@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw/sshwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
@@ -44,6 +45,16 @@ func parseWindowChange(payload []byte) (ptyDims, error) {
 	return dims(wc.Columns, wc.Rows, wc.WidthPx, wc.HeightPx), nil
 }
 
+// parseExecReq decodes an exec payload (RFC 4254 6.5) into the command line
+// `ssh host <cmd>` sent.
+func parseExecReq(payload []byte) (string, error) {
+	var er sshwire.ExecReq
+	if err := er.DecodeExact(payload); err != nil {
+		return "", fmt.Errorf("exec payload: %w", err)
+	}
+	return string(er.Command), nil
+}
+
 // parsePtyReq decodes a pty-req payload (RFC 4254 6.2).
 //
 // TERM is decoded and discarded: the runner-side PTY's TERM is fixed when the
@@ -70,7 +81,19 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 			taskID))
 		return
 	}
-	defer g.release(taskID, mode)
+	// Released exactly once, and possibly early: an `exec` never attaches, so it
+	// must not sit on the control seat for the length of the command. Calling
+	// g.release twice would be worse than harmless — between the two calls
+	// another session can claim the seat, and the second call would free THAT
+	// session's.
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			g.release(taskID, mode)
+		}
+	}
+	defer release()
 
 	ch, requests, err := newCh.Accept()
 	if err != nil {
@@ -99,20 +122,31 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 			_ = req.Reply(true, nil)
 			started = true
 		case "exec":
-			// Accepted and then answered, rather than refused. A refused
-			// request is reported by the client as a generic failure and the
-			// session is torn down without the stderr ever being read — the
-			// explanation would be written and never seen. Measured against
-			// x/crypto/ssh as the client; `ssh host ls` shows nothing useful
-			// either way, so the useful shape is: accept, say why, exit 1.
+			// `ssh host cmd` runs the command in the task's WORKTREE, as its own
+			// process. It used to be accepted-then-refused, because the only
+			// command surface then was `session exec`, which types into the
+			// session's foreground shell and merges the two output streams —
+			// nothing like what ssh promises. `exec` is that missing thing:
+			// separate stdout and stderr, the command's own exit code, and a
+			// session that is never touched.
+			cmdline, perr := parseExecReq(req.Payload)
+			if perr != nil {
+				// Accepted first, then answered. A REFUSED request is reported
+				// by the client as a generic failure and the channel is torn
+				// down without the stderr ever being read, so the explanation
+				// would be written and never seen (measured against
+				// x/crypto/ssh).
+				_ = req.Reply(true, nil)
+				fmt.Fprintf(ch.Stderr(), "ssh-gateway: %v\r\n", perr)
+				sendExit(ch, 1)
+				return
+			}
 			_ = req.Reply(true, nil)
-			fmt.Fprint(ch.Stderr(),
-				"ssh-gateway: exec is not served here — this gateway is a session's PTY, not a command runner.\r\n"+
-					"  `harness-cli session exec <task-id> <cmd>` runs a command line in the session's FOREGROUND SHELL: it\r\n"+
-					"  types into that shell, merges stdout and stderr into one PTY stream, and needs a POSIX shell there.\r\n"+
-					"  That is a different thing from what `ssh host cmd` promises, which is why it is not wired to it.\r\n"+
-					"  For files: `harness-cli file push` / `file pull`.\r\n")
-			sendExit(ch, 1)
+			// The seat goes back now: this never attaches, so holding a
+			// controller's seat for the length of `make test` would lock a real
+			// attach out for no reason.
+			release()
+			g.runExec(ctx, ch, taskID, cmdline)
 			return
 		case "subsystem":
 			// Refused rather than accepted: an sftp client that got an accept
@@ -133,6 +167,44 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 	}
 
 	g.attachAndPump(ctx, ch, requests, taskID, mode, dims, haveDims)
+}
+
+// runExec runs one command line in the task's worktree and reports its exit
+// status as the ssh session's.
+//
+// `sh -c <line>` because that is what `ssh host cmd` means everywhere else: the
+// client sends ONE string it expects a shell to interpret, so re-splitting it
+// here on whitespace would break every quote and redirection the operator
+// typed. The wire carries an argv precisely so this caller can choose the shell
+// form while `harness-cli exec` passes the words through untouched.
+//
+// The user-name suffix (.control / .view / bare) does not gate this. It selects
+// how a SHELL session ATTACHES, and an exec never attaches — treating .view as
+// read-only here would advertise an authority boundary the gateway does not
+// have, since reaching it at all already means holding the operator's
+// credentials.
+func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string) {
+	res, err := g.client.ExecRun(ctx, taskID, []string{"sh", "-c", cmdline}, cli.ExecRunOpts{
+		// Separate ends, all the way out to the ssh client: keeping them apart
+		// is the whole reason this is wired to `exec` and not to `session exec`.
+		Stdin:  ch,
+		Stdout: ch,
+		Stderr: ch.Stderr(),
+	})
+	if err != nil {
+		fmt.Fprintf(ch.Stderr(), "ssh-gateway: %v\r\n", err)
+		sendExit(ch, 1)
+		return
+	}
+	if res.Kind != protocol.ExecEventKind_Exited {
+		// The command never ran, or was killed. 125 rather than an invented
+		// 127, matching `harness-cli exec`: 127 is a shell's convention and the
+		// failure here is that no shell ever started.
+		fmt.Fprintf(ch.Stderr(), "ssh-gateway: exec %s: %s\r\n", res.Kind.String(), res.Detail)
+		sendExit(ch, 125)
+		return
+	}
+	sendExit(ch, uint32(res.ExitCode))
 }
 
 // attachAndPump attaches to the task and splices the ssh channel to it until

@@ -177,33 +177,55 @@ Accepted:
 - request `pty-req` — the initial window size is taken from it
 - request `shell` — starts the attach
 - request `window-change` — forwarded as a size update
+- request `exec` (`ssh host <command>`) — runs the command in the task's
+  worktree (see below)
 - reply `exit-status` — sent before the channel closes
+
+### `exec` — wired, after being refused for one release
+
+`ssh <id>@host <command>` runs the command through `harness-cli exec`'s RPC:
+in the task's worktree, as its own process, with stdout and stderr separate all
+the way out to the ssh client and the command's own exit code returned as the
+session's `exit-status`.
+
+**This reverses the original decision, and the reason it reverses is that the
+premise stopped being true.** The refusal was not "we cannot do this" — it was
+that the only command surface then available, `session exec`, has semantics
+that are not ssh's: it injects a line into the session's FOREGROUND SHELL (so
+it needs a POSIX shell to be in the foreground, which a session running an
+agent TUI does not have), it merges stdout and stderr into the one PTY stream,
+and the injected line appears in the scrollback of whoever is watching that
+session. Promising `ssh host cmd`'s semantics while delivering that was judged
+worse than not offering it, and that judgement still stands.
+`exec` (`docs/superpowers/specs/2026-08-25-task-exec-design.md`) is precisely
+the missing construct: an independent process in the task's worktree, separated
+streams, a real exit code, and no side effect on anyone's terminal. So the
+mapping is now the honest one it was not before.
+
+Details that follow from the mapping:
+
+- `sh -c <line>`, not a whitespace split. `ssh host cmd` sends ONE string it
+  expects a shell to interpret; re-splitting it here would break every quote and
+  redirection the operator typed. The wire carries an argv (task-exec D4)
+  precisely so this caller can choose the shell form while `harness-cli exec`
+  passes its words through untouched.
+- The user-name suffix does **not** gate it. `.control` / `.view` / bare choose
+  how a SHELL session attaches, and an exec never attaches; treating `.view` as
+  read-only here would advertise an authority boundary the gateway does not have,
+  since reaching it at all already means holding operator credentials.
+- The control seat is released before the command runs. An exec that held it for
+  the length of `make test` would lock a real attach out for no reason, and
+  `.control` is the form a script reaching for a command is likely to type.
+- A command that never started (no such task, no worktree, killed) exits **125**,
+  matching `harness-cli exec`, with the reason on stderr. 127 is a shell's
+  convention and the failure is that no shell ever started.
+- The malformed-payload path is still accepted-then-answered rather than refused,
+  for the original reason: a client whose *request* is refused tears the session
+  down without ever draining stderr, so the sentence would be written and never
+  read. Measured against `x/crypto/ssh` as the client.
 
 Not served, each saying why:
 
-- `exec` (`ssh host <command>`) — **not wired, and not for want of a command
-  surface.** `harness-cli session exec` is one, and `cli.SessionExec` is a
-  method on the long-lived client this gateway already holds, so connecting the
-  two is a few lines. It is deliberately not connected because its semantics are
-  not ssh's: it injects a line into the session's FOREGROUND SHELL, so it needs
-  a POSIX shell to be in the foreground (a session running an agent TUI has
-  none), it merges stdout and stderr into the one PTY stream, and the injected
-  line appears in the scrollback of whoever is watching that session. `ssh host
-  cmd` promises an independent execution with separated streams and no
-  side effects on anyone's terminal, and promising it while delivering the other
-  thing is worse than not offering it.
-  The construct that WOULD match — `submit --agent bash`, a fresh task in a
-  fresh worktree — is not addressable here: the ssh user name names an existing
-  task, and creating one as a side effect of `ssh t1 ls` is a worse surprise
-  than a refusal.
-  **Accepted and then answered** with the explanation on stderr and exit status
-  1, rather than refused; the message names `session exec` so an operator who
-  wanted that gets sent to it. Refusing a
-  *request* delivers no reason: the client's `Start` fails and it tears the
-  session down without ever draining stderr, so the sentence would be written
-  and never read. Measured against `x/crypto/ssh` as the client while writing
-  the end-to-end test, which asserted the reason arrives and caught the
-  original refuse-with-a-message shape.
 - `subsystem` (sftp, and therefore sftp-backed scp) — refused, with the same
   message written first on the chance a client shows it. Refused rather than
   accepted because an sftp client handed an acceptance waits for a protocol
@@ -461,10 +483,24 @@ no `replace` directive is used at any point.
 
 ## Not a wire change (D9)
 
-No `.bgn` file is touched. The gateway uses `AttachSession` and `AttachMode`
-exactly as they exist. So `scripts/wire-skew-check.sh` is a no-op for this work
-and no server restart is required to deploy it (Pitfall 10 does not apply). The
-`go.mod` change (x/crypto indirect → direct) affects only the client binaries.
+No file in `runner/protocol` is touched. The gateway uses `AttachSession` and
+`AttachMode` exactly as they exist, so `scripts/wire-skew-check.sh` is a no-op
+for this work and no server restart is required to deploy the gateway itself
+(Pitfall 10 does not apply). The `go.mod` change (x/crypto indirect → direct)
+affects only the client binaries.
+
+Two later amendments to the letter of D9, neither of which changes what it was
+protecting:
+
+- `cli/sshgw/sshwire/sshwire.bgn` describes **SSH's** payload layouts, not the
+  harness protocol. It is a `.bgn` file, so "no `.bgn` file is touched" is no
+  longer literally true; nothing on a harness connection changed, and the file
+  exists so `pty-req`'s field order and `exec`'s length prefix are decoded by
+  generated code rather than indexed by hand.
+- The `exec` mapping calls a verb whose own schema **is** a harness wire change
+  (`runner/protocol/message.bgn`, the task-exec design). Deploying that needs the
+  server restarted before the runners, as that spec says. The gateway inherits
+  the requirement from the verb it calls; it does not add one of its own.
 
 ## Operator surface matrix
 
@@ -499,8 +535,9 @@ refused, because an ssh client only reads some of those places:
   kind, an unusable `pty-req` size, a failed initial resize. The client is
   attached and reading, so the text lands.
 - **Never on the stderr of a refused request.** A client whose request is
-  refused tears the session down without draining stderr. This is why `exec` is
-  accepted and answered instead (§ SSH surface).
+  refused tears the session down without draining stderr. This is why a
+  malformed `exec` payload is accepted and answered instead of refused
+  (§ SSH surface).
 
 Startup failures — bind refused, a non-loopback `--listen` with no usable
 `--authorized-keys` (D5), unreadable host key —
@@ -536,6 +573,14 @@ the suite does not depend on an `ssh` binary being installed:
   one does not
 - closing the channel leaves the task alive and `Detached`
 - the mode-reset bytes are the last thing written before close
+- `ssh <id>@… 'echo hi 1>&2; exit 3'` returns an `*ssh.ExitError` with status 3,
+  puts `hi` on the channel's stderr and nothing on its stdout — the merged-buffer
+  version of that assertion would pass against `session exec` too, which is the
+  thing this replaced
+- `ssh <id>@… 'echo "one two"'` prints `one two`: the command line reaches a
+  shell intact rather than being re-split here
+- an exec on a `.control` connection leaves the seat free — a second `.control`
+  session immediately afterwards is accepted, with no waiting
 
 Live (`dummy-harness` skill, two-instance topology): a real `ssh` client from a
 real terminal, plus tmux, driven with actual keystrokes — rendering is not proof
@@ -611,9 +656,10 @@ that catches a missing `//go:build !js`.
   transfer, and for Remote-SSH a server binary staged on the far side), already
   served by `file push` / `file pull` / `git`. `subsystem` is refused explicitly
   so the failure names itself.
-- **`ssh host <command>`.** Not a missing capability — a refused mapping. See
-  § SSH surface: the nearest existing verb runs in the session's foreground
-  shell, which is not what that syntax means to anyone who types it.
+- ~~**`ssh host <command>`.**~~ **No longer a non-goal.** It was one while the
+  nearest existing verb ran in the session's foreground shell, which is not what
+  that syntax means to anyone who types it. `exec` supplies the matching
+  semantics and the request is now served — see § SSH surface.
 - **`ssh -L` / `-R` through the gateway.** `direct-tcpip` is refused; the harness
   has `forward` for this and a second path would drift.
 - **A server-hosted sshd.** § Why client-side and not in the server.

@@ -21,28 +21,28 @@ type PtyReq struct {
 	Modes    []uint8
 }
 
-func (p *PtyReq) SetTerm(tmp111 []uint8) bool {
-	if len(tmp111) > int(4294967295) {
+func (p *PtyReq) SetTerm(tmp141 []uint8) bool {
+	if len(tmp141) > int(4294967295) {
 		return false
 	}
-	p.TermLen = uint32(len(tmp111))
-	p.Term = tmp111
+	p.TermLen = uint32(len(tmp141))
+	p.Term = tmp141
 	return true
 }
 
-func (p *PtyReq) SetModes(tmp107 []uint8) bool {
-	if len(tmp107) > int(4294967295) {
+func (p *PtyReq) SetModes(tmp139 []uint8) bool {
+	if len(tmp139) > int(4294967295) {
 		return false
 	}
-	p.ModesLen = uint32(len(tmp107))
-	p.Modes = tmp107
+	p.ModesLen = uint32(len(tmp139))
+	p.Modes = tmp139
 	return true
 }
 
 func (p *PtyReq) Write(tmp14 io.Writer) error {
-	tmp19 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp19[:], uint32(p.TermLen))
-	if _, err := tmp14.Write(tmp19[:4]); err != nil {
+	tmp21 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp21[:], uint32(p.TermLen))
+	if _, err := tmp14.Write(tmp21[:4]); err != nil {
 		return err
 	}
 	if len(p.Term) != int(int(p.TermLen)) {
@@ -51,29 +51,29 @@ func (p *PtyReq) Write(tmp14 io.Writer) error {
 	if _, err := tmp14.Write(p.Term); err != nil {
 		return err
 	}
-	tmp124 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp124[:], uint32(p.Columns))
-	if _, err := tmp14.Write(tmp124[:4]); err != nil {
+	tmp153 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp153[:], uint32(p.Columns))
+	if _, err := tmp14.Write(tmp153[:4]); err != nil {
 		return err
 	}
-	tmp122 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp122[:], uint32(p.Rows))
-	if _, err := tmp14.Write(tmp122[:4]); err != nil {
+	tmp151 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp151[:], uint32(p.Rows))
+	if _, err := tmp14.Write(tmp151[:4]); err != nil {
 		return err
 	}
-	tmp120 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp120[:], uint32(p.WidthPx))
-	if _, err := tmp14.Write(tmp120[:4]); err != nil {
+	tmp149 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp149[:], uint32(p.WidthPx))
+	if _, err := tmp14.Write(tmp149[:4]); err != nil {
 		return err
 	}
-	tmp118 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp118[:], uint32(p.HeightPx))
-	if _, err := tmp14.Write(tmp118[:4]); err != nil {
+	tmp147 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp147[:], uint32(p.HeightPx))
+	if _, err := tmp14.Write(tmp147[:4]); err != nil {
 		return err
 	}
-	tmp116 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp116[:], uint32(p.ModesLen))
-	if _, err := tmp14.Write(tmp116[:4]); err != nil {
+	tmp145 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp145[:], uint32(p.ModesLen))
+	if _, err := tmp14.Write(tmp145[:4]); err != nil {
 		return err
 	}
 	if len(p.Modes) != int(int(p.ModesLen)) {
@@ -100,12 +100,12 @@ func (s *PtyReq) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (p *PtyReq) EncodeSlice(tmp14 []byte, tmp14Offset *int) error {
-	tmp19 := []uint8{}
+	tmp21 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::TermLen\"")
 	}
-	tmp19 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp19[:], uint32(p.TermLen))
+	tmp21 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp21[:], uint32(p.TermLen))
 	*tmp14Offset += int(4)
 	if len(p.Term) != int(int(p.TermLen)) {
 		return fmt.Errorf("size mismatch when writing field \"PtyReq::Term\": expected %d, got %d", int(int(p.TermLen)), len(p.Term))
@@ -115,40 +115,40 @@ func (p *PtyReq) EncodeSlice(tmp14 []byte, tmp14Offset *int) error {
 	}
 	copy(tmp14[*tmp14Offset:*tmp14Offset+int(int(p.TermLen))], p.Term)
 	*tmp14Offset += int(int(p.TermLen))
-	tmp124 := []uint8{}
+	tmp153 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::Columns\"")
 	}
-	tmp124 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp124[:], uint32(p.Columns))
+	tmp153 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp153[:], uint32(p.Columns))
 	*tmp14Offset += int(4)
-	tmp122 := []uint8{}
+	tmp151 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::Rows\"")
 	}
-	tmp122 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp122[:], uint32(p.Rows))
+	tmp151 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp151[:], uint32(p.Rows))
 	*tmp14Offset += int(4)
-	tmp120 := []uint8{}
+	tmp149 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::WidthPx\"")
 	}
-	tmp120 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp120[:], uint32(p.WidthPx))
+	tmp149 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp149[:], uint32(p.WidthPx))
 	*tmp14Offset += int(4)
-	tmp118 := []uint8{}
+	tmp147 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::HeightPx\"")
 	}
-	tmp118 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp118[:], uint32(p.HeightPx))
+	tmp147 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp147[:], uint32(p.HeightPx))
 	*tmp14Offset += int(4)
-	tmp116 := []uint8{}
+	tmp145 := []uint8{}
 	if len(tmp14)-*tmp14Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PtyReq::ModesLen\"")
 	}
-	tmp116 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp116[:], uint32(p.ModesLen))
+	tmp145 = tmp14[*tmp14Offset : *tmp14Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp145[:], uint32(p.ModesLen))
 	*tmp14Offset += int(4)
 	if len(p.Modes) != int(int(p.ModesLen)) {
 		return fmt.Errorf("size mismatch when writing field \"PtyReq::Modes\": expected %d, got %d", int(int(p.ModesLen)), len(p.Modes))
@@ -176,28 +176,28 @@ func (s *PtyReq) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (p *PtyReq) Append(tmp14 []byte) ([]byte, error) {
-	tmp19 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp19[:], uint32(p.TermLen))
-	tmp14 = append(tmp14, tmp19[:4]...)
+	tmp21 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp21[:], uint32(p.TermLen))
+	tmp14 = append(tmp14, tmp21[:4]...)
 	if len(p.Term) != int(int(p.TermLen)) {
 		return nil, fmt.Errorf("size mismatch when writing field \"PtyReq::Term\": expected %d, got %d", int(int(p.TermLen)), len(p.Term))
 	}
 	tmp14 = append(tmp14, p.Term...)
-	tmp124 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp124[:], uint32(p.Columns))
-	tmp14 = append(tmp14, tmp124[:4]...)
-	tmp122 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp122[:], uint32(p.Rows))
-	tmp14 = append(tmp14, tmp122[:4]...)
-	tmp120 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp120[:], uint32(p.WidthPx))
-	tmp14 = append(tmp14, tmp120[:4]...)
-	tmp118 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp118[:], uint32(p.HeightPx))
-	tmp14 = append(tmp14, tmp118[:4]...)
-	tmp116 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp116[:], uint32(p.ModesLen))
-	tmp14 = append(tmp14, tmp116[:4]...)
+	tmp153 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp153[:], uint32(p.Columns))
+	tmp14 = append(tmp14, tmp153[:4]...)
+	tmp151 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp151[:], uint32(p.Rows))
+	tmp14 = append(tmp14, tmp151[:4]...)
+	tmp149 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp149[:], uint32(p.WidthPx))
+	tmp14 = append(tmp14, tmp149[:4]...)
+	tmp147 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp147[:], uint32(p.HeightPx))
+	tmp14 = append(tmp14, tmp147[:4]...)
+	tmp145 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp145[:], uint32(p.ModesLen))
+	tmp14 = append(tmp14, tmp145[:4]...)
 	if len(p.Modes) != int(int(p.ModesLen)) {
 		return nil, fmt.Errorf("size mismatch when writing field \"PtyReq::Modes\": expected %d, got %d", int(int(p.ModesLen)), len(p.Modes))
 	}
@@ -214,11 +214,11 @@ func (s *PtyReq) MustAppend(buf []byte) []byte {
 }
 
 func (p *PtyReq) Read(tmp15 io.Reader) error {
-	tmp20 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp20[0:0+4]); err != nil {
+	tmp22 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp22[0:0+4]); err != nil {
 		return err
 	}
-	p.TermLen = binary.BigEndian.Uint32(tmp20[:])
+	p.TermLen = binary.BigEndian.Uint32(tmp22[:])
 	if seeker, ok := tmp15.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -242,37 +242,37 @@ func (p *PtyReq) Read(tmp15 io.Reader) error {
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_646 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_646, tmp15, int64(int(p.TermLen))); err != nil {
+		io_temp_733 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_733, tmp15, int64(int(p.TermLen))); err != nil {
 			return err
 		}
-		p.Term = io_temp_646.Bytes()
+		p.Term = io_temp_733.Bytes()
 	}
-	tmp147 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp147[0:0+4]); err != nil {
+	tmp172 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp172[0:0+4]); err != nil {
 		return err
 	}
-	p.Columns = binary.BigEndian.Uint32(tmp147[:])
-	tmp137 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp137[0:0+4]); err != nil {
+	p.Columns = binary.BigEndian.Uint32(tmp172[:])
+	tmp165 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp165[0:0+4]); err != nil {
 		return err
 	}
-	p.Rows = binary.BigEndian.Uint32(tmp137[:])
-	tmp135 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp135[0:0+4]); err != nil {
+	p.Rows = binary.BigEndian.Uint32(tmp165[:])
+	tmp163 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp163[0:0+4]); err != nil {
 		return err
 	}
-	p.WidthPx = binary.BigEndian.Uint32(tmp135[:])
-	tmp133 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp133[0:0+4]); err != nil {
+	p.WidthPx = binary.BigEndian.Uint32(tmp163[:])
+	tmp161 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp161[0:0+4]); err != nil {
 		return err
 	}
-	p.HeightPx = binary.BigEndian.Uint32(tmp133[:])
-	tmp152 := [4]uint8{}
-	if _, err := io.ReadFull(tmp15, tmp152[0:0+4]); err != nil {
+	p.HeightPx = binary.BigEndian.Uint32(tmp161[:])
+	tmp177 := [4]uint8{}
+	if _, err := io.ReadFull(tmp15, tmp177[0:0+4]); err != nil {
 		return err
 	}
-	p.ModesLen = binary.BigEndian.Uint32(tmp152[:])
+	p.ModesLen = binary.BigEndian.Uint32(tmp177[:])
 	if seeker, ok := tmp15.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -296,11 +296,11 @@ func (p *PtyReq) Read(tmp15 io.Reader) error {
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_548 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_548, tmp15, int64(int(p.ModesLen))); err != nil {
+		io_temp_633 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_633, tmp15, int64(int(p.ModesLen))); err != nil {
 			return err
 		}
-		p.Modes = io_temp_548.Bytes()
+		p.Modes = io_temp_633.Bytes()
 	}
 	return nil
 }
@@ -323,53 +323,53 @@ func (s *PtyReq) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (p *PtyReq) DecodeSlice(tmp15 []byte, tmp15Offset *int) error {
-	tmp20 := []uint8{}
+	tmp22 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::TermLen\"")
 	}
-	tmp20 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp22 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.TermLen = binary.BigEndian.Uint32(tmp20[:])
+	p.TermLen = binary.BigEndian.Uint32(tmp22[:])
 	if len(tmp15)-*tmp15Offset < int(p.TermLen) {
 		return errors.New("not enough data to read for field \"PtyReq::Term\"")
 	}
 	p.Term = tmp15[*tmp15Offset : *tmp15Offset+int(p.TermLen)]
 	*tmp15Offset += int(int(p.TermLen))
-	tmp147 := []uint8{}
+	tmp172 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::Columns\"")
 	}
-	tmp147 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp172 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.Columns = binary.BigEndian.Uint32(tmp147[:])
-	tmp137 := []uint8{}
+	p.Columns = binary.BigEndian.Uint32(tmp172[:])
+	tmp165 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::Rows\"")
 	}
-	tmp137 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp165 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.Rows = binary.BigEndian.Uint32(tmp137[:])
-	tmp135 := []uint8{}
+	p.Rows = binary.BigEndian.Uint32(tmp165[:])
+	tmp163 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::WidthPx\"")
 	}
-	tmp135 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp163 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.WidthPx = binary.BigEndian.Uint32(tmp135[:])
-	tmp133 := []uint8{}
+	p.WidthPx = binary.BigEndian.Uint32(tmp163[:])
+	tmp161 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::HeightPx\"")
 	}
-	tmp133 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp161 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.HeightPx = binary.BigEndian.Uint32(tmp133[:])
-	tmp152 := []uint8{}
+	p.HeightPx = binary.BigEndian.Uint32(tmp161[:])
+	tmp177 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PtyReq::ModesLen\"")
 	}
-	tmp152 = tmp15[*tmp15Offset : *tmp15Offset+4]
+	tmp177 = tmp15[*tmp15Offset : *tmp15Offset+4]
 	*tmp15Offset += int(4)
-	p.ModesLen = binary.BigEndian.Uint32(tmp152[:])
+	p.ModesLen = binary.BigEndian.Uint32(tmp177[:])
 	if len(tmp15)-*tmp15Offset < int(p.ModesLen) {
 		return errors.New("not enough data to read for field \"PtyReq::Modes\"")
 	}
@@ -403,25 +403,25 @@ type WindowChange struct {
 	HeightPx uint32
 }
 
-func (w *WindowChange) Write(tmp21 io.Writer) error {
-	tmp97 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp97[:], uint32(w.Columns))
-	if _, err := tmp21.Write(tmp97[:4]); err != nil {
+func (w *WindowChange) Write(tmp25 io.Writer) error {
+	tmp129 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp129[:], uint32(w.Columns))
+	if _, err := tmp25.Write(tmp129[:4]); err != nil {
 		return err
 	}
-	tmp95 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp95[:], uint32(w.Rows))
-	if _, err := tmp21.Write(tmp95[:4]); err != nil {
+	tmp127 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp127[:], uint32(w.Rows))
+	if _, err := tmp25.Write(tmp127[:4]); err != nil {
 		return err
 	}
-	tmp93 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp93[:], uint32(w.WidthPx))
-	if _, err := tmp21.Write(tmp93[:4]); err != nil {
+	tmp125 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp125[:], uint32(w.WidthPx))
+	if _, err := tmp25.Write(tmp125[:4]); err != nil {
 		return err
 	}
-	tmp91 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp91[:], uint32(w.HeightPx))
-	if _, err := tmp21.Write(tmp91[:4]); err != nil {
+	tmp123 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp123[:], uint32(w.HeightPx))
+	if _, err := tmp25.Write(tmp123[:4]); err != nil {
 		return err
 	}
 	return nil
@@ -441,35 +441,35 @@ func (s *WindowChange) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (w *WindowChange) EncodeSlice(tmp21 []byte, tmp21Offset *int) error {
-	tmp97 := []uint8{}
-	if len(tmp21)-*tmp21Offset < int(4) {
+func (w *WindowChange) EncodeSlice(tmp25 []byte, tmp25Offset *int) error {
+	tmp129 := []uint8{}
+	if len(tmp25)-*tmp25Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"WindowChange::Columns\"")
 	}
-	tmp97 = tmp21[*tmp21Offset : *tmp21Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp97[:], uint32(w.Columns))
-	*tmp21Offset += int(4)
-	tmp95 := []uint8{}
-	if len(tmp21)-*tmp21Offset < int(4) {
+	tmp129 = tmp25[*tmp25Offset : *tmp25Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp129[:], uint32(w.Columns))
+	*tmp25Offset += int(4)
+	tmp127 := []uint8{}
+	if len(tmp25)-*tmp25Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"WindowChange::Rows\"")
 	}
-	tmp95 = tmp21[*tmp21Offset : *tmp21Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp95[:], uint32(w.Rows))
-	*tmp21Offset += int(4)
-	tmp93 := []uint8{}
-	if len(tmp21)-*tmp21Offset < int(4) {
+	tmp127 = tmp25[*tmp25Offset : *tmp25Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp127[:], uint32(w.Rows))
+	*tmp25Offset += int(4)
+	tmp125 := []uint8{}
+	if len(tmp25)-*tmp25Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"WindowChange::WidthPx\"")
 	}
-	tmp93 = tmp21[*tmp21Offset : *tmp21Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp93[:], uint32(w.WidthPx))
-	*tmp21Offset += int(4)
-	tmp91 := []uint8{}
-	if len(tmp21)-*tmp21Offset < int(4) {
+	tmp125 = tmp25[*tmp25Offset : *tmp25Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp125[:], uint32(w.WidthPx))
+	*tmp25Offset += int(4)
+	tmp123 := []uint8{}
+	if len(tmp25)-*tmp25Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"WindowChange::HeightPx\"")
 	}
-	tmp91 = tmp21[*tmp21Offset : *tmp21Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp91[:], uint32(w.HeightPx))
-	*tmp21Offset += int(4)
+	tmp123 = tmp25[*tmp25Offset : *tmp25Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp123[:], uint32(w.HeightPx))
+	*tmp25Offset += int(4)
 	return nil
 }
 func (s *WindowChange) Encode(buf []byte) ([]byte, error) {
@@ -487,20 +487,20 @@ func (s *WindowChange) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (w *WindowChange) Append(tmp21 []byte) ([]byte, error) {
-	tmp97 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp97[:], uint32(w.Columns))
-	tmp21 = append(tmp21, tmp97[:4]...)
-	tmp95 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp95[:], uint32(w.Rows))
-	tmp21 = append(tmp21, tmp95[:4]...)
-	tmp93 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp93[:], uint32(w.WidthPx))
-	tmp21 = append(tmp21, tmp93[:4]...)
-	tmp91 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp91[:], uint32(w.HeightPx))
-	tmp21 = append(tmp21, tmp91[:4]...)
-	return tmp21, nil
+func (w *WindowChange) Append(tmp25 []byte) ([]byte, error) {
+	tmp129 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp129[:], uint32(w.Columns))
+	tmp25 = append(tmp25, tmp129[:4]...)
+	tmp127 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp127[:], uint32(w.Rows))
+	tmp25 = append(tmp25, tmp127[:4]...)
+	tmp125 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp125[:], uint32(w.WidthPx))
+	tmp25 = append(tmp25, tmp125[:4]...)
+	tmp123 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp123[:], uint32(w.HeightPx))
+	tmp25 = append(tmp25, tmp123[:4]...)
+	return tmp25, nil
 }
 func (s *WindowChange) MustAppend(buf []byte) []byte {
 	var err error
@@ -511,27 +511,27 @@ func (s *WindowChange) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (w *WindowChange) Read(tmp26 io.Reader) error {
-	tmp105 := [4]uint8{}
-	if _, err := io.ReadFull(tmp26, tmp105[0:0+4]); err != nil {
+func (w *WindowChange) Read(tmp30 io.Reader) error {
+	tmp137 := [4]uint8{}
+	if _, err := io.ReadFull(tmp30, tmp137[0:0+4]); err != nil {
 		return err
 	}
-	w.Columns = binary.BigEndian.Uint32(tmp105[:])
-	tmp103 := [4]uint8{}
-	if _, err := io.ReadFull(tmp26, tmp103[0:0+4]); err != nil {
+	w.Columns = binary.BigEndian.Uint32(tmp137[:])
+	tmp135 := [4]uint8{}
+	if _, err := io.ReadFull(tmp30, tmp135[0:0+4]); err != nil {
 		return err
 	}
-	w.Rows = binary.BigEndian.Uint32(tmp103[:])
-	tmp101 := [4]uint8{}
-	if _, err := io.ReadFull(tmp26, tmp101[0:0+4]); err != nil {
+	w.Rows = binary.BigEndian.Uint32(tmp135[:])
+	tmp133 := [4]uint8{}
+	if _, err := io.ReadFull(tmp30, tmp133[0:0+4]); err != nil {
 		return err
 	}
-	w.WidthPx = binary.BigEndian.Uint32(tmp101[:])
-	tmp99 := [4]uint8{}
-	if _, err := io.ReadFull(tmp26, tmp99[0:0+4]); err != nil {
+	w.WidthPx = binary.BigEndian.Uint32(tmp133[:])
+	tmp131 := [4]uint8{}
+	if _, err := io.ReadFull(tmp30, tmp131[0:0+4]); err != nil {
 		return err
 	}
-	w.HeightPx = binary.BigEndian.Uint32(tmp99[:])
+	w.HeightPx = binary.BigEndian.Uint32(tmp131[:])
 	return nil
 }
 func (s *WindowChange) DecodeCopy(buf []byte) ([]byte, error) {
@@ -552,35 +552,35 @@ func (s *WindowChange) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (w *WindowChange) DecodeSlice(tmp26 []byte, tmp26Offset *int) error {
-	tmp105 := []uint8{}
-	if len(tmp26)-*tmp26Offset < 4 {
+func (w *WindowChange) DecodeSlice(tmp30 []byte, tmp30Offset *int) error {
+	tmp137 := []uint8{}
+	if len(tmp30)-*tmp30Offset < 4 {
 		return errors.New("not enough data to read for field \"WindowChange::Columns\"")
 	}
-	tmp105 = tmp26[*tmp26Offset : *tmp26Offset+4]
-	*tmp26Offset += int(4)
-	w.Columns = binary.BigEndian.Uint32(tmp105[:])
-	tmp103 := []uint8{}
-	if len(tmp26)-*tmp26Offset < 4 {
+	tmp137 = tmp30[*tmp30Offset : *tmp30Offset+4]
+	*tmp30Offset += int(4)
+	w.Columns = binary.BigEndian.Uint32(tmp137[:])
+	tmp135 := []uint8{}
+	if len(tmp30)-*tmp30Offset < 4 {
 		return errors.New("not enough data to read for field \"WindowChange::Rows\"")
 	}
-	tmp103 = tmp26[*tmp26Offset : *tmp26Offset+4]
-	*tmp26Offset += int(4)
-	w.Rows = binary.BigEndian.Uint32(tmp103[:])
-	tmp101 := []uint8{}
-	if len(tmp26)-*tmp26Offset < 4 {
+	tmp135 = tmp30[*tmp30Offset : *tmp30Offset+4]
+	*tmp30Offset += int(4)
+	w.Rows = binary.BigEndian.Uint32(tmp135[:])
+	tmp133 := []uint8{}
+	if len(tmp30)-*tmp30Offset < 4 {
 		return errors.New("not enough data to read for field \"WindowChange::WidthPx\"")
 	}
-	tmp101 = tmp26[*tmp26Offset : *tmp26Offset+4]
-	*tmp26Offset += int(4)
-	w.WidthPx = binary.BigEndian.Uint32(tmp101[:])
-	tmp99 := []uint8{}
-	if len(tmp26)-*tmp26Offset < 4 {
+	tmp133 = tmp30[*tmp30Offset : *tmp30Offset+4]
+	*tmp30Offset += int(4)
+	w.WidthPx = binary.BigEndian.Uint32(tmp133[:])
+	tmp131 := []uint8{}
+	if len(tmp30)-*tmp30Offset < 4 {
 		return errors.New("not enough data to read for field \"WindowChange::HeightPx\"")
 	}
-	tmp99 = tmp26[*tmp26Offset : *tmp26Offset+4]
-	*tmp26Offset += int(4)
-	w.HeightPx = binary.BigEndian.Uint32(tmp99[:])
+	tmp131 = tmp30[*tmp30Offset : *tmp30Offset+4]
+	*tmp30Offset += int(4)
+	w.HeightPx = binary.BigEndian.Uint32(tmp131[:])
 	return nil
 }
 func (s *WindowChange) Decode(buf []byte) ([]byte, error) {
@@ -592,6 +592,190 @@ func (s *WindowChange) Decode(buf []byte) ([]byte, error) {
 	return buf[offset:], nil
 }
 func (s *WindowChange) DecodeExact(buf []byte) error {
+	remain, err := s.Decode(buf)
+	if err != nil {
+		return err
+	}
+	if len(remain) != 0 {
+		return fmt.Errorf("expect no remaining bytes but got %d bytes", len(remain))
+	}
+	return nil
+}
+
+type ExecReq struct {
+	CommandLen uint32
+	Command    []uint8
+}
+
+func (e *ExecReq) SetCommand(tmp159 []uint8) bool {
+	if len(tmp159) > int(4294967295) {
+		return false
+	}
+	e.CommandLen = uint32(len(tmp159))
+	e.Command = tmp159
+	return true
+}
+
+func (e *ExecReq) Write(tmp84 io.Writer) error {
+	tmp117 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp117[:], uint32(e.CommandLen))
+	if _, err := tmp84.Write(tmp117[:4]); err != nil {
+		return err
+	}
+	if len(e.Command) != int(int(e.CommandLen)) {
+		return fmt.Errorf("size mismatch when writing field \"ExecReq::Command\": expected %d, got %d", int(int(e.CommandLen)), len(e.Command))
+	}
+	if _, err := tmp84.Write(e.Command); err != nil {
+		return err
+	}
+	return nil
+}
+func (s *ExecReq) EncodeCopy(reserved []byte) ([]byte, error) {
+	buf := bytes.NewBuffer(reserved)
+	err := s.Write(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+func (s *ExecReq) MustEncodeCopy(reserved []byte) []byte {
+	buf, err := s.EncodeCopy(reserved)
+	if err != nil {
+		panic(err)
+	}
+	return buf
+}
+func (e *ExecReq) EncodeSlice(tmp84 []byte, tmp84Offset *int) error {
+	tmp117 := []uint8{}
+	if len(tmp84)-*tmp84Offset < int(4) {
+		return errors.New("not enough space to reserve data for field \"ExecReq::CommandLen\"")
+	}
+	tmp117 = tmp84[*tmp84Offset : *tmp84Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp117[:], uint32(e.CommandLen))
+	*tmp84Offset += int(4)
+	if len(e.Command) != int(int(e.CommandLen)) {
+		return fmt.Errorf("size mismatch when writing field \"ExecReq::Command\": expected %d, got %d", int(int(e.CommandLen)), len(e.Command))
+	}
+	if len(tmp84)-*tmp84Offset < int(0+int(e.CommandLen)) {
+		return errors.New("not enough space to write for field \"ExecReq::Command\"")
+	}
+	copy(tmp84[*tmp84Offset:*tmp84Offset+int(int(e.CommandLen))], e.Command)
+	*tmp84Offset += int(int(e.CommandLen))
+	return nil
+}
+func (s *ExecReq) Encode(buf []byte) ([]byte, error) {
+	var offset int
+	err := s.EncodeSlice(buf, &offset)
+	if err != nil {
+		return nil, err
+	}
+	return buf[:offset], nil
+}
+func (s *ExecReq) MustEncode(reserved []byte) []byte {
+	buf, err := s.Encode(reserved)
+	if err != nil {
+		panic(err)
+	}
+	return buf
+}
+func (e *ExecReq) Append(tmp84 []byte) ([]byte, error) {
+	tmp117 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp117[:], uint32(e.CommandLen))
+	tmp84 = append(tmp84, tmp117[:4]...)
+	if len(e.Command) != int(int(e.CommandLen)) {
+		return nil, fmt.Errorf("size mismatch when writing field \"ExecReq::Command\": expected %d, got %d", int(int(e.CommandLen)), len(e.Command))
+	}
+	tmp84 = append(tmp84, e.Command...)
+	return tmp84, nil
+}
+func (s *ExecReq) MustAppend(buf []byte) []byte {
+	var err error
+	buf, err = s.Append(buf)
+	if err != nil {
+		panic(err)
+	}
+	return buf
+}
+
+func (e *ExecReq) Read(tmp88 io.Reader) error {
+	tmp119 := [4]uint8{}
+	if _, err := io.ReadFull(tmp88, tmp119[0:0+4]); err != nil {
+		return err
+	}
+	e.CommandLen = binary.BigEndian.Uint32(tmp119[:])
+	if seeker, ok := tmp88.(io.Seeker); ok {
+		current, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		endOffset, err := seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+		_, err = seeker.Seek(current, io.SeekStart)
+		if err != nil {
+			return err
+		}
+		if (endOffset - current) < int64(int(e.CommandLen)) {
+			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(e.CommandLen)))
+		}
+		e.Command = make([]byte, int(e.CommandLen))
+		if _, err := io.ReadFull(tmp88, e.Command[0:0+int(e.CommandLen)]); err != nil {
+			return err
+		}
+	} else {
+		// To mitigate DoS attack, use incremental buffer allocation
+		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
+		io_temp_218 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_218, tmp88, int64(int(e.CommandLen))); err != nil {
+			return err
+		}
+		e.Command = io_temp_218.Bytes()
+	}
+	return nil
+}
+func (s *ExecReq) DecodeCopy(buf []byte) ([]byte, error) {
+	r := bytes.NewReader(buf)
+	err := s.Read(r)
+	if err != nil {
+		return nil, err
+	}
+	return buf[int(r.Size())-r.Len():], nil
+}
+func (s *ExecReq) DecodeExactCopy(buf []byte) error {
+	remain, err := s.DecodeCopy(buf)
+	if err != nil {
+		return err
+	}
+	if len(remain) != 0 {
+		return fmt.Errorf("expect no remaining bytes but got %d bytes", len(remain))
+	}
+	return nil
+}
+func (e *ExecReq) DecodeSlice(tmp88 []byte, tmp88Offset *int) error {
+	tmp119 := []uint8{}
+	if len(tmp88)-*tmp88Offset < 4 {
+		return errors.New("not enough data to read for field \"ExecReq::CommandLen\"")
+	}
+	tmp119 = tmp88[*tmp88Offset : *tmp88Offset+4]
+	*tmp88Offset += int(4)
+	e.CommandLen = binary.BigEndian.Uint32(tmp119[:])
+	if len(tmp88)-*tmp88Offset < int(e.CommandLen) {
+		return errors.New("not enough data to read for field \"ExecReq::Command\"")
+	}
+	e.Command = tmp88[*tmp88Offset : *tmp88Offset+int(e.CommandLen)]
+	*tmp88Offset += int(int(e.CommandLen))
+	return nil
+}
+func (s *ExecReq) Decode(buf []byte) ([]byte, error) {
+	var offset int
+	err := s.DecodeSlice(buf, &offset)
+	if err != nil {
+		return nil, err
+	}
+	return buf[offset:], nil
+}
+func (s *ExecReq) DecodeExact(buf []byte) error {
 	remain, err := s.Decode(buf)
 	if err != nil {
 		return err

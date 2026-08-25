@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"path/filepath"
@@ -181,7 +182,12 @@ func TestSSHGatewayE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("exec_is_refused_with_a_reason", func(t *testing.T) {
+	// `ssh host cmd` runs the command in the task's worktree. This used to be an
+	// accepted-then-refused request, because the only command surface was
+	// `session exec` — which types into the session's foreground shell and
+	// merges the two output streams, nothing like what ssh promises. It now maps
+	// to `exec`, which has exactly ssh's semantics.
+	t.Run("exec_runs_the_command", func(t *testing.T) {
 		cl := dialSSH(t, gwAddr, taskID)
 		defer cl.Close()
 		sess, err := cl.NewSession()
@@ -189,20 +195,100 @@ func TestSSHGatewayE2E(t *testing.T) {
 			t.Fatalf("NewSession: %v", err)
 		}
 		defer sess.Close()
-		var stderr bytes.Buffer
+		var stdout, stderr bytes.Buffer
+		sess.Stdout = &stdout
 		sess.Stderr = &stderr
-		err = sess.Run("ls")
-		if err == nil {
-			t.Error("want a non-zero exit for an exec request; this gateway has no command surface")
+
+		err = sess.Run("echo hi 1>&2; exit 3")
+
+		// The command's own exit code becomes ssh's, which is what makes this
+		// usable from a script on the other end.
+		var ee *ssh.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("Run = %v, want an *ssh.ExitError carrying the command's status", err)
 		}
-		// The reason has to be READ by the client to be worth writing. A
-		// refused request never is: Start fails and the session is torn down
-		// before Wait drains stderr, so the explanation is delivered as an
-		// accepted-then-answered command instead.
-		if s := stderr.String(); !strings.Contains(s, "not served here") {
-			t.Errorf("stderr %q does not explain why exec was refused", s)
+		if ee.ExitStatus() != 3 {
+			t.Errorf("exit status = %d, want 3", ee.ExitStatus())
+		}
+		// Separate, all the way out to the ssh client. A test that read one
+		// merged buffer would pass against `session exec` too, which is the
+		// thing this replaced.
+		if got := strings.TrimSpace(stderr.String()); !strings.Contains(got, "hi") {
+			t.Errorf("stderr = %q, want the redirected line", got)
+		}
+		if strings.Contains(stdout.String(), "hi") {
+			t.Errorf("stdout = %q, must NOT carry what the command sent to stderr", stdout.String())
 		}
 	})
+
+	// The shell form is the point: `ssh host cmd` sends ONE string it expects a
+	// shell to interpret, so quoting and redirection have to survive. Splitting
+	// it on whitespace here would break every one of them.
+	t.Run("exec_keeps_the_shell_quoting", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, err := cl.NewSession()
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		defer sess.Close()
+		out, err := sess.Output(`echo "one two"`)
+		if err != nil {
+			t.Fatalf("Output: %v", err)
+		}
+		if strings.TrimSpace(string(out)) != "one two" {
+			t.Errorf("output = %q, want the quoted argument intact", out)
+		}
+	})
+
+	// An exec must not take the control seat. It never attaches, so holding one
+	// for the length of the command would lock a real attach out for no reason —
+	// and `.control` is the form a script reaching for a command would type.
+	t.Run("exec_does_not_hold_the_control_seat", func(t *testing.T) {
+		// The seat an EARLIER sub-test took is given back when its ssh
+		// connection closes, which the gateway observes asynchronously. Waiting
+		// for that here keeps this case measuring its own claim rather than the
+		// previous one's cleanup.
+		cl := dialSSH(t, gwAddr, taskID+".control")
+		defer cl.Close()
+		sess := controlSessionWhenFree(t, cl)
+		if _, err := sess.Output("true"); err != nil {
+			t.Fatalf("Output: %v", err)
+		}
+		sess.Close()
+
+		// A second .control session must be accepted IMMEDIATELY — no waiting.
+		// The exec released the seat before it ran, so there is nothing to
+		// wait for, and being patient here would hide the defect.
+		cl2 := dialSSH(t, gwAddr, taskID+".control")
+		defer cl2.Close()
+		sess2, err := cl2.NewSession()
+		if err != nil {
+			t.Fatalf("the exec kept the control seat: %v", err)
+		}
+		defer sess2.Close()
+		if _, err := sess2.Output("true"); err != nil {
+			t.Errorf("second exec after a .control exec: %v", err)
+		}
+	})
+}
+
+// controlSessionWhenFree opens a session channel on a .control connection,
+// retrying while the seat is still held by a previous sub-test's connection
+// that has closed but whose release the gateway has not yet observed.
+func controlSessionWhenFree(t *testing.T, cl *ssh.Client) *ssh.Session {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		sess, err := cl.NewSession()
+		if err == nil {
+			return sess
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("control seat never came free: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // openThenDetachSession opens a detachable session, waits for it to run, then

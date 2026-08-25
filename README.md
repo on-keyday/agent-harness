@@ -75,6 +75,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Port forwarding: `forward <task-id> -L [bind:]lport:rhost:rport`
       (SSH `-L` style — the runner dials `rhost:rport`, bytes relayed
       over the same transport; `-L` repeatable, foreground until Ctrl-C).
+    - Commands in a worktree: `exec <task-id> -- <cmd> [args...]` runs one
+      command in the task's worktree as its own process — separate stdout and
+      stderr, and the command's exit code becomes yours. `exec ls` / `exec
+      kill <exec-id>` list and stop the running ones. See **Running a command
+      in a task's worktree** below.
     - SSH front door: `ssh-gateway [--listen 127.0.0.1:2222]` serves ssh,
       so `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session
       from any ssh client — an `~/.ssh/config` alias, tmux, mosh, a script
@@ -313,6 +318,51 @@ bin/harness-cli notify-watch          # stream notifications (ring backlog + liv
 # --url / --url-file args or DISCORD_WEBHOOK_URL / _FILE env).
 ```
 
+### Running a command in a task's worktree
+
+`exec` runs one command in a task's worktree as **its own process**. It is not
+the session's shell: nothing is typed into the agent's terminal, nothing appears
+in anyone's scrollback, and the two output streams stay apart.
+
+```bash
+bin/harness-cli exec <task-id> -- git status          # words after -- are the argv
+bin/harness-cli exec <task-id> -- make test           # exits with make's status
+bin/harness-cli exec <task-id> -- sh -c 'echo out; echo err 1>&2' 2>/dev/null
+bin/harness-cli exec ls [-task <task-id>] [--json]    # what is running right now
+bin/harness-cli exec kill <exec-id>                   # stop one
+```
+
+What it gives you that `session exec` does not:
+
+- **Separate stdout and stderr.** `session exec` types a line into the session's
+  foreground shell, so its output comes back merged on the one PTY stream. Here
+  the two are distinct all the way to your terminal, which is what makes
+  `2>/dev/null` and `> out.txt` mean what they usually mean.
+- **The command's own exit code.** `exec` exits with it, so `&&` and `if` work.
+  A command that never started (missing binary, no worktree, killed) exits
+  **125** with the reason on stderr — 125 rather than 127, which is a shell's
+  convention where there is no shell.
+- **No side effect on the session.** The agent's terminal is untouched, so this
+  is safe to run against a session someone is watching.
+
+The target is the **worktree**, not the task's status: a task that ended with
+uncommitted work keeps its tree — `git status` and `make test` in it are exactly
+what you want then — while a task that ended clean had its tree removed and is
+refused. On a `--no-worktree` runner every task runs in the repo itself, and so
+does its exec.
+
+It is **synchronous and dies with its caller**: Ctrl-C stops the child. The
+detached form is a task — `submit --agent bash --task '…'`. A long one is
+visible to every client in `exec ls` and stoppable from any of them, and each
+task's row shows how many are running: `execs=N` in `ls` and the WebUI, `Nx` in
+the TUI Obs column, `execs: N running` in the TUI `d` popup, `exec_count` in
+`ls --json`.
+
+Available from all three surfaces and over ssh: the TUI cmdline takes the same
+`exec` / `exec ls` / `exec kill` words, the WebUI has them on its command line
+and as 「⌨ コマンド実行」 on the task sheet, and `ssh <task-id>@host <command>`
+maps to it (see **SSH gateway**).
+
 ### SSH gateway
 
 `harness-cli ssh-gateway` (or `ssh-gateway start` in the TUI) serves the SSH
@@ -348,12 +398,27 @@ and reused, so `known_hosts` stays valid.
 No scp/sftp and no `ssh -L` through it: `file push` / `file pull` and `forward`
 already cover those, and each is refused with a message that says so.
 
-`ssh <task>@host <command>` is refused too, and that one is a decision rather
-than a gap. `harness-cli session exec` runs a command line in a session, but it
-does so by typing into that session's foreground shell — it needs a POSIX shell
-to be there, merges stdout and stderr, and shows up in the scrollback of whoever
-is watching. `ssh host cmd` promises none of that, so the refusal names
-`session exec` instead of pretending to be it.
+`ssh <task>@host <command>` runs the command in the task's **worktree**, through
+the same path as `harness-cli exec` (see **Running a command in a task's
+worktree**): its own process, stdout and stderr kept apart, the command's exit
+code returned as ssh's, and the session it belongs to never touched.
+
+```bash
+ssh -p 2222 <task-id>@127.0.0.1 'make test'    # exits with make's status
+ssh -p 2222 <task-id>@127.0.0.1 'git status' > out.txt 2> err.txt
+```
+
+This was refused for one release, and the reason it stopped being refused is
+worth stating: the only command surface then was `session exec`, which types
+into the session's foreground shell — it needs a POSIX shell to be there, merges
+stdout and stderr, and shows up in the scrollback of whoever is watching. `ssh
+host cmd` promises none of that, so mapping to it would have been a lie. `exec`
+is the construct with matching semantics, so the mapping is now honest.
+
+The command line reaches a shell intact (`sh -c '<line>'`), so quoting and
+redirection work. The `.control` / `.view` suffix does not gate it — those
+choose how a *shell* session attaches, and this never attaches — and an exec
+does not hold the control seat while it runs.
 
 ### X11 forwarding
 
@@ -722,9 +787,13 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ session stream attach / file {ls,push,pull,delete} / grid / caps / scope
+/ session stream attach / file {ls,push,pull,delete} / git / exec / forward
+/ grid / caps / scope
 / caps set / caps set-parent / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
+`exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
+its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
+`exec ls` / `exec kill <exec-id>` list and stop the running ones.
 `ssh-gateway [start [bind:port] | stop]` hosts the SSH front door from the TUI
 itself (see **SSH gateway**); with no argument it reports the address it is
 listening on, or that it is not running. It dies with the TUI.

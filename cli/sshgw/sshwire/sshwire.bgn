@@ -34,3 +34,14 @@ format WindowChange:
     rows :u32
     width_px :u32
     height_px :u32
+
+# ExecReq is the `exec` payload (RFC 4254 §6.5): one length-prefixed command
+# line, which is what `ssh host <cmd>` puts on the wire.
+#
+# One field is still worth describing rather than indexing: the length is a
+# big-endian u32 that must be checked against the payload's own size, and a
+# hand-rolled read that trusts it turns a malformed request from a stranger's
+# client into a panic. The generated decoder does that check.
+format ExecReq:
+    command_len :u32
+    command :[command_len]u8
