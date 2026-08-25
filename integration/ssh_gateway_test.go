@@ -241,6 +241,36 @@ func TestSSHGatewayE2E(t *testing.T) {
 		}
 	})
 
+	// An interrupted `ssh host cmd` stops the command. Ctrl-C at the far
+	// terminal kills the ssh client, and the only signal this end gets is the
+	// channel closing — the gateway's OWN harness connection stays up, so the
+	// server's disconnect sweep never fires for it and nothing else would
+	// notice. Measured before the fix: the ssh client gone, the exec still in
+	// `exec ls`, the child still running on the runner.
+	t.Run("closing_the_ssh_connection_stops_the_exec", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		sess, err := cl.NewSession()
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		if err := sess.Start("sleep 30"); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		eventually(t, func() bool {
+			execs, lerr := c.ExecRunListWith(context.Background(), "")
+			return lerr == nil && len(execs) == 1
+		}, 10*time.Second, 100*time.Millisecond, "the ssh exec to register")
+
+		// The whole client, not just the session: that is what an interrupted
+		// `ssh` leaves behind.
+		_ = cl.Close()
+
+		eventually(t, func() bool {
+			execs, lerr := c.ExecRunListWith(context.Background(), "")
+			return lerr == nil && len(execs) == 0
+		}, 15*time.Second, 200*time.Millisecond, "the abandoned exec to be stopped")
+	})
+
 	// An exec must not take the control seat. It never attaches, so holding one
 	// for the length of the command would lock a real attach out for no reason —
 	// and `.control` is the form a script reaching for a command would type.

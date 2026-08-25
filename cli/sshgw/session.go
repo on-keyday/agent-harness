@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
+	"sync/atomic"
+	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw/sshwire"
@@ -146,7 +149,22 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 			// controller's seat for the length of `make test` would lock a real
 			// attach out for no reason.
 			release()
-			g.runExec(ctx, ch, taskID, cmdline)
+			// An exec dies with the SSH SESSION, not with this gateway. The
+			// request channel closes when the client's channel goes away, which
+			// is the only signal this end gets that `ssh host cmd` was
+			// interrupted — Ctrl-C at the far terminal kills the ssh client, and
+			// nothing else here would notice.
+			ectx, cancelExec := context.WithCancel(ctx)
+			go func() {
+				defer cancelExec()
+				for r := range requests {
+					if r.WantReply {
+						_ = r.Reply(false, nil)
+					}
+				}
+			}()
+			g.runExec(ectx, ch, taskID, cmdline)
+			cancelExec()
 			return
 		case "subsystem":
 			// Refused rather than accepted: an sftp client that got an accept
@@ -184,7 +202,38 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 // have, since reaching it at all already means holding the operator's
 // credentials.
 func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string) {
+	// The kill is by ID, and it is not belt-and-braces: cancelling ctx only
+	// unwinds THIS end. The server drops an exec when its client's CONNECTION
+	// goes away, and one ssh client leaving is not this gateway's harness
+	// connection leaving — so without naming the id, an interrupted
+	// `ssh host cmd` leaves the command running with nobody watching it.
+	// Measured before this existed: the ssh client gone, `exec ls` still
+	// listing it, the child still alive on the runner.
+	var execID atomic.Uint64
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-finished:
+			return
+		case <-ctx.Done():
+		}
+		id := execID.Load()
+		if id == 0 {
+			return // never started; there is nothing to name
+		}
+		// A fresh context: ctx is the cancelled one, and the kill has to
+		// outlive whatever cancelled it.
+		kctx, kcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer kcancel()
+		if err := g.client.ExecRunKillWith(kctx, id); err != nil {
+			slog.Info("ssh-gateway: could not stop the exec its client abandoned",
+				"exec_id", id, "task", taskID, "err", err)
+		}
+	}()
+
 	res, err := g.client.ExecRun(ctx, taskID, []string{"sh", "-c", cmdline}, cli.ExecRunOpts{
+		OnStarted: func(id uint64) { execID.Store(id) },
 		// Separate ends, all the way out to the ssh client: keeping them apart
 		// is the whole reason this is wired to `exec` and not to `session exec`.
 		Stdin:  ch,

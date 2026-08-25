@@ -26,6 +26,17 @@ type ExecRunOpts struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// OnStarted, if set, is called once with the server-assigned exec id as
+	// soon as the request is accepted — before any output arrives.
+	//
+	// It exists for a caller whose OWN caller can leave while the command runs.
+	// The ssh gateway is that shape: one ssh client going away is not the
+	// gateway's harness connection going away, so the server's
+	// DropExecRunsForConn never fires for it, and naming the id is the only way
+	// left to reach the command. A caller that lives exactly as long as its
+	// connection (the CLI, the TUI, the WebUI) needs none of this.
+	OnStarted func(execID uint64)
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -58,6 +69,9 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	}
 	if err := execRunStatusError(taskIDHex, r.Status); err != nil {
 		return ExecRunResult{}, err
+	}
+	if opts.OnStarted != nil {
+		opts.OnStarted(r.ExecId)
 	}
 
 	data := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.DataStreamId))
