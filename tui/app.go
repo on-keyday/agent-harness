@@ -566,6 +566,42 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case ExecRunOutputMsg:
+		a.cmdresult.Append(execOutputLine(msg.Line, msg.Stderr))
+		return a, nil
+
+	case ExecRunDoneMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("exec %s: %v", pfShortID(msg.TaskID), msg.Err)))
+			return a, nil
+		}
+		// Reported, never swallowed: a panel that quietly showed fewer lines
+		// than the command printed would misrepresent what ran.
+		if msg.Dropped > 0 {
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
+				"exec: %d output line(s) dropped — the UI could not keep up", msg.Dropped)))
+		}
+		a.cmdresult.Append(execResultLine(msg.TaskID, msg.Argv, msg.Result))
+		return a, nil
+
+	case ExecRunListMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("exec ls: %v", msg.Err)))
+			return a, nil
+		}
+		for _, line := range cli.ExecRunInfoLines(msg.Execs) {
+			a.cmdresult.Append(line)
+		}
+		return a, nil
+
+	case ExecRunKillMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("exec kill %d: %v", msg.ExecID, msg.Err)))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("killed exec %d", msg.ExecID)))
+		return a, nil
+
 	case ConnStatusMsg:
 		a.connsModal.ApplyEvent(msg.Event)
 		return a, nil
@@ -2789,6 +2825,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
+		a.cmdresult.Append("exec <task-id> [--] <cmd>...                       - run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)")
+		a.cmdresult.Append("exec ls [-task <id>] | exec kill <exec-id>         - list the running execs / stop one (Obs column shows Nx while any run)")
 		a.cmdresult.Append("ssh-gateway [start [bind:port] | stop]             - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches")
 		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)")
 		a.cmdresult.Append("workspace rm <name>                                - delete one workspace from .harness/config")
@@ -3148,6 +3186,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case ForwardKillAction:
 		// No task/spec context: the operator supplied only a bare id.
 		return a, DoKillForward(a.client, v.ForwardID, "", "")
+	case ExecRunAction:
+		return a, a.runExecRunAction(v)
 	case SSHGatewayAction:
 		return a, a.runSSHGatewayAction(v)
 	case ServerDialRunnerAction:

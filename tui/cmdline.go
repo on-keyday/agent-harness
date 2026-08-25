@@ -262,6 +262,19 @@ type ForwardLsAction struct{}
 // ForwardKillAction closes one registered forward by id.
 type ForwardKillAction struct{ ForwardID uint64 }
 
+// ExecRunAction is the `exec` family: run one argv in a task's worktree as its
+// own process, list the running ones, or stop one.
+//
+// Sub is "run", "ls" or "kill". TaskID is the target for "run" and the optional
+// filter for "ls"; Argv is the command for "run"; ExecID names the victim for
+// "kill".
+type ExecRunAction struct {
+	Sub    string
+	TaskID string
+	Argv   []string
+	ExecID uint64
+}
+
 // SSHGatewayAction starts, stops or reports the ssh gateway this TUI hosts.
 // Sub is "start", "stop" or "status".
 type SSHGatewayAction struct {
@@ -389,6 +402,7 @@ func (FileNewAction) isAction()             {}
 func (WorkspaceAction) isAction()           {}
 func (ForwardLsAction) isAction()           {}
 func (ForwardKillAction) isAction()         {}
+func (ExecRunAction) isAction()             {}
 func (SSHGatewayAction) isAction()          {}
 func (ServerDialRunnerAction) isAction()    {}
 func (NotifyAction) isAction()              {}
@@ -432,6 +446,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseGit(tokens[1:])
 	case "forward":
 		return parseForward(tokens[1:])
+	case "exec":
+		return parseExecRun(tokens[1:])
 	case "ssh-gateway":
 		return parseSSHGateway(tokens[1:])
 	case "workspace":
@@ -1099,6 +1115,61 @@ func parseForward(args []string) (Action, error) {
 	default:
 		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
 	}
+}
+
+// parseExecRun handles `exec <task-id> [--] <cmd>...`, `exec ls [-task <id>]`
+// and `exec kill <exec-id>`.
+//
+// The sub-verb is decided by the FIRST token only. `exec <id> ls -la` is a
+// command named ls, not a listing, because a task id introduced it — the same
+// rule harness-cli's splitExecArgv follows, and the reason `exec ls` can never
+// be ambiguous with a task whose command happens to be `ls`.
+//
+// Everything after the task id is the argv VERBATIM. It is never re-joined and
+// re-split: an argument containing a space is one argument, and splitting it
+// would silently change the command. A bare `--` ends any option scanning, so
+// a command that starts with a dash still reaches the runner intact.
+func parseExecRun(args []string) (Action, error) {
+	const usage = "exec: usage: exec <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
+	if len(args) == 0 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	switch args[0] {
+	case "ls":
+		rest := args[1:]
+		filter := ""
+		for i := 0; i < len(rest); i++ {
+			switch rest[i] {
+			case "-task", "--task":
+				if i+1 >= len(rest) {
+					return nil, fmt.Errorf("exec ls: -task needs a task id")
+				}
+				i++
+				filter = rest[i]
+			default:
+				return nil, fmt.Errorf("exec ls: usage: exec ls [-task <task-id>]")
+			}
+		}
+		return ExecRunAction{Sub: "ls", TaskID: filter}, nil
+	case "kill":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("exec kill: usage: exec kill <exec-id>")
+		}
+		id, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("exec kill: bad exec id %q", args[1])
+		}
+		return ExecRunAction{Sub: "kill", ExecID: id}, nil
+	}
+	taskID := args[0]
+	argv := args[1:]
+	if len(argv) > 0 && argv[0] == "--" {
+		argv = argv[1:]
+	}
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("exec: a command is required\n%s", usage)
+	}
+	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv}, nil
 }
 
 // parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at

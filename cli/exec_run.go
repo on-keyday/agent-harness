@@ -4,13 +4,9 @@ package cli
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strings"
-	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -28,28 +24,6 @@ type ExecRunOpts struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
-}
-
-// ExecRunResult is how one exec ended.
-type ExecRunResult struct {
-	// ExitCode is the child's own for Kind==exited, and -1 otherwise — a death
-	// by signal has no exit code, and inventing 127 would be a shell's
-	// convention applied where there is no shell.
-	ExitCode int32
-	Kind     protocol.ExecEventKind
-	Detail   string
-}
-
-// buildExecArgv wraps a command line for the wire, one element per argument.
-func buildExecArgv(argv []string) protocol.ExecArgv {
-	var out protocol.ExecArgv
-	for _, a := range argv {
-		var e protocol.ExecArg
-		e.SetArg([]byte(a))
-		out.Argv = append(out.Argv, e)
-	}
-	out.ArgvLen = uint16(len(out.Argv))
-	return out
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -158,25 +132,6 @@ func copyIfSet(dst io.Writer, src io.Reader) {
 	_, _ = io.Copy(dst, src)
 }
 
-func execRunStatusError(taskID string, st protocol.ExecRunStatus) error {
-	switch st {
-	case protocol.ExecRunStatus_Ok:
-		return nil
-	case protocol.ExecRunStatus_NotFound:
-		return fmt.Errorf("exec: task %q not found (pruned, wrong id, or outside your scope)", taskID)
-	case protocol.ExecRunStatus_NoWorktree:
-		return fmt.Errorf("exec: task %q has no worktree to run in — it ended clean and its tree was removed (a task that ended with uncommitted work keeps one)", taskID)
-	case protocol.ExecRunStatus_RunnerUnreachable:
-		return fmt.Errorf("exec: the runner hosting task %q is not connected", taskID)
-	case protocol.ExecRunStatus_EmptyArgv:
-		return errors.New("exec: empty command")
-	case protocol.ExecRunStatus_Denied:
-		return errors.New("exec: denied (needs the exec_run capability)")
-	default:
-		return fmt.Errorf("exec: %s", st.String())
-	}
-}
-
 // ExecRunListWith reports the running execs this caller can see.
 func (c *Client) ExecRunListWith(ctx context.Context, taskFilter string) ([]protocol.ExecRunInfo, error) {
 	var q protocol.ExecRunListRequest
@@ -267,71 +222,4 @@ func ExecRunKill(ctx context.Context, peerCID objproto.ConnectionID, id uint64) 
 	}
 	defer c.Close()
 	return c.ExecRunKillWith(ctx, id)
-}
-
-// ExecRunArgvString renders an argv for a listing column. Arguments containing
-// spaces are quoted so a two-word argument cannot be read as two arguments —
-// the listing is what an operator reads to decide what to kill.
-func ExecRunArgvString(a protocol.ExecArgv) string {
-	parts := make([]string, 0, len(a.Argv))
-	for i := range a.Argv {
-		s := string(a.Argv[i].Arg)
-		if strings.ContainsAny(s, " \t\"") {
-			s = fmt.Sprintf("%q", s)
-		}
-		parts = append(parts, s)
-	}
-	return strings.Join(parts, " ")
-}
-
-// ExecRunInfoLines renders the listing as a human-readable table.
-func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
-	if len(es) == 0 {
-		return []string{"no running execs"}
-	}
-	out := make([]string, 0, len(es)+1)
-	out = append(out, fmt.Sprintf("%-6s %-12s %-8s %-24s %s", "id", "task", "age", "origin", "command"))
-	for i := range es {
-		e := &es[i]
-		age := "-"
-		if e.StartedUnixMs > 0 {
-			age = time.Since(time.UnixMilli(int64(e.StartedUnixMs))).Truncate(time.Second).String()
-		}
-		out = append(out, fmt.Sprintf("%-6d %-12s %-8s %-24s %s",
-			e.ExecId,
-			hex.EncodeToString(e.TaskId.Id[:])[:12],
-			age,
-			e.OriginKind.String()+" "+string(e.OriginCid),
-			ExecRunArgvString(e.Argv)))
-	}
-	return out
-}
-
-// ExecRunInfoJSONLine renders one row as JSON, carrying everything the text
-// form abbreviates — the full task id and the argv as a list.
-func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
-	argv := make([]string, 0, len(e.Argv.Argv))
-	for i := range e.Argv.Argv {
-		argv = append(argv, string(e.Argv.Argv[i].Arg))
-	}
-	row := struct {
-		ExecID        uint64   `json:"exec_id"`
-		TaskID        string   `json:"task_id"`
-		StartedUnixMs uint64   `json:"started_unix_ms"`
-		Argv          []string `json:"argv"`
-		OriginKind    string   `json:"origin_kind"`
-		OriginCID     string   `json:"origin_cid"`
-	}{
-		ExecID:        e.ExecId,
-		TaskID:        hex.EncodeToString(e.TaskId.Id[:]),
-		StartedUnixMs: e.StartedUnixMs,
-		Argv:          argv,
-		OriginKind:    e.OriginKind.String(),
-		OriginCID:     string(e.OriginCid),
-	}
-	b, err := json.Marshal(row)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
 }

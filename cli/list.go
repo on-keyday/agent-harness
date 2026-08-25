@@ -227,6 +227,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if t.Status == protocol.TaskStatus_Running || t.Status == protocol.TaskStatus_Detached {
 		obs = fmt.Sprintf("  cowrite=%d viewer=%d", t.Cowriters, t.Viewers)
 	}
+	// Commands running in the task's WORKTREE, which is a different subject
+	// from the session above: a task that ended with uncommitted work keeps its
+	// tree and can still be exec'd, so this is NOT gated on a live session.
+	// Printed unconditionally, zero included, for the same reason the pair above
+	// is — 0 is a measurement and absence is not.
+	execs := fmt.Sprintf("  execs=%d", t.ExecCount)
 	createdBy := ""
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
@@ -244,7 +250,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if ov := OverridesLabel(t.Overrides); ov != "" {
 		caps += " +" + ov
 	}
-	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s  prompt=%q%s",
+	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
 		taskKindStr(t.Kind),
@@ -254,6 +260,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 		resumedBy,
 		act,
 		obs,
+		execs,
 		createdBy,
 		caps,
 		string(t.Prompt),
@@ -363,6 +370,7 @@ type taskJSON struct {
 	// is what separates the two.
 	Viewers   uint16 `json:"viewers"`
 	Cowriters uint16 `json:"cowriters"`
+	ExecCount uint16 `json:"exec_count"`
 	Caps      string `json:"caps"`
 	Scope     string `json:"scope"`
 	// ScopeByCap is the FULLY RESOLVED capability -> scope map: every bit the
@@ -458,6 +466,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Activity:       activity,
 		Viewers:        t.Viewers,
 		Cowriters:      t.Cowriters,
+		ExecCount:      t.ExecCount,
 		Caps:           CapsLabel(t.Capabilities),
 		Scope:          ScopeLabel(t.Scope),
 		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),

@@ -66,7 +66,11 @@ func colsFor(tree bool, width int) []table.Column {
 		out := make([]table.Column, 0, len(cols)+1)
 		for _, c := range cols {
 			if c.Title == "Repo" {
-				out = append(out, table.Column{Title: "Obs", Width: 7})
+				// 10, not 7: the cell can carry "0c 0v 12x" when commands are
+				// running in the worktree, and bubbles hard-truncates a cell to its
+				// column width — a narrower column would hide the exec count
+				// exactly when there is one to show.
+				out = append(out, table.Column{Title: "Obs", Width: 10})
 			}
 			out = append(out, c)
 		}
@@ -307,15 +311,32 @@ func (m *TasksModel) rebuild() {
 	}
 }
 
-// observerCell renders the Obs column: who is on this task's live session,
-// cowriters first. Blank when the task has NO session — the Status column
-// already says which those are. A live session with nobody on it renders "0c
-// 0v" rather than blank, so an empty cell never has to mean two things.
+// observerCell renders the Obs column: what is working on this task. Observers
+// on its live session, cowriters first, plus a count of commands running in its
+// worktree. Blank when there is neither — the Status column already says which
+// tasks have no session. A live session with nobody on it renders "0c 0v"
+// rather than blank, so an empty cell never has to mean two things.
+//
+// The exec count appears only when non-zero, and its cell is drawn even for a
+// task whose session is gone: an exec runs against the WORKTREE, so a
+// terminal-but-dirty task can legitimately have one with no session at all —
+// the case where a silent column would be most surprising. Printing "0x" on
+// every row instead would need a ninth column this table cannot afford at 80
+// cells (see the Obs note below); the unconditional count is in the `d` detail
+// popup, in the CLI row, in ls --json and in the WebUI row.
 func observerCell(t protocol.TaskInfo) string {
-	if !taskSessionAlive(t.Status) {
-		return ""
+	execs := ""
+	if t.ExecCount > 0 {
+		execs = fmt.Sprintf("%dx", t.ExecCount)
 	}
-	return fmt.Sprintf("%dc %dv", t.Cowriters, t.Viewers)
+	if !taskSessionAlive(t.Status) {
+		return execs
+	}
+	cell := fmt.Sprintf("%dc %dv", t.Cowriters, t.Viewers)
+	if execs != "" {
+		cell += " " + execs
+	}
+	return cell
 }
 
 // The observer counts (TaskInfo.viewers / .cowriters) deliberately have NO

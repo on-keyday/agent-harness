@@ -186,6 +186,12 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))
 	}
+	// Always printed, zero included. Unlike the attach counts above there is no
+	// "no subject" case to gate on: every task can be asked how many commands
+	// are running in its tree, and none is a real answer to that. Eliding it
+	// would make "nothing is running" read as "this popup does not report
+	// execs" (surface-parity item 31).
+	fmt.Fprintf(&sb, "execs:         %d running\n", t.ExecCount)
 	fmt.Fprintf(&sb, "created:       %s\n", formatNanoTs(t.CreatedAt))
 	if t.StartedAt > 0 {
 		fmt.Fprintf(&sb, "started:       %s\n", formatNanoTs(t.StartedAt))
