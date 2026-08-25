@@ -404,8 +404,28 @@ anyway, so keys would buy nothing. Off loopback that reasoning inverts, so
 to start without it. The host key is generated once beside `.harness/config`
 and reused, so `known_hosts` stays valid.
 
-No scp/sftp and no `ssh -L` through it: `file push` / `file pull` and `forward`
-already cover those, and each is refused with a message that says so.
+**`ssh -L` and `ssh -W` tunnel through it.** The ssh client keeps its own
+listener and opens a `direct-tcpip` channel per connection; the **runner** dials
+the target, over the same data plane `forward -W` uses. Each forwarded
+connection is therefore an ordinary `forward ls` row while it lasts, stoppable
+from any client — which is the only place it can be seen, since the listener
+itself lives in the ssh client and the harness never learns of it.
+
+```bash
+ssh -p 2222 -N -L 3000:127.0.0.1:3000 <task-id>@127.0.0.1   # runner-side :3000, locally
+ssh -J <task-id>@127.0.0.1:2222 user@runner-host            # jump through it
+```
+
+This too was refused for one release, on the grounds that `forward` already did
+it and a second path would drift. It is not a second path — it is the same
+`OpenRawForward` behind a door an ssh client can find, which is what the refusal
+actually cost: every tool that does its own forwarding instead of calling a
+harness binary.
+
+Still not served: **scp / sftp** (`file push` / `file pull` cover that ground,
+and the subsystem refusal says so) and **`ssh -R`** (`forward -R`). `-R` is a
+global request, and SSH gives a global request no field to put a reason in, so
+that one fails without a sentence attached.
 
 `ssh <task>@host <command>` runs the command in the task's **worktree**, through
 the same path as `harness-cli exec` (see **Running a command in a task's

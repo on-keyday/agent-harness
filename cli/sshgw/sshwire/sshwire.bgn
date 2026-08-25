@@ -1,8 +1,8 @@
 config.go.package = "sshwire"
 
-# The two SSH channel-request payloads the harness ssh gateway reads, as
-# RFC 4254 defines them. Big-endian, which is both SSH's rule and the default
-# here.
+# The SSH payloads the harness ssh gateway reads, as RFC 4254 defines them:
+# three channel REQUESTS (pty-req, window-change, exec) and one channel OPEN
+# (direct-tcpip). Big-endian, which is both SSH's rule and the default here.
 #
 # Described rather than indexed by hand because the field ORDER is the trap:
 # SSH sends COLUMNS before ROWS, while every harness call that consumes them
@@ -45,3 +45,20 @@ format WindowChange:
 format ExecReq:
     command_len :u32
     command :[command_len]u8
+
+# DirectTcpip is the `direct-tcpip` channel-open payload (RFC 4254 §7.2), which
+# is what `ssh -L` and `ssh -W` put on the wire. Unlike the three above it rides
+# a channel OPEN rather than a channel request, so it is the only one here whose
+# decode failure is answered by rejecting the channel instead of writing to it.
+#
+# The originator pair is decoded and discarded: it names the socket on the SSH
+# CLIENT's side that is being forwarded, which is a fact about the client's own
+# machine and has no bearing on what the runner dials. It is described because
+# it is on the wire, for the same reason PtyReq describes term.
+format DirectTcpip:
+    host_len :u32
+    host :[host_len]u8
+    port :u32
+    origin_addr_len :u32
+    origin_addr :[origin_addr_len]u8
+    origin_port :u32

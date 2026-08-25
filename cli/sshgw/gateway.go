@@ -165,18 +165,28 @@ func (g *Gateway) serveConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 	defer sshConn.Close()
 	// Global requests (keepalive@openssh.com and friends) must be drained or
 	// the connection stalls; none of them mean anything here.
+	//
+	// `ssh -R` arrives here as the tcpip-forward global request and is refused
+	// by the drain. No sentence goes with that refusal, and not for lack of
+	// trying: SSH_MSG_REQUEST_FAILURE carries no reason field, so a global
+	// request can only be answered yes or no. `harness-cli forward -R` is the
+	// verb that does this; direct-tcpip below is the half of forwarding an ssh
+	// client can be told about.
 	go ssh.DiscardRequests(reqs)
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			// direct-tcpip lands here: `ssh -L` through the gateway would be a
-			// second, drifting path to what `harness-cli forward` already does.
+		switch newCh.ChannelType() {
+		case "session":
+			go g.serveSession(ctx, sshConn.User(), newCh)
+		case "direct-tcpip":
+			// `ssh -L` and `ssh -W` through the gateway. See serveDirectTCPIP
+			// for why this is served now after being refused for one release.
+			go g.serveDirectTCPIP(ctx, sshConn.User(), newCh)
+		default:
 			_ = newCh.Reject(ssh.UnknownChannelType, fmt.Sprintf(
-				"ssh-gateway serves only session channels (got %q); use `harness-cli forward` for port forwarding",
+				"ssh-gateway serves session and direct-tcpip channels (got %q)",
 				newCh.ChannelType()))
-			continue
 		}
-		go g.serveSession(ctx, sshConn.User(), newCh)
 	}
 }
 

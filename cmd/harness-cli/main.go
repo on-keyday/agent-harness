@@ -1164,7 +1164,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      Ctrl+] detaches. ssh's own ~. DISCONNECTS instead: the session survives either")
 	fmt.Fprintln(os.Stderr, "                                      way, but a disconnect leaves your terminal's modes unreset (`reset` fixes it)")
 	fmt.Fprintln(os.Stderr, "                                      no ssh auth on a loopback bind; --authorized-keys is REQUIRED off loopback")
-	fmt.Fprintln(os.Stderr, "                                      no scp/sftp and no ssh -L: use `file push`/`file pull` and `forward`")
+	fmt.Fprintln(os.Stderr, "                                      ssh -L / -W tunnel through it: the RUNNER dials the target, and each")
+	fmt.Fprintln(os.Stderr, "                                      forwarded connection is an ordinary `forward ls` row while it lasts")
+	fmt.Fprintln(os.Stderr, "                                      no scp/sftp and no ssh -R: use `file push`/`file pull` and `forward -R`")
 	fmt.Fprintln(os.Stderr, "                                      foreground; Ctrl-C stops it and every session it serves")
 }
 

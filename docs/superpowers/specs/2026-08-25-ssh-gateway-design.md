@@ -25,7 +25,9 @@ Non-problem, stated so the Implementation section is not read as narrowing it:
 this is about **reaching an interactive session's PTY**. File access to a
 worktree (scp / sftp / rsync / VS Code Remote-SSH) is a different feature with a
 different data plane, and `file push` / `file pull` already cover that ground.
-It is out of scope here and its absence is a decision, not an oversight (§ Non-goals).
+It is out of scope here (§ Non-goals) — but read that section's first bullet
+before treating the scoping as settled: it is this spec's framing, not a row of
+§ Decisions taken, and two of the Non-goals have since been reversed.
 
 ## Decisions taken
 
@@ -180,6 +182,8 @@ Accepted:
 - request `exec` (`ssh host <command>`) — runs the command in the task's
   worktree (see below)
 - reply `exit-status` — sent before the channel closes
+- channel type `direct-tcpip` (`ssh -L`, `ssh -W`, `ssh -J`) — the runner dials
+  the target and the channel is spliced to it (see below)
 
 ### `exec` — wired, after being refused for one release
 
@@ -229,16 +233,60 @@ Details that follow from the mapping:
   down without ever draining stderr, so the sentence would be written and never
   read. Measured against `x/crypto/ssh` as the client.
 
+### `direct-tcpip` — wired, after being refused for one release
+
+`ssh -L`, `ssh -W` and `ssh -J` all open a `direct-tcpip` channel; the gateway
+answers each one with `cli.OpenRawForward` — the same call `harness-cli forward
+-W` makes — and splices the channel to it. The runner dials, exactly as it does
+for `-L`. There is no listener on this side: the ssh client keeps its own, and
+the gateway only ever sees the connections that listener accepted, one channel
+each.
+
+**This reverses the original decision, and the reversal is on the ARGUMENT, not
+on a changed premise** — which makes it a different kind of reversal from
+`exec`'s above. The refusal said `direct-tcpip` "would be a second, drifting
+path to what `harness-cli forward` already does". The first half of that is
+simply not so: it is not a second path, it is the same `OpenRawForward` reached
+through a door an ssh client can find, and no second implementation of anything
+exists for the two to drift apart. What the refusal actually cost is the class
+of tools that do their own forwarding rather than calling a harness binary —
+`ssh -J` chains, `~/.ssh/config` `LocalForward` lines, VS Code Remote-SSH's
+bootstrap — which is the same class P1–P4 exist for.
+
+Details that follow:
+
+- **Registered per channel, not per listener.** `OpenRawForward` registers with
+  `ClientEndpointKind_InProcess`, so each forwarded connection is an ordinary
+  `forward ls` row for its lifetime and killable from any client. Per-connection
+  rather than per-spec because the SPEC is not visible here: `-L 3000:h:80`
+  binds a port inside the ssh client, which the harness never learns of. The
+  alternative was registering nothing, and a forward running with no entry in
+  `forward ls` is the state that registration exists to prevent.
+- **The forward is opened before the channel is accepted**, so "no such task" /
+  "runner offline" travels back as a channel-open rejection, which the client
+  prints. Accepting first and closing would reach the operator as a bare reset
+  and read as the TARGET refusing them — a diagnosis pointing at the wrong host.
+- **The user-name suffix does not gate it**, for the same reason it does not
+  gate `exec`: the suffix picks how a SHELL session attaches, and a forward
+  never attaches.
+- The splice is either-side-wins (`cli.spliceConnStream`'s rule), not
+  `spliceStdio`'s EOF-tolerant one. Both ends are TCP-shaped here; `spliceStdio`
+  survives a near-side EOF only because its near side is a pipe a shell closes
+  as soon as it has written a request.
+
 Not served, each saying why:
 
 - `subsystem` (sftp, and therefore sftp-backed scp) — refused, with the same
   message written first on the chance a client shows it. Refused rather than
   accepted because an sftp client handed an acceptance waits for a protocol
   that is never coming; "subsystem request failed" is the better outcome.
-- any channel type other than `session` — rejected at channel open, where the
-  reason travels in the rejection itself and the client does print it. Notably
-  `direct-tcpip`, i.e. `ssh -L` through the gateway, which would be a second,
-  redundant path to `harness-cli forward`.
+- the `tcpip-forward` global request (`ssh -R`) — refused by the drain, and with
+  no sentence attached because SSH gives none: `SSH_MSG_REQUEST_FAILURE` has no
+  reason field, so a global request can only be answered yes or no.
+  `harness-cli forward -R` is the verb.
+- any channel type other than `session` and `direct-tcpip` — rejected at channel
+  open, where the reason travels in the rejection itself and the client does
+  print it.
 
 `TERM` from `pty-req` is read and discarded: the runner-side PTY's `TERM` is
 fixed when the session is created, and re-negotiating it mid-session would
@@ -500,8 +548,11 @@ protecting:
 - `cli/sshgw/sshwire/sshwire.bgn` describes **SSH's** payload layouts, not the
   harness protocol. It is a `.bgn` file, so "no `.bgn` file is touched" is no
   longer literally true; nothing on a harness connection changed, and the file
-  exists so `pty-req`'s field order and `exec`'s length prefix are decoded by
-  generated code rather than indexed by hand.
+  exists so `pty-req`'s field order, `exec`'s length prefix and
+  `direct-tcpip`'s two host/port pairs are decoded by generated code rather than
+  indexed by hand. `direct-tcpip` is the one where the trap is duplication
+  rather than order: the payload carries the target pair AND the originator
+  pair, and reading the wrong one dials the ssh client's own machine.
 - The `exec` mapping calls a verb whose own schema **is** a harness wire change
   (`runner/protocol/message.bgn`, the task-exec design). Deploying that needs the
   server restarted before the runners, as that spec says. The gateway inherits
@@ -523,6 +574,7 @@ Filled per Pitfall 9 — every cell has a verdict, and omissions are decisions.
 | `objtrsf/exec` (separate module) | **Implemented** — `InputModeReset`, `ScreenModeReset`, `WriteTerminalReset` and `PumpTerminalIO` (D10), landed and published before this repo's work starts |
 | `server/`, `runner/`, protocol | **Not applicable** — no change (D9) |
 | Workspace config (`.harness/config`) | **Intentionally omitted** — a workspace records forwards so they can be re-established on reconnect; a gateway is not per-task and has one address, and `--listen` in the alias the operator already wrote is the same information |
+| Forward DISPLAY surfaces — `forward ls`, the TUI forwards view, the WebUI's | **Implemented by reuse, nothing added** — a `direct-tcpip` channel registers through `cli.OpenRawForward`, so it appears wherever an in-process forward already does and `forward kill` already reaches it. This is the row Pitfall 9 is about: the feature adds no INPUT surface, but it does put new rows on three existing DISPLAY surfaces. It needed no code on any of them because the endpoint kind it registers under (`InProcess`) is the one a raw `t` pane and a WebUI preview pin already use — including in `workspace save`, which skips in-process forwards with a count, so a gateway forward is correctly never written into `.harness/config` as an `-L` line |
 
 The `surface-parity-checklist` skill is walked item by item during plan writing,
 not summarized; this table is the design-level answer, not a substitute for it.
@@ -586,6 +638,20 @@ the suite does not depend on an `ssh` binary being installed:
   shell intact rather than being re-split here
 - an exec on a `.control` connection leaves the seat free — a second `.control`
   session immediately afterwards is accepted, with no waiting
+- `cl.Dial("tcp", …)` against a loopback echo listener returns the bytes it was
+  sent — the runner really dialled, rather than the channel merely opening
+- while that connection is up it is one `forward ls` row for the task, and it is
+  gone once the channel closes. Asserting only the first half would pass against
+  a registration that never deregisters, which is the ghost
+  `DropPortForwardsForConn` exists for
+- `direct-tcpip` on a user name that is not a task id is rejected at channel
+  open with the message that names the accepted forms — the same place and the
+  same text a session channel gets
+
+The `direct-tcpip` cases get a **negative control** too, for the reason Pitfall
+10 records: a check that cannot fail is worse than none. With the channel-type
+dispatch disabled (one line in `cli/sshgw/gateway.go`) all three must go red.
+Observed 2026-08-25: they did, and returned green when it was restored.
 
 Live (`dummy-harness` skill, two-instance topology): a real `ssh` client from a
 real terminal, plus tmux, driven with actual keystrokes — rendering is not proof
@@ -661,12 +727,31 @@ that catches a missing `//go:build !js`.
   transfer, and for Remote-SSH a server binary staged on the far side), already
   served by `file push` / `file pull` / `git`. `subsystem` is refused explicitly
   so the failure names itself.
+
+  Two corrections to how this bullet has been read, both from 2026-08-25.
+  **First, none of the Non-goals are operator decisions.** They are in no row of
+  § Decisions taken, so by that table's own rule they are "this spec" at best —
+  author framing, a v1 boundary, movable by saying so. Quoting this bullet back
+  as a settled refusal is what it must not be used for; the `exec` and
+  `direct-tcpip` reversals above are what happens when it is examined instead.
+  **Second, for Remote-SSH specifically there is now a measurement**, which is
+  worth more than the framing: the operator pointed VS Code Remote-SSH at the
+  gateway and its Windows bootstrap failed at `no sshd parent proc` — the script
+  walks its own parent process chain looking for `sshd` (`gps -Id $y_` returning
+  `ObjectNotFound`). Nothing the gateway serves puts an `sshd` in that chain, so
+  Remote-SSH does not become reachable by adding channel types; `direct-tcpip`
+  did not change it and neither would `subsystem`. What it would take is either
+  a real sshd on the far side (then the gateway is a jump host, which `-J` now
+  does) or a harness-side equivalent of the persistent server Remote-SSH stages,
+  which is the detached-exec question and not this design's.
 - ~~**`ssh host <command>`.**~~ **No longer a non-goal.** It was one while the
   nearest existing verb ran in the session's foreground shell, which is not what
   that syntax means to anyone who types it. `exec` supplies the matching
   semantics and the request is now served — see § SSH surface.
-- **`ssh -L` / `-R` through the gateway.** `direct-tcpip` is refused; the harness
-  has `forward` for this and a second path would drift.
+- ~~**`ssh -L` / `-W` / `-J` through the gateway.**~~ **No longer a non-goal.**
+  `direct-tcpip` is served — see § SSH surface for why the "second, drifting
+  path" argument did not hold. `ssh -R` remains one: it is a global request with
+  nowhere to put a refusal reason, and `forward -R` is the verb.
 - **A server-hosted sshd.** § Why client-side and not in the server.
 - **Surviving its host process.** D4: the listener dies with the CLI process or
   the TUI. Making it a persistent daemon is a separate change that adds one

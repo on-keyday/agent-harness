@@ -72,6 +72,7 @@ func sshGatewayStartedLines(addr string) []string {
 		"  ssh -p " + sshgw.PortOf(addr) + " <32-hex-task-id>@" + sshgw.HostOf(addr) +
 			"   (bare = cowrite; .control takes the seat; .view watches)",
 		"  Ctrl+] detaches — ssh's own ~. disconnects instead and leaves your terminal's modes unreset",
+		"  ssh -L / -W tunnel through it too: the runner dials, each connection shows in `forward ls`",
 	}
 }
 

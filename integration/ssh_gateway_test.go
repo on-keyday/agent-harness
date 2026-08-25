@@ -301,6 +301,134 @@ func TestSSHGatewayE2E(t *testing.T) {
 			t.Errorf("second exec after a .control exec: %v", err)
 		}
 	})
+
+	// `ssh -L` opens a direct-tcpip channel per accepted connection and `ssh -W`
+	// opens one; the RUNNER dials the target either way. The channel type was
+	// refused for one release on the grounds that `harness-cli forward` already
+	// does this and a second path would drift — but it is not a second path, it
+	// is the same OpenRawForward the `-W` verb calls, reached through a door an
+	// ssh client can find. What the refusal cost was every client that does its
+	// own forwarding.
+	t.Run("direct_tcpip_reaches_a_listener", func(t *testing.T) {
+		target := startEchoListener(t)
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+
+		conn, err := cl.Dial("tcp", target)
+		if err != nil {
+			t.Fatalf("direct-tcpip dial %s: %v", target, err)
+		}
+		defer conn.Close()
+
+		want := []byte("through the runner\n")
+		if _, err := conn.Write(want); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if got := readFullWithin(t, conn, len(want), 10*time.Second); !bytes.Equal(got, want) {
+			t.Errorf("echoed %q, want %q", got, want)
+		}
+	})
+
+	// The ssh client's own -L listener is invisible to the harness — it lives in
+	// a process on the other side of the gateway — so this per-connection row is
+	// the ONLY place a forward opened through the gateway can be seen or
+	// stopped. A forward running with no entry in `forward ls` is exactly the
+	// state OpenRawForward's registration exists to prevent.
+	t.Run("direct_tcpip_registers_a_killable_forward", func(t *testing.T) {
+		// The previous sub-test's connection closes asynchronously, so wait for
+		// a quiet baseline rather than assuming one: counting from a stale row
+		// would make this pass or fail on the neighbour's timing.
+		eventually(t, func() bool {
+			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			return lerr == nil && len(fs) == 0
+		}, 10*time.Second, 100*time.Millisecond, "the previous forward to deregister")
+
+		target := startEchoListener(t)
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		conn, err := cl.Dial("tcp", target)
+		if err != nil {
+			t.Fatalf("direct-tcpip dial: %v", err)
+		}
+
+		eventually(t, func() bool {
+			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			return lerr == nil && len(fs) == 1
+		}, 10*time.Second, 100*time.Millisecond, "the gateway's forward to be listed")
+
+		_ = conn.Close()
+		eventually(t, func() bool {
+			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			return lerr == nil && len(fs) == 0
+		}, 10*time.Second, 100*time.Millisecond, "the forward to deregister when the channel closes")
+	})
+
+	// The user name selects the task for a forward exactly as it does for a
+	// session, and an unusable one is refused at channel open where the reason
+	// rides the rejection and the client prints it.
+	t.Run("direct_tcpip_on_an_unknown_user_is_refused", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, "root")
+		defer cl.Close()
+		if _, err := cl.Dial("tcp", "127.0.0.1:9"); err == nil {
+			t.Fatal("want a rejection for a user name that is not a task id")
+		} else if !strings.Contains(err.Error(), ".control") || !strings.Contains(err.Error(), ".view") {
+			t.Errorf("rejection %q does not name the accepted forms", err)
+		}
+	})
+}
+
+// startEchoListener runs a loopback TCP echo server, standing in for whatever
+// service the operator wants to reach beside their agent. The runner in this
+// suite is on this machine, so 127.0.0.1 from the runner's side is this
+// listener.
+func startEchoListener(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// readFullWithin reads exactly n bytes or fails the test. The timeout is
+// imposed from outside the read because an ssh channel's net.Conn does not
+// support SetReadDeadline — x/crypto/ssh answers that call with an error rather
+// than honouring it, so a deadline set on it would silently do nothing.
+func readFullWithin(t *testing.T, r io.Reader, n int, d time.Duration) []byte {
+	t.Helper()
+	type result struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		buf := make([]byte, n)
+		_, rerr := io.ReadFull(r, buf)
+		ch <- result{buf, rerr}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			t.Fatalf("read %d bytes: %v", n, res.err)
+		}
+		return res.b
+	case <-time.After(d):
+		t.Fatalf("did not receive %d bytes within %v", n, d)
+		return nil
+	}
 }
 
 // controlSessionWhenFree opens a session channel on a .control connection,
