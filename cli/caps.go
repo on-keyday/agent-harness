@@ -24,6 +24,11 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_ExecCowrite,
 		protocol.Capability_ExecControl,
 		protocol.Capability_ExecResize,
+		// exec_run is separate from the three attach ranks, not a fourth one:
+		// it runs a command as its OWN process in the task's worktree instead
+		// of driving the session's PTY, so it neither implies nor is implied by
+		// any of them.
+		protocol.Capability_ExecRun,
 		protocol.Capability_FileRead,
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
@@ -59,6 +64,8 @@ func CapDescription(c protocol.Capability) string {
 		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite"
 	case protocol.Capability_ExecResize:
 		return "resize a session's PTY as a viewer or cowriter, while no control client is attached (orthogonal to the three above; control owns the size whenever it holds the seat)"
+	case protocol.Capability_ExecRun:
+		return "run a command in a task's worktree as its own process (exec), separate from the session's PTY; also stops one (exec kill)"
 	case protocol.Capability_FileRead:
 		return "read files from task worktrees (file pull / ls)"
 	case protocol.Capability_FileWrite:

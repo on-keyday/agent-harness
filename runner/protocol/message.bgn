@@ -11,6 +11,7 @@ enum RunnerMessageType:
     request_chained_relay
     remote_forward_conn
     remote_forward_bind_result
+    exec_run_finished  # an out-of-band exec ended; carries its exit code
 
 enum RunnerRequestType:
     :u8
@@ -26,6 +27,7 @@ enum RunnerRequestType:
     open_port_forward
     close_port_forward
     git_query          # read-only git query against a task's worktree
+    open_exec_run      # run one argv in a task's worktree, out of band
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -222,6 +224,7 @@ format RunnerMessage:
         RunnerMessageType.request_chained_relay => request_chained_relay :RequestChainedRelay
         RunnerMessageType.remote_forward_conn => remote_forward_conn :RemoteForwardConn
         RunnerMessageType.remote_forward_bind_result => remote_forward_bind_result :RemoteForwardBindResult
+        RunnerMessageType.exec_run_finished => exec_run_finished :ExecRunFinished
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -239,6 +242,7 @@ format RunnerRequest:
         RunnerRequestType.open_port_forward => open_port_forward :RunnerOpenPortForwardRequest
         RunnerRequestType.close_port_forward => close_port_forward :ClosePortForwardRequest
         RunnerRequestType.git_query => git_query :RunnerGitQueryRequest
+        RunnerRequestType.open_exec_run => open_exec_run :RunnerExecRunRequest
 
 enum TaskControlKind:
     :u8
@@ -295,6 +299,15 @@ enum TaskControlKind:
                             # adopt any victim under itself and inherit that
                             # victim's whole subtree as a target set, and
                             # spawn-time intersection can never claw that back.
+    open_exec_run           # run one argv in a task's WORKTREE as its own
+                            # process, out of band from the session's PTY.
+                            # Requires exec_run. Like git_query and unlike
+                            # open_file_transfer, NOT restricted to Running /
+                            # Detached: the gate is whether the worktree
+                            # DIRECTORY is still there, and a task that ended
+                            # with uncommitted work keeps it.
+    exec_run_list           # enumerate running execs the caller can see
+    exec_run_kill           # stop one running exec by id
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -576,6 +589,13 @@ format TaskInfo:
     # that from "a live session nobody is observing".
     viewers :u16
     cowriters :u16
+    # exec_count is how many out-of-band execs are running against this
+    # task's worktree right now. Live-only like the observer counts above,
+    # populated at List time from the server's exec registry, and reported
+    # AT ZERO for the same reason they are: an elided 0 reads as "this row
+    # does not report execs", which is the ambiguity the counts exist to
+    # remove. It is 0 for a task with no worktree to run anything in.
+    exec_count :u16
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -1085,6 +1105,9 @@ format TaskControlRequest:
         TaskControlKind.git_query             => git_query             :GitQueryRequest
         TaskControlKind.set_caps              => set_caps              :SetCapsRequest
         TaskControlKind.set_parent            => set_parent            :SetParentRequest
+        TaskControlKind.open_exec_run         => open_exec_run         :ExecRunRequest
+        TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListRequest
+        TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1134,6 +1157,9 @@ format TaskControlResponse:
         TaskControlKind.git_query             => git_query             :GitQueryResponse
         TaskControlKind.set_caps              => set_caps              :SetCapsResponse
         TaskControlKind.set_parent            => set_parent            :SetParentResponse
+        TaskControlKind.open_exec_run         => open_exec_run         :ExecRunResponse
+        TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListResponse
+        TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillResponse
 
 enum SetCapsStatus:
     :u8
@@ -1631,7 +1657,19 @@ enum Capability:
     # this grants a stand-in for an unattended session rather than a second
     # claimant fighting the human whose terminal defines the size.
     exec_resize    = 0x4000, "exec_resize"
-    all            = 0x7fff, "all"
+    # exec_run authorizes running a command in a task's WORKTREE out of band
+    # (TaskControlKind.open_exec_run), and stopping one. Not a new class of
+    # authority: exec_cowrite already lets a holder type any command into
+    # that session's shell, and spawn already runs arbitrary commands through
+    # the bash profile. What this adds is a shape — synchronous, non-invasive,
+    # no task created — not a power.
+    exec_run       = 0x8000, "exec_run"
+    # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
+    # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
+    # persists the NUMBER, so a task already granted `all` holds 0x7fff and
+    # does NOT gain exec_run until it is re-granted. That is the safe
+    # direction and needs no migration.
+    all            = 0xffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -2009,3 +2047,123 @@ format GitQueryResult:
         GitQueryKind.show     => show        :GitTextBody
         GitQueryKind.subrepos => subrepos    :GitSubrepoBody
         GitQueryKind.file     => file        :GitTextBody
+
+# ---------------------------------------------------------------------------
+# Out-of-band exec: run one argv in a task's worktree as its own process.
+#
+# Design: docs/superpowers/specs/2026-08-25-task-exec-design.md
+#
+# The DATA plane is not described here — it is the objtrsf exec frame protocol
+# (Stdout / Stderr / Stdin), reached through the stream ExecRunResponse names.
+# What is here is the control plane: starting one, listing them, stopping one,
+# and carrying the exit code, which the frame protocol has no shape for and
+# deliberately does not grow one (that protocol is pre-trsf legacy; sideband
+# goes in a separate trsf stream).
+# ---------------------------------------------------------------------------
+
+# ExecArg is one argv element. u16 per element matches ClaudeArg, for the same
+# reason: individual arguments are short in practice and 64 KiB is past any
+# real one.
+format ExecArg:
+    arg_len :u16
+    arg :[arg_len]u8
+
+format ExecArgv:
+    argv_len :u16
+    argv :[argv_len]ExecArg
+
+format ExecRunRequest:
+    task_id :TaskID
+    argv :ExecArgv
+    # stdin_enabled=0 closes the child's stdin immediately, which is what a
+    # non-interactive caller wants: a child that reads stdin then gets EOF
+    # rather than hanging forever on a pipe nobody will write to.
+    stdin_enabled :u1
+    reserved :u7
+
+enum ExecRunStatus:
+    :u8
+    ok
+    # not_found covers "no such task" AND "outside your scope", deliberately
+    # indistinguishable — the same choice CancelResult.no_such_task makes,
+    # because reporting the difference confirms that a task you may not see
+    # exists.
+    not_found
+    # no_worktree: nothing to run IN. The task ended clean and its worktree was
+    # removed, or it never had one. A task that ended DIRTY keeps its worktree
+    # and is a valid target.
+    no_worktree
+    runner_unreachable
+    empty_argv
+    denied
+    internal_error
+
+format ExecRunResponse:
+    status :ExecRunStatus
+    exec_id :u64
+    data_stream_id :u64
+    control_stream_id :u64
+
+enum ExecEventKind:
+    :u8
+    exited               # the child ran and ended; exit_code is its own
+    killed               # exec_run_kill, or the runner was torn down
+    failed               # the child never started (no such binary, cwd gone)
+
+# ExecEvent is the ONE record the server writes to the control stream before
+# closing it. Its arrival is how a client learns the command ended.
+format ExecEvent:
+    kind :ExecEventKind
+    # The child's own exit code for `exited`, -1 for the other two — the
+    # convention TaskFinished uses, for the same reason: a death by signal has
+    # no exit code to report, and inventing 127 or 137 would be a shell's
+    # convention applied where there is no shell.
+    exit_code :i32
+    detail :[..]u8       # human-readable; empty for a clean `exited`
+
+format RunnerExecRunRequest:
+    exec_id :u64
+    task_id :TaskID
+    auth_ticket :[16]u8
+    stream_id :u64       # bidi stream toward the runner for the frame protocol
+    # repo_path travels from the SERVER's task record, as RunnerGitQueryRequest's
+    # does and for the same reason: the runner drops its per-task entry when a
+    # task ends, so it cannot resolve the worktree of a TERMINAL task on its
+    # own. The runner re-validates this against its --roots before running.
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    argv :ExecArgv
+    stdin_enabled :u1
+    reserved :u7
+
+format ExecRunFinished:
+    exec_id :u64
+    exit_code :i32
+    kind :ExecEventKind
+    detail :[..]u8
+
+# ExecRunInfo is one row of `exec ls`. origin_kind/origin_cid say WHOSE it is —
+# the registry is shared, so two identical argvs from different clients are
+# otherwise indistinguishable, which is the same reason PortForwardInfo carries
+# its origin.
+format ExecRunInfo:
+    exec_id :u64
+    task_id :TaskID
+    started_unix_ms :u64
+    argv :ExecArgv
+    origin_kind :ClientKind
+    origin_cid_len :u8
+    origin_cid :[origin_cid_len]u8
+
+format ExecRunListRequest:
+    task_filter :TaskID  # all-zero = every exec the caller may see
+
+format ExecRunListResponse:
+    execs_len :u16
+    execs :[execs_len]ExecRunInfo
+
+format ExecRunKillRequest:
+    exec_id :u64
+
+format ExecRunKillResponse:
+    status :ExecRunStatus
