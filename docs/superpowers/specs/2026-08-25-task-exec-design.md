@@ -50,7 +50,7 @@ it while writing — those are the rows worth a second look.
 | D2 | No task is created. Visibility comes from a server-side registry, the way port forwards get theirs | operator |
 | D3 | CLI, TUI and WebUI all get it in v1 | operator |
 | D4 | The wire carries **argv**; a caller that wants a shell sends `["sh","-c",line]` itself | this spec |
-| D5 | cwd is the task's live worktree; a task without one is refused | this spec |
+| D5 | The gate is whether the worktree DIRECTORY exists, not whether the task is running. A terminal task that still has one can be exec'd into | this spec |
 | D6 | stdin is carried | this spec |
 | D7 | No timeout. `exec kill` and dropping the control stream are the ways to stop one | this spec |
 | D8 | New capability `exec_run = 0x8000`, and `all` widens to `0xffff` | this spec |
@@ -148,7 +148,8 @@ enum ExecRunStatus:
     :u8
     ok
     not_found            # unknown task id, or outside the caller's scope
-    no_worktree          # the task has no live worktree to run in (D5)
+    no_worktree          # no worktree directory to run in — never had one, or
+                         # it was removed at a clean task end (D5)
     runner_unreachable
     empty_argv
     denied               # capability check failed
@@ -180,6 +181,13 @@ format RunnerExecRunRequest:
     exec_id :u64
     task_id :TaskID
     auth_ticket :[16]u8
+    # The repo path travels from the server's task record, exactly as
+    # RunnerGitQueryRequest's does and for the same reason: the runner drops its
+    # per-task entry when a task ends, so it cannot resolve the worktree for a
+    # TERMINAL task on its own. The runner re-validates this against its --roots
+    # before running anything.
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
     stream_id :u64       # bidi stream toward the runner, fed to ExecuteCommandWithOption
     argv :ExecArgv
     stdin_enabled :u1
@@ -242,11 +250,22 @@ migration.
 
 On `open_exec_run`:
 
-1. Resolve the worktree for `task_id`. Absent → `no_worktree`; the task is
-   terminal and its tree was removed, or it never had one. `git_query`'s
-   fallback (run in the repo against the retained `harness/<id>` branch) is
-   **not** copied here: it is safe for a read-only git view and wrong for an
-   arbitrary command, which would silently run against a different tree.
+1. Re-validate `repo_path` against `--roots`, then resolve
+   `<repo>/.harness-worktrees/<task-id>/`. **The gate is that directory
+   existing** (D5) — not the task's status. A task that ended dirty keeps its
+   worktree (`RemoveIfClean` declines to remove one with uncommitted paths), and
+   running `git status` or `make test` in that tree is exactly what an operator
+   wants then. `handleGitQuery` draws the same line deliberately: "there is no
+   Running/Detached gate … Reviewing what a finished task did is exactly what
+   that gate would otherwise make impossible."
+   Absent → `no_worktree`: the task ended clean and its tree was removed, or it
+   never had one. `git_query`'s fallback (run in the repo against the retained
+   `harness/<id>` branch) is **not** copied here: it is safe for a read-only git
+   view and wrong for an arbitrary command, which would silently run against a
+   different tree than the caller named.
+   The runner must still be connected either way — a terminal task's exec is
+   `runner_unreachable` if the runner that held it is gone, the same status
+   `git_query` reports as `RunnerOffline`.
 2. `agentexec.ExecuteCommandWithOption(ctx, stream, log, argv[0], argv[1:], dir,
    false, env, ExecuteOption{OnProcessExit: …})` — `ptyEnabled=false`, the
    `streamtask.go` shape.
@@ -328,8 +347,9 @@ observer counts give (`cowrite=0 viewer=0`), for the same reason — someone els
 is touching this thing — and it follows their rule too: **the count is printed
 at zero.** A row that elides `exec=0` reads as "this row does not report execs",
 which is exactly the ambiguity the observer counts were added to remove. It is
-printed for a task that HAS a worktree to run in and omitted for one that does
-not, gating on existence rather than on value.
+printed for a task an exec could target — one whose worktree directory is still
+there, which by D5 includes terminal tasks that ended dirty — and omitted for
+one where there is nothing to run in. Gating on existence rather than on value.
 
 ## Capability and scope
 
@@ -385,8 +405,12 @@ worktree: a command's stdout and stderr arrive **separately** and in full; its
 exit code reaches the client; a non-zero exit is reported as `exited` with that
 code; a missing binary is `failed`, not `exited`; `exec ls` shows a running one
 and stops showing it after it ends; `exec kill` ends one and the child dies;
-dropping the control stream deregisters it; a terminal task with no worktree is
-refused with `no_worktree`; a task outside the caller's scope is `not_found`.
+dropping the control stream deregisters it; a task outside the caller's scope is `not_found`.
+
+The status axis, both ways (D5): a task that ended **dirty** keeps its worktree
+and an exec against it RUNS; a task that ended **clean** had its worktree
+removed and is refused with `no_worktree`. Testing only the second would leave
+"terminal ⇒ refused" looking correct while being wrong.
 
 Visibility (D11): a second client, with no `exec_run`, sees a running exec in
 `exec ls` and sees `exec_count` on the task's row; the same client with
