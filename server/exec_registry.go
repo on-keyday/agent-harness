@@ -14,9 +14,12 @@ import (
 // session's PTY.
 //
 // The server holds it so `exec ls` can report it and `exec kill` can reach it.
-// Nothing here is persisted, and there is no reaper: an exec dies with its
-// caller, so its registration cannot outlive the process that would replay a
-// WAL, and its control stream going away IS the signal that it is over.
+// Nothing here is persisted: an exec dies with its caller, so its registration
+// cannot outlive the process that would replay a WAL.
+//
+// "Dies with its caller" is enforced by DropExecRunsForConn, not by the stream:
+// a client that dies abruptly closes nothing, and the runner's frame pump reads
+// the resulting EOF as end-of-input while the child runs on.
 type execRun struct {
 	execID    uint64
 	taskIDHex string

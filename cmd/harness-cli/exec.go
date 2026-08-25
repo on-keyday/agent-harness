@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -93,7 +94,15 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+
+	// Ctrl-C has to reach the CHILD, not just this process. The exec is
+	// registered server-side against this CONNECTION, and the server kills the
+	// child when the connection goes away (DropExecRunsForConn) — so an
+	// interrupt that killed this process outright would leave the command
+	// running on the runner with nothing left to stop it but `exec kill`.
+	// Cancelling the context unwinds ExecRun so the close below can happen.
+	// Same shape as `forward` and `ssh-gateway`.
+	ectx, stopInterrupts := interruptContext("exec", ctx)
 
 	// stdin is forwarded only when it is NOT a terminal. An interactive
 	// invocation that piped the terminal in would leave the child waiting on a
@@ -102,13 +111,26 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 	if !isTTY(os.Stdin) {
 		stdin = os.Stdin
 	}
-	res, err := c.ExecRun(ctx, taskID, argv, cli.ExecRunOpts{
+	res, runErr := c.ExecRun(ectx, taskID, argv, cli.ExecRunOpts{
 		Stdin:  stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	})
-	if err != nil {
-		return err
+
+	// Closed HERE, not in a defer: every path below ends in os.Exit, which runs
+	// no defers. Without this the connection would be left to a ping timeout —
+	// and with it the server's exec registration, and any child still running.
+	stopInterrupts()
+	c.Close()
+
+	if runErr != nil {
+		// The operator's own Ctrl-C is not a failure to report: the close above
+		// is what stopped the child, and interruptContext already said
+		// "exec: stopping…". 130 is the shell's convention for SIGINT.
+		if errors.Is(runErr, context.Canceled) {
+			os.Exit(130)
+		}
+		return runErr
 	}
 	switch res.Kind {
 	case protocol.ExecEventKind_Exited:

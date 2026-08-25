@@ -39,6 +39,46 @@ func TestExecRunFinishedPushesEventAndDrops(t *testing.T) {
 	}
 }
 
+// An exec dies with its caller. The client's stream ending is not the signal —
+// the runner reads that as end-of-input while the child runs on — and a client
+// that dies abruptly closes nothing, so the connection teardown is the only
+// place this can happen. Verified live before the hook existed: a SIGINT'd
+// `harness-cli exec` left its row in `exec ls` and its `sleep` on the runner.
+func TestDropExecRunsForConnDropsOnlyThatConnection(t *testing.T) {
+	h := &TaskHandler{Registry: NewRegistry()}
+	mine := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: "ws:1.2.3.4:1-1",
+		control: newRecordingBidiStream(1)})
+	theirs := h.execs().add(&execRun{taskIDHex: "aaaa", clientCID: "ws:5.6.7.8:2-2",
+		control: newRecordingBidiStream(2)})
+
+	h.DropExecRunsForConn("ws:1.2.3.4:1-1")
+
+	if _, ok := h.execs().get(mine); ok {
+		t.Error("an exec whose client connection died must be dropped")
+	}
+	if _, ok := h.execs().get(theirs); !ok {
+		t.Error("another connection's exec must survive")
+	}
+	if n := h.execs().countForTask("aaaa"); n != 1 {
+		t.Errorf("exec_count = %d, want 1 — the surviving one", n)
+	}
+}
+
+// Dropping is idempotent and survives a runner that has gone away: the
+// registration is removed either way, because leaving it would report a command
+// that nothing can still be running.
+func TestDropExecRunsForConnWithNoRunner(t *testing.T) {
+	h := &TaskHandler{Registry: NewRegistry()}
+	id := h.execs().add(&execRun{taskIDHex: "bbbb", runnerID: "gone", clientCID: "c"})
+
+	h.DropExecRunsForConn("c")
+	h.DropExecRunsForConn("c")
+
+	if _, ok := h.execs().get(id); ok {
+		t.Error("the registration must be gone even when the runner is unreachable")
+	}
+}
+
 // A failure carries -1 and its reason, not an invented exit code: 127 is a
 // shell's convention and there is no shell in this path.
 func TestExecRunFinishedFailedCarriesDetail(t *testing.T) {

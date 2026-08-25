@@ -953,8 +953,14 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		// stream only signals teardown when the CLIENT closes it, which an
 		// abruptly-dead client never does, so drop them here or they outlive the
 		// connection forever. See DropPortForwardsForConn.
+		//
+		// Execs are keyed the same way and had the same hole, for a slightly
+		// different reason: their stream DOES end, and the runner reads that as
+		// end-of-input while the child runs on. Without this a Ctrl-C'd `exec`
+		// left its row in `exec ls` and its process on the runner.
 		if s.taskHandler != nil {
 			s.taskHandler.DropPortForwardsForConn(session.ConnectionID().String())
+			s.taskHandler.DropExecRunsForConn(session.ConnectionID().String())
 		}
 	}()
 

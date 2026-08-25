@@ -86,8 +86,23 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 		}()
 	}
 
-	<-done
-	<-done
+	// Cancellation has to reach the PUMPS. They block on the stream, not on ctx,
+	// so a cancelled context alone leaves this call parked for the whole life of
+	// the command — which is what "Ctrl-C does not stop it" looked like: the
+	// interrupt handler printed, the process stayed, and the child ran on.
+	// Returning here runs the deferred CloseBoth, which ends both pumps; the
+	// caller's connection close is what then stops the child server-side.
+	finished := make(chan struct{})
+	go func() {
+		<-done
+		<-done
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		return ExecRunResult{}, ctx.Err()
+	}
 
 	// The outcome stream is looked up HERE, not before the pumps: it carries
 	// nothing until the exec ends, and a stream with no bytes on it yet is not

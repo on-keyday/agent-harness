@@ -52,10 +52,10 @@ it while writing — those are the rows worth a second look.
 | D4 | The wire carries **argv**; a caller that wants a shell sends `["sh","-c",line]` itself | this spec |
 | D5 | The gate is whether the worktree DIRECTORY exists, not whether the task is running. A terminal task that still has one can be exec'd into | this spec |
 | D6 | stdin is carried | this spec |
-| D7 | No timeout. `exec kill` and dropping the control stream are the ways to stop one | this spec |
+| D7 | No timeout. `exec kill` and the caller going away are the ways to stop one (the CONNECTION, not the stream — see § Synchronous only) | this spec |
 | D8 | New capability `exec_run = 0x8000`, and `all` widens to `0xffff` | this spec |
 | D9 | The exit code travels on harness wire, NOT as a new `objtrsf/exec` frame type | this spec |
-| D10 | **Synchronous only.** The child dies with the exec's streams; there is no detached form, because that form already exists and is called a task | this spec |
+| D10 | **Synchronous only.** The child dies with its caller's connection; there is no detached form, because that form already exists and is called a task | this spec |
 | D11 | An exec is visible to anyone who can see its target task, and `TaskInfo` carries a running-exec count so the task's own row reports it | this spec |
 
 ## Why the exit code is not a frame (D9)
@@ -161,7 +161,8 @@ format ExecRunResponse:
     data_stream_id :u64
     control_stream_id :u64
 
-# Server → client, on the control stream. One record, then the stream closes.
+# Server → client, on the control stream (unidirectional). One record, then
+# EOF; the EOF is what says the outcome is complete.
 enum ExecEventKind:
     :u8
     exited               # the child ran and ended; exit_code is its own
@@ -296,18 +297,32 @@ a mutex, a monotonic counter starting at 1 (so 0 is never an id).
 - `exec_run_finished` from the runner: look the entry up, push one `ExecEvent`
   onto its control stream, close it, drop the entry.
 - `exec_run_kill`: cancel the runner side, push `killed`, drop the entry.
-- **The entry's lifetime is its control stream's lifetime, and the child's too.**
-  A client that dies takes its execs' registrations with it AND cancels their
-  children (D10); there is no TTL to tune, no reaper to write, and nothing left
-  running in a worktree with nobody watching it.
+- **The entry's lifetime is its CLIENT CONNECTION's lifetime, and the child's
+  too.** A client that goes away takes its execs' registrations with it AND
+  cancels their children (D10); there is no TTL to tune and nothing left running
+  in a worktree with nobody watching it.
+  Corrected after measurement: this said "its control stream's lifetime", and
+  that is wrong in the direction that matters. Closing the exec's stream does
+  NOT stop the child — the runner reads the EOF as end-of-input while the
+  process runs on, which is the same fact that makes `close_exec_run` a request
+  of its own. The hook is `DropExecRunsForConn` in `handleConnection`'s
+  teardown, beside `DropPortForwardsForConn`; see § Testing's Observed section
+  for what happened without it.
 
 ## Synchronous only (D10)
 
 An exec lives exactly as long as its caller is there to receive it. When the
-control stream goes away — the client exited, the terminal closed, the ssh
-connection dropped — the runner cancels the child through the same
-SIGHUP → SIGTERM → SIGKILL ladder a detaching session's agent gets, and the
-registration is dropped. Nothing survives to be collected later.
+client's CONNECTION goes away — the client exited, the terminal closed, the ssh
+connection dropped — the server drops the registration and asks the runner to
+cancel the child, and nothing survives to be collected later.
+
+Two things this rests on, both learned by measuring rather than by design (§
+Testing, Observed): the signal is the connection and not the stream, and the
+caller must actually close on its way out — an interrupt that kills the process
+outright closes nothing, so `harness-cli exec` runs under an interrupt context
+and `cli.ExecRun` returns on cancellation instead of blocking on its output
+pumps. A caller killed with no chance to close is still cleaned up, but only
+when the server declares the connection dead (~66 s, measured).
 
 That is a decision, not an omission, and it rests on the asynchronous form
 already existing: **`submit` is the detached one.** A task runs without a
@@ -405,7 +420,9 @@ worktree: a command's stdout and stderr arrive **separately** and in full; its
 exit code reaches the client; a non-zero exit is reported as `exited` with that
 code; a missing binary is `failed`, not `exited`; `exec ls` shows a running one
 and stops showing it after it ends; `exec kill` ends one and the child dies;
-dropping the control stream deregisters it; a task outside the caller's scope is `not_found`.
+a dropped CLIENT CONNECTION deregisters it and kills the child (the stream
+alone does not — see § Synchronous only); a task outside the caller's scope is
+`not_found`.
 
 The status axis, both ways (D5): a task that ended **dirty** keeps its worktree
 and an exec against it RUNS; a task that ended **clean** had its worktree
@@ -429,6 +446,65 @@ through the ssh gateway, with a command that takes long enough to watch
 
 Wire discipline: `scripts/wire-skew-check.sh` before landing, and **restart the
 server first** — this is a `.bgn` change and Pitfall 10 is about exactly this.
+
+### Observed, 2026-08-25
+
+Against a dummy harness (a `bash` profile session), from the CLI, the WebUI and
+a real OpenSSH client. Everything below is a measurement, not a re-statement of
+intent.
+
+| Property | Result |
+| --- | --- |
+| separate streams | `sh -c 'echo TO-STDOUT; echo TO-STDERR 1>&2'` — `2>/dev/null` suppressed only the second; each landed in its own file |
+| exit code | `exit 3` gave the CLI exit status 3; over ssh, `*ssh.ExitError` status 3 |
+| cwd | `pwd` printed the task's directory |
+| stdin | `echo hello-stdin \| … exec … -- cat` printed it back |
+| `exec ls` / counts | a running exec listed with its quoted argv; `execs=1` on the `ls` row, `exec_count: 1` in `--json`, `Nx` in the TUI Obs cell, `execs=1` in the WebUI row; back to 0 after a kill |
+| a second client sees it | the WebUI's `exec ls` listed a CLI-started exec and killed it |
+| quoting survives the ssh hop | `ssh … 'echo "one two"'` printed `one two` |
+
+**The session is untouched — measured, with a valid negative control.** The
+property that separates this from `session exec` cannot be observed in a test
+that only reads the exec's own output, so: `session snapshot` before and after
+an exec whose command printed to both streams is **byte-identical**, while the
+same snapshot after a `session exec` differs — it carries the injected command
+line and the `__HEXEC_<hex>_S__` / `_E__` sentinels in the scrollback. The
+control matters: without it, "identical" is equally consistent with a snapshot
+that simply did not update.
+
+**D10 did not hold when first measured, and two defects had to be fixed.**
+SIGINT to a `harness-cli exec … -- sh -c 'sleep 121'` left the registration in
+`exec ls` and the `sleep` running under the runner indefinitely:
+
+1. The server had no connection-teardown hook. `DropPortForwardsForConn` has sat
+   in `handleConnection`'s teardown for exactly this reason, with a doc comment
+   describing the same symptom; the exec registry needed the same hook
+   (`DropExecRunsForConn`), and closing the exec's stream is explicitly not a
+   substitute — the runner reads that EOF as end-of-input while the child runs
+   on, which is why `close_exec_run` exists as a request.
+2. `harness-cli exec` ran under no interrupt context (unlike `forward` and
+   `ssh-gateway`), and `cli.ExecRun` ignored its context for the whole life of
+   the command — it blocked on the two output pumps, which end on the stream and
+   not on cancellation. So even after adding the handler, the interrupt printed
+   `exec: stopping…` and nothing moved. `ExecRun` now selects on `ctx.Done()`,
+   and the CLI closes the connection explicitly rather than in a `defer`,
+   because every path there ends in `os.Exit`, which runs no defers.
+
+After both: SIGINT ends the process, drops the registration and kills the child.
+
+**A hard kill takes about a minute, and that is the transport's latency, not
+this feature's.** SIGKILL to the same command left it listed; the websocket
+closed within 3 s but the server declared the connection dead 66 s later
+(`deleting inactive connection`), and the teardown hook then fired and killed
+the child. Port forwards inherit the identical latency from the identical hook —
+their own note records "still listed 60 s later" as the pre-hook symptom. Worth
+knowing rather than fixing here: the reaper's interval belongs to the
+connection layer.
+
+**Not done: the fleet restart.** This is a `.bgn` change, so deploying it needs
+the server restarted before the runners
+(`scripts/build_and_restart_all.py`) — which kills every live session including
+the one this work was done from. Left for the operator.
 
 ## Non-goals
 

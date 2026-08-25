@@ -274,21 +274,59 @@ func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKill
 	if _, still := h.execs().remove(req.ExecId); !still {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
-	// Tell the runner to cancel the child. This needs its own request:
-	// closing the exec's stream does NOT stop the process — the frame pump
-	// reads EOF and ends its input goroutine while the child runs on. Same
-	// reason ClosePortForward exists rather than relying on a stream close.
-	if runner, ok := h.Registry.Get(e.runnerID); ok && runner.Conn != nil {
-		rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CloseExecRun}
-		rreq.SetCloseExecRun(protocol.CloseExecRunRequest{ExecId: req.ExecId})
-		data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		if _, _, err := runner.Conn.SendMessage(data); err != nil {
-			slog.Error("exec_run: close request to runner failed", "exec_id", req.ExecId, "err", err)
-		}
-	}
+	h.stopExecOnRunner(e, "exec kill")
 	// The client is told regardless: it asked for a stop and the registration
 	// is gone either way, so leaving it waiting on a runner that may never
 	// answer would be the worse failure.
 	writeExecEvent(e, protocol.ExecEventKind_Killed, -1, "killed by exec kill")
 	return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_Ok}
+}
+
+// stopExecOnRunner asks the runner to cancel a child. The caller has already
+// dropped the registration; this is the half that reaches the process.
+//
+// It needs its own request rather than a stream close: closing the exec's
+// stream does NOT stop the child — the runner's frame pump reads the EOF and
+// ends its input goroutine while the process runs on. Same reason
+// ClosePortForward exists.
+func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
+	runner, ok := h.Registry.Get(e.runnerID)
+	if !ok || runner.Conn == nil {
+		slog.Info("exec_run: runner gone, cannot stop the child", "exec_id", e.execID, "why", why)
+		return
+	}
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CloseExecRun}
+	rreq.SetCloseExecRun(protocol.CloseExecRunRequest{ExecId: e.execID})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
+	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+		slog.Error("exec_run: close request to runner failed", "exec_id", e.execID, "why", why, "err", err)
+	}
+}
+
+// DropExecRunsForConn kills every exec this connection started, and is what
+// makes "an exec dies with its caller" true rather than merely intended.
+//
+// Nothing else can do it. The client's data stream ending is NOT the signal —
+// see stopExecOnRunner — and a client that dies abruptly closes nothing at all:
+// SIGKILL, or the SIGHUP a terminal sends its foreground group when its window
+// is closed.
+//
+// Verified live before this existed: SIGINT to a `harness-cli exec … -- sh -c
+// 'sleep 121'` left the registration in `exec ls` and the `sleep` running under
+// the runner indefinitely. Same hook, same reason and the same live symptom as
+// DropPortForwardsForConn, which sits beside this one in handleConnection's
+// teardown.
+//
+// No outcome is written back: the stream it would go on belongs to the
+// connection that just died.
+func (h *TaskHandler) DropExecRunsForConn(connID string) {
+	for _, e := range h.execs().list("") {
+		if e.clientCID != connID {
+			continue
+		}
+		if _, still := h.execs().remove(e.execID); !still {
+			continue
+		}
+		h.stopExecOnRunner(e, "client disconnected")
+	}
 }
