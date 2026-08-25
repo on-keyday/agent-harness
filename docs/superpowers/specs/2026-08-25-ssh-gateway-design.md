@@ -45,6 +45,7 @@ by the operator on request.
 | D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
 | D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
+| D10 | The pump and the reset string are **exported from `objtrsf/exec`**, not copied into this repo; objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
 
 ## Why client-side and not in the server
 
@@ -212,9 +213,10 @@ Per accepted `shell` request:
    `pty-req` carries pixel dimensions too, so unlike `applyInitialWindowSize`
    (`cli/initial_winsize.go:20`, which has only rows/cols and passes 0/0) all
    four values are forwarded.
-4. Pump: channel → `stream.Stdin()`, scanning the inbound bytes for `0x1D`
-   (§ Detach), `stream.Stdout()` → channel, `stream.Stderr()` → the channel's
-   extended data (stderr) stream.
+4. `stream.PumpTerminalIO(channel, channel)` (D10) — channel → `stream.Stdin()`
+   with detach-key interception, `stream.Stdout()` → channel. `stream.Stderr()`
+   → the channel's extended data (stderr) stream is copied alongside it by the
+   gateway, since the pump handles only stdin/stdout.
 5. `window-change` → `SetTerminalWindowSize` with the new values.
 6. On either direction ending: § Detach below, then `exit-status` and close.
 
@@ -311,22 +313,55 @@ Today a CLI attach emits **two** groups, from two places, back to back
   (`cli/terminal_input_modes.go:33`)
 
 On either end it can serve, the gateway writes both groups into the ssh channel
-before closing it. The channel is the only
-pipe to the ssh client's terminal, so the bytes a local attach writes to
-`os.Stdout` go there instead — the ssh client prints them to its own terminal,
-which is what needs resetting. Both groups, not some merged subset: they overlap
-(`\x1b[?1000l`, `?1002l`, `?1003l`, `?1006l`, `?2004l` are in each), and turning
-off a mode that is already off is a no-op, so there is nothing to reconcile and
-no order to get right. The result is that an ssh detach leaves a terminal in the
-state a CLI detach leaves it in. `cli.InputModeReset` is already
-exported and is used directly. The other group is unexported inside `objtrsf`,
-so a second const — `cli.ScreenModeReset`, next to `InputModeReset` — carries
-it, with a comment naming the objtrsf site it duplicates and why the copy exists
-(publishing a new `objtrsf` and bumping `go.mod` to export one string is a
-cross-repo round trip for something that must be verified here first). The
-comment on `InputModeReset` explaining why screen modes are *excluded from that
-const* stays accurate and is not rewritten; the new const's comment explains why
-both are written together at this call site.
+before closing it. The channel is the only pipe to the ssh client's terminal, so
+the bytes a local attach writes to `os.Stdout` go there instead — the ssh client
+prints them to its own terminal, which is what needs resetting. Both groups, not
+some merged subset: they overlap (`\x1b[?1000l`, `?1002l`, `?1003l`, `?1006l`,
+`?2004l` are in each), and turning off a mode that is already off is a no-op, so
+there is nothing to reconcile and no order to get right. The result is that an
+ssh detach leaves a terminal in the state a CLI detach leaves it in.
+
+Both groups come from where they already live (D10). `cli.InputModeReset` is
+exported already. The other group is an unexported literal inside `objtrsf`, and
+it is **exported from there** rather than copied here — a magic escape string
+kept in two repositories drifts, and this project already runs objtrsf changes
+through publish + `go.mod` bump as a matter of course.
+
+## Shared code exported from objtrsf (D10)
+
+Two things the gateway needs are already written inside `objtrsf/exec`, reachable
+only through `RemoteShell`, which owns a local tty and therefore cannot serve an
+ssh channel. Both are exported instead of reimplemented:
+
+| Exported | What it is | Why the gateway needs it |
+| --- | --- | --- |
+| `exec.TerminalModeReset` (const) | the escape string `RemoteShell` writes in its `defer` | written to the ssh channel, per § above |
+| `(*CommandExecutionStream).PumpTerminalIO(in io.Reader, out io.Writer) error` | the existing unexported `pumpTerminalIO`, unchanged | the whole input/output pump, including detach-key interception |
+
+`pumpTerminalIO` already takes `io.Reader` / `io.Writer` and is already exercised
+with non-tty ends by objtrsf's own tests, so exporting it is a rename plus a doc
+comment. `RemoteShell` becomes: raw mode, the reset `defer`, the SIGWINCH
+forwarder, then `PumpTerminalIO(os.Stdin, os.Stdout)` — the tty-specific parts
+stay where they are, and the part that is not tty-specific becomes callable.
+
+Reusing it also gets the detach *semantics* right rather than approximately
+right. On the detach byte the pump calls `w.BidirectionalStream.Close()`, a
+half-close of the send side, and the comment there records why the obvious
+alternative is wrong: `stdinWrapper.Close()` sends a zero-length Stdin frame,
+which the runner delivers to the agent as EOF and kills bash. A gateway that
+hand-rolled its own detach would have had that choice to make blind.
+
+One property checked rather than assumed, because it decides whether a network
+end can be passed at all: the input pump's `swallowLocalReadEOF` absorbs a
+Windows console artefact, and `platformSwallowLocalReadEOF`
+(`exec/stdin_eof_windows.go`) is narrowed to an `in` that is an `*os.File` and a
+console handle. An ssh channel is neither, so it returns false and a genuine EOF
+on the channel ends the pump immediately, on Windows as everywhere else.
+
+Sequencing: the objtrsf change lands and is published first, then this repo's
+`go.mod` is bumped to it, and the gateway is written against the bumped version.
+objtrsf's landing policy is local-trunk FF push (`landing-policy-objtrsf`), and
+no `replace` directive is used at any point.
 
 ## Not a wire change (D9)
 
@@ -347,7 +382,8 @@ Filled per Pitfall 9 — every cell has a verdict, and omissions are decisions.
 | TUI popups/forms | **Intentionally omitted** — `PortForwardModal` exists because a forward spec is four fields with no default; a gateway takes one optional address |
 | TUI display | **Implemented** — start/stop/state are reported through the same result-line path the forward commands use (`tui/app.go:535`). The gateway is *not* added to `activeForwards`: that map is keyed per forward session and drives the `P`/`B` task-scoped stop keys and workspace capture, none of which apply |
 | WebUI buttons/forms, WebUI command line, WASM bridge | **Structurally impossible** — a page's JavaScript has no API for accepting an inbound TCP connection, so no wasm build can host a listener. The WebUI's equivalent of "reach this session from this device" is the WebUI itself |
-| Shared `cli/` | **Implemented** — `cli/sshgw` package plus `cli.ScreenModeReset` |
+| Shared `cli/` | **Implemented** — the `cli/sshgw` package. No new const: `cli.InputModeReset` is reused as-is |
+| `objtrsf/exec` (separate module) | **Implemented** — `TerminalModeReset` and `PumpTerminalIO` exported (D10), landed and published before this repo's work starts |
 | `server/`, `runner/`, protocol | **Not applicable** — no change (D9) |
 | Workspace config (`.harness/config`) | **Intentionally omitted** — a workspace records forwards so they can be re-established on reconnect; a gateway is not per-task and has one address, and `--listen` in the alias the operator already wrote is the same information |
 
@@ -402,7 +438,7 @@ round — detach with the resets suppressed, per group, and record what breaks:
 | Run | Suppressed | Scenario |
 | --- | --- | --- |
 | 1 | `cli.InputModeReset` | attach to a session whose app had mouse tracking on, detach with `Ctrl+]`, move the mouse at the local shell prompt |
-| 2 | `cli.ScreenModeReset` | attach while a full-screen app (`htop`) runs, detach with `Ctrl+]` mid-run, then use the local shell |
+| 2 | `exec.TerminalModeReset` | attach while a full-screen app (`htop`) runs, detach with `Ctrl+]` mid-run, then use the local shell |
 | 3 | both | either scenario |
 
 Every run leaves with the detach key, never with `~.`: the disconnect path
