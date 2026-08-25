@@ -58,16 +58,6 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/on-keyday/objtrsf v0.0.0-20260818075319-4fdb4f7b7e6a h1:XjiGfm2DI7U1Hc+rvjcbll1iqt0Z0a44MHz0+BtysKQ=
-github.com/on-keyday/objtrsf v0.0.0-20260818075319-4fdb4f7b7e6a/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
-github.com/on-keyday/objtrsf v0.0.0-20260820151510-5b9a39d09646 h1:Vt2hcgyQdyLuJmr3Hko7VrvlqgUczBaKZ6h9reKVl64=
-github.com/on-keyday/objtrsf v0.0.0-20260820151510-5b9a39d09646/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
-github.com/on-keyday/objtrsf v0.0.0-20260820152638-e75a7f1065e8 h1:YWWpW+5xCxbOu61C/4kOfdzx3WKmwQicSVPR+eHUUgk=
-github.com/on-keyday/objtrsf v0.0.0-20260820152638-e75a7f1065e8/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
-github.com/on-keyday/objtrsf v0.0.0-20260820153246-b8b4d6dcd21d h1:agwMeoVHwxFFyE/VMamriYhT4KD2mwgzCEEZ4+HY7HY=
-github.com/on-keyday/objtrsf v0.0.0-20260820153246-b8b4d6dcd21d/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
-github.com/on-keyday/objtrsf v0.0.0-20260822101433-f6d6c7b85251 h1:We6CfkBjkez7Gzi/1EFH1/tSbo06i/OGCGpWFsS01Ms=
-github.com/on-keyday/objtrsf v0.0.0-20260822101433-f6d6c7b85251/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
 github.com/on-keyday/objtrsf v0.0.0-20260825040414-0fa1c8bb237c h1:xfARz4HWP1jVstQCMQ91HHfFCNAEyBIBYJ0qN8hqSSE=
 github.com/on-keyday/objtrsf v0.0.0-20260825040414-0fa1c8bb237c/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=

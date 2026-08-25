@@ -6,11 +6,11 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
 	github.com/charmbracelet/x/vt v0.0.0-20260622092256-25656177ba8e
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/on-keyday/objtrsf v0.0.0-20260825040414-0fa1c8bb237c
+	golang.org/x/crypto v0.52.0
 )
 
 require (
@@ -18,6 +18,7 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymanbagabas/go-pty v0.2.2 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff // indirect
 	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
@@ -37,7 +38,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/u-root/u-root v0.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
