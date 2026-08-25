@@ -587,6 +587,22 @@ Re-measured after the bump: **2 s**, for an exec and for a port forward alike �
 they share this teardown, so the fix reached both. The sweep stays as the
 general mechanism for underlays that cannot tell.
 
+### Observed on Windows, 2026-08-25
+
+The Windows half was written blind — compile-checked on four platforms and
+nothing more — and is now measured against the live `LAPTOP-…` runner.
+
+| Property | Result |
+| --- | --- |
+| `--shell` picks the platform's shell | `cmd /c`: `%OS%` expanded to `Windows_NT`, `&&` obeyed |
+| the tree kill reaches a grandchild | `cmd /c "ping -n 300 …"` puts PING.EXE under cmd.exe; `exec kill` removed it, and the same `tasklist \| findstr` found it while running — the control that makes the empty answer mean something |
+| no console window | `GetConsoleWindow()` from the child returns **0** here and a real handle for the same command typed into a PTY session on that host, and the operator confirmed nothing appeared on the desktop |
+
+Two probes that proved nothing, recorded so they are not repeated:
+`MainWindowHandle` is 0 for a console process either way (the window belongs to
+conhost), and `timeout /t` cannot be used as a Windows sleep here at all — it
+refuses when stdin is redirected, which under D6 it always is.
+
 **Not done: the fleet restart.** This is a `.bgn` change, so deploying it needs
 the server restarted before the runners
 (`scripts/build_and_restart_all.py`) — which kills every live session including
