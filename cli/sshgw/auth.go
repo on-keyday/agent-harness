@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/on-keyday/agent-harness/cli/workspace"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -144,4 +145,25 @@ func BuildServerConfig(hostKey ssh.Signer, authorized []ssh.PublicKey, listenAdd
 	}
 	cfg.AddHostKey(hostKey)
 	return cfg, nil
+}
+
+// DefaultHostKeyPath returns where a gateway keeps its host key when the
+// operator names none: beside the workspace config, this project's one
+// existing per-repo client-state location. flagPath is the caller's --config
+// value, "" when it was not given.
+//
+// The config location is resolved from the same three sources the config
+// loader uses, rather than from the path that loader reports finding: it
+// reports none at all when the default .harness/config does not exist, which
+// is the ordinary case and exactly the one where a key still needs a home.
+// LoadOrCreateHostKey creates the directory.
+func DefaultHostKeyPath(flagPath string) string {
+	p := flagPath
+	if p == "" {
+		p = os.Getenv("HARNESS_CONFIG")
+	}
+	if p == "" {
+		p = filepath.FromSlash(workspace.DefaultPath)
+	}
+	return filepath.Join(filepath.Dir(p), "ssh_host_ed25519_key")
 }

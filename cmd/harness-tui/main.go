@@ -103,6 +103,7 @@ func main() {
 		WorkspaceFile: wsFile,
 		WorkspacePath: wsFilePath,
 		WorkspaceName: *wsName,
+		ConfigPath:    *configPath,
 	})
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	app.BindProgram(program)

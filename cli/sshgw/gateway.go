@@ -29,15 +29,21 @@ type Options struct {
 	AuthorizedKeysPath string
 }
 
-type gateway struct {
+// Gateway is a bound listener, ready to serve. Listen returns one; Serve runs
+// it. The two are separate so a caller can report a bind failure as a failure
+// rather than as a gateway that started and then stopped — the same split
+// tui.DoStartRemoteForward makes for the same reason.
+type Gateway struct {
 	client *cli.Client
+	ln     net.Listener
+	cfg    *ssh.ServerConfig
 
 	mu    sync.Mutex
 	seats map[string]bool // task id → a control session is live here
 }
 
-func newGateway(c *cli.Client) *gateway {
-	return &gateway{client: c, seats: map[string]bool{}}
+func newGateway(c *cli.Client) *Gateway {
+	return &Gateway{client: c, seats: map[string]bool{}}
 }
 
 // claim reserves what the mode needs, reporting whether the session may start.
@@ -47,7 +53,7 @@ func newGateway(c *cli.Client) *gateway {
 // stream), so a second control session through this gateway would take the seat
 // from whatever holds it — including the operator's own TUI. Refusing is
 // visible to whoever typed the command; taking is not.
-func (g *gateway) claim(taskID string, mode protocol.AttachMode) bool {
+func (g *Gateway) claim(taskID string, mode protocol.AttachMode) bool {
 	if mode != protocol.AttachMode_Control {
 		return true
 	}
@@ -62,7 +68,7 @@ func (g *gateway) claim(taskID string, mode protocol.AttachMode) bool {
 
 // release gives back what claim took. Modes that claim nothing release nothing:
 // a cowriter ending must not free a controller's seat.
-func (g *gateway) release(taskID string, mode protocol.AttachMode) {
+func (g *Gateway) release(taskID string, mode protocol.AttachMode) {
 	if mode != protocol.AttachMode_Control {
 		return
 	}
@@ -71,58 +77,84 @@ func (g *gateway) release(taskID string, mode protocol.AttachMode) {
 	delete(g.seats, taskID)
 }
 
-// Run serves ssh connections until ctx is cancelled or the listener fails.
+// Listen loads the keys, builds the ssh configuration and binds the socket.
+// Everything that can fail because of how the operator configured this fails
+// here, before anything reports itself as running.
 //
 // c is an already-connected client: the TUI passes its long-lived one and
 // harness-cli passes the one it dialled. The gateway never dials, so there is
 // no short-lived form for a *With split to distinguish.
-func Run(ctx context.Context, c *cli.Client, opts Options) error {
+func Listen(c *cli.Client, opts Options) (*Gateway, error) {
 	if opts.Listen == "" {
 		opts.Listen = DefaultListen
 	}
+	if opts.HostKeyPath == "" {
+		opts.HostKeyPath = DefaultHostKeyPath("")
+	}
 	hostKey, err := LoadOrCreateHostKey(opts.HostKeyPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var authorized []ssh.PublicKey
 	if opts.AuthorizedKeysPath != "" {
 		if authorized, err = LoadAuthorizedKeys(opts.AuthorizedKeysPath); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	cfg, err := BuildServerConfig(hostKey, authorized, opts.Listen)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	ln, err := net.Listen("tcp", opts.Listen)
 	if err != nil {
-		return fmt.Errorf("ssh-gateway: listen %s: %w", opts.Listen, err)
+		return nil, fmt.Errorf("ssh-gateway: listen %s: %w", opts.Listen, err)
 	}
-	defer ln.Close()
+	g := newGateway(c)
+	g.ln, g.cfg = ln, cfg
+	return g, nil
+}
+
+// Addr is the address actually bound, which is what to tell the operator when
+// they asked for port 0.
+func (g *Gateway) Addr() string { return g.ln.Addr().String() }
+
+// Close stops the listener. Serve returns shortly after.
+func (g *Gateway) Close() error { return g.ln.Close() }
+
+// Serve accepts connections until ctx is cancelled or the listener fails.
+// A cancelled context is an ordinary stop and returns nil.
+func (g *Gateway) Serve(ctx context.Context) error {
 	// Accept blocks on the listener, not on ctx, so cancellation has to reach
 	// it by closing the socket out from under it.
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close()
+		_ = g.ln.Close()
 	}()
-
-	g := newGateway(c)
 	for {
-		nConn, aerr := ln.Accept()
+		nConn, aerr := g.ln.Accept()
 		if aerr != nil {
 			if ctx.Err() != nil {
-				return nil // cancelled: an ordinary stop, not a failure
+				return nil
 			}
 			return fmt.Errorf("ssh-gateway: accept: %w", aerr)
 		}
-		go g.serveConn(ctx, nConn, cfg)
+		go g.serveConn(ctx, nConn, g.cfg)
 	}
+}
+
+// Run is Listen followed by Serve, for a caller with nothing to do in between.
+func Run(ctx context.Context, c *cli.Client, opts Options) error {
+	g, err := Listen(c, opts)
+	if err != nil {
+		return err
+	}
+	defer g.Close()
+	return g.Serve(ctx)
 }
 
 // serveConn completes the ssh handshake and dispatches the connection's
 // channels. One connection may open several; each gets its own session.
-func (g *gateway) serveConn(ctx context.Context, nConn net.Conn, cfg *ssh.ServerConfig) {
+func (g *Gateway) serveConn(ctx context.Context, nConn net.Conn, cfg *ssh.ServerConfig) {
 	sshConn, chans, reqs, err := ssh.NewServerConn(nConn, cfg)
 	if err != nil {
 		// A failed handshake is ordinary — a port scan, a wrong key, a client
@@ -146,4 +178,23 @@ func (g *gateway) serveConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 		}
 		go g.serveSession(ctx, sshConn.User(), newCh)
 	}
+}
+
+// HostOf and PortOf split a bind address for an `ssh -p PORT user@HOST` hint.
+// An address that does not split is returned whole rather than guessed at: the
+// hint is a convenience, and a wrong one is worse than none.
+func HostOf(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return addr
+	}
+	return host
+}
+
+func PortOf(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return port
 }

@@ -131,6 +131,13 @@ type App struct {
 	// unsavable in principle rather than merely unsaved.
 	gridSelSet bool
 
+	// ssh gateway: at most one per TUI. Deliberately NOT in activeForwards —
+	// that map is keyed per forward session and drives the task-scoped P/B stop
+	// keys and workspace capture, none of which apply to a listener that serves
+	// every task and belongs to none.
+	sshGateway *SSHGatewaySession
+	configPath string
+
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
@@ -292,12 +299,17 @@ type Config struct {
 	WorkspaceFile *workspace.File
 	WorkspacePath string
 	WorkspaceName string
+	// ConfigPath is the --config value verbatim ("" when not given), NOT the
+	// path WorkspacePath reports. The ssh gateway derives its host-key location
+	// from it, and that location is needed even when no config file exists —
+	// which is exactly when WorkspacePath is empty.
+	ConfigPath string
 }
 
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / session / file / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -305,6 +317,7 @@ func New(cfg Config) *App {
 		defaultRepo:     cfg.DefaultRepo,
 		workspaceFile:   cfg.WorkspaceFile,
 		workspacePath:   cfg.WorkspacePath,
+		configPath:      cfg.ConfigPath,
 		runners:         NewRunners(),
 		tasks:           NewTasks(),
 		detail:          NewDetailPopup(),
@@ -1154,6 +1167,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case PortForwardStatusMsg:
+		a.cmdresult.Append(msg.Line)
+		return a, nil
+
+	case SSHGatewayStartedMsg:
+		a.sshGateway = &SSHGatewaySession{Listen: msg.Listen, Cancel: msg.Cancel}
+		for _, line := range sshGatewayStartedLines(msg.Listen) {
+			a.cmdresult.Append(line)
+		}
+		return a, nil
+
+	case SSHGatewayStoppedMsg:
+		// The serve loop exited — stopped on purpose, or failed after binding.
+		// A miss is a no-op; the failure line, if any, arrived separately.
+		if a.sshGateway != nil {
+			a.sshGateway = nil
+			a.cmdresult.Append("ssh-gateway stopped")
+		}
+		return a, nil
+
+	case SSHGatewayStatusMsg:
 		a.cmdresult.Append(msg.Line)
 		return a, nil
 
@@ -2756,6 +2789,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
+		a.cmdresult.Append("ssh-gateway [start [bind:port] | stop]             - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches")
 		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)")
 		a.cmdresult.Append("workspace rm <name>                                - delete one workspace from .harness/config")
 		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
@@ -3114,6 +3148,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case ForwardKillAction:
 		// No task/spec context: the operator supplied only a bare id.
 		return a, DoKillForward(a.client, v.ForwardID, "", "")
+	case SSHGatewayAction:
+		return a, a.runSSHGatewayAction(v)
 	case ServerDialRunnerAction:
 		if a.client == nil {
 			a.cmdresult.Append(ErrorStyle.Render("server dial-runner: not connected to server"))

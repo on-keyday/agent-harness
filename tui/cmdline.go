@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -261,6 +262,13 @@ type ForwardLsAction struct{}
 // ForwardKillAction closes one registered forward by id.
 type ForwardKillAction struct{ ForwardID uint64 }
 
+// SSHGatewayAction starts, stops or reports the ssh gateway this TUI hosts.
+// Sub is "start", "stop" or "status".
+type SSHGatewayAction struct {
+	Sub    string
+	Listen string
+}
+
 // InteractiveAction opens an interactive PTY claude session in Repo —
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
@@ -381,6 +389,7 @@ func (FileNewAction) isAction()             {}
 func (WorkspaceAction) isAction()           {}
 func (ForwardLsAction) isAction()           {}
 func (ForwardKillAction) isAction()         {}
+func (SSHGatewayAction) isAction()          {}
 func (ServerDialRunnerAction) isAction()    {}
 func (NotifyAction) isAction()              {}
 func (CapsAction) isAction()                {}
@@ -423,6 +432,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseGit(tokens[1:])
 	case "forward":
 		return parseForward(tokens[1:])
+	case "ssh-gateway":
+		return parseSSHGateway(tokens[1:])
 	case "workspace":
 		return parseWorkspace(tokens[1:])
 	case "server":
@@ -1087,6 +1098,40 @@ func parseForward(args []string) (Action, error) {
 		return ForwardKillAction{ForwardID: id}, nil
 	default:
 		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
+	}
+}
+
+// parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at
+// all as a status report.
+//
+// Unlike a forward there is no modal: a forward spec is four fields with no
+// default, while a gateway takes one optional address. And unlike `forward`,
+// STARTING one is a cmdline verb — a forward is started by a task-pane key
+// because it belongs to the selected task, and a gateway belongs to no task,
+// so there is no row for a key to act on.
+func parseSSHGateway(args []string) (Action, error) {
+	const usage = "ssh-gateway: usage: ssh-gateway [start [bind:port] | stop]"
+	if len(args) == 0 {
+		return SSHGatewayAction{Sub: "status"}, nil
+	}
+	switch args[0] {
+	case "start":
+		addr := sshgw.DefaultListen
+		switch len(args) {
+		case 1:
+		case 2:
+			addr = args[1]
+		default:
+			return nil, fmt.Errorf("%s", usage)
+		}
+		return SSHGatewayAction{Sub: "start", Listen: addr}, nil
+	case "stop":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s", usage)
+		}
+		return SSHGatewayAction{Sub: "stop"}, nil
+	default:
+		return nil, fmt.Errorf("ssh-gateway: unknown sub-verb %q (want start | stop, or no argument for status)", args[0])
 	}
 }
 

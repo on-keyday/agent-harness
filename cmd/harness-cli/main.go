@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -787,7 +786,7 @@ func main() {
 		fs.Parse(args)
 		keyPath := *hostKey
 		if keyPath == "" {
-			keyPath = sshHostKeyDefault(*configPath)
+			keyPath = sshgw.DefaultHostKeyPath(*configPath)
 		}
 		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
@@ -795,7 +794,7 @@ func main() {
 		}
 		defer c.Close()
 		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>@%s` attaches; Ctrl-C stops it and every session it serves\n",
-			*listen, sshPortHint(*listen), sshHostHint(*listen))
+			*listen, sshgw.PortOf(*listen), sshgw.HostOf(*listen))
 		fmt.Fprintln(os.Stderr, "harness-cli: bare user name = cowrite (evicts nobody), .control takes the seat, .view watches; Ctrl+] detaches")
 		gctx, cancel := interruptContext("ssh-gateway", ctx)
 		defer cancel()
@@ -927,44 +926,6 @@ func isTaskIDLike(s string) bool {
 		}
 	}
 	return true
-}
-
-// sshHostKeyDefault returns where `ssh-gateway` keeps its host key when
-// --host-key is not given: beside the workspace config, this project's one
-// existing per-repo client-state location.
-//
-// It resolves the config location itself rather than using what workspace.Load
-// found, because Load reports "" when the default .harness/config does not
-// exist — which is the ordinary case, and the one where the key still needs a
-// home. LoadOrCreateHostKey creates the directory.
-func sshHostKeyDefault(flagPath string) string {
-	p := flagPath
-	if p == "" {
-		p = os.Getenv("HARNESS_CONFIG")
-	}
-	if p == "" {
-		p = filepath.FromSlash(workspace.DefaultPath)
-	}
-	return filepath.Join(filepath.Dir(p), "ssh_host_ed25519_key")
-}
-
-// sshHostHint / sshPortHint split a bind address for the `ssh -p PORT user@HOST`
-// hint line. An address that does not split is printed back whole rather than
-// guessed at — the hint is a convenience, and a wrong one is worse than none.
-func sshHostHint(addr string) string {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil || host == "" {
-		return addr
-	}
-	return host
-}
-
-func sshPortHint(addr string) string {
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return addr
-	}
-	return port
 }
 
 // forwardWConflictsWithLR reports whether -W was combined with -L or -R.

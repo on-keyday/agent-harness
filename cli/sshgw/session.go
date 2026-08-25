@@ -54,7 +54,7 @@ func parsePtyReq(payload []byte) (ptyDims, error) {
 }
 
 // serveSession runs one ssh session channel against one attach stream.
-func (g *gateway) serveSession(ctx context.Context, user string, newCh ssh.NewChannel) {
+func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewChannel) {
 	taskID, mode, err := ParseUserName(user)
 	if err != nil {
 		_ = newCh.Reject(ssh.Prohibited, err.Error())
@@ -129,7 +129,7 @@ func (g *gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 
 // attachAndPump attaches to the task and splices the ssh channel to it until
 // one end stops.
-func (g *gateway) attachAndPump(ctx context.Context, ch ssh.Channel, requests <-chan *ssh.Request,
+func (g *Gateway) attachAndPump(ctx context.Context, ch ssh.Channel, requests <-chan *ssh.Request,
 	taskID string, mode protocol.AttachMode, dims ptyDims, haveDims bool) {
 
 	stream, replayBytes, kind, err := g.client.AttachSessionWithReplayLimit(ctx, taskID, mode, 0)
