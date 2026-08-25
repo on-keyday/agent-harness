@@ -179,15 +179,24 @@ Accepted:
 - request `window-change` — forwarded as a size update
 - reply `exit-status` — sent before the channel closes
 
-Refused, each with a human-readable message written to the channel's stderr
-before rejection, so the ssh client prints a reason rather than a bare failure:
+Not served, each saying why:
 
 - `exec` (`ssh host <command>`) — there is no command surface here; the session
-  runs whatever the task already runs
-- `subsystem` (sftp, and therefore sftp-backed scp) — see Non-goals
-- any channel type other than `session` — notably `direct-tcpip`, i.e.
-  `ssh -L` through the gateway, which would be a second, redundant path to
-  `harness-cli forward`
+  runs whatever the task already runs. **Accepted and then answered** with the
+  explanation on stderr and exit status 1, rather than refused. Refusing a
+  *request* delivers no reason: the client's `Start` fails and it tears the
+  session down without ever draining stderr, so the sentence would be written
+  and never read. Measured against `x/crypto/ssh` as the client while writing
+  the end-to-end test, which asserted the reason arrives and caught the
+  original refuse-with-a-message shape.
+- `subsystem` (sftp, and therefore sftp-backed scp) — refused, with the same
+  message written first on the chance a client shows it. Refused rather than
+  accepted because an sftp client handed an acceptance waits for a protocol
+  that is never coming; "subsystem request failed" is the better outcome.
+- any channel type other than `session` — rejected at channel open, where the
+  reason travels in the rejection itself and the client does print it. Notably
+  `direct-tcpip`, i.e. `ssh -L` through the gateway, which would be a second,
+  redundant path to `harness-cli forward`.
 
 `TERM` from `pty-req` is read and discarded: the runner-side PTY's `TERM` is
 fixed when the session is created, and re-negotiating it mid-session would
@@ -464,11 +473,19 @@ not summarized; this table is the design-level answer, not a substitute for it.
 
 ## Errors
 
-Every refusal writes a sentence to the channel's stderr before closing, because
-an ssh client shows that text and shows nothing useful otherwise. The set:
-unknown user-name form, task not found / already finished (mapped from
-`cli.attachStatusError`, `cli/attach.go:80`), wrong task kind, task already
-connected through this gateway, `exec` / `subsystem` / non-session channel.
+Every refusal says why, but *where* the sentence goes depends on what is being
+refused, because an ssh client only reads some of those places:
+
+- **At channel open** — unknown user-name form, task already holding a control
+  session through this gateway, non-session channel type. The reason rides the
+  rejection and the client prints it.
+- **On the channel's stderr, with the channel live** — task not found / already
+  finished (mapped from `cli.attachStatusError`, `cli/attach.go:80`), wrong task
+  kind, an unusable `pty-req` size, a failed initial resize. The client is
+  attached and reading, so the text lands.
+- **Never on the stderr of a refused request.** A client whose request is
+  refused tears the session down without draining stderr. This is why `exec` is
+  accepted and answered instead (§ SSH surface).
 
 Startup failures — bind refused, a non-loopback `--listen` with no usable
 `--authorized-keys` (D5), unreadable host key —

@@ -1,0 +1,368 @@
+//go:build integration
+
+package integration
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/sshgw"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	agentexec "github.com/on-keyday/objtrsf/exec"
+	"golang.org/x/crypto/ssh"
+)
+
+// TestSSHGatewayE2E drives the gateway with golang.org/x/crypto/ssh AS A CLIENT,
+// so the suite depends on no `ssh` binary being installed, against a real
+// server + runner + detachable session.
+//
+// The sub-tests run in order and share one gateway and one task; each closes
+// its ssh connection so the control seat it may have taken is released.
+func TestSSHGatewayE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-claude scripts require bash — skipping on Windows")
+	}
+	clearAgentEnv(t)
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+	startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  2,
+		Roots:     []string{repo},
+		ClaudeBin: fakeClaudeSlowPath(t),
+	})
+
+	c := dialClient(t, serverCID)
+	taskID := openThenDetachSession(t, c, repo)
+	gwAddr := startGateway(t, c)
+
+	t.Run("attach_replays_the_ring", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, stdout, _ := startShell(t, cl, 30, 100)
+		defer sess.Close()
+
+		// fake-claude-slow echoes a starting line, so the replay is non-empty.
+		got := readSome(t, stdout, 3*time.Second)
+		if len(got) == 0 {
+			t.Error("no replay bytes arrived on the ssh channel")
+		}
+	})
+
+	t.Run("resize_applies_while_the_seat_is_empty", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, stdout, _ := startShell(t, cl, 30, 100)
+		defer sess.Close()
+		readSome(t, stdout, 2*time.Second)
+
+		// A bare user name is a cowrite attach, and an observer's resize is
+		// honoured while no control client holds the seat — which is the state
+		// of an ordinary detached session.
+		rows, cols := sessionSize(t, c, taskID)
+		if rows != 30 || cols != 100 {
+			t.Errorf("session size = %dx%d (rows x cols), want 30x100", rows, cols)
+		}
+	})
+
+	t.Run("resize_is_dropped_while_a_controller_holds_the_seat", func(t *testing.T) {
+		// Take the seat with an ordinary harness control attach, the way the
+		// TUI does.
+		ctrl, _, _, err := c.AttachSession(context.Background(), taskID, protocol.AttachMode_Control)
+		if err != nil {
+			t.Fatalf("control attach: %v", err)
+		}
+		defer ctrl.Close()
+		go func() { _, _ = io.Copy(io.Discard, ctrl.Stdout()) }()
+
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, stdout, _ := startShell(t, cl, 20, 50)
+		defer sess.Close()
+		readSome(t, stdout, 2*time.Second)
+
+		// Asserting that the frame was WRITTEN would pass either way. The size
+		// the session reports is the only thing that distinguishes the rule
+		// from its absence.
+		rows, cols := sessionSize(t, c, taskID)
+		if rows == 20 && cols == 50 {
+			t.Error("the ssh cowriter's resize took effect while a controller held the seat")
+		}
+		if rows != 30 || cols != 100 {
+			t.Errorf("session size = %dx%d, want the controller-era 30x100 to be unchanged", rows, cols)
+		}
+	})
+
+	t.Run("second_cowrite_is_accepted", func(t *testing.T) {
+		cl1 := dialSSH(t, gwAddr, taskID)
+		defer cl1.Close()
+		sess1, stdout1, _ := startShell(t, cl1, 30, 100)
+		defer sess1.Close()
+		readSome(t, stdout1, 2*time.Second)
+
+		cl2 := dialSSH(t, gwAddr, taskID)
+		defer cl2.Close()
+		sess2, err := cl2.NewSession()
+		if err != nil {
+			t.Fatalf("a second cowrite session on the same task must be accepted: %v", err)
+		}
+		sess2.Close()
+	})
+
+	t.Run("second_control_is_refused", func(t *testing.T) {
+		cl1 := dialSSH(t, gwAddr, taskID+".control")
+		defer cl1.Close()
+		sess1, stdout1, _ := startShell(t, cl1, 30, 100)
+		defer sess1.Close()
+		readSome(t, stdout1, 2*time.Second)
+
+		cl2 := dialSSH(t, gwAddr, taskID+".control")
+		defer cl2.Close()
+		if _, err := cl2.NewSession(); err == nil {
+			t.Fatal("a second .control session must be refused, not allowed to take the seat")
+		} else if !strings.Contains(err.Error(), taskID) {
+			t.Errorf("rejection %q does not name the task", err)
+		}
+	})
+
+	t.Run("detach_key_ends_the_ssh_session_and_leaves_the_task", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, stdout, stdin := startShell(t, cl, 30, 100)
+		readSome(t, stdout, 2*time.Second)
+
+		if _, err := stdin.Write([]byte{0x1d}); err != nil {
+			t.Fatalf("write detach key: %v", err)
+		}
+
+		rest := readUntilEOF(t, stdout, 10*time.Second)
+		if err := sess.Wait(); err != nil {
+			t.Errorf("ssh session ended with %v, want a clean exit after a detach", err)
+		}
+
+		// The reset is the last thing written before the channel closes; a
+		// client whose terminal is left on the alternate screen has no other
+		// way back.
+		wantSuffix := agentexec.ScreenModeReset + agentexec.InputModeReset
+		if !bytes.HasSuffix(rest, []byte(wantSuffix)) {
+			t.Errorf("channel did not end with the terminal reset (last 64 bytes: %q)", tail(rest, 64))
+		}
+
+		// Detaching is not ending: the task must still be there.
+		eventually(t, func() bool {
+			st := getTask(t, c, taskID).Status
+			return st == protocol.TaskStatus_Detached || st == protocol.TaskStatus_Running
+		}, 5*time.Second, 100*time.Millisecond, "task to survive the ssh detach")
+	})
+
+	t.Run("unknown_user_name_is_refused_at_channel_open", func(t *testing.T) {
+		// Not at authentication: failing there makes ssh retry keys and then
+		// report a credentials problem, pointing the operator at the wrong
+		// thing entirely.
+		cl := dialSSH(t, gwAddr, "root")
+		defer cl.Close()
+		_, err := cl.NewSession()
+		if err == nil {
+			t.Fatal("want a rejection for a user name that is not a task id")
+		}
+		if !strings.Contains(err.Error(), ".control") || !strings.Contains(err.Error(), ".view") {
+			t.Errorf("rejection %q does not name the accepted forms", err)
+		}
+	})
+
+	t.Run("exec_is_refused_with_a_reason", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, err := cl.NewSession()
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		defer sess.Close()
+		var stderr bytes.Buffer
+		sess.Stderr = &stderr
+		err = sess.Run("ls")
+		if err == nil {
+			t.Error("want a non-zero exit for an exec request; this gateway has no command surface")
+		}
+		// The reason has to be READ by the client to be worth writing. A
+		// refused request never is: Start fails and the session is torn down
+		// before Wait drains stderr, so the explanation is delivered as an
+		// accepted-then-answered command instead.
+		if s := stderr.String(); !strings.Contains(s, "not served here") {
+			t.Errorf("stderr %q does not explain why exec was refused", s)
+		}
+	})
+}
+
+// openThenDetachSession opens a detachable session, waits for it to run, then
+// closes the local stream so the task is Detached and the control seat is free
+// — the ordinary state of a session an operator reaches later.
+func openThenDetachSession(t *testing.T, c *cli.Client, repo string) string {
+	t.Helper()
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
+	stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
+		Selector: sel, InitialRows: 24, InitialCols: 80,
+	})
+	if err != nil {
+		t.Fatalf("OpenInteractive: %v", err)
+	}
+	drained := make(chan struct{})
+	go func() { defer close(drained); _, _ = io.Copy(io.Discard, stream.Stdout()) }()
+
+	eventually(t, func() bool {
+		return getTask(t, c, taskID).Status == protocol.TaskStatus_Running
+	}, 15*time.Second, 100*time.Millisecond, "task to reach Running")
+
+	stream.Close()
+	<-drained
+	eventually(t, func() bool {
+		return getTask(t, c, taskID).Status == protocol.TaskStatus_Detached
+	}, 10*time.Second, 100*time.Millisecond, "task to reach Detached")
+	return taskID
+}
+
+// startGateway runs a gateway on a free loopback port against the given client
+// and waits for the listener to accept.
+func startGateway(t *testing.T, c *cli.Client) string {
+	t.Helper()
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- sshgw.Run(ctx, c, sshgw.Options{
+			Listen:      addr,
+			HostKeyPath: filepath.Join(t.TempDir(), "ssh_host_ed25519_key"),
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Logf("ssh gateway returned %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Log("ssh gateway did not exit within 3s of cancel")
+		}
+	})
+	eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		conn.Close()
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "ssh gateway listener to accept")
+	return addr
+}
+
+// dialSSH connects to the gateway as user. The gateway binds loopback with no
+// authorized-keys file, so the "none" method is what the handshake uses.
+func dialSSH(t *testing.T, addr, user string) *ssh.Client {
+	t.Helper()
+	cl, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("ssh dial as %q: %v", user, err)
+	}
+	return cl
+}
+
+// startShell opens a session channel, requests a PTY of the given size and
+// starts a shell — the sequence an interactive `ssh` performs.
+func startShell(t *testing.T, cl *ssh.Client, rows, cols int) (*ssh.Session, io.Reader, io.WriteCloser) {
+	t.Helper()
+	sess, err := cl.NewSession()
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe: %v", err)
+	}
+	if err := sess.RequestPty("xterm-256color", rows, cols, ssh.TerminalModes{}); err != nil {
+		t.Fatalf("RequestPty: %v", err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	return sess, stdout, stdin
+}
+
+// sessionSize reports the PTY size the server replays to a fresh observer,
+// which is what the session actually renders at.
+func sessionSize(t *testing.T, c *cli.Client, taskID string) (uint16, uint16) {
+	t.Helper()
+	raw, err := c.CollectRaw(context.Background(), taskID, 1200*time.Millisecond, true)
+	if err != nil {
+		t.Fatalf("CollectRaw: %v", err)
+	}
+	if !raw.HasSize {
+		t.Fatal("the session reports no size at all")
+	}
+	return raw.Rows, raw.Cols
+}
+
+// readSome reads whatever arrives within d, returning early once anything has.
+func readSome(t *testing.T, r io.Reader, d time.Duration) []byte {
+	t.Helper()
+	type result struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		buf := make([]byte, 32*1024)
+		n, err := r.Read(buf)
+		ch <- result{buf[:n], err}
+	}()
+	select {
+	case res := <-ch:
+		return res.b
+	case <-time.After(d):
+		return nil
+	}
+}
+
+// readUntilEOF drains r until it ends or d elapses.
+func readUntilEOF(t *testing.T, r io.Reader, d time.Duration) []byte {
+	t.Helper()
+	ch := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		ch <- b
+	}()
+	select {
+	case b := <-ch:
+		return b
+	case <-time.After(d):
+		t.Fatalf("channel did not end within %v of the detach key", d)
+		return nil
+	}
+}
+
+func tail(b []byte, n int) []byte {
+	if len(b) <= n {
+		return b
+	}
+	return b[len(b)-n:]
+}

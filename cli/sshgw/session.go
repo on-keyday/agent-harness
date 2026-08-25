@@ -94,12 +94,24 @@ func (g *gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 		case "shell":
 			_ = req.Reply(true, nil)
 			started = true
-		case "exec", "subsystem":
-			// Refused with a reason on stderr, because an ssh client prints
-			// that and prints nothing useful otherwise.
-			fmt.Fprintf(ch.Stderr(),
-				"ssh-gateway: %s is not served here — this gateway attaches to a session's PTY. For files use `harness-cli file push` / `file pull`.\r\n",
-				req.Type)
+		case "exec":
+			// Accepted and then answered, rather than refused. A refused
+			// request is reported by the client as a generic failure and the
+			// session is torn down without the stderr ever being read — the
+			// explanation would be written and never seen. Measured against
+			// x/crypto/ssh as the client; `ssh host ls` shows nothing useful
+			// either way, so the useful shape is: accept, say why, exit 1.
+			_ = req.Reply(true, nil)
+			fmt.Fprint(ch.Stderr(),
+				"ssh-gateway: exec is not served here — this gateway attaches to a session's PTY, it runs no commands of its own. For files use `harness-cli file push` / `file pull`.\r\n")
+			sendExit(ch, 1)
+			return
+		case "subsystem":
+			// Refused rather than accepted: an sftp client that got an accept
+			// would sit waiting for a protocol that is never coming, which is
+			// worse than the "subsystem request failed" it prints on a refusal.
+			fmt.Fprint(ch.Stderr(),
+				"ssh-gateway: sftp/scp are not served here — use `harness-cli file push` / `file pull`.\r\n")
 			_ = req.Reply(false, nil)
 		default:
 			_ = req.Reply(false, nil)
