@@ -4,53 +4,57 @@ package sshgw
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 
+	"github.com/on-keyday/agent-harness/cli/sshgw/sshwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 	"golang.org/x/crypto/ssh"
 )
 
-// ptyDims are the four numbers pty-req and window-change both carry.
+// ptyDims are the four numbers pty-req and window-change both carry, narrowed
+// to what SetTerminalWindowSize takes.
 //
-// SSH puts COLUMNS first; SetTerminalWindowSize takes ROWS first. Decoding into
-// named fields is what stops the two orders from being silently swapped — a
-// transposed size renders a screen that looks plausible and is wrong.
+// SSH puts COLUMNS first and SetTerminalWindowSize takes ROWS first, so the
+// wire layout is described in sshwire.bgn and decoded into named fields rather
+// than indexed out of a byte slice: a transposed size renders a screen that
+// looks plausible and is wrong.
 type ptyDims struct {
 	Cols, Rows, WidthPx, HeightPx uint16
 }
 
-// parseWindowChange decodes a window-change payload: four uint32s.
-func parseWindowChange(payload []byte) (ptyDims, error) {
-	if len(payload) < 16 {
-		return ptyDims{}, fmt.Errorf("window-change payload is %d bytes, want 16", len(payload))
-	}
+// dims narrows the wire's uint32s to the uint16 pair the control frame carries.
+// One place, so the truncation is not repeated per call site.
+func dims(cols, rows, widthPx, heightPx uint32) ptyDims {
 	return ptyDims{
-		Cols:     uint16(binary.BigEndian.Uint32(payload[0:4])),
-		Rows:     uint16(binary.BigEndian.Uint32(payload[4:8])),
-		WidthPx:  uint16(binary.BigEndian.Uint32(payload[8:12])),
-		HeightPx: uint16(binary.BigEndian.Uint32(payload[12:16])),
-	}, nil
+		Cols:     uint16(cols),
+		Rows:     uint16(rows),
+		WidthPx:  uint16(widthPx),
+		HeightPx: uint16(heightPx),
+	}
 }
 
-// parsePtyReq decodes a pty-req payload: a TERM string, the same four uint32s,
-// then encoded modes.
+// parseWindowChange decodes a window-change payload (RFC 4254 6.7).
+func parseWindowChange(payload []byte) (ptyDims, error) {
+	var wc sshwire.WindowChange
+	if err := wc.DecodeExact(payload); err != nil {
+		return ptyDims{}, fmt.Errorf("window-change payload: %w", err)
+	}
+	return dims(wc.Columns, wc.Rows, wc.WidthPx, wc.HeightPx), nil
+}
+
+// parsePtyReq decodes a pty-req payload (RFC 4254 6.2).
 //
-// TERM is read and discarded. The runner-side PTY's TERM is fixed when the
+// TERM is decoded and discarded: the runner-side PTY's TERM is fixed when the
 // session is created, and changing it mid-session would change what the
 // already-running agent renders.
 func parsePtyReq(payload []byte) (ptyDims, error) {
-	if len(payload) < 4 {
-		return ptyDims{}, fmt.Errorf("pty-req payload is %d bytes, too short for the TERM length", len(payload))
+	var pr sshwire.PtyReq
+	if err := pr.DecodeExact(payload); err != nil {
+		return ptyDims{}, fmt.Errorf("pty-req payload: %w", err)
 	}
-	termLen := binary.BigEndian.Uint32(payload[0:4])
-	rest := payload[4:]
-	if uint32(len(rest)) < termLen {
-		return ptyDims{}, fmt.Errorf("pty-req TERM length %d exceeds the payload", termLen)
-	}
-	return parseWindowChange(rest[termLen:])
+	return dims(pr.Columns, pr.Rows, pr.WidthPx, pr.HeightPx), nil
 }
 
 // serveSession runs one ssh session channel against one attach stream.

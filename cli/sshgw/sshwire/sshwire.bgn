@@ -1,0 +1,36 @@
+config.go.package = "sshwire"
+
+# The two SSH channel-request payloads the harness ssh gateway reads, as
+# RFC 4254 defines them. Big-endian, which is both SSH's rule and the default
+# here.
+#
+# Described rather than indexed by hand because the field ORDER is the trap:
+# SSH sends COLUMNS before ROWS, while every harness call that consumes them
+# (SetTerminalWindowSize, applyInitialWindowSize) takes rows first. A
+# transposed size renders a screen that looks plausible and is wrong, which is
+# the kind of defect that survives a demo. Named fields make the swap a
+# compile-time mismatch instead.
+
+# PtyReq is the `pty-req` payload (RFC 4254 §6.2).
+#
+# term is decoded and then discarded by the gateway: the runner-side PTY's TERM
+# is fixed when the session is created, and changing it mid-session would change
+# what the already-running agent renders. It is described here anyway — it is on
+# the wire, and a format that skipped it could not find the fields after it.
+format PtyReq:
+    term_len :u32
+    term :[term_len]u8
+    columns :u32
+    rows :u32
+    width_px :u32
+    height_px :u32
+    modes_len :u32
+    modes :[modes_len]u8
+
+# WindowChange is the `window-change` payload (RFC 4254 §6.7): the same four
+# numbers, with no TERM and no encoded modes.
+format WindowChange:
+    columns :u32
+    rows :u32
+    width_px :u32
+    height_px :u32
