@@ -206,6 +206,103 @@ func TestIdleTimeoutReclaimsSilentTunnel(t *testing.T) {
 	}
 }
 
+// TestIdleDoesNotKillStreamingResponse is the asymmetric case the two tests
+// above leave open, and the one production actually hits: an HTTP client that
+// has finished sending its request sends NOTHING for the whole response, while
+// the server streams. A long agent turn makes that silence minutes long, so an
+// idle window measured per-direction expires on the client's read side while
+// the response is flowing perfectly — and the teardown is silent, so the only
+// evidence is the agent reporting an API error and retrying.
+func TestIdleDoesNotKillStreamingResponse(t *testing.T) {
+	// The gap between chunks has to sit well inside the window, not merely
+	// under it: a scheduling hiccup wider than idle is REAL silence and the
+	// tunnel is then right to go. At 50ms into a 500ms window the margin is
+	// 10x, while the 3s total stream is 6x the window — enough that a
+	// per-direction window still cuts this off around chunk 10.
+	const (
+		idle     = 500 * time.Millisecond
+		interval = 50 * time.Millisecond
+		chunks   = 60
+	)
+
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstream.Close()
+	// The server holds the connection open for the whole test. Closing it after
+	// the last chunk would drag a teardown race into a test about staying
+	// alive: the proxy hard-closes both sockets the moment either direction
+	// errors, which discards what is still queued for the client and costs the
+	// final chunk — a truncation with the same shape as the bug and a
+	// completely different cause.
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	sent := make(chan int, 1)
+	go func() {
+		s, err := upstream.Accept()
+		if err != nil {
+			sent <- -1
+			return
+		}
+		defer s.Close()
+		// Wait for the request before answering, like a real server. Streaming
+		// straight off Accept races the proxy's own "200 Connection
+		// Established": connectVia reads that status line through a
+		// bufio.Reader and drops the buffer, so a payload byte that arrived in
+		// the same segment is eaten by the TEST and never reaches the assert —
+		// a one-chunk shortfall indistinguishable from the bug being measured.
+		if _, err := s.Read(make([]byte, 64)); err != nil {
+			sent <- -1
+			return
+		}
+		go func() { _, _ = io.Copy(io.Discard, s) }()
+		// Stream steadily and never expect another byte from the client —
+		// exactly an SSE response after the request headers are in.
+		n := 0
+		for i := 0; i < chunks; i++ {
+			if _, err := s.Write([]byte("x")); err != nil {
+				t.Logf("upstream write %d/%d failed: %v", i+1, chunks, err)
+				break
+			}
+			n++
+			time.Sleep(interval)
+		}
+		sent <- n
+		<-done
+	}()
+
+	_, port, _ := net.SplitHostPort(upstream.Addr().String())
+	addr := startProxy(t, config{
+		allow:      loadAllow("127.0.0.1"),
+		idle:       idle,
+		maxTunnels: 4,
+	})
+	c, status := connectVia(t, addr, "127.0.0.1:"+port)
+	if !strings.Contains(status, "200") {
+		t.Fatalf("status = %q, want 200", status)
+	}
+
+	// The request goes out, then the client is silent for the whole response.
+	// It does NOT half-close: a keep-alive HTTP client holds its write side
+	// open for the next request on the same connection.
+	if _, err := c.Write([]byte("GET /stream\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// io.ReadFull, not a hand-rolled Read loop: a TCP Read hands back the final
+	// data segment and its EOF in the SAME call, so a loop that treats any
+	// non-nil error as failure reports a complete response as one byte short.
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	buf := make([]byte, chunks)
+	n, err := io.ReadFull(c, buf)
+	if err != nil {
+		t.Fatalf("response truncated after %d/%d chunks (upstream sent %d): %v — the idle window "+
+			"expired on the CLIENT's read side while the server was still streaming",
+			n, chunks, <-sent, err)
+	}
+}
+
 func TestMaxTunnelsRefusesWithoutBlocking(t *testing.T) {
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

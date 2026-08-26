@@ -230,7 +230,7 @@ func handle(client net.Conn, cfg config, slots chan struct{}) {
 	}
 	keepAlive(client)
 	keepAlive(upstream)
-	tunnel(client, upstream, cfg.idle)
+	tunnel(client, upstream, cfg.idle, net.JoinHostPort(host, port))
 }
 
 // readHead reads up to the end of the request headers, bounded by
@@ -276,12 +276,25 @@ type closeWriter interface{ CloseWrite() error }
 
 // tunnel splices both directions until both are done or one goes silent for
 // longer than idle.
-func tunnel(client, upstream net.Conn, idle time.Duration) {
+//
+// An abnormal end is LOGGED. Until it was, the deadline path was the one thing
+// in here that could kill a working tunnel while writing nothing to this log:
+// the agent reported an API error, the log showed only the ALLOW that opened
+// the tunnel, and the two read as unrelated. A teardown that a human has to
+// infer from the absence of a line is not observable.
+func tunnel(client, upstream net.Conn, idle time.Duration, target string) {
 	var wg sync.WaitGroup
 	wg.Add(2)
-	pipe := func(dst, src net.Conn) {
+	pipe := func(dst, src net.Conn, dir string) {
 		defer wg.Done()
-		if err := copyIdle(dst, src, idle); err != nil {
+		n, err := copyIdle(dst, src, idle)
+		if err != nil {
+			var ne net.Error
+			why := "error"
+			if errors.As(err, &ne) && ne.Timeout() {
+				why = "idle"
+			}
+			logf("CLOSE %s %s after %d B (%s: %v)", target, dir, n, why, err)
 			// A timeout or a hard error means nothing more will arrive on
 			// either side worth waiting for: close both so the opposite
 			// direction's Read returns instead of hanging.
@@ -298,33 +311,50 @@ func tunnel(client, upstream net.Conn, idle time.Duration) {
 			_ = cw.CloseWrite()
 		}
 	}
-	go pipe(upstream, client)
-	go pipe(client, upstream)
+	go pipe(upstream, client, "c>s")
+	go pipe(client, upstream, "s>c")
 	wg.Wait()
 }
 
-// copyIdle copies until EOF (nil) or the first error, refreshing the deadline
-// on every read and write so idle measures SILENCE rather than total duration.
-func copyIdle(dst, src net.Conn, idle time.Duration) error {
+// copyIdle copies until EOF (nil) or the first error, refreshing deadlines so
+// idle measures SILENCE rather than total duration.
+//
+// The refresh crosses directions on purpose. Each direction runs in its own
+// goroutine over its own socket, so refreshing only src's read deadline makes
+// the window per-DIRECTION — and an HTTP client sends nothing for the whole
+// response it is receiving. At idle=5m that tore down live streaming tunnels
+// mid-response on any agent turn that ran longer than the window, while the
+// server was still sending: the client saw its connection die and reported an
+// API error, and nothing appeared in this log to explain it, because a
+// deadline teardown logs nothing. So forwarding a byte also refreshes the READ
+// deadline of the peer it was forwarded to, which is what makes the window
+// bound the TUNNEL instead of one half of it. Both peers silent is still
+// reclaimed — that is the case the window exists for.
+func copyIdle(dst, src net.Conn, idle time.Duration) (int64, error) {
 	buf := make([]byte, 32<<10)
+	var total int64
 	for {
 		if err := src.SetReadDeadline(time.Now().Add(idle)); err != nil {
-			return err
+			return total, err
 		}
 		n, rerr := src.Read(buf)
 		if n > 0 {
 			if err := dst.SetWriteDeadline(time.Now().Add(idle)); err != nil {
-				return err
+				return total, err
 			}
 			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return werr
+				return total, werr
 			}
+			total += int64(n)
+			// Deadline setters are goroutine-safe, and one set while a Read is
+			// already blocked re-arms that Read rather than waiting it out.
+			_ = dst.SetReadDeadline(time.Now().Add(idle))
 		}
 		if rerr != nil {
 			if errors.Is(rerr, io.EOF) {
-				return nil
+				return total, nil
 			}
-			return rerr
+			return total, rerr
 		}
 	}
 }
