@@ -601,6 +601,25 @@ Startup failures — bind refused, a non-loopback `--listen` with no usable
 are returned from `Run` and surface as a CLI exit with a message, and in the TUI
 as the same result line the forward commands use.
 
+**Losing the harness connection ends the gateway** — an amendment to D4, found
+by the operator after v1 shipped. D4 bounds the listener by its host process,
+which is a bound but not the only one: a gateway is a listener plus a
+`*cli.Client`, and the client can die while the process lives. It did, and the
+listener stayed bound: `ssh-gateway status` still named an address, every attach
+through it failed against a client that could not reach the server, and only an
+explicit `ssh-gateway stop` freed the port. Nothing else in this layer needed the
+link spelled out, which is why it was missed — every sibling verb blocks on a
+stream the connection carries and dies with it for free (`tui/app.go`, on
+reconnect: the forwards "die with the connection that held their control
+streams"), while `Serve` blocks in `Accept` on a local socket that knows nothing
+about objproto. So `Serve` selects on `client.Peer().Done()` alongside `ctx`, and
+returns `sshgw.ErrHarnessDisconnected`: the CLI exits non-zero, the TUI prints it
+and drops the gateway from its status. Teardown closes the accepted ssh
+connections too — the goroutines serving them read the ssh transport and no
+context reaches them, so a stop had been leaving them alive, invisibly on the CLI
+because the process exits with them. Neither surface re-binds on reconnect;
+`ssh-gateway start` is that, and the address stays the operator's to choose.
+
 ## Testing
 
 Unit:
@@ -647,6 +666,12 @@ the suite does not depend on an `ssh` binary being installed:
 - `direct-tcpip` on a user name that is not a task id is rejected at channel
   open with the message that names the accepted forms — the same place and the
   same text a session channel gets
+- closing the harness connection ends `Serve` and **frees the port**, asserted by
+  binding the same address afterwards rather than by trusting the return value: a
+  gateway that reports itself stopped while still holding the socket is the bug
+  this covers (§ Errors)
+- stopping a gateway drops the ssh connections it accepted — assert the ssh
+  client's `Wait` returns, not merely that `Serve` did
 
 The `direct-tcpip` cases get a **negative control** too, for the reason Pitfall
 10 records: a check that cannot fail is worse than none. With the channel-type
@@ -754,7 +779,9 @@ that catches a missing `//go:build !js`.
   nowhere to put a refusal reason, and `forward -R` is the verb.
 - **A server-hosted sshd.** § Why client-side and not in the server.
 - **Surviving its host process.** D4: the listener dies with the CLI process or
-  the TUI. Making it a persistent daemon is a separate change that adds one
-  caller, not a different design.
+  the TUI — and, since the amendment in § Errors, with the harness connection
+  under it, which is the tighter of the two bounds. Making it a persistent daemon
+  is a separate change that adds one caller, not a different design; surviving a
+  reconnect is a different one again, and neither surface does it today.
 - **Agent-facing use.** This is an operator surface. Nothing is added to
   `runner/agentskills/`.

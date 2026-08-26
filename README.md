@@ -404,6 +404,14 @@ anyway, so keys would buy nothing. Off loopback that reasoning inverts, so
 to start without it. The host key is generated once beside `.harness/config`
 and reused, so `known_hosts` stays valid.
 
+**A gateway is only as alive as the harness connection under it**, the same rule
+a forward follows. A server restart or a dropped link ends it: the listener
+closes, the ssh connections it accepted are dropped, and `harness-cli
+ssh-gateway` exits non-zero instead of holding the port with a dead client
+behind it. The TUI reconnects on its own; its gateway does not come back with
+the connection, so `ssh-gateway status` will say it is not running and
+`ssh-gateway start` is what re-binds it.
+
 **`ssh -L` and `ssh -W` tunnel through it.** The ssh client keeps its own
 listener and opens a `direct-tcpip` channel per connection; the **runner** dials
 the target, over the same data plane `forward -W` uses. Each forwarded
@@ -830,7 +838,9 @@ its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` list and stop the running ones.
 `ssh-gateway [start [bind:port] | stop]` hosts the SSH front door from the TUI
 itself (see **SSH gateway**); with no argument it reports the address it is
-listening on, or that it is not running. It dies with the TUI.
+listening on, or that it is not running. It dies with the TUI, and with the
+server connection — a reconnect does not bring it back, `ssh-gateway start`
+does.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
 follows its events in the logs pane, which is where this kind's events

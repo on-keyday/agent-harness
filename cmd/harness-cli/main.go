@@ -804,7 +804,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>@%s` attaches; Ctrl-C stops it and every session it serves\n",
+		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>@%s` attaches; Ctrl-C stops it and every session it serves, and so does the server connection dropping\n",
 			*listen, sshgw.PortOf(*listen), sshgw.HostOf(*listen))
 		fmt.Fprintln(os.Stderr, "harness-cli: bare user name = cowrite (evicts nobody), .control takes the seat, .view watches; Ctrl+] detaches")
 		gctx, cancel := interruptContext("ssh-gateway", ctx)

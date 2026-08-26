@@ -46,7 +46,8 @@ func DoStartSSHGateway(c *cli.Client, listen, hostKeyPath, authKeysPath string, 
 			AuthorizedKeysPath: authKeysPath,
 		})
 		if err != nil {
-			return SSHGatewayStatusMsg{Line: ErrorStyle.Render("✗ ssh-gateway: ") + err.Error()}
+			// Every error out of Listen already opens with "ssh-gateway:".
+			return SSHGatewayStatusMsg{Line: ErrorStyle.Render("✗ ") + err.Error()}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		addr := gw.Addr()
@@ -55,8 +56,15 @@ func DoStartSSHGateway(c *cli.Client, listen, hostKeyPath, authKeysPath string, 
 		program.Send(SSHGatewayStartedMsg{Listen: addr, Cancel: cancel})
 		go func() {
 			defer gw.Close()
+			// Serve ends on its own when the harness connection dies, not only
+			// when the operator stops it, so this is a real path: the Stopped
+			// below is what takes the listener off `ssh-gateway status`, which
+			// otherwise kept advertising an address whose client was gone.
+			//
+			// No "ssh-gateway:" prefix here — every error Serve returns already
+			// opens with it.
 			if serr := gw.Serve(ctx); serr != nil {
-				program.Send(SSHGatewayStatusMsg{Line: ErrorStyle.Render("✗ ssh-gateway: ") + serr.Error()})
+				program.Send(SSHGatewayStatusMsg{Line: ErrorStyle.Render("✗ ") + serr.Error()})
 			}
 			program.Send(SSHGatewayStoppedMsg{})
 		}()
