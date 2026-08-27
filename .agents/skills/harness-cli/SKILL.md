@@ -333,11 +333,15 @@ loop. The agent itself must not call them.
 
 For those scripts, briefly, so the rule above is the only thing you have to
 remember here: `wait --topic T [--since N] [--in-reply-to SEQ]` blocks for a
-matching message; `dispatch --topic T --data D [--reply-to R]` publishes and
+matching message; `dispatch --topic T TEXT... [--reply-to R]` publishes and
 then blocks for the reply to THAT message — on your own `chat.<short-id>`,
 where the server routes a reply, or on `R` when you name one, since
 `--reply-to` declares the destination and waits there in a single flag.
-Neither writes any persistent position — `--since` is
+`dispatch` takes its body the same three ways `send` does, and prints what it
+published — `agent dispatch: published N bytes from <source> as seq S,
+delivered_to N` — on **stderr** before it starts waiting, so a body that went
+out empty shows up there rather than as a timeout minutes later; stdout stays
+the reply's JSON Lines. Neither writes any persistent position — `--since` is
 the caller's own resume point. A wait does not wake the task it belongs to for
 the topic it is waiting on: the waiter is already being handed the message, so
 a wake on top of it would type a `<harness:agentboard-wake>` prompt into an
@@ -373,19 +377,37 @@ Topics in v1 are **exact match** — no wildcards.
 ```bash
 # Publish a message to topic T.
 harness-cli agent send --topic T --data 'hello'
-# {"seq":42,"status":"ok","delivered_to":1}
+# {"bytes":5,"delivered_to":1,"seq":42,"source":"--data","status":"ok"}
 #
 # READ delivered_to: it is how many subscribers the publish matched. `status
 # ok` with `delivered_to: 0` means the topic exists but nobody is listening —
 # almost always a typo'd or stale chat.<short-id>. The message still lands in
 # the retained ring, so nothing else in the response tells you. It counts you
 # too when you publish to a topic you subscribe to, so a self-ping reads 1.
+#
+# READ bytes and source too: delivered_to says the message reached someone,
+# these two say WHAT reached them. A publish succeeds whether or not the body
+# is the one you meant — a pipe the shell ate, a heredoc that expanded to
+# nothing, a variable that was never set all report `status ok` with a body of
+# 0 bytes — and `source` names which of the three routes below it came from,
+# which is the part a byte count alone leaves ambiguous.
+#
 # The payload may also be given as a positional arg (joined ssh-style if
 # multi-word), so a forgotten --data still sends a non-empty body:
 harness-cli agent send --topic T 'hello'
+# {"bytes":5,...,"source":"positional","status":"ok"}
 # Or read --data from stdin with `-`:
 echo 'hello' | harness-cli agent send --topic T --data -
+# {"bytes":6,...,"source":"stdin","status":"ok"}
 ```
+
+**`-` is a value of `--data`, never a positional of its own.** `send --topic T
+-` takes the positional route and publishes the one-byte body `"-"` — to a real
+subscriber, reporting `status ok`. Nothing fails, so
+`{"bytes":1,...,"source":"positional"}` is the only thing that says so. The
+`--help` text abbreviates the pair, and an abbreviation is where this misread
+comes from; the ok line is the check that does not depend on reading either
+one correctly.
 
 That is the only command an agent normally runs to talk to peers. End
 the turn after sending; replies arrive through the inbox hook.
@@ -782,6 +804,12 @@ retained on the board and reaches no inbox.
 no capability. `delivered_to: 0` IS the third cause; anything above 0 rules it
 out and leaves you with the first two. Re-send is not how you check: publish a
 throwaway to the same topic if you no longer have the original response.
+
+A fourth cause hides among them and the same line rules it out: the message
+arrived and said nothing, because the body was not what you meant to send.
+`bytes` on that response is the check — `bytes: 0` is an empty publish that a
+peer has no way to distinguish from noise, and a `bytes` far below what you
+composed means the shell, not the board, is where it went wrong.
 
 The `board` commands below answer the same question about topics you did not
 send to, and about the whole board at once. Both need `board_observe`, so a task

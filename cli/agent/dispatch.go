@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -84,15 +85,14 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	ctx, cancelTimeout := context.WithTimeout(ctx, *timeout)
 	defer cancelTimeout()
 
-	var payload []byte
-	if *data == "-" {
-		b, err := io.ReadAll(stdin)
-		if err != nil {
-			return err
-		}
-		payload = b
-	} else {
-		payload = []byte(*data)
+	// Same resolver `agent send` uses. These two verbs publish to one board
+	// through one identical flag surface, so a positional that means the body
+	// on one and nothing at all on the other is a trap, not a distinction:
+	// `dispatch --topic T 'question'` used to ignore the word and block on a
+	// stdin nobody was writing to.
+	payload, source, err := resolvePayload(fs, *data, stdin)
+	if err != nil {
+		return err
 	}
 
 	if err := refuseIfOwnTicket(payload); err != nil {
@@ -168,9 +168,16 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	select {
 	case r := <-sendCh:
 		if r.Status != agentboard.SendStatus_Ok {
-			return fmt.Errorf("send failed: %v", r.Status)
+			return fmt.Errorf("send failed: %v (%d bytes from %s)", r.Status, len(payload), source)
 		}
 		publishedSeq = r.Seq
+		// What went out, before this blocks for an answer. stdout here is the
+		// REPLY stream (JSON-Lines), so the summary goes to stderr the way
+		// `session send`'s does — and it has to be printed BEFORE the wait,
+		// because a body that went out empty or truncated otherwise shows up
+		// only as a timeout minutes later, which names nothing.
+		fmt.Fprintf(os.Stderr, "agent dispatch: published %d bytes from %s as seq %d, delivered_to %d\n",
+			len(payload), source, r.Seq, r.DeliveredTo)
 	case <-ctx.Done():
 		return ctx.Err()
 	}

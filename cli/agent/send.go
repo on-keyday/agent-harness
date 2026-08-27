@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"strings"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -44,31 +43,9 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		return err
 	}
 
-	dataSet := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "data" {
-			dataSet = true
-		}
-	})
-
-	var payload []byte
-	switch {
-	case dataSet && *data != "-":
-		// explicit literal payload via --data
-		payload = []byte(*data)
-	case !dataSet && fs.NArg() > 0:
-		// payload given as positional argument(s), joined ssh-style. This matches
-		// the common `cmd <payload>` instinct so a forgotten --data doesn't
-		// silently send an empty body (we used to ignore positionals entirely and
-		// fall through to reading stdin).
-		payload = []byte(strings.Join(fs.Args(), " "))
-	default:
-		// explicit `--data -`, or neither --data nor a positional given: read stdin.
-		b, err := io.ReadAll(stdin)
-		if err != nil {
-			return err
-		}
-		payload = b
+	payload, source, err := resolvePayload(fs, *data, stdin)
+	if err != nil {
+		return err
 	}
 
 	if err := refuseIfOwnTicket(payload); err != nil {
@@ -163,7 +140,7 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		// sender nothing about what to do differently.
 		select {
 		case resp := <-respCh:
-			return sendResult(resp, *inReplyTo, stdout)
+			return sendResult(resp, *inReplyTo, len(payload), source, stdout)
 		case <-time.After(payloadErrGrace):
 			return fmt.Errorf("agent: payload stream write: %w", writeErr)
 		case <-ctx.Done():
@@ -173,7 +150,7 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 
 	select {
 	case resp := <-respCh:
-		return sendResult(resp, *inReplyTo, stdout)
+		return sendResult(resp, *inReplyTo, len(payload), source, stdout)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -184,22 +161,32 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 const payloadErrGrace = 2 * time.Second
 
 // sendResult renders a SendResponse: the ok line on stdout, or the error the
-// status stands for.
-func sendResult(resp agentboard.SendResponse, inReplyTo uint64, stdout io.Writer) error {
+// status stands for. n and source describe the body that was published.
+func sendResult(resp agentboard.SendResponse, inReplyTo uint64, n int, source string, stdout io.Writer) error {
 	if resp.Status == agentboard.SendStatus_UnknownInReplyTo {
 		return fmt.Errorf("send rejected: --in-reply-to %d is not on the board "+
 			"(evicted past the topic's ring or TTL, or purged). "+
 			"Drop --in-reply-to to send this as an ordinary message", inReplyTo)
 	}
 	if resp.Status != agentboard.SendStatus_Ok {
-		return fmt.Errorf("send rejected: %v", resp.Status)
+		// The size belongs on the rejection too: PayloadTooLarge is the status
+		// whose only remedy is splitting the body, and the sender cannot pick a
+		// split without knowing what it just tried to publish.
+		return fmt.Errorf("send rejected: %v (%d bytes from %s)", resp.Status, n, source)
 	}
 	// delivered_to is the point of the line for a sender debugging silence:
 	// status ok with 0 means the topic exists but nobody holds it (typo'd or
 	// stale chat.<short-id> is the usual cause), which is otherwise
 	// indistinguishable from a delivered send.
+	//
+	// bytes and source answer the question one step earlier: whether what went
+	// out is what the caller meant to send. A shell that swallowed the pipe, a
+	// heredoc that expanded to nothing, `--data -` typed as a positional — all
+	// of them publish successfully, and until the count was on this line the
+	// only way to notice was to go read the message back.
 	out, _ := json.Marshal(map[string]any{
 		"seq": resp.Seq, "status": "ok", "delivered_to": resp.DeliveredTo,
+		"bytes": n, "source": source,
 	})
 	fmt.Fprintln(stdout, string(out))
 	return nil
