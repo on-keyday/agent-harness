@@ -77,7 +77,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		fs := flag.NewFlagSet("git log", flag.ExitOnError)
 		max := fs.Uint("max", 0, "maximum commits (0 = 100, capped at 1000)")
 		common := gitCommonFlags(fs, false)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}
@@ -98,7 +98,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		fs.BoolVar(staged, "cached", false, "alias for --staged")
 		maxBytes := fs.Uint("max-bytes", 0, "maximum diff bytes (0 = 2MiB, capped at 8MiB)")
 		common := gitCommonFlags(fs, true)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}
@@ -131,7 +131,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		fs := flag.NewFlagSet("git show", flag.ExitOnError)
 		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
 		common := gitCommonFlags(fs, true)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}
@@ -149,7 +149,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 	case "status":
 		fs := flag.NewFlagSet("git status", flag.ExitOnError)
 		common := gitCommonFlags(fs, false)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		rev := fs.String("rev", "", "the blob at this revision instead of the file on disk")
 		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
 		common := gitCommonFlags(fs, false)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}
@@ -196,7 +196,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 	case "subrepos":
 		fs := flag.NewFlagSet("git subrepos", flag.ExitOnError)
 		common := gitCommonFlags(fs, false)
-		pos, err := parsePermuted(fs, rest)
+		pos, err := cli.ParsePermuted(fs, rest)
 		if err != nil {
 			return err
 		}

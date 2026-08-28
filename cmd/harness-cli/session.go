@@ -190,7 +190,7 @@ func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
 	message := fs.String("message", "", "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result — operator-authored text entering a model's context, not a private note")
 	suggestion := fs.Int("suggestion", -1, "accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop asking for this tool), not an answer to this one call")
 	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
-	pos, err := parsePermuted(fs, args)
+	pos, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ task log's rendering drops it).`)
 func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb string) error {
 	fs := flag.NewFlagSet("session stream "+verb, flag.ExitOnError)
 	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
-	pos, err := parsePermuted(fs, args)
+	pos, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb strin
 // Read-only; Ctrl+C detaches and the task keeps running.
 func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
 	fs := flag.NewFlagSet("session stream attach", flag.ExitOnError)
-	pos, err := parsePermuted(fs, args)
+	pos, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -280,32 +280,6 @@ func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
 	defer c.Close()
 
 	return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
-}
-
-// parsePermuted parses fs but tolerates flags appearing after positional args.
-// Go's stdlib flag stops at the first non-flag token, so `cmd <id> --flag` would
-// otherwise silently drop --flag (it lands in fs.Args() and is ignored). We peel
-// positionals one at a time and re-parse the remainder, making flag position
-// irrelevant — the model can write the flag before or after the id and it works.
-//
-// Use this ONLY for commands whose positionals can never begin with '-' (e.g. a
-// hex task id). For free-form text positionals, keep flags strictly before the
-// positional instead: a '-'-leading word is indistinguishable from a flag, and a
-// '--' terminator would not survive the peel loop.
-func parsePermuted(fs *flag.FlagSet, args []string) ([]string, error) {
-	var positionals []string
-	for len(args) > 0 {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		rest := fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-		positionals = append(positionals, rest[0])
-		args = rest[1:]
-	}
-	return positionals, nil
 }
 
 // runSessionSnapshot view-attaches to a detachable session and prints its
@@ -325,7 +299,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
 	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
 	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
-	pos, err := parsePermuted(fs, args)
+	pos, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -746,7 +720,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 	fs := flag.NewFlagSet("session attach", flag.ExitOnError)
 	view := fs.Bool("view", false, "attach in view-only mode (output only; your input is discarded by the server)")
-	pos, err := parsePermuted(fs, args)
+	pos, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -1105,7 +1079,7 @@ func runSessionAwaitIdle(cid objproto.ConnectionID, args []string) error {
 	notify := fs.Bool("notify", false, "fire as an operator notification instead of long-polling")
 	topic := fs.String("topic", "", "fire as an agentboard message to this topic instead of long-polling")
 	// Positional is a hex task id (never '-'-leading), so flag position is free.
-	pargs, err := parsePermuted(fs, args)
+	pargs, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
@@ -1210,7 +1184,7 @@ func runSessionResize(cid objproto.ConnectionID, args []string) error {
 	spec := fs.String("size", "", "new PTY size as ROWSxCOLS (e.g. 40x150)")
 	waitMs := fs.Uint("wait-ms", 2000, "ms to wait for the server to echo the new size back — that echo is the acknowledgement")
 	quiet := fs.Bool("quiet", false, "suppress the one-line result on stderr")
-	pargs, err := parsePermuted(fs, args)
+	pargs, err := cli.ParsePermuted(fs, args)
 	if err != nil {
 		return err
 	}

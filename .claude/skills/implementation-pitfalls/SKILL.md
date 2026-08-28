@@ -395,6 +395,51 @@ disjoint to `grep`. Do not truncate the dump. A locator miss is not absence
 
 ---
 
+## Pitfall 13 — Verification one layer below the defect reads as verification
+
+**What went wrong (2026-08-28)**: `board retract` shipped with unit tests, an
+in-process E2E against a real server, a `surface-parity-checklist` walk, and
+`wire-skew-check.sh`. The operator's first live command — `board retract
+<topic> --seq N`, the exact string the usage line prints — did nothing: Go's
+`flag` stops at the first non-flag token, so `--seq` was never read. The same
+shape had been in `board purge` all along, where the unread flag's zero value
+means *the whole topic*: **two messages on a live board, one named, both
+destroyed**, `purged:2` the only sign. `board read --in-reply-to`, `server
+dial-runner --via`, `logs -f`, `prune --force`, all four `file` verbs and
+`agent read/retract --server-cid` were the same shape.
+
+**Why it slipped**: every test called the CLIENT method
+(`c.BoardRetract(ctx, topic, seq)`), which is one layer BELOW argv parsing. The
+defect lives between the operator's command line and that call, and nothing in
+the suite crossed it. The wall of green then answered the question "am I
+verified?" — so the dummy-harness check, which takes ~60 s and would have
+caught it on the first command, was priced against a conclusion already formed.
+`wire-skew-check.sh` even boots real server and runner processes, which makes
+"I tested against running binaries" feel true while the CLI's own parser stays
+unexecuted.
+
+**Mitigation — mechanical, not a reminder** (`cli/flagorder_test.go`): a
+`go/ast` scan that fails when a verb's `FlagSet` defines flags, reads
+positionals, AND parses with stdlib `Parse`. Every verb must use
+`cli.ParsePermuted` or sit in `flagsMustPrecedePositionals` with a written
+reason (the free-form-text verbs: `session send` / `exec` / `stream turn`,
+`notify`). It went red on 11 sites before the fixes — that IS the negative
+control.
+
+**Mitigation — when the dummy-harness trigger should fire.** "Before claiming
+done" is phase-keyed and loses to a green suite. Use a property instead:
+
+> Does this diff touch a path that only an argv, a keystroke or a browser click
+> reaches — a flag parser, a key dispatcher, a button handler? A Go test cannot
+> execute those. If yes, run the documented command line once against
+> `scripts/dummy-harness.sh`, in the exact spelling the help text prints.
+
+The general form, which is the part worth carrying to other layers: **name the
+layer your tests enter at, and the layer the operator enters at. Everything
+between them is untested by construction.**
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:

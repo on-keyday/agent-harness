@@ -119,13 +119,18 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 	case "read":
 		fs := flag.NewFlagSet("board read", flag.ContinueOnError)
 		inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq")
-		if err := fs.Parse(rest); err != nil {
+		// Permuted: the usage line is `read <topic> [--in-reply-to N]`, and
+		// stdlib parsing stops at <topic>, so the flag the help text puts after
+		// it would never be read. See ParsePermuted — topic names cannot begin
+		// with '-', which is what makes the peel safe here.
+		pos, err := ParsePermuted(fs, rest)
+		if err != nil {
 			return err
 		}
-		if fs.NArg() == 0 {
+		if len(pos) == 0 {
 			return fmt.Errorf("board read: missing <topic>")
 		}
-		topic := fs.Arg(0)
+		topic := pos[0]
 		msgs, found, err := BoardRead(ctx, cid, topic)
 		if err != nil {
 			return err
@@ -235,10 +240,10 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 	case "retract":
 		fs := flag.NewFlagSet("board retract", flag.ContinueOnError)
 		seq := fs.Uint64("seq", 0, "the retained message to withdraw (required)")
-		if err := fs.Parse(rest); err != nil {
+		rargs, err := ParsePermuted(fs, rest)
+		if err != nil {
 			return err
 		}
-		rargs := fs.Args()
 		if len(rargs) == 0 {
 			return fmt.Errorf("board retract: missing <topic>")
 		}
@@ -264,10 +269,16 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 	case "purge":
 		fs := flag.NewFlagSet("board purge", flag.ContinueOnError)
 		seq := fs.Uint64("seq", 0, "drop only the retained message with this seq (0 = whole topic)")
-		if err := fs.Parse(rest); err != nil {
+		// Permuted, and here it is load-bearing rather than a convenience: with
+		// stdlib parsing `board purge <topic> --seq N` — the form the usage line
+		// prints — left --seq unread and fell through to seq 0, which is the
+		// WHOLE TOPIC. The operator asked to drop one message and the ring went.
+		// Measured on a live board 2026-08-28: two messages, one named, both
+		// destroyed, `purged:2` the only sign.
+		pargs, err := ParsePermuted(fs, rest)
+		if err != nil {
 			return err
 		}
-		pargs := fs.Args()
 		if len(pargs) == 0 {
 			return fmt.Errorf("board purge: missing <topic>")
 		}

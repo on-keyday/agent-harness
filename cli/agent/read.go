@@ -11,6 +11,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli"
 )
 
 // Read is the entry for `harness-cli agent read <seq>`: one retained message,
@@ -24,15 +25,19 @@ import (
 func Read(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent read", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Permuted: --server-cid after the seq would otherwise be read as a
+	// positional and silently ignored. A seq is decimal, so it can never look
+	// like a flag (see cli.ParsePermuted).
+	pos, perr := cli.ParsePermuted(fs, args)
+	if perr != nil {
+		return perr
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		return errors.New("usage: agent read <seq>")
 	}
-	seq, perr := strconv.ParseUint(fs.Arg(0), 10, 64)
+	seq, perr := strconv.ParseUint(pos[0], 10, 64)
 	if perr != nil || seq == 0 {
-		return fmt.Errorf("seq must be a positive integer, got %q", fs.Arg(0))
+		return fmt.Errorf("seq must be a positive integer, got %q", pos[0])
 	}
 
 	conn, cerr := ConnectAgent(ctx, Flags{ServerCID: *serverCID})

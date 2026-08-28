@@ -341,8 +341,10 @@ func main() {
 		before := fs.Duration("before", 7*24*time.Hour, "forget terminal tasks older than this (ignored when TASK_IDs are passed)")
 		force := fs.Bool("force", false, "with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)")
 		fs.BoolVar(force, "f", false, "shorthand for --force")
-		fs.Parse(args)
-		taskIDs := fs.Args()
+		taskIDs, perr := cli.ParsePermuted(fs, args)
+		if perr != nil {
+			die(perr)
+		}
 		if err := cli.Prune(ctx, parseCID(), *before, taskIDs, *force, os.Stdout); err != nil {
 			die(err)
 		}
@@ -353,7 +355,10 @@ func main() {
 		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this (ignored when TASK_IDs are passed)")
 		force := fs.Bool("force", false, "with TASK_IDs: remove even when the server still considers the task active (Queued/Running/Detached)")
 		fs.BoolVar(force, "f", false, "shorthand for --force")
-		fs.Parse(args)
+		taskIDs, perr := cli.ParsePermuted(fs, args)
+		if perr != nil {
+			die(perr)
+		}
 		repoVal := *repo
 		if repoVal == "." {
 			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
@@ -366,7 +371,6 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		taskIDs := fs.Args()
 		if len(taskIDs) == 0 {
 			if err := cli.PruneLocal(ctx, abs, *before, nil, os.Stdout); err != nil {
 				die(err)
@@ -389,8 +393,10 @@ func main() {
 		fs := flag.NewFlagSet("logs", flag.ExitOnError)
 		follow := fs.Bool("follow", false, "after dumping history, keep streaming live log chunks (no-op when task is terminal)")
 		fs.BoolVar(follow, "f", false, "shorthand for --follow")
-		fs.Parse(args)
-		rest := fs.Args()
+		rest, perr := cli.ParsePermuted(fs, args)
+		if perr != nil {
+			die(perr)
+		}
 		if len(rest) == 0 {
 			fmt.Fprintln(os.Stderr, "logs: missing task id")
 			os.Exit(2)
@@ -477,8 +483,10 @@ func main() {
 			fs.BoolVar(force, "f", false, "alias for --force")
 			parents := fs.Bool("parents", false, "create missing parent directories of the destination (mkdir -p)")
 			fs.BoolVar(parents, "p", false, "alias for --parents")
-			fs.Parse(rest)
-			pargs := fs.Args()
+			pargs, perr := cli.ParsePermuted(fs, rest)
+			if perr != nil {
+				die(perr)
+			}
 			if len(pargs) != 3 {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file push [-r] [-f] [-p] <task-id> <local-src> <worktree-rel-dst>")
 				os.Exit(2)
@@ -501,8 +509,10 @@ func main() {
 			fs.BoolVar(force, "f", false, "alias for --force")
 			offset := fs.Uint64("offset", 0, "first byte to pull (single-file pull only)")
 			length := fs.Uint64("length", 0, "max bytes to pull; 0 = to end of file")
-			fs.Parse(rest)
-			pargs := fs.Args()
+			pargs, perr := cli.ParsePermuted(fs, rest)
+			if perr != nil {
+				die(perr)
+			}
 			if len(pargs) != 3 {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull [-r] [-f] [--offset N] [--length N] <task-id> <worktree-rel-src> <local-dst>")
 				os.Exit(2)
@@ -540,8 +550,10 @@ func main() {
 			fs := flag.NewFlagSet("file mkdir", flag.ExitOnError)
 			parents := fs.Bool("parents", false, "create missing parent directories (mkdir -p); also makes an existing directory a success")
 			fs.BoolVar(parents, "p", false, "alias for --parents")
-			fs.Parse(rest)
-			pargs := fs.Args()
+			pargs, perr := cli.ParsePermuted(fs, rest)
+			if perr != nil {
+				die(perr)
+			}
 			if len(pargs) != 2 {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file mkdir [-p] <task-id> <worktree-rel-dir>")
 				os.Exit(2)
@@ -571,8 +583,10 @@ func main() {
 			fs.BoolVar(recursive, "r", false, "alias for --recursive")
 			force := fs.Bool("force", false, "with -r: delete non-empty directory contents recursively (os.RemoveAll). Ignored without -r.")
 			fs.BoolVar(force, "f", false, "alias for --force")
-			fs.Parse(rest)
-			pargs := fs.Args()
+			pargs, perr := cli.ParsePermuted(fs, rest)
+			if perr != nil {
+				die(perr)
+			}
 			if len(pargs) != 2 {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file delete [-r [-f]] <task-id> <worktree-rel-path>")
 				os.Exit(2)
@@ -833,14 +847,15 @@ func main() {
 		case "dial-runner":
 			fs := flag.NewFlagSet("server dial-runner", flag.ExitOnError)
 			viaCIDStr := fs.String("via", "", "relay through this registered runner CID (copy from `harness-cli ls` output)")
-			if err := fs.Parse(rest); err != nil {
-				die(err)
+			dpos, derr := cli.ParsePermuted(fs, rest)
+			if derr != nil {
+				die(derr)
 			}
-			if fs.NArg() != 1 {
+			if len(dpos) != 1 {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner [--via <runner-cid>] <runner-cid>")
 				os.Exit(2)
 			}
-			targetCID, err := objproto.ParseConnectionID(fs.Arg(0),
+			targetCID, err := objproto.ParseConnectionID(dpos[0],
 				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 			if err != nil {
 				die(fmt.Errorf("parse runner-cid: %w", err))
@@ -1337,16 +1352,11 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 	// argument, so `caps set <id> --caps X` would silently leave --caps unset
 	// with the id in front. Re-parsing after each positional accepts either
 	// order, which is what anyone types.
-	var positional []string
-	for rest := args; ; {
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
-		}
-		if fs.NArg() == 0 {
-			break
-		}
-		positional = append(positional, fs.Arg(0))
-		rest = fs.Args()[1:]
+	// One implementation of the peel, shared with every other verb that takes a
+	// hex id and flags in either order — this used to be a copy of it.
+	positional, perr := cli.ParsePermuted(fs, args)
+	if perr != nil {
+		os.Exit(2)
 	}
 
 	if len(positional) != 1 {
@@ -1400,16 +1410,11 @@ func runCapsSetParent(ctx context.Context, serverCID objproto.ConnectionID, args
 	// Interspersed parse, same as runCapsSet: Go's flag package stops at the
 	// first non-flag argument, so `caps set-parent <id> --swap` would silently
 	// leave --swap unset with the id in front.
-	var positional []string
-	for rest := args; ; {
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
-		}
-		if fs.NArg() == 0 {
-			break
-		}
-		positional = append(positional, fs.Arg(0))
-		rest = fs.Args()[1:]
+	// One implementation of the peel, shared with every other verb that takes a
+	// hex id and flags in either order — this used to be a copy of it.
+	positional, perr := cli.ParsePermuted(fs, args)
+	if perr != nil {
+		os.Exit(2)
 	}
 
 	usage := func() {

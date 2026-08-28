@@ -3,8 +3,11 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +30,7 @@ func (e *operatorE2E) Board() *agentboard.Board { return e.board }
 
 // startOperatorServerE2E starts an in-process server with a Board on a free
 // port. It returns (wrapper, dialableCID) where the CID is suitable for
-// cli.Dial(ctx, peerCID, protocol.ClientKind_Cli). Both the server and board
+// Dial(ctx, peerCID, protocol.ClientKind_Cli). Both the server and board
 // are stopped via t.Cleanup.
 //
 // This helper also clears the harness agent env vars (HARNESS_RUNNER_ID,
@@ -304,4 +307,84 @@ func TestClientBoard_Retract(t *testing.T) {
 	if purged, ok, err := c.BoardPurge(ctx, "chat.w", seq); err != nil || !ok || purged != 1 {
 		t.Errorf("purge after retract = (%d, found=%v, err=%v), want (1, true, nil)", purged, ok, err)
 	}
+}
+
+// TestRunBoardSubcmd_FlagsAfterTopic pins the argument ORDER the usage lines
+// print. Go's stdlib flag stops at the first non-flag token, so `board purge
+// <topic> --seq N` left --seq unread and fell through to seq 0 — the whole
+// topic — destroying the ring it was asked to take one message from. Measured
+// on a live board before the fix: two messages, one named, `purged:2`.
+//
+// It runs through RunBoardSubcmd rather than calling the client, because the
+// defect was in the parsing between the two and nothing below it could see it.
+func TestRunBoardSubcmd_FlagsAfterTopic(t *testing.T) {
+	srv, peerCID := startOperatorServerE2E(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	seed := func(topic string, n int) []uint64 {
+		t.Helper()
+		var seqs []uint64
+		for i := 0; i < n; i++ {
+			s, _, err := srv.Board().Send(topic, []byte("x"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seqs = append(seqs, s)
+		}
+		return seqs
+	}
+
+	t.Run("purge --seq after the topic takes ONE message", func(t *testing.T) {
+		seqs := seed("chat.order.purge", 2)
+		var out bytes.Buffer
+		if err := cli.RunBoardSubcmd(ctx, peerCID, "purge",
+			[]string{"chat.order.purge", "--seq", strconv.FormatUint(seqs[0], 10)}, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), `"purged":1`) {
+			t.Errorf("purged the wrong number of messages: %s", out.String())
+		}
+		left, found := srv.Board().ListRetained("chat.order.purge")
+		if !found || len(left) != 1 || left[0].Seq != seqs[1] {
+			t.Errorf("ring = %d message(s), found=%v — want the one that was not named", len(left), found)
+		}
+	})
+
+	t.Run("retract --seq after the topic is read", func(t *testing.T) {
+		seqs := seed("chat.order.retract", 2)
+		var out bytes.Buffer
+		if err := cli.RunBoardSubcmd(ctx, peerCID, "retract",
+			[]string{"chat.order.retract", "--seq", strconv.FormatUint(seqs[0], 10)}, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), `"status":"ok"`) {
+			t.Errorf("retract answered %s — the flag after the topic went unread", out.String())
+		}
+		left, _ := srv.Board().ListRetained("chat.order.retract")
+		if len(left) != 1 || left[0].Seq != seqs[1] {
+			t.Errorf("live ring = %d message(s), want only the one that was not named", len(left))
+		}
+	})
+
+	t.Run("read --in-reply-to after the topic filters", func(t *testing.T) {
+		parent := seed("chat.order.read", 1)[0]
+		if _, _, err := srv.Board().Send("chat.order.read", []byte("answer"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", parent); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := cli.RunBoardSubcmd(ctx, peerCID, "read",
+			[]string{"chat.order.read", "--in-reply-to", strconv.FormatUint(parent, 10)}, &out); err != nil {
+			t.Fatal(err)
+		}
+		// Row headers are `#<seq> …`, so anchor on the header rather than on the
+		// bare number: the reply row legitimately CONTAINS the parent's seq in
+		// its `re=` field.
+		if strings.Contains(out.String(), "#"+strconv.FormatUint(parent, 10)+" ") {
+			t.Errorf("the filter went unread — the parent row is still printed:\n%s", out.String())
+		}
+		if !strings.Contains(out.String(), "answer") {
+			t.Errorf("the reply row is missing:\n%s", out.String())
+		}
+	})
 }
