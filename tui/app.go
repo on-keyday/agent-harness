@@ -682,6 +682,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, DoBoardRead(a.client, msg.Topic)
 
+	case BoardRetractMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("retract: " + msg.Err.Error())
+			return a, nil
+		}
+		if !msg.Found {
+			a.boardModal.SetStatus("retract: not found")
+			return a, nil
+		}
+		a.boardModal.SetStatus(fmt.Sprintf("retracted #%d (still readable here)", msg.Seq))
+		// Re-read rather than edit the local copy: the message stays in this
+		// view, moved to the withdrawn list, and only the server knows what it
+		// looks like now.
+		return a, DoBoardRead(a.client, msg.Topic)
+
 	case LogChunkMsg:
 		if msg.TaskID == a.logs.TaskID() {
 			a.logs.Append(msg.Chunk)
@@ -1404,6 +1419,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					seq := a.boardModal.SelectedMsgSeq()
 					if seq != 0 {
 						return a, DoBoardPurge(a.client, a.boardModal.CurTopic(), seq)
+					}
+					return a, nil
+				case modalKeys.BoardRetractMsg:
+					seq := a.boardModal.SelectedMsgSeq()
+					if seq != 0 {
+						return a, DoBoardRetract(a.client, a.boardModal.CurTopic(), seq)
 					}
 					return a, nil
 				case modalKeys.BoardRefresh:

@@ -548,8 +548,9 @@ func WithReplyTo(topic string) SendOption {
 	return func(c *sendConfig) { c.replyToTopic = topic }
 }
 
-// ListRetracted returns the topic's withdrawn messages — the ones an author
-// retracted. found reports whether the topic exists.
+// ListRetracted returns the topic's withdrawn messages — whether their author
+// retracted them or a purge-capable caller did. found reports whether the topic
+// exists.
 //
 // It is a separate call from ListRetained rather than a flag on it because the
 // board is the storage layer and deciding who may see a message is a
@@ -612,6 +613,39 @@ func (b *Board) RetractSeq(seq uint64, by protocol.TaskID) (topicName string, ok
 		}
 	}
 	return "", false
+}
+
+// ForceRetractSeq withdraws a message from a NAMED topic without the authorship
+// match: the caller proved Capability_Purge instead. `by` is that caller,
+// recorded on the withdrawn entry; the zero value is legitimate here and means
+// an operator client, which holds its capabilities directly and has no
+// principal task.
+//
+// The capability is checked by the server, not here — the board is the storage
+// layer. That bit already authorizes PurgeSeq on the same message, which
+// destroys it outright, so this reaches nothing purge cannot and leaves more
+// behind: the payload stays readable on the operator surfaces for the topic's
+// normal retention window.
+//
+// found reports whether the topic existed, retracted whether a live message
+// with that seq was there to move; seq 0 is never a real message and answers
+// (false, found). The handler collapses all of it into not_found, for the
+// reason spelled out on RetractSeq.
+//
+// It takes a topic name instead of scanning every ring like RetractSeq: the
+// caller reached this seq through board_read, which is per-topic, so a scan
+// would be work spent rediscovering something the caller already knows.
+func (b *Board) ForceRetractSeq(name string, seq uint64, by protocol.TaskID) (retracted, found bool) {
+	b.mu.Lock()
+	t, ok := b.topics[name]
+	b.mu.Unlock()
+	if !ok {
+		return false, false
+	}
+	if seq == 0 {
+		return false, true
+	}
+	return t.forceRetract(seq, by, time.Now()), true
 }
 
 // LookupSeq resolves a published seq to the topic whose ring still retains it

@@ -50,6 +50,18 @@ type BoardPurgeMsg struct {
 	Err    error
 }
 
+// BoardRetractMsg carries the result of DoBoardRetract. Seq is always non-zero:
+// there is no whole-topic retract, so unlike BoardPurgeMsg this message never
+// stands for a topic-wide operation. Found=false when the topic, the seq, or a
+// live message with that seq does not exist — the server does not tell those
+// apart.
+type BoardRetractMsg struct {
+	Topic string
+	Seq   uint64
+	Found bool
+	Err   error
+}
+
 // ---- tea.Cmd factories (mirroring DoConnSnapshot in conns.go) ----
 
 // DoBoardTopics fetches all agentboard topics via the long-lived client.
@@ -121,6 +133,19 @@ func DoBoardPurge(c *cli.Client, topic string, seq uint64) tea.Cmd {
 		defer cancel()
 		purged, found, err := c.BoardPurge(ctx, topic, seq)
 		return BoardPurgeMsg{Topic: topic, Seq: seq, Purged: purged, Found: found, Err: err}
+	}
+}
+
+// DoBoardRetract withdraws one message via the long-lived client: it leaves
+// every agent-facing path and stays in this view, marked, until the topic ages
+// out. Mirrors DoBoardPurge — same client, same timeout; what differs is what
+// survives.
+func DoBoardRetract(c *cli.Client, topic string, seq uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		found, err := c.BoardRetract(ctx, topic, seq)
+		return BoardRetractMsg{Topic: topic, Seq: seq, Found: found, Err: err}
 	}
 }
 
@@ -439,8 +464,12 @@ func (m *BoardModal) updateContentFromCursor() {
 	// the operator auditing what was said.
 	retracted := ""
 	if msg.Retracted {
-		retracted = fmt.Sprintf("  RETRACTED at=%s",
-			time.UnixMilli(int64(msg.RetractedAtMs)).UTC().Format(time.RFC3339))
+		// by= rides with the marker for the reason the CLI prints it too: two
+		// verbs can withdraw a message now, and a bare RETRACTED would read as
+		// the author having done it whoever did.
+		retracted = fmt.Sprintf("  RETRACTED at=%s by=%s",
+			time.UnixMilli(int64(msg.RetractedAtMs)).UTC().Format(time.RFC3339),
+			cli.RetractedByLabel(msg))
 	}
 	// Same rule as re= : only a sender that declared a reply destination gets
 	// this. It is the only view that shows where an answer to this message
@@ -538,7 +567,7 @@ func (m BoardModal) View() string {
 			// hiding it here would hand the operator the same blank the agents
 			// see, which is the opposite of the point.
 			if msg.Retracted {
-				line = MutedStyle.Render(line + "  RETRACTED")
+				line = MutedStyle.Render(line + "  RETRACTED by=" + cli.RetractedByLabel(msg))
 			}
 			msgList.WriteString(line + "\n")
 		}
@@ -546,7 +575,7 @@ func (m BoardModal) View() string {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
-		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · X: purge msg  r: re-read  Esc: back")
+		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · w: retract msg  X: purge msg  r: re-read  Esc: back")
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 
 	case boardSubscribers:

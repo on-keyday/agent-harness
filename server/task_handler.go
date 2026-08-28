@@ -610,6 +610,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_purge variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_BoardRetract:
+		if r := req.BoardRetract(); r != nil {
+			// The caller's principal is read from the CONNECTION, never from the
+			// request: it is recorded on the withdrawn message as who withdrew
+			// it, and a caller that could name itself could blame another task
+			// for its own retract. An operator client has no principal task, so
+			// this is the zero id — see BoardMessageRow.retracted_by_task.
+			h.handleBoardRetract(conn, req.RequestId, string(r.Topic), r.Seq, h.lookupPrincipal(cid))
+		} else {
+			slog.Error("board_retract variant is nil", "request_id", req.RequestId)
+		}
+
 	case protocol.TaskControlKind_BoardSubscribers:
 		var topic string
 		if bs := req.BoardSubscribers(); bs != nil {

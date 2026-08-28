@@ -34,10 +34,19 @@ type RetainedMessage struct {
 	// entry, and a reply may arrive long after that connection is gone.
 	ReplyToTopic string
 	ReceivedAt   time.Time
-	// RetractedAt is when the message's AUTHOR withdrew it, zero while it is
-	// live. Set only on entries in topic.retracted — an entry in the live ring
-	// always carries the zero value.
+	// RetractedAt is when the message was withdrawn, zero while it is live. Set
+	// only on entries in topic.retracted — an entry in the live ring always
+	// carries the zero value.
 	RetractedAt time.Time
+	// RetractedBy names which authority check withdrew it: authorship
+	// (RetractSeq) or Capability_Purge (ForceRetractSeq). RetractedByTask is
+	// the caller, equal to FromTask on the authorship path and zero when the
+	// caller had no principal task at all — an operator client holds its
+	// capabilities directly rather than through a task. Both are meaningful
+	// only alongside a non-zero RetractedAt; on a live entry they are the zero
+	// value because nothing withdrew it, not because an author did.
+	RetractedBy     protocol.RetractedBy
+	RetractedByTask protocol.TaskID
 	// NoRetireOnReply carries SendRequest.no_retire_on_reply: the author asked
 	// that answering this message must NOT withdraw it. Negative, so the zero
 	// value is the default (a reply does retire it). The rule itself lives in
@@ -140,17 +149,47 @@ func (t *topic) retract(seq uint64, by protocol.TaskID, now time.Time) bool {
 		if t.ring[i].FromTask.Id != by.Id {
 			return false
 		}
-		m := t.ring[i]
-		m.RetractedAt = now
-		t.ring = append(t.ring[:i], t.ring[i+1:]...)
-		if len(t.retracted) == t.cap {
-			copy(t.retracted, t.retracted[1:])
-			t.retracted = t.retracted[:t.cap-1]
-		}
-		t.retracted = append(t.retracted, m)
+		t.withdrawLocked(i, now, protocol.RetractedBy_Author, by)
 		return true
 	}
 	return false
+}
+
+// forceRetract is retract without the authorship match: the caller proved
+// Capability_Purge instead of authorship, so it may withdraw a message it did
+// not write. Same move, same effect on every agent-facing read; the difference
+// is recorded on the withdrawn entry rather than left to be inferred.
+//
+// A zero `by` is accepted here and refused by retract, and the asymmetry is the
+// point: on the authorship path a zero id would be a match against nobody,
+// while here it is the honest identity of an operator client, which holds
+// capabilities directly and has no principal task.
+func (t *topic) forceRetract(seq uint64, by protocol.TaskID, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range t.ring {
+		if t.ring[i].Seq != seq {
+			continue
+		}
+		t.withdrawLocked(i, now, protocol.RetractedBy_PurgeCap, by)
+		return true
+	}
+	return false
+}
+
+// withdrawLocked moves ring[i] to the withdrawn list, stamping who withdrew it
+// and how. Caller holds t.mu and has already decided that this entry may go.
+func (t *topic) withdrawLocked(i int, now time.Time, kind protocol.RetractedBy, by protocol.TaskID) {
+	m := t.ring[i]
+	m.RetractedAt = now
+	m.RetractedBy = kind
+	m.RetractedByTask = by
+	t.ring = append(t.ring[:i], t.ring[i+1:]...)
+	if len(t.retracted) == t.cap {
+		copy(t.retracted, t.retracted[1:])
+		t.retracted = t.retracted[:t.cap-1]
+	}
+	t.retracted = append(t.retracted, m)
 }
 
 // snapshotRetracted returns a copy of the withdrawn list in ascending seq

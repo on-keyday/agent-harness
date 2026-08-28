@@ -72,6 +72,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_BoardTopics:      noTarget,
 	protocol.TaskControlKind_BoardRead:        noTarget,
 	protocol.TaskControlKind_BoardPurge:       noTarget,
+	protocol.TaskControlKind_BoardRetract:     noTarget,
 	protocol.TaskControlKind_BoardSubscribers: noTarget,
 	// set_caps / set_parent name a target task but are operator-only by
 	// principal identity, which is strictly stronger than any scope: an
@@ -83,7 +84,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_ExecRunKill); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardRetract); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -98,12 +99,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// exec_run_kill is the last kind; if the enum grows past it the loop above
+// board_retract is the last kind; if the enum grows past it the loop above
 // stops short and silently covers nothing new.
-func TestExecRunKillIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ExecRunKill) + 1)
+func TestBoardRetractIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardRetract) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after exec_run_kill (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after board_retract (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
 	}
 }

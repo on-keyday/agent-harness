@@ -696,6 +696,20 @@ withdrawing in seconds cannot shrink the window a human has to audit it.
 `purge` remains capability-gated: it erases the bytes outright,
 including from that operator view.
 
+The operator withdraws somebody else's message with `board retract
+<topic> --seq N` (TUI board view: `w`; WebUI board panel: ⊘ on a
+message). It is the same move without the authorship check, gated on
+`purge` — no new bit, because that bit already reaches the same message
+through `board purge --seq N` and destroys it outright. This is the half
+that leaves the payload behind for reading: the agents lose it now, the
+operator keeps it until the topic ages out. `--seq` is required and
+purge's "seq 0 means the whole topic" shorthand is deliberately not
+inherited, so a mistyped flag costs one message rather than a
+conversation. Which check a withdrawal passed is on the row —
+`RETRACTED at=… by=author` against `by=purge_cap:<task-id|operator>` —
+because with two verbs able to withdraw, a bare marker would credit the
+author for what somebody else did.
+
 Usually nothing calls `retract` by hand: **replying to a message that was
 addressed to you withdraws it**, since the reply is proof it was handled.
 That only applies point-to-point (the message sat on the replier's own

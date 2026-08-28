@@ -325,6 +325,15 @@ enum TaskControlKind:
                             # with uncommitted work keeps it.
     exec_run_list           # enumerate running execs the caller can see
     exec_run_kill           # stop one running exec by id
+    board_retract           # withdraw ONE retained message (by seq) from every
+                            # agent-facing path while leaving it readable on the
+                            # operator surfaces. Requires purge — the same bit
+                            # board_purge takes, because anything it can reach,
+                            # purge can already reach and destroy outright; this
+                            # is the gentler half of that authority, not a new
+                            # one. Distinct from the agentboard RetractRequest,
+                            # which takes no capability and is gated on
+                            # authorship instead.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -796,6 +805,22 @@ format BoardReadRequest:
     topic_len :u16
     topic :[topic_len]u8
 
+# RetractedBy names WHICH authority check withdrew a message, because there are
+# now two and they answer different questions for a reader of the board.
+# Meaningful only on a row whose `retracted` bit is 1 — like
+# retracted_at_unix_ms, its zero on a live row is padding, not a claim that the
+# author withdrew anything.
+enum RetractedBy:
+    :u8
+    # The message's own sender withdrew it: agentboard RetractRequest, gated on
+    # authorship (agentboard/topic.go retract).
+    author    = 0, "author"
+    # A holder of Capability_Purge withdrew somebody else's message:
+    # TaskControlKind.board_retract. Not necessarily an operator — a task
+    # granted `purge` can do this too, which is why the value names the check
+    # that passed rather than a kind of caller.
+    purge_cap = 1, "purge_cap"
+
 format BoardMessageRow:
     seq :u64
     # See agentboard/agentboard.bgn SendRequest.in_reply_to — same value,
@@ -812,18 +837,25 @@ format BoardMessageRow:
     from_agent_profile :[from_agent_profile_len]u8
     received_at_unix_ms :u64
     size :u32
-    # retracted marks a message its AUTHOR withdrew (agentboard RetractRequest).
-    # A withdrawn message has left every agent-facing path (deliver / inbox /
-    # wait / read_seq / list_retained) and survives only here, so that an agent
-    # retracting in seconds cannot shrink the window a human has to audit what
-    # was said. It ages out with the topic like anything else — this is a
-    # logical delete, not a durable ledger.
-    #
-    # There is no retracted_by: only the author may retract, so it would always
-    # repeat from_task.
+    # retracted marks a withdrawn message. A withdrawn message has left every
+    # agent-facing path (deliver / inbox / wait / read_seq / list_retained) and
+    # survives only here, so that a retract in seconds cannot shrink the window
+    # a human has to audit what was said. It ages out with the topic like
+    # anything else — this is a logical delete, not a durable ledger.
     retracted :u1
     reserved  :u7
     retracted_at_unix_ms :u64   # 0 unless retracted is 1
+    # WHO withdrew it. Both fields are meaningless unless retracted is 1.
+    #
+    # retracted_by names the authority check that passed; retracted_by_task is
+    # the task that made the call, and equals from_task for an author retract.
+    # It is all-zero when the caller had no principal task at all — an operator
+    # client (cli/tui/webui) holds its capabilities directly, not through a
+    # task, so there is no id to report. Read it with the enum, never alone: a
+    # zero id under `purge_cap` means "an operator client", while a zero id
+    # under `author` is just a live row's padding.
+    retracted_by :RetractedBy
+    retracted_by_task :TaskID
     # reply_to_topic is where a reply to THIS message is routed — the
     # destination its SENDER declared. See agentboard/agentboard.bgn
     # SendRequest.reply_to_topic. Empty = none declared, so a reply goes to the
@@ -891,6 +923,25 @@ format BoardPurgeResponse:
     request_id :u32
     status :BoardStatus
     purged :u16
+
+# BoardRetractRequest withdraws ONE retained message. seq is required and must
+# be non-zero: purge's "seq 0 means the whole topic" shorthand is deliberately
+# NOT inherited, so that a mistyped command costs one message instead of a
+# topic. The topic is named rather than searched for because the caller reached
+# the seq through board_read, which is per-topic.
+format BoardRetractRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+    seq :u64
+
+# not_found covers all of: unknown topic, unknown seq, a seq already withdrawn,
+# and seq 0. They are one answer on purpose — the same collapse RetractStatus
+# makes in agentboard.bgn — so the reply cannot be used to probe what a topic
+# holds.
+format BoardRetractResponse:
+    request_id :u32
+    status :BoardStatus
 
 format OpenInteractiveRequest:
     repo_path_len :u16
@@ -1129,6 +1180,7 @@ format TaskControlRequest:
         TaskControlKind.open_exec_run         => open_exec_run         :ExecRunRequest
         TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListRequest
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillRequest
+        TaskControlKind.board_retract         => board_retract         :BoardRetractRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1181,6 +1233,7 @@ format TaskControlResponse:
         TaskControlKind.open_exec_run         => open_exec_run         :ExecRunResponse
         TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListResponse
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillResponse
+        TaskControlKind.board_retract         => board_retract         :BoardRetractResponse
 
 enum SetCapsStatus:
     :u8
@@ -1646,6 +1699,13 @@ enum Capability:
     # records, self-scoped/benign): purge drops LIVE retained messages on a
     # possibly-shared topic, so it can wipe another agent's unconsumed inbound
     # channel. Different blast radius → its own bit, default-off.
+    #
+    # It gates board_retract too, which withdraws ONE message from every
+    # agent-facing path while leaving it readable on the operator surfaces.
+    # That is strictly less than this bit already permits — purge reaches the
+    # same message and destroys the bytes — so it rides here rather than
+    # claiming a bit of its own. The consequence, stated because it is a real
+    # limit: "may withdraw but may not destroy" is not a grantable shape.
     purge          = 0x800, "purge"
     # exec_view / exec_cowrite are the two weaker attach powers, split out of
     # what exec_attach used to grant wholesale. Default-off and appended, so no

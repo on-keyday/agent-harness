@@ -240,3 +240,68 @@ func TestClientBoard_Subscribers(t *testing.T) {
 		t.Errorf("patterns = %v, want the task's full set", only[0].Patterns)
 	}
 }
+
+// TestClientBoard_Retract is the operator half of the withdraw path over a live
+// server: the message leaves the agent-facing ring, comes back on the operator
+// read carrying who took it, and the same seq answers not_found the second
+// time.
+func TestClientBoard_Retract(t *testing.T) {
+	srv, peerCID := startOperatorServerE2E(t)
+	var author protocol.TaskID
+	author.Id[0] = 0x7a
+	seq, _, err := srv.Board().Send("chat.w", []byte("inconvenient"), protocol.RunnerID{}, author, "h", "claude", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	found, err := c.BoardRetract(ctx, "chat.w", seq)
+	if err != nil || !found {
+		t.Fatalf("retract = (found=%v, err=%v), want (true, nil)", found, err)
+	}
+
+	// Agent-facing: gone. ListRetained is what every one of those paths reads.
+	if live, _ := srv.Board().ListRetained("chat.w"); len(live) != 0 {
+		t.Errorf("live ring still holds %d message(s)", len(live))
+	}
+
+	// Operator-facing: still there, payload and provenance included. The caller
+	// is an operator client with no principal task, so the recorded id is empty
+	// — and the row must still say purge_cap rather than crediting the author.
+	msgs, ok, err := c.BoardRead(ctx, "chat.w")
+	if err != nil || !ok || len(msgs) != 1 {
+		t.Fatalf("read = (%d msgs, found=%v, err=%v), want 1 msg", len(msgs), ok, err)
+	}
+	m := msgs[0]
+	if !m.Retracted || m.RetractedAtMs == 0 {
+		t.Errorf("row = (retracted=%v, at=%d), want a withdrawn row with a stamp", m.Retracted, m.RetractedAtMs)
+	}
+	if string(m.Payload) != "inconvenient" {
+		t.Errorf("payload = %q, want the original bytes", m.Payload)
+	}
+	if m.RetractedBy != protocol.RetractedBy_PurgeCap {
+		t.Errorf("retracted_by = %v, want purge_cap", m.RetractedBy)
+	}
+	if m.RetractedByTaskHex != "" {
+		t.Errorf("retracted_by_task = %q, want empty (an operator client has no principal task)", m.RetractedByTaskHex)
+	}
+	if got := cli.RetractedByLabel(m); got != "purge_cap:operator" {
+		t.Errorf("RetractedByLabel = %q, want purge_cap:operator", got)
+	}
+
+	// Idempotent and blind: the second attempt is the same "no" an unknown seq
+	// gets, and purge can still reach the bytes.
+	if found, err := c.BoardRetract(ctx, "chat.w", seq); err != nil || found {
+		t.Errorf("second retract = (found=%v, err=%v), want (false, nil)", found, err)
+	}
+	if purged, ok, err := c.BoardPurge(ctx, "chat.w", seq); err != nil || !ok || purged != 1 {
+		t.Errorf("purge after retract = (%d, found=%v, err=%v), want (1, true, nil)", purged, ok, err)
+	}
+}

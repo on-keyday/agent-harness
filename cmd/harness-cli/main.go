@@ -1093,8 +1093,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      one-shot: fire when the session's PTY output goes quiescent.")
 	fmt.Fprintln(os.Stderr, "                                      default long-polls; --notify/--topic arm a server-side sink and return")
 	fmt.Fprintln(os.Stderr, "  server dial-runner [--via CID] RUNNER_CID  ask the server to reverse-dial a Listen-mode runner")
-	fmt.Fprintln(os.Stderr, "  board topics|read <topic>|subscribers [topic]|purge <topic> [--seq N]")
-	fmt.Fprintln(os.Stderr, "                                      inspect/purge the agentboard (cap: info_global; purge: purge)")
+	fmt.Fprintln(os.Stderr, "  board topics|read <topic>|subscribers [topic]|retract <topic> --seq N|purge <topic> [--seq N]")
+	fmt.Fprintln(os.Stderr, "                                      inspect/withdraw/purge the agentboard (cap: info_global; retract and purge: purge)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] [-p|--parents] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
@@ -1188,7 +1188,11 @@ func boardUsage() {
 	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board with metadata (cap: info_global)")
 	fmt.Fprintln(os.Stderr, "  read <topic> [--in-reply-to N]      print retained messages for <topic> (JSON pretty-printed; not found = exit 0)")
 	fmt.Fprintln(os.Stderr, "  subscribers [topic]                 list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: info_global)")
-	fmt.Fprintln(os.Stderr, "  purge <topic> [--seq N]             drop the whole topic ring (seq=0) or one message by seq (cap: purge)")
+	fmt.Fprintln(os.Stderr, "  retract <topic> --seq N             withdraw one message: gone from every agent path, still readable here")
+	fmt.Fprintln(os.Stderr, "                                      until the topic ages out. --seq is required — there is no whole-topic")
+	fmt.Fprintln(os.Stderr, "                                      retract (cap: purge)")
+	fmt.Fprintln(os.Stderr, "  purge <topic> [--seq N]             drop the whole topic ring (seq=0) or one message by seq. Unlike retract")
+	fmt.Fprintln(os.Stderr, "                                      this destroys the bytes, operator view included (cap: purge)")
 }
 
 func agentUsage() {

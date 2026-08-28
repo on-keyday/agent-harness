@@ -208,3 +208,147 @@ func TestHandleBoardRead_CarriesReplyToTopic(t *testing.T) {
 		t.Errorf("undeclared row ReplyToTopic = %q, want empty", got)
 	}
 }
+
+// boardRetractResp reads the last response as a board_retract one. The
+// generated accessor is a pointer method, so the response has to be a variable
+// before it can be asked — the sibling tests above spell that out inline.
+func boardRetractResp(t *testing.T, conn *fakeConn) *protocol.BoardRetractResponse {
+	t.Helper()
+	resp := lastTaskControlResponse(t, conn)
+	return resp.BoardRetract()
+}
+
+// boardReadResp is the same for board_read.
+func boardReadResp(t *testing.T, conn *fakeConn) *protocol.BoardReadResponse {
+	t.Helper()
+	resp := lastTaskControlResponse(t, conn)
+	return resp.BoardRead()
+}
+
+// TestHandleBoardRetract_WithdrawsAndKeepsItReadable is the whole point of the
+// verb in one test: the message stops being deliverable and stays in the
+// operator's read.
+func TestHandleBoardRetract_WithdrawsAndKeepsItReadable(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	var author protocol.TaskID
+	author.Id[0] = 7
+	var caller protocol.TaskID
+	caller.Id[0] = 9
+	seq, _, err := h.Board.Send("chat.w", []byte("inconvenient"), protocol.RunnerID{}, author, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.handleBoardRetract(conn, 1, "chat.w", seq, caller)
+	if got := boardRetractResp(t, conn); got == nil || got.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("retract = %+v, want ok", got)
+	}
+
+	// Gone from the live ring — which is every agent-facing read.
+	if msgs, _ := h.Board.ListRetained("chat.w"); len(msgs) != 0 {
+		t.Errorf("live ring still holds %d message(s)", len(msgs))
+	}
+
+	// Still in the operator's read, payload included, marked with who took it.
+	conn.nextSendStreamID = 5
+	h.handleBoardRead(conn, 2, "chat.w")
+	br := boardReadResp(t, conn)
+	if br == nil || len(br.Msgs) != 1 {
+		t.Fatalf("board read = %+v, want 1 msg", br)
+	}
+	row := br.Msgs[0]
+	if !row.Retracted() {
+		t.Error("row is not marked retracted")
+	}
+	if row.RetractedAtUnixMs == 0 {
+		t.Error("row carries no retracted_at stamp")
+	}
+	if row.RetractedBy != protocol.RetractedBy_PurgeCap {
+		t.Errorf("retracted_by = %v, want purge_cap", row.RetractedBy)
+	}
+	if row.RetractedByTask.Id != caller.Id {
+		t.Errorf("retracted_by_task = %x, want the caller %x", row.RetractedByTask.Id, caller.Id)
+	}
+	if row.FromTask.Id != author.Id {
+		t.Errorf("from_task = %x, want the author %x", row.FromTask.Id, author.Id)
+	}
+	if got := conn.sendStreamBytes(t, br.StreamId); string(got) != "inconvenient" {
+		t.Errorf("withdrawn payload = %q, want the original bytes", got)
+	}
+}
+
+// TestHandleBoardRetract_NotFoundCases: the four ways to miss all answer the
+// same status. Distinguishing them would confirm what a topic holds to a caller
+// that only guessed at a seq.
+func TestHandleBoardRetract_NotFoundCases(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	var caller protocol.TaskID
+	caller.Id[0] = 9
+	seq, _, err := h.Board.Send("chat.nf", []byte("x"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		topic string
+		seq   uint64
+	}{
+		{"unknown topic", "nope", seq},
+		{"unknown seq", "chat.nf", seq + 9999},
+		{"seq 0 is never a message", "chat.nf", 0},
+	} {
+		h.handleBoardRetract(conn, 1, tc.topic, tc.seq, caller)
+		if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_NotFound {
+			t.Errorf("%s: status = %v, want not_found", tc.name, got.Status)
+		}
+	}
+	// And once withdrawn, again.
+	h.handleBoardRetract(conn, 2, "chat.nf", seq, caller)
+	if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("first retract = %v, want ok", got.Status)
+	}
+	h.handleBoardRetract(conn, 3, "chat.nf", seq, caller)
+	if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_NotFound {
+		t.Errorf("second retract = %v, want not_found", got.Status)
+	}
+}
+
+// TestHandleBoardRetract_OperatorClientHasNoTaskID: an operator surface holds
+// its capabilities directly and has no principal task, so the recorded caller
+// is the zero id. The row must still read as purge_cap — an operator retract
+// must not be renderable as the author having done it.
+func TestHandleBoardRetract_OperatorClientHasNoTaskID(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	var author protocol.TaskID
+	author.Id[0] = 7
+	seq, _, err := h.Board.Send("chat.op", []byte("x"), protocol.RunnerID{}, author, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.handleBoardRetract(conn, 1, "chat.op", seq, protocol.TaskID{})
+	if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("retract = %v, want ok", got.Status)
+	}
+	conn.nextSendStreamID = 5
+	h.handleBoardRead(conn, 2, "chat.op")
+	br := boardReadResp(t, conn)
+	if br == nil || len(br.Msgs) != 1 {
+		t.Fatalf("board read = %+v, want 1 msg", br)
+	}
+	if br.Msgs[0].RetractedBy != protocol.RetractedBy_PurgeCap {
+		t.Errorf("retracted_by = %v, want purge_cap", br.Msgs[0].RetractedBy)
+	}
+	if br.Msgs[0].RetractedByTask.Id != ([16]byte{}) {
+		t.Errorf("retracted_by_task = %x, want the zero id", br.Msgs[0].RetractedByTask.Id)
+	}
+}
+
+// TestBoardRetractNeedsPurge pins the gate at the one place it is declared. It
+// reuses purge's bit deliberately: purge already reaches the same message and
+// destroys it outright, so this grants nothing new — but that is an argument
+// about a specific bit, and the map is where it is stated.
+func TestBoardRetractNeedsPurge(t *testing.T) {
+	if got := requiredCap[protocol.TaskControlKind_BoardRetract]; got != protocol.Capability_Purge {
+		t.Errorf("board_retract required cap = %v, want purge", got)
+	}
+}

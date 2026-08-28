@@ -29,7 +29,8 @@ func boardAgentOrDash(profile string) string {
 	return profile
 }
 
-// RunBoardSubcmd handles the board sub-subcommands (topics, read, purge).
+// RunBoardSubcmd handles the board sub-subcommands (topics, read, retract,
+// purge).
 // verb is the first arg after "board"; rest is the remaining args.
 // All output (including purge JSON) is written to out.
 // The caller is responsible for routing unknown verbs and printing board usage.
@@ -169,7 +170,11 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			// paths dropped it the moment its author called retract.
 			retracted := ""
 			if m.Retracted {
-				retracted = fmt.Sprintf(" RETRACTED at=%s", boardMsToRFC3339(m.RetractedAtMs))
+				// by= is part of the marker, not an extra: with two verbs able
+				// to withdraw a message, "RETRACTED" alone would read as the
+				// author having done it whoever actually did.
+				retracted = fmt.Sprintf(" RETRACTED at=%s by=%s",
+					boardMsToRFC3339(m.RetractedAtMs), RetractedByLabel(m))
 			}
 			// Same rule again: only senders that declared a destination get
 			// this. It answers "where did the answer to #N go", which nothing
@@ -226,6 +231,35 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			fmt.Fprintf(out, "%s host=%s agent=%s topics=%s\n",
 				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)
 		}
+
+	case "retract":
+		fs := flag.NewFlagSet("board retract", flag.ContinueOnError)
+		seq := fs.Uint64("seq", 0, "the retained message to withdraw (required)")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		rargs := fs.Args()
+		if len(rargs) == 0 {
+			return fmt.Errorf("board retract: missing <topic>")
+		}
+		topic := rargs[0]
+		if *seq == 0 {
+			// Deliberately NOT purge's "0 means the whole topic": withdrawing a
+			// topic-full of other agents' messages on a mistyped flag is
+			// exactly the accident this verb should not be able to have.
+			return fmt.Errorf("board retract: --seq is required and must be non-zero (there is no whole-topic retract; `board read %s` lists the seqs)", topic)
+		}
+		ok, err := BoardRetract(ctx, cid, topic, *seq)
+		if err != nil {
+			return err
+		}
+		status := "ok"
+		if !ok {
+			// One answer for: no such topic, no such seq, and a seq already
+			// withdrawn. The server does not tell them apart on purpose.
+			status = "not_found"
+		}
+		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"seq\":%d}\n", status, topic, *seq)
 
 	case "purge":
 		fs := flag.NewFlagSet("board purge", flag.ContinueOnError)

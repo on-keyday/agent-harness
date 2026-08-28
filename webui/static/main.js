@@ -5115,11 +5115,12 @@ const POLL_INTERVAL_MS = 5000;
       for (const m of r.msgs) {
         const card = document.createElement("div");
         card.className = "board-msg";
-        // A message its author withdrew (agent retract). It reaches no agent
-        // any more; this pane is the only place it still exists, so it is
-        // marked and dimmed rather than hidden — hiding it would give the
-        // operator the same blank the agents get, which defeats the point of
-        // keeping it.
+        // A withdrawn message — by its author (`agent retract`) or by a
+        // purge-capable caller (the ⊘ button below / `board retract`). It
+        // reaches no agent any more; this pane is the only place it still
+        // exists, so it is marked and dimmed rather than hidden — hiding it
+        // would give the operator the same blank the agents get, which defeats
+        // the point of keeping it.
         if (m.retracted) card.classList.add("board-msg-retracted");
 
         const hdr = document.createElement("div");
@@ -5187,8 +5188,36 @@ const POLL_INTERVAL_MS = 5000;
           const when = m.retractedAtMs
             ? new Date(m.retractedAtMs).toISOString()
             : "-";
-          retractedSpan.textContent = `RETRACTED ${when}`;
+          // by= rides with the badge: two verbs can withdraw a message now, so
+          // a bare RETRACTED would read as the author having done it whoever
+          // actually did. The label is rendered in Go (cli.RetractedByLabel)
+          // so this pane and the CLI cannot drift apart on the wording.
+          retractedSpan.textContent = `RETRACTED ${when} by=${m.retractedBy || "unknown"}`;
         }
+
+        // Retract: withdraw from every agent path, keep it readable here.
+        // Offered only on a live message — a second retract of the same seq
+        // answers not_found, which would read as a failure rather than as
+        // "already withdrawn".
+        const retractBtn = document.createElement("button");
+        retractBtn.className = "board-msg-retract";
+        retractBtn.textContent = "⊘";
+        retractBtn.title = `Retract message #${m.seq} (leaves every agent path; stays readable here)`;
+        retractBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!window.confirm(
+            `Retract message #${m.seq} from "${topic}"?\n\n` +
+            `It leaves every agent path immediately, and stays readable here until the topic ages out.`)) return;
+          try {
+            const r = await window.harness.boardRetract(topic, m.seq);
+            if (!r.found) {
+              appendCmdOutput(`boardRetract: #${m.seq} not found (already withdrawn, purged, or aged out)`);
+            }
+            openBoardTopic(topic);
+          } catch (err) {
+            appendCmdOutput(`boardRetract error: ${err.message}`);
+          }
+        });
 
         const purgeBtn = document.createElement("button");
         purgeBtn.className = "board-msg-purge";
@@ -5214,6 +5243,7 @@ const POLL_INTERVAL_MS = 5000;
         hdr.appendChild(timeSpan);
         hdr.appendChild(shownSpan);
         if (retractedSpan.textContent) hdr.appendChild(retractedSpan);
+        if (!m.retracted) hdr.appendChild(retractBtn);
         hdr.appendChild(purgeBtn);
 
         const pre = document.createElement("pre");

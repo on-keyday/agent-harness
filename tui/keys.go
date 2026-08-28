@@ -110,6 +110,7 @@ type modalKeyMap struct {
 	BoardRefresh     string
 	BoardPurgeTopic  string
 	BoardPurgeMsg    string
+	BoardRetractMsg  string
 	BoardSubscribers string
 	GitSetBase       string
 	GitStatus        string
@@ -121,15 +122,19 @@ type modalKeyMap struct {
 }
 
 var modalKeys = modalKeyMap{
-	ConfirmYes:       "y",
-	ConfirmYesUpper:  "Y",
-	ConfirmNo:        "n",
-	ConfirmNoUpper:   "N",
-	Escape:           "esc",
-	ForwardKill:      "x",
-	BoardRefresh:     "r",
-	BoardPurgeTopic:  "x",
-	BoardPurgeMsg:    "X",
+	ConfirmYes:      "y",
+	ConfirmYesUpper: "Y",
+	ConfirmNo:       "n",
+	ConfirmNoUpper:  "N",
+	Escape:          "esc",
+	ForwardKill:     "x",
+	BoardRefresh:    "r",
+	BoardPurgeTopic: "x",
+	BoardPurgeMsg:   "X",
+	// Withdraw, not destroy: its own letter rather than a shift-variant of the
+	// purge keys, because the two differ in what survives, not in how much of
+	// the topic they take.
+	BoardRetractMsg:  "w",
 	BoardSubscribers: "s",
 	GitSetBase:       "B",
 	GitStatus:        "s",
@@ -346,6 +351,6 @@ func keyHelpBody() string {
 			sb.WriteString("\n")
 		}
 	}
-	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message")
+	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message, w retract message")
 	return sb.String()
 }

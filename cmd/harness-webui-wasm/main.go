@@ -135,6 +135,7 @@ func main() {
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
+		"boardRetract":       js.FuncOf(harnessBoardRetract),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
@@ -1179,7 +1180,7 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 
 // harnessBoardRead returns all retained messages for a topic.
 //
-//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,replyToTopic,receivedAtMs,payload,retracted,retractedAtMs}]}>
+//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,replyToTopic,receivedAtMs,payload,retracted,retractedAtMs,retractedBy,retractedByTask}]}>
 func harnessBoardRead(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1227,12 +1228,22 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					"agentProfile": m.FromAgentProfile,
 					"receivedAtMs": float64(m.ReceivedAtMs),
 					"payload":      string(m.Payload),
-					// A message its author withdrew. It reaches no agent any
-					// more and exists only on this operator surface, so the
-					// flag has to cross the bridge or the WebUI would show a
-					// withdrawn message as if it were still live.
+					// A withdrawn message. It reaches no agent any more and
+					// exists only on this operator surface, so the flag has to
+					// cross the bridge or the WebUI would show a withdrawn
+					// message as if it were still live.
 					"retracted":     m.Retracted,
 					"retractedAtMs": float64(m.RetractedAtMs),
+					// WHO withdrew it, rendered on the Go side so the browser
+					// never has to re-derive "author vs purge_cap, and which
+					// task" from two fields. Empty string when the message is
+					// live — the badge is gated on `retracted`, never on this.
+					"retractedBy": func() string {
+						if !m.Retracted {
+							return ""
+						}
+						return cli.RetractedByLabel(m)
+					}(),
 					// How many of the topic's subscribers have been handed this
 					// message, out of how many subscribe at all. Small counts,
 					// so float64 is safe here — unlike seq.
@@ -1294,6 +1305,60 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"purged": float64(purged),
 				"found":  found,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardRetract withdraws ONE message (seq must be non-zero): it leaves
+// every agent-facing path and stays readable in this view until the topic ages
+// out. Unlike boardPurge there is no whole-topic form, so seq 0 is a caller
+// error here rather than a wider operation.
+//
+//	harness.boardRetract(topic, seq) -> Promise<{found}>
+func harnessBoardRetract(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("boardRetract: missing topic/seq args"))
+				return
+			}
+			topic := args[0].String()
+			// Same decimal-string handling as boardPurge, and for the same
+			// reason: a board seq exceeds JS's 2^53 safe-integer range, so a
+			// float64 round-trip rounds it and the retract misses the message.
+			var seq uint64
+			if args[1].Type() == js.TypeString {
+				parsed, perr := strconv.ParseUint(args[1].String(), 10, 64)
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("boardRetract: bad seq %q: %w", args[1].String(), perr))
+					return
+				}
+				seq = parsed
+			} else {
+				seq = uint64(args[1].Float())
+			}
+			if seq == 0 {
+				rejectErr(reject, errors.New("boardRetract: seq must be non-zero (there is no whole-topic retract)"))
+				return
+			}
+			found, err := c.BoardRetract(rootCtx, topic, seq)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardRetract: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"found": found,
 			}))
 		}()
 		return nil

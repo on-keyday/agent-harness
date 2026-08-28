@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // TestBoardModalApplyTopics verifies that ApplyTopics populates rowTopics and
@@ -285,5 +286,54 @@ func TestBoardModalMessagesMarkWithNoSubscribers(t *testing.T) {
 	m.ApplyMessages("t.orphan", []cli.BoardMessage{{Seq: 7, FromTaskHex: "abcdabcd"}}, nil, true)
 	if view := m.View(); !strings.Contains(view, "shown_to=0/0") {
 		t.Errorf("view missing shown_to=0/0\n%s", view)
+	}
+}
+
+// TestBoardModalMessagesNameWhoRetracted: with two verbs able to withdraw a
+// message, a bare RETRACTED would credit the author for what an operator did.
+// The list row and the content header must both say which check it passed.
+func TestBoardModalMessagesNameWhoRetracted(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 30)
+	msgs := []cli.BoardMessage{
+		{
+			Seq: 10, FromTaskHex: "11112222", ReceivedAtMs: 1_000,
+			Retracted: true, RetractedAtMs: 2_000,
+			RetractedBy: protocol.RetractedBy_Author, RetractedByTaskHex: "11112222",
+		},
+		{
+			Seq: 20, FromTaskHex: "33334444", ReceivedAtMs: 1_000,
+			Retracted: true, RetractedAtMs: 2_000,
+			RetractedBy: protocol.RetractedBy_PurgeCap, RetractedByTaskHex: "99998888",
+		},
+		{
+			Seq: 30, FromTaskHex: "55556666", ReceivedAtMs: 1_000,
+			Retracted: true, RetractedAtMs: 2_000,
+			RetractedBy: protocol.RetractedBy_PurgeCap,
+		},
+	}
+	m.ApplyMessages("t.withdrawn", msgs, nil, true)
+
+	view := m.View()
+	for _, want := range []string{
+		"RETRACTED by=author",
+		"RETRACTED by=purge_cap:99998888",
+		// No task id: an operator client holds its capabilities directly. The
+		// row says so rather than printing an empty by=.
+		"RETRACTED by=purge_cap:operator",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("message list missing %q\n%s", want, view)
+		}
+	}
+	// The header of the selected message (seq 10) carries it too — that pane is
+	// where the payload is read, so it must not lose the attribution.
+	if !strings.Contains(view, "at=") || !strings.Contains(view, "by=author") {
+		t.Errorf("content header missing the retract attribution\n%s", view)
+	}
+	// And the footer advertises the key that produces this state.
+	if !strings.Contains(view, modalKeys.BoardRetractMsg+": retract msg") {
+		t.Errorf("message-mode footer does not advertise the retract key\n%s", view)
 	}
 }

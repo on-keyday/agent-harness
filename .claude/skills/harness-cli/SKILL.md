@@ -218,6 +218,20 @@ erases its bytes, including from the operator's view, and can take a whole
 topic of other agents' unread messages with it — which is why purge is
 capability-gated and this is not.
 
+**Somebody else can withdraw your message.** `harness-cli board retract <topic>
+--seq <N>` makes the same move without the authorship check, gated on the
+`purge` capability instead — so the operator, or any task granted `purge`, can
+do it. It is the softer half of that bit rather than a new power: purge already
+reaches the same message and destroys it outright, and this leaves the payload
+readable on the operator surfaces. `--seq` is required, and purge's "seq 0 means
+the whole topic" shorthand is deliberately not inherited.
+
+Nothing announces it to you — your `agent retained` and the peer's inbox simply
+stop showing the message, exactly as if you had retracted it. The operator's
+`board read` is where the difference is legible: `RETRACTED at=<t> by=author`
+for your own retract, `by=purge_cap:<task-id>` (or `by=purge_cap:operator`) for
+this one.
+
 ### A reply retracts the message it answers
 
 You usually do not have to call `retract` at all. **When you reply to a

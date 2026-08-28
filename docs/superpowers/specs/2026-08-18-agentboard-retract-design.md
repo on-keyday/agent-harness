@@ -183,6 +183,9 @@ format BoardMessageRow:
 `retracted_by`: only the author may retract, so the field would always
 repeat `from_task`, and a redundant field is one that starts lying the day
 the rule changes.
+*(Superseded — Amendment 2026-08-28c adds a second withdrawal path, which is
+the rule change this sentence anticipated; `retracted_by` and
+`retracted_by_task` exist as of it.)*
 
 `retracted_count` is kept out of `msg_count` because `msg_count` answers
 "how much would a subscriber receive" — the number every agent-facing path
@@ -332,7 +335,9 @@ Recorded so no reader has to guess which were deliberate:
 3. Agents see **nothing** of a withdrawn message — not even metadata. A
    "there was something here" marker invites a reset agent to go looking.
 4. **No `retracted_by`** field: only the author can retract, so it would
-   duplicate `from_task`.
+   duplicate `from_task`. *(Reversed by Amendment 2026-08-28c — a
+   purge-capable caller can now withdraw somebody else's message, so the
+   field no longer duplicates anything.)*
 5. `RetractStatus` has **two members**; "not yours" is folded into
    `not_found` to avoid an existence oracle.
 6. A **new verb**, not a flag on `purge`, because the authority check
@@ -493,3 +498,149 @@ that quietly stopped collecting garbage would be its own defect.
 `agentboard/retract_test.go`: a retracted message survives its topic's last
 subscriber being revoked; a topic with no withdrawn messages is still
 dropped by the same Revoke.
+
+---
+
+# Amendment 2026-08-28c — the operator withdraws (`board retract`)
+
+## The gap
+
+The operator's only way to take a message out of the agents' reach was
+`board purge`, which destroys the bytes — the operator's own copy included.
+So "keep the history for now, but this message must stop being acted on"
+had no verb: the choice was leave it live or lose it entirely. Named by the
+operator, 2026-08-28: 「履歴はしばらく保持しときたいけど不都合だからこっちで
+消したいって時に purge しかないの不便だな」.
+
+The base design gave that shape to the author alone. Nothing about the shape
+is author-specific — what was author-specific was the *authority argument*
+(§3: the operation can only reach bytes the caller wrote), and that argument
+does not have to be the only one.
+
+## Rule
+
+```
+harness-cli board retract <topic> --seq N
+```
+
+Withdraws one message with **no authorship check**, gated on
+`Capability_Purge`. Same move as an author retract — out of the live ring,
+into the withdrawn list, stamped — so it leaves every agent-facing path at
+once and stays readable on the operator surfaces until the topic ages out.
+
+`--seq` is **required and must be non-zero**. Purge's "seq 0 means the whole
+topic" shorthand is deliberately not inherited: this verb should not be able
+to take a conversation on a mistyped flag, and there is no operator need for
+a topic-wide soft withdrawal that `purge <topic>` does not already answer
+(asked and answered: the operator chose seq-only, 2026-08-28).
+
+Unlike `RetractSeq`, it takes a topic NAME instead of scanning every ring.
+The caller reached the seq through `board_read`, which is per-topic, so the
+scan would be work spent rediscovering something the caller already knows.
+
+A **zero caller id is accepted here and refused by `RetractSeq`**, and the
+asymmetry is the point: on the authorship path a zero id is a match against
+nobody, while here it is the honest identity of an operator client, which
+holds capabilities directly and has no principal task.
+
+## Why `purge` and not a new bit
+
+Containment, not convenience. A caller holding `purge` can already reach the
+same message through `board purge --seq N` and destroy it outright; this
+verb reaches nothing further and leaves more behind. A new grantable bit
+would add a name to the catalog without adding a reachable state.
+
+The cost, stated because it is real: **"may withdraw but may not destroy" is
+not a grantable shape.** If that separation is ever wanted, the bit is the
+change — not a flag on this verb.
+
+Note what this means for the reader of a withdrawn row: `purge_cap` is not a
+synonym for "the operator". Any task granted `purge` can withdraw another
+task's message, which is why the recorded value names the *check that
+passed* rather than a kind of caller.
+
+## Reversal: `retracted_by` now exists
+
+Base spec §2 and Decision 4 said there must be no `retracted_by` because
+"only the author may retract, so the field would always repeat `from_task`".
+That premise is exactly what this amendment removes, and it was written with
+the failure mode in view — *"a redundant field is one that starts lying the
+day the rule changes"*. This is that day, so the field arrives with the rule
+rather than after it.
+
+`BoardMessageRow` gains two fields, both meaningful only under the existing
+`retracted` bit:
+
+```
+    retracted_by :RetractedBy        # author | purge_cap
+    retracted_by_task :TaskID        # == from_task on the author path;
+                                     # all-zero for an operator client
+```
+
+`RetractedBy` names the **authority check that passed**, not a kind of
+caller, for the reason in the section above. The task id is carried as well
+as the enum — the operator asked for it explicitly — because a `purge_cap`
+withdrawal by another task is otherwise unattributable: nothing else on the
+row identifies who took it.
+
+The all-zero id is a real state (an operator client has no principal task),
+not missing data, so it is rendered as `purge_cap:operator` rather than as
+32 zeros or as a blank. Reading the id alone is wrong in both directions:
+zero under `purge_cap` means an operator client, zero under `author` is a
+live row's padding.
+
+One spelling of that rendering exists — `cli.RetractedByLabel` — and the
+wasm bridge ships its RESULT to the browser rather than re-deriving it in
+JS, the same rule `cli.ShownTo` follows.
+
+## Operator surfaces
+
+| Surface | Change |
+| --- | --- |
+| CLI | `board retract <topic> --seq N`, JSON-line result mirroring `board purge` (`cli/cmd_board.go`); usage in `cmd/harness-cli/main.go` |
+| CLI `board read` | `RETRACTED at=<t> by=<author\|purge_cap:…>` — `by=` prints on every withdrawn row, author case included |
+| `cli.BoardMessage` | `RetractedBy protocol.RetractedBy`, `RetractedByTaskHex string` (empty = operator client) |
+| TUI board modal | `w` on a message (`modalKeys.BoardRetractMsg`), footer hint, `by=` on the list row and the content header |
+| WebUI board panel | ⊘ button per live message card, `by=` in the RETRACTED badge, `.board-msg-retract` styling incl. the ≤390px rule |
+| wasm bridge | `harness.boardRetract(topic, seq)`; `retractedBy` on each `boardRead` row |
+| `caps` catalog | the `purge` description now names both verbs |
+
+Deliberately omitted, and not a silent default: the **TUI cmdline** and the
+**WebUI command input** get no `board retract`, because neither has a
+`board` verb family at all — `topics` / `read` / `purge` / `subscribers` are
+equally absent from both. Adding that family is a separate change; retract is
+at parity with its siblings where it is absent.
+
+## Testing (amendment c)
+
+- `agentboard/retract_test.go`: force-retract takes another task's message;
+  the author path and the purge_cap path each stamp their own provenance; a
+  zero caller id is accepted and still records `purge_cap`; unknown topic /
+  unknown seq / seq 0 / already-withdrawn all answer no; `PurgeSeq` still
+  reaches a force-retracted message.
+- `server/board_handler_test.go`: the message leaves the live ring and comes
+  back on `board read` with payload, stamp, `retracted_by` and
+  `retracted_by_task`; the four not-found shapes; an operator client's zero
+  id still reads `purge_cap`; the required cap is `purge`.
+- `cli/board_e2e_test.go`: the whole round trip over a live server,
+  including `RetractedByLabel` == `purge_cap:operator` and purge-after-
+  retract.
+- `tui/board_test.go`: the list row and content header name who withdrew it,
+  in all three shapes (author / purge_cap with a task / purge_cap with none),
+  and the footer advertises the key.
+
+## Decisions taken (amendment c)
+
+1. Gated on **`purge`**, no new capability bit — it is a subset of what that
+   bit already reaches. Consequence recorded: withdraw and destroy cannot be
+   granted separately.
+2. **Per-seq only.** No whole-topic form; seq 0 is an error, not a wider
+   operation.
+3. **Topic-addressed**, not a board-wide scan, because the caller already
+   knows the topic.
+4. `retracted_by` **exists now**, reversing base Decision 4, and carries the
+   caller's task id alongside the enum.
+5. The enum names the **check that passed** (`author` / `purge_cap`), not a
+   kind of caller, because a task granted `purge` is not an operator.
+6. A zero caller id is **accepted** on this path and still refused on the
+   authorship path.

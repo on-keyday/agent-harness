@@ -46,13 +46,24 @@ type BoardMessage struct {
 	ReplyToTopic string
 	ReceivedAtMs uint64
 	Payload      []byte
-	// Retracted is true when the message's author withdrew it (agent retract).
-	// A withdrawn message is invisible to every agent-facing path and reaches
-	// only this operator view, so a retract at agent speed cannot shrink the
-	// window a human has to audit what was said. RetractedAtMs is 0 unless
-	// Retracted is true.
+	// Retracted is true when the message was withdrawn — by its author
+	// (`agent retract`) or by a holder of the purge capability
+	// (`board retract`). A withdrawn message is invisible to every agent-facing
+	// path and reaches only this operator view, so a retract at agent speed
+	// cannot shrink the window a human has to audit what was said.
+	// RetractedAtMs is 0 unless Retracted is true.
 	Retracted     bool
 	RetractedAtMs uint64
+	// RetractedBy names which authority check the withdrawal passed:
+	// RetractedBy_Author (authorship) or RetractedBy_PurgeCap
+	// (Capability_Purge). RetractedByTaskHex is the caller, equal to
+	// FromTaskHex on the author path. It is EMPTY when the caller had no
+	// principal task — an operator client (cli/tui/webui) holds its
+	// capabilities directly rather than through a task, so there is no id to
+	// report, and that is a real state rather than missing data. Both fields
+	// are meaningful only when Retracted is true.
+	RetractedBy        protocol.RetractedBy
+	RetractedByTaskHex string
 }
 
 // BoardSubscriberRow is one task's agentboard subscription set as returned by
@@ -158,6 +169,27 @@ func ShownToLabel(subs []BoardSubscriberRow, topic string, seq uint64) string {
 	return fmt.Sprintf("shown_to=%d/%d", n, total)
 }
 
+// RetractedByLabel renders WHO withdrew a message, for a text row. One
+// spelling, so the CLI, the TUI and the WebUI cannot drift apart on it.
+//
+// The author path prints just "author": the sender is already on the row as
+// from=, so repeating the id would be noise. The purge_cap path names the
+// caller, because nothing else on the row identifies it — and "operator" when
+// there is no task id, which is the honest rendering of a caller that holds its
+// capabilities directly rather than through a task.
+func RetractedByLabel(m BoardMessage) string {
+	if m.RetractedBy == protocol.RetractedBy_PurgeCap {
+		if m.RetractedByTaskHex == "" {
+			return "purge_cap:operator"
+		}
+		return "purge_cap:" + m.RetractedByTaskHex
+	}
+	// String() answers "author" for the authorship path and RetractedBy(N) for
+	// a value this build does not know, which is what a newer server would
+	// send. Neither is silently rendered as the other.
+	return m.RetractedBy.String()
+}
+
 // BoardTopics lists every topic currently held in the board with aggregate
 // metadata (last seq, last publish time, message count). Requires the caller
 // to hold Capability_BoardObserve; operator connections (ClientKind_Cli with no
@@ -223,6 +255,13 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
 			Retracted:        m.Retracted(),
 			RetractedAtMs:    m.RetractedAtUnixMs,
+			RetractedBy:      m.RetractedBy,
+		}
+		// An operator client has no principal task, and the server sends the
+		// zero id for it. Hex-encoding that would print 32 zeros as if it were
+		// a task; the empty string is what every caller renders as "operator".
+		if m.RetractedByTask.Id != ([16]byte{}) {
+			rows[i].RetractedByTaskHex = hex.EncodeToString(m.RetractedByTask.Id[:])
 		}
 		total += int(m.Size)
 	}
@@ -285,6 +324,33 @@ func (c *Client) BoardPurge(ctx context.Context, topic string, seq uint64) (int,
 	return int(bp.Purged), true, nil
 }
 
+// BoardRetract withdraws ONE retained message (seq must be non-zero) from a
+// topic: it leaves every agent-facing path and stays readable here, on the
+// operator surfaces, until the topic ages out. found=false when the topic, the
+// seq, or a live message with that seq does not exist — the server does not
+// distinguish those, so neither can this.
+//
+// It is a separate verb from BoardPurge rather than a flag on it because the
+// two differ in what SURVIVES, not in what they target, and because purge's
+// "seq 0 means the whole topic" shorthand must not be inherited by a call that
+// a mistyped seq would otherwise widen. Both need Capability_Purge.
+func (c *Client) BoardRetract(ctx context.Context, topic string, seq uint64) (bool, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRetract}
+	rr := protocol.BoardRetractRequest{Seq: seq}
+	rr.SetTopic([]byte(topic))
+	req.SetBoardRetract(rr)
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	br := resp.BoardRetract()
+	if br == nil || resp.Kind != protocol.TaskControlKind_BoardRetract {
+		return false, fmt.Errorf("BoardRetract: unexpected response kind=%v", resp.Kind)
+	}
+	return br.Status != protocol.BoardStatus_NotFound, nil
+}
+
 // BoardTopics is a package-level fresh-dial wrapper: it opens a new Client,
 // calls (*Client).BoardTopics, and closes the connection. Suitable for
 // short-lived CLI processes; long-lived consumers should hold a *Client.
@@ -326,4 +392,14 @@ func BoardPurge(ctx context.Context, peerCID objproto.ConnectionID, topic string
 	}
 	defer c.Close()
 	return c.BoardPurge(ctx, topic, seq)
+}
+
+// BoardRetract is a package-level fresh-dial wrapper for (*Client).BoardRetract.
+func BoardRetract(ctx context.Context, peerCID objproto.ConnectionID, topic string, seq uint64) (bool, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return false, err
+	}
+	defer c.Close()
+	return c.BoardRetract(ctx, topic, seq)
 }

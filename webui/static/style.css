@@ -1584,6 +1584,23 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .btn-danger:hover { background: #7a1a1a; border-color: #aa3333; }
 
+/* Retract sits left of purge and carries the auto margin, so the pair rides
+   together at the right edge instead of splitting the free space between two
+   auto margins. Amber, not purge's red: it withdraws, it does not destroy. */
+.board-msg-retract {
+  margin-left: auto;
+  background: #3a2f10;
+  color: #d7ba7d;
+  border: 1px solid #6a5520;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+.board-msg-retract:hover { background: #5a4810; }
+.board-msg-retract + .board-msg-purge { margin-left: 0.3rem; }
+
 .board-msg-purge {
   margin-left: auto;
   background: #3a1010;
@@ -1603,6 +1620,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   .board-detail-header { flex-direction: column; align-items: flex-start; }
   .board-msg-header { flex-direction: column; align-items: flex-start; }
   .board-msg-time { margin-left: 0; }
+  .board-msg-retract { margin-left: 0; margin-top: 0.2rem; }
+  .board-msg-retract + .board-msg-purge { margin-left: 0; }
   .board-msg-purge { margin-left: 0; margin-top: 0.2rem; }
 }
 

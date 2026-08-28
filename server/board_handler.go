@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/hex"
 	"log/slog"
 	"sort"
 
@@ -135,6 +136,11 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		if !m.RetractedAt.IsZero() {
 			row.SetRetracted(true)
 			row.RetractedAtUnixMs = uint64(m.RetractedAt.UnixMilli())
+			// Which check let the withdrawal through, and who called. Set only
+			// under the retracted bit: on a live row these are the zero value
+			// because nothing withdrew it, not because its author did.
+			row.RetractedBy = m.RetractedBy
+			row.RetractedByTask = m.RetractedByTask
 		}
 		rows = append(rows, row)
 		payloads = append(payloads, m.Payload)
@@ -164,6 +170,32 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 			slog.Warn("BoardRead: stream EOF failed", "topic", topic, "err", err)
 		}
 	}()
+}
+
+// handleBoardRetract withdraws ONE retained message from a topic and leaves it
+// readable on the operator surfaces. Cap (purge) enforced centrally — the same
+// bit handleBoardPurge takes, because purge already reaches this message and
+// destroys it outright; this is the gentler half of that authority, not a new
+// one.
+//
+// by is the caller's principal task, recorded on the withdrawn entry. It is
+// zero for an operator client, which holds its capabilities directly and has no
+// principal task.
+//
+// Unknown topic, unknown seq, an already-withdrawn seq and seq 0 all answer
+// not_found. Telling them apart would confirm what a topic holds to a caller
+// that only guessed at a seq — the same collapse agentboard's RetractStatus
+// makes on the authorship path.
+func (h *TaskHandler) handleBoardRetract(conn ConnHandle, requestID uint32, topic string, seq uint64, by protocol.TaskID) {
+	status := protocol.BoardStatus_NotFound
+	if retracted, found := h.Board.ForceRetractSeq(topic, seq, by); found && retracted {
+		status = protocol.BoardStatus_Ok
+		slog.Info("board retract", "topic", topic, "seq", seq, "by_task", hex.EncodeToString(by.Id[:]))
+	}
+	out := protocol.BoardRetractResponse{RequestId: requestID, Status: status}
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardRetract, RequestId: requestID}
+	resp.SetBoardRetract(out)
+	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }
 
 // handleBoardPurge drops a topic's ring (seq==0) or a single seq. Cap (purge)
