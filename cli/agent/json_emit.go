@@ -6,14 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 )
 
 // emitMessageLine writes one JSON-Lines record describing a delivered
-// message. payload is always echoed as base64 (payload_b64 field) so the
-// consumer can recover the exact bytes. When payload is JSON-parseable, it
-// is additionally embedded raw under "payload" for ergonomic chains.
+// message. payload_b64 echoes the exact bytes so the consumer can recover
+// them, and the body is additionally rendered readably: embedded raw under
+// "payload" when the bytes parse as JSON, or decoded into "payload_text" when
+// they are merely valid UTF-8.
 //
 // The from block carries server-attested sender info (RunnerID, TaskID,
 // hostname, agent profile). It is always present, even for legacy messages
@@ -26,7 +28,7 @@ import (
 // for the same reason the from block is unconditional: a consumer can address
 // the field without probing for it.
 func emitMessageLine(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
-	emitMessageRecord(w, m, payload, 0)
+	emitMessageRecord(w, m, payload, false)
 }
 
 // hookInlineLimit is the largest payload the hook modes splice into the
@@ -38,22 +40,33 @@ const hookInlineLimit = 64 * 1024
 // emitMessageLineForHook is emitMessageLine for --stop-hook and
 // --user-prompt-submit-hook. Those modes are the only consumer that cannot
 // decline a payload — their output is spliced into the agent's next prompt, so
-// an inlined body is spent context whether the agent wanted it or not, and the
-// cost is worse than the byte count: payload_b64 inflates 4/3, and a
-// JSON-parseable body is ALSO embedded raw, for 7/3 in total. Past the limit
-// the record describes the message and says how to fetch it instead.
+// an inlined body is spent context whether the agent wanted it or not. Past
+// the limit the record describes the message and says how to fetch it instead.
 func emitMessageLineForHook(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
-	emitMessageRecord(w, m, payload, hookInlineLimit)
+	emitMessageRecord(w, m, payload, true)
 }
 
-// emitMessageRecord writes the JSON-Lines record. inlineLimit == 0 means the
-// body is always carried; a positive value replaces an over-limit body with
-// its size and a command that re-reads it.
+// emitMessageRecord writes the JSON-Lines record. forHook marks the two modes
+// whose output is spliced into the agent's next prompt, and it changes the
+// body twice over: an over-limit body is replaced by its size and a command
+// that re-reads it, and payload_b64 is dropped whenever a readable rendering
+// was emitted alongside it.
+//
+// The readable rendering is the point, not an ergonomic extra. Base64 is a
+// body no reader can read: a model handed nothing else does not shell out to
+// decode it, it "reads" the blob and confabulates — a wrong instruction rather
+// than a missing one. A JSON payload always had "payload"; a prose one had
+// nothing until payload_text, and prose is what a relayed human instruction
+// is. Dropping payload_b64 under forHook then also recovers the inflation it
+// costs (4/3, or 7/3 when a JSON body is embedded raw as well); the exact
+// bytes stay reachable through the plain read and `agent read <seq>`, neither
+// of which is spliced into anyone's context.
+//
 // It takes the whole DeliveredMessage rather than its fields one at a time:
 // every caller was unpacking the same nine, several of them adjacent strings,
 // and reply_to_topic would have made a tenth that a misordered call site could
 // not fail to compile on.
-func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byte, inlineLimit int) {
+func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byte, forHook bool) {
 	seq := m.Seq
 	rec := map[string]any{
 		"seq":         seq,
@@ -73,7 +86,7 @@ func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byt
 	if len(m.ReplyToTopic) > 0 {
 		rec["reply_to_topic"] = string(m.ReplyToTopic)
 	}
-	if inlineLimit > 0 && len(payload) > inlineLimit {
+	if forHook && len(payload) > hookInlineLimit {
 		// `agent read` addresses this seq alone and never truncates, which is
 		// what makes it a usable destination. Pointing at `inbox --since
 		// <seq-1>` instead would re-deliver every later message too, and inbox
@@ -86,9 +99,23 @@ func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byt
 		fmt.Fprintln(w, string(line))
 		return
 	}
-	rec["payload_b64"] = base64.StdEncoding.EncodeToString(payload)
-	if len(payload) > 0 && json.Valid(payload) {
+	readable := false
+	switch {
+	case len(payload) == 0:
+		// Nothing to render: payload_b64 "" already says the same nothing, and
+		// keeping it there leaves one field a consumer can always address.
+	case json.Valid(payload):
 		rec["payload"] = json.RawMessage(payload)
+		readable = true
+	case utf8.Valid(payload):
+		// json.Marshal escapes every byte below 0x20, so a body carrying
+		// newlines or ANSI sequences can neither break the one-record-per-line
+		// framing nor reach a terminal raw.
+		rec["payload_text"] = string(payload)
+		readable = true
+	}
+	if !forHook || !readable {
+		rec["payload_b64"] = base64.StdEncoding.EncodeToString(payload)
 	}
 	line, _ := json.Marshal(rec)
 	fmt.Fprintln(w, string(line))

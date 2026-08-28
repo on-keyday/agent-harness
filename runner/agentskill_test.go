@@ -27,8 +27,13 @@ func TestWriteAgentSkills_WritesHarnessCliSkill(t *testing.T) {
 	if !strings.Contains(s, "chat.<first-8") {
 		t.Error("SKILL.md should document the chat.<first-8-...> inbound topic convention")
 	}
-	if !strings.Contains(s, "payload_b64") || !strings.Contains(s, "json.Valid") {
-		t.Error("SKILL.md should explain the JSON-vs-base64 inbox behaviour")
+	// The three body renderings, and payload_text above all: a prose message
+	// used to arrive as base64 and nothing else, which a model reads by
+	// guessing rather than by decoding.
+	for _, want := range []string{"payload", "payload_text", "payload_b64"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("SKILL.md should document %q — how a body reaches the receiver", want)
+		}
 	}
 }
 

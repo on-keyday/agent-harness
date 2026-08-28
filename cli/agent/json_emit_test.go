@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -87,11 +88,94 @@ func TestEmitMessageLineForHook_InlinesAtTheLimit(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := rec["payload_b64"]; !ok {
-		t.Error("payload_b64 absent at exactly the limit")
+	if _, ok := rec["payload_text"]; !ok {
+		t.Error("payload_text absent at exactly the limit: the body was not inlined")
 	}
 	if _, ok := rec["read_with"]; ok {
 		t.Error("read_with present: a body that fits needs no fetch instructions")
+	}
+}
+
+// TestEmitMessageRecord_ProseIsReadable pins the field that keeps a non-JSON
+// body from reaching a reader as base64 and nothing else. A model given only
+// the blob does not decode it — it guesses at it — so a prose message needs a
+// rendering it can actually read, on BOTH paths: the hook splices its record
+// into a claude prompt, and a runtime without that hook (codex, bash, …) polls
+// the plain read for the same bytes.
+func TestEmitMessageRecord_ProseIsReadable(t *testing.T) {
+	const prose = "指示: X を実装して\nY は触らないこと"
+	for _, tc := range []struct {
+		name    string
+		emit    func(io.Writer, agentboard.DeliveredMessage, []byte)
+		wantB64 bool
+	}{
+		// The plain read is where `read_with` points and where an exact-bytes
+		// consumer lands, so it keeps payload_b64 alongside the text.
+		{"plain read", emitMessageLine, true},
+		// The hook cannot decline what it is handed, so a body it already
+		// rendered readably must not also arrive 4/3-inflated as base64.
+		{"hook", emitMessageLineForHook, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tc.emit(&buf, mkDM(7, "chat.abc", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte(prose))
+
+			var rec map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := rec["payload_text"].(string); got != prose {
+				t.Errorf("payload_text = %q, want %q", got, prose)
+			}
+			if _, ok := rec["payload_b64"]; ok != tc.wantB64 {
+				t.Errorf("payload_b64 present = %v, want %v", ok, tc.wantB64)
+			}
+			// One record per line: an embedded newline must stay escaped.
+			if n := bytes.Count(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), []byte("\n")); n != 0 {
+				t.Errorf("record spans %d extra lines; JSON-Lines framing broken: %s", n, buf.String())
+			}
+		})
+	}
+}
+
+// A JSON body already had a readable rendering under "payload"; payload_text
+// would only duplicate it, and under the hook the base64 copy is the third
+// rendering of one message.
+func TestEmitMessageLineForHook_JSONBodyDropsB64(t *testing.T) {
+	var buf bytes.Buffer
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte(`{"kind":"review"}`))
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec["payload"]; !ok {
+		t.Error("payload absent: a JSON body must arrive structured")
+	}
+	if _, ok := rec["payload_b64"]; ok {
+		t.Error("payload_b64 present: the body was already embedded raw")
+	}
+	if _, ok := rec["payload_text"]; ok {
+		t.Error("payload_text present: it duplicates the embedded payload")
+	}
+}
+
+// Bytes that are neither JSON nor UTF-8 have no readable rendering, so base64
+// remains the body — dropping it under the hook would emit a record carrying
+// no payload at all.
+func TestEmitMessageLineForHook_BinaryKeepsB64(t *testing.T) {
+	var buf bytes.Buffer
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte{0xff, 0xfe, 0x00, 0x01})
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec["payload_b64"]; !ok {
+		t.Error("payload_b64 absent: a non-UTF-8 body has nothing else to arrive as")
+	}
+	if _, ok := rec["payload_text"]; ok {
+		t.Error("payload_text present for non-UTF-8 bytes")
 	}
 }
 

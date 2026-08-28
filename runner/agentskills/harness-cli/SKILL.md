@@ -589,17 +589,31 @@ belongs in the task log, not the notification. Use it to surface "I'm done",
 "I'm blocked and need a decision", or "this failed" to an away-from-keyboard
 operator.
 
-## Prefer JSON for `--data`
+## How a body reaches the receiver — and never reading base64 by eye
 
-The broker delivers `--data` verbatim, but the `inbox` JSON-Lines output
-checks the payload with `json.Valid` and behaves differently:
+The broker delivers `--data` verbatim; the `inbox` / `read` JSON-Lines output
+renders it in whatever readable form the bytes have:
 
-- Always present: `payload_b64` — base64 of the raw bytes.
-- Additionally, **iff the bytes are valid JSON**: `payload` — embedded as
-  structured JSON (not a string), so the receiving agent sees a real
-  object/array without manual base64-decode-then-parse.
+- `payload` — **iff the bytes are valid JSON**: embedded as structured JSON
+  (not a string), so the receiver branches on fields without parsing anything.
+- `payload_text` — otherwise, **iff the bytes are valid UTF-8**: the body as a
+  string. Prose, and any other non-JSON text, arrives here.
+- `payload_b64` — base64 of the exact bytes. It is the ONLY body a non-UTF-8
+  payload has. On the hook path (`--user-prompt-submit-hook`) it is dropped
+  whenever one of the two above was emitted: that record is spliced into the
+  agent's prompt, where a second copy of the same body costs 4/3 of its size
+  in context and says nothing new.
 
-Alongside those, every record carries `seq`, `topic`, `in_reply_to` (0 when
+**Never interpret a `payload_b64` by eye.** If it is the only body on a record
+the bytes are not text, and the only way to know what they say is to decode
+them (`... | base64 -d`, or `agent read <seq>` and decode that). A model that
+skims a base64 blob does not read it — it invents a plausible message and then
+acts on it, which surfaces as confident work against an instruction nobody
+sent. This cost this repo a wrong review before `payload_text` existed: a prose
+instruction had no readable rendering at all, so the agent had nothing to read
+but the blob.
+
+Alongside the body, every record carries `seq`, `topic`, `in_reply_to` (0 when
 the message is not a reply) and the `from` block. Those come from the server,
 not from the sender, so they are the fields to branch on — see
 "Replying — `--in-reply-to`".
@@ -610,13 +624,14 @@ the sender. You need it for nothing — `--in-reply-to` alone lands correctly �
 but if you were about to add your own `--topic` to a reply, this is what you
 would be overriding.
 
-So sending JSON is not just convention — it materially changes how your
-message lands on the other side. Recommended:
+Which form to send still matters, though no longer for legibility:
 
-- Send a JSON object whenever feasible. Include a short `"kind"` (or
-  equivalent discriminator) so the receiver can branch on intent.
-- Use raw bytes / plain text only for trivial signals (e.g. a single token)
-  where the receiver does not need to inspect contents.
+- Send a JSON object whenever the receiver has to **branch** on the message.
+  Include a short `"kind"` (or equivalent discriminator) so it can dispatch on
+  a field instead of interpreting prose.
+- Plain text is fine for anything shaped like a human instruction — it arrives
+  as `payload_text`, readable as sent. Only raw non-UTF-8 bytes land as base64
+  and nothing else.
 
 ## Peers may not be claude — or skill-injected
 

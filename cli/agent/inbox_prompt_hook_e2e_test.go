@@ -124,3 +124,94 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 // runner/settings.go retired and pruneStaleHarnessHooks removes from
 // worktrees. TestAgentCLI_E2E_RetiredInboxFlagsAreRejected covers that it
 // fails rather than being ignored.
+
+// TestAgentCLI_E2E_Inbox_ProseArrivesReadable runs a non-JSON body through the
+// whole wire — send, the server's retained ring, the payload stream, emit — and
+// pins the rendering at both exits. A prose instruction is what a relayed human
+// request looks like, and it used to arrive with payload_b64 as its ONLY body:
+// unreadable to the hook path (claude) and to the polled plain read (codex,
+// gemini, bash) alike. Multi-byte text is the case that matters, since a
+// mangled decode is what a reader would have to notice.
+func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
+	addr := freePortE2E(t)
+	board, _ := startServerE2E(t, addr)
+
+	const (
+		ridStrA = "ws:1.2.3.4:9203-23"
+		ridStrB = "ws:5.6.7.8:9204-24"
+		prose   = "指示: X を実装して\nY は触らないこと"
+		topic   = "topic/prose-e2e"
+	)
+	var ticketA, ticketB [16]byte
+	ticketA[0] = 0xF3
+	ticketB[0] = 0xF4
+	tidA := mkTidE2E(0x23)
+	tidB := mkTidE2E(0x24)
+	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9203, 23)
+	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9204, 24)
+	board.Registry().Register(ridA, tidA, ticketA)
+	board.Registry().Register(ridB, tidB, ticketB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	var subOut bytes.Buffer
+	if err := agent.Subscribe(ctx, []string{"--topic", topic}, &subOut); err != nil {
+		restoreB()
+		t.Fatalf("Subscribe: %v", err)
+	}
+	restoreB()
+
+	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	var sendOut bytes.Buffer
+	if err := agent.Send(ctx, []string{"--topic", topic, "--data", prose}, nil, &sendOut); err != nil {
+		restoreA()
+		t.Fatalf("Send: %v", err)
+	}
+	restoreA()
+
+	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	defer restoreB2()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	// The plain read first: it moves no delivery position, so the hook read
+	// after it still gets the same message.
+	var plain bytes.Buffer
+	if err := agent.Inbox(ctx, nil, &plain); err != nil {
+		t.Fatalf("Inbox (plain): %v", err)
+	}
+	var plainRec map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(plain.String())), &plainRec); err != nil {
+		t.Fatalf("plain record: %v; raw=%q", err, plain.String())
+	}
+	if got, _ := plainRec["payload_text"].(string); got != prose {
+		t.Errorf("plain payload_text = %q, want %q", got, prose)
+	}
+	if _, ok := plainRec["payload_b64"]; !ok {
+		t.Error("plain payload_b64 absent: the exact bytes must stay recoverable here")
+	}
+
+	var hookOut bytes.Buffer
+	if err := agent.Inbox(ctx, []string{"--user-prompt-submit-hook"}, &hookOut); err != nil {
+		t.Fatalf("Inbox (hook): %v", err)
+	}
+	var env struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(hookOut.String())), &env); err != nil {
+		t.Fatalf("hook envelope: %v; raw=%q", err, hookOut.String())
+	}
+	var hookRec map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(env.HookSpecificOutput.AdditionalContext)), &hookRec); err != nil {
+		t.Fatalf("hook record: %v; raw=%q", err, env.HookSpecificOutput.AdditionalContext)
+	}
+	if got, _ := hookRec["payload_text"].(string); got != prose {
+		t.Errorf("hook payload_text = %q, want %q", got, prose)
+	}
+	if _, ok := hookRec["payload_b64"]; ok {
+		t.Error("hook payload_b64 present: a readable body must not also be inlined as base64")
+	}
+}
