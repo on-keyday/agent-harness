@@ -943,13 +943,25 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 func (s *Session) WakeStdin(taskIDHex string) {
 	s.mu.Lock()
 	e, ok := s.tasks[taskIDHex]
-	if !ok || e == nil || e.wakeWrite == nil {
+	if !ok || e == nil {
 		s.mu.Unlock()
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task not known to this runner")
+		return
+	}
+	if e.wakeWrite == nil {
+		s.mu.Unlock()
+		// Permanent for that task, not transient: only handleOpenExec wires a
+		// stdin writer, so a oneshot never has one. Worth a line anyway — from
+		// the outside this is identical to a wake that was written and ignored,
+		// and telling the two apart is the whole reason these logs exist.
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not an interactive session)")
 		return
 	}
 	now := s.Now()
 	if !e.lastWakeAt.IsZero() && now.Sub(e.lastWakeAt) < wakeDebounceWindow {
+		since := now.Sub(e.lastWakeAt)
 		s.mu.Unlock()
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "debounced", "since_last", since)
 		return
 	}
 	write := e.wakeWrite
@@ -973,4 +985,10 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		e2.lastWakeAt = now
 	}
 	s.mu.Unlock()
+	// Both writes landed in the PTY. This says the harness did its half — it
+	// does NOT say a turn started, which is the agent's decision and not
+	// observable from here. That boundary is exactly what the log is for: with
+	// this line present and no turn, the next investigation starts at the
+	// agent instead of re-reading this file.
+	s.logger().Info("wake written", "task_id", taskIDHex)
 }
