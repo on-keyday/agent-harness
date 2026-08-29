@@ -73,12 +73,12 @@ func parsePtyReq(payload []byte) (ptyDims, error) {
 
 // serveSession runs one ssh session channel against one attach stream.
 func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewChannel) {
-	taskID, mode, err := ParseUserName(user)
+	taskID, uopts, err := ParseUserName(user)
 	if err != nil {
 		_ = newCh.Reject(ssh.Prohibited, err.Error())
 		return
 	}
-	if !g.claim(taskID, mode) {
+	if !g.claim(taskID, uopts.Mode) {
 		_ = newCh.Reject(ssh.Prohibited, fmt.Sprintf(
 			"ssh-gateway: task %s already has a control session through this gateway; connect without .control to co-write, or with .view to watch",
 			taskID))
@@ -93,7 +93,7 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 	release := func() {
 		if !released {
 			released = true
-			g.release(taskID, mode)
+			g.release(taskID, uopts.Mode)
 		}
 	}
 	defer release()
@@ -163,7 +163,7 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 					}
 				}
 			}()
-			g.runExec(ectx, ch, taskID, cmdline)
+			g.runExec(ectx, ch, taskID, cmdline, uopts)
 			cancelExec()
 			return
 		case "subsystem":
@@ -184,7 +184,7 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 		return
 	}
 
-	g.attachAndPump(ctx, ch, requests, taskID, mode, dims, haveDims)
+	g.attachAndPump(ctx, ch, requests, taskID, uopts.Mode, dims, haveDims)
 }
 
 // runExec runs one command line in the task's worktree and reports its exit
@@ -206,7 +206,7 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 // read-only here would advertise an authority boundary the gateway does not
 // have, since reaching it at all already means holding the operator's
 // credentials.
-func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string) {
+func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string, uopts UserOpts) {
 	// The kill is by ID, and it is not belt-and-braces: cancelling ctx only
 	// unwinds THIS end. The server drops an exec when its client's CONNECTION
 	// goes away, and one ssh client leaving is not this gateway's harness
@@ -238,6 +238,13 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 	}()
 
 	res, err := g.client.ExecRun(ctx, taskID, []string{cmdline}, cli.ExecRunOpts{
+		// Both come from the ssh USER NAME, so they are a property of the
+		// connection rather than of one command: a client that opens several
+		// execs over one connection — which is what a remote editor's
+		// bootstrap does — gets the same treatment on each without having to
+		// say so per command, and it has nowhere to say so anyway.
+		Detached:   uopts.Detach,
+		SshdParent: uopts.SshdParent,
 		// The RUNNER picks the shell. This used to send ["sh","-c",line], which
 		// is right on unix and wrong on Windows — and only appeared to work
 		// there because Git for Windows had put sh on PATH.

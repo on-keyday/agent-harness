@@ -49,7 +49,7 @@ re-deciding it during implementation.
 | D6 | One **control** ssh session per task per gateway; a second control session is refused. Cowriters and viewers coexist freely | this spec |
 | D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | this spec — **reverses** an earlier D7 in this spec, see § Detach |
 | D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | this spec |
-| D9 | No `.bgn` / wire change | this spec |
+| D9 | ~~No `.bgn` / wire change~~ — **reversed 2026-08-29**, see § Not a wire change (D9) | this spec |
 | D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | operator |
 | D11 | The bare user name is a **cowrite** attach, so arriving over ssh never evicts an attached client; `.control` and `.view` are the other two forms | operator |
 
@@ -73,6 +73,8 @@ is the accepted trade for P1–P4, all of which are same-machine cases.
 ssh -p 2222 <32-hex-task-id>@127.0.0.1           # cowrite: type, evict nobody
 ssh -p 2222 <32-hex-task-id>.control@127.0.0.1   # take the seat (owns the PTY size)
 ssh -p 2222 <32-hex-task-id>.view@127.0.0.1      # watch only
+ssh -p 2222 <32-hex-task-id>.detach@127.0.0.1    # execs leave what they start running
+ssh -p 2222 <32-hex-task-id>.detach,sshd-parent@127.0.0.1   # …and run under a parent named sshd
 ```
 
 ```
@@ -222,6 +224,10 @@ Details that follow from the mapping:
   how a SHELL session attaches, and an exec never attaches; treating `.view` as
   read-only here would advertise an authority boundary the gateway does not have,
   since reaching it at all already means holding operator credentials.
+  **Amended 2026-08-29:** the suffix does not GATE an exec, and it now
+  CONFIGURES one — `.detach` and `.sshd-parent` set the two flags of the same
+  name on every exec the connection makes. The sentence above is about
+  authority and is unchanged by that; see § User name → target.
 - The control seat is released before the command runs. An exec that held it for
   the length of `make test` would lock a real attach out for no reason, and
   `.control` is the form a script reaching for a command is likely to type.
@@ -296,12 +302,43 @@ change what the already-running agent renders.
 
 `cli/sshgw/user.go` maps the ssh user name:
 
+The suffix is a comma-separated **list**: at most one attach mode, plus any
+number of exec options.
+
 | User name | Result |
 | --- | --- |
 | 32 lowercase hex chars | that task, `protocol.AttachMode_Cowrite` |
 | 32 lowercase hex chars + `.control` | that task, `protocol.AttachMode_Control` |
 | 32 lowercase hex chars + `.view` | that task, `protocol.AttachMode_View` |
+| `.detach` | execs on this connection set `detached` |
+| `.sshd-parent` | execs on this connection set `sshd_parent` |
+| any combination, e.g. `.detach,sshd-parent` or `.control,detach` | the union; order is not significant |
+| two attach modes, an unknown token, an empty token | rejected |
 | anything else | authentication succeeds, the session channel is rejected with a message naming the accepted forms |
+
+**The exec options ride the user name because that is the only channel a client
+that builds its own ssh invocation can reach this gateway through.** A remote
+editor's bootstrap opens several execs over one connection and has nowhere to
+annotate an individual one; a `~/.ssh/config` `User` line is written once and
+applies to all of them, which matches the granularity — these are properties of
+what the connection is FOR, not of one command.
+
+Mixing them into a suffix that until 2026-08-29 meant "attach mode" and nothing
+else needs its own justification, since the two other places in this document
+that discuss the suffix say it gates neither `exec` nor forwards. Those
+statements were about **authority**: treating `.view` as read-only for an exec
+or a forward would advertise a boundary the gateway does not have, because
+reaching it at all already means holding operator credentials. Neither of these
+options is a permission — they change how a command runs, not what the
+connection may reach — so that argument does not reach them. D3 and D11 are
+operator rows and both still hold verbatim: the user name selects the task, and
+bare / `.control` / `.view` are the attach forms.
+
+A flat list rather than a second syntactic axis, because the two kinds do not
+collide in use: an attach mode governs a shell channel and these govern exec
+channels, which never attach. `.control,detach` is accepted anyway — one
+connection may open both kinds of channel, and refusing the combination would
+be a constraint invented here rather than one anything needs.
 
 The rejection deliberately happens at channel open, not at authentication:
 failing authentication for a malformed user name makes ssh retry keys and then
@@ -534,16 +571,42 @@ Sequencing: the objtrsf change lands and is published first, then this repo's
 objtrsf's landing policy is local-trunk FF push (`landing-policy-objtrsf`), and
 no `replace` directive is used at any point.
 
-## Not a wire change (D9)
+## Not a wire change (D9) — reversed 2026-08-29
 
-No file in `runner/protocol` is touched. The gateway uses `AttachSession` and
-`AttachMode` exactly as they exist, so `scripts/wire-skew-check.sh` is a no-op
-for this work and no server restart is required to deploy the gateway itself
-(Pitfall 10 does not apply). The `go.mod` change (x/crypto indirect → direct)
-affects only the client binaries.
+**D9 no longer holds.** `runner/protocol/message.bgn` gains two flag bits on
+`ExecRunRequest` and `RunnerExecRunRequest`, appended after `shell_line`:
 
-Two later amendments to the letter of D9, neither of which changes what it was
-protecting:
+| Flag | Meaning |
+| --- | --- |
+| `detached` | the runner does not wrap the leaf in a kill-on-close process group, so what the command starts outlives the exec |
+| `sshd_parent` | Windows only: run the shell line under a process NAMED sshd, for a client that walks its own ancestry comparing process names |
+
+It is reversed rather than worked around because the alternative was worse in
+the way this project has a rule about: a payload convention carrying what the
+schema does not describe. Both facts are properties of the request, and the
+runner is the party that acts on them.
+
+**What made the reversal necessary was a measurement, not a preference.** The
+Non-goals bullet on Remote-SSH ends by naming "a harness-side equivalent of the
+persistent server Remote-SSH stages" as the open question. Measured on a Windows
+runner 2026-08-29: an exec's process group is a job object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so a server the command deliberately
+detached (`Start-Process`, and `CreateProcess` with `DETACHED_PROCESS`) died the
+instant the exec returned — one heartbeat line written, then gone — while the
+same probe run outside an exec survived. `CREATE_BREAKAWAY_FROM_JOB` cannot opt
+out either: `ERROR_ACCESS_DENIED`, because `JOB_OBJECT_LIMIT_BREAKAWAY_OK` is
+not set. So the command cannot decide this from the inside and the decision has
+to travel on the wire. Below this repo nothing changes: objtrsf's
+`KillProcessTree` is already opt-in, and `detached` is the runner declining to
+pass it.
+
+D9's protection is not lost, it is paid: deploying this needs the server
+restarted **before** the runners, and `scripts/wire-skew-check.sh` is no longer
+a no-op for the gateway. That is the same requirement the `exec` mapping already
+inherited from the task-exec design (below), not a new one of a different kind.
+
+Two earlier amendments to the letter of D9, from when it still held, neither of
+which changed what it was protecting:
 
 - `cli/sshgw/sshwire/sshwire.bgn` describes **SSH's** payload layouts, not the
   harness protocol. It is a `.bgn` file, so "no `.bgn` file is touched" is no
@@ -572,7 +635,9 @@ Filled per Pitfall 9 — every cell has a verdict, and omissions are decisions.
 | WebUI buttons/forms, WebUI command line, WASM bridge | **Structurally impossible** — a page's JavaScript has no API for accepting an inbound TCP connection, so no wasm build can host a listener. The WebUI's equivalent of "reach this session from this device" is the WebUI itself |
 | Shared `cli/` | **Implemented** — the `cli/sshgw` package. `cli/terminal_input_modes.go` is deleted and its four call sites drop a line (D10) |
 | `objtrsf/exec` (separate module) | **Implemented** — `InputModeReset`, `ScreenModeReset`, `WriteTerminalReset` and `PumpTerminalIO` (D10), landed and published before this repo's work starts |
-| `server/`, `runner/`, protocol | **Not applicable** — no change (D9) |
+| `server/`, `runner/`, protocol | **Implemented** — `detached` + `sshd_parent` on `ExecRunRequest` / `RunnerExecRunRequest`, relayed in `runnerExecRunRequest`, read by the runner as `KillProcessTree: !req.Detached()` and by `shellLineArgv`. Reverses D9; server restarts before runners |
+| CLI `exec` verb | **Implemented** — `--detach` / `--sshd-parent`, order-free with `--shell`, scanned before the task id. The two flags are usable without the gateway, which is what makes them testable by hand |
+| TUI `exec` command line, WebUI `exec` command line | **Implemented** — the same two options on both, refused at parse time when paired with `ls` / `kill`, `--sshd-parent` refused without `--shell` |
 | Workspace config (`.harness/config`) | **Intentionally omitted** — a workspace records forwards so they can be re-established on reconnect; a gateway is not per-task and has one address, and `--listen` in the alias the operator already wrote is the same information |
 | Forward DISPLAY surfaces — `forward ls`, the TUI forwards view, the WebUI's | **Implemented by reuse, nothing added** — a `direct-tcpip` channel registers through `cli.OpenRawForward`, so it appears wherever an in-process forward already does and `forward kill` already reaches it. This is the row Pitfall 9 is about: the feature adds no INPUT surface, but it does put new rows on three existing DISPLAY surfaces. It needed no code on any of them because the endpoint kind it registers under (`InProcess`) is the one a raw `t` pane and a WebUI preview pin already use — including in `workspace save`, which skips in-process forwards with a count, so a gateway forward is correctly never written into `.harness/config` as an `-L` line |
 
@@ -625,7 +690,18 @@ because the process exits with them. Neither surface re-binds on reconnect;
 Unit:
 
 - user-name mapping: 32-hex, 32-hex + `.view`, uppercase hex, wrong length,
-  empty, a name that merely contains a hex run
+  empty, a name that merely contains a hex run; and for the option list —
+  `.detach` alone, `.sshd-parent` alone, both, both reversed (order is not
+  significant), an attach mode combined with an option, and the rejections:
+  two attach modes, an empty token from a trailing comma, a wrong spelling
+  (`.sshd_parent`), an unknown token
+- the runner's `shellLineArgv`: `sshd_parent` refused off Windows naming the
+  platform, and the ordinary path unchanged when it is not asked for — a
+  runner that started staging a shim for every `exec --shell` would put a file
+  copy in front of a hot path
+- the server's exec relay carries every flag: the existing test asserted only
+  `stdin_enabled`, so a dropped `detached` would have put the command back in
+  a kill-on-close job and reported success
 - authorized-keys: accepted key, unknown key, comment / options lines, empty
   file
 - the bind/auth coupling (D5): loopback with no keys starts, non-loopback with
@@ -769,6 +845,19 @@ that catches a missing `//go:build !js`.
   a real sshd on the far side (then the gateway is a jump host, which `-J` now
   does) or a harness-side equivalent of the persistent server Remote-SSH stages,
   which is the detached-exec question and not this design's.
+
+  **Third, 2026-08-29: the detached-exec question became this design's, and the
+  bullet is now only half a non-goal.** Two blockers were measured on a Windows
+  runner, in this order of hardness. The `sshd` name check is the shallow one
+  and was already known to be satisfiable by running the shell line under a copy
+  of `cmd.exe` named `sshd.exe` — only the process NAME is compared. Behind it
+  sat the real wall: Remote-SSH's bootstrap prints `Listening on …:PORT` and
+  **exits**, expecting the server it launched to outlive that connection, and an
+  exec's kill-on-close job takes the server with it (§ Not a wire change). So
+  `sshd_parent` alone gets past the check and still fails; `detached` is the
+  prerequisite. Both are now served, reached through the user-name suffix.
+  What stays a non-goal is scp / sftp / rsync — `subsystem` is still refused,
+  and the file data plane is still `file push` / `file pull` / `git`.
 - ~~**`ssh host <command>`.**~~ **No longer a non-goal.** It was one while the
   nearest existing verb ran in the session's foreground shell, which is not what
   that syntax means to anyone who types it. `exec` supplies the matching

@@ -20,12 +20,34 @@ import (
 
 const taskIDHexLen = 32
 
-// ParseUserName maps an ssh user name to the task it names and the attach mode
-// it asks for:
+// UserOpts is everything an ssh user name asks for beyond naming the task.
+type UserOpts struct {
+	// Mode is how a SHELL session attaches. Ignored by every channel that
+	// does not attach — an exec and a forward both reach the task without
+	// taking a seat.
+	Mode protocol.AttachMode
+
+	// Detach makes an exec on this connection leave whatever it starts
+	// running after the command ends. Off by default, because the default is
+	// right for `ssh <id>@gw 'make test'`: interrupting that must stop make's
+	// children too.
+	Detach bool
+
+	// SshdParent runs an exec's shell line under a process named sshd, for a
+	// client that checks its own ancestry by process name. Windows runners
+	// only; elsewhere the runner refuses the exec rather than running it
+	// without the property.
+	SshdParent bool
+}
+
+// ParseUserName maps an ssh user name to the task it names and what the
+// connection is asking for:
 //
-//	<32-hex>            cowrite — types, takes no seat
-//	<32-hex>.control    control — takes the seat, owns the PTY size
-//	<32-hex>.view       view    — reads only
+//	<32-hex>                      cowrite — types, takes no seat
+//	<32-hex>.control              control — takes the seat, owns the PTY size
+//	<32-hex>.view                 view    — reads only
+//	<32-hex>.detach               execs leave what they start running
+//	<32-hex>.detach,sshd-parent   …and run under a parent named sshd
 //
 // The bare form is cowrite on purpose. A control attach is a takeover
 // server-side (SessionMux.Attach closes the previous controller's stream), so a
@@ -36,23 +58,64 @@ const taskIDHexLen = 32
 // There is no `.cowrite` spelling: the bare form already is one, and a second
 // spelling of the same thing would show up as two different names in anything
 // that logs this gateway.
-func ParseUserName(name string) (string, protocol.AttachMode, error) {
+//
+// The suffix is a comma-separated LIST, and it carries two kinds of thing: at
+// most one attach mode, plus any number of exec options. That mixing is
+// deliberate and worth the note, because this file used to say the suffix
+// selects an attach mode and nothing else.
+//
+// D3 and D11 (both operator decisions) fix that the user name selects the task
+// and that bare/.control/.view are the attach forms. Neither says the suffix
+// may carry nothing else. What argued against it was tcpip.go's note that
+// treating `.view` as read-only for a forward "would advertise an authority
+// boundary the gateway does not have" — and that is an argument about
+// PERMISSIONS, which neither of these options is. They change how a command
+// runs, not what the connection is allowed to reach; anyone who got this far
+// already holds the operator's credentials either way.
+//
+// A flat list rather than a second axis because the two kinds never collide in
+// practice: an attach mode governs a shell channel, and these options govern
+// exec channels, which never attach. `.control,detach` is accepted anyway — a
+// connection may open both kinds of channel, and refusing the combination
+// would be a constraint invented here rather than one anything needs.
+//
+// Where it is meant to be typed is an ~/.ssh/config `User` line, which is the
+// only thing that reaches this gateway from a client that builds its own ssh
+// invocation.
+func ParseUserName(name string) (string, UserOpts, error) {
+	const forms = "use <32-hex-task-id>[.<opt>[,<opt>...]]@host, where opt is control | view | detach | sshd-parent (lowercase hex; no suffix means cowrite)"
 	id, suffix, hasSuffix := strings.Cut(name, ".")
 	if !isTaskIDHex(id) {
-		return "", 0, fmt.Errorf("ssh user name %q is not a task id: use <32-hex-task-id>[.control|.view]@host (lowercase hex; no suffix means cowrite)", name)
+		return "", UserOpts{}, fmt.Errorf("ssh user name %q is not a task id: %s", name, forms)
 	}
-	mode := protocol.AttachMode_Cowrite
-	if hasSuffix {
-		switch suffix {
-		case "control":
-			mode = protocol.AttachMode_Control
-		case "view":
-			mode = protocol.AttachMode_View
+	opts := UserOpts{Mode: protocol.AttachMode_Cowrite}
+	if !hasSuffix {
+		return id, opts, nil
+	}
+	modeSeen := false
+	for _, tok := range strings.Split(suffix, ",") {
+		switch tok {
+		case "control", "view":
+			// One attach mode, because two would have to be resolved by a
+			// precedence rule nobody typed and the loser would be silent.
+			if modeSeen {
+				return "", UserOpts{}, fmt.Errorf("ssh user name %q names more than one attach mode: %s", name, forms)
+			}
+			modeSeen = true
+			if tok == "control" {
+				opts.Mode = protocol.AttachMode_Control
+			} else {
+				opts.Mode = protocol.AttachMode_View
+			}
+		case "detach":
+			opts.Detach = true
+		case "sshd-parent":
+			opts.SshdParent = true
 		default:
-			return "", 0, fmt.Errorf("ssh user name %q: unknown mode %q (want .control or .view, or no suffix for cowrite)", name, suffix)
+			return "", UserOpts{}, fmt.Errorf("ssh user name %q: unknown option %q: %s", name, tok, forms)
 		}
 	}
-	return id, mode, nil
+	return id, opts, nil
 }
 
 // isTaskIDHex reports whether s is exactly 32 LOWERCASE hex characters.

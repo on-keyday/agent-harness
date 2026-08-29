@@ -612,7 +612,7 @@ func main() {
 
 	case "exec":
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli exec [--shell] <task-id> -- <command> [args...]")
+			fmt.Fprintln(os.Stderr, "usage: harness-cli exec [--shell] [--detach] [--sshd-parent] <task-id> -- <command> [args...]")
 			fmt.Fprintln(os.Stderr, "       harness-cli exec ls [--task <task-id>] [--json]")
 			fmt.Fprintln(os.Stderr, "       harness-cli exec kill <exec-id> [<exec-id> ...]")
 			os.Exit(2)
@@ -818,7 +818,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>@%s` attaches; Ctrl-C stops it and every session it serves, and so does the server connection dropping\n",
+		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>[.control|.view|.detach|.sshd-parent]@%s` attaches; Ctrl-C stops it and every session it serves, and so does the server connection dropping\n",
 			*listen, sshgw.PortOf(*listen), sshgw.HostOf(*listen))
 		fmt.Fprintln(os.Stderr, "harness-cli: bare user name = cowrite (evicts nobody), .control takes the seat, .view watches; Ctrl+] detaches")
 		gctx, cancel := interruptContext("ssh-gateway", ctx)
@@ -1161,7 +1161,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      kill one or more registered forwards by id (from `forward ls`)")
-	fmt.Fprintln(os.Stderr, "  exec [--shell] <task-id> -- <command> [args...]")
+	fmt.Fprintln(os.Stderr, "  exec [--shell] [--detach] [--sshd-parent] <task-id> -- <command> [args...]")
 	fmt.Fprintln(os.Stderr, "                                      run a command in the task's WORKTREE as its own process:")
 	fmt.Fprintln(os.Stderr, "                                      stdout and stderr stay separate, and the command's own exit code becomes ours")
 	fmt.Fprintln(os.Stderr, "                                      works on a FINISHED task too, as long as its worktree is still there —")

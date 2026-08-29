@@ -15,23 +15,39 @@ func TestParseUserName_Accepted(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
-		want protocol.AttachMode
+		want UserOpts
 	}{
-		{"bare is cowrite", validID, protocol.AttachMode_Cowrite},
-		{"control suffix", validID + ".control", protocol.AttachMode_Control},
-		{"view suffix", validID + ".view", protocol.AttachMode_View},
+		{"bare is cowrite", validID, UserOpts{Mode: protocol.AttachMode_Cowrite}},
+		{"control suffix", validID + ".control", UserOpts{Mode: protocol.AttachMode_Control}},
+		{"view suffix", validID + ".view", UserOpts{Mode: protocol.AttachMode_View}},
+		// An exec option alone leaves the attach mode at its default, because
+		// it says nothing about attaching.
+		{"detach alone", validID + ".detach",
+			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true}},
+		{"sshd-parent alone", validID + ".sshd-parent",
+			UserOpts{Mode: protocol.AttachMode_Cowrite, SshdParent: true}},
+		// The form a remote editor's ~/.ssh/config User line carries.
+		{"both exec options", validID + ".detach,sshd-parent",
+			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true, SshdParent: true}},
+		// Order is not significant: this is a set, not a sequence.
+		{"reversed", validID + ".sshd-parent,detach",
+			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true, SshdParent: true}},
+		// Accepted rather than refused: one connection may open a shell
+		// channel AND exec channels, so the combination is meaningful.
+		{"attach mode with an exec option", validID + ".control,detach",
+			UserOpts{Mode: protocol.AttachMode_Control, Detach: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			id, mode, err := ParseUserName(tc.in)
+			id, got, err := ParseUserName(tc.in)
 			if err != nil {
 				t.Fatalf("ParseUserName(%q) error: %v", tc.in, err)
 			}
 			if id != validID {
 				t.Errorf("task id = %q, want %q", id, validID)
 			}
-			if mode != tc.want {
-				t.Errorf("mode = %v, want %v", mode, tc.want)
+			if got != tc.want {
+				t.Errorf("opts = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
@@ -51,6 +67,12 @@ func TestParseUserName_Rejected(t *testing.T) {
 		validID + ".cowrite", // the bare form IS cowrite; a suffix for it would be a second spelling
 		validID + ".Control",
 		validID + ".control.view",
+		validID + ".control,view", // two attach modes: the loser would be silent
+		validID + ".view,control",
+		validID + ".detach,", // an empty token is a typo, not an empty set
+		validID + ".Detach",
+		validID + ".sshd_parent", // the spelling is sshd-parent
+		validID + ".detach,bogus",
 		"prefix-" + validID,
 		"01234567-89ab-cdef-0123-456789abcdef",
 	} {
@@ -67,7 +89,7 @@ func TestParseUserName_ErrorNamesTheForms(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	for _, want := range []string{".control", ".view"} {
+	for _, want := range []string{"control", "view", "detach", "sshd-parent"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}

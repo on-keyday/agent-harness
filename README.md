@@ -329,6 +329,7 @@ bin/harness-cli exec <task-id> -- git status          # words after -- are the a
 bin/harness-cli exec --shell <task-id> -- 'ls | wc -l'   # one line for the RUNNER's shell
 bin/harness-cli exec <task-id> -- make test           # exits with make's status
 bin/harness-cli exec <task-id> -- sh -c 'echo out; echo err 1>&2' 2>/dev/null
+bin/harness-cli exec --shell --detach <task-id> -- 'start-server &'  # survives the exec
 bin/harness-cli exec ls [-task <task-id>] [--json]    # what is running right now
 bin/harness-cli exec kill <exec-id>                   # stop one
 ```
@@ -346,7 +347,8 @@ What it gives you that `session exec` does not:
 - **No side effect on the session.** The agent's terminal is untouched, so this
   is safe to run against a session someone is watching.
 - **Stopping it stops what it started.** `exec kill`, Ctrl-C, or a dropped ssh
-  session ends the whole process tree, not just the first process.
+  session ends the whole process tree, not just the first process — unless you
+  ask for the opposite with `--detach`, below.
 
 Words after `--` are an argv and reach the child untouched — no shell re-reads
 a quote. `--shell` is the other mode: the words become ONE line for the
@@ -360,8 +362,21 @@ what you want then — while a task that ended clean had its tree removed and is
 refused. On a `--no-worktree` runner every task runs in the repo itself, and so
 does its exec.
 
-It is **synchronous and dies with its caller**: Ctrl-C stops the child. The
-detached form is a task — `submit --agent bash --task '…'`. A long one is
+It is **synchronous and dies with its caller**: Ctrl-C stops the child, and so
+does the whole-tree kill above. `--detach` lifts only the second half — the call
+still blocks until the command returns, but whatever the command left running
+stays running. That is for a command whose POINT is to leave a server behind,
+and without it such a command is impossible rather than awkward: on Windows the
+group is a kill-on-close job, so even a deliberately detached child dies the
+instant the exec returns. Nothing reaps what is left, so a process with no
+shutdown path of its own is a leak. For a whole background *job* the answer is
+still a task — `submit --agent bash --task '…'`.
+
+`--sshd-parent` is the neighbouring option and needs `--shell`: it runs the line
+under a process **named** `sshd`, for a client that decides whether it is
+talking to an SSH server by walking its own ancestry and comparing process
+names. Windows only — elsewhere the runner refuses rather than running the
+command without the property and reporting success. A long one is
 visible to every client in `exec ls` and stoppable from any of them, and each
 task's row shows how many are running: `execs=N` in `ls` and the WebUI, `Nx` in
 the TUI Obs column, `execs: N running` in the TUI `d` popup, `exec_count` in
@@ -383,6 +398,8 @@ with an ssh channel where a local terminal would be.
 ssh -p 2222 <32-hex-task-id>@127.0.0.1           # cowrite: type, evict nobody
 ssh -p 2222 <32-hex-task-id>.control@127.0.0.1   # take the seat (owns the PTY size)
 ssh -p 2222 <32-hex-task-id>.view@127.0.0.1      # watch only
+ssh -p 2222 <32-hex-task-id>.detach@127.0.0.1    # execs leave what they start running
+ssh -p 2222 <32-hex-task-id>.detach,sshd-parent@127.0.0.1   # …and run under a parent named sshd
 ```
 
 The user name names the task and picks the mode. The **bare form is cowrite**
@@ -461,6 +478,15 @@ The `.control` / `.view` suffix does not gate it — those choose how a *shell*
 session attaches, and this never attaches — and an exec does not hold the
 control seat while it runs. Interrupting the ssh client stops the command,
 including anything it forked.
+
+The suffix does, however, **configure** an exec. It is a comma-separated list,
+and alongside at most one attach mode it takes `detach` and `sshd-parent` —
+the two `exec` options above, applied to every command this connection runs.
+They live in the user name because that is the only thing that reaches the
+gateway from a client building its own ssh invocation: a `~/.ssh/config` `User`
+line is written once and covers every exec the connection makes, which is the
+right granularity for a property of what the connection is *for*. Order does
+not matter and the modes compose, so `.control,detach` is a valid name.
 
 ### X11 forwarding
 
