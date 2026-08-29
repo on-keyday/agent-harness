@@ -33,10 +33,17 @@ type RawConn struct {
 	stopWatch context.CancelFunc
 }
 
-// OpenRawForward opens the data stream, registers the forward so it is listable
-// and killable, and starts watching the control stream. Registration failure
-// closes the data stream: a forward that is running but absent from `forward ls`
-// is exactly the state the registry exists to prevent.
+// OpenRawForward registers the forward so it is listable and killable, opens
+// the data stream under that registration, and starts watching the control
+// stream. A forward that is running but absent from `forward ls` is exactly the
+// state the registry exists to prevent, so a failure on either half closes the
+// other.
+//
+// REGISTER FIRST, then open: the data stream names the registration it belongs
+// to (OpenPortForwardRequest.forward_id), so the id has to exist before the
+// open. The brief window where a registration has no data stream behind it is a
+// state RunForward already produces — it registers when its listener binds and
+// opens per accepted connection.
 //
 // ctx bounds the OPEN — the two RPCs below — and nothing else. The connection
 // itself lives until Close, or until the far end ends the registration. The
@@ -55,15 +62,15 @@ func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port
 	if logf == nil {
 		logf = func(string) {}
 	}
-	data, err := c.OpenPortForward(ctx, taskIDHex, host, port)
-	if err != nil {
-		return nil, err
-	}
 	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
 		"", 0, host, port, kind)
 	if err != nil {
-		_ = data.CloseBoth()
 		return nil, fmt.Errorf("raw forward: register: %w", err)
+	}
+	data, err := c.OpenPortForward(ctx, taskIDHex, host, port, fid)
+	if err != nil {
+		_ = ctrl.CloseBoth()
+		return nil, err
 	}
 	watchCtx, stopWatch := context.WithCancel(context.WithoutCancel(ctx))
 	rc := &RawConn{data: data, ctrl: ctrl, forwardID: fid, stopWatch: stopWatch}

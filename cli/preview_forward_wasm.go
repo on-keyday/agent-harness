@@ -119,14 +119,17 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 
 // PreviewPinFetch sends one HTTP request over a connection opened under the
 // pin. The connection itself is NOT registered: the pin already represents it,
-// for longer and more visibly than a per-request row ever did.
+// for longer and more visibly than a per-request row ever did. It still names
+// the pin's forward id on the wire, so the traffic is counted and tappable
+// under that row.
 func PreviewPinFetch(ctx context.Context, c *Client, key string, spec HTTPRequestSpec) (*HTTPFetchResult, error) {
 	pinMu.Lock()
 	slot := pinSlots[key]
 	var taskID, host string
 	var port int
+	var fid uint64
 	if slot != nil {
-		taskID, host, port = slot.taskID, slot.host, slot.port
+		taskID, host, port, fid = slot.taskID, slot.host, slot.port, slot.forwardID
 	}
 	pinMu.Unlock()
 	if slot == nil || slot.ctrl == nil {
@@ -136,7 +139,10 @@ func PreviewPinFetch(ctx context.Context, c *Client, key string, spec HTTPReques
 	if err != nil {
 		return nil, err
 	}
-	st, err := c.OpenPortForward(ctx, taskID, host, port)
+	// The fetch rides the PIN's registration rather than making one of its
+	// own — which is what the pin is for — so its bytes land on the pin's row
+	// and are tappable without a row per request.
+	st, err := c.OpenPortForward(ctx, taskID, host, port, fid)
 	if err != nil {
 		return nil, err
 	}

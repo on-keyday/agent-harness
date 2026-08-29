@@ -153,7 +153,17 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 		// mapping shows up as ZERO rather than being indistinguishable from a
 		// correctly-mapped OsSocket.
 		clientEndpoint: protocol.ClientEndpointKind_InProcess,
+		conns:          map[uint64]connBytes{},
 	}
+	// The traffic counters are atomics, which a struct literal cannot fill and
+	// the reflect sweep above therefore cannot see as "populated". Drive them
+	// through the real methods, so this guard tests the MAPPING rather than
+	// being satisfied by a literal that skipped them.
+	pf.openConn()
+	pf.noteBytes(protocol.ForwardTapDirection_ToTarget, 1024)
+	pf.noteBytes(protocol.ForwardTapDirection_FromTarget, 4096)
+	pf.addTap(newForwardTap(nil, protocol.ForwardTapFilter_Both, 0))
+
 	info := portForwardInfo(pf)
 	assertNoZeroFields(t, info, map[string]string{})
 }

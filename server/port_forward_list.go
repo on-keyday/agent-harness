@@ -102,6 +102,9 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.OriginKind = pf.clientKind
 	info.SetOriginCid([]byte(pf.clientCID))
 	info.ClientEndpoint = pf.clientEndpoint
+	info.BytesToTarget, info.BytesFromTarget, info.ConnsTotal, info.ConnsOpen,
+		info.LastActivityUnixMs = pf.counters()
+	info.Taps = pf.tapCount()
 	return info
 }
 
@@ -131,6 +134,11 @@ func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortF
 	if notify {
 		pushPortForwardClosed(pf, reason)
 	}
+	// Taps are told unconditionally, even when notify is false. notify governs
+	// the OWNER's control stream, and a tapper is not necessarily the owner: it
+	// has no other channel on which to learn the difference between "the
+	// forward ended" and "my own connection dropped".
+	pf.closeTaps(reason)
 	if pf.direction != protocol.PortForwardDirection_Remote {
 		return true
 	}

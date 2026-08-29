@@ -254,3 +254,120 @@ func TestPortForwardInfo_InProcessRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 }
+
+// TestForwardTapRecordRoundTrip covers the union shape: only the arm named by
+// kind is readable, and the others answer nil rather than a zero value that
+// would read as real data.
+func TestForwardTapRecordRoundTrip(t *testing.T) {
+	rec := ForwardTapRecord{Kind: ForwardTapRecordKind_Data, UnixMs: 1756000000000}
+	d := ForwardTapData{
+		ConnSeq:        3,
+		Direction:      ForwardTapDirection_ToTarget,
+		StreamOffset:   4096,
+		TruncatedBytes: 12,
+	}
+	d.SetData([]byte("GET /x HTTP/1.1\r\n"))
+	rec.SetData(d)
+
+	enc, err := rec.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &ForwardTapRecord{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	arm := got.Data()
+	if arm == nil {
+		t.Fatalf("data arm missing, kind=%v", got.Kind)
+	}
+	if arm.ConnSeq != 3 || arm.StreamOffset != 4096 || arm.TruncatedBytes != 12 {
+		t.Fatalf("arm fields: %+v", arm)
+	}
+	if string(arm.Data) != "GET /x HTTP/1.1\r\n" {
+		t.Fatalf("payload: %q", arm.Data)
+	}
+	if got.Gap() != nil || got.ConnOpen() != nil {
+		t.Fatal("a wrong arm is readable on a data record")
+	}
+}
+
+func TestForwardTapForwardClosedCarriesReason(t *testing.T) {
+	rec := ForwardTapRecord{Kind: ForwardTapRecordKind_ForwardClosed, UnixMs: 1}
+	rec.SetForwardClosed(ForwardTapForwardClosed{Reason: PortForwardCloseReason_Killed})
+	enc, err := rec.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &ForwardTapRecord{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ForwardClosed() == nil || got.ForwardClosed().Reason != PortForwardCloseReason_Killed {
+		t.Fatalf("reason lost: %+v", got.ForwardClosed())
+	}
+}
+
+func TestForwardTapConnCloseCarriesItsOwnTotals(t *testing.T) {
+	rec := ForwardTapRecord{Kind: ForwardTapRecordKind_ConnClose, UnixMs: 1}
+	rec.SetConnClose(ForwardTapConnClose{ConnSeq: 3, BytesToTarget: 4198, BytesFromTarget: 1 << 20})
+	enc, err := rec.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &ForwardTapRecord{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cc := got.ConnClose()
+	if cc == nil || cc.BytesToTarget != 4198 || cc.BytesFromTarget != 1<<20 {
+		t.Fatalf("per-connection totals lost: %+v", cc)
+	}
+}
+
+// TestPortForwardInfoCarriesCounters pins the six appended fields. A row that
+// silently drops them would report every forward as idle.
+func TestPortForwardInfoCarriesCounters(t *testing.T) {
+	in := PortForwardInfo{
+		ForwardId:          7,
+		BytesToTarget:      1 << 20,
+		BytesFromTarget:    48,
+		ConnsTotal:         41,
+		ConnsOpen:          3,
+		Taps:               1,
+		LastActivityUnixMs: 1756000000000,
+	}
+	in.SetBindAddr([]byte("127.0.0.1"))
+	in.SetTargetHost([]byte("localhost"))
+	in.SetOriginCid([]byte("ws:abc"))
+
+	enc, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &PortForwardInfo{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.BytesToTarget != 1<<20 || got.BytesFromTarget != 48 ||
+		got.ConnsTotal != 41 || got.ConnsOpen != 3 || got.Taps != 1 ||
+		got.LastActivityUnixMs != 1756000000000 {
+		t.Fatalf("counters lost: %+v", got)
+	}
+}
+
+func TestOpenPortForwardRequestCarriesForwardID(t *testing.T) {
+	in := OpenPortForwardRequest{RemotePort: 3000, ForwardId: 9}
+	in.SetRemoteHost([]byte("localhost"))
+	enc, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &OpenPortForwardRequest{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ForwardId != 9 {
+		t.Fatalf("forward id lost: %d", got.ForwardId)
+	}
+}

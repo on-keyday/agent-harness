@@ -45,6 +45,11 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_OpenPortForward:     targetGated,
 	protocol.TaskControlKind_RegisterPortForward: targetGated,
 	protocol.TaskControlKind_KillPortForward:     targetGated,
+	// open_forward_tap names a FORWARD that resolves to a task, exactly as
+	// kill_port_forward does — and it reads that forward's payload, so it must
+	// clear the same two gates: visible to the caller, and in the caller's
+	// action scope for forward_tap.
+	protocol.TaskControlKind_OpenForwardTap: targetGated,
 	// open_exec_run names a task; exec_run_kill names an EXEC that resolves to
 	// one, and gates on that task exactly as kill_port_forward does with a
 	// forward id.
@@ -84,7 +89,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardRetract); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_OpenForwardTap); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -99,12 +104,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// board_retract is the last kind; if the enum grows past it the loop above
+// open_forward_tap is the last kind; if the enum grows past it the loop above
 // stops short and silently covers nothing new.
-func TestBoardRetractIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardRetract) + 1)
+func TestOpenForwardTapIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_OpenForwardTap) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after board_retract (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after open_forward_tap (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
 	}
 }

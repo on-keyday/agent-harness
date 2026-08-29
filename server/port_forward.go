@@ -32,6 +32,15 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
 	}
+	// The registration these bytes belong to. Refused when it names nothing —
+	// 0 included, which no caller in this tree sends and a version-skewed one
+	// cannot reach (a short request fails to decode instead). A stream naming
+	// no registration would be a forward no listing shows, no counter counts
+	// and no `forward kill` can name.
+	pf, ok := h.pforwards().get(req.ForwardId)
+	if !ok {
+		return errResp(protocol.OpenPortForwardStatus_NoSuchForward)
+	}
 	if conn == nil {
 		slog.Error("port_forward: nil client conn (programmer error)")
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
@@ -62,7 +71,9 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 		slog.Error("port_forward: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
-	go spliceBidi(clientStream, runnerStream, taskIDHex)
+	connSeq := pf.openConn()
+	pf.tapConnOpen(connSeq, string(req.RemoteHost), req.RemotePort)
+	go spliceBidiCounted(clientStream, runnerStream, taskIDHex, pf, connSeq)
 	return protocol.OpenPortForwardResponse{
 		Status:   protocol.OpenPortForwardStatus_Ok,
 		StreamId: uint64(clientStream.ID()),
@@ -249,7 +260,9 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		_ = runnerStream.CloseBoth()
 		return
 	}
-	go spliceBidi(clientStream, runnerStream, pf.taskIDHex)
+	connSeq := pf.openConn()
+	pf.tapConnOpen(connSeq, pf.targetHost, pf.targetPort)
+	go spliceBidiCounted(clientStream, runnerStream, pf.taskIDHex, pf, connSeq)
 }
 
 // pushPortForwardClosed tells the client to stop this forward. Sent as an

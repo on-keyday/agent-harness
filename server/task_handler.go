@@ -557,6 +557,17 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_OpenForwardTap:
+		tr := req.OpenForwardTap()
+		if tr == nil {
+			slog.Error("TaskHandler: OpenForwardTap variant is nil")
+			return
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenForwardTap, RequestId: req.RequestId}
+		resp.SetOpenForwardTap(h.handleOpenForwardTap(conn, tr, cid))
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {
@@ -1487,42 +1498,19 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	}
 }
 
-// spliceBidi pumps bytes between two bidirectional streams in both directions
-// until either side closes or errors. Each side's EOF is propagated to the
-// other so exec.ExecuteCommand can react to TUI detach (close stream → EOF
-// on PTY stdin pipe → claude exits via SIGHUP/SIGTERM/SIGKILL ladder).
+// The tear-down-on-either-close variant lives in forward_splice.go as
+// spliceBidiCounted: port forwarding was its only caller, and a forward's
+// splice now also has a registration to count bytes against.
 //
-// When either direction returns — clean EOF or error — both streams are
-// fully closed via CloseBoth. For an interactive PTY, half-closes are not
-// meaningful: if one direction is dead the other should be torn down too,
-// otherwise the surviving relay goroutine blocks forever on ReadDirect
-// (e.g. TUI vanished mid-session, claude is sitting idle waiting for
-// stdin) and the splice never finishes.
-func spliceBidi(a, b trsf.BidirectionalStream, taskIDHex string) {
-	var wg sync.WaitGroup
-	var once sync.Once
-	teardown := func() {
-		once.Do(func() {
-			_ = a.CloseBoth()
-			_ = b.CloseBoth()
-		})
-	}
-	wg.Add(2)
-	go func() { defer wg.Done(); defer teardown(); relayBytes(a, b) }()
-	go func() { defer wg.Done(); defer teardown(); relayBytes(b, a) }()
-	wg.Wait()
-	slog.Info("OpenInteractive: splice ended", "task_id", taskIDHex)
-}
-
-// spliceBidiHalfClose is a non-tear-down variant of spliceBidi for request /
+// spliceBidiHalfClose is a non-tear-down variant of that shape, for request /
 // response patterns over a bidi stream — like file_transfer push (client EOFs
 // → runner ACKs back) and pull / list_files (runner EOFs → client closes its
 // idle send side). Both relays complete on natural EOF; the streams are
 // CloseBoth'd only after both have returned.
 //
 // Use this when the application protocol on top of the stream guarantees that
-// both directions will EOF on their own. For interactive PTY (where one side
-// going away should kill the other), use spliceBidi.
+// both directions will EOF on their own. When one side going away should kill
+// the other, use spliceBidiCounted.
 func spliceBidiHalfClose(a, b trsf.BidirectionalStream, taskIDHex string) {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -1535,8 +1523,10 @@ func spliceBidiHalfClose(a, b trsf.BidirectionalStream, taskIDHex string) {
 }
 
 // relayBytes copies bytes from src to dst, propagating EOF. Returns on the
-// first read error or write error — the spliceBidi caller force-closes both
+// first read error or write error — a tear-down caller force-closes both
 // streams once either direction returns, which unblocks the reverse relay.
+// relayBytesCounted (forward_splice.go) is this loop plus a forward's
+// accounting; keep the two in step.
 func relayBytes(src, dst trsf.BidirectionalStream) {
 	for {
 		data, eof, err := src.ReadDirect(64 * 1024)

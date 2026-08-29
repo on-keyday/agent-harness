@@ -334,6 +334,12 @@ enum TaskControlKind:
                             # one. Distinct from the agentboard RetractRequest,
                             # which takes no capability and is gated on
                             # authorship instead.
+    open_forward_tap        # appended (keeps existing ordinals stable): attach
+                            # to one port forward and receive the bytes crossing
+                            # it, live, as ForwardTapRecord. Requires
+                            # forward_tap AND that the forward is visible to the
+                            # caller. Nothing is recorded server-side — a tap
+                            # sees only what crosses after it opens.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1181,6 +1187,7 @@ format TaskControlRequest:
         TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListRequest
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillRequest
         TaskControlKind.board_retract         => board_retract         :BoardRetractRequest
+        TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1234,6 +1241,7 @@ format TaskControlResponse:
         TaskControlKind.exec_run_list         => exec_run_list         :ExecRunListResponse
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillResponse
         TaskControlKind.board_retract         => board_retract         :BoardRetractResponse
+        TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapResponse
 
 enum SetCapsStatus:
     :u8
@@ -1766,12 +1774,26 @@ enum Capability:
     # the bash profile. What this adds is a shape — synchronous, non-invasive,
     # no task created — not a power.
     exec_run       = 0x8000, "exec_run"
+    # forward_tap authorizes READING THE PAYLOAD of a port forward — the
+    # cleartext of whatever protocol it carries, which routinely means an
+    # Authorization header, a git credential or a database password. Holding a
+    # forward is a different power from reading what crosses it, so
+    # forward_local does not imply this and neither does forward_remote.
+    #
+    # It is not the gate on the always-on byte COUNTERS: those ride the listing
+    # every caller that can see a forward already gets, and a count is not a
+    # payload.
+    forward_tap    = 0x10000, "forward_tap"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
-    # persists the NUMBER, so a task already granted `all` holds 0x7fff and
-    # does NOT gain exec_run until it is re-granted. That is the safe
+    # persists the NUMBER, so a task already granted `all` holds 0xffff and
+    # does NOT gain forward_tap until it is re-granted. That is the safe
     # direction and needs no migration.
-    all            = 0xffff, "all"
+    #
+    # Widening it is REQUIRED, not stylistic: callerCaps hands operator
+    # connections Capability_All, so a literal left at 0xffff would deny the
+    # operator its own feature.
+    all            = 0x1ffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -1847,6 +1869,9 @@ enum OpenPortForwardStatus:
     runner_offline = "runner_offline"
     internal_error = "internal_error"
     bind_failed    = "bind_failed"
+    # forward_id named no live registration — unknown, already killed, or 0.
+    # Appended, so existing ordinals are unchanged.
+    no_such_forward = "no_such_forward"
 
 # RegisterPortForwardRequest: one registration, either direction. Direction
 # decides what the address pair means:
@@ -1895,6 +1920,22 @@ format PortForwardInfo:
     origin_cid      :[origin_cid_len]u8  # ConnectionID canonical String(), as in ConnInfo.cid;
                                          # the only way to tell two identical specs apart
     client_endpoint :ClientEndpointKind
+    # Always-on traffic accounting, appended. Before these, a registration
+    # described only how it was CONFIGURED: an idle forward and a saturated one
+    # rendered identically, and "is this an abandoned registration?" had no
+    # answer on any surface.
+    #
+    # Named against this row's own target_host:target_port rather than tx/rx,
+    # because the connection INITIATOR is on the client side for -L and on the
+    # runner side for -R — tx/rx would silently invert between the two.
+    bytes_to_target       :u64
+    bytes_from_target     :u64
+    conns_total           :u64  # accepted since registration; never decreases
+    conns_open            :u32
+    taps                  :u16  # taps reading this forward RIGHT NOW, so a
+                                # forward cannot be watched invisibly
+    last_activity_unix_ms :u64  # 0 = no byte has ever crossed. Rendered as
+                                # "never", not as a zero duration.
 
 format PortForwardListResultBody:
     forwards_len :u16
@@ -1935,6 +1976,106 @@ format PortForwardEvent:
         PortForwardEventKind.closed      => closed      :PortForwardClosed
         .. => error("Unexpected port forward event")
 
+# --- forward tap (server -> client, one stream per open_forward_tap) ---
+
+# Direction is named against the forward's own target_host:target_port, so it
+# means the same thing for -L and -R. tx/rx would invert between them: the
+# connection initiator is on the client side for one and the runner side for
+# the other.
+enum ForwardTapDirection:
+    :u8
+    to_target
+    from_target
+
+enum ForwardTapFilter:
+    :u8
+    both
+    to_target
+    from_target
+
+enum OpenForwardTapStatus:
+    :u8
+    ok
+    no_such_forward   # unknown id OR not visible to the caller — the same
+                      # deliberate conflation kill_port_forward makes, so an
+                      # invisible id cannot become an existence oracle
+    internal_error
+    # There is no `denied` member: required_cap is checked BEFORE dispatch and
+    # answers with a different response KIND (permission_denied), so this
+    # handler is never entered on a capability failure and a status here would
+    # have no writer.
+
+format OpenForwardTapRequest:
+    forward_id       :u64
+    direction_filter :ForwardTapFilter
+    # 0 = whole payload. Otherwise each record's data is cut to this many bytes
+    # and truncated_bytes reports what was cut from THAT record. Cutting on the
+    # SERVER is the point: doing it at the client would first spend the
+    # bandwidth the option exists to save.
+    max_record_bytes :u32
+
+format OpenForwardTapResponse:
+    status    :OpenForwardTapStatus
+    stream_id :u64
+
+enum ForwardTapRecordKind:
+    :u8
+    conn_open
+    data
+    gap             # the tap could not keep up; dropped_bytes were missed
+    conn_close      # that connection ended, the forward is still up
+    forward_closed  # the forward itself ended; the stream EOFs after this
+
+format ForwardTapConnOpen:
+    conn_seq        :u64   # per-forward, 1-based, assigned at accept
+    target_host_len :u16
+    target_host     :[target_host_len]u8
+    target_port     :u16
+
+format ForwardTapData:
+    conn_seq      :u64
+    direction     :ForwardTapDirection
+    # Where this payload sits in its (conn_seq, direction) stream, counted by
+    # the SERVER from that connection's first byte. Record boundaries are an
+    # artifact of ReadDirect chunking and carry no application meaning, so a
+    # per-record offset would restart mid-message; and a client-side counter
+    # would start at 0 when the TAP opened rather than when the connection did.
+    stream_offset :u64
+    # Bytes cut by max_record_bytes. The NEXT record's stream_offset counts
+    # them, so a cut never reads as a shorter stream.
+    truncated_bytes :u32
+    data_len        :u32
+    data            :[data_len]u8
+
+format ForwardTapGap:
+    conn_seq      :u64
+    direction     :ForwardTapDirection
+    dropped_bytes :u64
+
+format ForwardTapConnClose:
+    conn_seq          :u64
+    bytes_to_target   :u64   # what this ONE connection carried, each way
+    bytes_from_target :u64
+
+format ForwardTapForwardClosed:
+    reason :PortForwardCloseReason
+
+format ForwardTapRecord:
+    # One of these exists per relayed chunk, on the relay goroutine that must
+    # never be slowed. The default union storage boxes the arm in an interface
+    # and type-asserts on every access — a heap allocation per chunk on the
+    # hottest path this feature has.
+    config.go.union = "noheap"
+    kind    :ForwardTapRecordKind
+    unix_ms :u64
+    match kind:
+        ForwardTapRecordKind.conn_open      => conn_open      :ForwardTapConnOpen
+        ForwardTapRecordKind.data           => data           :ForwardTapData
+        ForwardTapRecordKind.gap            => gap            :ForwardTapGap
+        ForwardTapRecordKind.conn_close     => conn_close     :ForwardTapConnClose
+        ForwardTapRecordKind.forward_closed => forward_closed :ForwardTapForwardClosed
+        .. => error("Unexpected forward tap record")
+
 # OpenPortForwardRequest: remote_host/remote_port are the runner's dial target
 # for one accepted local-forward connection.
 format OpenPortForwardRequest:
@@ -1944,6 +2085,18 @@ format OpenPortForwardRequest:
     remote_port     :u16
     # direction / bind_addr / bind_port removed: this message now means exactly
     # "open the data stream for one accepted local-forward connection".
+    #
+    # forward_id names the registration these bytes belong to. The id is minted
+    # by register_port_forward, so without it the server cannot attribute a
+    # splice to a row — and two forwards with an identical spec from one client
+    # are indistinguishable, which is the ambiguity origin_cid above exists to
+    # resolve on the listing.
+    #
+    # There is no "unattributed" value: 0 is refused like any other id that
+    # resolves to nothing. A stream naming no registration would be a forward no
+    # listing shows, no counter counts and no kill can name — the state the
+    # registry exists to prevent.
+    forward_id      :u64
 
 # OpenPortForwardResponse: stream_id is the data stream for the accepted
 # connection.

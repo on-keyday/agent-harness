@@ -3,6 +3,7 @@ package server
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -31,6 +32,28 @@ type portForward struct {
 	// byte path — it exists so the listing does not report a bind address that
 	// was never bound.
 	clientEndpoint protocol.ClientEndpointKind
+
+	// Always-on traffic accounting. Atomics rather than the registry mutex:
+	// these are written from the relay goroutines of every connection under
+	// this forward, and a relay must never wait on a lock a listing holds.
+	bytesToTarget   atomic.Uint64
+	bytesFromTarget atomic.Uint64
+	connsTotal      atomic.Uint64
+	connsOpen       atomic.Int64
+	lastActivityMs  atomic.Int64
+	nextConnSeq     atomic.Uint64
+
+	// Per-connection halves, for the conn_close record a tap receives. Its own
+	// mutex, not the registry's: it is touched on every relayed chunk, and
+	// taking the registry lock there would put every listing behind the
+	// traffic.
+	connMu sync.Mutex
+	conns  map[uint64]connBytes
+
+	// Taps reading this forward right now, and the count the listing reports so
+	// a forward cannot be watched invisibly.
+	tapMu sync.Mutex
+	taps  []*forwardTap
 }
 
 // portForwardRegistry maps server-assigned forwardId → registration. Safe for

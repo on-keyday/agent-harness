@@ -48,6 +48,12 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
 	protocol.TaskControlKind_OpenExecRun:      protocol.Capability_ExecRun,
+	// OpenForwardTap sits in this map, and NOT inline like KillPortForward's,
+	// because it is direction-INDEPENDENT: reading the payload of a -R forward
+	// is the same power as reading a -L one, so the bit is known without the
+	// registry lookup. The visibility and scope halves still happen in the
+	// handler, which is where the target becomes known.
+	protocol.TaskControlKind_OpenForwardTap: protocol.Capability_ForwardTap,
 }
 
 // attachModeCap returns the capability set that satisfies an attach in the

@@ -92,9 +92,17 @@ func TestHandleOpenPortForward_LocalDialsRunner(t *testing.T) {
 	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
 
 	clientConn := &fakeConn{nextStreamID: 501}
+	// The data stream names the registration it belongs to, so the bytes it
+	// carries land on a row. Registering first is the order every caller uses.
+	fid := h.pforwards().add(&portForward{
+		direction: protocol.PortForwardDirection_Local,
+		taskIDHex: idHex,
+		conns:     map[uint64]connBytes{},
+	})
 	req := &protocol.OpenPortForwardRequest{
 		TaskId:     protocol.TaskID{Id: rawID},
 		RemotePort: 3306,
+		ForwardId:  fid,
 	}
 	req.SetRemoteHost([]byte("db.internal"))
 
@@ -882,5 +890,43 @@ func TestHandleRegisterPortForward_RemoteInProcessRejected(t *testing.T) {
 	}
 	if sent := runnerConn.Sent(); len(sent) != 0 {
 		t.Fatalf("rejected registration must not ask the runner to bind; got %d messages", len(sent))
+	}
+}
+
+// TestOpenPortForwardRefusesUnattributedStream pins the other half of the
+// forward_id change: a data stream that names no registration is refused, not
+// relayed uncounted. Such a stream would be a forward no listing shows, no
+// counter counts and no `forward kill` can name — the state the registry
+// exists to prevent (cli/forward_endpoint.go:36).
+//
+// 0 is included deliberately. No caller in this tree sends it, and a
+// version-skewed client cannot produce it either: its request is eight bytes
+// short and fails io.ReadFull before the handler is reached.
+func TestOpenPortForwardRefusesUnattributedStream(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	var rawID [16]byte
+	rawID[0] = 0x33
+	idHex := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: "runner-1"}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: &fakeConn{nextStreamID: 900}})
+
+	for _, id := range []uint64{0, 4242} {
+		clientConn := &fakeConn{nextStreamID: 501}
+		req := &protocol.OpenPortForwardRequest{
+			TaskId:     protocol.TaskID{Id: rawID},
+			RemotePort: 3306,
+			ForwardId:  id,
+		}
+		req.SetRemoteHost([]byte("db.internal"))
+		resp := h.handleOpenPortForward(clientConn, req)
+		if resp.Status != protocol.OpenPortForwardStatus_NoSuchForward {
+			t.Fatalf("forward_id=%d: status = %v, want no_such_forward", id, resp.Status)
+		}
+		if resp.StreamId != 0 {
+			t.Fatalf("forward_id=%d: a refused open left stream %d behind", id, resp.StreamId)
+		}
 	}
 }

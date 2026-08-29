@@ -7,8 +7,8 @@ func TestCapabilityBits(t *testing.T) {
 	// String method, and fmt applies %x to the STRING for a Stringer — so
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
-	if Capability_All != 0xffff {
-		t.Fatalf("All = %#x, want 0xffff", uint32(Capability_All))
+	if Capability_All != 0x1ffff {
+		t.Fatalf("All = %#x, want 0x1ffff", uint32(Capability_All))
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", uint32(Capability_None))
@@ -18,7 +18,7 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_FileRead | Capability_FileWrite | Capability_ForwardLocal |
 		Capability_ForwardRemote | Capability_Notify | Capability_Prune |
 		Capability_RunnerAdmin | Capability_BoardObserve | Capability_Purge |
-		Capability_ExecRun |
+		Capability_ExecRun | Capability_ForwardTap |
 		Capability_ExecView | Capability_ExecCowrite | Capability_ExecResize
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint32(or), uint32(Capability_All))
@@ -132,5 +132,21 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 	if !execOut.X11Enabled() || !execOut.ResumeConversation() {
 		t.Fatalf("OpenExec flags lost: x11=%v conversation=%v",
 			execOut.X11Enabled(), execOut.ResumeConversation())
+	}
+}
+
+// TestForwardTapBitIsInAll pins both halves of the capability change. The
+// second assertion is the load-bearing one: `all` is a hand-widened literal and
+// callerCaps hands operator connections Capability_All, so a literal left at
+// 0xffff denies the operator its own feature.
+func TestForwardTapBitIsInAll(t *testing.T) {
+	if Capability_ForwardTap != 0x10000 {
+		t.Fatalf("forward_tap bit moved: %#x", uint32(Capability_ForwardTap))
+	}
+	if Capability_All&Capability_ForwardTap == 0 {
+		t.Fatal("all does not include forward_tap; callerCaps would deny the operator")
+	}
+	if Capability_ForwardLocal&Capability_ForwardTap != 0 {
+		t.Fatal("forward_local must not overlap forward_tap")
 	}
 }

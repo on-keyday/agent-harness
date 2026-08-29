@@ -33,6 +33,10 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
 		protocol.Capability_ForwardRemote,
+		// forward_tap is listed after the two that OPEN a forward, and is
+		// implied by neither: holding a forward and reading what crosses it are
+		// different powers.
+		protocol.Capability_ForwardTap,
 		protocol.Capability_Notify,
 		protocol.Capability_Prune,
 		protocol.Capability_RunnerAdmin,
@@ -74,6 +78,10 @@ func CapDescription(c protocol.Capability) string {
 		return "open local port forwards (-L)"
 	case protocol.Capability_ForwardRemote:
 		return "open remote port forwards (-R)"
+	case protocol.Capability_ForwardTap:
+		return "read the payload crossing a port forward (forward tap) — cleartext, " +
+			"so routinely Authorization headers, git credentials and database passwords; " +
+			"NOT implied by forward_local or forward_remote, and not needed for the byte counts on `forward ls`"
 	case protocol.Capability_Notify:
 		return "send operator notifications"
 	case protocol.Capability_Prune:

@@ -78,7 +78,13 @@ func ParseStdioForwardSpec(s string) (string, int, error) {
 // stream the caller splices its accepted TCP connection against. Mirrors
 // (*Client).OpenFileTransfer. This is a method on the long-lived *Client,
 // so the TUI calls it directly on a.client (no fresh dial).
-func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost string, remotePort int) (trsf.BidirectionalStream, error) {
+//
+// forwardID names the registration these bytes belong to, so the server can
+// count them against a row and a tap can name them. Every caller has one by
+// the time it opens: RunForward registers at listener-bind time, OpenRawForward
+// registers first, and PreviewPinFetch rides the pin's. The server refuses an
+// id that names nothing, 0 included — there is no unattributed forward.
+func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost string, remotePort int, forwardID uint64) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("forward: parse task id: %w", err)
@@ -87,6 +93,7 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 	body := protocol.OpenPortForwardRequest{
 		TaskId:     tid,
 		RemotePort: uint16(remotePort),
+		ForwardId:  forwardID,
 	}
 	body.SetRemoteHost([]byte(remoteHost))
 	req.SetOpenPortForward(body)
@@ -108,6 +115,8 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 		return nil, errors.New("forward: no such task (id unknown or task not running)")
 	case protocol.OpenPortForwardStatus_RunnerOffline:
 		return nil, errors.New("forward: runner offline")
+	case protocol.OpenPortForwardStatus_NoSuchForward:
+		return nil, errors.New("forward: registration is gone (killed, or its task ended)")
 	default:
 		return nil, fmt.Errorf("forward: server error (status=%d)", r.Status)
 	}
@@ -120,7 +129,7 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 
 // spliceConnStream pumps bytes between a net.Conn and a trsf bidi stream
 // until either direction closes or errors, then tears down both. Same
-// either-side-wins teardown as server.spliceBidi (correct for TCP, where a
+// either-side-wins teardown as server.spliceBidiCounted (correct for TCP, where a
 // half-closed/RST peer must not leave the reverse relay blocked forever).
 func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 	var once sync.Once
@@ -240,7 +249,7 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		fwdCtx, cancel := context.WithCancel(runCtx)
 		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s, fwd %d)",
 			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))], fid))
-		go acceptLoop(fwdCtx, c, taskIDHex, sp, ln, logf)
+		go acceptLoop(fwdCtx, c, taskIDHex, sp, fid, ln, logf)
 		wg.Add(1)
 		go func(ctrl trsf.BidirectionalStream) {
 			defer wg.Done()
@@ -293,7 +302,10 @@ func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, log
 	}
 }
 
-func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec, ln net.Listener, logf func(string)) {
+// forwardID is the registration every accepted connection's data stream names,
+// so its bytes are counted against the row `forward ls` shows. It is available
+// here because RunForward registers when the listener binds, before any accept.
+func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec, forwardID uint64, ln net.Listener, logf func(string)) {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -304,7 +316,7 @@ func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec
 			return // listener closed (ctx done) or fatal accept error
 		}
 		go func() {
-			st, err := c.OpenPortForward(ctx, taskIDHex, sp.RemoteHost, sp.RemotePort)
+			st, err := c.OpenPortForward(ctx, taskIDHex, sp.RemoteHost, sp.RemotePort, forwardID)
 			if err != nil {
 				logf("forward: " + err.Error())
 				_ = conn.Close()
