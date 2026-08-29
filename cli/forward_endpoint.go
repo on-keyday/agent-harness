@@ -47,7 +47,11 @@ type RawConn struct {
 // TUI reported "connection closed" the moment it was established. Callers tear
 // down with Close (spliceStdio, CloseRawPane and the TUI pump all do); ctx is
 // not, and must not be, the teardown signal.
-func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) (*RawConn, error) {
+// kind names WHAT the caller's end of this forward is, so `forward ls` can say
+// it. There is no default: every caller states its own, because the label is
+// only worth having if it is never a guess, and a caller that says nothing
+// would put `(in-process)` back on a row that had a real answer available.
+func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port int, kind protocol.ClientEndpointKind, logf func(string)) (*RawConn, error) {
 	if logf == nil {
 		logf = func(string) {}
 	}
@@ -56,7 +60,7 @@ func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port
 		return nil, err
 	}
 	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-		"", 0, host, port, protocol.ClientEndpointKind_InProcess)
+		"", 0, host, port, kind)
 	if err != nil {
 		_ = data.CloseBoth()
 		return nil, fmt.Errorf("raw forward: register: %w", err)

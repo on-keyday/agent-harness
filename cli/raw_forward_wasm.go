@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"sync"
 	"sync/atomic"
 	"syscall/js"
@@ -49,7 +50,7 @@ func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string
 		_ = old.conn.Close()
 	}
 
-	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, func(line string) {
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, protocol.ClientEndpointKind_InProcessPane, func(line string) {
 		rawMu.Lock()
 		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
 			slot.note = line

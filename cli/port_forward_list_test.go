@@ -132,3 +132,72 @@ func TestPortForwardConfigSpecRoundTrips(t *testing.T) {
 		t.Error("an in-process forward reported itself savable")
 	}
 }
+
+// Every in-process kind renders as what it IS. `(in-process)` collapsed four
+// different clients into one label, so a row the operator did not create said
+// nothing about whether killing it was safe — the ssh gateway's row, which
+// holds a remote editor's session open, read identically to a WebUI preview
+// pin.
+func TestPortForwardSpecStringNamesTheInProcessKind(t *testing.T) {
+	for _, tc := range []struct {
+		kind protocol.ClientEndpointKind
+		want string
+	}{
+		{protocol.ClientEndpointKind_InProcess, "(in-process)"},
+		{protocol.ClientEndpointKind_InProcessStdio, "(stdio)"},
+		{protocol.ClientEndpointKind_InProcessHttp, "(http)"},
+		{protocol.ClientEndpointKind_InProcessPane, "(pane)"},
+		{protocol.ClientEndpointKind_InProcessPreview, "(preview)"},
+		{protocol.ClientEndpointKind_InProcessSshGateway, "(ssh-gateway)"},
+	} {
+		fi := &protocol.PortForwardInfo{
+			Direction: protocol.PortForwardDirection_Local, ClientEndpoint: tc.kind, TargetPort: 60565,
+		}
+		fi.SetTargetHost([]byte("127.0.0.1"))
+		got := PortForwardSpecString(fi)
+		if !strings.HasPrefix(got, tc.want+" -> ") {
+			t.Errorf("%v rendered %q, want it to start with %q", tc.kind, got, tc.want+" -> ")
+		}
+	}
+}
+
+// The JSON is a contract consumers script against, and its old `default:` arm
+// answered "os_socket" for anything it did not recognise — so every kind added
+// here would have started LYING about the one property the field exists to
+// report. The predicate is what closes that, not a longer switch.
+func TestClientEndpointJSONNeverCallsAnInProcessKindASocket(t *testing.T) {
+	for _, k := range []protocol.ClientEndpointKind{
+		protocol.ClientEndpointKind_InProcess,
+		protocol.ClientEndpointKind_InProcessStdio,
+		protocol.ClientEndpointKind_InProcessHttp,
+		protocol.ClientEndpointKind_InProcessPane,
+		protocol.ClientEndpointKind_InProcessPreview,
+		protocol.ClientEndpointKind_InProcessSshGateway,
+	} {
+		if got := clientEndpointJSON(k); got != "in_process" {
+			t.Errorf("clientEndpointJSON(%v) = %q, want in_process", k, got)
+		}
+	}
+	if got := clientEndpointJSON(protocol.ClientEndpointKind_OsSocket); got != "os_socket" {
+		t.Errorf("clientEndpointJSON(os_socket) = %q", got)
+	}
+}
+
+// Savability is decided by client_endpoint alone and must stay that way: a
+// workspace writes a `-L`/`-R` line only for a forward with a real OS socket
+// behind it, and no in-process kind has one however specifically it is named.
+func TestPortForwardConfigSpecRefusesEveryInProcessKind(t *testing.T) {
+	for _, k := range []protocol.ClientEndpointKind{
+		protocol.ClientEndpointKind_InProcess,
+		protocol.ClientEndpointKind_InProcessStdio,
+		protocol.ClientEndpointKind_InProcessHttp,
+		protocol.ClientEndpointKind_InProcessPane,
+		protocol.ClientEndpointKind_InProcessPreview,
+		protocol.ClientEndpointKind_InProcessSshGateway,
+	} {
+		fi := &protocol.PortForwardInfo{Direction: protocol.PortForwardDirection_Local, ClientEndpoint: k}
+		if _, ok := PortForwardConfigSpec(fi); ok {
+			t.Errorf("%v was reported savable", k)
+		}
+	}
+}

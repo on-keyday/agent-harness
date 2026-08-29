@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"io"
 	"net/http"
 	"strconv"
@@ -167,7 +168,7 @@ func HTTPFetch(ctx context.Context, c *Client, taskIDHex, host string, port int,
 	if err != nil {
 		return nil, err
 	}
-	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, nil)
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, protocol.ClientEndpointKind_InProcessHttp, nil)
 	if err != nil {
 		return nil, err
 	}

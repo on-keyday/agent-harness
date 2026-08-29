@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // rawTUIRingBytes caps the modal's output buffer. Same reasoning as the WebUI
@@ -811,7 +812,7 @@ func DoStartRawForward(c *cli.Client, taskID, host string, port int, gen uint64,
 		note := &rawNote{}
 
 		openCtx, openCancel := context.WithTimeout(ctx, rawConnectTimeout)
-		rc, err := cli.OpenRawForward(openCtx, c, taskID, host, port, note.set)
+		rc, err := cli.OpenRawForward(openCtx, c, taskID, host, port, protocol.ClientEndpointKind_InProcessPane, note.set)
 		openCancel()
 		if err != nil {
 			cancel()

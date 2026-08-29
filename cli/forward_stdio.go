@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"io"
 	"os"
 	"sync"
@@ -52,7 +53,7 @@ func RunHTTPRequestForward(ctx context.Context, c *Client, taskIDHex, host strin
 	if err != nil {
 		return err
 	}
-	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, logf)
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, protocol.ClientEndpointKind_InProcessHttp, logf)
 	if err != nil {
 		return err
 	}
@@ -79,7 +80,7 @@ func RunHTTPRequestForward(ctx context.Context, c *Client, taskIDHex, host strin
 // RunStdioForward opens a raw forward to host:port and splices it to this
 // process's stdin/stdout — the harness equivalent of `ssh -W`.
 func RunStdioForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) error {
-	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, logf)
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, protocol.ClientEndpointKind_InProcessStdio, logf)
 	if err != nil {
 		return err
 	}

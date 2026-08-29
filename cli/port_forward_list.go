@@ -115,8 +115,8 @@ func PortForwardSpecString(fi *protocol.PortForwardInfo) string {
 	switch {
 	case fi.Direction == protocol.PortForwardDirection_Remote:
 		listen = "runner:" + listen
-	case fi.ClientEndpoint == protocol.ClientEndpointKind_InProcess:
-		listen = "(in-process)"
+	case fi.ClientEndpoint.IsInProcess():
+		listen = inProcessLabel(fi.ClientEndpoint)
 	}
 	return fmt.Sprintf("%s -> %s:%d", listen, fi.TargetHost, fi.TargetPort)
 }
@@ -169,12 +169,47 @@ type portForwardJSON struct {
 // JSON key names and values are the wire contract a consumer scripts against,
 // not the generator's label spelling.
 func clientEndpointJSON(k protocol.ClientEndpointKind) string {
-	switch k {
-	case protocol.ClientEndpointKind_InProcess:
+	// The PREDICATE, not a member list: this used to switch on the single
+	// in_process member with `default: os_socket`, so every kind added to the
+	// enum would have been reported here as a socket — a lie about the one
+	// property this field exists to carry, in the form consumers script
+	// against. The specific kind is not exposed in JSON: `in_process` is the
+	// contract that already shipped, and narrowing it per kind would change
+	// what an existing consumer reads.
+	if k.IsInProcess() {
 		return "in_process"
-	default:
-		return "os_socket"
 	}
+	return "os_socket"
+}
+
+// inProcessLabel names WHAT the in-process client is, for the one place the
+// three UIs render a forward's client side.
+//
+// `(in-process)` alone said four different things at once, and the operator's
+// question was the reasonable one: a row nobody recognises gives no basis for
+// deciding whether killing it is safe. The ssh gateway's row holds a remote
+// editor's entire session open and read exactly like a preview pin.
+//
+// The bare member keeps the old label rather than gaining a new one: it is what
+// a client older than the split sends, and "in-process, kind unsaid" is exactly
+// what it means.
+func inProcessLabel(k protocol.ClientEndpointKind) string {
+	switch k {
+	case protocol.ClientEndpointKind_InProcessStdio:
+		return "(stdio)"
+	case protocol.ClientEndpointKind_InProcessHttp:
+		return "(http)"
+	case protocol.ClientEndpointKind_InProcessPane:
+		return "(pane)"
+	case protocol.ClientEndpointKind_InProcessPreview:
+		return "(preview)"
+	case protocol.ClientEndpointKind_InProcessSshGateway:
+		return "(ssh-gateway)"
+	}
+	// Reached by the bare member AND by a kind a NEWER peer knows and this
+	// build does not — the wire round-trips an unknown enum value unchanged,
+	// so this is a live path, not a defensive default.
+	return "(in-process)"
 }
 
 // PortForwardInfoJSONLine returns one JSON object (single line, no trailing

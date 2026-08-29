@@ -60,7 +60,7 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 	}
 
 	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-		"", 0, host, port, protocol.ClientEndpointKind_InProcess)
+		"", 0, host, port, protocol.ClientEndpointKind_InProcessPreview)
 	if err != nil {
 		pinMu.Lock()
 		if slot := pinSlots[key]; slot != nil && slot.gen == gen {

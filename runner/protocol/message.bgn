@@ -1651,11 +1651,32 @@ enum PortForwardDirection:
 enum ClientEndpointKind:
     :u8
     os_socket   # client-side endpoint is an OS socket: the listener for -L, the dial for -R.
-    in_process  # client-side endpoint lives inside the client process (stdio for -W, a UI
-                # pane in TUI/WebUI). The address pair describing the client side is therefore
-                # empty: bind_addr / bind_port for a local forward, target_host / target_port
-                # for a remote one. Only local x in_process is defined today; the server
-                # rejects remote x in_process.
+    in_process  # client-side endpoint lives inside the client process, KIND UNSAID. The
+                # address pair describing the client side is therefore empty: bind_addr /
+                # bind_port for a local forward, target_host / target_port for a remote one.
+                # Only local x in_process is defined; the server rejects remote x in_process,
+                # and that refusal must test the PREDICATE below, not equality with this
+                # member.
+                #
+                # Kept as a member rather than replaced by the specific kinds, and that is
+                # what makes this addition need no coordinated restart: a client older than
+                # the split sends this value, which stays legal and renders as it always did.
+                # Widening the enum rather than appending a FIELD is the same choice — the
+                # wire is STRICT about length (a message one byte short decodes as EOF, not
+                # as a zero value) and TOLERANT of an enum value it does not know (measured
+                # 2026-08-29: an unknown u8 round-trips unchanged). So a new member costs
+                # old peers a fallback rendering; a new field would have cost them the
+                # message.
+    # The specific kinds. `(in-process)` named four different clients at once, and a row
+    # the operator did not create said nothing about whether killing it was safe: the ssh
+    # gateway's row — holding a remote editor's whole session open — read exactly like a
+    # WebUI preview pin. Every one of these still has an empty client-side address pair and
+    # is still unsavable into a workspace; the name is the only thing added.
+    in_process_stdio        # `forward -W`: this process's stdin/stdout is the client end
+    in_process_http         # one built HTTP request (`-W --http-path`, the WebUI's fetch)
+    in_process_pane         # a raw-connect pane (the TUI's `t`, the WebUI's)
+    in_process_preview      # a WebUI preview pin
+    in_process_ssh_gateway  # a direct-tcpip channel the ssh gateway serves
 
 # Capability is a bitmask of server-mediated capabilities bound to a task at
 # spawn time. It is a u32 power-of-two flag set; do NOT add is_defined assertions

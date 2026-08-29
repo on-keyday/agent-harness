@@ -10,6 +10,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw/sshwire"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -72,7 +73,7 @@ func (g *Gateway) serveDirectTCPIP(ctx context.Context, user string, newCh ssh.N
 	// rejection, where the client prints the reason. Accepting first and then
 	// closing would reach the operator as a bare connection reset and read as
 	// the TARGET having refused them — a diagnosis pointing at the wrong host.
-	rc, err := cli.OpenRawForward(ctx, g.client, taskID, host, port, func(line string) {
+	rc, err := cli.OpenRawForward(ctx, g.client, taskID, host, port, protocol.ClientEndpointKind_InProcessSshGateway, func(line string) {
 		slog.Info("ssh-gateway: " + line)
 	})
 	if err != nil {

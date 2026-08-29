@@ -442,6 +442,15 @@ connection is therefore an ordinary `forward ls` row while it lasts, stoppable
 from any client — which is the only place it can be seen, since the listener
 itself lives in the ssh client and the harness never learns of it.
 
+Those rows say `(ssh-gateway)` where a `-L` shows its bind address, because
+there is no local socket to name. **Every forward whose client side lives inside
+a client process says which kind it is** — `(stdio)` for `forward -W`, `(http)`
+for a built HTTP request, `(pane)` for a raw-connect pane, `(preview)` for a
+WebUI preview pin, `(ssh-gateway)` for one of these. They all read `(in-process)`
+until 2026-08-29, which meant a row you did not create told you nothing about
+whether killing it was safe — and killing this one ends a remote editor's whole
+session. A client older than the split still shows the bare `(in-process)`.
+
 ```bash
 ssh -p 2222 -N -L 3000:127.0.0.1:3000 <task-id>@127.0.0.1   # runner-side :3000, locally
 ssh -J <task-id>@127.0.0.1:2222 user@runner-host            # jump through it
@@ -1021,9 +1030,8 @@ from what the file already says, so a second save defaults to "what I said last
 time", not to whatever is running now.
 
 Both save paths read the server-side forward registry and write every forward
-whose client endpoint is an OS socket, skipping the in-process ones (a raw `t`
-pane, a WebUI preview pin) with a count: those bind nothing locally, so no
-`-L`/`-R` line describes them. Reading the registry means a save also captures a
+whose client endpoint is an OS socket, skipping the in-process ones with a
+count: those bind nothing locally, so no `-L`/`-R` line describes them. Reading the registry means a save also captures a
 forward established from a `harness-cli forward` in another terminal — and that
 the next apply will then contend for that port with the process still holding
 it, reported as an ordinary bind conflict.

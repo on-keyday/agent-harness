@@ -1388,7 +1388,7 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	// closed the data stream, so every TUI raw connect died the moment it was
 	// established ("connection closed", no reason given).
 	openCtx, openCancel := context.WithCancel(context.Background())
-	rc, err := cli.OpenRawForward(openCtx, c, taskID, "127.0.0.1", port, func(string) {})
+	rc, err := cli.OpenRawForward(openCtx, c, taskID, "127.0.0.1", port, protocol.ClientEndpointKind_InProcessPane, func(string) {})
 	openCancel()
 	if err != nil {
 		t.Fatalf("OpenRawForward: %v", err)
@@ -1422,11 +1422,19 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	if found == nil {
 		t.Fatalf("raw forward %d absent from the listing (%d entries)", rc.ForwardID(), len(forwards))
 	}
-	if found.ClientEndpoint != protocol.ClientEndpointKind_InProcess {
-		t.Fatalf("listed endpoint = %v, want InProcess", found.ClientEndpoint)
+	// The SPECIFIC kind, end to end: the caller names what its end is, the
+	// server stores it, and the listing hands it back. Asserting the bare
+	// in_process member would pass against a registration that lost the caller's
+	// answer somewhere in between and fell back — which is the failure this
+	// carries the kind to prevent.
+	if found.ClientEndpoint != protocol.ClientEndpointKind_InProcessPane {
+		t.Fatalf("listed endpoint = %v, want InProcessPane", found.ClientEndpoint)
 	}
-	if spec := cli.PortForwardSpecString(found); !strings.HasPrefix(spec, "(in-process) -> ") {
-		t.Fatalf("spec = %q, want an (in-process) prefix", spec)
+	if !found.ClientEndpoint.IsInProcess() {
+		t.Fatalf("%v is not reported in-process — the predicate every caller uses would miss it", found.ClientEndpoint)
+	}
+	if spec := cli.PortForwardSpecString(found); !strings.HasPrefix(spec, "(pane) -> ") {
+		t.Fatalf("spec = %q, want a (pane) prefix", spec)
 	}
 
 	// --- a built HTTP request over a second raw forward, to a real server ---

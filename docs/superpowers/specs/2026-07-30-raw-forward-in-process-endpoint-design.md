@@ -362,6 +362,66 @@ server-first-then-runners dance that wire changes normally force.
   poke-and-close use. The entry disappears when the pane closes, so the cost is
   transient listing noise, not leakage.
 
+## Amendment (2026-08-29) — the label names WHICH in-process client
+
+Decision 6 said the endpoint kind shows up in the `SPEC` column as
+`(in-process) -> host:port`. It did, and by then `(in-process)` was answering
+for four different clients: a `-W` stdio splice, a built HTTP request, a
+raw-connect pane, a WebUI preview pin — and, once the ssh gateway began serving
+`direct-tcpip`, an ssh client's tunnel.
+
+The operator met it as a row they had not created and could not classify. That
+row was a VS Code Remote-SSH session's channel; killing it would have taken the
+whole editor session down, and it read exactly like a preview pin. Decision 6's
+reasoning — "which surface owns it is already answerable from the `ORIGIN`
+column" — is true and insufficient: origin names the harness CLIENT (`tui …`,
+`cli …`), and one client hosts several of these kinds at once.
+
+**DECIDED** — `ClientEndpointKind` gains `in_process_stdio`, `in_process_http`,
+`in_process_pane`, `in_process_preview` and `in_process_ssh_gateway`, and
+`PortForwardSpecString` renders `(stdio)`, `(http)`, `(pane)`, `(preview)`,
+`(ssh-gateway)`. Every caller of `OpenRawForward` states its own kind — there is
+no default parameter, because a label is only worth having if it is never a
+guess.
+
+**DECIDED — the ENUM widens; no field is appended.** A `client_role` field with
+an `unspecified = 0` member was designed first and was wrong, on a premise
+nobody had checked. Two measurements settled it (2026-08-29):
+
+| question | answer |
+| --- | --- |
+| a message one byte SHORT — what a peer older than an appended field sends | `EOF`: a decode **error**, not a zero value |
+| an enum value this build does not know | **round-trips unchanged** |
+
+So appending a field would have made an older client's registration fail
+outright — the opposite of the "renders as before" the `unspecified` member was
+supposed to buy. Widening the enum costs an older peer a fallback rendering and
+nothing else. `in_process` is therefore KEPT as a member: it is what such a
+client sends, and "in-process, kind unsaid" is exactly what it means.
+
+**DECIDED — `IsInProcess()` replaces `== ClientEndpointKind_InProcess`**
+(`runner/protocol/client_endpoint.go`, hand-written beside the generated code as
+`task_kind.go` already is). The equality was correct with one member and becomes
+a silent miss with several, at two sites that matter: the server's
+`remote × in_process` refusal, which a specifically-named kind would have
+slipped past to bind a runner listener nothing answers; and the JSON renderer,
+whose `default:` arm answered `"os_socket"` for anything unrecognised — every
+new kind would have lied about the one property the field exists to report.
+
+Savability deliberately does NOT go through the predicate. `PortForwardConfigSpec`
+tests `== os_socket`, a positive test against the one member that has an address
+to write down, so a kind added tomorrow is unsavable by default rather than
+savable by omission.
+
+**The JSON contract is unchanged**: `client_endpoint` stays `"os_socket"` /
+`"in_process"` for every kind. The specific kind is a display affordance, and
+narrowing the JSON per kind would change what an existing consumer reads.
+
+**Rollout, amended.** The original change needed every client↔server surface
+updated together because it appended fields. This one does not: no format's
+length changes, so an old peer keeps working in both directions — it sends
+`in_process`, and it renders a kind it does not know as `(in-process)`.
+
 ## Out of scope
 
 - **Browser as a service endpoint** (`direction=remote` × `in_process`: the runner

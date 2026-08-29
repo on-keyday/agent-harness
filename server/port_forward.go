@@ -102,8 +102,11 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 	// in-process handler on the client is a separate design (the browser as a
 	// service endpoint). Refuse it rather than letting it half-work: the
 	// runner's listener would bind and nothing would ever answer.
+	// The PREDICATE, not equality with the bare member: a specifically-named
+	// in-process kind would otherwise slip past this refusal and bind a runner
+	// listener that nothing would ever answer.
 	if req.Direction == protocol.PortForwardDirection_Remote &&
-		req.ClientEndpoint == protocol.ClientEndpointKind_InProcess {
+		req.ClientEndpoint.IsInProcess() {
 		slog.Warn("port_forward: remote x in_process registration refused (unimplemented combination)",
 			"task_id", taskIDHex)
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
