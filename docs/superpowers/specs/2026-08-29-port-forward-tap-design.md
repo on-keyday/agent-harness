@@ -244,17 +244,73 @@ enum ForwardTapRecordKind:
     conn_close      # that connection ended, the forward is still up
     forward_closed  # the forward itself ended; the stream EOFs after this
 
-format ForwardTapRecord:
-    kind            :ForwardTapRecordKind
-    direction       :ForwardTapDirection      # to_target on non-data kinds
+format ForwardTapConnOpen:
     conn_seq        :u64   # per-forward, 1-based, assigned at accept
-    unix_ms         :u64
-    dropped_bytes   :u64   # gap only, else 0
-    truncated_bytes :u32   # data only: cut by max_record_bytes, else 0
-    close_reason    :PortForwardCloseReason   # forward_closed only
+    target_host_len :u16
+    target_host     :[target_host_len]u8
+    target_port     :u16
+
+format ForwardTapData:
+    conn_seq      :u64
+    direction     :ForwardTapDirection
+    # Where this payload sits in its (conn_seq, direction) stream, counted by
+    # the SERVER from that connection's first byte. A tap opened mid-connection
+    # therefore starts at a non-zero offset — it says so rather than pretending
+    # the stream began when the tap did — and the jump across a gap needs no
+    # arithmetic to see.
+    stream_offset :u64
+    # Bytes cut by max_record_bytes. The NEXT record's stream_offset counts
+    # them, so a cut never reads as a shorter stream.
+    truncated_bytes :u32
     data_len        :u32
     data            :[data_len]u8
+
+format ForwardTapGap:
+    conn_seq      :u64
+    direction     :ForwardTapDirection
+    dropped_bytes :u64
+
+format ForwardTapConnClose:
+    conn_seq          :u64
+    bytes_to_target   :u64   # what this ONE connection carried, each way
+    bytes_from_target :u64
+
+format ForwardTapForwardClosed:
+    reason :PortForwardCloseReason
+
+format ForwardTapRecord:
+    # One of these exists per relayed chunk, on the relay goroutine that must
+    # never be slowed (§ Server behaviour). The default union storage boxes the
+    # arm in an interface and type-asserts on every access
+    # (runner/protocol/message.go:23564) — a heap allocation per chunk on the
+    # hottest path this feature has.
+    config.go.union = "noheap"
+    kind    :ForwardTapRecordKind
+    unix_ms :u64
+    match kind:
+        ForwardTapRecordKind.conn_open      => conn_open      :ForwardTapConnOpen
+        ForwardTapRecordKind.data           => data           :ForwardTapData
+        ForwardTapRecordKind.gap            => gap            :ForwardTapGap
+        ForwardTapRecordKind.conn_close     => conn_close     :ForwardTapConnClose
+        ForwardTapRecordKind.forward_closed => forward_closed :ForwardTapForwardClosed
+        .. => error("Unexpected forward tap record")
 ```
+
+The arms are not decoration. A flat record would have to carry
+`dropped_bytes`, `truncated_bytes`, a direction and a close reason on every
+record, meaningless on four kinds out of five — bytes the schema would be
+describing as present and the reader would have to know to ignore
+(`feedback_no_schema_invisible_bytes`). `PortForwardEvent`
+(`runner/protocol/message.bgn:1931`), the control-stream record for this same
+feature, is already this shape, down to the `.. => error(…)` arm that makes an
+unknown kind from a newer peer fail closed.
+
+`conn_seq` repeats in four arms rather than sitting above the match, because
+`forward_closed` is about the forward and has no connection. Hoisting it would
+need the record to say "0 means not-a-connection", or an `if kind != …` — and
+nothing in any `.bgn` in this tree conditions on anything but `==`, so the
+design does not lean on an operator it has not seen used. Four declared lines
+cost nothing on the wire; a sentinel costs a rule every reader has to remember.
 
 The runner wire is **unchanged**. `RunnerOpenPortForwardRequest` does not learn
 the forward id, because the runner dials and relays and has nothing to attribute.
@@ -342,7 +398,7 @@ then the body for `data`:
 #3 <-     12:34:56.902  1.4kB  (truncated, 1.3kB cut)
 0000  48 54 54 50 2f 31 2e 31  20 32 30 30 20 4f 4b 0d  |HTTP/1.1 200 OK.|
 #3 gap    12:34:57.100  3.2MB missed
-#3 close  12:34:57.900
+#3 close  12:34:57.900  ->4.1kB <-1.2MB
 -- forward #7 closed (killed) --
 ```
 
@@ -351,7 +407,7 @@ then the body for `data`:
 | 1 | `#<conn_seq>`, or nothing on the forward-level closing line |
 | 2 | kind, left-aligned in a fixed width: `->` / `<-` for data, `open` / `close` / `gap` |
 | 3 | wall clock from `unix_ms`, `HH:MM:SS.mmm` |
-| 4 | payload size for data, the missed count for `gap`, the dialled target for `open` |
+| 4 | payload size for data, the missed count for `gap`, the dialled target for `open`, that connection's two totals for `close` |
 
 `->` / `<-` rather than arrows or `to_target`/`from_target`: `forward ls`
 already writes its row as `127.0.0.1:8080 -> localhost:3000`, so an arrow
@@ -359,11 +415,12 @@ pointing right already means "toward the target" on the surface next to this
 one, and both survive a non-UTF-8 console.
 
 The hex body is `xxd` layout — offset, 16 bytes in two groups of eight, ASCII
-gutter. **The offset is cumulative within its `(conn_seq, direction)` stream**,
-not per record: record boundaries are an artifact of `ReadDirect` chunking
-(§ Wire), so a per-record offset would restart at 0 in the middle of a message
-and mean nothing. A cumulative one lines up with `bytes_to_target` on the
-listing.
+gutter. The offset column is the record's `stream_offset` straight off the wire,
+not a count the renderer keeps: record boundaries are an artifact of `ReadDirect`
+chunking (§ Wire), so a per-record offset would restart at 0 mid-message, and a
+renderer-side counter would start at 0 when the TAP opened rather than when the
+connection did. The server's number lines up with `bytes_to_target` on the
+listing and makes the jump across a `gap` self-evident.
 
 Four renderings, one decision each:
 
@@ -379,9 +436,11 @@ Four renderings, one decision each:
   stable (`PortForwardInfoJSONLine`'s reason). `data` is base64, being bytes.
 
 ```
-{"conn":3,"kind":"data","dir":"to_target","unix_ms":1756...,"len":64,"truncated":0,"data":"R0VUIC9hcGkveCBIVFRQLzEuMQ0K"}
-{"conn":3,"kind":"gap","dir":"to_target","unix_ms":1756...,"dropped":3355443}
-{"forward_id":7,"kind":"forward_closed","unix_ms":1756...,"reason":"killed"}
+{"kind":"conn_open","unix_ms":1756...,"conn":3,"target":"localhost:3000"}
+{"kind":"data","unix_ms":1756...,"conn":3,"dir":"to_target","offset":0,"len":64,"truncated_bytes":0,"data":"R0VUIC9hcGkveCBIVFRQLzEuMQ0K"}
+{"kind":"gap","unix_ms":1756...,"conn":3,"dir":"to_target","dropped_bytes":3355443}
+{"kind":"conn_close","unix_ms":1756...,"conn":3,"bytes_to_target":4198,"bytes_from_target":1258291}
+{"kind":"forward_closed","unix_ms":1756...,"reason":"killed"}
 ```
 
 **One renderer in `cli/`, called by all three surfaces** (`surface-parity-checklist`
