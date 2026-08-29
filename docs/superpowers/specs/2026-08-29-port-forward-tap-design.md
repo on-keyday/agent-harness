@@ -128,7 +128,8 @@ harness-cli forward ls [--json]
       conns=3/41  to-target=1.2MB  from-target=48.3MB  last=2s  taps=1
 
 harness-cli forward tap <forward-id> [--dir to-target|from-target|both]
-                                     [--max-bytes N] [--hex | --raw]
+                                     [--max-bytes N]
+                                     [--hex | --text | --raw | --json]
 ```
 
 ```
@@ -312,6 +313,73 @@ a buffer the relay is about to reuse — the same rule `spliceConnStream` alread
 documents at `cli/port_forward.go:143`. With `max_record_bytes` set, the copy is
 of the truncated length, so a narrow tap on a fast forward is cheap.
 
+## Rendering
+
+A tap record has to be readable on a Windows console, in a bubbles viewport and
+in a `<pre>`, so the line is ASCII and fixed-column. One header line per record,
+then the body for `data`:
+
+```
+#3 open   12:34:56.700  localhost:3000
+#3 ->     12:34:56.789  64B
+0000  47 45 54 20 2f 61 70 69  2f 78 20 48 54 54 50 2f  |GET /api/x HTTP/|
+0010  31 2e 31 0d 0a 48 6f 73  74 3a 20 6c 6f 63 61 6c  |1.1..Host: local|
+#3 <-     12:34:56.902  1.4kB  (truncated, 1.3kB cut)
+0000  48 54 54 50 2f 31 2e 31  20 32 30 30 20 4f 4b 0d  |HTTP/1.1 200 OK.|
+#3 gap    12:34:57.100  3.2MB missed
+#3 close  12:34:57.900
+-- forward #7 closed (killed) --
+```
+
+| Column | Content |
+| --- | --- |
+| 1 | `#<conn_seq>`, or nothing on the forward-level closing line |
+| 2 | kind, left-aligned in a fixed width: `->` / `<-` for data, `open` / `close` / `gap` |
+| 3 | wall clock from `unix_ms`, `HH:MM:SS.mmm` |
+| 4 | payload size for data, the missed count for `gap`, the dialled target for `open` |
+
+`->` / `<-` rather than arrows or `to_target`/`from_target`: `forward ls`
+already writes its row as `127.0.0.1:8080 -> localhost:3000`, so an arrow
+pointing right already means "toward the target" on the surface next to this
+one, and both survive a non-UTF-8 console.
+
+The hex body is `xxd` layout — offset, 16 bytes in two groups of eight, ASCII
+gutter. **The offset is cumulative within its `(conn_seq, direction)` stream**,
+not per record: record boundaries are an artifact of `ReadDirect` chunking
+(§ Wire), so a per-record offset would restart at 0 in the middle of a message
+and mean nothing. A cumulative one lines up with `bytes_to_target` on the
+listing.
+
+Four renderings, one decision each:
+
+- `--hex` (default) — the above.
+- `--text` — the same header lines, body as the payload with non-printables as
+  `.` and no offset column. HTTP over a forward is the likeliest use and a
+  hexdump of it is unreadable.
+- `--raw` — payload bytes only, no headers, for piping into a decoder.
+  Requires `--dir`: two directions concatenated into one stdout is not a
+  stream any decoder can read.
+- `--json` — JSON Lines, one object per record, matching what `ls --json` and
+  `forward ls --json` already are. A struct, not a map, so field order is
+  stable (`PortForwardInfoJSONLine`'s reason). `data` is base64, being bytes.
+
+```
+{"conn":3,"kind":"data","dir":"to_target","unix_ms":1756...,"len":64,"truncated":0,"data":"R0VUIC9hcGkveCBIVFRQLzEuMQ0K"}
+{"conn":3,"kind":"gap","dir":"to_target","unix_ms":1756...,"dropped":3355443}
+{"forward_id":7,"kind":"forward_closed","unix_ms":1756...,"reason":"killed"}
+```
+
+**The header line is rendered in Go, once, and all three surfaces call it**
+(`surface-parity-checklist` item 32). The TUI view and the WebUI panel display
+the same string the CLI prints — the browser reaches it over the wasm bridge
+rather than re-deriving the format in JS, which is the mistake `scopeSpecJS`
+made and paid for.
+
+`formatByteCount` (`tui/rawforward.go:333`) is the existing renderer for the
+size column and moves to `cli/` in this change, because the new counters put
+byte sizes on all three surfaces and a second copy in JS would drift the same
+way.
+
 ## Capability and scope
 
 Two gates, both required:
@@ -345,7 +413,7 @@ look at.
 | --- | --- |
 | CLI rows | six new fields on the `forward ls` row (`cli/port_forward_list.go` renderer) |
 | CLI JSON | the same six on `portForwardJSON` (`cli/port_forward_list.go:151`) |
-| CLI verb | `forward tap <id>` with `--dir` / `--max-bytes` / `--hex` / `--raw` |
+| CLI verb | `forward tap <id>` with `--dir` / `--max-bytes` / `--hex` / `--text` / `--raw` / `--json` (§ Rendering) |
 | CLI caps catalog | `forward_tap` in `cli/caps.go` `GrantableCaps` + `WriteCaps` |
 | TUI forwards pane | new columns on the `f` pane; the column set and the rows swap together (`applyColumns`), never one then the other |
 | TUI tap | its own view, the way the exec listing got one — not a dump into the cmdline result region |
@@ -361,9 +429,8 @@ blank is not (`surface-parity-checklist` item 31). `last=` is the one field that
 renders as `never` rather than a number, because it has no measurement to
 report until the first byte.
 
-`--raw` requires an explicit `--dir`: writing both directions' payloads to one
-stdout interleaves two conversations into a byte soup that no decoder can read.
-The default is `--hex`, one framed record per header line.
+The line format, its four renderings and the shared Go renderer are specified in
+§ Rendering.
 
 The `surface-parity-checklist` skill is walked item by item during plan writing,
 and this table is checked back against the code when the feature is finished
