@@ -315,6 +315,18 @@ of the truncated length, so a narrow tap on a fast forward is cheap.
 
 ## Rendering
 
+**The server formats nothing.** It emits `ForwardTapRecord` — bytes plus the
+metadata only the crossing point can know: `conn_seq`, direction, `unix_ms`,
+`dropped_bytes`. Every line below is produced by the `cli/` package in the
+CLIENT process, which for the WebUI is the same Go compiled to wasm and running
+in the browser. `--json` is therefore a re-encode of the record, not a re-parse
+of text.
+
+The one exception, and it is deliberate: `max_record_bytes` truncation happens
+server-side, along with the `truncated_bytes` count. Cutting the payload at the
+client would first spend the bandwidth the option exists to save. That is the
+only place the server touches the payload at all.
+
 A tap record has to be readable on a Windows console, in a bubbles viewport and
 in a `<pre>`, so the line is ASCII and fixed-column. One header line per record,
 then the body for `data`:
@@ -369,11 +381,10 @@ Four renderings, one decision each:
 {"forward_id":7,"kind":"forward_closed","unix_ms":1756...,"reason":"killed"}
 ```
 
-**The header line is rendered in Go, once, and all three surfaces call it**
-(`surface-parity-checklist` item 32). The TUI view and the WebUI panel display
-the same string the CLI prints — the browser reaches it over the wasm bridge
-rather than re-deriving the format in JS, which is the mistake `scopeSpecJS`
-made and paid for.
+**One renderer in `cli/`, called by all three surfaces** (`surface-parity-checklist`
+item 32). The TUI view and the WebUI panel display the same string the CLI
+prints; the browser reaches it over the wasm bridge rather than re-deriving the
+format in JS, which is the mistake `scopeSpecJS` made and paid for.
 
 `formatByteCount` (`tui/rawforward.go:333`) is the existing renderer for the
 size column and moves to `cli/` in this change, because the new counters put
