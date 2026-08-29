@@ -576,3 +576,63 @@ func TestForwardsModalResizeKeepsRowsAndCursor(t *testing.T) {
 		t.Fatalf("resize moved the selection to %d", got)
 	}
 }
+
+// An open pane keeps up with the stream: stats upsert the row, closed removes
+// it. Before this the pane showed whatever the fetch on open returned, so a
+// forward carrying traffic still read 0/0.
+func TestForwardsModalApplyEventKeepsRowsFresh(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.ForwardId = 7
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.SetTargetHost([]byte("localhost"))
+	fi.SetOriginCid([]byte("ws:abc"))
+
+	m := NewForwardsModal()
+	m.Open()
+	m.SetSize(220, 24)
+	m.ApplySnapshot([]protocol.PortForwardInfo{fi})
+
+	moved := fi
+	moved.BytesToTarget = 4096
+	moved.ConnsOpen = 2
+	moved.ConnsTotal = 3
+	m.ApplyEvent(protocol.ForwardStatusEvent{Kind: protocol.StatusEventKind_ForwardStats, Info: moved})
+
+	view := m.View()
+	if !strings.Contains(view, "4.0kB") || !strings.Contains(view, "2/3") {
+		t.Fatalf("stats event did not reach the row:\n%s", view)
+	}
+
+	m.ApplyEvent(protocol.ForwardStatusEvent{Kind: protocol.StatusEventKind_ForwardClosed, Info: moved})
+	if got, _ := m.SelectedID(); got != 0 {
+		t.Fatalf("closed event left the row behind (selected %d)", got)
+	}
+}
+
+// A registered event for a forward the pane has never seen inserts it, so a
+// forward created while the pane is open appears without a refetch.
+func TestForwardsModalApplyEventInsertsAndKeepsTheCursor(t *testing.T) {
+	mk := func(id uint64) protocol.PortForwardInfo {
+		var fi protocol.PortForwardInfo
+		fi.ForwardId = id
+		fi.SetBindAddr([]byte("127.0.0.1"))
+		fi.SetTargetHost([]byte("localhost"))
+		fi.SetOriginCid([]byte("ws:abc"))
+		return fi
+	}
+	m := NewForwardsModal()
+	m.Open()
+	m.SetSize(220, 24)
+	m.ApplySnapshot([]protocol.PortForwardInfo{mk(1), mk(2), mk(3)})
+	m.table.SetCursor(2) // forward 3
+
+	// A new forward sorts in ABOVE the cursor; the selection must stay on 3
+	// rather than sliding onto another row the next `x` would kill.
+	m.ApplyEvent(protocol.ForwardStatusEvent{Kind: protocol.StatusEventKind_ForwardRegistered, Info: mk(0)})
+	if got, ok := m.SelectedID(); !ok || got != 3 {
+		t.Fatalf("selection moved to %d after an insert above it", got)
+	}
+	if len(m.forwards) != 4 {
+		t.Fatalf("insert did not happen: %d rows", len(m.forwards))
+	}
+}

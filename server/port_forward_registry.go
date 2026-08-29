@@ -54,6 +54,11 @@ type portForward struct {
 	// a forward cannot be watched invisibly.
 	tapMu sync.Mutex
 	taps  []*forwardTap
+
+	// What the stats sweep last published, so an unchanged forward costs a
+	// comparison and no event.
+	statsMu       sync.Mutex
+	lastPublished publishedCounters
 }
 
 // portForwardRegistry maps server-assigned forwardId → registration. Safe for

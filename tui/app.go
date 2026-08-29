@@ -585,6 +585,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward tap %d: %v", msg.ForwardID, msg.Err)))
 		}
 		return a, nil
+	case ForwardStatusMsg:
+		a.forwardsModal.ApplyEvent(msg.Event)
+		return a, nil
+	case ExecStatusMsg:
+		a.execsModal.ApplyEvent(msg.Event)
+		return a, nil
 	case ForwardKillResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward kill %d: %v", msg.ID, msg.Err)))

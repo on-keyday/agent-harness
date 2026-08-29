@@ -431,6 +431,23 @@ func New(cfg Config) *Server {
 
 	// Store the conn event publisher so handleConnection can emit
 	// conn_opened and conn_closed without threading a parameter.
+	// forwards.status / execs.status: the same shape as publishConnEvent above,
+	// with the same rule about the filter — one predicate for the snapshot and
+	// the stream, so a subscriber is never told about a row its own listing
+	// would deny.
+	s.taskHandler.OnForwardEvent = func(kind protocol.StatusEventKind, pf *portForward) {
+		payload := forwardStatusPayload(kind, pf)
+		s.pubsub.PublishFiltered("server", topics.ForwardsStatus(), payload, func(subCID objproto.ConnectionID) bool {
+			return s.taskHandler.forwardVisibleTo(subCID.String(), pf)
+		})
+	}
+	s.taskHandler.OnExecEvent = func(kind protocol.StatusEventKind, e *execRun) {
+		payload := execStatusPayload(kind, e)
+		s.pubsub.PublishFiltered("server", topics.ExecsStatus(), payload, func(subCID objproto.ConnectionID) bool {
+			return s.taskHandler.execVisibleTo(subCID.String(), e)
+		})
+	}
+
 	s.onConnEvent = publishConnEvent
 
 	return s
@@ -660,6 +677,12 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	if s.cfg.DetachIdleTimeout > 0 {
 		go s.runDetachIdleSweeper(ctx)
 	}
+
+	// Coalesces the port-forward counters into forwards.status. One goroutine
+	// for the whole server: the quantity moves per byte, so it can only be
+	// published on a clock, and a per-forward publisher would have to
+	// rediscover the coalescing each time.
+	go s.taskHandler.runForwardStatsSweeper(ctx)
 
 	const shutdownGracePeriod = 2 * time.Second
 

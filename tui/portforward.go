@@ -466,6 +466,64 @@ func (m *ForwardsModal) ApplySnapshot(fs []protocol.PortForwardInfo) {
 	m.table.SetRows(rows)
 }
 
+// ApplyEvent folds one forwards.status event into the rows, so an open pane
+// keeps up instead of showing whatever the fetch on open returned.
+//
+// Three kinds, two behaviours: registered and stats both upsert the row the
+// event carries — the whole PortForwardInfo travels, so there is nothing to
+// merge — and closed removes it. Same shape as ConnsModal.ApplyEvent, which is
+// the point: two registry listings side by side should not stay fresh in two
+// different ways.
+//
+// The cursor is preserved by id rather than by index: rows are keyed on
+// forward_id, and a removal above the cursor would otherwise silently move the
+// selection onto a different forward — which matters here because the next key
+// the operator presses may be `x`.
+func (m *ForwardsModal) ApplyEvent(ev protocol.ForwardStatusEvent) {
+	selected, hadSelection := m.SelectedID()
+
+	idx := -1
+	for i := range m.forwards {
+		if m.forwards[i].ForwardId == ev.Info.ForwardId {
+			idx = i
+			break
+		}
+	}
+
+	switch ev.Kind {
+	case protocol.StatusEventKind_ForwardRegistered, protocol.StatusEventKind_ForwardStats:
+		if idx >= 0 {
+			m.forwards[idx] = ev.Info
+		} else {
+			m.forwards = append(m.forwards, ev.Info)
+			sort.Slice(m.forwards, func(i, j int) bool {
+				return m.forwards[i].ForwardId < m.forwards[j].ForwardId
+			})
+		}
+	case protocol.StatusEventKind_ForwardClosed:
+		if idx < 0 {
+			return
+		}
+		m.forwards = append(m.forwards[:idx], m.forwards[idx+1:]...)
+	default:
+		return
+	}
+
+	rows := make([]table.Row, 0, len(m.forwards))
+	for i := range m.forwards {
+		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
+	}
+	m.table.SetRows(rows)
+	if hadSelection {
+		for i := range m.forwards {
+			if m.forwards[i].ForwardId == selected {
+				m.table.SetCursor(i)
+				break
+			}
+		}
+	}
+}
+
 // SelectedID returns the forward id under the cursor.
 func (m *ForwardsModal) SelectedID() (uint64, bool) {
 	if len(m.forwards) == 0 {

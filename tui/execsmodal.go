@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -105,6 +106,59 @@ func (m *ExecsModal) ApplySnapshot(es []protocol.ExecRunInfo) {
 		rows = append(rows, execRunInfoRow(&m.execs[i], now))
 	}
 	m.table.SetRows(rows)
+}
+
+// ApplyEvent folds one execs.status event into the rows. Two kinds, because an
+// exec has nothing that moves while it runs: started inserts, ended removes.
+//
+// The age column still ages only on a refetch — it is rendered into a string at
+// row-build time, which is what execRunInfoRow's own comment says. That is
+// unchanged by this: an event rebuilds the rows and re-ages them as a side
+// effect, which is more often than before, not less.
+func (m *ExecsModal) ApplyEvent(ev protocol.ExecStatusEvent) {
+	selected, hadSelection := m.SelectedID()
+
+	idx := -1
+	for i := range m.execs {
+		if m.execs[i].ExecId == ev.Info.ExecId {
+			idx = i
+			break
+		}
+	}
+
+	switch ev.Kind {
+	case protocol.StatusEventKind_ExecStarted:
+		if idx >= 0 {
+			m.execs[idx] = ev.Info
+		} else {
+			m.execs = append(m.execs, ev.Info)
+			sort.Slice(m.execs, func(i, j int) bool {
+				return m.execs[i].ExecId < m.execs[j].ExecId
+			})
+		}
+	case protocol.StatusEventKind_ExecEnded:
+		if idx < 0 {
+			return
+		}
+		m.execs = append(m.execs[:idx], m.execs[idx+1:]...)
+	default:
+		return
+	}
+
+	now := time.Now()
+	rows := make([]table.Row, 0, len(m.execs))
+	for i := range m.execs {
+		rows = append(rows, execRunInfoRow(&m.execs[i], now))
+	}
+	m.table.SetRows(rows)
+	if hadSelection {
+		for i := range m.execs {
+			if m.execs[i].ExecId == selected {
+				m.table.SetCursor(i)
+				break
+			}
+		}
+	}
 }
 
 // SelectedID returns the exec id under the cursor.

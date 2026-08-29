@@ -1427,6 +1427,20 @@ enum StatusEventKind:
                       # an event-driven client the counts moved and it shows a
                       # stale figure until some unrelated event happens to
                       # arrive. Payload of interest is viewers/cowriters.
+    forward_registered  # appended: a port forward joined the registry.
+    forward_closed      # appended: it left. Clients drop the row.
+    forward_stats       # appended, and the exact shape task_observers exists
+                        # for, one object over: a forward's COUNTERS moved.
+                        # Without it a client holding a listing shows an idle
+                        # 0/0 while bytes cross, and nothing corrects it until
+                        # some unrelated event arrives. Coalesced server-side —
+                        # one sweep publishes only the forwards that changed —
+                        # because the underlying quantity moves per BYTE and an
+                        # event per byte is not a design.
+    exec_started        # appended: an exec joined the registry.
+    exec_ended          # appended: it left. Execs have no counters, so they
+                        # need no stats kind — their listing is discrete, which
+                        # is why these two are enough where a forward needs three.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -1510,6 +1524,21 @@ format ConnStatusEvent:
     kind :StatusEventKind  # conn_opened | conn_identified | conn_closed
     ts :u64
     info :ConnInfo
+
+# ForwardStatusEvent mirrors ConnStatusEvent for forwards.status: the whole row
+# travels, so a subscriber upserts on registered/stats and drops on closed —
+# the same three-way apply ConnsModal already does for conns.
+format ForwardStatusEvent:
+    kind :StatusEventKind  # forward_registered | forward_stats | forward_closed
+    ts :u64
+    info :PortForwardInfo
+
+# ExecStatusEvent is the same shape for execs.status. Two kinds, not three: an
+# exec has nothing that moves while it runs.
+format ExecStatusEvent:
+    kind :StatusEventKind  # exec_started | exec_ended
+    ts :u64
+    info :ExecRunInfo
 
 # === File transfer (client ↔ runner; see specs/2026-05-10-file-transfer-design.md) ===
 

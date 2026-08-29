@@ -130,6 +130,8 @@ func main() {
 				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)
 				go tui.SubscribeNotifications(runCtx, handle.C, program)
 				go tui.SubscribeConnStatus(runCtx, handle.C, program)
+				go tui.SubscribeForwardStatus(runCtx, handle.C, program)
+				go tui.SubscribeExecStatus(runCtx, handle.C, program)
 				// Task log subscription is NOT re-issued here: the App owns
 				// it exclusively via followTask, which its own BindClientMsg
 				// handler re-triggers (see program.Send above) once a.client

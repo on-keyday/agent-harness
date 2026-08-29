@@ -139,6 +139,10 @@ func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortF
 	// has no other channel on which to learn the difference between "the
 	// forward ended" and "my own connection dropped".
 	pf.closeTaps(reason)
+	// The single funnel every ending path goes through, so a subscriber's row
+	// disappears whether it was killed, reaped for a gone task, or dropped with
+	// its client's connection.
+	h.emitForwardEvent(protocol.StatusEventKind_ForwardClosed, pf)
 	if pf.direction != protocol.PortForwardDirection_Remote {
 		return true
 	}

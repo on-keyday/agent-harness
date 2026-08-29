@@ -135,6 +135,7 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 	}
 	pf.control = ctrl
 	fid := h.pforwards().add(pf)
+	h.emitForwardEvent(protocol.StatusEventKind_ForwardRegistered, pf)
 	go h.watchRemoteForwardControl(pf)
 	return protocol.RegisterPortForwardResponse{
 		Status:    protocol.OpenPortForwardStatus_Ok,
@@ -197,6 +198,10 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		return errResp(protocol.OpenPortForwardStatus_BindFailed)
 	}
 
+	// Announced only once the listener is known to have bound: a registration
+	// that fails its bind is removed again below, and a registered/closed pair
+	// for something that never existed is noise a subscriber has to filter.
+	h.emitForwardEvent(protocol.StatusEventKind_ForwardRegistered, pf)
 	// Tear the forward down when the client closes the control stream.
 	go h.watchRemoteForwardControl(pf)
 	return protocol.RegisterPortForwardResponse{

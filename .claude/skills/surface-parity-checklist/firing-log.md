@@ -1359,6 +1359,37 @@ Notes worth keeping:
   Worth noting because it is the counter-example to the log's premise: not every
   parity failure is a UI surface, and the cheapest guards here are executable.
 
+### 2026-08-29 (2) — forwards.status / execs.status push
+
+done:    10, 23, 29, 31, 32, 35, 37
+omitted: 6, 7, 8 (the WebUI keeps its 5s poll: it is NOT stale — the snapshot
+         already carries forwards — and the wasm bridge has no pubsub
+         subscription machinery, so this would mean building a mechanism, not
+         using one. The gap is responsiveness, not correctness)
+         38 (neither live screen pane renders a registry listing)
+
+Notes worth keeping:
+
+- **The trigger for this walk was an operator question, not a diff.** "How does
+  it feel in the TUI?" is what surfaced a fetch-once pane showing `0/0` while
+  bytes crossed. No item on this list asks "does this stay fresh once it is on
+  screen" — 11-23 ask whether a field is VISIBLE, and it was. Worth watching
+  whether that becomes an item: the defect is invisible to a walk and obvious
+  within ten seconds of using the thing.
+
+- **32 fired on a PREDICATE rather than a serializer**, which is the shape the
+  item keeps growing into. `publishConnEvent`'s comment already required "one
+  predicate for the snapshot and the stream"; honouring it for two more topics
+  meant extracting `execVisibleTo` from the listing, and reusing
+  `forwardVisibleTo`, which the tap change had already extracted for its own
+  gate. The second use is what proved the first extraction was in the right
+  place.
+
+- **The fix carried to the sibling in the same change** (execs), which is the
+  `feedback_carry_invariants_across_surfaces` rule applied without waiting to be
+  told. Execs had the same fetch-once staleness, milder only because their rows
+  are discrete.
+
 ## Standing tallies
 
 Update when adding an entry.

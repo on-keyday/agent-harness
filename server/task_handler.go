@@ -50,6 +50,13 @@ type TaskHandler struct {
 	// nil-safe: tests may leave it nil to exercise egress in isolation.
 	OnNotify func(ev protocol.NotifyEvent)
 
+	// OnForwardEvent / OnExecEvent publish to forwards.status / execs.status.
+	// Hooks rather than a pubsub reference, matching every other publication
+	// out of this handler: the handler raises, the server decides who may see
+	// it.
+	OnForwardEvent func(kind protocol.StatusEventKind, pf *portForward)
+	OnExecEvent    func(kind protocol.StatusEventKind, e *execRun)
+
 	// portForwardsOnce guards the lazy init of portForwards so concurrent
 	// callers racing on the first use cannot create two separate registries or
 	// observe a torn pointer write.

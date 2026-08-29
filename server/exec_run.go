@@ -93,13 +93,18 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
-		h.execs().remove(execID)
+		h.removeExec(execID)
 		_ = dataStream.CloseBoth()
 		_ = ctrlStream.Close()
 		_ = runnerStream.CloseBoth()
 		slog.Error("exec_run: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.ExecRunStatus_InternalError)
 	}
+	// Announced only once the runner has been told, so a send failure does not
+	// publish an exec that never started — the same rule the remote forward's
+	// registered event follows around its bind result.
+	h.emitExecEvent(protocol.StatusEventKind_ExecStarted, e)
+
 	// HalfClose, not spliceBidi: the full-teardown variant closes BOTH streams
 	// the moment either direction ends, and for a command that finishes in
 	// milliseconds that can tear the client's data stream down before the
@@ -158,7 +163,7 @@ func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath 
 // deregisters. An unknown id is a no-op: the client may have gone away first,
 // taking the registration with it.
 func (h *TaskHandler) onExecRunFinished(fin *protocol.ExecRunFinished) {
-	e, ok := h.execs().remove(fin.ExecId)
+	e, ok := h.removeExec(fin.ExecId)
 	if !ok {
 		return
 	}
@@ -247,15 +252,23 @@ func (h *TaskHandler) visibleExecRuns(connID string, filter protocol.TaskID) []p
 	if filter.Id != ([16]byte{}) {
 		taskFilter = hex.EncodeToString(filter.Id[:])
 	}
-	all, allowed := h.visibleToCaller(connID)
 	out := make([]protocol.ExecRunInfo, 0, 8)
 	for _, e := range h.execs().list(taskFilter) {
-		if !all && !allowed[e.taskIDHex] {
+		if !h.execVisibleTo(connID, e) {
 			continue
 		}
 		out = append(out, execRunInfo(e))
 	}
 	return out
+}
+
+// execVisibleTo reports whether connID may see e. Factored out of the listing
+// so execs.status gates delivery with the SAME predicate — a subscriber must
+// not be told about an exec the listing would deny, which is the rule
+// publishConnEvent already states for conns.
+func (h *TaskHandler) execVisibleTo(connID string, e *execRun) bool {
+	all, allowed := h.visibleToCaller(connID)
+	return all || allowed[e.taskIDHex]
 }
 
 // execRunInfo renders one registration for the listing.
@@ -295,7 +308,7 @@ func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKill
 	if !h.authorize(connID, protocol.Capability_ExecRun, e.taskIDHex) {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
-	if _, still := h.execs().remove(req.ExecId); !still {
+	if _, still := h.removeExec(req.ExecId); !still {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
 	h.stopExecOnRunner(e, "exec kill")
@@ -348,7 +361,7 @@ func (h *TaskHandler) DropExecRunsForConn(connID string) {
 		if e.clientCID != connID {
 			continue
 		}
-		if _, still := h.execs().remove(e.execID); !still {
+		if _, still := h.removeExec(e.execID); !still {
 			continue
 		}
 		h.stopExecOnRunner(e, "client disconnected")

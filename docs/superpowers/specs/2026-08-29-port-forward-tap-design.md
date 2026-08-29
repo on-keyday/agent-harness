@@ -652,3 +652,66 @@ zeros and the PSK gate refused them (`6c6d912`). With that fixed:
 
 So the gate refuses and permits on the same forward from the same kind of
 caller, which is the pair worth having.
+
+
+---
+
+## Amendment 2 — the listing is pushed, not fetched-once (2026-08-29)
+
+Driving the TUI found the defect this feature introduced on top of a
+pre-existing asymmetry: the forwards pane fetches once when it opens, which was
+harmless while a row was pure configuration and is not once it carries
+counters. An open pane showed `conns=0/0 to-target=0` while bytes crossed —
+which reads as *this forward is idle*, the exact question the counters exist to
+answer.
+
+The repository had already solved this shape once. `StatusEventKind.task_observers`
+exists because "nothing tells an event-driven client the counts moved and it
+shows a stale figure until some unrelated event happens to arrive" — the same
+sentence, one object over.
+
+**`forwards.status` and `execs.status`** join `conns.status`, with
+`ForwardStatusEvent` / `ExecStatusEvent` carrying the whole row so a subscriber
+upserts and drops without refetching — `ConnsModal.ApplyEvent`'s three-way
+apply, reused.
+
+The counters could not ride the change itself: they move per BYTE. A
+server-side sweep (`forwardStatsInterval`, 1s) publishes `forward_stats` only
+for the forwards whose counters differ from what was last published, so a burst
+is one event and an idle server is silent. That is why this is cheaper than the
+clients polling rather than merely tidier — polling costs a round trip per
+client per interval whether or not anything moved, while one publish fans out
+to every subscriber with `PublishFiltered`'s per-subscriber visibility gate.
+
+Execs got the same treatment in the same change: two kinds, not three, because
+an exec's row does not change while it runs. Fixing one and not the other would
+have left the same defect class in the pane next door.
+
+The delivery filters reuse `forwardVisibleTo` / `execVisibleTo` — the latter
+extracted from `visibleExecRuns` here — so the rule `publishConnEvent` states
+holds for both: one predicate for the snapshot and the stream, and a subscriber
+is never told about a row its own listing would deny.
+
+**The WebUI is deliberately left on its poll.** It is not stale — its 5s
+snapshot already includes forwards, so the row self-updates — and the wasm
+bridge has no pubsub subscription machinery at all, so wiring this there means
+building a mechanism rather than using one. Recorded as an `omitted`, not an
+oversight: the gap it would close is responsiveness (5s → 1s), not correctness.
+
+### Verified live, 2026-08-29
+
+TUI against a dummy harness, pane open, **no key pressed** throughout:
+
+- counters: `0/1 97B 160B` → `0/3 283B 480B` as requests crossed
+- a forward registered elsewhere appeared as a second row
+- `taps=` went 0 → 1 when a tap attached
+- the exec pane went `(0)` → `(1)` when an exec started, and back to
+  `no running execs` when it was killed
+
+One earlier "the TUI lists no forwards" scare was a fixture error, not a
+defect, and is worth recording because it looks exactly like a bug: the TUI had
+been launched inside a harness session WITHOUT unsetting the injected
+`HARNESS_AUTH_TICKET`, so it authenticated as that session's task and correctly
+saw only that task's subtree. Trap 1 of the `dummy-harness` skill. Confinement
+working is indistinguishable from a broken listing if you forget which identity
+your client picked up.

@@ -126,6 +126,64 @@ func SubscribeConnStatus(ctx context.Context, c *cli.Client, program *tea.Progra
 	})
 }
 
+// ForwardStatusMsg / ExecStatusMsg carry one decoded registry event.
+type ForwardStatusMsg struct {
+	Event protocol.ForwardStatusEvent
+}
+
+type ExecStatusMsg struct {
+	Event protocol.ExecStatusEvent
+}
+
+// DecodeForwardStatus decodes a ForwardStatusEvent payload.
+func DecodeForwardStatus(payload []byte) (protocol.ForwardStatusEvent, error) {
+	var ev protocol.ForwardStatusEvent
+	if _, err := ev.Decode(payload); err != nil {
+		return protocol.ForwardStatusEvent{}, fmt.Errorf("decode ForwardStatusEvent: %w", err)
+	}
+	return ev, nil
+}
+
+// SubscribeForwardStatus mirrors SubscribeConnStatus for forwards.status.
+//
+// Why forwards need this and did not before: the pane used to hold pure
+// configuration, so one fetch when it opened was the whole truth. It now holds
+// counters, and a fetch-once pane shows an idle 0/0 while bytes cross — which
+// reads as an answer rather than as stale data.
+func SubscribeForwardStatus(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.ForwardsStatus(), program, func(payload []byte) tea.Msg {
+		ev, err := DecodeForwardStatus(payload)
+		if err != nil {
+			slog.Warn("decode forward event", "err", err)
+			return nil
+		}
+		return ForwardStatusMsg{Event: ev}
+	})
+}
+
+// DecodeExecStatus decodes an ExecStatusEvent payload.
+func DecodeExecStatus(payload []byte) (protocol.ExecStatusEvent, error) {
+	var ev protocol.ExecStatusEvent
+	if _, err := ev.Decode(payload); err != nil {
+		return protocol.ExecStatusEvent{}, fmt.Errorf("decode ExecStatusEvent: %w", err)
+	}
+	return ev, nil
+}
+
+// SubscribeExecStatus is its sibling for execs.status. The exec pane had the
+// same fetch-once staleness; it is less loud because an exec row is discrete,
+// but it is the same defect and gets the same fix in the same change.
+func SubscribeExecStatus(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.ExecsStatus(), program, func(payload []byte) tea.Msg {
+		ev, err := DecodeExecStatus(payload)
+		if err != nil {
+			slog.Warn("decode exec event", "err", err)
+			return nil
+		}
+		return ExecStatusMsg{Event: ev}
+	})
+}
+
 // SubscribeTaskLog joins task.<taskID>.log and forwards each chunk as
 // LogChunkMsg{TaskID: taskID}.
 func SubscribeTaskLog(ctx context.Context, c *cli.Client, program *tea.Program, taskID string) {
