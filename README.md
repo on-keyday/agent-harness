@@ -926,6 +926,7 @@ A **workspace** is a named set of those values in `.harness/config`. Both
 server-cid = ws:HOSTNAME:8539-*
 repo       = /abs/path/to/repo
 grid       = --under 3f2a9c…            # the `grid` command's arguments, verbatim
+ssh-gateway = 127.0.0.1:2222            # empty value = its default bind; no key = don't touch it
 
 [workspace default task 3f2a9c…]
 resume  = continue                      # no (default) | continue (r/u) | fresh (R/U)
@@ -957,7 +958,23 @@ bin/harness-tui --workspace default          # applies on start and every reconn
 
 Inside the TUI, `workspace apply [name]` re-applies on demand, `workspace save
 <name>` writes the current state back, and `workspace ls` / `show [name]`
-inspect the file. From the CLI:
+inspect the file.
+
+**`workspace detach` takes the workspace back off.** An applied workspace stays
+installed and re-applies on every reconnect; detach stops that and leaves
+everything running, because stopping to MANAGE something is not the same as
+tearing it down — an operator typing it should not lose the tunnels they are
+working through. `workspace detach --stop` is the other one: it also stops the
+forwards this workspace started (never a hand-started one) and the gateway, if
+the workspace declared one. Neither form touches a resumed session — a resume
+has no inverse, and ending the session is a much larger action than undoing an
+apply. Before this the only way out was `workspace rm`, which uninstalls as a
+side effect of deleting what you wrote down.
+
+An apply **reconciles** the ssh gateway the same way it reconciles forwards: no
+key means leave it alone, a declared address with nothing running starts one,
+and a gateway running somewhere else is stopped and restarted where the file
+says. From the CLI:
 
 `workspace rm <name>` deletes one workspace — its own lines only; other
 workspaces and every comment stay as they were.

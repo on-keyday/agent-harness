@@ -119,3 +119,50 @@ func TestWorkspaceSpanExcludesTheNextHeadersPreamble(t *testing.T) {
 	}
 	t.Error("the next workspace's comment is inside the default workspace's span")
 }
+
+// ssh-gateway is a workspace-level key, beside grid: the gateway is
+// process-scoped, not per-task, so a task block is the wrong home for it.
+//
+// Presence is its own bit for grid's exact reason — the empty value is a real
+// instruction ("bind wherever the gateway defaults to") and an absent key means
+// "do not touch the gateway at all". A plain string cannot hold both.
+func TestParseSSHGateway(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantVal string
+		wantSet bool
+	}{
+		{"absent", "[workspace w]\nrepo = /r\n", "", false},
+		{"address", "[workspace w]\nssh-gateway = 127.0.0.1:2222\n", "127.0.0.1:2222", true},
+		{"empty value means the default bind", "[workspace w]\nssh-gateway =\n", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := Parse(strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ws, ok := f.Workspace("w")
+			if !ok {
+				t.Fatal("workspace w not parsed")
+			}
+			if ws.SSHGateway != tc.wantVal || ws.SSHGatewaySet != tc.wantSet {
+				t.Errorf("SSHGateway = %q set=%v, want %q set=%v",
+					ws.SSHGateway, ws.SSHGatewaySet, tc.wantVal, tc.wantSet)
+			}
+		})
+	}
+}
+
+// The unknown-key error names every legal key, because it is the only place an
+// operator who mistyped one finds out what the right ones are.
+func TestUnknownWorkspaceKeyNamesSSHGateway(t *testing.T) {
+	_, err := Parse(strings.NewReader("[workspace w]\nsshgateway = x\n"))
+	if err == nil {
+		t.Fatal("want an error for an unknown key")
+	}
+	if !strings.Contains(err.Error(), "ssh-gateway") {
+		t.Errorf("error %q does not name the ssh-gateway key", err)
+	}
+}

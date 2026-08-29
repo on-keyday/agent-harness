@@ -248,12 +248,17 @@ type FileDeleteAction struct {
 // file holds. There is no `workspace open`-shaped verb for starting one piece
 // at a time; an apply is all-or-nothing by design.
 type WorkspaceAction struct {
-	Sub  string // "save" | "apply" | "ls" | "show"
+	Sub  string // "save" | "apply" | "detach" | "ls" | "show" | "rm"
 	Name string // "" means the installed workspace, except for save
 	// All is `save --all`: write every live session without opening the
 	// picker. The picker is the default because which tasks belong in a
 	// workspace is a statement, not something a rule can infer.
 	All bool
+	// Stop is `detach --stop`: also stop what the workspace started. Off by
+	// default because detach's job is to stop MANAGING — an operator who
+	// detaches after a reconnect-triggered apply should not lose the tunnels
+	// they are working through.
+	Stop bool
 }
 
 // ForwardLsAction lists every port forward visible to this operator.
@@ -1250,17 +1255,22 @@ func parseSSHGateway(args []string) (Action, error) {
 // would let a slip overwrite one from the live client state; every other verb
 // is read-only or re-runs what is already installed, so they may default.
 func parseWorkspace(args []string) (Action, error) {
-	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace rm <name> | workspace ls | workspace show [name]"
+	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace detach [--stop] | workspace rm <name> | workspace ls | workspace show [name]"
 	if len(args) == 0 {
 		return nil, fmt.Errorf("%s", usage)
 	}
 	sub := args[0]
 	rest := args[1:]
 	all := false
+	stop := false
 	var positional []string
 	for _, a := range rest {
 		if a == "--all" {
 			all = true
+			continue
+		}
+		if a == "--stop" {
+			stop = true
 			continue
 		}
 		if strings.HasPrefix(a, "-") {
@@ -1286,6 +1296,16 @@ func parseWorkspace(args []string) (Action, error) {
 		if all {
 			return nil, fmt.Errorf("workspace rm: --all applies to save only\n%s", usage)
 		}
+	case "detach":
+		if name != "" {
+			// Detach takes no name on purpose: there is only ever one
+			// installed workspace, and accepting a name would invite
+			// `detach other` to read as "detach that one instead of mine".
+			return nil, fmt.Errorf("workspace detach: takes no name (it detaches the installed one)\n%s", usage)
+		}
+		if all {
+			return nil, fmt.Errorf("workspace detach: --all applies to save only\n%s", usage)
+		}
 	case "apply", "ls", "show":
 		if all {
 			return nil, fmt.Errorf("workspace %s: --all applies to save only\n%s", sub, usage)
@@ -1296,7 +1316,10 @@ func parseWorkspace(args []string) (Action, error) {
 	if len(positional) > 1 {
 		return nil, fmt.Errorf("workspace %s: too many arguments\n%s", sub, usage)
 	}
-	return WorkspaceAction{Sub: sub, Name: name, All: all}, nil
+	if stop && sub != "detach" {
+		return nil, fmt.Errorf("workspace %s: --stop applies to detach only\n%s", sub, usage)
+	}
+	return WorkspaceAction{Sub: sub, Name: name, All: all, Stop: stop}, nil
 }
 
 // splitPathspecTokens peels "-- <path...>" off the tail. It runs BEFORE the

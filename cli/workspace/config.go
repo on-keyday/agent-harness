@@ -53,7 +53,21 @@ type Workspace struct {
 	// meaningful value here, so presence needs its own bit.
 	Grid    string
 	GridSet bool
-	Tasks   []Task
+	// SSHGateway is the ssh gateway's listen address, and SSHGatewaySet
+	// separates an absent key (do not touch the gateway) from `ssh-gateway =`
+	// with an empty value (bind wherever the gateway defaults to) — the same
+	// split Grid needs, for the same reason: the empty string is an
+	// instruction here, not the absence of one.
+	//
+	// Workspace-level rather than per-task because a gateway is
+	// process-scoped: it has one address and serves every task the operator
+	// can reach. That is also why this file holds the address as a STRING and
+	// does not resolve the empty case — the default lives in cli/sshgw, which
+	// is //go:build !js while this package is compiled for js/wasm. The
+	// caller that can import sshgw resolves it.
+	SSHGateway    string
+	SSHGatewaySet bool
+	Tasks         []Task
 
 	// start, end is the half-open span of File.lines this workspace occupies.
 	// end advances only when a line is ASSIGNED to this workspace — a header or
@@ -193,8 +207,10 @@ func assign(ws *Workspace, tk *Task, key, val string, lineNo int) error {
 		ws.Repo = val
 	case "grid":
 		ws.Grid, ws.GridSet = val, true
+	case "ssh-gateway":
+		ws.SSHGateway, ws.SSHGatewaySet = val, true
 	default:
-		return fmt.Errorf("line %d: unknown key %q in a workspace block (want server-cid, ws-path, repo or grid)", lineNo, key)
+		return fmt.Errorf("line %d: unknown key %q in a workspace block (want server-cid, ws-path, repo, grid or ssh-gateway)", lineNo, key)
 	}
 	return nil
 }

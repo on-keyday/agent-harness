@@ -129,6 +129,7 @@ Keys under `[workspace <name>]`:
 | `ws-path` | as `--ws-path` |
 | `repo` | as `--repo` |
 | `grid` | the argument string of the `grid` command, verbatim; empty means the unnarrowed grid |
+| `ssh-gateway` | the gateway's listen address; empty means its default bind. An absent key means "do not touch the gateway" |
 
 Keys under `[workspace <name> task <id>]`:
 
@@ -349,7 +350,7 @@ would have had no CLI implementation.
 | `harness-tui` flags | `--config`, `--workspace` |
 | `harness-cli` global flags | `--config`, `--workspace`; they resolve `server-cid` / `ws-path` / `repo` only |
 | `harness-cli workspace` | new verb family: `save`, `ls`, `show` — no `apply`, see below |
-| TUI command line | new verb family `workspace`: `save`, `apply`, `ls`, `show` |
+| TUI command line | new verb family `workspace`: `save`, `apply`, `detach`, `ls`, `show`, `rm` |
 | TUI keybindings | omitted — re-applying is rare and the command line reaches it |
 | TUI popups / pickers | n/a — no new modal |
 | WebUI controls / command input / wasm bridge | omitted — see Scope |
@@ -537,6 +538,72 @@ every comment survive, the same rule `Set` follows. In the TUI, removing the
 INSTALLED workspace also uninstalls it — leaving it installed would keep
 re-applying something the file no longer describes, and the next reconnect would
 look like the delete had not happened.
+
+## Amendment (2026-08-29, fourth round) — the gateway is workspace state, and an install can be taken back
+
+Two gaps, raised together by the operator, and the second is the older one.
+
+**1. `ssh-gateway` joins the workspace-level keys.**
+
+The ssh-gateway design listed workspace config as **Intentionally omitted**, on
+the grounds that "a gateway is not per-task and has one address, and `--listen`
+in the alias the operator already wrote is the same information". The first half
+is true and is why this is a workspace-level key rather than a task one. The
+second half does not hold: `--listen` lives in the operator's `~/.ssh/config` on
+the CLIENT side and says where to CONNECT; nothing on the harness side says the
+listener should exist. A workspace restores forwards on reconnect and left the
+door they arrive through to be started by hand every time — the same asymmetry
+`grid` was fixed for in the third round.
+
+**DECIDED** — `ssh-gateway = <addr>` under `[workspace <name>]`, with the same
+presence/emptiness split `grid` needs: an absent key means "do not touch the
+gateway", `ssh-gateway =` means "bind wherever the gateway defaults to", and the
+empty string is therefore an instruction rather than the absence of one. The
+picker gains a row cycling **keep / running now / none**, on `s`, beside the
+grid row and by its rules — including that `set` is not offered when no gateway
+is running.
+
+**DECIDED** — apply RECONCILES the gateway, as it does forwards: absent key →
+nothing; declared and none running → start; declared and running elsewhere →
+stop, then start; declared and already there → nothing. The stop-then-start
+cannot be one batch. `Cancel()` only signals, and the listener holds its port
+until the serve goroutine returns and sends `SSHGatewayStoppedMsg`, so a start
+issued beside the stop would race it for the port and lose. The restart is
+parked and fired by that handler — the same deferral the first amendment
+introduced for a resuming task's forwards, arrived at for the same reason.
+
+**DECIDED** — `cli/workspace` does NOT import `cli/sshgw`. That package is
+`//go:build !js` and this one compiles for `js/wasm`, so the import would break
+the wasm build. The config therefore holds the address as a string and validates
+only that it is well formed (`net.SplitHostPort` plus a numeric port); the
+default-bind resolution and the loopback / authorized-keys refusal stay in the
+layers that can see `sshgw`. What a config can check is the shape; what only the
+runtime can check stays at runtime.
+
+**2. `workspace detach` — an installed workspace can be uninstalled.**
+
+`apply` installed a workspace and nothing took it back off. Once installed it
+re-applied on every reconnect, and the only exit was `workspace rm`, which
+uninstalls as a SIDE EFFECT of deleting the file's block (third round) — so
+"stop doing this to me" and "delete what I wrote down" were the same keystroke.
+
+**DECIDED** — `workspace detach` clears the install and stops there: forwards,
+sessions and the gateway keep running. Detach's job is to stop MANAGING. An
+operator typing it after a reconnect-triggered apply should not lose the tunnels
+they are working through, and tearing down by default would make the safe verb
+the dangerous one.
+
+**DECIDED** — `workspace detach --stop` also stops what the workspace started:
+the forwards marked workspace-owned (that flag is the whole selector — a forward
+the operator started by hand is not this workspace's to stop) and the gateway,
+but only if the workspace DECLARED one.
+
+**DECIDED** — sessions are never touched, by either form, and the result line
+says so rather than leaving it to be discovered. A resume has no inverse: the
+session exists, and ending it is a different and much larger action than undoing
+an apply. Detach takes no workspace name for the same reason `rm` requires one —
+there is only ever one installed workspace, and accepting a name would invite
+`detach other` to read as "detach that one instead of mine".
 
 ### What the end-to-end run confirmed
 

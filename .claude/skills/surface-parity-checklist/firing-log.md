@@ -1266,31 +1266,78 @@ missed:  39 — and it is the reason the item now exists. The task-exec spec's o
          CODE was behind it, which 37 has no direction for.
 
 
+### 2026-08-29 (pre-landing) — `ssh-gateway` becomes workspace state, and `workspace detach`
+
+done:    3 (TUI cmdline: `detach` sub-verb and its `--stop`),
+         5 (the save picker gains an ssh-gateway row on `s`, cycling
+         keep / running now / none — the grid row's three states, because both
+         are one workspace-level value and an enum-shaped choice belongs on a
+         control rather than in a text field),
+         10 (the `workspace` family: a verb added and a flag added to it, both
+         parsed beside the family's existing ones),
+         24 (`--stop` has ONE meaning and it is written down: detach clears the
+         install either way, and --stop additionally stops the workspace's own
+         forwards and its gateway — never a hand-started forward, never a
+         session),
+         29 (`workspace mine: detached — 0 forward(s) stopped; resumed sessions
+         left running` names the target, the count and what was deliberately
+         NOT touched),
+         31 (the zero prints: "0 forward(s) stopped" is a measurement, and a
+         detach that stopped nothing must not read as one that stopped
+         something unspecified),
+         32 (the config validates the address with the SAME shape check the
+         file's other values follow — one grammar, one parser — but see the
+         omission below for the half it cannot reach),
+         33 (`--stop` on any verb but detach is refused, and `detach <name>` is
+         refused: there is only ever one installed workspace, so a name would
+         read as "detach that one instead of mine"),
+         35 (README: the file example, the detach paragraph, and the reconcile
+         sentence),
+         37 (BOTH specs — the workspace design gets a fourth-round amendment,
+         and the ssh-gateway design's `Workspace config | Intentionally
+         omitted` row is struck through with the half of its reasoning that did
+         not hold),
+         39 (walked the workspace spec's own Surfaces table against the code
+         before starting; that is what surfaced `harness-cli workspace` having
+         no `apply` — and therefore no `detach` either — as a DECIDED row
+         rather than an omission to repair)
+omitted: 32, second half (the loopback / authorized-keys refusal is NOT
+         validated in the config. `cli/workspace` compiles for js/wasm and
+         `cli/sshgw` is //go:build !js, so importing the owning parser there
+         would break the wasm build — caught by `make wasm-check`, which is the
+         target that exists for it. What a config can check is that the address
+         is well formed; the rest stays a runtime refusal in sshgw.Run, where
+         the flags are also visible. Recorded because "one serializer" is
+         satisfied only in part),
+         6/20/21/23 (WebUI: a workspace is a client-local FILE and a browser has
+         no file — the design's own Scope says so. Not a surface this can reach)
+
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 16 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
+| 31 (don't hide a value for what it IS) | 17 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
 | 16 (TUI task table) | 3 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 3 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. |
 | 17 (TUI detail popup) | 4 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 16 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
+| 33 (take effect or error) | 17 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
-| 10 (other verb families) | 12 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 10 (other verb families) | 13 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 5 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 7 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 13 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 32 (one serializer, round-trip tested) | 14 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
 | 28a (follow the value to the request build) | 12 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
 | 34a (same KIND of control as its neighbours) | 4 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 | 38 (live screen-rendering surfaces) | 6 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. |
-| 29 (result messages name the target and the change) | 8 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 29 (result messages name the target and the change) | 9 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 | 36 (agent-facing skill texts) | 3 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 | 6 (WebUI controls) | 5 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |
-| 39 (feature's own surface matrix vs. what shipped) | 1 | **1** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). |
+| 39 (feature's own surface matrix vs. what shipped) | 2 | **1** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). |
 | 15 (caps catalog) | 1 | 0 | First row, and it fired on a change that added NO capability: `purge` now gates two verbs with different outcomes (`board purge` destroys, `board retract` withdraws), so the catalog line understated the grant while being literally accurate. The item's question is not "was a bit added" but "does the description still name everything the bit reaches". |
 
 **Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after

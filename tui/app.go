@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
@@ -137,7 +138,12 @@ type App struct {
 	// keys and workspace capture, none of which apply to a listener that serves
 	// every task and belongs to none.
 	sshGateway *SSHGatewaySession
-	configPath string
+	// gatewayRestartTo parks a workspace apply's restart address while the
+	// previous listener is still releasing its port. Cancel() only signals;
+	// the SSHGatewayStoppedMsg handler is where the port is actually free, so
+	// that is where the new one starts. See applyWorkspaceGateway.
+	gatewayRestartTo string
+	configPath       string
 
 	// port-forward state
 	portForwardModal PortForwardModal
@@ -1250,6 +1256,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.sshGateway = nil
 			a.cmdresult.Append("ssh-gateway stopped")
 		}
+		// Only NOW is the port actually released, which is why a workspace
+		// apply that has to move the gateway parks its restart here instead of
+		// batching it beside the stop. Cleared before dispatching so a start
+		// that fails does not leave a restart armed for the next stop.
+		if to := a.gatewayRestartTo; to != "" {
+			a.gatewayRestartTo = ""
+			if a.client == nil {
+				a.cmdresult.Append(ErrorStyle.Render("ssh-gateway: not connected to server"))
+				return a, nil
+			}
+			a.cmdresult.Append("ssh-gateway: starting on " + to)
+			return a, DoStartSSHGateway(a.client, to, sshgw.DefaultHostKeyPath(a.configPath), "", a.program)
+		}
 		return a, nil
 
 	case SSHGatewayStatusMsg:
@@ -1677,6 +1696,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						a.workspacePicker.CycleRunner()
 					case 'g':
 						a.workspacePicker.CycleGrid()
+					case 's':
+						a.workspacePicker.CycleGateway()
 					case 'f':
 						a.workspacePicker.BeginEdit()
 					case 'a':
@@ -2916,6 +2937,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)")
 		a.cmdresult.Append("workspace rm <name>                                - delete one workspace from .harness/config")
 		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
+		a.cmdresult.Append("workspace detach [--stop]                          - stop re-applying on reconnect; --stop also stops its forwards and gateway")
 		a.cmdresult.Append("workspace ls | show [name]                         - list the workspaces in .harness/config, or print one")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.")

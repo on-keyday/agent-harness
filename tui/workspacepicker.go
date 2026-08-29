@@ -69,6 +69,17 @@ type WorkspacePickerModel struct {
 	gridHave     bool // a grid was opened this session, so `set` has something to write
 	gridExisting string
 	gridDeclared bool // the file already carries a grid line
+
+	// The ssh-gateway row is the grid row's twin: one workspace-level value,
+	// three states, chosen HERE rather than inferred from whether a gateway
+	// happens to be running. Inferring is what the grid row's own comment
+	// rejects, and the reason is the same — a save must record what the
+	// operator MEANT for next time, not a snapshot of this moment.
+	gwChoice   workspaceGridChoice
+	gwAddr     string
+	gwHave     bool // a gateway is running now, so `set` has an address to write
+	gwExisting string
+	gwDeclared bool // the file already carries an ssh-gateway line
 }
 
 // workspaceGridChoice is the grid row's three states.
@@ -111,7 +122,7 @@ func (m *WorkspacePickerModel) SetSize(w, h int) { m.w, m.h = w, h }
 // offer rather than a proposal.
 func (m *WorkspacePickerModel) Open(name string, live, resumable []protocol.TaskInfo,
 	existing *workspace.Workspace, forwards map[string][]string,
-	gridArgs string, gridHave bool) {
+	gridArgs string, gridHave bool, gwAddr string, gwHave bool) {
 
 	m.open, m.name, m.cur = true, name, 0
 	m.rows = m.rows[:0]
@@ -127,6 +138,20 @@ func (m *WorkspacePickerModel) Open(name string, live, resumable []protocol.Task
 		m.gridChoice = gridSet // a grid was opened this session and none is recorded
 	default:
 		m.gridChoice = gridNone
+	}
+
+	m.gwAddr, m.gwHave = gwAddr, gwHave
+	m.gwExisting, m.gwDeclared = "", false
+	if existing != nil && existing.SSHGatewaySet {
+		m.gwExisting, m.gwDeclared = existing.SSHGateway, true
+	}
+	switch {
+	case m.gwDeclared:
+		m.gwChoice = gridKeep
+	case gwHave:
+		m.gwChoice = gridSet
+	default:
+		m.gwChoice = gridNone
 	}
 
 	declared := map[string]workspace.Task{}
@@ -305,6 +330,56 @@ func (m *WorkspacePickerModel) gridRowLabel() string {
 	return "grid: none"
 }
 
+// CycleGateway walks the ssh-gateway row's three states, skipping `set` when no
+// gateway is running — offering a state that would write nothing is worse than
+// not offering it (CycleGrid's rule).
+func (m *WorkspacePickerModel) CycleGateway() {
+	switch m.gwChoice {
+	case gridKeep:
+		if m.gwHave {
+			m.gwChoice = gridSet
+		} else {
+			m.gwChoice = gridNone
+		}
+	case gridSet:
+		m.gwChoice = gridNone
+	default:
+		m.gwChoice = gridKeep
+	}
+}
+
+// GatewayResult says what to write: the address, whether to write a line at
+// all, and whether to leave the file's line untouched.
+func (m *WorkspacePickerModel) GatewayResult() (value string, set, keep bool) {
+	switch m.gwChoice {
+	case gridSet:
+		return m.gwAddr, true, false
+	case gridNone:
+		return "", false, false
+	}
+	return "", false, true
+}
+
+// gwRowLabel renders the ssh-gateway row for the header area.
+func (m *WorkspacePickerModel) gwRowLabel() string {
+	show := func(v string) string {
+		if strings.TrimSpace(v) == "" {
+			return "default bind"
+		}
+		return v
+	}
+	switch m.gwChoice {
+	case gridSet:
+		return "ssh-gateway: " + show(m.gwAddr) + "  (running now)"
+	case gridNone:
+		return "ssh-gateway: none"
+	}
+	if m.gwDeclared {
+		return "ssh-gateway: " + show(m.gwExisting) + "  (unchanged)"
+	}
+	return "ssh-gateway: none"
+}
+
 // IsEditing reports whether the forward input has the keyboard.
 func (m *WorkspacePickerModel) IsEditing() bool { return m.editing }
 
@@ -448,7 +523,8 @@ func (m *WorkspacePickerModel) View() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "workspace %q — which tasks?\n", m.name)
-	b.WriteString("  " + m.gridRowLabel() + "   " + FooterStyle.Render("(g cycles)") + "\n\n")
+	b.WriteString("  " + m.gridRowLabel() + "   " + FooterStyle.Render("(g cycles)") + "\n")
+	b.WriteString("  " + m.gwRowLabel() + "   " + FooterStyle.Render("(s cycles)") + "\n\n")
 	if len(m.rows) == 0 {
 		b.WriteString("  (no live session, no declared task, no resumable task, no forward)\n")
 	}

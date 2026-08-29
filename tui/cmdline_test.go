@@ -1439,3 +1439,35 @@ func TestParseDiagRejectsAnUnknownArgument(t *testing.T) {
 		t.Fatal("`diag maybe` parsed; want an error naming on/off")
 	}
 }
+
+// detach is the verb that takes the workspace back OFF. Its parsing carries
+// two refusals worth pinning: it takes no name, and --stop belongs to it alone.
+func TestParseWorkspaceDetach(t *testing.T) {
+	act, err := ParseCommand("workspace detach", "/cwd")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	w, ok := act.(WorkspaceAction)
+	if !ok || w.Sub != "detach" || w.Stop {
+		t.Fatalf("action = %+v, want detach with Stop false", act)
+	}
+
+	act, err = ParseCommand("workspace detach --stop", "/cwd")
+	if err != nil {
+		t.Fatalf("parse --stop: %v", err)
+	}
+	if w := act.(WorkspaceAction); !w.Stop {
+		t.Error("--stop did not reach the action")
+	}
+
+	// A name would read as "detach that one instead of mine", and there is only
+	// ever one installed workspace for it to mean.
+	if _, err := ParseCommand("workspace detach other", "/cwd"); err == nil {
+		t.Error("workspace detach <name> = nil error, want a refusal")
+	}
+	// A typed flag either takes effect or errors; silently ignoring --stop on
+	// apply would be the shape the checklist's item 33 exists for.
+	if _, err := ParseCommand("workspace apply --stop", "/cwd"); err == nil {
+		t.Error("workspace apply --stop = nil error, want a refusal")
+	}
+}

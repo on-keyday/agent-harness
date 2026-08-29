@@ -54,8 +54,12 @@ func (f *File) Set(ws *Workspace) {
 // renderWorkspace emits the block for one workspace: its own keys, then one
 // task block per task. A key whose value is empty is omitted — a bare `repo =`
 // line would parse back as an explicit empty repo, which is not the same as
-// never having written one. `grid` is the exception: its empty value is a real
-// selection (the unnarrowed grid), so GridSet decides it instead.
+// never having written one. `grid` and `ssh-gateway` are the exceptions: for
+// both, the empty value is a real instruction — the unnarrowed grid, and the
+// gateway's default bind — so their presence bits decide instead of emptiness.
+// The workspace-level keys pad to 11 so the `=` column lines up: `ssh-gateway`
+// is the longest of them, and a width shorter than the longest key makes that
+// key alone stick out in a file the operator reads.
 func renderWorkspace(ws *Workspace) []string {
 	out := []string{fmt.Sprintf("[workspace %s]", ws.Name)}
 	for _, kv := range [][2]string{
@@ -64,11 +68,14 @@ func renderWorkspace(ws *Workspace) []string {
 		{"repo", ws.Repo},
 	} {
 		if kv[1] != "" {
-			out = append(out, fmt.Sprintf("%-10s = %s", kv[0], kv[1]))
+			out = append(out, fmt.Sprintf("%-11s = %s", kv[0], kv[1]))
 		}
 	}
 	if ws.GridSet {
-		out = append(out, strings.TrimRight(fmt.Sprintf("%-10s = %s", "grid", ws.Grid), " "))
+		out = append(out, strings.TrimRight(fmt.Sprintf("%-11s = %s", "grid", ws.Grid), " "))
+	}
+	if ws.SSHGatewaySet {
+		out = append(out, strings.TrimRight(fmt.Sprintf("%-11s = %s", "ssh-gateway", ws.SSHGateway), " "))
 	}
 	for _, t := range ws.Tasks {
 		resume := t.Resume
@@ -144,6 +151,11 @@ func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Worksp
 		out.Grid, out.GridSet = observed.Grid, true
 	} else {
 		out.Grid, out.GridSet = existing.Grid, existing.GridSet
+	}
+	if observed.SSHGatewaySet {
+		out.SSHGateway, out.SSHGatewaySet = observed.SSHGateway, true
+	} else {
+		out.SSHGateway, out.SSHGatewaySet = existing.SSHGateway, existing.SSHGatewaySet
 	}
 
 	// Existing blocks first, in file order, so a save never reshuffles the file.

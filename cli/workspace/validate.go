@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/google/shlex"
@@ -63,6 +65,21 @@ func (w *Workspace) Validate() error {
 		if _, _, _, err := cli.ParseGridArgs(args); err != nil {
 			return fmt.Errorf("workspace %s: %w", w.Name, err)
 		}
+	}
+	if w.SSHGatewaySet && strings.TrimSpace(w.SSHGateway) != "" {
+		// net.SplitHostPort, not cli/sshgw's own refusals: sshgw is
+		// //go:build !js and this package compiles for js/wasm, so importing it
+		// would break that build. What a config can check is that the address is
+		// WELL FORMED; the loopback / authorized-keys rule is a runtime refusal
+		// in sshgw.Run and belongs there, where it can see the flags too.
+		host, port, err := net.SplitHostPort(strings.TrimSpace(w.SSHGateway))
+		if err != nil {
+			return fmt.Errorf("workspace %s: ssh-gateway = %q: want host:port (%w)", w.Name, w.SSHGateway, err)
+		}
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			return fmt.Errorf("workspace %s: ssh-gateway = %q: %q is not a port number", w.Name, w.SSHGateway, port)
+		}
+		_ = host // an empty host is legal — it binds every interface
 	}
 	for _, t := range w.Tasks {
 		for _, fw := range t.Forwards {

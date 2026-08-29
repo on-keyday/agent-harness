@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -91,6 +92,9 @@ func (a *App) applyWorkspace() tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if cmd := a.applyWorkspaceGateway(ws); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if len(cmds) == 0 {
 		// An apply that had nothing to do must SAY so. Reconciling to a no-op is
 		// the healthy steady state and the expected answer to `workspace apply`
@@ -140,6 +144,46 @@ func (a *App) applyWorkspaceForwards(wsName string, decl workspace.Task) []tea.C
 	return cmds
 }
 
+// applyWorkspaceGateway reconciles the ssh gateway toward what the workspace
+// declares — the same shape applyWorkspaceForwards has, and for the same
+// reason: an apply makes the world match the declaration, it does not merely
+// add to it.
+//
+// An absent key means "do not touch the gateway", which is why SSHGatewaySet
+// gates everything here: a workspace that never mentioned the gateway must not
+// stop one the operator started by hand.
+//
+// A MISMATCH cannot stop-and-start in one batch. Cancel() only signals; the
+// listener is released when the serve goroutine returns and sends
+// SSHGatewayStoppedMsg, so a start issued alongside the stop would race it for
+// the port and lose. The restart is therefore parked in gatewayRestartTo and
+// fired by that handler — the same deferral applyWorkspace already makes for a
+// resuming task's forwards.
+func (a *App) applyWorkspaceGateway(ws *workspace.Workspace) tea.Cmd {
+	if !ws.SSHGatewaySet || a.client == nil {
+		return nil
+	}
+	// The empty value means "wherever the gateway defaults to". Resolved HERE
+	// rather than in cli/workspace: DefaultListen lives in cli/sshgw, which is
+	// //go:build !js while that package compiles for js/wasm.
+	want := strings.TrimSpace(ws.SSHGateway)
+	if want == "" {
+		want = sshgw.DefaultListen
+	}
+	if a.sshGateway == nil {
+		a.cmdresult.Append(fmt.Sprintf("workspace %s: starting ssh-gateway on %s", ws.Name, want))
+		return DoStartSSHGateway(a.client, want, sshgw.DefaultHostKeyPath(a.configPath), "", a.program)
+	}
+	if a.sshGateway.Listen == want {
+		return nil
+	}
+	a.cmdresult.Append(fmt.Sprintf("workspace %s: stopping ssh-gateway %s (declares %s)",
+		ws.Name, a.sshGateway.Listen, want))
+	a.gatewayRestartTo = want
+	a.sshGateway.Cancel()
+	return nil
+}
+
 // workspaceGridCmd turns the workspace's grid value into the openGrid call the
 // g / z / Z keys make. The value is the `grid` command's argument string and is
 // parsed by that command's own parser.
@@ -185,6 +229,49 @@ func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
 			return nil
 		}
 		return a.applyWorkspace()
+
+	case "detach":
+		if a.workspace == nil {
+			a.cmdresult.Append(WarnStyle.Render("workspace detach: no workspace installed"))
+			return nil
+		}
+		name := a.workspace.Name
+		declaredGateway := a.workspace.SSHGatewaySet
+		// Cleared BEFORE anything is stopped: this is what detach is for. An
+		// installed workspace re-applies on every reconnect, and until now
+		// nothing took it back off — `apply` installed and no verb uninstalled.
+		a.workspace = nil
+		a.workspaceRetryOnRunner = false
+
+		if !v.Stop {
+			a.cmdresult.Append(fmt.Sprintf(
+				"workspace %s: detached — forwards and sessions left running (`workspace detach --stop` also stops them)", name))
+			return nil
+		}
+		stopped := 0
+		for _, f := range a.activeForwards {
+			// FromWorkspace is the whole selector: a forward the operator
+			// started by hand is not this workspace's to stop, and the
+			// server-side registry has no notion of a workspace to ask.
+			if f == nil || !f.FromWorkspace || f.Cancel == nil {
+				continue
+			}
+			a.cmdresult.Append(fmt.Sprintf("workspace %s: stopping %s %s on %s",
+				name, f.Direction.flag(), f.Spec, pfShortID(f.TaskID)))
+			f.Cancel()
+			stopped++
+		}
+		if declaredGateway && a.sshGateway != nil {
+			a.cmdresult.Append(fmt.Sprintf("workspace %s: stopping ssh-gateway %s", name, a.sshGateway.Listen))
+			a.sshGateway.Cancel()
+		}
+		// Sessions are NOT touched, and the line says so rather than leaving it
+		// to be discovered: a resume has no inverse — the session exists, and
+		// killing it would be a different and much larger action than undoing
+		// an apply.
+		a.cmdresult.Append(fmt.Sprintf(
+			"workspace %s: detached — %d forward(s) stopped; resumed sessions left running", name, stopped))
+		return nil
 
 	case "ls":
 		names := a.workspaceFile.Names()
@@ -308,8 +395,13 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 
 	if !all {
 		existing, _ := a.workspaceFile.Workspace(name)
+		gwAddr, gwHave := "", false
+		if a.sshGateway != nil {
+			gwAddr, gwHave = a.sshGateway.Listen, true
+		}
 		a.workspacePicker.Open(name, gridLiveTasks(a.visibleTasks()),
-			a.resumableTasks(), existing, byTaskFwd, a.gridArgsString(), a.gridSelSet)
+			a.resumableTasks(), existing, byTaskFwd, a.gridArgsString(), a.gridSelSet,
+			gwAddr, gwHave)
 		a.workspacePicker.SetSize(a.width, a.height)
 		if skippedFwd > 0 {
 			a.cmdresult.Append(fmt.Sprintf(
@@ -380,7 +472,9 @@ func (a *App) writeWorkspaceAll(name string, forwards []protocol.PortForwardInfo
 			observed[t.ID] = true
 		}
 	}
-	a.writeWorkspace(ws, observed, 0, skipped, false)
+	// --all observes forwards only, so it decides about neither
+	// workspace-level line and both are carried forward by Merge.
+	a.writeWorkspace(ws, observed, 0, skipped, workspaceDecided{})
 }
 
 func countWorkspaceForwards(ws *workspace.Workspace) int {
@@ -416,28 +510,53 @@ func (a *App) commitWorkspacePicker() tea.Cmd {
 			ws.Grid, ws.GridSet = "", false
 		}
 	}
-	a.writeWorkspace(ws, observed, dropped, 0, !gridKeep)
+	gwVal, gwSet, gwKeep := a.workspacePicker.GatewayResult()
+	if !gwKeep {
+		ws.SSHGateway, ws.SSHGatewaySet = gwVal, true
+		if !gwSet {
+			ws.SSHGateway, ws.SSHGatewaySet = "", false
+		}
+	}
+	a.writeWorkspace(ws, observed, dropped, 0, workspaceDecided{Grid: !gridKeep, Gateway: !gwKeep})
 	return nil
+}
+
+// workspaceDecided records which workspace-level lines the caller made an
+// explicit choice about, so Merge does not carry the file's old value forward
+// over an explicit "none".
+//
+// A struct rather than two positional bools: they are added one per
+// workspace-level key, and `writeWorkspace(ws, observed, 0, skipped, false, false)`
+// says nothing at a call site about which false is which.
+type workspaceDecided struct {
+	Grid    bool
+	Gateway bool
 }
 
 // writeWorkspace merges ws into the file and reports what it wrote. Both save
 // paths — the picker and --all — end here, so the merge rules and the result
 // line cannot differ between them.
-// gridDecided says the caller made an explicit choice about the grid line, so
-// Merge must not carry the file's old value forward.
-func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int, gridDecided bool) {
+// decided says which workspace-level lines the caller chose explicitly, so
+// Merge must not carry the file's old value forward for those.
+func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int, decided workspaceDecided) {
 	f := a.workspaceFile
 	if f == nil {
 		f = workspace.New()
 		a.workspaceFile = f
 	}
 	existing, _ := f.Workspace(ws.Name)
-	if gridDecided && existing != nil {
-		// Merge keeps the existing grid when the observed workspace does not
+	if (decided.Grid || decided.Gateway) && existing != nil {
+		// Merge keeps the existing value when the observed workspace does not
 		// set one; an explicit "none" has to survive that, so the old value is
-		// dropped from the copy Merge reads.
+		// dropped from the copy Merge reads — per key, so deciding about the
+		// grid does not silently erase an ssh-gateway line nobody touched.
 		clone := *existing
-		clone.Grid, clone.GridSet = "", false
+		if decided.Grid {
+			clone.Grid, clone.GridSet = "", false
+		}
+		if decided.Gateway {
+			clone.SSHGateway, clone.SSHGatewaySet = "", false
+		}
 		existing = &clone
 	}
 	merged := workspace.Merge(existing, ws, observed)

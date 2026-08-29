@@ -71,3 +71,43 @@ func TestValidateAcceptsEmptyGridValue(t *testing.T) {
 		t.Errorf("Validate: %v", err)
 	}
 }
+
+// A config must not be able to hold a listen address the gateway would reject,
+// for the reason the forward values already follow: the file is validated by
+// the same grammar the command line uses, so a typo is caught at parse time
+// rather than at apply time on a reconnect nobody is watching.
+//
+// The check is net.SplitHostPort rather than sshgw's own: cli/sshgw is
+// //go:build !js and this package is compiled for js/wasm, so importing it here
+// would break the wasm build. What that costs is the loopback/authorized-keys
+// rule, which is a RUNTIME refusal in Run and belongs there — the address being
+// well formed is what a config can check.
+func TestValidateSSHGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		val     string
+		set     bool
+		wantErr bool
+	}{
+		{"absent", "", false, false},
+		{"empty value is the default bind", "", true, false},
+		{"host:port", "127.0.0.1:2222", true, false},
+		{"bare host", "127.0.0.1", true, true},
+		{"no port", "127.0.0.1:", true, true},
+		{"not a port", "127.0.0.1:http-ish", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &Workspace{Name: "w", SSHGateway: tc.val, SSHGatewaySet: tc.set}
+			err := w.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Validate(%q) = nil, want an error", tc.val)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Validate(%q) = %v, want nil", tc.val, err)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "ssh-gateway") {
+				t.Errorf("error %q does not name the key", err)
+			}
+		})
+	}
+}

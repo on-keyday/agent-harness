@@ -269,3 +269,46 @@ resume = fresh
 		t.Fatalf("does not parse after removing both: %v", err)
 	}
 }
+
+// ssh-gateway is emitted beside grid and by grid's rule: presence decides,
+// not emptiness, so `ssh-gateway =` survives a round trip as an instruction
+// rather than being dropped as "no value".
+func TestRenderSSHGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ws   *Workspace
+		want string
+	}{
+		{"address", &Workspace{Name: "w", SSHGateway: "127.0.0.1:2222", SSHGatewaySet: true}, "ssh-gateway = 127.0.0.1:2222"},
+		{"empty value keeps its line", &Workspace{Name: "w", SSHGatewaySet: true}, "ssh-gateway ="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(Block(tc.ws))
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("block does not contain %q:\n%s", tc.want, got)
+			}
+		})
+	}
+	// Not set: no line at all, so a workspace that never mentioned the gateway
+	// does not start declaring one the moment it is saved.
+	if got := string(Block(&Workspace{Name: "w"})); strings.Contains(got, "ssh-gateway") {
+		t.Errorf("an unset gateway wrote a line:\n%s", got)
+	}
+}
+
+// A save MERGES: it must not drop an ssh-gateway the operator wrote by hand
+// just because this save did not observe one — the same rule grid follows, and
+// the reason Merge exists at all.
+func TestMergeSSHGateway(t *testing.T) {
+	existing := &Workspace{Name: "w", SSHGateway: "127.0.0.1:2222", SSHGatewaySet: true}
+
+	kept := Merge(existing, &Workspace{Name: "w"}, nil)
+	if kept.SSHGateway != "127.0.0.1:2222" || !kept.SSHGatewaySet {
+		t.Errorf("an unobserved gateway was lost: %q set=%v", kept.SSHGateway, kept.SSHGatewaySet)
+	}
+
+	observed := Merge(existing, &Workspace{Name: "w", SSHGateway: "0.0.0.0:2200", SSHGatewaySet: true}, nil)
+	if observed.SSHGateway != "0.0.0.0:2200" {
+		t.Errorf("an observed gateway did not win: %q", observed.SSHGateway)
+	}
+}
