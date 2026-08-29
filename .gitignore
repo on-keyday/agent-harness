@@ -7,6 +7,19 @@ harness-data/
 harness-tui.log
 server.log
 bin/
+
+# `go build ./cmd/X/` without -o drops the binary named X in the CURRENT
+# directory, which is the repo root when run from here — and a `git add -A`
+# then sweeps it in. That is how a 10 MB main.wasm reached this repository
+# once. The Makefile always passes -o bin/…, so anything matching a cmd name
+# at the root is a stray from a hand-typed build.
+/agent-runner
+/harness-cli
+/harness-server
+/harness-tui
+/harness-stream-adapter
+/harness-webui-wasm
+/sandbox-connect-proxy
 scripts/.venv/
 scripts/__pycache__/
 
