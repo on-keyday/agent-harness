@@ -84,7 +84,12 @@ func shellLineArgv(argv []string, sshdParent bool) ([]string, error) {
 		// Refused rather than ignored. The caller asked for a property the
 		// command will not have, and running it anyway would report success
 		// for something that did not happen.
-		return nil, fmt.Errorf("sshd_parent is a Windows mechanism; this runner runs %s", runtime.GOOS)
+		//
+		// "not wired" rather than "is a Windows mechanism": nothing about
+		// giving a process a chosen name is Windows-shaped. It is only asked
+		// for on Windows because that is the only bootstrap that searches its
+		// ancestry by name — the POSIX one passes its own pid instead.
+		return nil, fmt.Errorf("sshd_parent is not wired on %s (only Windows runners stage the shim)", runtime.GOOS)
 	}
 	return []string{"sh", "-c", argv[0]}, nil
 }
@@ -219,16 +224,7 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 			// operator kills it — and worse, they inherit the child's stdout, so
 			// this call never returns and the runner leaks a goroutine parked on
 			// a stream the server has already forgotten.
-			//
-			// detached inverts it for a command whose POINT is to leave
-			// something running. Measured on Windows 2026-08-29: the group is a
-			// job object with KILL_ON_JOB_CLOSE, so a server the command
-			// deliberately detached died the moment the exec returned, and
-			// CREATE_BREAKAWAY_FROM_JOB could not opt out (ERROR_ACCESS_DENIED,
-			// since BREAKAWAY_OK is not set). objtrsf already makes this
-			// opt-in — false means it never builds the group at all — so the
-			// whole mechanism is this one field.
-			KillProcessTree: !req.Detached(),
+			KillProcessTree: true,
 			OnProcessExit: func(st *os.ProcessState, werr error) {
 				// The CHILD's own code, read from ProcessState rather than
 				// inferred from an error: the errgroup inside agentexec

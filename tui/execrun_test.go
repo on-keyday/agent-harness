@@ -127,7 +127,7 @@ func TestExecOutputLineKeepsRealContent(t *testing.T) {
 // is why the scan stops at the first token it does not recognise.
 func TestParseExecRunScansOptionsInAnyOrder(t *testing.T) {
 	act, err := parseExecRun([]string{
-		"--detach", "--shell", "--sshd-parent",
+		"--shell", "--sshd-parent",
 		"0123456789abcdef0123456789abcdef", "--", "powershell -File boot.ps1",
 	})
 	if err != nil {
@@ -137,8 +137,8 @@ func TestParseExecRunScansOptionsInAnyOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("action = %T, want ExecRunAction", act)
 	}
-	if !a.Shell || !a.Detach || !a.SshdParent {
-		t.Errorf("flags = shell:%v detach:%v sshd:%v, want all true", a.Shell, a.Detach, a.SshdParent)
+	if !a.Shell || !a.SshdParent {
+		t.Errorf("flags = shell:%v sshd:%v, want both true", a.Shell, a.SshdParent)
 	}
 	if a.TaskID != "0123456789abcdef0123456789abcdef" {
 		t.Errorf("task id = %q — an option scan that ran past the id ate it", a.TaskID)
@@ -167,8 +167,8 @@ func TestParseExecRunRefusesSshdParentWithoutShell(t *testing.T) {
 // that runs none is a typo worth naming rather than silently ignoring.
 func TestParseExecRunRefusesOptionsOnSubVerbs(t *testing.T) {
 	for _, sub := range []string{"ls", "kill"} {
-		if _, err := parseExecRun([]string{"--detach", sub}); err == nil {
-			t.Errorf("parseExecRun(--detach %s) = nil error, want a refusal", sub)
+		if _, err := parseExecRun([]string{"--shell", sub}); err == nil {
+			t.Errorf("parseExecRun(--shell %s) = nil error, want a refusal", sub)
 		}
 	}
 }

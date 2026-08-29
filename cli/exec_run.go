@@ -50,23 +50,9 @@ type ExecRunOpts struct {
 	// a quote.
 	ShellLine bool
 
-	// Detached leaves whatever the command starts running after the command
-	// itself ends, instead of tearing the whole process group down with it.
-	//
-	// For a command whose POINT is to leave something behind — a server the
-	// caller connects to afterwards. Without it that is impossible rather than
-	// merely awkward: the runner's group is a kill-on-close job on Windows, and
-	// a child the command deliberately detached dies the instant the exec
-	// returns. ExecRunRequest.detached in the schema carries the measurement.
-	//
-	// The cost is that nothing reaps what is left behind. `exec kill` still
-	// stops the command, and a caller that detaches a process with no shutdown
-	// path of its own has leaked it.
-	Detached bool
-
 	// SshdParent asks the runner to give the command line a parent process
-	// NAMED sshd. Windows only — elsewhere the runner refuses, rather than
-	// quietly running the command without it and reporting success.
+	// NAMED sshd. Wired on Windows only — elsewhere the runner refuses, rather
+	// than quietly running the command without it and reporting success.
 	//
 	// For a client that decides whether it is talking to a real SSH server by
 	// walking its own ancestry and comparing process names, which is what VS
@@ -104,7 +90,6 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	}
 	body := protocol.ExecRunRequest{TaskId: tid, Argv: buildExecArgv(argv)}
 	body.SetShellLine(opts.ShellLine)
-	body.SetDetached(opts.Detached)
 	body.SetSshdParent(opts.SshdParent)
 	body.SetStdinEnabled(opts.Stdin != nil)
 	req.SetOpenExecRun(body)

@@ -2120,7 +2120,7 @@ const POLL_INTERVAL_MS = 5000;
   // A non-zero exit is reported, not thrown: the command ran and said what it
   // meant. Only a refusal (no such task, no worktree, denied) reaches the catch.
   const execRunToOutput = async (taskId, argv, flags = {}) => {
-    const { shell = false, detach = false, sshdParent = false } = flags;
+    const { shell = false, sshdParent = false } = flags;
     const out = makeExecSink("1| ");
     const err = makeExecSink("2| ");
     const label = `exec ${taskId.slice(0, 12)}…: ${window.harness.execArgvText(argv)}`;
@@ -2131,8 +2131,6 @@ const POLL_INTERVAL_MS = 5000;
         // One line for the RUNNER's own shell, which is what makes a pipe or a
         // redirect mean anything. The runner picks sh -c or cmd /c.
         shell,
-        // Leaves what the command starts running after it ends.
-        detach,
         // A parent process named sshd, for a client that checks its own
         // ancestry by process name. Windows only.
         sshdParent,
@@ -2396,17 +2394,16 @@ const POLL_INTERVAL_MS = 5000;
           // the argv verbatim, so re-scanning it would eat a command whose own
           // first word is --shell.
           let rest = tokens.slice(1);
-          let shell = false, detach = false, sshdParent = false;
+          let shell = false, sshdParent = false;
           for (;;) {
             if (rest[0] === "--shell") shell = true;
-            else if (rest[0] === "--detach") detach = true;
             else if (rest[0] === "--sshd-parent") sshdParent = true;
             else break;
             rest = rest.slice(1);
           }
           const sub = rest[0];
-          if (!sub) throw new Error("exec: usage: exec [--shell] [--detach] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
-          if ((shell || detach || sshdParent) && (sub === "ls" || sub === "kill")) {
+          if (!sub) throw new Error("exec: usage: exec [--shell] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
+          if ((shell || sshdParent) && (sub === "ls" || sub === "kill")) {
             throw new Error(`exec: those options apply to running a command, not to ${sub}`);
           }
           // Refused here so the operator is told at the prompt rather than
@@ -2444,7 +2441,7 @@ const POLL_INTERVAL_MS = 5000;
           // Joining is right here and only here: the operator asked for shell
           // interpretation, so these words were never an argv to preserve.
           if (shell) argv = [argv.join(" ")];
-          out = await execRunToOutput(sub, argv, { shell, detach, sshdParent });
+          out = await execRunToOutput(sub, argv, { shell, sshdParent });
           break;
         }
         case "forward": {
@@ -2584,7 +2581,6 @@ const POLL_INTERVAL_MS = 5000;
             "  exec ls [-task <id>] | exec kill <exec-id>",
             "                            list the running execs / stop one (the task row shows execs=N)",
             "                            --shell: one line for the runner's own shell, so pipes and redirects mean something",
-            "                            --detach: leave what the command starts running after it ends (nothing reaps it but `exec kill`)",
             "                            --sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)",
             "  forward ls                list registered port forwards (from the last snapshot poll)",
             "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",

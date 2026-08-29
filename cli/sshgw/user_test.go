@@ -21,21 +21,14 @@ func TestParseUserName_Accepted(t *testing.T) {
 		{"control suffix", validID + ".control", UserOpts{Mode: protocol.AttachMode_Control}},
 		{"view suffix", validID + ".view", UserOpts{Mode: protocol.AttachMode_View}},
 		// An exec option alone leaves the attach mode at its default, because
-		// it says nothing about attaching.
-		{"detach alone", validID + ".detach",
-			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true}},
+		// it says nothing about attaching. This is also the form a remote
+		// editor's ~/.ssh/config User line carries.
 		{"sshd-parent alone", validID + ".sshd-parent",
 			UserOpts{Mode: protocol.AttachMode_Cowrite, SshdParent: true}},
-		// The form a remote editor's ~/.ssh/config User line carries.
-		{"both exec options", validID + ".detach,sshd-parent",
-			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true, SshdParent: true}},
-		// Order is not significant: this is a set, not a sequence.
-		{"reversed", validID + ".sshd-parent,detach",
-			UserOpts{Mode: protocol.AttachMode_Cowrite, Detach: true, SshdParent: true}},
 		// Accepted rather than refused: one connection may open a shell
 		// channel AND exec channels, so the combination is meaningful.
-		{"attach mode with an exec option", validID + ".control,detach",
-			UserOpts{Mode: protocol.AttachMode_Control, Detach: true}},
+		{"attach mode with an exec option", validID + ".control,sshd-parent",
+			UserOpts{Mode: protocol.AttachMode_Control, SshdParent: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,10 +62,10 @@ func TestParseUserName_Rejected(t *testing.T) {
 		validID + ".control.view",
 		validID + ".control,view", // two attach modes: the loser would be silent
 		validID + ".view,control",
-		validID + ".detach,", // an empty token is a typo, not an empty set
-		validID + ".Detach",
+		validID + ".sshd-parent,", // an empty token is a typo, not an empty set
+		validID + ".Sshd-Parent",
 		validID + ".sshd_parent", // the spelling is sshd-parent
-		validID + ".detach,bogus",
+		validID + ".sshd-parent,bogus",
 		"prefix-" + validID,
 		"01234567-89ab-cdef-0123-456789abcdef",
 	} {
@@ -89,7 +82,7 @@ func TestParseUserName_ErrorNamesTheForms(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	for _, want := range []string{"control", "view", "detach", "sshd-parent"} {
+	for _, want := range []string{"control", "view", "sshd-parent"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}

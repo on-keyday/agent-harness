@@ -111,24 +111,23 @@ func TestExecRunRefusesSshdParentWithoutShellLine(t *testing.T) {
 	}
 }
 
-// The two new flags reach the wire. A setter that was declared but never
+// The new flag reaches the wire. A setter that was declared but never
 // called is invisible from the caller's side: the request encodes, the exec
 // runs, and the property the caller asked for is simply absent.
 func TestExecRunOptsReachTheRequestFlags(t *testing.T) {
 	var body protocol.ExecRunRequest
 	body.SetShellLine(true)
-	body.SetDetached(true)
 	body.SetSshdParent(true)
-	if !body.ShellLine() || !body.Detached() || !body.SshdParent() {
-		t.Fatalf("flags did not round-trip: shell=%v detached=%v sshd=%v",
-			body.ShellLine(), body.Detached(), body.SshdParent())
+	if !body.ShellLine() || !body.SshdParent() {
+		t.Fatalf("flags did not round-trip: shell=%v sshd=%v",
+			body.ShellLine(), body.SshdParent())
 	}
 	// The bits share a byte with stdin_enabled, and a new flag declared BEFORE
 	// an existing one shifts every bit behind it — an old peer then reads
 	// shell_line as stdin_enabled, which decodes cleanly and means something
 	// else. Setting one must not disturb another.
 	body.SetStdinEnabled(false)
-	if !body.ShellLine() || !body.Detached() || !body.SshdParent() {
+	if !body.ShellLine() || !body.SshdParent() {
 		t.Error("setting stdin_enabled disturbed the flags declared after it")
 	}
 }

@@ -127,7 +127,6 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	// Every flag set to the NON-default, so a relay that drops one is caught by
 	// the assertion rather than passing on the zero value it would have had.
 	in.SetShellLine(true)
-	in.SetDetached(true)
 	in.SetSshdParent(true)
 
 	out := runnerExecRunRequest(in, 7, "/repo", 42)
@@ -148,12 +147,6 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	}
 	if !out.ShellLine() {
 		t.Error("shell_line did not survive the relay")
-	}
-	// A dropped detached would silently put the command back in a
-	// kill-on-close job and take its detached children with it when it ends —
-	// the exact failure this flag exists to remove, reported as success.
-	if !out.Detached() {
-		t.Error("detached did not survive the relay")
 	}
 	if !out.SshdParent() {
 		t.Error("sshd_parent did not survive the relay")

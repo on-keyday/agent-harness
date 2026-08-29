@@ -17,5 +17,5 @@ import (
 // command would run, and the property the caller asked for would simply not be
 // there with nothing to say so.
 func stageSSHDShim() (string, error) {
-	return "", fmt.Errorf("sshd_parent is a Windows mechanism; this runner runs %s", runtime.GOOS)
+	return "", fmt.Errorf("sshd_parent is not wired on %s (only Windows runners stage the shim)", runtime.GOOS)
 }

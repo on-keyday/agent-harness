@@ -86,14 +86,12 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 	// These are scanned BEFORE the task id, because everything after the id is
 	// the argv VERBATIM: re-scanning that for flags is how a command whose own
 	// first word is `--shell` would be eaten.
-	shellLine, detached, sshdParent := false, false, false
+	shellLine, sshdParent := false, false
 scan:
 	for len(args) > 0 {
 		switch args[0] {
 		case "--shell":
 			shellLine = true
-		case "--detach":
-			detached = true
 		case "--sshd-parent":
 			sshdParent = true
 		default:
@@ -106,7 +104,7 @@ scan:
 		return err
 	}
 	if len(argv) == 0 {
-		return fmt.Errorf("usage: harness-cli exec [--shell] [--detach] [--sshd-parent] <task-id> -- <command> [args...]")
+		return fmt.Errorf("usage: harness-cli exec [--shell] [--sshd-parent] <task-id> -- <command> [args...]")
 	}
 	if shellLine {
 		// Joining is right here and ONLY here: the operator asked for shell
@@ -138,7 +136,6 @@ scan:
 	}
 	res, runErr := c.ExecRun(ectx, taskID, argv, cli.ExecRunOpts{
 		ShellLine:  shellLine,
-		Detached:   detached,
 		SshdParent: sshdParent,
 		Stdin:      stdin,
 		Stdout:     os.Stdout,

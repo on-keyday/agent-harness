@@ -2188,32 +2188,8 @@ format ExecRunRequest:
     # arrived as stdin_enabled=1 and the command line was exec'd as a program
     # name. New bits go at the END of the reserved run.
     shell_line :u1
-    # detached=1 tells the runner NOT to wrap the leaf in a kill-on-close
-    # process group, so anything the command starts and leaves running OUTLIVES
-    # the exec. Default 0 keeps the existing behaviour, which is the right one
-    # for `make test`: an exec that is stopped must stop everything it started.
-    #
-    # It exists because that default makes a whole class of command impossible,
-    # not merely awkward — one whose POINT is to leave a server running. Measured
-    # on a Windows runner 2026-08-29: objtrsf's group is a job object with
-    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so a child the command deliberately
-    # detached (Start-Process, and CreateProcess with DETACHED_PROCESS) died the
-    # instant the exec returned, having written exactly one heartbeat line. The
-    # same probe run outside an exec survived. The job also refuses escape:
-    # CREATE_BREAKAWAY_FROM_JOB failed with ERROR_ACCESS_DENIED because
-    # JOB_OBJECT_LIMIT_BREAKAWAY_OK is not set, so the command cannot opt out
-    # from the inside and the decision has to travel on the wire.
-    #
-    # The runner implements it by NOT passing objtrsf's KillProcessTree, which
-    # is already opt-in there — no change below this repo.
-    #
-    # What bounds the lifetime instead is the CALLER's problem, and deliberately
-    # not specified here: `exec kill` still reaches the leaf, and a caller that
-    # detaches a process with no shutdown path of its own has leaked it.
-    detached :u1
     # sshd_parent=1 asks the runner to run the shell line under a process whose
-    # NAME is sshd, rather than under its ordinary shell. Windows only; the
-    # runner reports an error elsewhere rather than ignoring it.
+    # NAME is sshd, rather than under its ordinary shell.
     #
     # For a client that decides whether it is talking to a real SSH server by
     # walking its own parent-process chain and comparing process NAMES. VS Code
@@ -2229,12 +2205,18 @@ format ExecRunRequest:
     # nothing listens on a port. That is also the honest limit of this flag: it
     # makes a name check pass, and claims nothing else about the process.
     #
-    # Separate from detached rather than folded into one "remote editor" bit:
-    # the two are independent mechanisms (one is about process lifetime on every
-    # platform, one about a process name on Windows), and a single bit named for
-    # the use case would bake that use case into the wire.
+    # Wired on Windows ONLY, and that is a measured scope boundary rather than
+    # anything inherent. The name walk exists on Windows because that bootstrap
+    # has to FIND a pid to pass to `--parent-process-id`; the POSIX bootstrap
+    # passes `$$` and inspects no process name at all (read from
+    # linux-exec-server-installer.sh across 0.124.0 / 0.126.0 / 0.128.0 —
+    # `grep -c sshd` is 0 in every one). So there is no POSIX client asking for
+    # this, not a POSIX impossibility. A runner elsewhere REFUSES the exec
+    # rather than running it without the property: the caller asked for
+    # something the command would not have, and reporting success for that is
+    # worse than a refusal.
     sshd_parent :u1
-    reserved :u4
+    reserved :u5
 
 enum ExecRunStatus:
     :u8
@@ -2291,11 +2273,9 @@ format RunnerExecRunRequest:
     stdin_enabled :u1
     # Relayed verbatim; see ExecRunRequest.shell_line.
     shell_line :u1
-    # Relayed verbatim; see ExecRunRequest.detached.
-    detached :u1
     # Relayed verbatim; see ExecRunRequest.sshd_parent.
     sshd_parent :u1
-    reserved :u4
+    reserved :u5
 
 format ExecRunFinished:
     exec_id :u64

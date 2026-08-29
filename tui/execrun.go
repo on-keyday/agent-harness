@@ -158,7 +158,7 @@ func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
 			return nil
 		}
 		a.cmdresult.Append(fmt.Sprintf("exec %s: %s …", pfShortID(full), execArgvLabel(v.Argv)))
-		return DoExecRun(a.client, full, v.Argv, ExecRunFlags{Shell: v.Shell, Detach: v.Detach, SshdParent: v.SshdParent}, a.program)
+		return DoExecRun(a.client, full, v.Argv, ExecRunFlags{Shell: v.Shell, SshdParent: v.SshdParent}, a.program)
 	}
 }
 
@@ -171,7 +171,6 @@ func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
 // reaches the wire.
 type ExecRunFlags struct {
 	Shell      bool
-	Detach     bool
 	SshdParent bool
 }
 
@@ -210,7 +209,6 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, 
 			defer cancel()
 			res, err := c.ExecRun(context.Background(), taskID, argv, cli.ExecRunOpts{
 				ShellLine:  flags.Shell,
-				Detached:   flags.Detach,
 				SshdParent: flags.SshdParent,
 				Stdout:     out,
 				Stderr:     errw,

@@ -27,12 +27,6 @@ type UserOpts struct {
 	// taking a seat.
 	Mode protocol.AttachMode
 
-	// Detach makes an exec on this connection leave whatever it starts
-	// running after the command ends. Off by default, because the default is
-	// right for `ssh <id>@gw 'make test'`: interrupting that must stop make's
-	// children too.
-	Detach bool
-
 	// SshdParent runs an exec's shell line under a process named sshd, for a
 	// client that checks its own ancestry by process name. Windows runners
 	// only; elsewhere the runner refuses the exec rather than running it
@@ -46,8 +40,7 @@ type UserOpts struct {
 //	<32-hex>                      cowrite — types, takes no seat
 //	<32-hex>.control              control — takes the seat, owns the PTY size
 //	<32-hex>.view                 view    — reads only
-//	<32-hex>.detach               execs leave what they start running
-//	<32-hex>.detach,sshd-parent   …and run under a parent named sshd
+//	<32-hex>.sshd-parent          execs run under a parent process named sshd
 //
 // The bare form is cowrite on purpose. A control attach is a takeover
 // server-side (SessionMux.Attach closes the previous controller's stream), so a
@@ -75,7 +68,7 @@ type UserOpts struct {
 //
 // A flat list rather than a second axis because the two kinds never collide in
 // practice: an attach mode governs a shell channel, and these options govern
-// exec channels, which never attach. `.control,detach` is accepted anyway — a
+// exec channels, which never attach. `.control,sshd-parent` is accepted anyway — a
 // connection may open both kinds of channel, and refusing the combination
 // would be a constraint invented here rather than one anything needs.
 //
@@ -83,7 +76,7 @@ type UserOpts struct {
 // only thing that reaches this gateway from a client that builds its own ssh
 // invocation.
 func ParseUserName(name string) (string, UserOpts, error) {
-	const forms = "use <32-hex-task-id>[.<opt>[,<opt>...]]@host, where opt is control | view | detach | sshd-parent (lowercase hex; no suffix means cowrite)"
+	const forms = "use <32-hex-task-id>[.<opt>[,<opt>...]]@host, where opt is control | view | sshd-parent (lowercase hex; no suffix means cowrite)"
 	id, suffix, hasSuffix := strings.Cut(name, ".")
 	if !isTaskIDHex(id) {
 		return "", UserOpts{}, fmt.Errorf("ssh user name %q is not a task id: %s", name, forms)
@@ -107,8 +100,6 @@ func ParseUserName(name string) (string, UserOpts, error) {
 			} else {
 				opts.Mode = protocol.AttachMode_View
 			}
-		case "detach":
-			opts.Detach = true
 		case "sshd-parent":
 			opts.SshdParent = true
 		default:

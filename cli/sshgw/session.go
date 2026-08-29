@@ -238,12 +238,11 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 	}()
 
 	res, err := g.client.ExecRun(ctx, taskID, []string{cmdline}, cli.ExecRunOpts{
-		// Both come from the ssh USER NAME, so they are a property of the
-		// connection rather than of one command: a client that opens several
-		// execs over one connection — which is what a remote editor's
-		// bootstrap does — gets the same treatment on each without having to
-		// say so per command, and it has nowhere to say so anyway.
-		Detached:   uopts.Detach,
+		// From the ssh USER NAME, so it is a property of the connection rather
+		// than of one command: a client that opens several execs over one
+		// connection — which is what a remote editor's bootstrap does — gets
+		// the same treatment on each without having to say so per command, and
+		// it has nowhere to say so anyway.
 		SshdParent: uopts.SshdParent,
 		// The RUNNER picks the shell. This used to send ["sh","-c",line], which
 		// is right on unix and wrong on Windows — and only appeared to work

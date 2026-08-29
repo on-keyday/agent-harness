@@ -278,14 +278,9 @@ type ExecRunAction struct {
 	// words reach the child untouched, which is right for `make test` and
 	// useless for `ls | wc -l`.
 	Shell bool
-	// Detach leaves whatever the command starts running after it ends. For a
-	// command whose point is to leave a server behind; without it the runner
-	// tears the whole group down, which on Windows is a kill-on-close job that
-	// takes deliberately detached children with it.
-	Detach bool
 	// SshdParent gives the command line a parent process NAMED sshd, for a
-	// client that checks its own ancestry by process name. Windows only, and
-	// it needs Shell — what it renames is the shell.
+	// client that checks its own ancestry by process name. Wired on Windows
+	// only, and it needs Shell — what it renames is the shell.
 	SshdParent bool
 }
 
@@ -1144,18 +1139,16 @@ func parseForward(args []string) (Action, error) {
 // would silently change the command. A bare `--` ends any option scanning, so
 // a command that starts with a dash still reaches the runner intact.
 func parseExecRun(args []string) (Action, error) {
-	const usage = "exec: usage: exec [--shell] [--detach] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
+	const usage = "exec: usage: exec [--shell] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
 	// Scanned BEFORE the task id: everything after the id is the argv verbatim,
 	// so re-scanning that for flags would eat a command whose own first word is
 	// --shell.
-	shell, detach, sshdParent := false, false, false
+	shell, sshdParent := false, false
 scan:
 	for len(args) > 0 {
 		switch args[0] {
 		case "--shell":
 			shell = true
-		case "--detach":
-			detach = true
 		case "--sshd-parent":
 			sshdParent = true
 		default:
@@ -1166,7 +1159,7 @@ scan:
 	if len(args) == 0 {
 		return nil, fmt.Errorf("%s", usage)
 	}
-	if (shell || detach || sshdParent) && (args[0] == "ls" || args[0] == "kill") {
+	if (shell || sshdParent) && (args[0] == "ls" || args[0] == "kill") {
 		return nil, fmt.Errorf("exec: those options apply to running a command, not to %s", args[0])
 	}
 	// Refused at parse time so the operator is told at the prompt, rather than
@@ -1214,7 +1207,7 @@ scan:
 		// interpretation, so these words were never an argv to preserve.
 		argv = []string{strings.Join(argv, " ")}
 	}
-	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv, Shell: shell, Detach: detach, SshdParent: sshdParent}, nil
+	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv, Shell: shell, SshdParent: sshdParent}, nil
 }
 
 // parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at
