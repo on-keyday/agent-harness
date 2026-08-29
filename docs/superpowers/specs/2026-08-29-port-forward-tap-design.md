@@ -90,10 +90,22 @@ registration exists with no data stream behind it is a state `RunForward`
 already produces (it registers at listener-bind time, `cli/port_forward.go:229`,
 and opens per accepted connection).
 
-`forward_id = 0` means "no registration" and is accepted: an open that never
-registers is counted nowhere and cannot be tapped. Nothing in the tree is known
-to do this today, but the field must have a defined zero, and a peer older than
-this change sends one.
+There is exactly one caller that opens a data stream without registering one of
+its own, and it is deliberate: `PreviewPinFetch`
+(`cli/preview_forward_wasm.go:123`) opens a fresh stream per HTTP request while
+the PIN holds the registration. Per-fetch registrations lived tens of
+milliseconds against a 5s poll, so nothing the page did ever appeared in
+`forward ls`
+(`docs/superpowers/specs/2026-08-12-preview-pin-forward-registration-design.md`).
+
+That stays as it is, and still gets attributed: the pin's id is already in
+`slot.forwardID`, so the fetch passes it and its bytes land on the pin's row —
+which is the row the pin was invented to be. WebUI preview traffic is counted
+and tappable without a row per request.
+
+`forward_id = 0` therefore means "no registration" and is accepted — the field
+needs a defined zero and a client older than this change sends one — but after
+D6 no caller in this tree sends it.
 
 ## Shape
 
@@ -354,5 +366,6 @@ These are v1 boundaries chosen while writing, not refusals:
   decoder is the escape hatch.
 - **Traffic outside a forward stream is not covered** — notably the sandbox
   connect-proxy, which is not a port forward.
-- **No tap on an unregistered open** (`forward_id = 0`): there is no id to name
-  it by.
+- **An open carrying no `forward_id`** — 0, which after D6 only a client older
+  than this change sends — is relayed but not counted and cannot be tapped:
+  there is no id to name it by.
