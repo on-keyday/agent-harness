@@ -34,9 +34,17 @@ type ExecRunDoneMsg struct {
 }
 
 // ExecRunListMsg carries the result of `exec ls`.
+//
+// ToCmdresult separates the two callers, exactly as ForwardsSnapshotMsg does:
+// the `exec ls` CMDLINE verb wants its text in the result pane, while the `e`
+// modal (and the refresh a kill triggers) wants the rows and nothing else.
+// Without the split, every keypress would dump a header plus one line per exec
+// into a 200-entry ring that evicts oldest-first, pushing an earlier error out
+// of the operator's reach to say the same thing the modal is already showing.
 type ExecRunListMsg struct {
-	Execs []protocol.ExecRunInfo
-	Err   error
+	Execs       []protocol.ExecRunInfo
+	Err         error
+	ToCmdresult bool
 }
 
 // ExecRunKillMsg carries the result of `exec kill <id>`.
@@ -148,7 +156,9 @@ func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
 			}
 			filter = full
 		}
-		return DoExecRunList(a.client, filter)
+		// true: this is the `exec ls` cmdline verb, so its text belongs in
+		// the result pane. The `e` modal passes false.
+		return DoExecRunList(a.client, filter, true)
 	case "kill":
 		return DoExecRunKill(a.client, v.ExecID)
 	default:
@@ -224,15 +234,16 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, 
 }
 
 // DoExecRunList fetches the running execs this operator may see.
-func DoExecRunList(c *cli.Client, taskFilter string) tea.Cmd {
+// toCmdresult is threaded straight onto the result (see ExecRunListMsg).
+func DoExecRunList(c *cli.Client, taskFilter string, toCmdresult bool) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
-			return ExecRunListMsg{Err: fmt.Errorf("not connected to server")}
+			return ExecRunListMsg{Err: fmt.Errorf("not connected to server"), ToCmdresult: toCmdresult}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		execs, err := c.ExecRunListWith(ctx, taskFilter)
-		return ExecRunListMsg{Execs: execs, Err: err}
+		return ExecRunListMsg{Execs: execs, Err: err, ToCmdresult: toCmdresult}
 	}
 }
 

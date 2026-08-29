@@ -610,6 +610,7 @@ const POLL_INTERVAL_MS = 5000;
     renderConnTopology(conns, allTasks, snap.forwards || []);
     renderConnList(conns, allTasks);
     renderForwardList(snap.forwards || []);
+    renderExecList(snap.execs || []);
   };
 
   // --- Raw connect pane -------------------------------------------------------
@@ -984,6 +985,67 @@ const POLL_INTERVAL_MS = 5000;
           refreshSnapshot();
         } catch (err) {
           appendCmdOutput(`forward kill error: ${err.message}`);
+          kill.disabled = false;
+        }
+      });
+      row.appendChild(kill);
+      host.appendChild(row);
+    }
+  }
+
+  // renderExecList draws one row per running exec (every exec visible to this
+  // operator on the server, not just ones this WebUI started), each with a kill
+  // button. The sibling of renderForwardList in every respect — `exec ls` /
+  // `exec kill` is the same list-and-kill pair as `forward ls` / `forward kill`
+  // against the same kind of shared registry — so it shares that function's DOM
+  // shape and its CSS, and the two must keep agreeing.
+  //
+  // The task row's `execs=N` says HOW MANY are running; this is the one WebUI
+  // surface that says WHICH, whose they are, and lets one be stopped.
+  function renderExecList(execs) {
+    const host = document.getElementById("exec-list");
+    if (!host) return;
+    host.textContent = "";
+    if (!execs.length) {
+      const empty = document.createElement("div");
+      empty.className = "forward-list-empty";
+      empty.textContent = "実行中の exec はありません";
+      host.appendChild(empty);
+      return;
+    }
+    const now = Date.now();
+    for (const e of execs) {
+      const row = document.createElement("div");
+      row.className = "exec-row";
+      const taskShort = e.task ? e.task.slice(0, 8) + "…" : "-";
+      // Formatted per render, not per snapshot: the poll redraws this list, so
+      // the age ticks. Whole seconds — a sub-second figure on a 2s poll would
+      // be precision the number does not have.
+      const age = e.started_unix_ms
+        ? `${Math.max(0, Math.round((now - e.started_unix_ms) / 1000))}s`
+        : "-";
+      for (const text of [`#${e.exec_id}`, taskShort, age, e.origin, e.command]) {
+        const cell = document.createElement("span");
+        cell.className = "forward-cell";
+        cell.textContent = text;
+        row.appendChild(cell);
+      }
+      const kill = document.createElement("button");
+      kill.type = "button";
+      kill.className = "btn-danger";
+      kill.textContent = "kill";
+      kill.addEventListener("click", async () => {
+        // Confirmed for the modal's reason: the registry is shared, so this row
+        // may be another operator's build — or the long-lived bootstrap holding
+        // somebody's editor session open, now that `ssh host cmd` maps here.
+        if (!window.confirm(`Kill exec #${e.exec_id} (${e.command})?`)) return;
+        kill.disabled = true;
+        try {
+          await window.harness.execRunKill(e.exec_id);
+          appendCmdOutput(`killed exec #${e.exec_id}`);
+          refreshSnapshot();
+        } catch (err) {
+          appendCmdOutput(`exec kill error: ${err.message}`);
           kill.disabled = false;
         }
       });

@@ -83,6 +83,7 @@ type App struct {
 	// connections view
 	connsModal    ConnsModal
 	forwardsModal ForwardsModal
+	execsModal    ExecsModal
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -331,6 +332,7 @@ func New(cfg Config) *App {
 		fileEditor:      NewFileEdit(),
 		connsModal:      NewConnsModal(),
 		forwardsModal:   NewForwardsModal(),
+		execsModal:      NewExecsModal(),
 		rawModal:        NewRawConnectModal(),
 		boardModal:      NewBoardModal(),
 		gitModal:        NewGitModal(),
@@ -589,8 +591,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("exec ls: %v", msg.Err)))
 			return a, nil
 		}
-		for _, line := range cli.ExecRunInfoLines(msg.Execs) {
-			a.cmdresult.Append(line)
+		a.execsModal.ApplySnapshot(msg.Execs)
+		// The text dump belongs only to the `exec ls` cmdline path. See
+		// ExecRunListMsg.ToCmdresult for why the modal refresh must not write
+		// into a ring the operator is also reading errors from.
+		if msg.ToCmdresult {
+			for _, line := range cli.ExecRunInfoLines(msg.Execs) {
+				a.cmdresult.Append(line)
+			}
 		}
 		return a, nil
 
@@ -600,6 +608,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("killed exec %d", msg.ExecID)))
+		// A killed row must leave the list, and only a fresh fetch can say so
+		// — execs have no push subscription. Silent (ToCmdresult false): the
+		// "killed" line above is the report, and a listing after it would be a
+		// second one nobody asked for.
+		if a.execsModal.IsOpen() {
+			return a, DoExecRunList(a.client, "", false)
+		}
 		return a, nil
 
 	case ConnStatusMsg:
@@ -1281,6 +1296,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.fileEditor.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
 		a.forwardsModal.SetSize(a.width, a.height)
+		a.execsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
 		a.gitModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
@@ -1326,6 +1342,34 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// action (this repo's convention: destructive full-screen-overlay
 		// actions use x/X, e.g. the grid's dismiss and the file picker's
 		// delete — never k, which is universally "up" in this layer).
+		if a.execsModal.IsOpen() {
+			if a.execsModal.IsConfirming() {
+				switch msg.String() {
+				case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
+					if id, ok := a.execsModal.ConfirmKill(); ok {
+						return a, DoExecRunKill(a.client, id)
+					}
+					return a, nil
+				case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
+					a.execsModal.CancelKillConfirm()
+					return a, nil
+				}
+				// Swallow everything else so the table cannot move under the
+				// operator mid-confirm, as the forwards modal does below.
+				return a, nil
+			}
+			if msg.Type == tea.KeyEsc {
+				a.execsModal.Close()
+				return a, nil
+			}
+			if msg.String() == modalKeys.ForwardKill {
+				a.execsModal.BeginKillConfirm()
+				return a, nil
+			}
+			var cmd tea.Cmd
+			a.execsModal, cmd = a.execsModal.Update(msg)
+			return a, cmd
+		}
 		if a.forwardsModal.IsOpen() {
 			if a.forwardsModal.IsConfirming() {
 				switch msg.String() {
@@ -1990,6 +2034,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.forwardsModal.Open()
 			return a, DoListForwards(a.client, false)
 		}
+		// `e` opens the full-screen running-exec list: every exec visible to
+		// this operator on the server, not just ones this TUI started. Esc
+		// closes; `x` (then y/n) kills the selected row through the same
+		// DoExecRunKill the cmdline verb uses. The task pane's Obs cell says
+		// HOW MANY are running; this is the one surface that says WHICH.
+		// false: the modal-refresh path, not `exec ls` — no text dump.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Execs {
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("execs: not connected"))
+				return a, nil
+			}
+			a.execsModal.SetSize(a.width, a.height)
+			a.execsModal.Open()
+			return a, DoExecRunList(a.client, "", false)
+		}
 		// `g` opens the live session viewer grid: a full-screen overlay
 		// tiling read-only PaneStreamers for the live interactive sessions,
 		// replacing the task-list view (task-list model state is preserved
@@ -2572,6 +2631,9 @@ func (a *App) View() string {
 	}
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
+	}
+	if a.execsModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.execsModal.View())
 	}
 	if a.forwardsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardsModal.View())

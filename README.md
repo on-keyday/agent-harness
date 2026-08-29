@@ -384,6 +384,16 @@ Available from all three surfaces and over ssh: the TUI cmdline takes the same
 and as 「⌨ コマンド実行」 on the task sheet, and `ssh <task-id>@host <command>`
 maps to it (see **SSH gateway**).
 
+**The list has a view of its own on each UI**, because the count and the list
+answer different questions: `execs=N` (the TUI Obs column, the WebUI task row,
+`ls`) says how many are running, and these say WHICH, whose they are, and let
+one be stopped. In the TUI it is `e` — a full-screen table, `x` then y/n kills
+the selected row, Esc closes. In the WebUI it is the 「実行中の exec」 panel on
+the Connections tab, beside the port-forward list it is modelled on, each row
+with its own kill button. Both show every exec visible to you on the server,
+not just ones that surface started — including, now, the long-lived bootstrap a
+VS Code Remote-SSH session holds open.
+
 ### SSH gateway
 
 `harness-cli ssh-gateway` (or `ssh-gateway start` in the TUI) serves the SSH

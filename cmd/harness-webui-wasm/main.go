@@ -768,7 +768,8 @@ func connRemoteAddr(cid string) string {
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
 //	              viewers, cowriters, execCount, errorMsg}],
 //	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
-//	  forwards: [{forward_id, dir, task, spec, origin}]
+//	  forwards: [{forward_id, dir, task, spec, origin}],
+//	  execs:    [{exec_id, task, started_unix_ms, origin, command}]
 //	}>
 func harnessSnapshot(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
@@ -962,12 +963,38 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"origin_cid": string(fi.OriginCid),
 				})
 			}
+			// Execs ride the same poll as forwards, and for the same reason:
+			// both are shared server-side registries with no push
+			// subscription, so a panel fed by the snapshot is as fresh as one
+			// that fetched on its own and costs no extra round trip.
+			execInfos, execErr := c.ExecRunListWith(rootCtx, "")
+			if execErr != nil {
+				slog.Warn("snapshot: ExecRunListWith failed (execs will be empty)", "err", execErr)
+			}
+			execs := make([]any, 0, len(execInfos))
+			for i := range execInfos {
+				e := &execInfos[i]
+				execs = append(execs, map[string]any{
+					"exec_id": float64(e.ExecId),
+					"task":    hex.EncodeToString(e.TaskId.Id[:]),
+					// RAW, not a rendered age: the page re-renders on every
+					// poll, so formatting here would freeze the age at
+					// whatever it was when the snapshot was built while the
+					// row kept being redrawn — a clock that looks live and is
+					// not. The TUI modal formats at snapshot time because its
+					// table holds strings and does not redraw.
+					"started_unix_ms": float64(e.StartedUnixMs),
+					"origin":          cli.ExecRunOrigin(e),
+					"command":         cli.ExecRunArgvString(e.Argv),
+				})
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"runners":  runners,
 				"tasks":    tasks,
 				"taskTree": taskTree,
 				"conns":    conns,
 				"forwards": forwards,
+				"execs":    execs,
 			}))
 		}()
 		return nil

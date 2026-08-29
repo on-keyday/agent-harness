@@ -380,6 +380,17 @@ func ExecRunArgvString(a protocol.ExecArgv) string {
 	return ExecArgvString(ExecArgvStrings(a))
 }
 
+// ExecRunOrigin renders WHOSE an exec is, as one "<kind> <cid>" string.
+//
+// The one implementation, for PortForwardOrigin's reason: the registry is
+// shared, so two identical argvs from different clients are told apart only by
+// the cid half, and a surface that rendered the kind alone — or joined the two
+// differently — would disagree with `exec ls` about what an origin is. The CLI
+// table, the TUI modal and the WebUI row all call this.
+func ExecRunOrigin(e *protocol.ExecRunInfo) string {
+	return e.OriginKind.String() + " " + string(e.OriginCid)
+}
+
 // ExecRunInfoLines renders the listing as a human-readable table.
 func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
 	if len(es) == 0 {
@@ -397,7 +408,7 @@ func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
 			e.ExecId,
 			hex.EncodeToString(e.TaskId.Id[:])[:12],
 			age,
-			e.OriginKind.String()+" "+string(e.OriginCid),
+			ExecRunOrigin(e),
 			ExecRunArgvString(e.Argv)))
 	}
 	return out

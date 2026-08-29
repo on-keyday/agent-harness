@@ -1,6 +1,6 @@
 ---
 name: surface-parity-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–37 for every input surface, display surface, per-path semantics axis and result/display convention across CLI/TUI/WebUI/wasm, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–39 for every input surface, display surface, per-path semantics axis, result/display convention across CLI/TUI/WebUI/wasm, and the feature spec's own surface matrix, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
 ---
 
 # Surface-parity checklist
@@ -17,7 +17,7 @@ checklist.
 ## How to use — non-negotiable
 
 This is a CHECKLIST, not reference prose. When this skill applies, walk
-**every number from 1 to 37 in order** and record a verdict for each:
+**every number from 1 to 39 in order** and record a verdict for each:
 
 - `done` — implemented/verified, with the file touched
 - `n/a` — genuinely not applicable, WITH the reason stated
@@ -29,7 +29,7 @@ the summary sentence is exactly where discretionary omission hides. If an
 item is expensive, say so and mark it; do not silently drop it.
 
 Items S1–S6 (agent-launch parity) are a SEPARATE list with its own trigger,
-kept out of 1–37 on purpose: they are `n/a` for almost every field change,
+kept out of 1–39 on purpose: they are `n/a` for almost every field change,
 and a list that trains you to type `n/a` is how the walk decays. Walk them
 when their trigger fires, with the same three verdicts.
 
@@ -250,6 +250,27 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     are different deliverables) rather than shipped as an asymmetry nobody had
     looked at, which is the outcome this item exists to force.
 
+39. **The feature's OWN surface matrix, checked against what shipped.** Items
+    1–23 walk the surfaces a CHANGE must reach. Nothing walks the surfaces the
+    feature's spec already promised, so a row of its own table can ship
+    unimplemented and stay that way — the spec reads as description, the code
+    reads as complete, and only an operator asking "is that all there is?"
+    closes the gap.
+    Found 2026-08-29, four days late: the task-exec spec's Surfaces table said
+    "TUI display | running execs listed **like forwards**" and "WebUI | a
+    listing **beside the forwards one**". What shipped was the cmdline text
+    dump into a FIVE-line viewport that scrolls to the bottom on every write,
+    so a listing of more than four execs hid its own header. Both rows had been
+    written, agreed and then not built, and every 1–37 item was `n/a` for the
+    change that omitted them because none of them asks about the SPEC.
+    The check is mechanical and belongs at the END of a feature's walk, not the
+    start: open the spec's Surfaces / operator-matrix table and confirm each row
+    against the code, one row at a time. A row you decide not to build is an
+    `omitted` **in the spec**, struck through with its reason, so the table
+    stops claiming it. The failure mode this prevents is not forgetting — it is
+    a table that keeps asserting something nobody has looked at since it was
+    written.
+
 ## Documentation surfaces
 
 35. `README.md` — the feature's section (e.g. "Capabilities and scope"),
@@ -276,13 +297,13 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
 
 ## Agent-launch parity — SEPARATE trigger, walk S1–S6
 
-Items 1–37 are one field across ~15 UI surfaces. This section is a
+Items 1–39 are one field across ~15 UI surfaces. This section is a
 different axis: an agent is launched by the operator through a preset, and
 the podman sandbox (`scripts/sandbox/`) re-runs that same agent through a
 wrapper that must be kept in lockstep by hand. Nothing in `cli/`, `tui/`
-or `webui/` mentions it, so a 1–37 walk cannot reach it.
+or `webui/` mentions it, so a 1–39 walk cannot reach it.
 
-**Trigger (walk S1–S6 instead of, or in addition to, 1–37):** adding,
+**Trigger (walk S1–S6 instead of, or in addition to, 1–39):** adding,
 renaming or removing an agent; changing an agent's bin path, argv
 templates, log format, config directory, credential mode, or endpoint
 domains; changing what env the runner hands an agent; changing the
@@ -337,6 +358,7 @@ S6. Sandbox docs + the verifier — `scripts/sandbox/README.md` (agent table
 - Adding an option to ANY verb family (spawn or otherwise)
 - Adding an operator action (new keybinding / button / dialog / verb)
 - Reviewing a diff that claims "CLI, TUI and WebUI covered"
+- (39) FINISHING a feature — walk its spec's own Surfaces table against the code
 - (S1–S6) Adding or renaming an agent, or changing its bin / argv templates
   / log format / config dir / credential mode / egress domains
 - (S1–S6) Changing the env or the server addressing an agent is launched

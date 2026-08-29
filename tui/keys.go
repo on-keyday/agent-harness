@@ -33,6 +33,7 @@ type mainKeyMap struct {
 	Board           string
 	Tree            string
 	Forwards        string
+	Execs           string
 	FilePicker      string
 	Git             string
 	LogFilter       string
@@ -68,6 +69,7 @@ var mainKeys = mainKeyMap{
 	Board:           "O",
 	Tree:            "T",
 	Forwards:        "f",
+	Execs:           "e",
 	FilePicker:      "F",
 	Git:             "G",
 	LogFilter:       "/",
@@ -229,6 +231,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Short: "f forwards", Long: "port-forward list (x kills the selected row)"},
+	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},
 }
