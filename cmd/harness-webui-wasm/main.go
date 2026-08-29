@@ -3130,17 +3130,25 @@ func harnessExecRun(this js.Value, args []js.Value) any {
 				opts = args[2]
 			}
 			var onOut, onErr js.Value
-			shellLine := false
+			shellLine, detached, sshdParent := false, false, false
 			if opts.Type() == js.TypeObject {
 				onOut = opts.Get("onStdout")
 				onErr = opts.Get("onStderr")
 				shellLine = optBool(opts, "shell")
+				detached = optBool(opts, "detach")
+				sshdParent = optBool(opts, "sshdParent")
 			}
 			res, err := c.ExecRun(rootCtx, taskID, argv, cli.ExecRunOpts{
 				// One line for the RUNNER's shell, chosen from its own platform.
 				ShellLine: shellLine,
-				Stdout:    jsChunkWriter{fn: onOut},
-				Stderr:    jsChunkWriter{fn: onErr},
+				// Leaves what the command starts running after it ends.
+				Detached: detached,
+				// A parent process named sshd, for a client that checks its own
+				// ancestry by process name. Windows only; the runner refuses
+				// elsewhere rather than reporting a success it did not deliver.
+				SshdParent: sshdParent,
+				Stdout:     jsChunkWriter{fn: onOut},
+				Stderr:     jsChunkWriter{fn: onErr},
 			})
 			if err != nil {
 				rejectErr(reject, err)

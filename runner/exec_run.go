@@ -58,14 +58,33 @@ func (s *Session) execRunDir(repoPath, taskIDHex string) (string, bool) {
 // PowerShell variant is deliberately not offered yet — nothing has asked, and
 // inventing a second spelling before someone needs it is how a knob nobody uses
 // gets a bug nobody notices.
-func shellLineArgv(argv []string) ([]string, error) {
+func shellLineArgv(argv []string, sshdParent bool) ([]string, error) {
 	if len(argv) != 1 {
 		// The wire says one element. More than one means the caller built an
 		// argv AND asked for shell interpretation, which cannot both be meant.
 		return nil, fmt.Errorf("shell_line needs exactly one argv element, got %d", len(argv))
 	}
 	if runtime.GOOS == "windows" {
-		return []string{"cmd", "/c", argv[0]}, nil
+		shell := "cmd"
+		if sshdParent {
+			// The SHELL is what gets renamed, not a wrapper around it. A
+			// wrapper that then ran cmd would sit one step further up the
+			// chain with cmd between it and the command, and the check this
+			// serves compares the NAME of each ancestor in turn — it would
+			// find cmd first and be no better off.
+			p, serr := stageSSHDShim()
+			if serr != nil {
+				return nil, serr
+			}
+			shell = p
+		}
+		return []string{shell, "/c", argv[0]}, nil
+	}
+	if sshdParent {
+		// Refused rather than ignored. The caller asked for a property the
+		// command will not have, and running it anyway would report success
+		// for something that did not happen.
+		return nil, fmt.Errorf("sshd_parent is a Windows mechanism; this runner runs %s", runtime.GOOS)
 	}
 	return []string{"sh", "-c", argv[0]}, nil
 }
@@ -147,7 +166,7 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	}
 	if req.ShellLine() {
 		var serr error
-		argv, serr = shellLineArgv(argv)
+		argv, serr = shellLineArgv(argv, req.SshdParent())
 		if serr != nil {
 			_ = stream.CloseBoth()
 			finish(protocol.ExecEventKind_Failed, -1, serr.Error())
@@ -200,7 +219,16 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 			// operator kills it — and worse, they inherit the child's stdout, so
 			// this call never returns and the runner leaks a goroutine parked on
 			// a stream the server has already forgotten.
-			KillProcessTree: true,
+			//
+			// detached inverts it for a command whose POINT is to leave
+			// something running. Measured on Windows 2026-08-29: the group is a
+			// job object with KILL_ON_JOB_CLOSE, so a server the command
+			// deliberately detached died the moment the exec returned, and
+			// CREATE_BREAKAWAY_FROM_JOB could not opt out (ERROR_ACCESS_DENIED,
+			// since BREAKAWAY_OK is not set). objtrsf already makes this
+			// opt-in — false means it never builds the group at all — so the
+			// whole mechanism is this one field.
+			KillProcessTree: !req.Detached(),
 			OnProcessExit: func(st *os.ProcessState, werr error) {
 				// The CHILD's own code, read from ProcessState rather than
 				// inferred from an error: the errgroup inside agentexec

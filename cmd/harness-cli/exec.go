@@ -83,12 +83,22 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		return nil
 	}
 
-	// --shell is scanned BEFORE the task id, because everything after the id is
+	// These are scanned BEFORE the task id, because everything after the id is
 	// the argv VERBATIM: re-scanning that for flags is how a command whose own
 	// first word is `--shell` would be eaten.
-	shellLine := false
-	for len(args) > 0 && args[0] == "--shell" {
-		shellLine = true
+	shellLine, detached, sshdParent := false, false, false
+scan:
+	for len(args) > 0 {
+		switch args[0] {
+		case "--shell":
+			shellLine = true
+		case "--detach":
+			detached = true
+		case "--sshd-parent":
+			sshdParent = true
+		default:
+			break scan
+		}
 		args = args[1:]
 	}
 	taskID, argv, err := splitExecArgv(args)
@@ -96,7 +106,7 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		return err
 	}
 	if len(argv) == 0 {
-		return fmt.Errorf("usage: harness-cli exec [--shell] <task-id> -- <command> [args...]")
+		return fmt.Errorf("usage: harness-cli exec [--shell] [--detach] [--sshd-parent] <task-id> -- <command> [args...]")
 	}
 	if shellLine {
 		// Joining is right here and ONLY here: the operator asked for shell
@@ -127,10 +137,12 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		stdin = os.Stdin
 	}
 	res, runErr := c.ExecRun(ectx, taskID, argv, cli.ExecRunOpts{
-		ShellLine: shellLine,
-		Stdin:     stdin,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
+		ShellLine:  shellLine,
+		Detached:   detached,
+		SshdParent: sshdParent,
+		Stdin:      stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
 	})
 
 	// Closed HERE, not in a defer: every path below ends in os.Exit, which runs

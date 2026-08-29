@@ -121,3 +121,54 @@ func TestExecOutputLineKeepsRealContent(t *testing.T) {
 		t.Errorf("output = %q, want the tab and the text intact", got)
 	}
 }
+
+// The options are scanned in ANY order and before the task id, and none of
+// them is confused for the command. A command whose own first word is a dash
+// is why the scan stops at the first token it does not recognise.
+func TestParseExecRunScansOptionsInAnyOrder(t *testing.T) {
+	act, err := parseExecRun([]string{
+		"--detach", "--shell", "--sshd-parent",
+		"0123456789abcdef0123456789abcdef", "--", "powershell -File boot.ps1",
+	})
+	if err != nil {
+		t.Fatalf("parseExecRun: %v", err)
+	}
+	a, ok := act.(ExecRunAction)
+	if !ok {
+		t.Fatalf("action = %T, want ExecRunAction", act)
+	}
+	if !a.Shell || !a.Detach || !a.SshdParent {
+		t.Errorf("flags = shell:%v detach:%v sshd:%v, want all true", a.Shell, a.Detach, a.SshdParent)
+	}
+	if a.TaskID != "0123456789abcdef0123456789abcdef" {
+		t.Errorf("task id = %q — an option scan that ran past the id ate it", a.TaskID)
+	}
+	if len(a.Argv) != 1 || a.Argv[0] != "powershell -File boot.ps1" {
+		t.Errorf("argv = %q, want the line intact", a.Argv)
+	}
+}
+
+// --sshd-parent renames the SHELL, so without --shell there is nothing to
+// rename. Refused at the prompt rather than after a round trip that would say
+// the same thing from the far side.
+func TestParseExecRunRefusesSshdParentWithoutShell(t *testing.T) {
+	_, err := parseExecRun([]string{
+		"--sshd-parent", "0123456789abcdef0123456789abcdef", "--", "whoami",
+	})
+	if err == nil {
+		t.Fatal("parseExecRun(--sshd-parent without --shell) = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "--shell") {
+		t.Errorf("error %q does not name the flag that is missing", err)
+	}
+}
+
+// The options describe how a COMMAND runs, so pairing them with a sub-verb
+// that runs none is a typo worth naming rather than silently ignoring.
+func TestParseExecRunRefusesOptionsOnSubVerbs(t *testing.T) {
+	for _, sub := range []string{"ls", "kill"} {
+		if _, err := parseExecRun([]string{"--detach", sub}); err == nil {
+			t.Errorf("parseExecRun(--detach %s) = nil error, want a refusal", sub)
+		}
+	}
+}

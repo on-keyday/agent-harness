@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -89,5 +90,45 @@ func TestExecRunStatusErrorNamesTheReason(t *testing.T) {
 	if err := execRunStatusError("abc", protocol.ExecRunStatus_Denied); err == nil ||
 		!strings.Contains(err.Error(), "exec_run") {
 		t.Errorf("denied error = %v, want it to name the capability", err)
+	}
+}
+
+// SshdParent renames the shell, so a caller that supplied its own argv has
+// asked for something with no shell in it to rename. Caught HERE rather than
+// on the runner, which cannot tell that case from a caller that simply forgot
+// ShellLine, and would have to guess which one was meant.
+func TestExecRunRefusesSshdParentWithoutShellLine(t *testing.T) {
+	c := &Client{}
+	_, err := c.ExecRun(context.Background(),
+		"0123456789abcdef0123456789abcdef",
+		[]string{"powershell", "-Command", "echo hi"},
+		ExecRunOpts{SshdParent: true})
+	if err == nil {
+		t.Fatal("ExecRun(SshdParent, no ShellLine) = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "ShellLine") {
+		t.Errorf("error %q does not name the flag that is missing", err)
+	}
+}
+
+// The two new flags reach the wire. A setter that was declared but never
+// called is invisible from the caller's side: the request encodes, the exec
+// runs, and the property the caller asked for is simply absent.
+func TestExecRunOptsReachTheRequestFlags(t *testing.T) {
+	var body protocol.ExecRunRequest
+	body.SetShellLine(true)
+	body.SetDetached(true)
+	body.SetSshdParent(true)
+	if !body.ShellLine() || !body.Detached() || !body.SshdParent() {
+		t.Fatalf("flags did not round-trip: shell=%v detached=%v sshd=%v",
+			body.ShellLine(), body.Detached(), body.SshdParent())
+	}
+	// The bits share a byte with stdin_enabled, and a new flag declared BEFORE
+	// an existing one shifts every bit behind it — an old peer then reads
+	// shell_line as stdin_enabled, which decodes cleanly and means something
+	// else. Setting one must not disturb another.
+	body.SetStdinEnabled(false)
+	if !body.ShellLine() || !body.Detached() || !body.SshdParent() {
+		t.Error("setting stdin_enabled disturbed the flags declared after it")
 	}
 }

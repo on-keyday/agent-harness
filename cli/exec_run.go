@@ -49,6 +49,31 @@ type ExecRunOpts struct {
 	// the words then reach the child untouched, with no shell to re-interpret
 	// a quote.
 	ShellLine bool
+
+	// Detached leaves whatever the command starts running after the command
+	// itself ends, instead of tearing the whole process group down with it.
+	//
+	// For a command whose POINT is to leave something behind — a server the
+	// caller connects to afterwards. Without it that is impossible rather than
+	// merely awkward: the runner's group is a kill-on-close job on Windows, and
+	// a child the command deliberately detached dies the instant the exec
+	// returns. ExecRunRequest.detached in the schema carries the measurement.
+	//
+	// The cost is that nothing reaps what is left behind. `exec kill` still
+	// stops the command, and a caller that detaches a process with no shutdown
+	// path of its own has leaked it.
+	Detached bool
+
+	// SshdParent asks the runner to give the command line a parent process
+	// NAMED sshd. Windows only — elsewhere the runner refuses, rather than
+	// quietly running the command without it and reporting success.
+	//
+	// For a client that decides whether it is talking to a real SSH server by
+	// walking its own ancestry and comparing process names, which is what VS
+	// Code Remote-SSH's Windows bootstrap does before it will do anything else.
+	// Needs ShellLine: what it renames is the shell, and there is no shell to
+	// rename when the caller supplied its own argv.
+	SshdParent bool
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -70,8 +95,17 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if opts.ShellLine && len(argv) != 1 {
 		return ExecRunResult{}, fmt.Errorf("exec: ShellLine needs exactly one argv element, got %d", len(argv))
 	}
+	// Refused here rather than on the runner, because the runner cannot tell the
+	// two cases apart: a caller that asked for a named parent and supplied its
+	// own argv has asked for something with no shell in it to rename, and a
+	// runner that received both would have to guess which one the caller meant.
+	if opts.SshdParent && !opts.ShellLine {
+		return ExecRunResult{}, errors.New("exec: SshdParent needs ShellLine — what it renames is the shell")
+	}
 	body := protocol.ExecRunRequest{TaskId: tid, Argv: buildExecArgv(argv)}
 	body.SetShellLine(opts.ShellLine)
+	body.SetDetached(opts.Detached)
+	body.SetSshdParent(opts.SshdParent)
 	body.SetStdinEnabled(opts.Stdin != nil)
 	req.SetOpenExecRun(body)
 

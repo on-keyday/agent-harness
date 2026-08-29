@@ -158,14 +158,24 @@ func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
 			return nil
 		}
 		a.cmdresult.Append(fmt.Sprintf("exec %s: %s …", pfShortID(full), execArgvLabel(v.Argv)))
-		return DoExecRun(a.client, full, v.Argv, v.Shell, a.program)
+		return DoExecRun(a.client, full, v.Argv, ExecRunFlags{Shell: v.Shell, Detach: v.Detach, SshdParent: v.SshdParent}, a.program)
 	}
 }
 
 // DoExecRun runs one command in a task's worktree and streams its output into
 // cmdresult. It uses the long-lived client (never dials), like every other Do*
 // in this layer, and program MUST be App's *tea.Program.
-func DoExecRun(c *cli.Client, taskID string, argv []string, shell bool, program *tea.Program) tea.Cmd {
+// ExecRunFlags are the per-invocation options `exec` takes. A struct rather
+// than three positional bools: three bools in a row say nothing at a call site
+// about which is which, and this set travels through two layers before it
+// reaches the wire.
+type ExecRunFlags struct {
+	Shell      bool
+	Detach     bool
+	SshdParent bool
+}
+
+func DoExecRun(c *cli.Client, taskID string, argv []string, flags ExecRunFlags, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
 			return ExecRunDoneMsg{TaskID: taskID, Argv: argv, Err: fmt.Errorf("not connected to server")}
@@ -199,9 +209,11 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, shell bool, program 
 		go func() {
 			defer cancel()
 			res, err := c.ExecRun(context.Background(), taskID, argv, cli.ExecRunOpts{
-				ShellLine: shell,
-				Stdout:    out,
-				Stderr:    errw,
+				ShellLine:  flags.Shell,
+				Detached:   flags.Detach,
+				SshdParent: flags.SshdParent,
+				Stdout:     out,
+				Stderr:     errw,
 			})
 			out.flush()
 			errw.flush()

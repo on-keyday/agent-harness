@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -138,7 +139,7 @@ func TestExecCancelsCancelsTheContext(t *testing.T) {
 // gateway hard-coded `sh -c` and it worked on one Windows box only because Git
 // for Windows had put sh on PATH.
 func TestShellLineArgvPicksThePlatformShell(t *testing.T) {
-	got, err := shellLineArgv([]string{"echo hi | wc -l"})
+	got, err := shellLineArgv([]string{"echo hi | wc -l"}, false)
 	if err != nil {
 		t.Fatalf("shellLineArgv: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestShellLineArgvPicksThePlatformShell(t *testing.T) {
 // asked for shell interpretation precisely because quotes, pipes and
 // redirections are in there.
 func TestShellLineArgvDoesNotSplitTheLine(t *testing.T) {
-	got, err := shellLineArgv([]string{`echo "one two" > out.txt`})
+	got, err := shellLineArgv([]string{`echo "one two" > out.txt`}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +177,43 @@ func TestShellLineArgvDoesNotSplitTheLine(t *testing.T) {
 // picking either reading silently would run something the caller did not write.
 func TestShellLineArgvRefusesAnythingButOneElement(t *testing.T) {
 	for _, argv := range [][]string{nil, {}, {"sh", "-c", "true"}, {"a", "b"}} {
-		if _, err := shellLineArgv(argv); err == nil {
+		if _, err := shellLineArgv(argv, false); err == nil {
 			t.Errorf("shellLineArgv(%q) = nil error, want a refusal", argv)
 		}
+	}
+}
+
+// sshd_parent renames the SHELL, so off Windows there is nothing it can mean.
+// Refused rather than ignored: a runner that ran the command anyway would
+// report success for a property the command does not have, and the caller —
+// a bootstrap that checks its own ancestry — would fail later and somewhere
+// else.
+func TestShellLineArgvRefusesSshdParentOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows path stages a shim instead of refusing")
+	}
+	_, err := shellLineArgv([]string{"echo hi"}, true)
+	if err == nil {
+		t.Fatal("shellLineArgv(sshdParent=true) = nil error, want a refusal naming the platform")
+	}
+	if !strings.Contains(err.Error(), runtime.GOOS) {
+		t.Errorf("error %q does not name the platform it refused on", err)
+	}
+}
+
+// sshd_parent must not disturb the ordinary path. A runner that started
+// staging a shim for every shell line would put an unnecessary file copy in
+// front of every `exec --shell`.
+func TestShellLineArgvWithoutSshdParentIsUnchanged(t *testing.T) {
+	got, err := shellLineArgv([]string{"echo hi"}, false)
+	if err != nil {
+		t.Fatalf("shellLineArgv: %v", err)
+	}
+	want := "sh"
+	if runtime.GOOS == "windows" {
+		want = "cmd"
+	}
+	if got[0] != want {
+		t.Errorf("shell = %q, want %q", got[0], want)
 	}
 }
