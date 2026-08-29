@@ -535,7 +535,9 @@ func (m ForwardsModal) View() string {
 		footer := FooterStyle.Render(prompt)
 		return box.Render(header + "\n" + m.table.View() + "\n" + footer)
 	}
-	footer := FooterStyle.Render("x: kill · Esc: close")
+	// Every key the pane accepts is named. `t` existed and was invisible: the
+	// only way to find it was to read the source or the global `?` list.
+	footer := FooterStyle.Render("t: tap · r: refresh · x: kill · Esc: close")
 	if len(m.forwards) == 0 {
 		return box.Render(header + "\n" + "no active forwards" + "\n" + footer)
 	}

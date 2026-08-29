@@ -1421,6 +1421,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.forwardTap.IsOpen() {
 			if msg.Type == tea.KeyEsc {
 				a.stopForwardTap()
+				// Straight back onto a pane whose counters moved while the tap
+				// was up — refetch rather than show the numbers from before.
+				if a.forwardsModal.IsOpen() {
+					return a, DoListForwards(a.client, false)
+				}
 				return a, nil
 			}
 			cmd := a.forwardTap.Update(msg)
@@ -1456,6 +1461,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, a.startForwardTap(ForwardTapAction{ForwardID: id, Dir: "both"})
 				}
 				return a, nil
+			}
+			// The pane fetches once on open and forwards have no push
+			// subscription, so its rows age in place. That was harmless while a
+			// row was pure configuration; now it carries counters, and a stale
+			// pane shows 0/0 while bytes are crossing — which reads as "this
+			// forward is idle", the one thing the counters exist to answer.
+			if msg.String() == modalKeys.ForwardRefresh {
+				return a, DoListForwards(a.client, false)
 			}
 			var cmd tea.Cmd
 			a.forwardsModal, cmd = a.forwardsModal.Update(msg)

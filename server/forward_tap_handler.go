@@ -82,6 +82,23 @@ func (h *TaskHandler) handleOpenForwardTap(conn ConnHandle, req *protocol.OpenFo
 		defer func() { _ = stream.CloseBoth() }()
 		tap.run(ctx)
 	}()
+	// Watch for the tapper going away. The client never writes on this stream,
+	// so any read returning EOF or error means it is gone — the same signal
+	// watchRemoteForwardControl reads for a forward's control stream.
+	//
+	// Without this a tap is only reaped when the NEXT record fails to send, so
+	// a tap closed on a quiet forward is never noticed: it stays attached, and
+	// `taps=N` keeps counting a reader that left. Observed exactly that way —
+	// the TUI's tap view closed and the row still said taps=1.
+	go func() {
+		defer cancel()
+		for {
+			_, eof, err := stream.ReadDirect(4096)
+			if eof || err != nil {
+				return
+			}
+		}
+	}()
 
 	slog.Info("forward tap: attached", "forward_id", pf.forwardID, "task_id", pf.taskIDHex,
 		"filter", req.DirectionFilter, "max_record_bytes", req.MaxRecordBytes)

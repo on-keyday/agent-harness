@@ -255,3 +255,37 @@ func TestTapCopiesThePayload(t *testing.T) {
 		t.Fatalf("tap retained the relay's buffer: %q", got[0].Data().Data)
 	}
 }
+
+// A tapper that goes away must be reaped even if nothing is flowing. Before
+// this, the tap was only dropped when the next record failed to send, so on a
+// quiet forward it stayed attached forever and `taps=N` counted a reader that
+// had left.
+func TestTapIsReapedWhenTheReaderGoesAwayOnAQuietForward(t *testing.T) {
+	pf := newCounterForward()
+	sink := &chanSink{out: make(chan *protocol.ForwardTapRecord, 8)}
+	tap := newForwardTap(sink, protocol.ForwardTapFilter_Both, 0)
+	pf.addTap(tap)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go tap.run(ctx)
+	go func() {
+		defer cancel()
+		defer pf.removeTap(tap)
+		<-ctx.Done()
+	}()
+
+	if pf.tapCount() != 1 {
+		t.Fatalf("tapCount = %d before the reader leaves", pf.tapCount())
+	}
+	// The reader leaves. No bytes cross the forward at any point.
+	cancel()
+
+	deadline := time.After(2 * time.Second)
+	for pf.tapCount() != 0 {
+		select {
+		case <-deadline:
+			t.Fatal("tap still attached after its reader left a quiet forward")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
