@@ -44,6 +44,19 @@ func (r *registry) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
 	delete(r.tickets, ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)})
 }
 
+// Ticket returns the ticket registered for (rid, tid), if any.
+//
+// Reuse, not reissue: a second Register for the same pair OVERWRITES the entry,
+// which would invalidate the credential the running agent is already holding.
+// A caller that needs to hand the task's identity to another process it starts
+// in that task's name — `exec` does — must look the existing one up.
+func (r *registry) Ticket(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tickets[ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}]
+	return t, ok
+}
+
 // Validate is called from the agent_message Hello handler with the
 // agentboard.RunnerID/TaskID types decoded off the wire.
 func (r *registry) Validate(rid RunnerID, tid TaskID, ticket [16]byte) HelloStatus {

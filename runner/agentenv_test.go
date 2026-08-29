@@ -361,3 +361,30 @@ func TestBuildAgentEnv_NoX11WhenUnset(t *testing.T) {
 		}
 	}
 }
+
+// A zero ticket is not a credential, and advertising one is strictly worse than
+// advertising none: harness-cli prefers a ticket over the PSK, so an all-zero
+// HARNESS_AUTH_TICKET is sent, refused by the PSK gate as BadTicket, and blocks
+// the PSK fallback that would have worked. Omit the variable instead, exactly
+// as an empty Hostname is omitted rather than set to "".
+func TestBuildAgentEnvOmitsAZeroTicket(t *testing.T) {
+	env := BuildAgentEnv(AgentEnvSpec{})
+	for _, e := range env {
+		if strings.HasPrefix(e, "HARNESS_AUTH_TICKET=") {
+			t.Fatalf("a zero ticket was advertised as a credential: %q", e)
+		}
+	}
+
+	var ticket [16]byte
+	ticket[0] = 0xab
+	env = BuildAgentEnv(AgentEnvSpec{AuthTicket: ticket})
+	var found string
+	for _, e := range env {
+		if strings.HasPrefix(e, "HARNESS_AUTH_TICKET=") {
+			found = e
+		}
+	}
+	if found != "HARNESS_AUTH_TICKET=ab"+strings.Repeat("00", 15) {
+		t.Fatalf("a real ticket must still be set, got %q", found)
+	}
+}

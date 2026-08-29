@@ -56,7 +56,6 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 		"HARNESS_TASK_ID=" + hex.EncodeToString(s.TaskID.Id[:]),
 		"HARNESS_REPO_PATH=" + s.RepoPath,
 		"HARNESS_WS_PATH=" + s.WSPath,
-		"HARNESS_AUTH_TICKET=" + hex.EncodeToString(s.AuthTicket[:]),
 		// Disable MSYS/MinGW automatic POSIX-path → Windows-path rewriting
 		// so that POSIX-style args we pass (topics like "chat/demo", ws
 		// paths like "/ws", task IDs starting with "/", etc.) are not
@@ -64,6 +63,15 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 		// Both vars are no-ops outside MSYS/MinGW.
 		"MSYS_NO_PATHCONV=1",
 		"MSYS2_ARG_CONV_EXCL=*",
+	}
+	// A zero ticket is not a credential, and advertising one is strictly WORSE
+	// than advertising none: harness-cli prefers a ticket over the PSK, so it
+	// would send sixteen zero bytes, the PSK gate would refuse them as
+	// BadTicket (server/psk.go step 4), and the PSK fallback that would have
+	// worked never runs. Omitted rather than zero-filled, for the same reason
+	// an empty Hostname is omitted.
+	if s.AuthTicket != ([16]byte{}) {
+		env = append(env, "HARNESS_AUTH_TICKET="+hex.EncodeToString(s.AuthTicket[:]))
 	}
 	if s.Hostname != "" {
 		env = append(env, "HARNESS_HOSTNAME="+s.Hostname)

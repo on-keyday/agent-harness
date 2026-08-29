@@ -75,8 +75,22 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	}
 	execID := h.execs().add(e)
 
+	// The child runs in the task's worktree AS that task, so it carries the
+	// task's own ticket. Looked up, never reissued: Register overwrites, so a
+	// fresh ticket here would invalidate the credential the running agent is
+	// holding. A task with no registered ticket — one whose agent has ended,
+	// which exec still serves as long as the worktree is there — yields the
+	// zero value, and BuildAgentEnv omits the variable rather than advertising
+	// a credential that cannot work.
+	var ticket [16]byte
+	if h.Board != nil {
+		if t, ok := h.Board.Registry().Ticket(runnerIDFromConnID(runner.ID), req.TaskId); ok {
+			ticket = t
+		}
+	}
+
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExecRun}
-	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID())))
+	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		h.execs().remove(execID)
@@ -118,12 +132,20 @@ func execArgvStrings(a protocol.ExecArgv) []string {
 // for a growing struct is the shape that has silently dropped a new field on
 // this project before — runnerGitRequest carries the same note for the same
 // reason.
-func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath string, streamID uint64) protocol.RunnerExecRunRequest {
+//
+// That guard did not catch auth_ticket, and the reason is worth keeping: the
+// ticket is not RELAYED from the client's request, it is supplied by the
+// server, so a test asking "did every field of req survive?" cannot see it
+// missing. It is a parameter rather than something read off req for exactly
+// that reason — a caller has to pass it, and one that forgets is a compile
+// error rather than a zero.
+func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath string, streamID uint64, authTicket [16]byte) protocol.RunnerExecRunRequest {
 	body := protocol.RunnerExecRunRequest{
-		ExecId:   execID,
-		TaskId:   req.TaskId,
-		StreamId: streamID,
-		Argv:     req.Argv,
+		ExecId:     execID,
+		TaskId:     req.TaskId,
+		StreamId:   streamID,
+		Argv:       req.Argv,
+		AuthTicket: authTicket,
 	}
 	body.SetRepoPath([]byte(repoPath))
 	body.SetShellLine(req.ShellLine())

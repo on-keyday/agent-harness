@@ -129,7 +129,7 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	in.SetShellLine(true)
 	in.SetSshdParent(true)
 
-	out := runnerExecRunRequest(in, 7, "/repo", 42)
+	out := runnerExecRunRequest(in, 7, "/repo", 42, [16]byte{})
 	if out.ExecId != 7 || out.StreamId != 42 {
 		t.Errorf("exec id / stream id = %d / %d, want 7 / 42", out.ExecId, out.StreamId)
 	}
@@ -188,5 +188,29 @@ func TestExecRunInfoCarriesOrigin(t *testing.T) {
 	}
 	if info.TaskId.Id[15] != 0xff {
 		t.Error("task id did not decode from hex")
+	}
+}
+
+// An exec child runs in the task's worktree as that task, so it carries the
+// task's OWN auth ticket — the same credential the agent got when the task was
+// assigned, not a fresh one, which would overwrite the running agent's.
+//
+// Before this, the field was simply never set. That is not the miss
+// runnerExecRunRequest's "every field survives" test was built for: the ticket
+// is not relayed from the client's request, it is added by the SERVER, so a
+// relay-completeness test could not see it missing. The symptom was
+// HARNESS_AUTH_TICKET=000…0 inside the child and `psk: server rejected:
+// BadTicket` from any harness-cli it ran — the PSK gate correctly refusing a
+// zero ticket.
+func TestRunnerExecRunRequestCarriesTheTasksTicket(t *testing.T) {
+	var ticket [16]byte
+	for i := range ticket {
+		ticket[i] = byte(i + 1)
+	}
+	in := &protocol.ExecRunRequest{TaskId: protocol.TaskID{Id: [16]byte{9}}}
+	out := runnerExecRunRequest(in, 7, "/repo", 42, ticket)
+	if out.AuthTicket != ticket {
+		t.Fatalf("auth ticket = %x, want %x — a zero ticket is refused by the PSK gate, "+
+			"and blocks the PSK fallback that would otherwise work", out.AuthTicket, ticket)
 	}
 }
