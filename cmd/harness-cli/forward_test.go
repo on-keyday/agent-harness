@@ -12,7 +12,7 @@ import (
 // TestForwardSubcommandRouting: "ls" and "kill" are not hex, so they can
 // never collide with a task id.
 func TestForwardSubcommandRouting(t *testing.T) {
-	for _, sub := range []string{"ls", "kill"} {
+	for _, sub := range []string{"ls", "kill", "tap"} {
 		if isTaskIDLike(sub) {
 			t.Errorf("%q must not parse as a task id", sub)
 		}
@@ -70,5 +70,27 @@ func TestForwardWFlagRouting(t *testing.T) {
 	}
 	if !forwardWConflictsWithLR(*wspec3, len(*specs3), len(*rspecs3)) {
 		t.Fatalf("-W combined with -R must be reported as conflicting")
+	}
+}
+
+// "tap" joins "ls" and "kill" as a sub-verb, so it must not parse as a task id
+// either — the routing above dispatches on exactly that test.
+func TestForwardTapSubcommandRouting(t *testing.T) {
+	if isTaskIDLike("tap") {
+		t.Error(`"tap" must not parse as a task id`)
+	}
+}
+
+func TestTapModeRejectsTwoAtOnce(t *testing.T) {
+	if _, err := tapMode(true, false, true, false); err == nil {
+		t.Fatal("--hex with --raw must be refused, not silently ranked")
+	}
+	m, err := tapMode(false, false, false, false)
+	if err != nil || m != cli.TapHex {
+		t.Fatalf("no flag = hex, got %v %v", m, err)
+	}
+	m, err = tapMode(false, false, false, true)
+	if err != nil || m != cli.TapJSON {
+		t.Fatalf("--json, got %v %v", m, err)
 	}
 }

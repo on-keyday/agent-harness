@@ -330,15 +330,15 @@ func (m *RawConnectModal) UpdateList(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// formatByteCount keeps the list's columns narrow.
+// formatByteCount keeps the list's columns narrow. It delegates to
+// cli.FormatByteCount rather than keeping its own copy: the port-forward
+// counters put byte sizes on all three surfaces, and two renderers for one
+// grammar is how the scope labels drifted.
 func formatByteCount(n int) string {
-	switch {
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1fMB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1fkB", float64(n)/(1<<10))
+	if n < 0 {
+		n = 0
 	}
-	return fmt.Sprintf("%dB", n)
+	return cli.FormatByteCount(uint64(n))
 }
 
 // SetSize records the terminal size. Mirrors ForwardsModal.SetSize — App calls

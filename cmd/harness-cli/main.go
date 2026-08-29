@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -633,6 +634,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "       harness-cli forward <task-id> -W host:port")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward ls [--task <task-id>] [--json]")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward kill <forward-id> [<forward-id> ...]")
+		fmt.Fprintln(os.Stderr, "       harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
 			os.Exit(2)
 		}
 		switch args[0] {
@@ -655,6 +657,53 @@ func main() {
 				for _, line := range cli.PortForwardInfoLines(forwards) {
 					fmt.Println(line)
 				}
+			}
+			return
+		case "tap":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
+				os.Exit(2)
+			}
+			id, perr := strconv.ParseUint(args[1], 10, 64)
+			if perr != nil {
+				die(fmt.Errorf("forward tap: bad forward id %q", args[1]))
+			}
+			fs := flag.NewFlagSet("forward tap", flag.ExitOnError)
+			dir := fs.String("dir", "both", "to-target, from-target or both")
+			maxBytes := fs.Uint("max-bytes", 0, "cut each record's payload to this many bytes (0 = whole payload)")
+			asHex := fs.Bool("hex", false, "hexdump body (default)")
+			asText := fs.Bool("text", false, "printable body, no offset column")
+			asRaw := fs.Bool("raw", false, "payload bytes only; requires an explicit --dir")
+			asJSON := fs.Bool("json", false, "one JSON object per record")
+			if err := fs.Parse(args[2:]); err != nil {
+				die(err)
+			}
+			mode, merr := tapMode(*asHex, *asText, *asRaw, *asJSON)
+			if merr != nil {
+				fmt.Fprintln(os.Stderr, merr)
+				os.Exit(2)
+			}
+			// --raw writes payloads with no headers, so two directions
+			// concatenated onto one stdout interleave two conversations into a
+			// byte soup no decoder can read. Refuse rather than produce it.
+			if mode == cli.TapRaw && *dir == "both" {
+				fmt.Fprintln(os.Stderr, "forward tap: --raw needs an explicit --dir (to-target or from-target); "+
+					"both directions on one stdout is not a stream any decoder can read")
+				os.Exit(2)
+			}
+			filter, ferr := cli.ParseTapFilter(*dir)
+			if ferr != nil {
+				die(ferr)
+			}
+			if *maxBytes > math.MaxUint32 {
+				die(fmt.Errorf("forward tap: --max-bytes %d is out of range", *maxBytes))
+			}
+			tctx, cancel := interruptContext("forward tap", ctx)
+			defer cancel()
+			if err := cli.RunForwardTapDial(tctx, parseCID(), id, cli.ForwardTapOpts{
+				Filter: filter, MaxRecordBytes: uint32(*maxBytes), Mode: mode,
+			}, os.Stdout); err != nil {
+				die(err)
 			}
 			return
 		case "kill":
@@ -1526,4 +1575,26 @@ func editViaExternalEditor(name, text string) (string, string, error) {
 		return "", tmp, err
 	}
 	return string(b), tmp, nil
+}
+
+// tapMode turns the four mutually exclusive output flags into one mode. Two at
+// once is refused rather than silently ranked: a caller that asked for both
+// --raw and --json meant something, and guessing which would be wrong half the
+// time.
+func tapMode(asHex, asText, asRaw, asJSON bool) (cli.TapRenderMode, error) {
+	n := 0
+	mode := cli.TapHex
+	for _, c := range []struct {
+		on bool
+		m  cli.TapRenderMode
+	}{{asHex, cli.TapHex}, {asText, cli.TapText}, {asRaw, cli.TapRaw}, {asJSON, cli.TapJSON}} {
+		if c.on {
+			n++
+			mode = c.m
+		}
+	}
+	if n > 1 {
+		return 0, errors.New("forward tap: --hex, --text, --raw and --json are mutually exclusive")
+	}
+	return mode, nil
 }

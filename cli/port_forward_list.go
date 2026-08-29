@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -142,8 +143,31 @@ func PortForwardInfoLines(fs []protocol.PortForwardInfo) []string {
 		lines = append(lines, fmt.Sprintf("  %-6d  %-3s  %-12s  %-40s  %s",
 			fi.ForwardId, PortForwardDirFlag(fi.Direction), principalShort(fi.TaskId.Id[:]),
 			PortForwardSpecString(fi), PortForwardOrigin(fi)))
+		// A second line rather than five more columns: the spec and origin
+		// columns are already 40 and open-ended, and a row that wraps in a
+		// normal terminal is worse than one that takes two lines on purpose.
+		lines = append(lines, "          "+PortForwardTrafficLine(fi))
 	}
 	return lines
+}
+
+// PortForwardTrafficLine renders what a forward has carried. Exported because
+// all three operator surfaces show the same values, and the browser reaches
+// this function over the wasm bridge rather than re-deriving the format in JS.
+//
+// Every field prints, including zeros: `conns=0/0 to-target=0` says the forward
+// is idle, while a blank would say the row does not report traffic. `last` is
+// the one field that reads as a word — it has no measurement to show until the
+// first byte, which is different from a zero duration.
+func PortForwardTrafficLine(fi *protocol.PortForwardInfo) string {
+	last := "never"
+	if fi.LastActivityUnixMs != 0 {
+		last = time.Since(time.UnixMilli(int64(fi.LastActivityUnixMs))).Truncate(time.Second).String() + " ago"
+	}
+	return fmt.Sprintf("conns=%d/%d  to-target=%s  from-target=%s  last=%s  taps=%d",
+		fi.ConnsOpen, fi.ConnsTotal,
+		FormatByteCount(fi.BytesToTarget), FormatByteCount(fi.BytesFromTarget),
+		last, fi.Taps)
 }
 
 // portForwardJSON is the single source of truth for the JSON shape of a
@@ -160,6 +184,14 @@ type portForwardJSON struct {
 	ClientEndpoint string `json:"client_endpoint"`
 	OriginKind     string `json:"origin_kind"`
 	OriginCid      string `json:"origin_cid"`
+	// Traffic. Always emitted, zeros included — the JSON form carries
+	// everything, with no elision.
+	BytesToTarget      uint64 `json:"bytes_to_target"`
+	BytesFromTarget    uint64 `json:"bytes_from_target"`
+	ConnsTotal         uint64 `json:"conns_total"`
+	ConnsOpen          uint32 `json:"conns_open"`
+	Taps               uint16 `json:"taps"`
+	LastActivityUnixMs uint64 `json:"last_activity_unix_ms"`
 }
 
 // clientEndpointJSON renders the JSON contract's own spelling for the enum:
@@ -226,6 +258,13 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 		ClientEndpoint: clientEndpointJSON(fi.ClientEndpoint),
 		OriginKind:     strings.ToLower(fi.OriginKind.String()),
 		OriginCid:      string(fi.OriginCid),
+
+		BytesToTarget:      fi.BytesToTarget,
+		BytesFromTarget:    fi.BytesFromTarget,
+		ConnsTotal:         fi.ConnsTotal,
+		ConnsOpen:          fi.ConnsOpen,
+		Taps:               fi.Taps,
+		LastActivityUnixMs: fi.LastActivityUnixMs,
 	})
 	return string(b)
 }

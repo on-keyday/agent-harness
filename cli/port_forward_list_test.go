@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -198,6 +200,83 @@ func TestPortForwardConfigSpecRefusesEveryInProcessKind(t *testing.T) {
 		fi := &protocol.PortForwardInfo{Direction: protocol.PortForwardDirection_Local, ClientEndpoint: k}
 		if _, ok := PortForwardConfigSpec(fi); ok {
 			t.Errorf("%v was reported savable", k)
+		}
+	}
+}
+
+// A forward that has carried nothing prints zeros. 0 is a measurement; a blank
+// column reads as "this row does not report traffic", which is a different and
+// false claim.
+func TestForwardRowPrintsZeroCounters(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.ForwardId = 7
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.BindPort = 8080
+	fi.SetTargetHost([]byte("localhost"))
+	fi.TargetPort = 3000
+	fi.SetOriginCid([]byte("ws:abc"))
+
+	joined := strings.Join(PortForwardInfoLines([]protocol.PortForwardInfo{fi}), "\n")
+	for _, want := range []string{"conns=0/0", "to-target=0", "from-target=0", "taps=0", "last=never"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("row elides a zero measurement (%q missing):\n%s", want, joined)
+		}
+	}
+}
+
+func TestForwardTrafficLineRendersCounts(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.BytesToTarget = 1 << 20
+	fi.BytesFromTarget = 2048
+	fi.ConnsTotal = 41
+	fi.ConnsOpen = 3
+	fi.Taps = 2
+	fi.LastActivityUnixMs = uint64(time.Now().Add(-5 * time.Second).UnixMilli())
+
+	got := PortForwardTrafficLine(&fi)
+	for _, want := range []string{"conns=3/41", "to-target=1.0MB", "from-target=2.0kB", "taps=2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("traffic line missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "last=never") {
+		t.Fatalf("a forward with activity must not say never: %s", got)
+	}
+}
+
+func TestForwardJSONCarriesCounters(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.ForwardId = 7
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.SetTargetHost([]byte("localhost"))
+	fi.SetOriginCid([]byte("ws:abc"))
+	fi.BytesToTarget = 1 << 20
+	fi.ConnsOpen = 2
+	fi.Taps = 1
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(PortForwardInfoJSONLine(&fi)), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"bytes_to_target", "bytes_from_target", "conns_total", "conns_open", "taps", "last_activity_unix_ms"} {
+		if _, ok := got[k]; !ok {
+			t.Fatalf("JSON contract missing %q: %v", k, got)
+		}
+	}
+	if got["bytes_to_target"].(float64) != float64(1<<20) {
+		t.Fatalf("bytes_to_target: %v", got["bytes_to_target"])
+	}
+}
+
+// One renderer for byte sizes, shared by every surface. Zero renders as "0",
+// not "" — same rule as the row above.
+func TestFormatByteCount(t *testing.T) {
+	for _, c := range []struct {
+		in   uint64
+		want string
+	}{{0, "0"}, {512, "512B"}, {2048, "2.0kB"}, {3 << 20, "3.0MB"}} {
+		if got := FormatByteCount(c.in); got != c.want {
+			t.Fatalf("FormatByteCount(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
