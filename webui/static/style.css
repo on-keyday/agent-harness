@@ -1654,6 +1654,53 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .forward-row .btn-danger,
 .exec-row .btn-danger { margin-left: auto; }
 
+/* A forward's entry is the row plus everything hanging off it: the traffic
+   line, and the tap panel when one is open. The row keeps its own flex
+   layout; the entry only stacks them. */
+.forward-entry { margin-bottom: 0.4rem; }
+.forward-entry > .forward-row { margin-bottom: 0; }
+
+/* The traffic line reads like `forward ls` — same string, same order — sitting
+   under the row rather than as a sixth column, because five already fill a
+   phone. Dimmer than the row: it is measurement, not identity. */
+.forward-traffic {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #8a8a8a;
+  padding: 0.15rem 0.6rem 0.35rem;
+  word-break: break-all;
+}
+
+/* Tap button: neither destructive nor primary — it reads. */
+.btn-secondary {
+  background: #23324a;
+  color: #9cdcfe;
+  border: 1px solid #35507a;
+  padding: 0.3rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.btn-secondary:hover { background: #2c3f5e; border-color: #4a6da8; }
+.btn-secondary.btn-active { background: #35507a; color: #d4d4d4; }
+
+/* The tap panel scrolls INSIDE itself in both axes: a hex line is 70-odd
+   columns and must not make the page body scroll sideways on a phone. */
+.forward-tap-panel {
+  max-height: 16rem;
+  overflow: auto;
+  margin: 0 0.6rem 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: #141414;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #d4d4d4;
+  white-space: pre;
+}
+
 /* Under 600px, stack each cell on its own line rather than letting the row
    force the page body to scroll sideways. */
 @media (max-width: 600px) {
@@ -1668,6 +1715,14 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   }
   .forward-row .btn-danger,
   .exec-row .btn-danger { margin-left: 0; align-self: flex-start; }
+  /* Select by CONTAINER, not by button class: a control added to the row
+     later would otherwise fall between the selectors and render differently
+     from its neighbours — the trap the base-row checkbox already hit. */
+  .forward-row > button { align-self: flex-start; }
+  .forward-tap-panel {
+    max-height: 12rem;
+    font-size: 0.7rem;
+  }
 }
 
 /* Port-forward edges on the topology (see

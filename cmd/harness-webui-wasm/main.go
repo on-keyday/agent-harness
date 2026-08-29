@@ -138,6 +138,7 @@ func main() {
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
+		"forwardTap":         js.FuncOf(harnessForwardTap),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
 		"rawSendHTTP":        js.FuncOf(harnessRawSendHTTP),
@@ -944,24 +945,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			}
 			forwards := make([]any, 0, len(fwInfos))
 			for i := range fwInfos {
-				fi := &fwInfos[i]
-				forwards = append(forwards, map[string]any{
-					"forward_id": float64(fi.ForwardId),
-					"dir":        cli.PortForwardDirFlag(fi.Direction),
-					"task":       hex.EncodeToString(fi.TaskId.Id[:]),
-					"spec":       cli.PortForwardSpecString(fi),
-					// origin is the single "kind cid" string (cli.PortForwardOrigin) —
-					// the CLI, TUI, and WebUI all render this exact helper's output so
-					// the three surfaces agree on what "origin" means (the cid half is
-					// what distinguishes two identical specs started by different
-					// clients; a kind-only rendering was Task 6's caught half-reimplementation).
-					"origin": cli.PortForwardOrigin(fi),
-					// origin_cid is the join key for the topology's forward edges:
-					// it matches conns[].cid exactly. `origin` above is the display
-					// form ("<kind> <cid>"), and splitting that to recover the cid
-					// would make the diagram depend on a formatting convention.
-					"origin_cid": string(fi.OriginCid),
-				})
+				forwards = append(forwards, cli.ForwardSnapshotRow(&fwInfos[i]))
 			}
 			// Execs ride the same poll as forwards, and for the same reason:
 			// both are shared server-side registries with no push
@@ -3437,4 +3421,90 @@ func harnessStreamFinish(this js.Value, args []js.Value) any {
 			Kind: streamagent.KindFinish, Finish: &streamagent.Finish{},
 		}, nil
 	})
+}
+
+// harnessForwardTap taps one forward and streams its rendered lines to the page.
+//
+//	harness.forwardTap(forwardId, opts, onLines, onEnd) -> { close() }
+//
+// Unlike the Promise-returning bridges above this is a SUBSCRIPTION: it returns
+// a handle synchronously and delivers lines by callback until the forward ends
+// or the page closes it. A Promise would resolve once, which is the wrong shape
+// for something that produces output for as long as the operator watches.
+//
+// Lines are rendered by cli.RenderTapRecord on this side of the bridge, so the
+// panel prints exactly what `harness-cli forward tap` prints and the page never
+// formats a record itself.
+//
+// It runs on currentClient() — the long-lived connection the page already holds
+// — for the reason every other bridge here does: a fresh dial would throw away
+// a handshake.
+func harnessForwardTap(this js.Value, args []js.Value) any {
+	if len(args) < 3 || args[0].IsUndefined() {
+		slog.Warn("forwardTap: want (forwardId, opts, onLines[, onEnd])")
+		return js.Undefined()
+	}
+	forwardID := uint64(args[0].Float())
+	filter := protocol.ForwardTapFilter_Both
+	var maxRecordBytes uint32
+	if opts := args[1]; opts.Truthy() {
+		if d := opts.Get("dir"); d.Truthy() {
+			parsed, err := cli.ParseTapFilter(d.String())
+			if err != nil {
+				slog.Warn("forwardTap: bad dir", "err", err)
+				return js.Undefined()
+			}
+			filter = parsed
+		}
+		if mb := opts.Get("maxBytes"); mb.Truthy() {
+			maxRecordBytes = uint32(mb.Float())
+		}
+	}
+	onLines := args[2]
+	var onEnd js.Value
+	if len(args) > 3 {
+		onEnd = args[3]
+	}
+
+	ctx, cancel := context.WithCancel(rootCtx)
+	go func() {
+		c, err := currentClient()
+		if err != nil {
+			cancel()
+			if onEnd.Truthy() {
+				onEnd.Invoke(err.Error())
+			}
+			return
+		}
+		serr := cli.StreamForwardTap(ctx, c, forwardID, cli.ForwardTapOpts{
+			Filter: filter, MaxRecordBytes: maxRecordBytes, Mode: cli.TapHex,
+		}, func(lines []string) {
+			if !onLines.Truthy() {
+				return
+			}
+			arr := make([]any, 0, len(lines))
+			for _, l := range lines {
+				arr = append(arr, l)
+			}
+			onLines.Invoke(js.ValueOf(arr))
+		})
+		if ctx.Err() != nil {
+			return // the page closed it; not an end worth reporting
+		}
+		if onEnd.Truthy() {
+			if serr != nil {
+				onEnd.Invoke(serr.Error())
+			} else {
+				onEnd.Invoke(js.Null())
+			}
+		}
+	}()
+
+	handle := map[string]any{
+		"close": js.FuncOf(func(js.Value, []js.Value) any {
+			cancel()
+			return js.Undefined()
+		}),
+	}
+	return js.ValueOf(handle)
 }

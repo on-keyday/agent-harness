@@ -963,6 +963,8 @@ const POLL_INTERVAL_MS = 5000;
       return;
     }
     for (const f of forwards) {
+      const wrap = document.createElement("div");
+      wrap.className = "forward-entry";
       const row = document.createElement("div");
       row.className = "forward-row";
       const taskShort = f.task ? f.task.slice(0, 8) + "…" : "-";
@@ -972,6 +974,12 @@ const POLL_INTERVAL_MS = 5000;
         cell.textContent = text;
         row.appendChild(cell);
       }
+      const tap = document.createElement("button");
+      tap.type = "button";
+      tap.className = "btn-secondary";
+      tap.textContent = "tap";
+      tap.addEventListener("click", () => toggleForwardTap(f, wrap, tap));
+      row.appendChild(tap);
       const kill = document.createElement("button");
       kill.type = "button";
       kill.className = "btn-danger";
@@ -989,8 +997,97 @@ const POLL_INTERVAL_MS = 5000;
         }
       });
       row.appendChild(kill);
-      host.appendChild(row);
+      wrap.appendChild(row);
+
+      // The traffic line is a SECOND line inside the entry, not a sixth
+      // column: five columns already fill 390px, and the string comes straight
+      // from cli.PortForwardTrafficLine so this reads exactly like `forward ls`.
+      const traffic = document.createElement("div");
+      traffic.className = "forward-traffic";
+      traffic.textContent = f.traffic || "";
+      wrap.appendChild(traffic);
+
+      // A tap panel already open for this forward survives the poll that
+      // rebuilt the list: without this, every 5s refresh would close it.
+      const live = openTaps.get(f.forward_id);
+      if (live) {
+        wrap.appendChild(live.panel);
+        tap.textContent = "untap";
+        tap.classList.add("btn-active");
+      }
+      host.appendChild(wrap);
     }
+  }
+
+  // openTaps maps forward_id -> { panel, close }. A tap is a live subscription,
+  // so it outlives the 5s snapshot poll that rebuilds the rows around it — the
+  // panel element is re-attached rather than recreated.
+  const openTaps = new Map();
+
+  // findForwardEntry locates a rendered forward row so the command input can
+  // drive the same panel the row's own button does.
+  function findForwardEntry(forwardID) {
+    const host = document.getElementById("forward-list");
+    if (!host) return null;
+    for (const wrap of host.querySelectorAll(".forward-entry")) {
+      const first = wrap.querySelector(".forward-cell");
+      if (first && first.textContent === `#${forwardID}`) {
+        const buttons = wrap.querySelectorAll(".forward-row > button");
+        return { wrap, button: buttons[0] };
+      }
+    }
+    return null;
+  }
+
+  // toggleForwardTap starts or stops a tap on one forward and shows its lines
+  // in a panel under the row.
+  //
+  // Lines arrive already rendered by cli.RenderTapRecord over the wasm bridge:
+  // the browser never formats a record itself, so this panel prints what
+  // `harness-cli forward tap` prints.
+  function toggleForwardTap(f, wrap, btn) {
+    const existing = openTaps.get(f.forward_id);
+    if (existing) {
+      existing.close();
+      openTaps.delete(f.forward_id);
+      existing.panel.remove();
+      btn.textContent = "tap";
+      btn.classList.remove("btn-active");
+      return;
+    }
+    const panel = document.createElement("pre");
+    panel.className = "forward-tap-panel";
+    panel.textContent = "";
+    wrap.appendChild(panel);
+
+    let stopped = false;
+    const append = (lines) => {
+      if (stopped) return;
+      // Pinned to the bottom unless the reader has scrolled up: a tap on a
+      // busy forward would otherwise make its own scrollback unreadable.
+      const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
+      panel.textContent += lines.join("\n") + "\n";
+      const lineCount = panel.textContent.split("\n").length;
+      if (lineCount > 4000) {
+        panel.textContent = panel.textContent.split("\n").slice(-2000).join("\n");
+      }
+      if (atBottom) panel.scrollTop = panel.scrollHeight;
+    };
+
+    let closeFn = () => { stopped = true; };
+    try {
+      const handle = window.harness.forwardTap(f.forward_id, { dir: "both" }, append, (err) => {
+        append([err ? `-- tap ended: ${err} --` : "-- tap ended --"]);
+      });
+      if (handle && typeof handle.close === "function") {
+        closeFn = () => { stopped = true; handle.close(); };
+      }
+    } catch (err) {
+      append([`-- tap failed: ${err.message} --`]);
+    }
+    openTaps.set(f.forward_id, { panel, close: closeFn });
+    btn.textContent = "untap";
+    btn.classList.add("btn-active");
   }
 
   // renderExecList draws one row per running exec (every exec visible to this
@@ -2517,15 +2614,27 @@ const POLL_INTERVAL_MS = 5000;
           if (sub === "ls") {
             const fs = lastForwards || [];
             out = fs.length
-              ? fs.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}`).join("\n")
+              ? fs.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n")
               : "(no active port forwards)";
           } else if (sub === "kill") {
             const id = parseInt(tokens[2], 10);
             if (!Number.isFinite(id)) throw new Error("forward kill: usage: forward kill <forward-id>");
             await window.harness.forwardKill(id);
             out = `killed forward ${id}`;
+          } else if (sub === "tap") {
+            // The command input starts the same tap the row's button does, and
+            // shows it in the same panel: a second rendering path for the same
+            // subscription is how two surfaces end up disagreeing.
+            const id = parseInt(tokens[2], 10);
+            if (!Number.isFinite(id)) throw new Error("forward tap: usage: forward tap <forward-id>");
+            const f = (lastForwards || []).find((x) => x.forward_id === id);
+            if (!f) throw new Error(`forward tap: no such forward ${id} in the current snapshot`);
+            const entry = findForwardEntry(id);
+            if (!entry) throw new Error(`forward tap: forward ${id} has no row to attach a panel to`);
+            toggleForwardTap(f, entry.wrap, entry.button);
+            out = openTaps.has(id) ? `tapping forward ${id}` : `stopped tapping forward ${id}`;
           } else {
-            throw new Error("forward: usage: forward ls | forward kill <forward-id>");
+            throw new Error("forward: usage: forward ls | forward kill <forward-id> | forward tap <forward-id>");
           }
           break;
         }
@@ -2646,6 +2755,7 @@ const POLL_INTERVAL_MS = 5000;
             "                            --sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)",
             "  forward ls                list registered port forwards (from the last snapshot poll)",
             "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
+            "  forward tap <forward-id>  show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)",
             "  help                      this list",
           ].join("\n");
           break;

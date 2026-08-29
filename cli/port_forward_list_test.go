@@ -280,3 +280,33 @@ func TestFormatByteCount(t *testing.T) {
 		}
 	}
 }
+
+// The snapshot row carries raw numbers AND the rendered line. Raw, because a
+// label cannot be computed with; rendered, because the browser must not grow a
+// second copy of the format.
+func TestForwardSnapshotRowCarriesRawAndRendered(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.ForwardId = 7
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.SetTargetHost([]byte("localhost"))
+	fi.SetOriginCid([]byte("ws:abc"))
+	fi.BytesToTarget = 1 << 20
+	fi.Taps = 2
+
+	m := ForwardSnapshotRow(&fi)
+	for _, k := range []string{
+		"forward_id", "dir", "task", "spec", "origin", "origin_cid",
+		"bytes_to_target", "bytes_from_target", "conns_total", "conns_open",
+		"taps", "last_activity_unix_ms", "traffic",
+	} {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("snapshot row missing %q: %v", k, m)
+		}
+	}
+	if m["bytes_to_target"].(float64) != float64(1<<20) {
+		t.Fatalf("raw value must be a number, got %T", m["bytes_to_target"])
+	}
+	if !strings.Contains(m["traffic"].(string), "taps=2") {
+		t.Fatalf("traffic line: %v", m["traffic"])
+	}
+}
