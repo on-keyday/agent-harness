@@ -217,8 +217,11 @@ enum OpenForwardTapStatus:
     no_such_forward   # unknown id OR not visible to the caller — the same
                       # deliberate conflation KillPortForward already makes,
                       # so an invisible id is not an existence oracle
-    denied            # capability check failed
     internal_error
+    # No `denied` member: a capability failure never reaches this handler.
+    # requiredCap is checked before dispatch and answers with a different
+    # response KIND (PermissionDenied), so a status here could not be set by
+    # anything.
 
 format OpenForwardTapResponse:
     status    :OpenForwardTapStatus
@@ -403,7 +406,17 @@ Two gates, both required:
    lookup. `KillPortForward` is inline because its cap is not.
 2. Visibility — the forward must be in `visiblePortForwards(connID, …)`
    (`server/port_forward_list.go:66`). An invisible id answers `no_such_forward`,
-   never `denied`, so the two cannot be differenced into an existence oracle.
+   the same answer a genuinely unknown one gets, so the two cannot be
+   differenced into an existence oracle.
+
+The two gates report through different channels, and that is the existing
+design rather than a choice made here. A cap failure is answered by
+`denyTaskControl` (`server/task_handler.go:224`) with a `PermissionDenied`
+response naming the missing bit — the handler is never entered — and
+`RoundTripTaskControl` turns it into a `CapabilityError` at a single point
+(`cli/client.go:228`), so `forward tap` inherits the message every capped verb
+already prints. Only the visibility failure travels as a status on the tap's own
+response.
 
 What this does and does not confine, stated plainly because it was the first
 thing to be got wrong in conversation: there is no operator branch in any gate.
@@ -456,8 +469,9 @@ Unit, server:
 - `conns_open` returns to zero when a connection ends, `conns_total` does not
 - a tap whose consumer never reads gets `gap` records with a non-zero
   `dropped_bytes`, the relay is not blocked, and the tap is still open afterwards
-- an invisible forward id answers `no_such_forward`; a visible one without the
-  cap answers `denied`
+- an invisible forward id answers `no_such_forward`; a caller without the cap
+  gets a `PermissionDenied` response naming `forward_tap`, and the tap handler
+  is never entered
 - `max_record_bytes` cuts the payload and reports `truncated_bytes`
 - two taps on one forward both receive, and `taps` reports 2
 - an open with `forward_id = 0`, and one naming a forward killed a moment
