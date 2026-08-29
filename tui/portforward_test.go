@@ -153,19 +153,53 @@ func TestForwardsModalApplySnapshot(t *testing.T) {
 
 	// Pin the id and origin cells directly (column-indexed, not a substring
 	// search over the rendered view).
+	// Cells are addressed by COLUMN NAME, not by a literal index: the columns
+	// have already moved once (the traffic ones landed before origin), and a
+	// hard-coded 4 turns the next such change into a test failure that says
+	// nothing about what broke.
+	origin := forwardColIndex(t, "origin")
+	id := forwardColIndex(t, "id")
 	rowA := portForwardInfoRow(&a)
-	if rowA[0] != "1" {
-		t.Errorf("a: id cell = %q, want %q", rowA[0], "1")
+	if rowA[id] != "1" {
+		t.Errorf("a: id cell = %q, want %q", rowA[id], "1")
 	}
-	if !strings.Contains(rowA[4], "tui") || !strings.Contains(rowA[4], "ws:10.0.0.1:1-1") {
-		t.Errorf("a: origin cell = %q, want kind %q + cid %q", rowA[4], "tui", "ws:10.0.0.1:1-1")
+	if !strings.Contains(rowA[origin], "tui") || !strings.Contains(rowA[origin], "ws:10.0.0.1:1-1") {
+		t.Errorf("a: origin cell = %q, want kind %q + cid %q", rowA[origin], "tui", "ws:10.0.0.1:1-1")
 	}
 	rowB := portForwardInfoRow(&b)
-	if rowB[0] != "2" {
-		t.Errorf("b: id cell = %q, want %q", rowB[0], "2")
+	if rowB[id] != "2" {
+		t.Errorf("b: id cell = %q, want %q", rowB[id], "2")
 	}
-	if !strings.Contains(rowB[4], "cli") || !strings.Contains(rowB[4], "ws:10.0.0.2:2-2") {
-		t.Errorf("b: origin cell = %q, want kind %q + cid %q", rowB[4], "cli", "ws:10.0.0.2:2-2")
+	if !strings.Contains(rowB[origin], "cli") || !strings.Contains(rowB[origin], "ws:10.0.0.2:2-2") {
+		t.Errorf("b: origin cell = %q, want kind %q + cid %q", rowB[origin], "cli", "ws:10.0.0.2:2-2")
+	}
+}
+
+// forwardColIndex resolves a column title to its position, and fails loudly if
+// the column is gone — which is a real change worth failing on, unlike a
+// reordering.
+func forwardColIndex(t *testing.T, title string) int {
+	t.Helper()
+	m := NewForwardsModal()
+	for i, c := range m.baseCols {
+		if c.Title == title {
+			return i
+		}
+	}
+	t.Fatalf("forwards pane has no %q column", title)
+	return -1
+}
+
+// Every row must have exactly one cell per column. bubbles' renderRow indexes
+// row[i] per column, so a mismatch is an index-out-of-range panic at draw time
+// rather than a visible defect.
+func TestForwardRowHasOneCellPerColumn(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.SetTargetHost([]byte("localhost"))
+	fi.SetOriginCid([]byte("ws:abc"))
+	if got, want := len(portForwardInfoRow(&fi)), len(NewForwardsModal().baseCols); got != want {
+		t.Fatalf("row has %d cells, columns %d", got, want)
 	}
 }
 
@@ -491,5 +525,54 @@ func TestForwardsSnapshotMsg_ErrorSurfacesRegardlessOfToCmdresult(t *testing.T) 
 		if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), boom.Error()) {
 			t.Errorf("ToCmdresult=%v: error should still surface in cmdresult", toCmdresult)
 		}
+	}
+}
+
+// The forwards pane reports traffic, and reports it as zero rather than blank
+// for a forward that has carried nothing: 0 is a measurement, absence is not.
+func TestForwardsModalShowsTrafficIncludingZero(t *testing.T) {
+	var fi protocol.PortForwardInfo
+	fi.ForwardId = 7
+	fi.SetBindAddr([]byte("127.0.0.1"))
+	fi.BindPort = 8080
+	fi.SetTargetHost([]byte("localhost"))
+	fi.TargetPort = 3000
+	fi.SetOriginCid([]byte("ws:abc"))
+
+	m := NewForwardsModal()
+	m.Open()
+	m.SetSize(220, 24)
+	m.ApplySnapshot([]protocol.PortForwardInfo{fi})
+	view := m.View()
+	for _, want := range []string{"0/0", "taps"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("forwards pane hides a zero measurement (%q):\n%s", want, view)
+		}
+	}
+}
+
+// bubbles' renderRow indexes row[i] per COLUMN, so a moment holding N columns
+// against N-1-cell rows panics. Resizing must also leave the selection alone.
+func TestForwardsModalResizeKeepsRowsAndCursor(t *testing.T) {
+	var fs []protocol.PortForwardInfo
+	for i := 0; i < 3; i++ {
+		var fi protocol.PortForwardInfo
+		fi.ForwardId = uint64(i + 1)
+		fi.SetBindAddr([]byte("127.0.0.1"))
+		fi.SetTargetHost([]byte("localhost"))
+		fi.SetOriginCid([]byte("ws:abc"))
+		fs = append(fs, fi)
+	}
+	m := NewForwardsModal()
+	m.Open()
+	m.SetSize(220, 24)
+	m.ApplySnapshot(fs)
+	m.table.SetCursor(2)
+	for _, w := range []int{60, 220, 40, 120} {
+		m.SetSize(w, 24)
+		_ = m.View() // must not panic
+	}
+	if got := m.table.Cursor(); got != 2 {
+		t.Fatalf("resize moved the selection to %d", got)
 	}
 }

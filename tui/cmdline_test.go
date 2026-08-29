@@ -1471,3 +1471,32 @@ func TestParseWorkspaceDetach(t *testing.T) {
 		t.Error("workspace apply --stop = nil error, want a refusal")
 	}
 }
+
+func TestCmdlineParsesForwardTap(t *testing.T) {
+	act, err := ParseCommand("forward tap 7 --dir to-target --max-bytes 64", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ta, ok := act.(ForwardTapAction)
+	if !ok {
+		t.Fatalf("action type %T", act)
+	}
+	if ta.ForwardID != 7 || ta.Dir != "to-target" || ta.MaxRecordBytes != 64 {
+		t.Fatalf("parsed %+v", ta)
+	}
+}
+
+// The cmdline accepts exactly what harness-cli accepts, because both go
+// through cli.ParseTapFilter. A direction this surface invented would be a
+// silent divergence.
+func TestCmdlineForwardTapRejectsBadDir(t *testing.T) {
+	if _, err := ParseCommand("forward tap 7 --dir inbound", ""); err == nil {
+		t.Fatal("a bad --dir must be refused here too")
+	}
+	if _, err := ParseCommand("forward tap 7 --nope", ""); err == nil {
+		t.Fatal("an unknown option must be refused, not ignored")
+	}
+	if _, err := ParseCommand("forward tap notanumber", ""); err == nil {
+		t.Fatal("a non-numeric forward id must be refused")
+	}
+}

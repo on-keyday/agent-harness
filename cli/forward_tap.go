@@ -150,3 +150,45 @@ func RunForwardTapDial(ctx context.Context, peerCID objproto.ConnectionID, forwa
 	defer c.Close()
 	return RunForwardTap(ctx, c, forwardID, opts, w)
 }
+
+// StreamForwardTap taps forwardID and hands each record's rendered lines to
+// onLines until the forward ends or ctx is cancelled.
+//
+// It is RunForwardTap with a callback instead of an io.Writer, for the two
+// surfaces that draw into something other than a file: the TUI's view and the
+// browser's panel. Rendering stays in RenderTapRecord so all three print the
+// same text.
+func StreamForwardTap(ctx context.Context, c *Client, forwardID uint64, opts ForwardTapOpts, onLines func([]string)) error {
+	st, err := c.OpenForwardTap(ctx, forwardID, opts)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.CloseBoth() }()
+
+	var reader tapRecordReader
+	for {
+		data, eof, rerr := st.ReadDirectContext(ctx, 64*1024)
+		if len(data) > 0 {
+			recs, derr := reader.push(data)
+			if derr != nil {
+				return derr
+			}
+			var lines []string
+			for _, rec := range recs {
+				lines = append(lines, RenderTapRecord(rec, opts.Mode)...)
+			}
+			if len(lines) > 0 && onLines != nil {
+				onLines(lines)
+			}
+		}
+		if rerr != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return rerr
+		}
+		if eof {
+			return nil
+		}
+	}
+}

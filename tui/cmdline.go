@@ -267,6 +267,15 @@ type ForwardLsAction struct{}
 // ForwardKillAction closes one registered forward by id.
 type ForwardKillAction struct{ ForwardID uint64 }
 
+// ForwardTapAction opens a live view of one forward's traffic. Dir and
+// MaxRecordBytes carry the same meaning as harness-cli's --dir / --max-bytes,
+// parsed by the same cli.ParseTapFilter so the two surfaces cannot drift.
+type ForwardTapAction struct {
+	ForwardID      uint64
+	Dir            string
+	MaxRecordBytes uint32
+}
+
 // ExecRunAction is the `exec` family: run one argv in a task's worktree as its
 // own process, list the running ones, or stop one.
 //
@@ -416,6 +425,7 @@ func (FileNewAction) isAction()             {}
 func (WorkspaceAction) isAction()           {}
 func (ForwardLsAction) isAction()           {}
 func (ForwardKillAction) isAction()         {}
+func (ForwardTapAction) isAction()          {}
 func (ExecRunAction) isAction()             {}
 func (SSHGatewayAction) isAction()          {}
 func (ServerDialRunnerAction) isAction()    {}
@@ -1109,7 +1119,7 @@ func parseFile(args []string) (Action, error) {
 // open`-shaped verb here either. This stays the list/kill surface only.
 func parseForward(args []string) (Action, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("forward: sub-verb required (ls | kill)")
+		return nil, fmt.Errorf("forward: sub-verb required (ls | kill | tap)")
 	}
 	switch args[0] {
 	case "ls":
@@ -1126,8 +1136,44 @@ func parseForward(args []string) (Action, error) {
 			return nil, fmt.Errorf("forward kill: bad forward id %q", args[1])
 		}
 		return ForwardKillAction{ForwardID: id}, nil
+	case "tap":
+		if len(args) < 2 {
+			return nil, fmt.Errorf("forward tap: usage: forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N]")
+		}
+		id, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("forward tap: bad forward id %q", args[1])
+		}
+		act := ForwardTapAction{ForwardID: id, Dir: "both"}
+		rest := args[2:]
+		for len(rest) > 0 {
+			switch rest[0] {
+			case "--dir":
+				if len(rest) < 2 {
+					return nil, fmt.Errorf("forward tap: --dir needs a value")
+				}
+				// Parsed through the shared parser rather than compared here,
+				// so this surface accepts exactly what harness-cli accepts.
+				if _, perr := cli.ParseTapFilter(rest[1]); perr != nil {
+					return nil, perr
+				}
+				act.Dir, rest = rest[1], rest[2:]
+			case "--max-bytes":
+				if len(rest) < 2 {
+					return nil, fmt.Errorf("forward tap: --max-bytes needs a value")
+				}
+				n, nerr := strconv.ParseUint(rest[1], 10, 32)
+				if nerr != nil {
+					return nil, fmt.Errorf("forward tap: bad --max-bytes %q", rest[1])
+				}
+				act.MaxRecordBytes, rest = uint32(n), rest[2:]
+			default:
+				return nil, fmt.Errorf("forward tap: unknown option %q", rest[0])
+			}
+		}
+		return act, nil
 	default:
-		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
+		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill | tap)", args[0])
 	}
 }
 

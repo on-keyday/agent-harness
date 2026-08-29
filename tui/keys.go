@@ -109,6 +109,7 @@ type modalKeyMap struct {
 	ConfirmNoUpper   string
 	Escape           string
 	ForwardKill      string
+	ForwardTap       string
 	BoardRefresh     string
 	BoardPurgeTopic  string
 	BoardPurgeMsg    string
@@ -130,6 +131,9 @@ var modalKeys = modalKeyMap{
 	ConfirmNoUpper:  "N",
 	Escape:          "esc",
 	ForwardKill:     "x",
+	// `t` rather than a shift-variant of the kill key: tapping is a read, not
+	// a stronger form of killing, and the two should not look like a pair.
+	ForwardTap:      "t",
 	BoardRefresh:    "r",
 	BoardPurgeTopic: "x",
 	BoardPurgeMsg:   "X",
@@ -230,7 +234,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Short: "C conns", Long: "connections view"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
-	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Short: "f forwards", Long: "port-forward list (x kills the selected row)"},
+	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Short: "f forwards", Long: "port-forward list (x kills the selected row, t taps its traffic)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},

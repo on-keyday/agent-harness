@@ -379,6 +379,13 @@ func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
 		cli.PortForwardDirFlag(fi.Direction),
 		pfShortID(FormatTaskID(fi.TaskId)),
 		cli.PortForwardSpecString(fi),
+		// Traffic, always rendered: a forward that has carried nothing shows
+		// 0/0 and 0, because a blank cell would say this row does not report
+		// traffic rather than that there is none.
+		fmt.Sprintf("%d/%d", fi.ConnsOpen, fi.ConnsTotal),
+		cli.FormatByteCount(fi.BytesToTarget),
+		cli.FormatByteCount(fi.BytesFromTarget),
+		fmt.Sprintf("%d", fi.Taps),
 		cli.PortForwardOrigin(fi),
 	}
 }
@@ -422,6 +429,14 @@ func NewForwardsModal() ForwardsModal {
 		{Title: "dir", Width: 4},
 		{Title: "task", Width: 12},
 		{Title: "spec", Width: 44},
+		// The traffic columns sit BEFORE origin, which is the flex column, so
+		// the row and the column set always have the same length — there is no
+		// width-conditional column here, and adding one would need the rows
+		// rebuilt in the same step (bubbles indexes row[i] per column).
+		{Title: "conns", Width: 7},
+		{Title: "->tgt", Width: 8},
+		{Title: "<-tgt", Width: 8},
+		{Title: "taps", Width: 5},
 		{Title: "origin", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))

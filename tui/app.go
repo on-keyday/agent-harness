@@ -84,7 +84,11 @@ type App struct {
 	// connections view
 	connsModal    ConnsModal
 	forwardsModal ForwardsModal
-	execsModal    ExecsModal
+	// forwardTap is the live traffic view for one forward. Its pump is stopped
+	// through forwardTapStop, which is nil whenever no tap is running.
+	forwardTap     ForwardTapView
+	forwardTapStop context.CancelFunc
+	execsModal     ExecsModal
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -559,6 +563,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case ForwardTapLinesMsg:
+		// Lines for a tap the operator already closed are dropped rather than
+		// appended into whatever view replaced it.
+		if a.forwardTap.IsOpen() && a.forwardTap.ForwardID() == msg.ForwardID {
+			a.forwardTap.Append(msg.Lines)
+		}
+		return a, nil
+	case ForwardTapEndedMsg:
+		if a.forwardTap.IsOpen() && a.forwardTap.ForwardID() == msg.ForwardID {
+			if msg.Err != nil {
+				a.forwardTap.Append([]string{ErrorStyle.Render("tap ended: " + msg.Err.Error())})
+			} else {
+				a.forwardTap.Append([]string{"-- tap ended --"})
+			}
+		}
+		// The view stays up so the operator can read what it caught; only the
+		// pump is finished.
+		a.forwardTapStop = nil
+		if msg.Err != nil && !a.forwardTap.IsOpen() {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward tap %d: %v", msg.ForwardID, msg.Err)))
+		}
+		return a, nil
 	case ForwardKillResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward kill %d: %v", msg.ID, msg.Err)))
@@ -1315,6 +1341,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.fileEditor.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
 		a.forwardsModal.SetSize(a.width, a.height)
+		a.forwardTap.SetSize(a.width, a.height)
 		a.execsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
 		a.gitModal.SetSize(a.width, a.height)
@@ -1389,6 +1416,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.execsModal, cmd = a.execsModal.Update(msg)
 			return a, cmd
 		}
+		// The tap view is checked BEFORE the forwards pane: it is opened from
+		// that pane and drawn on top of it, so it owns the keys while it is up.
+		if a.forwardTap.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.stopForwardTap()
+				return a, nil
+			}
+			cmd := a.forwardTap.Update(msg)
+			return a, cmd
+		}
 		if a.forwardsModal.IsOpen() {
 			if a.forwardsModal.IsConfirming() {
 				switch msg.String() {
@@ -1412,6 +1449,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.String() == modalKeys.ForwardKill {
 				a.forwardsModal.BeginKillConfirm()
+				return a, nil
+			}
+			if msg.String() == modalKeys.ForwardTap {
+				if id, ok := a.forwardsModal.SelectedID(); ok {
+					return a, a.startForwardTap(ForwardTapAction{ForwardID: id, Dir: "both"})
+				}
 				return a, nil
 			}
 			var cmd tea.Cmd
@@ -2052,6 +2095,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			a.forwardsModal.SetSize(a.width, a.height)
+			a.forwardTap.SetSize(a.width, a.height)
 			a.forwardsModal.Open()
 			return a, DoListForwards(a.client, false)
 		}
@@ -2655,6 +2699,9 @@ func (a *App) View() string {
 	}
 	if a.execsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.execsModal.View())
+	}
+	if a.forwardTap.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardTap.View())
 	}
 	if a.forwardsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardsModal.View())
@@ -3293,6 +3340,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case ForwardKillAction:
 		// No task/spec context: the operator supplied only a bare id.
 		return a, DoKillForward(a.client, v.ForwardID, "", "")
+	case ForwardTapAction:
+		return a, a.startForwardTap(v)
 	case ExecRunAction:
 		return a, a.runExecRunAction(v)
 	case SSHGatewayAction:
