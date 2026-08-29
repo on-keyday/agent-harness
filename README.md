@@ -75,6 +75,13 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Port forwarding: `forward <task-id> -L [bind:]lport:rhost:rport`
       (SSH `-L` style — the runner dials `rhost:rport`, bytes relayed
       over the same transport; `-L` repeatable, foreground until Ctrl-C).
+      `forward ls` reports what each forward has carried — connections,
+      bytes each way, last activity, and how many taps are reading it —
+      and `forward tap <forward-id>` streams the bytes themselves, live.
+      A tap needs the `forward_tap` capability, which `forward_local` does
+      NOT imply: opening a forward and reading the cleartext crossing it
+      are different powers. Nothing is recorded server-side, so a tap sees
+      only what crosses after it opens.
     - Commands in a worktree: `exec <task-id> -- <cmd> [args...]` runs one
       command in the task's worktree as its own process — separate stdout and
       stderr, and the command's exit code becomes yours. `exec ls` / `exec
@@ -297,6 +304,15 @@ bin/harness-cli git <task-id> file [--staged | --rev REV] <path>
 # for reaching a dev server the agent started inside its worktree. Foreground;
 # Ctrl-C tears down. bind defaults to 127.0.0.1; -L is repeatable.
 bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
+
+# 7b. See what a forward is doing. `forward ls` reports traffic per row;
+# `forward tap` shows the bytes, live, as a hexdump (--text for HTTP, --raw
+# to pipe into a decoder, --json for one object per record). Needs the
+# forward_tap capability; an operator holds it, an agent does not unless
+# granted. Only plaintext protocols are legible — a forward carrying TLS
+# yields TLS records.
+bin/harness-cli forward ls
+bin/harness-cli forward tap <forward-id> --text --dir to-target
 
 # 8. Notifications. Push a short status ping — from inside a task or by hand —
 # that shows in the TUI / WebUI notification feed and `notify-watch`. Fire-and-
@@ -634,7 +650,8 @@ scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
 Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, cancel, the three
 session-attach powers, file read / write, local / remote port-forward,
-notify, prune, purge, runner-admin, global info) — and a **target scope**
+reading a forward's payload, notify, prune, purge, runner-admin, global
+info) — and a **target scope**
 bounding WHICH tasks those capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -884,7 +901,8 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ session stream attach / file {ls,push,pull,delete} / git / exec / forward
+/ session stream attach / file {ls,push,pull,delete} / git / exec
+/ forward {ls,kill,tap}
 / grid / caps / scope
 / caps set / caps set-parent / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.

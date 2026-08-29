@@ -558,3 +558,90 @@ These are v1 boundaries chosen while writing, not refusals:
 - **There is no unattributed forward.** Every data stream names a registration
   or is refused (D6), so "a forward that exists but is not counted" is not a
   state this design has.
+
+---
+
+## Amendment — what shipped, 2026-08-29
+
+Recorded so the spec never contradicts the behaviour a later reader verifies
+against.
+
+**The scope gate was missing from this spec.** § Capability and scope named two
+gates — the capability and visibility. The server has a third, and the
+repository's own guard said so: `TestEveryCapabilityDeclaresHowItsTargetIsResolved`
+went red until `forward_tap` was classified, because a forward VISIBLE through a
+global visibility rank may still belong to a task outside the caller's ACTION
+scope. That is the distinction `kill_port_forward` already draws
+(`server/task_handler.go:541-552`). The handler therefore calls
+`h.inScope(connID, Capability_ForwardTap, pf.taskIDHex)` after the visibility
+check — `inScope` rather than `authorize`, because `authorize`'s `hasCap` half
+has already run in the pre-dispatch `requiredCap` gate. An out-of-scope forward
+answers `no_such_forward`, like the other two refusals.
+
+**`spliceBidi` is gone, not extended.** Both port-forward call sites moved to
+`spliceBidiCounted` (`server/forward_splice.go`), which left the original with
+no callers; it is deleted rather than kept as an unused near-duplicate. Its log
+line still said `OpenInteractive: splice ended`, from a caller it had not had
+for some time.
+
+**Task boundaries merged during execution.** The plan's Tasks 1, 2, 5 and 6 
+landed as one commit, and 3 and 4 as parts of it. The repository's completeness
+guards made them inseparable: `TestPortForwardInfoMapsEveryField` fails the
+moment a field is added to the wire struct, so the schema could not land before
+the counters that fill it, and `TestCapabilityTargetClassesMatchTheSource` fails
+until a handler passes the new bit by name, so the classification could not land
+before the handler. That is the guards working as intended, not a planning miss
+— but the plan drew boundaries the tree does not allow.
+
+**`conn_close` carries per-connection totals** (`bytes_to_target` /
+`bytes_from_target`), added while implementing: the forward's running totals
+move under every other connection at once, so a close record built from them
+would report the wrong thing. `connBytes` keeps the halves per connection and
+`closeConn` releases the entry, so a long-lived forward does not grow a map
+entry per connection forever.
+
+**`max_record_bytes` does not shorten the stream.** `stream_offset` advances by
+what CROSSED, not by what was kept, so a truncated tap's offsets still line up
+with `bytes_to_target` on the listing. Pinned by
+`TestTapTruncatesAndKeepsTheOffsetHonest`.
+
+### Surfaces table, checked against the code
+
+| Row | Verdict |
+| --- | --- |
+| CLI rows | **done** — `PortForwardTrafficLine`, on a second line rather than five more columns |
+| CLI JSON | **done** — six fields on `portForwardJSON` |
+| CLI verb | **done** — `forward tap` with `--dir` / `--max-bytes` / `--hex` / `--text` / `--raw` / `--json` |
+| CLI caps catalog | **done** — `GrantableCaps` + `CapDescription` |
+| TUI forwards pane | **done** — four columns, before `origin`, so the column set never varies |
+| TUI tap | **done** — `ForwardTapView`, header outside the viewport |
+| TUI keys | **done** — `modalKeys.ForwardTap` = `t`; the `f` row's help text names it. Not in `mainKeyBindings`, which lists MAIN keys — this is a modal key, like `ForwardKill` |
+| WebUI row | **done** — traffic line under the row |
+| WebUI tap | **done** — per-row button and panel, plus the command input's `forward tap` |
+| wasm snapshot | **done** — `cli.ForwardSnapshotRow`, raw numbers plus the rendered line |
+| README | **done** |
+
+### Verified live, 2026-08-29
+
+Against `scripts/dummy-harness.sh` with a local HTTP target behind a `-L`
+forward:
+
+- `forward ls` on an untouched forward: `conns=0/0  to-target=0  from-target=0
+  last=never  taps=0` — every zero printed.
+- After one request: `conns=0/1  to-target=91B  from-target=160B  last=2s ago
+  taps=1`. The two directions are counted separately and correctly (91 bytes of
+  request toward the target, 160 of response back).
+- `forward tap` printed `conn open` / `->` / `<-` / `conn close ->91B <-160B`
+  with the xxd body; `--json`, `--text` and the `--dir` filter all behave as
+  specified, and `--raw` without `--dir` is refused.
+- WebUI at desktop and at 390px: the row's traffic line and the tap panel render,
+  the panel scrolls inside itself, the page body does not scroll sideways, and
+  the panel survives the 5s snapshot poll that rebuilds the rows around it. Both
+  entry points work — the row's button and the command input's `forward tap`.
+
+Not verified live: the capability refusal for a confined AGENT. `harness-cli`
+from inside an `exec`-spawned child of the dummy could not authenticate at all
+(`psk: server rejected: BadTicket`, which `whoami` reproduces), so the failure
+is upstream of this feature and unrelated to it. The gate has direct unit
+coverage instead — the `requiredCap` entry, the invisible-forward refusal and
+the out-of-action-scope refusal.

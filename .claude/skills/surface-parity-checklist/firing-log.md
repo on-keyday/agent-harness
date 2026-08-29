@@ -1313,6 +1313,52 @@ omitted: 32, second half (the loopback / authorized-keys refusal is NOT
          no file — the design's own Scope says so. Not a surface this can reach)
 
 
+### 2026-08-29 — port-forward traffic counters + `forward tap`
+
+done:    1, 2, 3, 4, 6, 7, 8, 10, 13, 15, 23, 24, 27, 28a, 29, 30, 31, 32, 33,
+         34, 34a, 35, 36, 37, 39
+omitted: 25 (`max_record_bytes = 0` is a real value — "the whole payload" — not
+         an absent one, so presence needs no bit; stated in the schema comment)
+         28 (counters are per REGISTRATION and die with it; a forward does not
+         outlive its row, so there is nothing for the WAL to replay. Deliberate:
+         persisting them would mean inventing a lifetime the object lacks)
+         38 (the TUI grid pane and the WebUI session preview render a SESSION's
+         screen; a forward has no screen. Asked properly rather than assumed —
+         grepped both panes for what they draw before recording it)
+
+Notes worth keeping:
+
+- **36 fired as a real gap, for the second time in the same shape.** Its own row
+  below records `exec_run` shipping grantable-to-an-agent with no agent-facing
+  text naming the verb. `forward_tap` is grantable to an agent too, and the
+  granular-names list in `supervising-workers/SKILL.md` would have shipped
+  without it — the same list, the same omission, one feature later. The list now
+  also says what the bit reaches and what it is NOT implied by, because "a name
+  in a list" was what let the previous one hide.
+
+- **31 fired on a whole row rather than one field.** Every counter prints at
+  zero (`conns=0/0 to-target=0 from-target=0 taps=0`); `last` is the one that
+  reads as a word, and it gates on EXISTENCE — no byte has ever crossed — not on
+  the value being small. That is the item's own distinction, applied without
+  having to be reminded of it this time.
+
+- **34 answered by REMOVING the condition.** The traffic columns are
+  unconditional and sit before the flex column, so the column set never varies
+  and the swap invariant is untouched. A test now pins row length == column
+  count, which is cheaper than the `applyColumns` dance the item describes and
+  is available only because nothing here is width-conditional.
+
+- **A guard OUTSIDE this checklist did the work three times.** The repo's own
+  completeness tests — `TestPortForwardInfoMapsEveryField`,
+  `TestEveryTaskControlKindIsClassified`,
+  `TestEveryCapabilityDeclaresHowItsTargetIsResolved`,
+  `TestGrantableCapsCoversEveryBitOfAll` — each went red on a half-done step and
+  named exactly what was missing. Two of them found things this checklist does
+  not ask about at all: that a new capability needs a target-resolution
+  classification, and that its handler must pass the bit to `inScope` BY NAME.
+  Worth noting because it is the counter-example to the log's premise: not every
+  parity failure is a UI surface, and the cheapest guards here are executable.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -1322,7 +1368,7 @@ Update when adding an entry.
 | 31 (don't hide a value for what it IS) | 17 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
 | 16 (TUI task table) | 3 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
-| 34 (dynamic column sets) | 3 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. |
+| 34 (dynamic column sets) | 4 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. |
 | 17 (TUI detail popup) | 4 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
 | 33 (take effect or error) | 17 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
@@ -1335,10 +1381,10 @@ Update when adding an entry.
 | 34a (same KIND of control as its neighbours) | 4 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 | 38 (live screen-rendering surfaces) | 6 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. |
 | 29 (result messages name the target and the change) | 9 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
-| 36 (agent-facing skill texts) | 3 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
+| 36 (agent-facing skill texts) | 4 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 | 6 (WebUI controls) | 5 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |
 | 39 (feature's own surface matrix vs. what shipped) | 2 | **1** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). |
-| 15 (caps catalog) | 1 | 0 | First row, and it fired on a change that added NO capability: `purge` now gates two verbs with different outcomes (`board purge` destroys, `board retract` withdraws), so the catalog line understated the grant while being literally accurate. The item's question is not "was a bit added" but "does the description still name everything the bit reaches". |
+| 15 (caps catalog) | 2 | 0 | First row, and it fired on a change that added NO capability: `purge` now gates two verbs with different outcomes (`board purge` destroys, `board retract` withdraws), so the catalog line understated the grant while being literally accurate. The item's question is not "was a bit added" but "does the description still name everything the bit reaches". |
 
 **Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

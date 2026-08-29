@@ -381,11 +381,15 @@ and the scope forms (`--json` for the machine-readable form).
 
 Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `file_read`, `file_write`,
-`forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,
-`board_observe`, `purge` — plus the aliases `none` / `all`. `harness-cli caps`
+`forward_local`, `forward_remote`, `forward_tap`, `notify`, `prune`,
+`runner_admin`, `board_observe`, `purge` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
-`exec_resize` and `exec_run` sit BESIDE the three attach caps rather than
-inside their ranking — resizing is availability and running a command in the
+`forward_tap` reads the PAYLOAD crossing a port forward (`forward tap`) —
+cleartext, so routinely Authorization headers and credentials. Holding a
+forward is a different power from reading what goes through it, so
+`forward_local` does not imply it and neither does `forward_remote`; the byte
+COUNTS on `forward ls` need neither. `exec_resize` and `exec_run` sit BESIDE
+the three attach caps rather than inside their ranking — resizing is availability and running a command in the
 worktree touches no session at all, so neither is implied by being allowed to
 type. The three attach caps are ranked and checked with implication:
 `exec_view` reads a session, `exec_cowrite` also types into one, `exec_control`
