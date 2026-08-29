@@ -37,7 +37,7 @@ it while writing — those are the rows worth a second look.
 | D3 | A dedicated capability gates the content tap — `forward_local` does not imply it | operator |
 | D4 | No recording. A tap sees bytes from the moment it opens; the server buffers nothing and writes nothing | operator |
 | D5 | Counters are always-on (atomic adds, no storage) — they are the answer to P1, which is a glance, not a subscription | this spec |
-| D6 | `OpenPortForwardRequest` gains `forward_id`, so a data stream names its registration instead of being matched by heuristic | this spec |
+| D6 | `OpenPortForwardRequest` gains `forward_id`, so a data stream names its registration instead of being matched by heuristic. An id that names nothing — 0 included — is refused, never relayed uncounted | this spec |
 | D7 | A tap that cannot keep up gets a `gap` record and stays alive; it is never dropped | operator (confirmed) |
 | D8 | Directions are named `to_target` / `from_target`, never tx/rx | this spec |
 | D9 | Every record carries a `conn_seq` — one forward multiplexes many TCP connections | this spec |
@@ -103,9 +103,22 @@ That stays as it is, and still gets attributed: the pin's id is already in
 which is the row the pin was invented to be. WebUI preview traffic is counted
 and tappable without a row per request.
 
-`forward_id = 0` therefore means "no registration" and is accepted — the field
-needs a defined zero and a client older than this change sends one — but after
-D6 no caller in this tree sends it.
+**`forward_id = 0` is refused, not relayed uncounted.** It has no legitimate
+sender. A client older than this change does not send a zero — it sends a
+message eight bytes short, `OpenPortForwardRequest.Read` fails on `io.ReadFull`,
+and the server drops the request with a decode error
+(`server/task_handler.go:247`); version skew is loud on its own. The only way
+to reach a zero is a Go zero-valued struct inside this repository, i.e. a call
+site that forgot the field.
+
+Accepting that would produce a data stream that no listing shows, no counter
+counts and no `forward kill` can name — the exact state `OpenRawForward`'s own
+doc says the registry exists to prevent (`cli/forward_endpoint.go:36-38`), and
+a silently-ignored typed field, which `surface-parity-checklist` item 33 rules
+out. So the open answers `no_such_forward` and the caller learns immediately.
+A non-zero id that is not in the registry gets the same answer, which also
+covers the real race: a forward killed between its registration and an open
+underneath it.
 
 ## Shape
 
@@ -166,6 +179,21 @@ format PortForwardInfo:
     conns_open            :u32
     taps                  :u16  # how many taps are open on this forward RIGHT NOW
     last_activity_unix_ms :u64  # 0 = no byte has ever crossed
+
+# --- (A) attribution: the data stream names its registration (D6) ---
+format OpenPortForwardRequest:
+    task_id         :TaskID
+    remote_host_len :u16
+    remote_host     :[remote_host_len]u8
+    remote_port     :u16
+    # The registration these bytes belong to. Appended, so the field order the
+    # existing three keep is unchanged. There is no "unattributed" value: 0 is
+    # refused like any other id that resolves to nothing.
+    forward_id      :u64
+
+enum OpenPortForwardStatus:
+    …
+    no_such_forward   # forward_id names no live registration (0 included)
 
 # --- (B) the tap ---
 format OpenForwardTapRequest:
@@ -228,9 +256,16 @@ The runner wire is **unchanged**. `RunnerOpenPortForwardRequest` does not learn
 the forward id, because the runner dials and relays and has nothing to attribute.
 Restart order therefore excludes runners: server and clients move together,
 runners do not need to (`project_wire_change_kills_runners_server_first` applies
-to `RunnerHello`/PSK, not here). An old client against a new server misparses
-the longer `PortForwardInfo`, so `forward ls` is the surface that breaks if the
-pair is skewed.
+to `RunnerHello`/PSK, not here).
+
+Both formats that grow are fixed-layout, so a skewed pair fails at decode rather
+than misreading a value, in both directions. A new server reading an old
+client's `OpenPortForwardRequest` runs out of bytes in `io.ReadFull` and drops
+the request with `TaskHandler: failed to decode TaskControlRequest`
+(`server/task_handler.go:247`) — the client's round-trip then times out. An old
+client reading a new server's longer `PortForwardInfo` rows fails the same way,
+so `forward ls` is the surface that reports the skew. Neither direction
+degrades quietly, which is why D6 does not need a compatibility value.
 
 ## Server behaviour
 
@@ -246,8 +281,9 @@ taps                            []*forwardTap   // under the registry mutex
 ```
 
 `handleOpenPortForward` looks the forward up by the new `forward_id` and hands
-the entry to the splice; a zero id or an unknown one relays with a nil entry, so
-an unattributable stream still works and is simply not counted. `conn_seq` is
+the entry to the splice. There is no nil-entry path: an id that resolves to
+nothing answers `no_such_forward` before any stream is created, so every splice
+has a registration behind it. `conn_seq` is
 taken from `nextConnSeq` there, and `connsTotal` / `connsOpen` move around the
 splice call rather than inside `relayBytes`, which never learns a connection
 started or ended.
@@ -346,6 +382,8 @@ Unit, server:
   cap answers `denied`
 - `max_record_bytes` cuts the payload and reports `truncated_bytes`
 - two taps on one forward both receive, and `taps` reports 2
+- an open with `forward_id = 0`, and one naming a forward killed a moment
+  earlier, both answer `no_such_forward` and create no stream
 
 E2E against a dummy harness (`scripts/dummy-harness.sh`): `-L` to a local echo
 server, drive known bytes through it, and confirm `forward ls` reports them and
@@ -366,6 +404,6 @@ These are v1 boundaries chosen while writing, not refusals:
   decoder is the escape hatch.
 - **Traffic outside a forward stream is not covered** — notably the sandbox
   connect-proxy, which is not a port forward.
-- **An open carrying no `forward_id`** — 0, which after D6 only a client older
-  than this change sends — is relayed but not counted and cannot be tapped:
-  there is no id to name it by.
+- **There is no unattributed forward.** Every data stream names a registration
+  or is refused (D6), so "a forward that exists but is not counted" is not a
+  state this design has.
