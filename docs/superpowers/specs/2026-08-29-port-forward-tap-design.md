@@ -639,9 +639,16 @@ forward:
   the panel survives the 5s snapshot poll that rebuilds the rows around it. Both
   entry points work — the row's button and the command input's `forward tap`.
 
-Not verified live: the capability refusal for a confined AGENT. `harness-cli`
-from inside an `exec`-spawned child of the dummy could not authenticate at all
-(`psk: server rejected: BadTicket`, which `whoami` reproduces), so the failure
-is upstream of this feature and unrelated to it. The gate has direct unit
-coverage instead — the `requiredCap` entry, the invisible-forward refusal and
-the out-of-action-scope refusal.
+The capability refusal was verified live too, after the bug that blocked it was
+fixed. `harness-cli` from inside an `exec`-spawned child could not authenticate
+at all — the server never issued the child a ticket, so it presented sixteen
+zeros and the PSK gate refused them (`6c6d912`). With that fixed:
+
+- a task holding `forward_local` but not `forward_tap`:
+  `permission denied: OpenForwardTap requires capability forward_tap`
+- the same task granted `forward_local,forward_tap`, tapping the same forward:
+  records arrive, `--max-bytes 32` truncating as specified
+  (`#1 -> 32B (truncated, 54B cut)`).
+
+So the gate refuses and permits on the same forward from the same kind of
+caller, which is the pair worth having.
