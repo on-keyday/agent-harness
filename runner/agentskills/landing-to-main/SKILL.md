@@ -1,6 +1,6 @@
 ---
 name: landing-to-main
-description: Use when landing / pushing / merging a harness task-branch's work to a repo's trunk, AND at the start of a RESUMED session before new work. Covers both local-trunk-authoritative (FF-mirror) repos and PR-based repos. Universal rule — NEVER cherry-pick to the remote (it manufactures dup-SHA divergence) and rebase the task branch onto the current trunk first. Determine each repo's landing policy once and record it in memory.
+description: Use when landing / pushing / merging a harness task-branch's work to a repo's trunk — AND at the START of a session before you write code, to sync the task branch onto the current trunk FIRST (a branch is cut once and never re-synced, so implementing on a stale base makes you rebuild helpers and "fix" footguns the trunk already landed, and hit avoidable conflicts). Covers both local-trunk-authoritative (FF-mirror) repos and PR-based repos. Universal rule — NEVER cherry-pick to the remote (it manufactures dup-SHA divergence) and rebase the task branch onto the current trunk first. Determine each repo's landing policy once and record it in memory.
 ---
 
 # Landing harness task-branch work
@@ -11,6 +11,20 @@ re-synced** — resume just re-attaches the same branch. So the branch drifts fr
 the trunk the longer it lives. **Landing is where that drift becomes divergence
 if you do it wrong.** This skill is about landing safely on any repo the harness
 manages.
+
+## Sync BEFORE you implement — not only before you land
+
+The drift above starts costing you the moment you START CODING on a stale
+branch, not at landing. A branch cut when the trunk was N commits back means you
+are editing yesterday's files: you rebuild helpers the trunk already added,
+"fix" footguns it already closed, and the diff you eventually land can silently
+revert the trunk's changes to the same lines — on top of the merge conflicts.
+
+So run **Procedure A** at the START of a session, before writing any code —
+whenever the trunk may have moved since the branch was cut (a resumed session, a
+long-lived one, or a fresh session whose branch was created off an old HEAD). It
+is cheap up front; the alternative is rediscovering already-landed work and
+untangling a conflicted land after the fact.
 
 "Trunk" below = the repo's default branch (`main` or `master`). Detect once:
 
@@ -84,9 +98,11 @@ gh pr create --base $TRUNK --fill
 Still rebase-first, still never cherry-pick. After the PR merges, local trunk
 follows origin via `git pull --ff-only`.
 
-## Procedure A — Resume-sync (run at the START of a resumed session)
+## Procedure A — Sync onto trunk (run at the START of a session, before building on the branch)
 
-Make the task branch a clean descendant of the current trunk before building on it.
+Make the task branch a clean descendant of the current trunk before building on
+it. Not only on resume: any branch whose trunk has moved since it was cut is
+stale, so this is the first step of new work, not just of a landing.
 
 ```bash
 git stash -u 2>/dev/null
