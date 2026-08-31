@@ -1203,6 +1203,9 @@ scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (
 scripts/sandbox/      opt-in rootless-podman confinement kit for spawned claude
                       (Containerfile + agent-in-podman.sh wrapper + egress
                       firewall / CONNECT-proxy); plugs in via --agent-bin
+scripts/netem-lab/    rootless netns + netem lab: a shaped WAN path (delay, loss,
+                      a bottleneck queue, small MTU, NAT) between server and
+                      runner on one machine, for exercising the transport
 examples/             notify-hook samples (e.g. Discord webhook relay)
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
