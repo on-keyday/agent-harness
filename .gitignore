@@ -21,7 +21,11 @@ bin/
 /harness-webui-wasm
 /sandbox-connect-proxy
 scripts/.venv/
-scripts/__pycache__/
+# Unanchored, so it matches at any depth. This was `scripts/__pycache__/`,
+# which is that one directory only — the moment scripts/netem-lab/ gained
+# importable modules, its own __pycache__/ appeared untracked in `git status`,
+# one `git add -A` away from the same fate as the strays listed above.
+__pycache__/
 
 # superpowers brainstorm scratch (mockups, server state)
 .superpowers/

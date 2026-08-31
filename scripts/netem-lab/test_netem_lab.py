@@ -13,7 +13,10 @@ Run directly::
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -23,6 +26,13 @@ sys.path.insert(0, str(_HERE))
 
 import shaping  # noqa: E402  (path set above)
 import nsutil  # noqa: E402
+
+# netem-lab.py has a hyphen, so it cannot be imported by name. Same importlib
+# route scripts/test_dummy_harness.py already uses on dummy-harness.py.
+_LAB = _HERE / "netem-lab.py"
+_spec = importlib.util.spec_from_file_location("netem_lab", _LAB)
+netem_lab = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(netem_lab)
 
 
 class TestProfiles(unittest.TestCase):
@@ -199,6 +209,45 @@ class TestPreflight(unittest.TestCase):
             problems = nsutil.preflight_problems(run=fake)
         self.assertTrue(any("missing from PATH" in p for p in problems))
         self.assertEqual(fake.calls, [], "probed with the tools it needs absent")
+
+
+class TestState(unittest.TestCase):
+    """The state file is the only record of what to kill. Its loss leaves a
+    server, a runner and three namespace holders alive with nothing naming
+    them."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._env = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(self._env)))
+        os.environ["TMPDIR"] = self.tmp.name
+
+    def test_round_trip_keeps_every_pid(self):
+        st = {
+            "USERNS_PID": 11, "SRV_PID": 22, "CLI_PID": 33,
+            "SERVER_PID": 44, "RUNNER_PID": 55,
+            "CID": "udp:10.90.0.2:9000-*", "HARNESS_PSK": "p",
+            "TMP": self.tmp.name, "REPO": self.tmp.name,
+            "SUBNET_A": "10.90.0.0/24", "SUBNET_B": "10.91.0.0/24",
+            "PROFILE": "wan-us",
+        }
+        netem_lab.write_state("t", st)
+        self.assertEqual(netem_lab.read_state("t"), st)
+
+    def test_reading_an_absent_instance_is_none_not_an_error(self):
+        self.assertIsNone(netem_lab.read_state("nope"))
+
+    def test_down_on_an_absent_instance_is_a_no_op(self):
+        self.assertEqual(netem_lab.cmd_down("nope"), 0)
+
+    def test_state_dir_ignores_TMP(self):
+        # dummy-harness.py's `env` exports TMP set to its own instance dir, and
+        # tempfile.gettempdir() consults TMP first. Sourcing that in a shell
+        # once made every later call resolve its state dir inside the instance,
+        # `down` report nothing to stop, and a server and runner leak.
+        os.environ["TMP"] = "/definitely/not/here"
+        self.assertNotIn("definitely", str(netem_lab.state_dir()))
 
 
 if __name__ == "__main__":
