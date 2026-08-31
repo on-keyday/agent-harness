@@ -183,6 +183,44 @@ Step 1 is not optional. A lab whose measured RTT does not match its profile is
 not a lab, and the cheapest moment to find out is before you have a number you
 believe.
 
+## `bench` — and why a single number is not a result
+
+```bash
+scripts/netem-lab/netem-lab.py --name t1 bench --runs 6 --size-mb 100
+```
+
+Pushes the same file N times against a throwaway sink task it creates and
+cancels itself, discards a warm-up run, pins server / runner / client to
+separate cores (`--no-pin` to skip), and reports the **spread** alongside the
+middle:
+
+```
+  n=6  median=10.07  mean=10.85  stdev=2.67 (27%)  min=7.56  max=14.47  spread=1.91x
+  RESOLUTION: this run can distinguish differences larger than about 31%.
+```
+
+**The resolution line is the point of the verb.** This workload measured
+6.76–12.70 MB/s across six runs of one unchanged build. A lone number therefore
+says nothing about any change smaller than roughly 2×, and this project has
+twice mistaken one for a finding: an `O(n²)` allocation removed from the send
+path and a relay chunk size raised 64× both produced "improvements" that were
+entirely inside the noise. The one real result of that investigation — a UDP
+receive buffer left at 208 KB — was a 5.5× change, which is why a single run
+could see it.
+
+So: **quote the median of a `bench` run, never a single push, and do not claim
+a change smaller than the resolution figure did anything.**
+
+Two things measured about the noise itself, so nobody re-derives them:
+
+- **Pinning does not help.** stdev 27% pinned vs 23% unpinned. CPU contention
+  between the three processes is not the source.
+- **More runs help slowly.** n=6 → 31%, n=16 → 26%: the distribution has a fat
+  tail, so a larger sample raises the observed stdev and partly cancels the
+  `1/√n` gain. Reaching ~10% would need on the order of 60 runs. Reducing the
+  underlying variance is the better lever, and where it comes from is not yet
+  known.
+
 ## Reading `show`
 
 `show` prints `tc -s qdisc show` for both shaped devices. The counters are how

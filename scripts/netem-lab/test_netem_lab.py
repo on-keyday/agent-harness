@@ -250,5 +250,41 @@ class TestState(unittest.TestCase):
         self.assertNotIn("definitely", str(netem_lab.state_dir()))
 
 
+class TestBenchSummary(unittest.TestCase):
+    """The summary exists to stop a single number being read as evidence, so
+    the resolution figure is the part that must not be wrong."""
+
+    def test_one_run_resolves_nothing_and_says_so(self):
+        out = netem_lab._bench_summary([9.8])
+        self.assertIn("resolves nothing", out)
+
+    def test_no_runs_does_not_divide_by_zero(self):
+        self.assertIn("no successful runs", netem_lab._bench_summary([]))
+
+    def test_resolution_shrinks_as_runs_are_added(self):
+        # Same spread, more samples: the difference a run set can distinguish
+        # gets smaller. If this ever inverts, the figure is lying in the
+        # direction that matters.
+        spread = [8.0, 12.0, 9.0, 11.0, 10.0, 10.5]
+        few = netem_lab._bench_summary(spread[:3])
+        many = netem_lab._bench_summary(spread * 4)
+        pct = lambda s: float(s.split("larger than about ")[1].split("%")[0])
+        self.assertLess(pct(many), pct(few))
+
+    def test_resolution_grows_with_noise(self):
+        tight = netem_lab._bench_summary([10.0, 10.1, 9.9, 10.0, 10.05])
+        loose = netem_lab._bench_summary([6.8, 12.7, 10.3, 7.5, 11.5])
+        pct = lambda s: float(s.split("larger than about ")[1].split("%")[0])
+        self.assertGreater(pct(loose), pct(tight))
+
+    def test_the_measured_session_numbers_are_not_resolvable_at_10_percent(self):
+        # The six runs that ended the investigation. Whatever else changes,
+        # this set must not claim it could have detected a 10% improvement.
+        out = netem_lab._bench_summary([6.76, 10.26, 10.13, 11.46, 12.70, 7.52])
+        pct = float(out.split("larger than about ")[1].split("%")[0])
+        self.assertGreater(pct, 10.0)
+        self.assertIn("spread=1.88x", out)
+
+
 if __name__ == "__main__":
     unittest.main()

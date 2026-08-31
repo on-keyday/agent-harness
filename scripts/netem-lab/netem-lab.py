@@ -30,7 +30,9 @@ import getpass
 import importlib.util
 import ipaddress
 import json
+import math
 import os
+import statistics
 import secrets
 import shutil
 import subprocess
@@ -197,9 +199,29 @@ def _addrs(cidr: str) -> tuple[str, str, int]:
     return str(hosts[0]), str(hosts[1]), net.prefixlen
 
 
+def ns_env(st: dict) -> dict:
+    """The environment for anything run inside the lab.
+
+    main() scrubs HARNESS_* out of this process, which is right for what `up`
+    spawns and wrong for everything run against the lab afterwards: the usual
+    thing to run is harness-cli, and a scrubbed environment leaves it with no
+    credential, so the server answers BadPsk — an error that reads as a WRONG
+    psk rather than an absent one.
+
+    This lives in the shared helper rather than in one verb. It was in cmd_exec
+    alone at first, and `bench` — a second caller, added later — hit the same
+    BadPsk on its first run. A guard belongs where every caller passes.
+    """
+    env = os.environ.copy()
+    if st.get("HARNESS_PSK"):
+        env["HARNESS_PSK"] = st["HARNESS_PSK"]
+    return env
+
+
 def ns_run(st: dict, ns: str, argv: list[str], check: bool = True, **kw):
     """Run one command inside one of the lab's namespaces."""
     prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
+    kw.setdefault("env", ns_env(st))
     proc = subprocess.run(
         [*prefix, *[str(a) for a in argv]],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -573,17 +595,9 @@ def cmd_exec(name: str, ns: str, argv: list[str]) -> int:
     if not argv:
         die("exec needs a command after `--`")
     prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
-    # main() scrubbed HARNESS_* out of this process. That is right for what
-    # `up` spawns and wrong here: the usual reason to run `exec` at all is
-    # harness-cli, and a scrubbed environment leaves it with no credential, so
-    # the server answers BadPsk — which reads as a WRONG psk rather than an
-    # absent one and sends you looking in the wrong place. Re-inject THIS
-    # instance's, so `exec` works whether or not the caller ran
-    # `eval "$(netem-lab.py env)"` first.
-    env = os.environ.copy()
-    if st.get("HARNESS_PSK"):
-        env["HARNESS_PSK"] = st["HARNESS_PSK"]
-    return subprocess.run([*prefix, *argv], env=env).returncode
+    # ns_env re-injects this instance's PSK; see there for why. It means `exec`
+    # works whether or not the caller ran `eval "$(netem-lab.py env)"` first.
+    return subprocess.run([*prefix, *argv], env=ns_env(st)).returncode
 
 
 def cmd_show(name: str) -> int:
@@ -607,6 +621,135 @@ def cmd_show(name: str) -> int:
     for ns in ("srv", "cli"):
         print(f"{ns}: {st[f'{ns.upper()}_IP']} via {st[f'{ns.upper()}_RTR_IP']}")
     return 0
+
+
+def _pin(st: dict, cpus: list[int]) -> str:
+    """Pin the server and the runner to cores of their own.
+
+    CPU affinity is not namespaced, so this is set from the host against the
+    pids the state file already records. Returns a line describing what was
+    done, or why it was not.
+    """
+    if len(cpus) < 3:
+        return f"pinning skipped: {len(cpus)} cpu(s) available, need 3"
+    placed = []
+    for key, cpu in (("SERVER_PID", cpus[0]), ("RUNNER_PID", cpus[1])):
+        pid = st.get(key)
+        if not pid:
+            continue
+        proc = subprocess.run(["taskset", "-cp", str(cpu), str(pid)],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            placed.append(f"{key.split('_')[0].lower()}=cpu{cpu}")
+    placed.append(f"client=cpu{cpus[2]}")
+    return "pinned " + " ".join(placed)
+
+
+def _bench_payload(st: dict, size_mb: int) -> Path:
+    """The file every run pushes. Generated once and reused: regenerating it
+    per run would put `dd` and the page cache inside the measurement."""
+    path = Path(st["TMP"]) / f"bench-{size_mb}mb.bin"
+    if not path.is_file() or path.stat().st_size != size_mb * 1024 * 1024:
+        with path.open("wb") as f:
+            chunk = os.urandom(1024 * 1024)
+            for _ in range(size_mb):
+                f.write(chunk)
+    return path
+
+
+def cmd_bench(args) -> int:
+    """Push the same file N times and report the spread as well as the middle.
+
+    The spread is the point. A single run of this workload was measured
+    spanning 6.76-12.70 MB/s on one unchanged build — so a lone number carries
+    no information about a change smaller than about 2x, and two of this
+    project's "findings" were once exactly that. The resolution line at the
+    bottom says what this particular run can actually distinguish.
+    """
+    st = read_state(args.name)
+    if st is None:
+        die(f"no instance named {args.name!r}; run 'up' first")
+    if not st.get("CID"):
+        die("this lab has no harness running; `bench` needs one")
+
+    cpus = sorted(os.sched_getaffinity(0))
+    pin_note = _pin(st, cpus) if args.pin else "pinning disabled (--no-pin)"
+    payload = _bench_payload(st, args.size_mb)
+    size = payload.stat().st_size
+    cli_bin = str(dh.daemon.bin_path("harness-cli"))
+
+    task = ns_run(st, "cli", [cli_bin, "--server-cid", st["CID"], "submit",
+                              "--repo", st["REPO"], "--agent", "bash",
+                              "--task", "sleep 3600"]).stdout
+    task_id = next((ln.strip() for ln in task.splitlines()
+                    if len(ln.strip()) == 32 and all(c in "0123456789abcdef"
+                                                     for c in ln.strip())), "")
+    if not task_id:
+        die("could not start the sink task; does this lab have a `bash` agent "
+            f"profile?\n{task}")
+    time.sleep(4)  # let it reach Running, or file push refuses
+
+    prefix: list[str] = []
+    if args.pin and len(cpus) >= 3:
+        prefix = ["taskset", "-c", str(cpus[2])]
+
+    print(f"netem-lab: bench  name={args.name}  profile={st.get('PROFILE') or '(knobs)'}  "
+          f"size={args.size_mb}MB  runs={args.runs}(+1 warm-up)")
+    print(f"netem-lab: {pin_note}")
+
+    rates: list[float] = []
+    for i in range(args.runs + 1):
+        start = time.monotonic()
+        proc = ns_run(st, "cli", [*prefix, cli_bin, "--server-cid", st["CID"],
+                                  "file", "push", "-f", task_id,
+                                  str(payload), f"bench{i}"], check=False)
+        elapsed = time.monotonic() - start
+        if proc.returncode != 0:
+            ns_run(st, "cli", [cli_bin, "--server-cid", st["CID"],
+                               "cancel", task_id], check=False)
+            die(f"run {i} failed: {(proc.stderr or proc.stdout).strip()[:400]}")
+        rate = size / elapsed / 1e6
+        if i == 0:
+            # Discarded: the first push pays page-cache misses on the payload
+            # and whatever the connection does on its first bulk transfer.
+            print(f"  warm-up  {rate:6.2f} MB/s  (discarded)")
+        else:
+            rates.append(rate)
+            print(f"  run {i:<4} {rate:6.2f} MB/s")
+
+    ns_run(st, "cli", [cli_bin, "--server-cid", st["CID"], "cancel", task_id],
+           check=False)
+    print(_bench_summary(rates))
+    return 0
+
+
+def _bench_summary(rates: list[float]) -> str:
+    """Format the run set, ending with what it can resolve.
+
+    The resolution figure is 2 standard errors of a difference between two
+    such run sets — 2*s*sqrt(2/n) — expressed against the median. Below it,
+    two builds cannot be told apart by this benchmark, and reporting a smaller
+    difference as an improvement is reporting noise.
+    """
+    if not rates:
+        return "  (no successful runs)"
+    med = statistics.median(rates)
+    if len(rates) < 2:
+        return (f"  n=1  {med:.2f} MB/s — one run resolves nothing; "
+                f"use --runs 5 or more")
+    sd = statistics.stdev(rates)
+    resolvable = 2 * sd * math.sqrt(2 / len(rates)) / med * 100
+    return (
+        f"  ---\n"
+        f"  n={len(rates)}  median={med:.2f}  mean={statistics.mean(rates):.2f}  "
+        f"stdev={sd:.2f} ({sd / med * 100:.0f}%)  "
+        f"min={min(rates):.2f}  max={max(rates):.2f}  "
+        f"spread={max(rates) / min(rates):.2f}x\n"
+        f"  RESOLUTION: this run can distinguish differences larger than about "
+        f"{resolvable:.0f}%.\n"
+        f"  A change measuring smaller than that has not been shown to do "
+        f"anything — raise --runs to narrow it."
+    )
 
 
 def cmd_shape(args) -> int:
@@ -672,6 +815,10 @@ def main(argv: list[str]) -> int:
     ex.add_argument("ns", choices=("srv", "rtr", "cli"))
     sh = sub.add_parser("shape")
     _add_knob_flags(sh)
+    bench = sub.add_parser("bench")
+    bench.add_argument("--runs", type=int, default=6)
+    bench.add_argument("--size-mb", dest="size_mb", type=int, default=100)
+    bench.add_argument("--no-pin", dest="pin", action="store_false", default=True)
     sub.add_parser("show")
     sub.add_parser("down")
 
@@ -689,6 +836,8 @@ def main(argv: list[str]) -> int:
         return cmd_env(args.name)
     if args.sub == "shape":
         return cmd_shape(args)
+    if args.sub == "bench":
+        return cmd_bench(args)
     die(f"unhandled subcommand {args.sub!r}")
 
 
