@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260622092256-25656177ba8e
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-runewidth v0.0.23
-	github.com/on-keyday/objtrsf v0.0.0-20260831135623-e8558e4742bf
+	github.com/on-keyday/objtrsf v0.0.0-20260831141659-24b09b24cf85
 	golang.org/x/crypto v0.52.0
 )
 

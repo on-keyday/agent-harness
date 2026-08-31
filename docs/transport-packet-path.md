@@ -392,12 +392,54 @@ two are indistinguishable and the effect is barely resolvable. **The counts are
 the solid part, not the percentage.** The O(n) scan and O(n) removal that make
 a deep buffer O(n²) are still there; they simply no longer run deep.
 
-**Whether any of this moves throughput is unmeasured.** Interleaved A/B over
-two test binaries put udp at +3.4% and the control at −1.4%, both inside a
-±16% resolution on a busy box. The change landed on its allocation count and
-its identical semantics, not on a throughput claim. The next honest step is
-the same profile on an idle machine — after `popFromReorderBuf`, the profile's
-remaining weight was `sendStream.onACK` (8.7%), `sendStream.triggerPacket`
-(7.1%), `Streams.run` (4.3%), and ~4% in `ConnectionID.String` and
-`netip.AddrPort.String`, which are logging arguments evaluated on the hot path
-even when the logger discards them.
+**That one did not move throughput measurably** — interleaved A/B put udp at
++3.4% against a ±16% resolution — and it landed on its allocation count and
+identical semantics instead. What the rest of the profile held, however, did.
+
+## 11. The rest of the profile
+
+Working down it, re-profiling after each change because the ranking moved
+every time. Two kinds of item turned up, and only one of them mattered.
+
+**Work that scales with the congestion window — this is what moves
+throughput.** All of it is the same shape as the `O(n²)` audit removed in
+cc75e99, and §6 predicted it would recur:
+
+- `sendStream.onACK` rebuilt its slice from zero capacity on *every ACK* to
+  drop one range: 16.7% of allocations and 43% of all time in
+  `runtime.growslice`, the largest non-syscall item in the CPU profile.
+- `detectAck` and `detectLost` rebuilt the connection-wide in-flight set the
+  same way, per ACK and per loss tick.
+- All three now filter in place; `onACK` also takes an O(1) head path, since
+  ACKs arrive in send order and the match is nearly always index 0.
+
+**Arguments to disabled log calls — large in allocations, invisible in
+throughput.** Go evaluates them at the call site whatever the level:
+
+- `sendApplicationFrame` ran `cid.String()` per packet — a `fmt.Sprintf` plus
+  an `AddrPort.String` — 10.2% of allocations with a discarding handler.
+- `detectAck` assembled a slice of acked packet numbers for one `Debug` call.
+- The run loop's `case <-time.After(…)` allocated a timer per iteration and
+  never stopped the ones another case won: 17.5% of allocations, 100% of every
+  `time.NewTimer` in the profile. Hoisted and `Reset`.
+
+**The pattern, stated once because it held four times.** Removing allocations
+alone never moved throughput past the noise floor — the reorder buffer (−22.9%
+allocs), the timer (−8 to −20%), and the log arguments all measured flat.
+Removing work proportional to the congestion window did, every time. Allocation
+count is worth measuring because it is *deterministic* and so usable on a busy
+machine; it is not by itself the thing to optimise.
+
+**Cumulative, `17acb0a` against `24b09b2`, 20 interleaved runs of each:**
+
+| rung | before | after | |
+|---|---|---|---|
+| `mock` | 149.8 MB/s | **214.6 MB/s** | **+43.3%** (±4%) |
+| `udp` | 72.3 MB/s | **116.0 MB/s** | **+60.4%** (±8%) |
+
+What is left is mostly not objtrsf's to spend: `Syscall6` is ~22% of CPU and
+is the price of one `sendto`/`recvfrom` per 1450-byte packet, which §10 showed
+cannot be made to carry more on a real path. Batching them (`sendmmsg`, or
+`UDP_SEGMENT`) is the one remaining lever on that term. AES-GCM is ~5%. The
+GC's own machinery is still several percent, which is what the allocation work
+above was buying down.
