@@ -311,9 +311,54 @@ treat a difference under ~25% on a loaded box as no result. `mock` and `udp`
 are forgiving; `mock` is also the control for any objproto-side change,
 because it never reaches objproto.
 
-**What is left.** The packet layer's 2.09x gave up 26.6% to one change and
-still holds the rest. The relay's ~2.5x has survived every structural
-explanation offered for it so far, which points at the plain reading — a relay
-does the work twice — and therefore at per-packet cost, not at serialization.
-That makes the remaining levers the ones that move bytes per packet or work
-per byte, not the ones that rearrange who waits for whom.
+**What is left.** Nothing that rearranges who waits for whom. Throughput is
+packets per second times bytes per packet, and with the serialization
+explanations gone those two terms are the whole remaining space. §10 measures
+both.
+
+## 10. Bytes per packet, and work per byte
+
+**Bytes per packet is spent.** `TestUDPPacketOccupancy` (objtrsf `0b476be`)
+counts the packet numbers a sender actually consumes: **8,388,608 payload
+bytes in 5,784 packets = 1450 bytes/packet at MTU 1500, 97% full**, three runs
+agreeing within two packets. An estimate from the application's packet rate
+had implied ~860 bytes and therefore real headroom; it was wrong. There is
+nothing to reclaim inside a packet, and no MTU to raise on a real path — 1500
+is the wire. (The ws/wss path is the exception and already took this lever:
+`StreamMTU = 16384` was worth ~3x, harness `ed9b004`.)
+
+**So it is work per byte, and it is large.** Allocation counts are
+deterministic, which makes them the one thing measurable on a box that is not
+idle. Per 32 MB transferred — about 23,100 packets:
+
+| rung | allocs | bytes allocated | per packet |
+|---|---|---|---|
+| `mock` | 743,181 | 251 MB | ~32 allocs |
+| `udp` | 1,755,812 | 566 MB | **~76 allocs, 24.5 KB** |
+
+24.5 KB allocated to move a 1450-byte packet, ~17x the packet.
+
+An allocation profile named the largest single item: **44.37% of all
+allocations were in `objproto.popFromReorderBuf`**, which used
+`for i, msg := range` and returned `&msg.msg`, so the loop variable escaped
+and a copy was heap-allocated **on every entry scanned** rather than on the
+one that matched — ~94 per received packet, one of them delivered. Indexing
+instead (objtrsf `8e60e7b`) took udp to 1,354,425 allocs/op, **−22.9%**, with
+the `mock` control flat at −0.1%. The alloc-count spread collapsed with it
+(1.57M–2.10M before, 1.348M–1.365M after): the variance *was* the reorder
+buffer's depth following the machine's load.
+
+That depth is itself a finding. A message that had to take `SendMessage`'s
+goroutine path holds up every message behind it, and they queue in the reorder
+buffer waiting — where both the scan and the removal are O(n), so a deep
+buffer is O(n²). Only the allocation has been addressed.
+
+**Whether any of this moves throughput is unmeasured.** Interleaved A/B over
+two test binaries put udp at +3.4% and the control at −1.4%, both inside a
+±16% resolution on a busy box. The change landed on its allocation count and
+its identical semantics, not on a throughput claim. The next honest step is
+the same profile on an idle machine — after `popFromReorderBuf`, the profile's
+remaining weight was `sendStream.onACK` (8.7%), `sendStream.triggerPacket`
+(7.1%), `Streams.run` (4.3%), and ~4% in `ConnectionID.String` and
+`netip.AddrPort.String`, which are logging arguments evaluated on the hot path
+even when the logger discards them.
