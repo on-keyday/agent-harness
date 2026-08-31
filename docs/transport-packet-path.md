@@ -9,8 +9,16 @@ transport's throughput and one was right. The four misses were all local
 changes proposed from a profile — a loss detector, a relay chunk size, a send
 buffer, a batched send loop — and each was killed by measurement after being
 written. The common fault was reasoning one step ahead of the structure. This
-document is the structure, so the sixth attempt argues from it instead of from
+document is the structure, so the next attempt argues from it instead of from
 a hunch.
+
+**And then the structure was tested too.** Every serialization point named in
+§6 is real, and §9 records that three of them cost nothing measurable; the one
+change that did win (§3, worth 26.6%) was an allocation, not a queue. So read
+this as a map of what the code *is*, never as a ranking of what it costs. The
+instrument that separates the two is §8's ladder, which is cheap enough
+(`go test -bench Throughput`, seconds) that there is no longer any reason to
+argue a throughput claim rather than measure it.
 
 Everything below cites a file and line. Where a claim is measured rather than
 read, it says so.
@@ -159,12 +167,20 @@ the two connections' S4/R1 are the *same* G4/G5.
 
 ## 6. Serialization points, ranked by how much they narrow the path
 
+These are ordered by how much they *look* like they narrow the path. Three of
+them have since been measured and do not — see §9. The list is kept because
+the structure is real even where the cost is not, and because that gap is the
+whole lesson.
+
 1. **G4/G5 are per endpoint.** Every connection on a server shares one sending
    and one receiving goroutine. A relay saturates both with its own two legs.
+   *Measured: no consistent effect (§9.2).*
 2. **G1 is per connection and handles both directions.** Send and receive on
-   one connection cannot overlap, and receive wins.
+   one connection cannot overlap, and receive wins. *Measured: making them
+   overlap is worse (§9.1).*
 3. **`relayBytes` alternates.** 64 KB is read, then written, then read; the two
-   legs never overlap (`server/task_handler.go:1537`).
+   legs never overlap (`server/task_handler.go:1537`). *Measured: decoupling
+   them is worse (§9.3).*
 4. **One packet per iteration at G1, G2, G3, G4, G5.** No stage batches.
 5. **`bufferLimit` = 1 MB per send stream** (`trsf/send_stream.go:80`) — the
    only backpressure knob, and measurement has not shown it binding.
@@ -244,22 +260,60 @@ The per-rung spread of 1.17–1.26x is the other half of the point. A 26.6%
 change is now resolvable, and `mock` — which never reaches objproto — doubles
 as a control for machine drift on any change below it.
 
-## 9. What this predicts
+## 9. The three predictions, and what happened to them
 
-Each is falsifiable with `netem-lab bench --runs 8` before and after, which
-resolves ~25%; the `relay` rung above is cheaper for the third:
+All three were tested against the ladder in §8. **None of them survived.**
 
-- If **G1's one-packet-per-iteration** binds, letting it drain N received
-  packets per iteration should scale throughput with N until another stage
-  takes over. If it does not, G1 is not the constraint.
-- If **G4/G5 being per-endpoint** binds, a second endpoint (or a per-connection
-  socket) should help a relaying server and do nothing for a single connection.
-  That asymmetry is the test.
-- If **`relayBytes` alternating** binds, decoupling its read and write with a
-  bounded queue should approach the sum of the two legs rather than their
-  serialization. Raising its chunk size 64 KB → 4 MB did *not* help, which
-  already weakens this one.
+**1. G1's one-packet-per-iteration — FALSIFIED.** The concern was that the
+`continue` after `handlePacket` (§4) skips the whole send half, so a
+connection whose receive queue is non-empty emits nothing at all — including
+the ACK, since `GenerateACK` lives below that `continue`. A bulk receiver's
+queue is essentially never empty, so this predicted starved ACKs. Bounding the
+consecutive-receive streak, so the send half runs every N packets:
 
-The cheapest of the three to falsify is the second, because it predicts a
-*difference between two cases* rather than an improvement, and a difference
-survives the noise floor better than a ratio.
+| streak | mock | udp |
+|---|---|---|
+| unbounded (as shipped) | 155.1 MB/s | 88.6 MB/s |
+| 1 | 50.5 (**−67%**) | 51.6 (**−42%**) |
+| 4 | 155.9 (+1%) | 79.2 (−11%) |
+| 16 | 158.9 (+2%) | 89.7 (+1%) |
+| 64 | 157.8 (+2%) | 86.4 (−3%) |
+
+Sending sooner never helped and hurt badly when forced. **The `continue` is an
+optimization, not an oversight** — the send half allocates and encodes an ACK
+and pops three queues, which is too much to run per received packet. Read §4's
+"receive starves send" as a description, not a defect.
+
+**2. G4/G5 being per-endpoint — NOT ESTABLISHED.** The `relay-2ep` rung gives
+the relay's outbound leg its own socket, and so its own sender and reader
+goroutine, changing nothing else. Three run sets: +8.1%, −17.7%, −13.7%. The
+sign does not hold, so this is a non-result rather than a finding — but
+nothing in it supports a second endpoint helping.
+
+**3. `relayBytes` alternating — FALSIFIED in direction.** The `relay-pipelined`
+rung decouples the read from the write with a bounded queue. Four run sets:
+−17.1%, −1.2%, −8.3%, −19.3%. It never went faster. The alternation is real
+and the legs really never overlap, but that is not what a relay costs: it does
+the work twice, and the overlap a queue buys is worth less than the handoff it
+adds.
+
+Both dead ends are kept as rungs in the benchmark, because the shape of the
+code keeps suggesting them.
+
+**What the disagreement between run sets means.** The relay rungs run three
+connections and four transports in one process, and they are far more
+load-sensitive than the others: while the box was busy they swung 20.6–29.1
+MB/s and `mock` (144.7–155.1) and `udp` (87.1–90.6) did not move at all. Two
+interleaved 20-run sets then disagreed by 26 points on the same comparison. So
+the ±X% a single run's stdev implies understates the real error whenever
+anything else is running — check the load before a relay-rung comparison, and
+treat a difference under ~25% on a loaded box as no result. `mock` and `udp`
+are forgiving; `mock` is also the control for any objproto-side change,
+because it never reaches objproto.
+
+**What is left.** The packet layer's 2.09x gave up 26.6% to one change and
+still holds the rest. The relay's ~2.5x has survived every structural
+explanation offered for it so far, which points at the plain reading — a relay
+does the work twice — and therefore at per-packet cost, not at serialization.
+That makes the remaining levers the ones that move bytes per packet or work
+per byte, not the ones that rearrange who waits for whom.
