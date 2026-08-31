@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 import shaping  # noqa: E402  (path set above)
+import nsutil  # noqa: E402
 
 
 class TestProfiles(unittest.TestCase):
@@ -117,6 +119,86 @@ class TestQdiscCommands(unittest.TestCase):
             for cmd in shaping.qdisc_commands("v0", k):
                 with self.subTest(cmd=cmd):
                     self.assertIn("replace", cmd)
+
+
+class TestNsenterArgv(unittest.TestCase):
+    def test_preserve_credentials_is_always_present(self):
+        # Without it, entry fails with "setgroups: Operation not permitted",
+        # which names neither the namespace nor the missing flag.
+        argv = nsutil.nsenter_argv(111, 222)
+        self.assertIn("--preserve-credentials", argv)
+
+    def test_it_names_both_namespaces_by_pid(self):
+        argv = nsutil.nsenter_argv(111, 222)
+        self.assertEqual(argv[0], "nsenter")
+        self.assertIn("--user=/proc/111/ns/user", argv)
+        self.assertIn("--net=/proc/222/ns/net", argv)
+
+    def test_the_user_namespace_pid_may_differ_from_the_net_one(self):
+        argv = nsutil.nsenter_argv(111, 111)
+        self.assertIn("--user=/proc/111/ns/user", argv)
+        self.assertIn("--net=/proc/111/ns/net", argv)
+
+
+class _FakeRun:
+    """Stands in for subprocess.run so the preflight is tested without
+    spawning anything."""
+
+    def __init__(self, returncode=0, stderr=""):
+        self.returncode = returncode
+        self.stderr = stderr
+        self.stdout = ""
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        return self
+
+
+class TestPreflight(unittest.TestCase):
+    def test_non_linux_refuses_and_names_the_platform(self):
+        with unittest.mock.patch("platform.system", return_value="Windows"):
+            problems = nsutil.preflight_problems(run=_FakeRun())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Windows", problems[0])
+
+    def test_non_linux_does_not_go_on_to_spawn_a_probe(self):
+        fake = _FakeRun()
+        with unittest.mock.patch("platform.system", return_value="Darwin"):
+            nsutil.preflight_problems(run=fake)
+        self.assertEqual(fake.calls, [], "probed anyway on a platform that cannot")
+
+    def test_disabled_user_namespaces_are_reported_with_the_sysctl_name(self):
+        with unittest.mock.patch("platform.system", return_value="Linux"), \
+             unittest.mock.patch.object(nsutil, "_read_sysctl", return_value=0):
+            problems = nsutil.preflight_problems(run=_FakeRun())
+        self.assertTrue(any("user.max_user_namespaces" in p for p in problems))
+
+    def test_a_failing_probe_suggests_modprobe(self):
+        fake = _FakeRun(returncode=1, stderr="Unknown qdisc \"netem\"")
+        with unittest.mock.patch("platform.system", return_value="Linux"), \
+             unittest.mock.patch.object(nsutil, "_read_sysctl", return_value=10000), \
+             unittest.mock.patch("shutil.which", return_value="/usr/bin/x"):
+            problems = nsutil.preflight_problems(run=fake)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("modprobe", problems[0])
+        self.assertIn("netem", problems[0])
+
+    def test_a_clean_host_reports_nothing(self):
+        with unittest.mock.patch("platform.system", return_value="Linux"), \
+             unittest.mock.patch.object(nsutil, "_read_sysctl", return_value=10000), \
+             unittest.mock.patch("shutil.which", return_value="/usr/bin/x"):
+            problems = nsutil.preflight_problems(run=_FakeRun())
+        self.assertEqual(problems, [])
+
+    def test_missing_tools_are_listed_before_the_probe_runs(self):
+        fake = _FakeRun()
+        with unittest.mock.patch("platform.system", return_value="Linux"), \
+             unittest.mock.patch.object(nsutil, "_read_sysctl", return_value=10000), \
+             unittest.mock.patch("shutil.which", return_value=None):
+            problems = nsutil.preflight_problems(run=fake)
+        self.assertTrue(any("missing from PATH" in p for p in problems))
+        self.assertEqual(fake.calls, [], "probed with the tools it needs absent")
 
 
 if __name__ == "__main__":
