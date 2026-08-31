@@ -80,6 +80,25 @@ netem-lab.py [--name N] down
 (default `fake`), `--transport udp|ws` (default `udp`), and
 `--subnet-a` / `--subnet-b`.
 
+Words after `--` go to the **runner**. `--server-arg` is the server's
+equivalent, and it is repeatable. Use the `=` form for anything starting with a
+dash, or argparse reads the value as a flag of its own:
+
+```bash
+scripts/netem-lab/netem-lab.py --name p up --profile lan \
+  --server-arg=--pprof-listen --server-arg=10.90.0.2:6060
+# then, from inside the lab:
+#   ... exec srv -- curl -o /tmp/cpu.pprof \
+#         'http://10.90.0.2:6060/debug/pprof/profile?seconds=20'
+#   go tool pprof -top bin/harness-server /tmp/cpu.pprof
+```
+
+`harness-server --pprof-listen` also turns the **block and mutex** profilers on.
+Read the block profile with care: idle goroutines parked on a channel dominate
+it by wall-clock, so a periodic sweeper that spends its life asleep outranks the
+thing you are hunting. `kill -USR1 <server-pid>` is often more direct — it dumps
+each connection's trsf state (cwnd, srtt, bytes in flight) to the server log.
+
 **`--transport udp` is the default on purpose.** Over WebSocket the kernel's
 TCP does the congestion control and the code under test is mostly bypassed;
 the UDP leg is where `trsf`'s own controller runs.

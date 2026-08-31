@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +45,8 @@ var (
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
 
 	webuiDir = flag.String("webui-dir", "", "dev hot-reload: serve WebUI assets from this directory on disk instead of the embedded copy (env: HARNESS_WEBUI_DIR). Point it at the repo's webui/ dir; then `make webui-build` + a browser refresh picks up wasm/js/css changes with no server rebuild or restart. Empty (default) serves the embedded assets.")
+
+	pprofListen = flag.String("pprof-listen", "", "serve net/http/pprof on this host:port (empty = off, the default). Turning it on ALSO enables the block and mutex profilers, which ship off because they sample on every blocking event: a CPU profile alone answers \"where does the CPU go\", which is the wrong question for a process sitting at half a core — the other half is waiting, and only the block profile says on what. Dev-only and unauthenticated: /debug/pprof exposes goroutine stacks and lets anyone who can reach it start a profile, so bind it to loopback or to a namespace nothing else can reach.")
 )
 
 func resolvePSK(pskVal, pskFile string) ([]byte, error) {
@@ -164,6 +169,22 @@ func main() {
 
 	// Debug: SIGUSR1 (Unix) dumps every connection's trsf internal state.
 	installTrsfDump(s)
+
+	// Both rates are set to 1 (record every event) rather than a sampling
+	// fraction: this listener only exists when somebody asked for it, and a
+	// sampled block profile of a rare-but-long stall reports nothing. The
+	// overhead is real and perturbs throughput, so measure the rate you want
+	// to quote with the flag OFF and use this to explain it, not to produce it.
+	if addr := strings.TrimSpace(*pprofListen); addr != "" {
+		runtime.SetBlockProfileRate(1)
+		runtime.SetMutexProfileFraction(1)
+		go func() {
+			slog.Warn("pprof listening — unauthenticated, dev only", "addr", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				slog.Error("pprof listener exited", "err", err)
+			}
+		}()
+	}
 
 	if err := s.Run(ctx); err != nil && err != context.Canceled {
 		slog.Error("server exited", "err", err)

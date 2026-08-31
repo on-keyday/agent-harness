@@ -421,6 +421,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
         "--udp-listen", f"{srv_ip}:{port}",
         "--psk", psk, "--operator-psk", psk,
         "--data-dir", str(data),
+        *getattr(args, "server_args", []),
     ], tmp / "server.log")
     st["SERVER_PID"] = server.pid
 
@@ -653,6 +654,18 @@ def main(argv: list[str]) -> int:
     up.add_argument("--transport", default="udp", choices=("udp", "ws"))
     up.add_argument("--subnet-a", dest="subnet_a", default="10.90.0.0/24")
     up.add_argument("--subnet-b", dest="subnet_b", default="10.91.0.0/24")
+    # Words after `--` go to the RUNNER, which left the server with no way to
+    # be configured at all — and the server is the process a transfer spends
+    # most of its CPU in, so it is the one you want --pprof-listen on.
+    # Repeatable; appended after this script's own server flags.
+    #
+    # Use the `=` form for anything starting with a dash —
+    # `--server-arg=--pprof-listen --server-arg=10.90.0.2:6060`. Without it
+    # argparse reads the next token as a flag of its own and refuses.
+    up.add_argument("--server-arg", dest="server_args", action="append",
+                    default=[], metavar="FLAG",
+                    help="extra flag for harness-server; repeatable. Use "
+                         "--server-arg=--flag for dash-leading values.")
 
     sub.add_parser("env")
     ex = sub.add_parser("exec")
