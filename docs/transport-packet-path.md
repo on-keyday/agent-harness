@@ -94,12 +94,22 @@ from blocking the socket reader.
 locking, not the channel.** `receiveApplication` holds
 `s.endpointLock.RLock()` *and* `activeConn.mu.Lock()` across the call
 (`objproto/objproto.go:993`), so a send that blocked there would stall every
-other connection on the endpoint. The fix that did work keeps the spawn as the
-fallback and simply tries the send first, so the goroutine is paid only when
-the reader is actually behind (objtrsf `a21e7a3`).
+other connection on the endpoint. Two changes fixed it without touching that:
+trying the send first, so the goroutine is paid only when the reader is behind
+(objtrsf `a21e7a3`), and then making the channel deep enough that it never is
+(`a21e7a3` left 59.5% of messages still spawning; objtrsf `e8558e4` took the
+depth from 10 to 256 and that to 0.0%). §10 has the counts.
 
-**Quantified, and it was worth 26.6%** — measured on the point-to-point rung
-of the ladder in §8, not on this relay path, where it does not show at all.
+**Quantified: worth about 12.5%,** measured on the point-to-point rung of the
+ladder in §8, not on this relay path, where it does not show at all.
+
+> **Correction.** This was first reported as +26.6%, and objtrsf `a21e7a3` and
+> harness `8145143` still say so in their commit messages. That figure came
+> from a block-ordered A/B — all the baseline runs, then all the after runs —
+> which is the same method that later produced an impossible −18.1% on the
+> `mock` control and was caught by it. Re-measured by alternating two test
+> binaries, removing the change costs 12.5% (resolving ±3%, control flat). The
+> direction held; the magnitude was doubled by drift.
 
 **R1 is the stage that made the receive buffer matter.** `sess.Receive` runs on
 G5, so while it decrypts and demultiplexes, nothing is calling `ReadFromUDP`
@@ -348,10 +358,39 @@ the `mock` control flat at −0.1%. The alloc-count spread collapsed with it
 (1.57M–2.10M before, 1.348M–1.365M after): the variance *was* the reorder
 buffer's depth following the machine's load.
 
-That depth is itself a finding. A message that had to take `SendMessage`'s
-goroutine path holds up every message behind it, and they queue in the reorder
-buffer waiting — where both the scan and the removal are O(n), so a deep
-buffer is O(n²). Only the allocation has been addressed.
+### Why the reorder buffer exists at all
+
+It repairs damage nothing else does. There is **one** producer —
+`receiveApplication` at `objproto/objproto.go:1066`, serialized by
+`activeConn.mu` — and the `seqNum` it stamps is a call-order counter, not a
+wire packet number, so what the buffer restores is *socket arrival order*.
+Network reordering is trsf's `OrderingQueue`, keyed on stream offsets, a
+different layer entirely. With a single serialized producer, the only thing
+that can shuffle the stream between `SendMessage` and the consumer is
+`SendMessage`'s own `go func()`. **No spawn, no reordering, and the buffer is
+dead code.**
+
+The spawn happens when the channel is full, and the channel was **10** deep.
+Counted over one 16 MB transfer:
+
+| depth | fast path | spawned | spawned % | reorder scans | max depth | peak goroutines |
+|---|---|---|---|---|---|---|
+| 10 | 4,956 | 7,277 | **59.5%** | 230,726 | 173 | **523** |
+| 64 | 11,433 | 692 | 5.7% | 64,915 | 143 | 177 |
+| 256 | 12,228 | 1 | **0.0%** | 306 | 17 | **14** |
+
+A connection needs about nine goroutines — two run loops, two `AutoSend`, two
+`AutoReceive`, and a sender and reader per endpoint. At depth 10 it peaked at
+523, nearly all senders blocked on this channel at 8 KB of stack apiece, some
+4 MB. The memory argument for a small channel is therefore backwards: 256
+references keep ~384 KB of payload alive per connection, an order of magnitude
+less than the stacks they replace. objtrsf `e8558e4` sets it to 256, and
+`TestPeakGoroutines` guards it at 100.
+
+Throughput from that: udp +8.6% at depth 64, +6.7% at 256, against ±7% — the
+two are indistinguishable and the effect is barely resolvable. **The counts are
+the solid part, not the percentage.** The O(n) scan and O(n) removal that make
+a deep buffer O(n²) are still there; they simply no longer run deep.
 
 **Whether any of this moves throughput is unmeasured.** Interleaved A/B over
 two test binaries put udp at +3.4% and the control at −1.4%, both inside a
