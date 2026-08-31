@@ -608,6 +608,30 @@ def cmd_show(name: str) -> int:
     return 0
 
 
+def cmd_shape(args) -> int:
+    """Re-shape a running lab without restarting anything.
+
+    Path conditions that change mid-transfer cannot be tested by a tool that
+    only sets conditions at startup, and re-running `up` would restart the
+    processes under test — losing exactly the connection whose behaviour is in
+    question.
+
+    Nearly free: every tc command was already `replace`, and every iptables
+    chain is flushed before being rebuilt, so this reuses `up`'s path whole.
+    """
+    st = read_state(args.name)
+    if st is None:
+        die(f"no instance named {args.name!r}; run 'up' first")
+    knobs = knobs_from_args(args)
+    apply_shaping(st, knobs)
+    st["PROFILE"] = args.profile or ""
+    write_state(args.name, st)
+    print(f"netem-lab: reshaped  delay={knobs.delay_ms:g}ms one-way  "
+          f"rate={knobs.rate or 'unlimited'}  loss={knobs.loss_pct:g}%  "
+          f"limit={knobs.limit}  nat={'on' if knobs.nat else 'off'}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     dh.survive_undisplayable_output()
     dh.scrub_own_env()
@@ -650,7 +674,9 @@ def main(argv: list[str]) -> int:
         return cmd_show(args.name)
     if args.sub == "env":
         return cmd_env(args.name)
-    raise NotImplementedError(f"{args.sub} arrives in a later task")
+    if args.sub == "shape":
+        return cmd_shape(args)
+    die(f"unhandled subcommand {args.sub!r}")
 
 
 if __name__ == "__main__":
