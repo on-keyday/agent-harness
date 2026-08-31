@@ -892,6 +892,12 @@ func (s *Server) DumpTrsfState() {
 			"sendQ", st.SendQueueLength, "recvQ", st.ReceiveQueueLength,
 			"sendTrig", st.SendActionCount, "updWin", st.UpdateWindowCount, "cancel", st.CancelStreamCount,
 			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets),
+			// lossEvents is how many times the congestion window was cut, and
+			// spuriousLoss how many of the packets behind those cuts were
+			// acknowledged afterwards. A spuriousLoss that climbs with the
+			// transfer says the sending rate is being set by a measurement
+			// error rather than by the path.
+			"lossEvents", st.Loss.Events, "lostPkts", st.Loss.Packets, "spuriousLoss", st.Loss.Spurious,
 			// loopIters separates a run loop that is blocked (frozen counter
 			// across two dumps) from one that is busy-spinning (counter
 			// exploding) from one that is merely congestion-blocked (counter

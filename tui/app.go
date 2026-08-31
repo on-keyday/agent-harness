@@ -3042,6 +3042,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
 		a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
 			st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
+		// spurious counts packets given up on and then acked: those cuts to
+		// the window were taken on nothing.
+		a.cmdresult.Append(fmt.Sprintf("  loss: events=%d packets=%d spurious=%d",
+			st.Loss.Events, st.Loss.Packets, st.Loss.Spurious))
 		// Only meaningful as a delta between two dumps: frozen = the run loop
 		// is blocked (nothing is demuxed, so no stream ever becomes visible),
 		// exploding = busy-spin, advancing slowly = congestion-blocked.
