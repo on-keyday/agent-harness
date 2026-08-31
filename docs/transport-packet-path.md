@@ -437,9 +437,43 @@ machine; it is not by itself the thing to optimise.
 | `mock` | 149.8 MB/s | **214.6 MB/s** | **+43.3%** (±4%) |
 | `udp` | 72.3 MB/s | **116.0 MB/s** | **+60.4%** (±8%) |
 
-What is left is mostly not objtrsf's to spend: `Syscall6` is ~22% of CPU and
-is the price of one `sendto`/`recvfrom` per 1450-byte packet, which §10 showed
-cannot be made to carry more on a real path. Batching them (`sendmmsg`, or
-`UDP_SEGMENT`) is the one remaining lever on that term. AES-GCM is ~5%. The
-GC's own machinery is still several percent, which is what the allocation work
-above was buying down.
+AES-GCM is ~5%. The GC's own machinery is still several percent, which is what
+the allocation work above was buying down. And `Syscall6` is ~22% — the price
+of one `sendto`/`recvfrom` per 1450-byte packet, which §10 showed cannot be
+made to carry more on a real path. That last one has one lever, below.
+
+## 12. Batching the syscalls — receive yes, send no
+
+**Receive: yes, and there is something to batch**, which was the open
+question. Counted over one 16 MB transfer:
+
+| asked for | reads | datagrams | mean per read |
+|---|---|---|---|
+| 1 | 12,328 | 12,328 | 1.00 |
+| 8 | 3,225 | 12,687 | **3.93** |
+| 64 | 1,489 | 12,042 | **8.09** |
+
+Bimodal: a pile of single-datagram reads where the reader had caught up, and —
+at a batch of 8 — 1,222 reads that came back completely full. The bursts are
+real and they exceed the batch. objtrsf `5447a12` uses `recvmmsg` via
+`x/net/ipv6`'s `ReadBatch` with a batch of 8, which costs 512 KB of buffers per
+endpoint against the 4 MB the socket's receive buffer already takes.
+
+**Linux only, deliberately.** `ReadBatch` compiles everywhere but degrades to
+a single `RecvMsg` off Linux, so elsewhere it would buy nothing while putting a
+different syscall under the receive path on platforms this project cannot test
+— Windows above all, where a regression here reads as "the runner receives
+nothing". The non-Linux build keeps `ReadFromUDP` untouched.
+
+Throughput was +10.5%, +6.6% and +6.6% over three interleaved sets with the
+UDP-free control flat in all three, and no single set cleared its own ±8–11%.
+**The syscall count is the claim; the percentage is not.** A batch of 1
+measured −0.3%, so the API itself is free.
+
+**Send: no, not as the pipeline stands.** G1 emits one packet per iteration
+(§4), so the endpoint's sender channel is empty when G4 wakes — which is
+exactly what §7 recorded when a batched send loop was tried and *never
+engaged*. `sendmmsg` and `UDP_SEGMENT` both need a burst to hand the kernel,
+and nothing upstream produces one. That is a change to the run loop's shape,
+not to the transport, and §9.1 is a warning about changing that shape on a
+hunch.
