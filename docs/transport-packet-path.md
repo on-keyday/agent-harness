@@ -78,16 +78,20 @@ go func() {
 
 A whole goroutine to push one value into a channel, once per received packet,
 and the `go` statement is paid on G5's stack because `sess.Receive` is
-synchronous (R1). The design intent is visible and reasonable — the
-non-spawning `SendMessageBlocking` sits right beside it at
-`objproto/message.go:139`, so the spawn is there to keep a full channel from
-blocking the socket reader. It is an expensive way to buy that: a bounded
-worker, or a buffered channel with an explicit backpressure policy, costs no
-allocation per packet.
+synchronous (R1). The non-spawning `SendMessageBlocking` sits right beside it
+at `objproto/message.go:139`, so the spawn is there to keep a full channel
+from blocking the socket reader.
 
-Unquantified. It is consistent with the 16% `mallocgc` and 10% GC seen on the
-server's CPU profile, and with the scheduler weight (`park_m`, `findRunnable`,
-`schedule` each ~14–16%), but nothing has isolated it.
+**It could not be replaced by a blocking handoff, and the reason is the
+locking, not the channel.** `receiveApplication` holds
+`s.endpointLock.RLock()` *and* `activeConn.mu.Lock()` across the call
+(`objproto/objproto.go:993`), so a send that blocked there would stall every
+other connection on the endpoint. The fix that did work keeps the spawn as the
+fallback and simply tries the send first, so the goroutine is paid only when
+the reader is actually behind (objtrsf `a21e7a3`).
+
+**Quantified, and it was worth 26.6%** — measured on the point-to-point rung
+of the ladder in §8, not on this relay path, where it does not show at all.
 
 **R1 is the stage that made the receive buffer matter.** `sess.Receive` runs on
 G5, so while it decrypts and demultiplexes, nothing is calling `ReadFromUDP`
@@ -168,7 +172,9 @@ the two connections' S4/R1 are the *same* G4/G5.
 Per-packet *costs* that are not serialization points but scale with the packet
 rate, so they grow as the path gets faster:
 
-- **A goroutine spawned per inbound packet** (`objproto/message.go:117`).
+- ~~A goroutine spawned per inbound packet~~ (`objproto/message.go:117`) —
+  **fixed**, objtrsf `a21e7a3`. Worth 26.6% point-to-point and nothing here;
+  see §8.
 - **Three copies of every payload**: `WriteContext` copies the caller's bytes
   (`send_stream.go:113`), G5 copies each datagram out of its shared buffer
   (`transport/udp.go:76`), and the relay copies again through `ReadDirect` /
@@ -199,10 +205,49 @@ binding constraint. The batch also never engaged, because the send channel was
 usually empty when G4 woke: **G4 is not backed up, so the queue that is full is
 upstream of it.**
 
-## 8. What this predicts
+## 8. What each layer costs
+
+`netem-lab bench` measures the whole three-process path and resolves ~25%,
+which is why the four misses above could be argued at all. objtrsf now carries
+a benchmark that takes the same bulk transfer at three rungs, in one process,
+so a number belongs to a layer instead of to the sum
+(`trsf/throughput_test.go`, objtrsf `17acb0a`):
+
+```
+go test ./trsf -run '^$' -bench Throughput -benchtime 1x -count 8
+```
+
+| rung | what it adds | median | spread | step |
+|---|---|---|---|---|
+| `mock` | trsf alone — packets by channel send | 145.9 MB/s | 1.17x | — |
+| `udp` | + objproto AES-GCM + a real loopback socket | 69.8 MB/s | 1.82x | **2.09x** |
+| `relay` | + a middle endpoint splicing two connections | 27.3 MB/s | 1.26x | **2.56x** |
+| harness | + three processes and the application | ~11.8 MB/s | 1.9x | **2.31x** |
+
+32 MB per iteration, 8 runs, MTU 1200/1500 — the same the UDP path runs. The
+first three rungs are one process over loopback; the harness row is the
+`netem-lab` lan profile (2 ms RTT) and is there for scale, not as a controlled
+fourth point.
+
+**The 12.4x gap is three roughly equal multiplicative steps, not one
+bottleneck.** That is the result the old instrument could not have produced,
+and it retires the question the rest of this document was written to answer.
+
+It does *not* explain the four misses — each of those layers is large enough
+that removing one would have cleared even the old 25% floor. What the misses
+have in common is narrower and less comfortable: none of them removed a
+factor. Raising the relay chunk 64x changed the chunk, not the alternation.
+The batched send loop never engaged. A layer stays worth what it is worth
+until something actually takes it away.
+
+The per-rung spread of 1.17–1.26x is the other half of the point. A 26.6%
+change is now resolvable, and `mock` — which never reaches objproto — doubles
+as a control for machine drift on any change below it.
+
+## 9. What this predicts
 
 Each is falsifiable with `netem-lab bench --runs 8` before and after, which
-resolves ~25%:
+resolves ~25%; the `relay` rung above is cheaper for the third:
 
 - If **G1's one-packet-per-iteration** binds, letting it drain N received
   packets per iteration should scale throughput with N until another stage
