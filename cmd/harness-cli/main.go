@@ -634,7 +634,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "       harness-cli forward <task-id> -W host:port")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward ls [--task <task-id>] [--json]")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward kill <forward-id> [<forward-id> ...]")
-		fmt.Fprintln(os.Stderr, "       harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
+			fmt.Fprintln(os.Stderr, "       harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
 			os.Exit(2)
 		}
 		switch args[0] {
@@ -1251,7 +1251,7 @@ func boardUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board with metadata (cap: info_global)")
-	fmt.Fprintln(os.Stderr, "  read <topic> [--in-reply-to N]      print retained messages for <topic> (JSON pretty-printed; not found = exit 0)")
+	fmt.Fprintln(os.Stderr, "  read <topic> [--in-reply-to N] [--json]  print retained messages for <topic> (text: header + pretty payload; --json: JSON Lines, same record shape as agent inbox --json; not found = exit 0)")
 	fmt.Fprintln(os.Stderr, "  subscribers [topic]                 list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: info_global)")
 	fmt.Fprintln(os.Stderr, "  retract <topic> --seq N             withdraw one message: gone from every agent path, still readable here")
 	fmt.Fprintln(os.Stderr, "                                      until the topic ages out. --seq is required — there is no whole-topic")

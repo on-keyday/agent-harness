@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -42,6 +43,50 @@ func boardHostOrDash(h string) string {
 		return "-"
 	}
 	return h
+}
+
+// emitBoardMessageJSON writes one JSON-Lines record for a retained board
+// message. It mirrors the `agent inbox --json` record shape where the fields
+// overlap — seq, in_reply_to, topic, from{...}, payload_b64, and payload (the
+// body embedded raw only when it is valid JSON) — so the two feeds parse the
+// same way, and carries the operator-only columns board read's text row shows:
+// reply_to_topic, received_at (epoch-ms + RFC3339), shown_to (delivery marks,
+// derived from subs exactly as the text row is, so they cannot drift), and the
+// retracted trio. payload_b64 always holds
+// the exact bytes. A BoardMessage exposes its sender as a task hex string with
+// no RunnerID, so from omits runner_id rather than emit an empty one; agent is
+// left as the raw profile ("" = server could not attribute a runtime), not the
+// "-" the text view substitutes.
+func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []BoardSubscriberRow) {
+	shownN, shownTotal := ShownTo(subs, topic, m.Seq)
+	rec := map[string]any{
+		"seq":            m.Seq,
+		"in_reply_to":    m.InReplyTo,
+		"topic":          topic,
+		"reply_to_topic": m.ReplyToTopic,
+		"shown_to":       map[string]any{"shown": shownN, "total": shownTotal},
+		"received_at_ms": m.ReceivedAtMs,
+		"received_at":    boardMsToRFC3339(m.ReceivedAtMs),
+		"retracted":      m.Retracted,
+		"from": map[string]any{
+			"task_id":  m.FromTaskHex,
+			"hostname": m.FromHostname,
+			"agent":    m.FromAgentProfile,
+		},
+		"payload_b64": base64.StdEncoding.EncodeToString(m.Payload),
+	}
+	// retracted_at_ms is emitted only when the message is withdrawn: a 0 epoch
+	// timestamp on every live line reads as "retracted at 1970", not "not
+	// retracted". retracted (the bool) is always present for addressability.
+	if m.Retracted {
+		rec["retracted_at_ms"] = m.RetractedAtMs
+		rec["retracted_by"] = RetractedByLabel(m)
+	}
+	if len(m.Payload) > 0 && json.Valid(m.Payload) {
+		rec["payload"] = json.RawMessage(m.Payload)
+	}
+	line, _ := json.Marshal(rec)
+	fmt.Fprintln(out, string(line))
 }
 
 func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string, rest []string, out io.Writer) error {
@@ -119,8 +164,9 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 	case "read":
 		fs := flag.NewFlagSet("board read", flag.ContinueOnError)
 		inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq")
-		// Permuted: the usage line is `read <topic> [--in-reply-to N]`, and
-		// stdlib parsing stops at <topic>, so the flag the help text puts after
+		asJSON := fs.Bool("json", false, "emit JSON Lines (one record per message: seq/in_reply_to/topic/from/received_at/retracted/reply_to_topic/shown_to, payload_b64, and payload when the body is JSON)")
+		// Permuted: the usage line is `read <topic> [--in-reply-to N] [--json]`,
+		// and stdlib parsing stops at <topic>, so a flag the help text puts after
 		// it would never be read. See ParsePermuted — topic names cannot begin
 		// with '-', which is what makes the peel safe here.
 		pos, err := ParsePermuted(fs, rest)
@@ -163,6 +209,10 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 				continue
 			}
 			shown++
+			if *asJSON {
+				emitBoardMessageJSON(out, topic, m, subs)
+				continue
+			}
 			// re= is printed only on replies: on a board where nothing replies
 			// yet, a re=0 on every line is noise.
 			re := ""
