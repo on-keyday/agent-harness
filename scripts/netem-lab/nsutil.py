@@ -17,7 +17,11 @@ import subprocess
 import time
 from pathlib import Path
 
-REQUIRED_TOOLS = ("ip", "tc", "iptables", "unshare", "nsenter")
+# `sysctl` sets ip_forward and the per-namespace conntrack timeouts; `ping` is
+# what the calibration step measures with. Both are used deep inside `up`, so
+# their absence would otherwise surface as a half-built lab rather than as a
+# refusal naming the missing package.
+REQUIRED_TOOLS = ("ip", "tc", "iptables", "unshare", "nsenter", "sysctl", "ping")
 
 # Runs inside a throwaway user namespace during preflight. Its namespace goes
 # away when unshare exits, so there is nothing to clean up afterwards.

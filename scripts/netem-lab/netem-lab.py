@@ -28,10 +28,14 @@ from __future__ import annotations
 import argparse
 import getpass
 import importlib.util
+import ipaddress
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -169,6 +173,204 @@ def knobs_from_args(args) -> shaping.Knobs:
         die(str(e))
 
 
+# Device names, (endpoint side, router side). The kernel caps an interface name
+# at 15 bytes; these stay well under while still saying which side of which leg
+# they are.
+_DEV = {
+    "srv": ("v-srv", "v-rtr-s"),
+    "cli": ("v-cli", "v-rtr-c"),
+}
+
+_PID_KEY = {"rtr": "USERNS_PID", "srv": "SRV_PID", "cli": "CLI_PID"}
+
+
+def _addrs(cidr: str) -> tuple[str, str, int]:
+    """(router address, endpoint address, prefix length) for one leg."""
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError as e:
+        die(f"bad subnet {cidr!r}: {e}")
+    hosts = list(net.hosts())
+    if len(hosts) < 2:
+        die(f"subnet {cidr} has fewer than two usable addresses")
+    return str(hosts[0]), str(hosts[1]), net.prefixlen
+
+
+def ns_run(st: dict, ns: str, argv: list[str], check: bool = True, **kw):
+    """Run one command inside one of the lab's namespaces."""
+    prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
+    proc = subprocess.run(
+        [*prefix, *[str(a) for a in argv]],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        **kw,
+    )
+    if check and proc.returncode != 0:
+        die(f"in ns {ns}: {' '.join(str(a) for a in argv)}\n"
+            f"{(proc.stderr or proc.stdout).strip()}")
+    return proc
+
+
+def build_network(knobs: shaping.Knobs, subnet_a: str, subnet_b: str,
+                  tmp: Path) -> dict:
+    """Create the three namespaces, wire them, address them, and route them.
+
+    Returns the pid and address fields for the state dict. Every namespace is
+    held by a detached process; the holder for `rtr` also owns the user
+    namespace that owns the other two, which is what makes moving a veth end
+    between them legal without real root.
+    """
+    host_ns = nsutil.current_netns()
+
+    rtr = nsutil.spawn_holder(
+        [*nsutil.unshare_holder_argv(), "sleep", "infinity"], tmp / "rtr.log")
+    nsutil.wait_for_namespace(rtr.pid, host_ns)
+    st: dict = {"USERNS_PID": rtr.pid}
+    rtr_ns = os.readlink(f"/proc/{rtr.pid}/ns/net")
+
+    for ns in ("srv", "cli"):
+        # `unshare --net` run INSIDE the user namespace, so the new network
+        # namespace is OWNED by it. One created outside would belong to the
+        # host's user namespace and be unreachable without real root.
+        holder = nsutil.spawn_holder(
+            [*nsutil.nsenter_argv(rtr.pid, rtr.pid),
+             "unshare", "--net", "sleep", "infinity"],
+            tmp / f"{ns}.log")
+        nsutil.wait_for_namespace(holder.pid, rtr_ns)
+        st[_PID_KEY[ns]] = holder.pid
+
+    for ns, cidr in (("srv", subnet_a), ("cli", subnet_b)):
+        end_dev, rtr_dev = _DEV[ns]
+        rtr_ip, end_ip, plen = _addrs(cidr)
+
+        ns_run(st, "rtr", ["ip", "link", "add", rtr_dev,
+                           "type", "veth", "peer", "name", end_dev])
+        ns_run(st, "rtr", ["ip", "link", "set", end_dev,
+                           "netns", st[_PID_KEY[ns]]])
+        ns_run(st, "rtr", ["ip", "addr", "add", f"{rtr_ip}/{plen}",
+                           "dev", rtr_dev])
+        ns_run(st, "rtr", ["ip", "link", "set", rtr_dev, "up"])
+        ns_run(st, ns, ["ip", "addr", "add", f"{end_ip}/{plen}", "dev", end_dev])
+        ns_run(st, ns, ["ip", "link", "set", end_dev, "up"])
+        ns_run(st, ns, ["ip", "link", "set", "lo", "up"])
+        # A default route through the router, so each endpoint reaches the
+        # other leg's subnet without a per-subnet route.
+        ns_run(st, ns, ["ip", "route", "add", "default", "via", rtr_ip])
+        st[f"{ns.upper()}_IP"] = end_ip
+        st[f"{ns.upper()}_RTR_IP"] = rtr_ip
+
+    ns_run(st, "rtr", ["sysctl", "-qw", "net.ipv4.ip_forward=1"])
+
+    st["SUBNET_A"] = subnet_a
+    st["SUBNET_B"] = subnet_b
+    return st
+
+
+def apply_shaping(st: dict, knobs: shaping.Knobs) -> None:
+    """(Re-)apply the qdiscs and the NAT.
+
+    Shaping goes on the ROUTER side of each veth, in the egress direction. A
+    packet cli->srv is delayed once, on v-rtr-s; the reply is delayed once, on
+    v-rtr-c. That is why the configured delay is one-way and the round trip is
+    twice it.
+
+    Every tc command is `replace`, so this is the same code path for `up` and
+    for `shape` on a live lab.
+    """
+    for ns in ("srv", "cli"):
+        _, rtr_dev = _DEV[ns]
+        for cmd in shaping.qdisc_commands(rtr_dev, knobs):
+            ns_run(st, "rtr", cmd)
+
+    # NAT is rebuilt from scratch each time rather than appended to, so
+    # `shape --no-nat` on a live lab REMOVES it instead of stacking a rule.
+    ns_run(st, "rtr", ["iptables", "-t", "nat", "-F", "POSTROUTING"])
+    if knobs.nat:
+        _, srv_rtr_dev = _DEV["srv"]
+        ns_run(st, "rtr", ["iptables", "-t", "nat", "-A", "POSTROUTING",
+                           "-o", srv_rtr_dev, "-j", "MASQUERADE"])
+
+
+def calibrate(st: dict, knobs: shaping.Knobs) -> None:
+    """Ping the server address from the client namespace and print measured
+    against configured RTT.
+
+    A lab whose measured RTT does not match its profile is not a lab, and the
+    cheapest moment to find that out is before any measurement is taken.
+    """
+    proc = ns_run(st, "cli",
+                  ["ping", "-c", "3", "-q", "-W", "5", st["SRV_IP"]],
+                  check=False)
+    line = next((l for l in proc.stdout.splitlines()
+                 if "rtt" in l or "round-trip" in l), "")
+    if proc.returncode != 0 or not line:
+        die("calibration ping failed; the lab is wired but not carrying "
+            f"traffic:\n{proc.stdout}{proc.stderr}")
+    want = knobs.delay_ms * 2
+    print(f"netem-lab: configured RTT {want:g}ms "
+          f"(2 x {knobs.delay_ms:g}ms one-way)")
+    print(f"netem-lab: measured   {line.strip()}")
+
+
+def cmd_up(args, extra: list[str]) -> int:
+    problems = nsutil.preflight_problems()
+    if problems:
+        setup_err("\n         ".join(problems))
+    if read_state(args.name) is not None:
+        die(f"an instance named {args.name!r} is already recorded at "
+            f"{state_path(args.name)}; run 'down' first")
+
+    knobs = knobs_from_args(args)
+    tmp = Path(tempfile.mkdtemp(prefix="harness-netem.", dir=str(dh.tmp_root())))
+    st = build_network(knobs, args.subnet_a, args.subnet_b, tmp)
+    st["TMP"] = str(tmp)
+    st["PROFILE"] = args.profile or ""
+    apply_shaping(st, knobs)
+    # Written BEFORE anything that can fail from here on: the state file is the
+    # only record of what to kill, and losing it strands three namespace
+    # holders with nothing naming them.
+    write_state(args.name, st)
+
+    calibrate(st, knobs)
+    print(f"netem-lab: up  name={args.name}  "
+          f"srv={st['SRV_IP']}  cli={st['CLI_IP']}")
+    print("netem-lab: 'netem-lab.py exec cli -- <cmd>' runs inside the lab; "
+          "'down' stops it")
+    return 0
+
+
+def cmd_exec(name: str, ns: str, argv: list[str]) -> int:
+    st = read_state(name)
+    if st is None:
+        die(f"no instance named {name!r}; run 'up' first")
+    if not argv:
+        die("exec needs a command after `--`")
+    prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
+    return subprocess.run([*prefix, *argv]).returncode
+
+
+def cmd_show(name: str) -> int:
+    st = read_state(name)
+    if st is None:
+        die(f"no instance named {name!r}; run 'up' first")
+    for ns in ("srv", "cli"):
+        _, rtr_dev = _DEV[ns]
+        print(f"--- rtr:{rtr_dev} (egress toward {ns}) ---")
+        # -s carries sent / dropped / overlimits / backlog, which is what
+        # separates "the bottleneck queue overflowed" from "netem dropped it".
+        print(ns_run(st, "rtr",
+                     ["tc", "-s", "qdisc", "show", "dev", rtr_dev]).stdout)
+    print("--- rtr: conntrack entries ---")
+    ct = ns_run(st, "rtr", ["conntrack", "-C"], check=False)
+    print(ct.stdout.strip() if ct.returncode == 0 else "(conntrack-tools absent)")
+    print("--- rtr: nat ---")
+    print(ns_run(st, "rtr",
+                 ["iptables", "-t", "nat", "-S", "POSTROUTING"]).stdout.strip())
+    print("--- addresses ---")
+    for ns in ("srv", "cli"):
+        print(f"{ns}: {st[f'{ns.upper()}_IP']} via {st[f'{ns.upper()}_RTR_IP']}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     dh.survive_undisplayable_output()
     dh.scrub_own_env()
@@ -203,6 +405,12 @@ def main(argv: list[str]) -> int:
 
     if args.sub == "down":
         return cmd_down(args.name)
+    if args.sub == "up":
+        return cmd_up(args, extra)
+    if args.sub == "exec":
+        return cmd_exec(args.name, args.ns, extra)
+    if args.sub == "show":
+        return cmd_show(args.name)
     raise NotImplementedError(f"{args.sub} arrives in a later task")
 
 
