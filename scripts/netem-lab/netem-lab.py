@@ -31,6 +31,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -290,6 +291,188 @@ def apply_shaping(st: dict, knobs: shaping.Knobs) -> None:
                            "-o", srv_rtr_dev, "-j", "MASQUERADE"])
 
 
+# What cmd_env unsets in the CONSUMING shell. Same list dummy-harness.py uses
+# and for the same reason: inside a harness task the shell still carries
+# HARNESS_AUTH_TICKET for the LIVE server, and harness-cli prefers a ticket
+# over the PSK, so every call would fail BadTicket while looking like a PSK
+# problem.
+_UNSET_IN_CONSUMER = (
+    "HARNESS_AUTH_TICKET HARNESS_TASK_ID HARNESS_RUNNER_ID HARNESS_SERVER_CID "
+    "HARNESS_WS_PATH HARNESS_REPO_PATH HARNESS_HOSTNAME"
+)
+
+_LISTEN_PROBE = (
+    "import socket,sys\n"
+    "try:\n"
+    "    socket.create_connection((sys.argv[1], int(sys.argv[2])),\n"
+    "                             timeout=0.5).close()\n"
+    "except OSError:\n"
+    "    raise SystemExit(1)\n"
+)
+
+
+def _ns_listening(st: dict, ns: str, ip: str, port: int) -> bool:
+    """Whether something accepts a TCP connection at ip:port inside `ns`.
+
+    A connect rather than a parse of `ss -ltn`: it needs no extra tool and it
+    tests the property actually wanted. Run through this interpreter, which is
+    reachable at the same path inside the namespace because only the user and
+    network namespaces were unshared — the mount namespace is shared, so every
+    filesystem path means the same thing on both sides.
+    """
+    return ns_run(st, ns, [sys.executable, "-c", _LISTEN_PROBE, ip, str(port)],
+                  check=False).returncode == 0
+
+
+def _ns_spawn(st: dict, ns: str, argv: list[str], log: Path) -> subprocess.Popen:
+    """Start a long-lived process inside one of the lab's namespaces."""
+    prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
+    fh = log.open("wb")
+    return subprocess.Popen(
+        [*prefix, *[str(a) for a in argv]],
+        stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        start_new_session=True, env=os.environ.copy(),
+    )
+
+
+def _tail(path: Path, n: int) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-n:]
+    except OSError:
+        return f"(no {path.name})"
+
+
+def start_harness(st: dict, args, extra: list[str]) -> None:
+    """Start harness-server in `srv` and agent-runner in `cli`.
+
+    make build, not go build: harness-server embeds webui/static/main.wasm and
+    refuses to start without it. A server that never starts would make every
+    later check trivially pass, which is worse than a loud failure.
+    """
+    dh.build()
+
+    tmp = Path(st["TMP"])
+    repo = tmp / "repo"
+    data = tmp / "data"
+    repo.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=lab@example.invalid",
+         "-c", "user.name=lab", "commit", "-q", "--allow-empty",
+         "-m", "netem-lab repo"],
+        check=True,
+    )
+
+    port = dh.pick_port()
+    psk = "netem-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
+    srv_ip = st["SRV_IP"]
+    # The server binds its own namespace's address. The runner's DIAL target is
+    # derived from that address, never from the bind string — those are
+    # different things even when they look alike, and using one for the other
+    # has cost this project a cross-OS bug before (rewriteProxyViaForLocalDial).
+    cid = f"{args.transport}:{srv_ip}:{port}-*"
+
+    server = _ns_spawn(st, "srv", [
+        dh.daemon.bin_path("harness-server"),
+        "--listen", f"{srv_ip}:{port}",
+        "--udp-listen", f"{srv_ip}:{port}",
+        "--psk", psk, "--operator-psk", psk,
+        "--data-dir", str(data),
+    ], tmp / "server.log")
+    st["SERVER_PID"] = server.pid
+
+    ready = False
+    for _ in range(60):
+        if server.poll() is not None:
+            break
+        if _ns_listening(st, "srv", srv_ip, port):
+            ready = True
+            break
+        time.sleep(0.25)
+    if not ready:
+        sys.stderr.write(_tail(tmp / "server.log", 2000))
+        dh.kill_pid(server.pid)
+        setup_err(f"server never listened on {srv_ip}:{port}")
+
+    runner_args = [
+        dh.daemon.bin_path("agent-runner"),
+        "--server-cid", cid, "--psk", psk, "--roots", str(repo),
+        "--no-worktree", "--max-tasks", "4",
+    ]
+    # No profile at all beats one that registers and then fails per task; an
+    # absent `bash` agent is rejected at submit with a name you can act on.
+    bash = dh.bash_bin()
+    if bash:
+        runner_args += ["--agent-profiles", dh.bash_profile(bash)]
+    if args.agent == "claude":
+        runner_args += [
+            "--agent-bin", "claude",
+            "--claude-args", f"--model {args.model}",
+            "--agent-oneshot-argv",
+            "--output-format stream-json --verbose {args} -p {prompt}",
+            "--agent-resume-oneshot-argv",
+            "--output-format stream-json --verbose {args} --continue -p {prompt}",
+            "--agent-resume-interactive-argv", "{args} --continue",
+            "--agent-log-format", "claude-stream-json",
+        ]
+    else:
+        fake = tmp / "fake-claude.py"
+        fake.write_text(dh.FAKE_AGENT, encoding="utf-8")
+        runner_args += [
+            "--agent-bin", sys.executable,
+            "--agent-oneshot-argv",
+            f"{fake} --output-format stream-json --verbose {{args}} -p {{prompt}}",
+            "--agent-resume-oneshot-argv",
+            f"{fake} --output-format stream-json --verbose {{args}} "
+            f"--continue -p {{prompt}}",
+            "--agent-resume-interactive-argv", f"{fake} {{args}} --continue",
+            "--agent-log-format", "claude-stream-json",
+        ]
+    runner_args += extra
+
+    runner = _ns_spawn(st, "cli", runner_args, tmp / "runner.log")
+    st["RUNNER_PID"] = runner.pid
+
+    os.environ["HARNESS_PSK"] = psk  # harness-cli's operator binder falls back to it
+    cli_bin = str(dh.daemon.bin_path("harness-cli"))
+    registered = False
+    for _ in range(80):
+        if runner.poll() is not None:
+            break
+        out = ns_run(st, "cli", [cli_bin, "--server-cid", cid, "ls"], check=False)
+        if "agent=" in out.stdout:
+            registered = True
+            break
+        time.sleep(0.25)
+    if not registered:
+        sys.stderr.write(_tail(tmp / "runner.log", 2000))
+        dh.kill_pid(runner.pid)
+        dh.kill_pid(server.pid)
+        setup_err("runner never registered")
+
+    st.update({"HARNESS_PSK": psk, "CID": cid, "REPO": str(repo),
+               "SERVER_PORT": port})
+
+
+def cmd_env(name: str) -> int:
+    st = read_state(name)
+    if st is None:
+        die(f"no instance named {name!r}; run 'up' first")
+    print(f"unset {_UNSET_IN_CONSUMER}")
+    # TMP is deliberately NOT exported; see state_dir() for the leak that one
+    # caused in the tool this borrows from.
+    for key in ("HARNESS_PSK", "CID", "REPO", "SERVER_PORT"):
+        print(f"export {key}='{st[key]}'")
+    print(f"export NETEM_LAB_NAME='{name}'")
+    print("# harness-cli must run INSIDE the lab: the host namespace has no")
+    print(f"# route to {st['SRV_IP']}, so a call from here TIMES OUT rather")
+    print("# than saying anything. Use:")
+    print(f"#   scripts/netem-lab/netem-lab.py --name {name} exec cli -- \\")
+    print("#     harness-cli --server-cid \"$CID\" ls")
+    return 0
+
+
 def calibrate(st: dict, knobs: shaping.Knobs) -> None:
     """Ping the server address from the client namespace and print measured
     against configured RTT.
@@ -331,6 +514,8 @@ def cmd_up(args, extra: list[str]) -> int:
     write_state(args.name, st)
 
     calibrate(st, knobs)
+    start_harness(st, args, extra)
+    write_state(args.name, st)
     print(f"netem-lab: up  name={args.name}  "
           f"srv={st['SRV_IP']}  cli={st['CLI_IP']}")
     print("netem-lab: 'netem-lab.py exec cli -- <cmd>' runs inside the lab; "
@@ -345,7 +530,17 @@ def cmd_exec(name: str, ns: str, argv: list[str]) -> int:
     if not argv:
         die("exec needs a command after `--`")
     prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
-    return subprocess.run([*prefix, *argv]).returncode
+    # main() scrubbed HARNESS_* out of this process. That is right for what
+    # `up` spawns and wrong here: the usual reason to run `exec` at all is
+    # harness-cli, and a scrubbed environment leaves it with no credential, so
+    # the server answers BadPsk — which reads as a WRONG psk rather than an
+    # absent one and sends you looking in the wrong place. Re-inject THIS
+    # instance's, so `exec` works whether or not the caller ran
+    # `eval "$(netem-lab.py env)"` first.
+    env = os.environ.copy()
+    if st.get("HARNESS_PSK"):
+        env["HARNESS_PSK"] = st["HARNESS_PSK"]
+    return subprocess.run([*prefix, *argv], env=env).returncode
 
 
 def cmd_show(name: str) -> int:
@@ -411,6 +606,8 @@ def main(argv: list[str]) -> int:
         return cmd_exec(args.name, args.ns, extra)
     if args.sub == "show":
         return cmd_show(args.name)
+    if args.sub == "env":
+        return cmd_env(args.name)
     raise NotImplementedError(f"{args.sub} arrives in a later task")
 
 
