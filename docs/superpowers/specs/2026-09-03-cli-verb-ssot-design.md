@@ -75,6 +75,17 @@ holds the three copies together.
   and a top-level `usage()` at :1090. The `board purge` incident was exactly a
   usage line describing an invocation the parser could not accept.
 
+- **`usage()` is also an incomplete enumeration.** Verbs that exist in the
+  code and are absent from it: `caps set-parent` (`main.go:257`), `file edit`
+  and `file new` (:565, :573), `forward tap` (:662), `session resize` and the
+  whole `session stream` namespace with its seven sub-verbs
+  (`session.go:102`, :104, :127-135), and four of the twelve `agent`
+  sub-verbs — `usage()` prints
+  `{send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}`
+  while `main.go:953-975` dispatches those eight plus `purge`, `retained`,
+  `read` and `retract`. The help does not merely describe invocations that
+  fail; it omits operations that work.
+
 - **Aliases have two different shapes and no way to tell them apart.**
   `cmd/harness-cli/session.go:584-585` binds one variable twice (`--detach` /
   `-d`) — a real alias. `cmd/harness-cli/git.go:98` does the same across two
@@ -117,8 +128,10 @@ holds the three copies together.
 
 The verb *sets* differ between surfaces, and that is correct, not drift:
 
-- `trsf`, `diag`, `grid`, `repo` are TUI-only because they manipulate TUI
-  screen state.
+- `trsf`, `diag`, `repo`, `clear`, `quit` are TUI-only because they manipulate
+  TUI screen state; `preview` is WebUI-only for the same kind of reason.
+  `grid` is on both of those and not on the CLI, which has no screen to
+  arrange.
 - `conns`, `logs`, `watch`, `board` are CLI verbs whose TUI/WebUI equivalents
   are dedicated UI, not a command line.
 - `skill`, `whoami`, and the `agent` family are CLI-only by construction: they
@@ -337,25 +350,43 @@ passes for that family and the legacy parser for it is deleted.
 Phase 0 decides whether the design holds. If it does not, the correct response
 is to revise the declaration before Phase 1, not to special-case `prune`.
 
+### Enumerating a family before declaring it
+
+Sub-verb dispatch in this tree is not uniformly a `switch`. `caps set` and
+`caps set-parent` are `if` statements (`cmd/harness-cli/main.go:253-259`), as
+is `skill --list` (:289) and the TUI's `caps` sub-dispatch
+(`tui/cmdline.go:505-508`). A `grep 'case "'` sweep misses all of them and
+reports a family as complete when it is not. Enumerate a family by reading its
+dispatch function, not by grepping for `case`, and cross-check the count
+against the surface matrix row before writing the spec — the matrix above was
+itself wrong at family granularity until it was rebuilt this way.
+
 ### Surface matrix
 
-| Family | CLI | TUI | WebUI | Phase |
+At **sub-verb** granularity, because four families differ per surface in ways
+a family-level row hides. The CLI alone has ~76 verb paths; that is the size
+of the table being built.
+
+| Verb path | CLI | TUI | WebUI | Phase |
 | --- | --- | --- | --- | --- |
 | `prune` | ✓ | ✓ | ✓ | 0 |
-| `file` | ✓ | ✓ | ✓ | 1 |
-| `git` | ✓ | ✓ | ✓ | 2 |
-| `forward` | ✓ | ✓ | ✓ | 3 |
-| `exec` (exec_run) | ✓ | ✓ | ✓ | 3 |
+| `file` push / pull / ls / mkdir / edit / new / delete | 7 | 7 | 7 | 1 |
+| `git` log / diff / show / status / file / subrepos | 6 | 6 | 6 | 2 |
+| `forward ls` / `kill` / `tap` | ✓ | ✓ | ✓ | 3 |
+| `forward` open (`-L` / `-R` / `-W`) | ✓ | — (the `p` pane) | — (cannot bind) | 3 |
+| `exec` run / `ls` / `kill` | 3 | 3 | 3 | 3 |
 | `server dial-runner` | ✓ | ✓ | ✓ | 3 |
-| `workspace` | ✓ | ✓ | — | 3 |
-| `ssh-gateway` | ✓ | ✓ | — | 3 |
-| `board` | ✓ | — | — | 3 |
+| `workspace` ls / rm / show / save | 4 | 4 | — | 3 |
+| `workspace apply` / `detach` | — | ✓ | — | 3 |
+| `ssh-gateway` (flags, no sub-verb) | ✓ | — | — | 3 |
+| `ssh-gateway start` / `stop` | — | ✓ | — | 3 |
+| `board` topics / read / subscribers / retract / purge | 5 | — | — | 3 |
 | `submit` | ✓ | ✓ | ✓ | 4 |
 | `interactive` | ✓ | ✓ | — (buttons) | 4 |
 | `session new` / `attach` / `ls` / `kill` | ✓ | ✓ | — (buttons) | 4 |
 | `session snapshot` / `resize` | ✓ | — | — | 4 |
 | `session await-idle` | ✓ | ✓ | ✓ as top-level `await-idle` | 4 |
-| `session stream` (attach/approve/interrupt/finish/requests/snapshot) | ✓ | ✓ | ✓ | 4 |
+| `session stream` attach / approve / interrupt / finish / requests / snapshot | 6 | 6 | 6 | 4 |
 | `session send` / `session exec` | ✓ | — | — | 5 |
 | `session stream turn` | ✓ | ✓ | ✓ | 5 |
 | `notify` | ✓ | ✓ | — | 5 |
@@ -364,13 +395,28 @@ is to revise the declaration before Phase 1, not to special-case `prune`.
 | `grid` | — | ✓ | ✓ | 6 |
 | `refresh` / `sync` / `help` | — | ✓ | ✓ | 6 |
 | `preview` | — | — | ✓ | 6 |
-| `agent`, `logs`, `watch`, `conns`, `ls`, `whoami`, `skill`, `version`, `cancel`, `prune-local`, `notify-watch` | ✓ | — | — | 6 |
+| `agent` (12 sub-verbs) | 12 | — | — | 6 |
+| `logs`, `watch`, `notify-watch`, `conns`, `ls`, `whoami`, `skill`, `version`, `cancel`, `prune-local` | ✓ | — | — | 6 |
 | `trsf`, `diag`, `repo`, `clear`, `quit` | — | ✓ | — | 6 (declared in `tui`) |
 
-`—` in this table is a decision, not an omission: the reasons are in
-**What is NOT the problem**, except the two "(buttons)" cells and the `caps`
-row, where the WebUI reaches the operation through a control rather than the
-command input.
+A number is the sub-verb count where all three surfaces carry the same set.
+
+`—` is a decision, not an omission. The four rows where a family splits are
+the ones a family-level matrix would have gotten wrong:
+
+- **`forward` open is CLI-only.** `tui/cmdline.go`'s `parseForward` accepts
+  `ls | kill | tap` and nothing else; a TUI forward is opened from the port-
+  forward pane. The WebUI cannot open one at all — `main.js` says so at the
+  `forward` case: a browser cannot bind a local listener.
+- **`workspace apply` / `detach` are TUI-only**, and `usage()` says why:
+  "neither exists here — a forward dies with the process that holds it".
+- **`ssh-gateway` has a different shape per surface** — CLI flags versus TUI
+  `start` / `stop`. Two `Path`s, not one with a `Surfaces` mask.
+- **`session`'s sub-verb set differs three ways** — CLI 10, TUI 6, WebUI only
+  the `stream` namespace.
+
+The "(buttons)" cells and the `caps` row mean the WebUI reaches the operation
+through a control rather than the command input.
 
 Three rows record paths that differ across surfaces today — `ls`/`list`,
 `caps set-parent`/`set-parent`, `session await-idle`/`await-idle`. A
