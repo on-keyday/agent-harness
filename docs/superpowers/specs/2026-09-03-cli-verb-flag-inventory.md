@@ -244,3 +244,96 @@ the path registers no flags — measured, not skipped.
 `--server-cid` on all twelve `agent` paths is the global flag re-registered
 per sub-verb, not a per-verb option; in the declaration it belongs to the
 global set that `usage()` already documents separately.
+
+## Appendix B — positional arity
+
+Appendix A counts flags. Positionals are never declared, only consumed, so
+they were extracted from three shapes: arity checks (`len(pos) != 3`,
+`fs.NArg() > 1`), indexed reads (`pos[0]`, `fs.Arg(0)`), and reads that happen
+**before** the FlagSet is built (`args[1]`).
+
+That third shape is why the first pass reported nothing for several verbs:
+`forward tap` takes its id at `args[1]` and only then constructs its FlagSet.
+An extractor that starts at the declaration sees a verb with no positionals.
+
+`(no evidence)` in the census conflates four different states, and separating
+them is the point of this appendix:
+
+| State | Meaning | Example |
+| --- | --- | --- |
+| variadic, unchecked | `fs.Args()` passed through whole | `prune` — 0..N task ids |
+| pre-parse | positional read before the FlagSet exists | `forward tap`, `workspace save`, `forward` |
+| none, extras ignored | positionals never read; surplus silently dropped | `forward ls`, `exec ls` |
+| none | the verb genuinely takes none | `ls`, `conns`, `whoami`, `version`, `submit` |
+
+### Arity per CLI path
+
+`+text` marks free-form trailing words (the `Trailing` verbs).
+
+| Path | Positionals | Evidence |
+| --- | --- | --- |
+| `submit` / `interactive` / `session new` | 0 | flags only |
+| `ls` / `conns` / `caps` / `whoami` / `version` | 0 | — |
+| `caps set` / `caps set-parent` | 1 task-id | `len!=1`, `[0]` |
+| `notify` | 1 + text | `len==0` guard, then joined |
+| `prune` / `prune-local` | 0..N task-ids | `fs.Args()` passthrough |
+| `logs` | 1 task-id | `len==0`, `[0]` |
+| `watch` / `notify-watch` | 0 | — |
+| `file push` / `file pull` | 3 | `len!=3`, `[0]`..`[2]` |
+| `file mkdir` / `file delete` | 2 | `len!=2`, `[0]`,`[1]` |
+| `file ls` | 1..2 | task-id + optional dir |
+| `git <sub>` | 1 task-id + 1 sub, then per-sub | `pre` reads, then `[0]`/`[1]` |
+| `git log` / `show` / `file` | +0..1 rev | `len>1` refused, `len==1` |
+| `git diff` | +0..2 revs | `[0]`, `[1]` |
+| `git status` / `subrepos` | +0 | `len>0` refused |
+| `exec` (run) | 1 task-id + argv after `--` | hand-scanned |
+| `exec ls` | 0, extras ignored | positionals never read |
+| `exec kill` | 1..N exec-ids | — |
+| `forward` (open) | 1 task-id | `pre:args[0]` |
+| `forward ls` | 0, extras ignored | positionals never read |
+| `forward tap` | 1 forward-id | `pre:args[1]` |
+| `forward kill` | 1..N forward-ids | — |
+| `ssh-gateway` | 0 | flags only |
+| `session attach` / `ls` / `kill` / `await-idle` / `snapshot` / `resize` | 1 task-id | `len!=1` / `len<1`, `[0]` |
+| `session send` / `session exec` | 1 task-id + text | `NArg<2`, `Arg(0)` |
+| `session stream turn` | 1 task-id + text | `NArg<2`, `Arg(0)` |
+| `session stream approve` | 2 (task-id, verdict) | `len!=2`, `[0]`,`[1]` |
+| `session stream attach` / `interrupt` / `finish` | 1 task-id | `len!=1`, `[0]` |
+| `server dial-runner` | 1 runner-cid | `len!=1`, `[0]` |
+| `workspace save` | 1 name | `pre:args[1]` |
+| `workspace ls` / `rm` / `show` | 0..1 name | — |
+| `board topics` | 0 | — |
+| `board read` / `retract` / `purge` | 1 topic | `len==0`, `[0]` |
+| `board subscribers` | 0..1 topic | optional |
+| `agent read` / `agent retract` | 1 topic | `len!=1`, `[0]` |
+| all other `agent` paths | 0 | topic and data are flags |
+
+Rows whose Evidence column is `—` were read from the source rather than
+derived by the extractor, and are the ones to re-check when their family is
+migrated: `exec kill`, `forward kill`, `file ls`, `workspace ls`/`rm`/`show`,
+`board topics`/`subscribers`, `watch`, `notify-watch`, and the nine flag-only
+`agent` paths.
+
+### Divergences in arity
+
+| Path | CLI | TUI | WebUI |
+| --- | --- | --- | --- |
+| `file push` | 3 | 3 | **2** — the source is a file picker, not a path |
+| `file pull` | 3 | 3 | **2** — the browser downloads rather than writing a path |
+| `submit` | 0 (`--task`) | **1 + text** (prompt positional) | **1 + text** |
+| `notify` | 1 + text | **1 level word + 1 + text** | absent |
+
+### Two things this pass found
+
+**`forward ls` and `exec ls` accept surplus positionals and drop them.**
+Neither reads `fs.Args()` after parsing, so `forward ls garbage` runs the
+unfiltered listing and says nothing about `garbage`. Not a live incident, but
+it is the same shape as an ignored flag.
+
+**`forward tap` and `workspace save` require the positional BEFORE the
+flags** — the inverse of what `ParsePermuted` guarantees everywhere else.
+`forward tap --dir both 5` fails with `bad forward id "--dir"` because
+`args[1]` is read before the FlagSet exists. **Decision: this constraint
+disappears rather than being declared.** It is an artifact of needing the id
+in order to build the FlagSet, which a declaration-driven parse removes; both
+verbs become ordinary permuted parses, which only widens what is accepted.

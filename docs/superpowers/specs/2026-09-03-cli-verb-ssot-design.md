@@ -33,6 +33,7 @@ author chose it while writing — those are the rows worth a second look.
 | D19 | `Flag.Surfaces` — a flag may be declared for fewer surfaces than its verb, with a stated reason. Default is the verb's set | this spec |
 | D20 | `Arg.Surfaces` likewise: positional arity is per-surface. `file push` / `file pull` take one fewer positional in a browser, which has no local path. Declaring them as separate `Path`s instead would give one verb two names | this spec |
 | D21 | Divergences the inventory found are reconciled, not preserved: the WebUI stops accepting git flags its sub-verb has no use for, `--max-bytes` is either honoured there or removed, the TUI gains `--agent-arg`, and `notify`'s TUI form adopts the CLI's flags | this spec |
+| D22 | `forward tap` and `workspace save` read their positional before building a FlagSet, so today the positional must precede the flags — the inverse of `ParsePermuted`. That constraint is removed, not declared: it is an artifact of the construction order, and losing it only widens what parses | this spec |
 
 ## Problem
 
