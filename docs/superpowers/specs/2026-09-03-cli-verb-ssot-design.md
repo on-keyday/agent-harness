@@ -268,12 +268,38 @@ type Flag struct {
 `tui/cmdline.go`'s `len(pargs) != 3` (file push/pull) and `fs.NArg() > 1`
 (session await-idle), and their CLI counterparts.
 
-**`Trailing`** is non-nil for exactly the four verbs in
-`cli/flagorder_test.go:20-26` — `session send`, `session exec`, `session
-stream turn`, `notify` — whose trailing words are literal text, so a
-`-`-leading word cannot be distinguished from a flag. Everywhere else
-`Trailing` is nil and the parse is permuted (D6). This turns an allowlist the
-test carries into a property the verb carries.
+**`Trailing`** is non-nil for the verbs whose trailing words are literal text,
+so a `-`-leading word cannot be told from a flag. Everywhere else `Trailing`
+is nil and the parse is permuted (D6).
+
+There are **six**, not the four listed in `cli/flagorder_test.go:20-26`.
+`session send`, `session exec`, `session stream turn` and `notify` are on that
+allowlist; `agent send` (`cli/agent/send.go:46`) and `agent dispatch`
+(`dispatch.go:93`) are not, and they take exactly the same kind of payload —
+`resolvePayload` joins `fs.Args()` ssh-style whenever `--data` is absent
+(`cli/agent/payload.go:43-48`).
+
+The allowlist is not wrong so much as unable to see them, and the two blind
+spots are worth naming because the declaration is what closes them:
+
+- **Positional reads behind a helper.** `scanFlagSetUse` looks for
+  `fs.Args()` / `fs.Arg` / `fs.NArg` in the block that declares the FlagSet.
+  `agent send` reads its positionals inside `resolvePayload(fs, …)`, so the
+  scan sees a verb that defines flags, parses with stdlib `flag`, and reads no
+  positionals — harmless by its rule, and therefore neither reported nor
+  required to be on the allowlist.
+- **Non-literal FlagSet names.** `flagSetDecl` requires the name argument to
+  be a string literal (`flagorder_test.go:132-135`), so
+  `flag.NewFlagSet("session stream "+verb, …)` is skipped entirely. That verb
+  happens to call `ParsePermuted` anyway, so there is no victim today — but it
+  is unexamined, not verified.
+
+Taking `Trailing` from the allowlist as-is would have declared `agent send`
+and `agent dispatch` permutable, and permuting them breaks any payload whose
+first word begins with `-`: `ParsePermuted` peels a positional, re-parses, and
+`flag` rejects the unknown flag. Declaring `Trailing` per verb replaces an
+inference from code shape — which is what both blind spots are — with a
+statement the verb carries.
 
 **`Aliases`** is explicit. The three shapes in the tree are declared as:
 
@@ -414,7 +440,7 @@ passes for that family and the legacy parser for it is deleted.
 | 2 | `git` | Carries the long-to-long alias `--cached`/`--staged` (git.go:98, tui/cmdline.go:1443) |
 | 3 | `forward`, `exec`, `server`, `workspace`, `ssh-gateway`, `board` | Structurally simple. `board` is here rather than last (D15) so `WidensIfUnset` is exercised on `board purge`, the verb that motivated it |
 | 4 | `submit`, `interactive`, `session` (every sub-verb except the four `Trailing` ones) | First real use of `Resolve` chains and `FlagCustom` (`scopeForFlag`, `repeatableStrings`), and of `SurfaceContext` injection from the WebUI dropdowns. Settles the `session await-idle` / `await-idle` path (D16) |
-| 5 | `session send`, `session exec`, `session stream turn`, `notify` | The four `Trailing` verbs, including the `-e` / `--enter` pair. `session send` and `session exec` are CLI-only, so the blast radius is one surface. Last, so every mechanism is proven before the most dangerous parse is touched |
+| 5 | `session send`, `session exec`, `session stream turn`, `notify`, **`agent send`, `agent dispatch`** | All six `Trailing` verbs, including the `-e` / `--enter` pair. The last two are here rather than with the rest of `agent` in Phase 6 because they take a joined-positional payload and are absent from `flagorder_test.go`'s allowlist — see the inventory. `session send` / `session exec` are CLI-only, so their blast radius is one surface. Last, so every mechanism is proven before the most dangerous parse is touched |
 | 6 | Everything left. CLI-only: `agent`, `logs`, `watch`, `conns`, `ls`, `whoami`, `skill`, `version`, `cancel`, `prune-local`, `notify-watch`. Shared but trivial: `caps`, `caps set`, `caps set-parent`, `scope`, `grid`, `refresh`/`sync`, `help`. Single-surface: `preview` (WebUI), `trsf`, `diag`, `repo`, `clear`, `quit` (TUI) | Little or no cross-surface derivation left; consolidation so usage generation and the completeness tests cover every verb. Settles the `caps set-parent` / `set-parent` and `ls` / `list` paths (D16) |
 
 Phase 0 decides whether the design holds. If it does not, the correct response
@@ -465,7 +491,8 @@ of the table being built.
 | `grid` | — | ✓ | ✓ | 6 |
 | `refresh` / `sync` / `help` | — | ✓ | ✓ | 6 |
 | `preview` | — | — | ✓ | 6 |
-| `agent` (12 sub-verbs) | 12 | — | — | 6 |
+| `agent` — the 10 non-trailing sub-verbs | 10 | — | — | 6 |
+| `agent send` / `agent dispatch` | 2 | — | — | 5 (`Trailing`) |
 | `ls` | ✓ | — (the main pane) | ✓ (today `list`) | 6 |
 | `ls --filtered` | — (no filter pane) | — | ✓ | 6 |
 | `logs`, `watch`, `notify-watch`, `conns`, `whoami`, `skill`, `version`, `cancel`, `prune-local` | ✓ | — | — | 6 |

@@ -306,7 +306,8 @@ them is the point of this appendix:
 | `board read` / `retract` / `purge` | 1 topic | `len==0`, `[0]` |
 | `board subscribers` | 0..1 topic | optional |
 | `agent read` / `agent retract` | 1 topic | `len!=1`, `[0]` |
-| all other `agent` paths | 0 | topic and data are flags |
+| `agent send` / `agent dispatch` | 0..N payload words (**trailing text**) | `resolvePayload` joins `fs.Args()` |
+| `agent wait` / `inbox` / `subscribe` / `unsubscribe` / `topics` / `subscriptions` / `purge` / `retained` | 0 | topic is a flag |
 
 Rows whose Evidence column is `—` were read from the source rather than
 derived by the extractor, and are the ones to re-check when their family is
@@ -329,6 +330,27 @@ migrated: `exec kill`, `forward kill`, `file ls`, `workspace ls`/`rm`/`show`,
 Neither reads `fs.Args()` after parsing, so `forward ls garbage` runs the
 unfiltered listing and says nothing about `garbage`. Not a live incident, but
 it is the same shape as an ignored flag.
+
+**The `agent` family has two trailing-text verbs nobody had listed.**
+`agent send` and `agent dispatch` take their payload as joined positional
+words when `--data` is absent (`cli/agent/payload.go:43-48`, called from
+`send.go:46` and `dispatch.go:93`). That makes six `Trailing` verbs, not the
+four on `cli/flagorder_test.go`'s allowlist.
+
+They are missing from it because the guard cannot see them: `scanFlagSetUse`
+looks for `fs.Args()` in the block that declares the FlagSet, and here the
+read happens one call deeper, inside `resolvePayload(fs, …)`. The verb reads
+as "defines flags, stdlib parse, no positionals" — harmless by the rule — so
+it is neither reported as an offender nor required to be on the allowlist.
+
+The same file has a second blind spot, identical to the one this census had:
+`flagSetDecl` requires a literal FlagSet name (`flagorder_test.go:132-135`),
+so `flag.NewFlagSet("session stream "+verb, …)` is skipped. That verb calls
+`ParsePermuted` anyway, so it is unexamined rather than broken.
+
+Both matter because D6 derives `Trailing` from that allowlist. Taken as-is it
+would have declared `agent send` permutable, and permuting it breaks any
+payload whose first word starts with `-`.
 
 **`forward tap` and `workspace save` require the positional BEFORE the
 flags** — the inverse of what `ParsePermuted` guarantees everywhere else.
