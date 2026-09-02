@@ -471,6 +471,10 @@ of the table being built.
 | `trsf`, `diag`, `repo`, `clear`, `quit` | — | ✓ | — | 6 (declared in `tui`) |
 
 A number is the sub-verb count where all three surfaces carry the same set.
+The counts are a summary, never the working list: every path is spelled out,
+with its flags and with `(none)` where it has none, in Appendix A of
+`2026-09-03-cli-verb-flag-inventory.md`. Build the declaration from that
+appendix, not from this table.
 
 `—` is a decision, not an omission. The four rows where a family splits are
 the ones a family-level matrix would have gotten wrong:

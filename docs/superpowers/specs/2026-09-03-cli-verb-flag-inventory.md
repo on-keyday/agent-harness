@@ -26,8 +26,29 @@ Hand-scanned parsers (the TUI's `parseSetCaps`, `parseWorkspace`, `parseForward`
 `parseExecRun`, `parseServer`, `parseSetParent`, and all of `main.js`) have no
 FlagSet to walk and were enumerated by reading their comparison chains.
 
-**Counted in the Go surfaces: 68 FlagSets, 293 flag registrations.** The
+- **Non-literal FlagSet names.** Two sites build the name —
+  `flag.NewFlagSet("session stream "+verb, …)` (`session.go:238`) and
+  `flag.NewFlagSet("git "+act.Sub, …)` (`tui/cmdline.go:1515`). The first pass
+  of this census required a string literal and dropped both **silently**, which
+  is the same shape of miss it exists to find. Caught by comparing the walk's
+  count (68) against a plain `grep -c NewFlagSet` (70); they recovered
+  `session stream interrupt`/`finish`'s `--flush-ms` and TUI `git
+  status`/`subrepos`'s `--subrepo`.
+
+**Counted in the Go surfaces: 70 FlagSets, 287 flag registrations.** The
 hand-scanned parsers add 17 more in the TUI and 25 in the WebUI.
+
+Two counting conventions, because both were ambiguous on the first pass:
+
+- **`(none)` is a measured zero, not an absence of data.** `board topics`,
+  `session ls`, `file ls`, `forward kill` and others genuinely register no
+  flags. Appendix A lists them rather than omitting them, so a path that was
+  never examined cannot hide among the ones that have nothing to declare.
+- **One parser can serve two paths.** `agent subscribe` and `agent
+  unsubscribe` both run `subscribeOrUnsub` (`cli/agent/subscribe.go:95-102`),
+  so one FlagSet row covers two verbs. The census printed eleven rows for
+  twelve `agent` sub-verbs; nothing was missed, but the row was labelled with
+  only one of the two names.
 
 ## Divergences
 
@@ -139,3 +160,87 @@ and applies it to one family out of twelve.
    / `agent` resolution order. #1 through #4 show the whole selector and
    forwarding surface is missing from the TUI, so Phase 4 is a larger behaviour
    reconciliation than "compare three resolution orders".
+
+## Appendix A — every CLI path and its flags
+
+The CLI is the reference surface (D14, D16), so this is the list the
+declaration is built from. `=` joins names sharing one target. `(none)` means
+the path registers no flags — measured, not skipped.
+
+| Path | Flags |
+| --- | --- |
+| `submit` | `repo` `task` `resume` `resume-conversation` `caps` `scope` `agent` `scope-for` `runner` `host` `ip` `agent-arg`=`claude-arg` |
+| `ls` | `json` `tree` |
+| `conns` | `json` `follow`=`f` |
+| `caps` | `json` |
+| `caps set` | `caps` `scope` `scope-for` `cascade` `keep-conns` |
+| `caps set-parent` | `parent` `none` `swap` |
+| `whoami` | `json` |
+| `version` | `json` |
+| `skill` | `--list`/`-l`/`ls` (if-chain, `main.go:289`) |
+| `cancel` | (none) |
+| `notify` | `title` `level` |
+| `prune` | `before` `force`=`f` |
+| `prune-local` | `repo` `before` `force`=`f` |
+| `logs` | `follow`=`f` |
+| `watch` | (none) |
+| `notify-watch` | (none) |
+| `interactive` | `repo` `resume` `resume-conversation` `caps` `scope` `agent` `scope-for` `runner` `host` `ip` `agent-arg`=`claude-arg` |
+| `file push` | `recursive`=`r` `force`=`f` `parents`=`p` |
+| `file pull` | `recursive`=`r` `force`=`f` `offset` `length` |
+| `file ls` | (none) |
+| `file mkdir` | `parents`=`p` |
+| `file edit` | (none) |
+| `file new` | (none) |
+| `file delete` | `recursive`=`r` `force`=`f` |
+| `git log` | `max` `subrepo` |
+| `git diff` | `staged`=`cached` `max-bytes` `subrepo` `submodule` |
+| `git show` | `max-bytes` `subrepo` `submodule` |
+| `git status` | `subrepo` |
+| `git file` | `staged` `rev` `max-bytes` `subrepo` |
+| `git subrepos` | `subrepo` |
+| `exec` (run) | `--shell` `--sshd-parent` (hand-scanned, `exec.go:93-95`) |
+| `exec ls` | `task` `json` |
+| `exec kill` | (none) |
+| `workspace save` | `task` `resume` `runner` `repo` |
+| `workspace ls` / `rm` / `show` | (none) |
+| `forward` (open) | `L` `R` `W` `http-method` `http-path` `http-body` `http-header` |
+| `forward ls` | `task` `json` |
+| `forward tap` | `dir` `max-bytes` `hex` `text` `raw` `json` |
+| `forward kill` | (none) |
+| `ssh-gateway` | `listen` `host-key` `authorized-keys` |
+| `session new` | `repo` `runner` `host` `ip` `resume` `resume-conversation` `caps` `scope` `scope-for` `agent` `agent-arg`=`claude-arg` `detach`=`d` `stream` `x11` `x11-display` `rows` `cols` |
+| `session attach` | `view` |
+| `session snapshot` | `rows` `cols` `settle-ms` `style` `color` `without-synth` `raw` `json` `ansi` `detect` `detect-agent` |
+| `session send` | `enter` `e` `flush-ms` `quiet` `snapshot` `rows` `cols` `settle-ms` `resize` `style` `color` `json` `ansi` `without-synth` `detect` `detect-agent` |
+| `session exec` | `timeout` `json` `exit-only` `raw` |
+| `session ls` | (none) |
+| `session kill` | (none) |
+| `session await-idle` | `threshold-ms` `notify` `topic` |
+| `session resize` | `size` `wait-ms` `quiet` |
+| `session stream attach` | (none) |
+| `session stream turn` | `flush-ms` |
+| `session stream approve` | `allow` `deny` `message` `suggestion` `flush-ms` |
+| `session stream interrupt` / `finish` | `flush-ms` (one FlagSet, dynamic name) |
+| `session stream requests` / `snapshot` | unbuilt — naming one reports that, by design (`session.go:117-119`) |
+| `server dial-runner` | `via` |
+| `board topics` | (none) |
+| `board read` | `in-reply-to` `json` |
+| `board subscribers` | (none) — optional positional topic |
+| `board retract` | `seq` |
+| `board purge` | `seq` |
+| `agent send` | `server-cid` `topic` `data` `in-reply-to` `reply-to` `no-retire-on-reply` |
+| `agent wait` | `server-cid` `topic` `since` `in-reply-to` `timeout` |
+| `agent inbox` | `server-cid` `since` `json` `user-prompt-submit-hook` `in-reply-to` |
+| `agent subscribe` / `unsubscribe` | `server-cid` `topic` `self` (one parser, `subscribeOrUnsub`) |
+| `agent dispatch` | `server-cid` `topic` `reply-to` `data` `timeout` |
+| `agent topics` | `server-cid` |
+| `agent subscriptions` | `server-cid` |
+| `agent purge` | `server-cid` `topic` `self` `seq` |
+| `agent retained` | `server-cid` `topic` `self` |
+| `agent read` | `server-cid` |
+| `agent retract` | `server-cid` |
+
+`--server-cid` on all twelve `agent` paths is the global flag re-registered
+per sub-verb, not a per-verb option; in the declaration it belongs to the
+global set that `usage()` already documents separately.
