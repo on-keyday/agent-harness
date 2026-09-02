@@ -25,6 +25,9 @@ author chose it while writing — those are the rows worth a second look.
 | D14 | Where the three surfaces' existing resolution orders disagree, the CLI's order is authoritative and the other surface is fixed | this spec |
 | D15 | `board` migrates in Phase 3, not Phase 6, so `WidensIfUnset` is exercised on the verb that motivated it | this spec |
 | D16 | Where a verb's path differs across surfaces, the CLI's path becomes canonical and the divergent spelling is removed. No path-alias mechanism is added | this spec |
+| D17 | A shared verb path must produce the same observable result on every surface it is declared for. A surface may answer from locally cached state only when the result is equivalent, and the staleness bound is recorded | this spec |
+| D18 | `ls` resolves to the shared listing on every surface. The WebUI's filtered-pane view stays reachable, as `ls --filtered` | operator |
+| D19 | `Flag.Surfaces` — a flag may be declared for fewer surfaces than its verb, with a stated reason. Default is the verb's set | this spec |
 
 ## Problem
 
@@ -116,6 +119,33 @@ holds the three copies together.
   word cannot be silently dropped the way a [flag] can". The WebUI's grammar
   is shaped by the absence of a parser, not by what reads best.
 
+- **Sharing the grammar is not enough, because one verb already means two
+  different things.** What a surface does after parsing falls into three
+  shapes, and only the first two are safe:
+
+  1. *Shared implementation.* `file`, `git`, `exec ls`/`kill`, `session *`,
+     `submit`, `cancel`, `prune`, `server dial-runner`, `forward kill` — the
+     TUI through `Do*(a.client)` helpers (`tui/app.go:3190`, :3361), the
+     WebUI through `window.harness.*` into `cli.Client`.
+  2. *Different fetch, equivalent result.* The WebUI's `forward ls` reads the
+     snapshot the page already polls (`lastForwards`, `main.js:376`, assigned
+     wholesale at :954) instead of issuing an RPC. The only difference is
+     freshness, bounded by the poll interval.
+  3. *Different result behind the same idea.* The WebUI's `list` scrapes
+     `.task-row` out of the DOM — **the filtered render**. `main.js:387` says
+     so: "The graph shows every visible task; the list shows the filtered
+     ones", where the filter bar is `task-filter-input` (:364) plus the
+     status chips. `harness-cli ls` returns the full server snapshot. The
+     shared implementation is already exposed to the WebUI as
+     `window.harness.list` (`cmd/harness-webui-wasm/main.go:715-726`, calling
+     `cli.Client.List`) and the command input does not use it — nor even the
+     unfiltered `lastTasks` cache at `main.js:300`.
+
+  Shape 3 is why unifying the grammar alone would make things worse: renaming
+  `list` to `ls` (D16) would give one name to two different results, where
+  today the differing spelling is at least an accidental signal. D17 and D18
+  are the response.
+
 - **The compensation is a 380-line manual checklist.**
   `.claude/skills/surface-parity-checklist/SKILL.md` requires walking 39
   numbered items with a verdict each, before any operator-visible option
@@ -153,6 +183,10 @@ IN:
   argument branches in `runCmd` (`webui/static/main.js`).
 - One new wasm bridge function, `parseCommand`, and one bridge accessor,
   `pathsForSurface`.
+- Rewiring the WebUI's task listing onto the shared `cli.Client.List` it
+  already exposes, and preserving today's filtered-pane view as
+  `ls --filtered` (D17, D18). This is the one behaviour change to an existing
+  surface that is not just a spelling.
 - Generated usage text replacing the inline per-verb usage strings.
 - Tests: differential (migration-lifetime), alias grouping
   (migration-lifetime), `Trailing`/permute invariant (permanent), per-surface
@@ -211,6 +245,8 @@ type Flag struct {
     Help          string
     Resolve       Chain      // nil = flag only
     WidensIfUnset bool       // D11
+    Surfaces      Surface    // zero = the verb's set (D19)
+    SurfaceReason string     // required when Surfaces is narrower than the verb's
 }
 ```
 
@@ -258,6 +294,26 @@ first time.
 **Custom value types** use `FlagCustom{New: func() flag.Value}`, which is how
 `scopeForFlag` (`cmd/harness-cli/main.go:35`) and `repeatableStrings` (:1358)
 survive unchanged.
+
+**`Surfaces` / `SurfaceReason`** exist because a flag can be meaningless on a
+surface its verb is otherwise fine on. The case that produced the field:
+
+```go
+// ls
+{Name: "filtered", Type: FlagBool, Surfaces: WebUI,
+ SurfaceReason: "only the WebUI has a task-list filter pane; the CLI has no filter to honour",
+ Help: "list only the rows the task-list filter currently admits"},
+```
+
+`ls` itself resolves to `cli.Client.List` on every surface that declares it —
+the CLI and the WebUI (the TUI has no top-level `ls`; its four `case "ls"`
+sites are `session` / `file` / `forward` / `exec` sub-verbs). The WebUI's
+current DOM scrape becomes `ls --filtered`, so both meanings stay reachable
+and each has its own name (D18).
+
+`Surfaces` narrower than the verb's requires `SurfaceReason`, enforced by the
+same completeness test that checks the verb's own surface set — a per-surface
+flag is exactly the shape that becomes silent drift when it is only a habit.
 
 **`WidensIfUnset`** marks a flag whose absence makes the operation cover more,
 not less — `board purge --seq` being the case that cost two messages. In this
@@ -396,7 +452,9 @@ of the table being built.
 | `refresh` / `sync` / `help` | — | ✓ | ✓ | 6 |
 | `preview` | — | — | ✓ | 6 |
 | `agent` (12 sub-verbs) | 12 | — | — | 6 |
-| `logs`, `watch`, `notify-watch`, `conns`, `ls`, `whoami`, `skill`, `version`, `cancel`, `prune-local` | ✓ | — | — | 6 |
+| `ls` | ✓ | — (the main pane) | ✓ (today `list`) | 6 |
+| `ls --filtered` | — (no filter pane) | — | ✓ | 6 |
+| `logs`, `watch`, `notify-watch`, `conns`, `whoami`, `skill`, `version`, `cancel`, `prune-local` | ✓ | — | — | 6 |
 | `trsf`, `diag`, `repo`, `clear`, `quit` | — | ✓ | — | 6 (declared in `tui`) |
 
 A number is the sub-verb count where all three surfaces carry the same set.
@@ -476,6 +534,24 @@ follows the pattern already used at
   which throws on a missing entry (D13). Scanning `main.js` from a Go test
   would be a regex over JavaScript; asserting from inside the runtime that
   owns the dispatch is exact.
+
+**Same-result invariant (permanent, D17).** "Produces the same observable
+result" cannot be asserted directly, but the thing that broke it can be. The
+WebUI dispatch table already needs an entry per path for D13; make each entry
+name how it answers — either a `window.harness.*` function or a named cached
+value with its staleness bound:
+
+```js
+"ls":          { fn: "list" },
+"forward ls":  { cache: "lastForwards", stale: "one snapshot poll" },
+```
+
+The startup assertion then rejects a shared path that has neither. That is
+what turns today's `list` — answered from filtered DOM, with the shared
+implementation sitting unused one call away — into something that cannot be
+written without declaring it. Review is not enough here for the reason
+`cli/flagorder_test.go:40-45` gives about its own defect class: every one of
+those sites had been reviewed.
 
 ## Risks
 
