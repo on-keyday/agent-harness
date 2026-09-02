@@ -2,6 +2,9 @@
 
 Date: 2026-09-03
 
+Companion: `2026-09-03-cli-verb-flag-inventory.md` counts every option on every
+surface and lists the thirteen divergences this design has to reconcile.
+
 ## Decisions taken
 
 **operator** means the human chose it in conversation, **this spec** means the
@@ -28,6 +31,8 @@ author chose it while writing — those are the rows worth a second look.
 | D17 | A shared verb path must produce the same observable result on every surface it is declared for. A surface may answer from locally cached state only when the result is equivalent, and the staleness bound is recorded | this spec |
 | D18 | `ls` resolves to the shared listing on every surface. The WebUI's filtered-pane view stays reachable, as `ls --filtered` | operator |
 | D19 | `Flag.Surfaces` — a flag may be declared for fewer surfaces than its verb, with a stated reason. Default is the verb's set | this spec |
+| D20 | `Arg.Surfaces` likewise: positional arity is per-surface. `file push` / `file pull` take one fewer positional in a browser, which has no local path. Declaring them as separate `Path`s instead would give one verb two names | this spec |
+| D21 | Divergences the inventory found are reconciled, not preserved: the WebUI stops accepting git flags its sub-verb has no use for, `--max-bytes` is either honoured there or removed, the TUI gains `--agent-arg`, and `notify`'s TUI form adopts the CLI's flags | this spec |
 
 ## Problem
 
@@ -51,7 +56,13 @@ holds the three copies together.
   flag written after a positional. Its search path
   (`cli/flagorder_test.go:48`) is `{".", "agent", "../cmd/harness-cli"}`. It
   does not walk `tui/`, and it structurally cannot reach `main.js`.
-  `cli.ParsePermuted` has **zero** callers under `tui/`.
+  `cli.ParsePermuted` has zero callers under `tui/` — because the TUI carries
+  its own line-for-line copy, `parsePermutedFlags` (`tui/cmdline.go:1394`),
+  whose comment gives an expired reason ("duplicated rather than imported
+  because tui must not depend on cmd/" — the canonical copy moved to package
+  `cli`, which that file already imports). It is called from five sites, all
+  in `parseGit`, so exactly one of the TUI's twelve families tolerates a flag
+  after a positional.
 
 - **That defect class has already cost data.** `cli/permute.go:17-22` records
   it: `board purge <topic> --seq N` — the exact line the help text printed —
@@ -235,6 +246,8 @@ type Arg struct {
     Name     string
     Type     ArgType
     Variadic bool
+    Surfaces Surface  // zero = the verb's set (D20)
+    SurfaceReason string
 }
 
 type Flag struct {
@@ -567,6 +580,13 @@ Mitigation, as an explicit task before Phase 4: compare the three orders for
 each affected flag and record the result. Where they disagree, the CLI's order
 is authoritative and the diverging surface is fixed as part of that phase
 (D14).
+
+**Phase 4 is larger than the resolution-order question.** The flag inventory
+found that the TUI's `submit` has no `--runner` / `--host` / `--ip` at all, its
+`session new` has no `--repo` / `--rows` / `--cols`, and none of its three
+spawning verbs accept `--agent-arg` — only the CLI's deprecated `--claude-arg`
+spelling. Phase 4 therefore reconciles a missing selector surface, not just an
+order of precedence.
 
 **Phase 5 touches a live PTY's input path.** `session send` is the only verb
 where a parse mistake types characters into a running agent's terminal. It is
