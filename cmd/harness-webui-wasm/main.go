@@ -755,7 +755,17 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 // harnessList returns the list output as a string.
 //
 //	harness.list() -> Promise<string>
+//
+// harnessList renders the shared listing. mode selects which of the three
+// renderers cli.Client already has -- "" (rows), "json" or "tree".
+//
+// --json and --tree parsed on this surface and were discarded, because only
+// the row renderer was exposed. The renderers existed the whole time.
 func harnessList(this js.Value, args []js.Value) any {
+	mode := ""
+	if len(args) > 0 && args[0].Type() == js.TypeString {
+		mode = args[0].String()
+	}
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -766,7 +776,14 @@ func harnessList(this js.Value, args []js.Value) any {
 				return
 			}
 			var buf bytesBuffer
-			if err := c.List(rootCtx, &buf); err != nil {
+			render := c.List
+			switch mode {
+			case "json":
+				render = c.ListJSON
+			case "tree":
+				render = c.ListTree
+			}
+			if err := render(rootCtx, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("list: %w", err))
 				return
 			}

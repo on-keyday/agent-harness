@@ -100,7 +100,9 @@ var Verbs = []VerbSpec{
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
-				Help: "overwrite existing destination"},
+				Surfaces:      CLI | TUI,
+				SurfaceReason: "a browser hands the bytes to its save dialog; there is no destination here to overwrite",
+				Help:          "overwrite existing destination"},
 			// -o / -n existed only in the TUI before the migration. Adding them
 			// to the other surfaces widens what parses and never narrows it.
 			{Name: "offset", Aliases: []string{"o"}, Type: FlagUint64, Default: uint64(0), Field: "Offset",
@@ -452,6 +454,11 @@ var Verbs = []VerbSpec{
 		// The four render modes are one choice, not four bools.
 		// They were CLI-only before -- the TUI took only --dir/--max-bytes.
 		Modes: &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
+		// The four render modes shape a byte STREAM on stdout. The WebUI's tap
+		// is a scrolling panel with its own rendering and no stdout to shape,
+		// so all four parsed there and were discarded -- declared away rather
+		// than silently ignored. --dir and --max-bytes are honoured on all
+		// three: they decide what is captured, not how it is printed.
 		Flags: []Flag{
 			{Name: "dir", Type: FlagString, Default: "both", Field: "Dir",
 				OneOf: []string{"to-target", "from-target", "both"},
@@ -459,12 +466,16 @@ var Verbs = []VerbSpec{
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxRecordBytes", FieldType: "uint32",
 				Help: "cut each record's payload to this many bytes (0 = whole payload)"},
 			{Name: "hex", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "hexdump body (default)"},
 			{Name: "text", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "printable body, no offset column"},
 			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "payload bytes only; requires an explicit --dir"},
 			{Name: "json", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "one JSON object per record"},
 		},
 		// --raw writes payloads with no headers, so two directions

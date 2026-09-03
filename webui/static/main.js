@@ -1051,7 +1051,7 @@ const POLL_INTERVAL_MS = 5000;
   // Lines arrive already rendered by cli.RenderTapRecord over the wasm bridge:
   // the browser never formats a record itself, so this panel prints what
   // `harness-cli forward tap` prints.
-  function toggleForwardTap(f, wrap, btn) {
+  function toggleForwardTap(f, wrap, btn, opts) {
     const existing = openTaps.get(f.forward_id);
     if (existing) {
       existing.close();
@@ -1082,7 +1082,12 @@ const POLL_INTERVAL_MS = 5000;
 
     let closeFn = () => { stopped = true; };
     try {
-      const handle = window.harness.forwardTap(f.forward_id, { dir: "both" }, append, (err) => {
+      // The row's button taps both directions whole; the command line can
+      // narrow either. They were discarded here, so `forward tap 7 --dir
+      // to-target` parsed and tapped both.
+      const tapOpts = { dir: (opts && opts.dir) || "both" };
+      if (opts && opts.maxBytes) tapOpts.maxBytes = opts.maxBytes;
+      const handle = window.harness.forwardTap(f.forward_id, tapOpts, append, (err) => {
         append([err ? `-- tap ended: ${err} --` : "-- tap ended --"]);
       });
       if (handle && typeof handle.close === "function") {
@@ -2462,7 +2467,10 @@ const POLL_INTERVAL_MS = 5000;
             out = Array.from(taskList.querySelectorAll(".task-row"))
                     .map(r => r.textContent).join("\n") || "(none)";
           } else {
-            out = await window.harness.list();
+            // --json and --tree reach cli.Client's own renderers; both parsed
+            // here and were dropped while only the row form was exposed.
+            out = await window.harness.list(
+              b.flags.json ? "json" : b.flags.tree ? "tree" : "");
           }
           break;
         }
@@ -2566,7 +2574,9 @@ const POLL_INTERVAL_MS = 5000;
             // gave undefined, and `.slice(0,8)` on it threw as soon as one
             // exec was running -- so this path only ever worked when empty.
             out = es.length
-              ? es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n")
+              ? (b.flags.json
+                  ? es.map((e) => JSON.stringify(e)).join("\n")
+                  : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n"))
               : "(no running execs)";
           } else if (sub === "kill") {
             // Every id, as on the CLI: this killed args[0] and reported
@@ -2590,7 +2600,9 @@ const POLL_INTERVAL_MS = 5000;
             const fwds = (lastForwards || []).filter(
               (f) => !b.flags.task || f.task === b.flags.task);
             out = fwds.length
-              ? fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n")
+              ? (b.flags.json
+                  ? fwds.map((f) => JSON.stringify(f)).join("\n")
+                  : fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n"))
               : "(no active port forwards)";
           } else if (sub === "kill") {
             for (const id of b.args) await window.harness.forwardKill(Number(id));
@@ -2604,7 +2616,10 @@ const POLL_INTERVAL_MS = 5000;
             if (!f) throw new Error(`forward tap: no such forward ${id} in the current snapshot`);
             const entry = findForwardEntry(id);
             if (!entry) throw new Error(`forward tap: forward ${id} has no row to attach a panel to`);
-            toggleForwardTap(f, entry.wrap, entry.button);
+            toggleForwardTap(f, entry.wrap, entry.button, {
+              dir: b.flags.dir || "both",
+              maxBytes: b.flags["max-bytes"] || 0,
+            });
             out = openTaps.has(id) ? `tapping forward ${id}` : `stopped tapping forward ${id}`;
           }
           break;
@@ -2751,7 +2766,10 @@ const POLL_INTERVAL_MS = 5000;
         default:
           out = `unknown command: ${cmd} (type 'help' for the list)`;
       }
-      appendCmdOutput(out, true);
+      // Only when a case produced one. Several report through
+      // appendCmdOutput themselves and break with `out` unset, which printed
+      // a bare "undefined" under the real message.
+      if (out !== undefined) appendCmdOutput(out, true);
       refreshSnapshot();
     } catch (e) {
       appendCmdOutput(`error: ${e.message}`, true);
@@ -6267,7 +6285,10 @@ async function runFileAction(b) {
     case "push":
       return filePushCmd(a[0], a[1]);
     case "pull":
-      return filePullCmd(a[0], a[1], !!b.flags.recursive);
+      // --offset / --length reach filePullBytesRange, which this surface has
+      // had all along for the HTML preview. They parsed here and were dropped.
+      return filePullCmd(a[0], a[1], !!b.flags.recursive,
+        Number(b.flags.offset || 0), Number(b.flags.length || 0));
     case "mkdir":
       return fileMkdirCmd(a[0], a[1], !!b.flags.parents);
     case "new":
@@ -6480,13 +6501,18 @@ function openFileEditor(opts) {
   });
 }
 
-async function filePullCmd(taskID, remoteRel, recursive) {
+async function filePullCmd(taskID, remoteRel, recursive, offset = 0, length = 0) {
   const fp = beginFileProgress(basename(remoteRel) + (recursive ? ".tar" : ""));
   try {
     if (recursive) {
       const bytes = await window.harness.filePullDirBytes(taskID, remoteRel, fp.onProgress);
       triggerDownload(bytes, basename(remoteRel) + ".tar");
       return `pull ok (tar): ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+    }
+    if (offset || length) {
+      const slice = await pullPreviewSlice(taskID, remoteRel, offset, length, fp);
+      triggerDownload(slice.bytes, basename(remoteRel));
+      return `pull ok: ${remoteRel} bytes ${offset}..${offset + slice.bytes.byteLength} of ${slice.total} — browser save dialog`;
     }
     const bytes = await window.harness.filePullBytes(taskID, remoteRel, fp.onProgress);
     triggerDownload(bytes, basename(remoteRel));

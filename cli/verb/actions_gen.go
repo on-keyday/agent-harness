@@ -668,7 +668,6 @@ func init() {
 		"file pull\x00webui": func(b Bound) (Action, error) {
 			a := FilePullAction{}
 			a.Recursive = b.Bool("recursive")
-			a.Force = b.Bool("force")
 			a.Offset = uint64Of(b.Flags["offset"])
 			a.Length = uint64Of(b.Flags["length"])
 			if len(b.Args) > 0 {
