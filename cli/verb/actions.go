@@ -372,41 +372,6 @@ type LogsAction struct {
 	Follow bool
 }
 
-// SessionAction is the shape of the single-task session verbs that carry only
-// a task id and a few knobs: attach, ls, kill, await-idle, snapshot, resize,
-// and the stream sub-verbs.
-type SessionAction struct {
-	ActionMarker
-	Sub    string
-	TaskID string
-
-	View bool // attach
-
-	ThresholdMs uint // await-idle
-	Notify      bool
-	Topic       string
-
-	Rows, Cols   uint // snapshot
-	SettleMs     uint
-	Style, Color bool
-	Raw, JSON    bool
-	ANSI         bool
-	WithoutSynth bool
-	Detect       bool
-	DetectAgent  string
-
-	Size    string // resize
-	WaitMs  uint
-	Quiet   bool
-	FlushMs uint // stream verbs
-
-	Allow      bool // stream approve
-	Deny       bool
-	Message    string
-	Suggestion string
-	RequestID  string
-}
-
 // AgentAction is the shape of the agentboard verbs an agent calls from inside
 // its own task. ServerCID is env-primary; the ticket is env-only.
 type AgentAction struct {

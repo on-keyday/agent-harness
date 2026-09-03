@@ -32,6 +32,60 @@ type PruneAction struct {
 	TaskIDs []string
 }
 
+// SessionAction is built by: session attach, session await-idle, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt.
+type SessionAction struct {
+	ActionMarker
+	// attach in view-only mode
+	View   bool
+	TaskID string
+	Sub    string
+	// quiescence threshold in ms (0 = server default)
+	ThresholdMs uint
+	// fire via the operator-notification egress
+	Notify bool
+	// fire via an agentboard publish to this topic
+	Topic string
+	// new PTY size as ROWSxCOLS (e.g. 40x150)
+	Size string
+	// ms to wait for the server to echo the new size back — that echo is the acknowledgement
+	WaitMs uint
+	// suppress the one-line result on stderr
+	Quiet bool
+	// fallback rows when the session reports no size
+	Rows uint
+	// fallback cols when the session reports no size
+	Cols uint
+	// ms to collect output before rendering
+	SettleMs uint
+	// also print attribute spans
+	Style bool
+	// also print fg/bg colour spans
+	Color bool
+	// render only what the PTY produced, dropping the server's replay additions
+	WithoutSynth bool
+	// write the verbatim replay bytes instead of the VT-rendered screen
+	Raw bool
+	// emit the screen as one JSON object
+	JSON bool
+	// re-emit the screen WITH its colours and attributes
+	ANSI bool
+	// also judge what STATE the screen shows (working / blocked / idle / unknown)
+	Detect bool
+	// with --detect: which agent's rule set
+	DetectAgent string
+	// ms to let the line drain
+	FlushMs uint
+	// run the tool as requested
+	Allow bool
+	// refuse it
+	Deny bool
+	// with --deny, the reason. It reaches the AGENT verbatim as a failed tool result
+	Message string
+	// with --allow, an updated input
+	Suggestion string
+	RequestID  string
+}
+
 // The builds the declaration implies, one per verb path, registered into
 // generated.go's map at init. Registering rather than declaring is what lets
 // the package compile when this file is absent -- which it must, because the
@@ -85,6 +139,111 @@ func init() {
 			a.Seq = uint64Of(b.Flags["seq"])
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"session attach": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "attach"
+			a.View = b.Bool("view")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session ls": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "ls"
+			return a, nil
+		},
+		"session kill": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "kill"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session await-idle": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle"
+			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session resize": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "resize"
+			a.Size = b.Str("size")
+			a.WaitMs = uintOf(b.Flags["wait-ms"])
+			a.Quiet = b.Bool("quiet")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session snapshot": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "snapshot"
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			a.SettleMs = uintOf(b.Flags["settle-ms"])
+			a.Style = b.Bool("style")
+			a.Color = b.Bool("color")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Raw = b.Bool("raw")
+			a.JSON = b.Bool("json")
+			a.ANSI = b.Bool("ansi")
+			a.Detect = b.Bool("detect")
+			a.DetectAgent = b.Str("detect-agent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream attach": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-attach"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream interrupt": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-interrupt"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream finish": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-finish"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream approve": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-approve"
+			a.Allow = b.Bool("allow")
+			a.Deny = b.Bool("deny")
+			a.Message = b.Str("message")
+			a.Suggestion = b.Str("suggestion")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
 			}
 			return a, nil
 		},

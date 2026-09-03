@@ -1190,146 +1190,122 @@ var Verbs = []VerbSpec{
 	// --- single-task session verbs ---
 	{
 		Path: []string{"session", "attach"}, Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Flags:    []Flag{{Name: "view", Type: FlagBool, Default: false, Help: "attach in view-only mode"}},
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "attach"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Flags:    []Flag{{Name: "view", Type: FlagBool, Default: false, Field: "View", Help: "attach in view-only mode"}},
 		Examples: []string{"session attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "attach", TaskID: b.Args[0], View: b.Bool("view")}, nil
-		},
 	},
 	{
 		Path: []string{"session", "ls"}, Surfaces: CLI | TUI,
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "ls"},
 		Examples: []string{"session ls"},
-		Build:    func(b Bound) (Action, error) { return SessionAction{Sub: "ls"}, nil },
 	},
 	{
 		Path: []string{"session", "kill"}, Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "kill"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Examples: []string{"session kill aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "kill", TaskID: b.Args[0]}, nil
-		},
 	},
 	{
 		Path: []string{"session", "await-idle"}, Surfaces: CLI | TUI | WebUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "await-idle"},
+		// Two sinks for one fire: the reply long-poll, the notification
+		// egress, or an agentboard publish. Naming two asks for two.
+		Exclusive: [][]string{{"notify", "topic"}},
+		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
-			{Name: "threshold-ms", Type: FlagUint, Default: uint(0), Help: "quiescence threshold in ms (0 = server default)"},
-			{Name: "notify", Type: FlagBool, Default: false, Help: "fire via the operator-notification egress"},
-			{Name: "topic", Type: FlagString, Default: "", Help: "fire via an agentboard publish to this topic"},
+			{Name: "threshold-ms", Type: FlagUint, Default: uint(0), Field: "ThresholdMs", Help: "quiescence threshold in ms (0 = server default)"},
+			{Name: "notify", Type: FlagBool, Default: false, Field: "Notify", Help: "fire via the operator-notification egress"},
+			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "fire via an agentboard publish to this topic"},
 		},
 		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			if b.Bool("notify") && b.Str("topic") != "" {
-				return nil, fmt.Errorf("session await-idle: --notify and --topic are mutually exclusive")
-			}
-			return SessionAction{Sub: "await-idle", TaskID: b.Args[0],
-				ThresholdMs: uintFlag(b, "threshold-ms"), Notify: b.Bool("notify"), Topic: b.Str("topic")}, nil
-		},
 	},
 	{
 		Path: []string{"session", "resize"}, Surfaces: CLI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "resize"},
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
-			{Name: "size", Type: FlagString, Default: "", Help: "new PTY size as ROWSxCOLS (e.g. 40x150)"},
-			{Name: "wait-ms", Type: FlagUint, Default: uint(2000),
+			{Name: "size", Type: FlagString, Default: "", Field: "Size", Help: "new PTY size as ROWSxCOLS (e.g. 40x150)"},
+			{Name: "wait-ms", Type: FlagUint, Default: uint(2000), Field: "WaitMs",
 				Help: "ms to wait for the server to echo the new size back — that echo is the acknowledgement"},
-			{Name: "quiet", Type: FlagBool, Default: false, Help: "suppress the one-line result on stderr"},
+			{Name: "quiet", Type: FlagBool, Default: false, Field: "Quiet", Help: "suppress the one-line result on stderr"},
 		},
 		Examples: []string{"session resize aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --size 40x150"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "resize", TaskID: b.Args[0], Size: b.Str("size"),
-				WaitMs: uintFlag(b, "wait-ms"), Quiet: b.Bool("quiet")}, nil
-		},
 	},
 	{
 		Path: []string{"session", "snapshot"}, Surfaces: CLI | TUI | WebUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "snapshot"},
+		// --raw is the verbatim byte stream, so the renderers have nothing to
+		// act on: combining them asks for two different outputs at once.
+		Exclusive: [][]string{{"raw", "style"}, {"raw", "color"}, {"raw", "json"}, {"raw", "detect"}},
+		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
-			{Name: "rows", Type: FlagUint, Default: uint(40), Help: "fallback rows when the session reports no size"},
-			{Name: "cols", Type: FlagUint, Default: uint(120), Help: "fallback cols when the session reports no size"},
-			{Name: "settle-ms", Type: FlagUint, Default: uint(1500), Help: "ms to collect output before rendering"},
-			{Name: "style", Type: FlagBool, Default: false, Help: "also print attribute spans"},
-			{Name: "color", Type: FlagBool, Default: false, Help: "also print fg/bg colour spans"},
-			{Name: "without-synth", Type: FlagBool, Default: false,
+			{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "fallback rows when the session reports no size"},
+			{Name: "cols", Type: FlagUint, Default: uint(120), Field: "Cols", Help: "fallback cols when the session reports no size"},
+			{Name: "settle-ms", Type: FlagUint, Default: uint(1500), Field: "SettleMs", Help: "ms to collect output before rendering"},
+			{Name: "style", Type: FlagBool, Default: false, Field: "Style", Help: "also print attribute spans"},
+			{Name: "color", Type: FlagBool, Default: false, Field: "Color", Help: "also print fg/bg colour spans"},
+			{Name: "without-synth", Type: FlagBool, Default: false, Field: "WithoutSynth",
 				Help: "render only what the PTY produced, dropping the server's replay additions"},
-			{Name: "raw", Type: FlagBool, Default: false,
+			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
 				Help: "write the verbatim replay bytes instead of the VT-rendered screen"},
-			{Name: "json", Type: FlagBool, Default: false, Help: "emit the screen as one JSON object"},
-			{Name: "ansi", Type: FlagBool, Default: false, Help: "re-emit the screen WITH its colours and attributes"},
-			{Name: "detect", Type: FlagBool, Default: false,
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "emit the screen as one JSON object"},
+			{Name: "ansi", Type: FlagBool, Default: false, Field: "ANSI", Help: "re-emit the screen WITH its colours and attributes"},
+			{Name: "detect", Type: FlagBool, Default: false, Field: "Detect",
 				Help: "also judge what STATE the screen shows (working / blocked / idle / unknown)"},
-			{Name: "detect-agent", Type: FlagString, Default: "claude", Help: "with --detect: which agent's rule set"},
+			{Name: "detect-agent", Type: FlagString, Default: "claude", Field: "DetectAgent", Help: "with --detect: which agent's rule set"},
 		},
 		Examples: []string{"session snapshot aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			a := SessionAction{Sub: "snapshot", TaskID: b.Args[0],
-				Rows: uintFlag(b, "rows"), Cols: uintFlag(b, "cols"), SettleMs: uintFlag(b, "settle-ms"),
-				Style: b.Bool("style"), Color: b.Bool("color"), Raw: b.Bool("raw"),
-				JSON: b.Bool("json"), ANSI: b.Bool("ansi"), WithoutSynth: b.Bool("without-synth"),
-				Detect: b.Bool("detect"), DetectAgent: b.Str("detect-agent")}
-			// --raw is the verbatim byte stream, so the renderers have nothing
-			// to act on: combining them asks for two different outputs at once.
-			if a.Raw {
-				var with []string
-				for _, n := range []string{"style", "color", "json", "detect"} {
-					if b.Set[n] {
-						with = append(with, "--"+n)
-					}
-				}
-				if len(with) > 0 {
-					return nil, fmt.Errorf("session snapshot: --raw cannot be combined with %s", strings.Join(with, ", "))
-				}
-			}
-			return a, nil
-		},
 	},
 	{
 		Path: []string{"session", "stream", "attach"}, Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "stream-attach"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Examples: []string{"session stream attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "stream-attach", TaskID: b.Args[0]}, nil
-		},
 	},
 	{
 		Path: []string{"session", "stream", "interrupt"}, Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"}},
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "stream-interrupt"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs", Help: "ms to let the line drain"}},
 		Examples: []string{"session stream interrupt aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "stream-interrupt", TaskID: b.Args[0], FlushMs: uintFlag(b, "flush-ms")}, nil
-		},
 	},
 	{
 		Path: []string{"session", "stream", "finish"}, Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"}},
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "stream-finish"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs", Help: "ms to let the line drain"}},
 		Examples: []string{"session stream finish aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return SessionAction{Sub: "stream-finish", TaskID: b.Args[0], FlushMs: uintFlag(b, "flush-ms")}, nil
-		},
 	},
 	{
 		Path: []string{"session", "stream", "approve"}, Surfaces: CLI | TUI | WebUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}, {Name: "request-id", Type: ArgString}},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "stream-approve"},
+		// The verdict is the whole point of the verb, so neither omitting it
+		// nor giving both is an answer.
+		ExactlyOne: [][]string{{"allow", "deny"}},
+		Args: []Arg{
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "request-id", Type: ArgString, Field: "RequestID"},
+		},
 		Flags: []Flag{
-			{Name: "allow", Type: FlagBool, Default: false, Help: "run the tool as requested"},
-			{Name: "deny", Type: FlagBool, Default: false, Help: "refuse it"},
-			{Name: "message", Type: FlagString, Default: "",
+			{Name: "allow", Type: FlagBool, Default: false, Field: "Allow", Help: "run the tool as requested"},
+			{Name: "deny", Type: FlagBool, Default: false, Field: "Deny", Help: "refuse it"},
+			{Name: "message", Type: FlagString, Default: "", Field: "Message",
 				Help: "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result"},
-			{Name: "suggestion", Type: FlagString, Default: "", Help: "with --allow, an updated input"},
-			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"},
+			{Name: "suggestion", Type: FlagString, Default: "", Field: "Suggestion", Help: "with --allow, an updated input"},
+			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs", Help: "ms to let the line drain"},
 		},
 		Examples: []string{"session stream approve aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa req-1 --allow"},
-		Build: func(b Bound) (Action, error) {
-			if b.Bool("allow") == b.Bool("deny") {
-				return nil, fmt.Errorf("session stream approve: pass exactly one of --allow or --deny")
-			}
-			return SessionAction{Sub: "stream-approve", TaskID: b.Args[0], RequestID: b.Args[1],
-				Allow: b.Bool("allow"), Deny: b.Bool("deny"), Message: b.Str("message"),
-				Suggestion: b.Str("suggestion"), FlushMs: uintFlag(b, "flush-ms")}, nil
-		},
 	},
 
 	// --- the agent-runtime verbs ---
