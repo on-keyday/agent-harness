@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/on-keyday/agent-harness/cli"
@@ -12,21 +13,23 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-func workspaceUsage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli workspace save <name> [--task <32-hex>] [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
-	fmt.Fprintln(os.Stderr, "       harness-cli workspace rm <name>")
-	fmt.Fprintln(os.Stderr, "       harness-cli workspace ls")
-	fmt.Fprintln(os.Stderr, "       harness-cli workspace show [<name>]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "save records every task the registry reports a forward for; --task narrows it")
-	fmt.Fprintln(os.Stderr, "to one, and is also how a task's forwards get CLEARED after you stop them.")
-	fmt.Fprintln(os.Stderr, "It MERGES: task blocks it did not observe are kept, and an existing block's")
-	fmt.Fprintln(os.Stderr, "resume / runner are never overwritten — those are yours to hand-edit.")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "There is no `workspace apply` here: a forward lives exactly as long as the")
-	fmt.Fprintln(os.Stderr, "client holding its control stream, so a short-lived CLI process could only")
-	fmt.Fprintln(os.Stderr, "establish one by staying in the foreground — which is `harness-cli forward`.")
-	fmt.Fprintln(os.Stderr, "The TUI applies a workspace on start, on reconnect, and on `workspace apply`.")
+func workspaceUsage() { workspaceUsageTo(os.Stderr) }
+
+func workspaceUsageTo(w io.Writer) {
+	fmt.Fprintln(w, "usage: harness-cli workspace save <name> [--task <32-hex>] [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
+	fmt.Fprintln(w, "       harness-cli workspace rm <name>")
+	fmt.Fprintln(w, "       harness-cli workspace ls")
+	fmt.Fprintln(w, "       harness-cli workspace show [<name>]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "save records every task the registry reports a forward for; --task narrows it")
+	fmt.Fprintln(w, "to one, and is also how a task's forwards get CLEARED after you stop them.")
+	fmt.Fprintln(w, "It MERGES: task blocks it did not observe are kept, and an existing block's")
+	fmt.Fprintln(w, "resume / runner are never overwritten — those are yours to hand-edit.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "There is no `workspace apply` here: a forward lives exactly as long as the")
+	fmt.Fprintln(w, "client holding its control stream, so a short-lived CLI process could only")
+	fmt.Fprintln(w, "establish one by staying in the foreground — which is `harness-cli forward`.")
+	fmt.Fprintln(w, "The TUI applies a workspace on start, on reconnect, and on `workspace apply`.")
 }
 
 // runWorkspace implements the `workspace` family.

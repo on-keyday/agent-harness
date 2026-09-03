@@ -984,6 +984,31 @@ var Verbs = []VerbSpec{
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the identity as a JSON object"}},
 		Examples: []string{"whoami"},
 	},
+	// Three verbs the migration dispatched and never declared -- found by the
+	// usage guard, not by review: usage() printed them and PathsForSurface did
+	// not know them, so every completeness check passed over them.
+	{
+		Path: []string{"skill"}, Surfaces: CLI,
+		Action: "CatalogAction",
+		Const:  map[string]string{"Sub": "skill"},
+		Args: []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name",
+			Optional: true}},
+		Flags: []Flag{{Name: "list", Aliases: []string{"l"}, Type: FlagBool, Default: false, Field: "List",
+			Help: "name every embedded skill with its description instead of printing one"}},
+		Examples: []string{"skill", "skill --list", "skill harness-cli"},
+	},
+	{
+		Path: []string{"watch"}, Surfaces: CLI,
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "watch"},
+		Examples: []string{"watch"},
+	},
+	{
+		Path: []string{"notify-watch"}, Surfaces: CLI,
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "notify-watch"},
+		Examples: []string{"notify-watch"},
+	},
 	{
 		Path: []string{"version"}, Surfaces: CLI,
 		Action:   "CatalogAction",

@@ -82,12 +82,15 @@ type CancelAction struct {
 	TaskID string
 }
 
-// CatalogAction is built by: caps, version, whoami.
+// CatalogAction is built by: caps, notify-watch, skill, version, watch, whoami.
 type CatalogAction struct {
 	ActionMarker
 	// output the capability catalog as JSON
 	JSON bool
 	Sub  string
+	// name every embedded skill with its description instead of printing one
+	List bool
+	Name string
 }
 
 // ConnsAction is built by: conns.
@@ -1933,6 +1936,25 @@ func init() {
 			a := CatalogAction{}
 			a.Sub = "whoami"
 			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"skill\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "skill"
+			a.List = b.Bool("list")
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"watch\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "watch"
+			return a, nil
+		},
+		"notify-watch\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "notify-watch"
 			return a, nil
 		},
 		"version\x00cli": func(b Bound) (Action, error) {
