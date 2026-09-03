@@ -511,6 +511,28 @@ passes for that family and the legacy parser for it is deleted.
 Phase 0 decides whether the design holds. If it does not, the correct response
 is to revise the declaration before Phase 1, not to special-case `prune`.
 
+### A newly found exception halts the phase
+
+**Operator instruction: stop and report; do not absorb it and do not decide
+it alone.** This is not caution for its own sake — it is what the history of
+this document says happens. Every exception found while writing it changed the
+design rather than fitting into it:
+
+| Found | Changed |
+| --- | --- |
+| `-e` is not short for `--enter` | D4 — aliases declared, never inferred |
+| WebUI `list` reads filtered DOM | D17, D18 — same path, same result |
+| `--filtered` is meaningless without a filter pane | D19 — `Flag.Surfaces` |
+| `file push` takes one fewer positional in a browser | D20 — `Arg.Surfaces` |
+| `forward tap` reads its id before the FlagSet | D22 — constraint removed |
+| `cli` itself parses `board` | D23 — the package layout, which did not work as first written |
+| `agent send` joins positionals into a payload | `Trailing` is six verbs, not four |
+
+Seven of these were found by looking one level further after the design
+already read as finished. So a new one during implementation is evidence the
+model is still incomplete, not a detail to route around: finish nothing, write
+down what was found and which decision it contradicts, and bring it back.
+
 ### Enumerating a family before declaring it
 
 Sub-verb dispatch in this tree is not uniformly a `switch`. `caps set` and
