@@ -2,7 +2,7 @@ CMDS := agent-runner harness-cli harness-server harness-tui harness-stream-adapt
 GOEXE := $(shell go env GOEXE)
 BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 
-.PHONY: all build release check webui-build wasm-check test vet clean protoregen help $(BIN_TARGETS)
+.PHONY: all build release check webui-build wasm-check test js-test vet clean protoregen help $(BIN_TARGETS)
 
 # Per-target flags appended to `go build` in the BIN_TARGETS recipe. Empty by
 # default so `make build` matches dev expectations (debug info preserved);
@@ -44,8 +44,21 @@ check: webui-build
 wasm-check:
 	GOOS=js GOARCH=wasm go build ./cli/... ./cmd/harness-webui-wasm/
 
-test:
+test: js-test
 	go test ./...
+
+# The WebUI's command line, driven under node's built-in test runner against
+# the REAL wasm bridge (webui/static/harness_env.mjs loads main.wasm, so the
+# declaration under test is the one the CLI and TUI parse from). Depends on
+# webui-build because a stale main.wasm would test a stale table.
+#
+# Skipped where node is absent rather than failing: this repo builds on
+# Windows runners too, and a missing JS runtime must not stop `make test`
+# from checking the Go half. No packages -- node --test and node:vm ship with
+# the runtime, and there is no package.json to install from.
+js-test: webui-build
+	@command -v node >/dev/null 2>&1 || { echo "js-test: no node on PATH, skipping"; exit 0; }
+	node --test webui/static/cmd_test.mjs
 
 # The integration suite lives behind the `integration` build tag and is NOT
 # part of `make test` / `go test ./...`. Run it explicitly (CI mirrors this in
@@ -86,6 +99,7 @@ protoregen:
 help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
+	@echo "  js-test       node --test over the WebUI command line (skipped without node)"
 	@echo "  build         webui-build + emit bin/<cmd> for each cmd/*"
 	@echo "  release       build with -trimpath -ldflags=\"-s -w\" (used by CI matrix)"
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"

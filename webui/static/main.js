@@ -2318,48 +2318,6 @@ const POLL_INTERVAL_MS = 5000;
     }
   };
 
-  // How runCmd answers each declared path: a window.harness.* function, or a
-  // named cached value with the bound on its staleness. Design D13 + D17.
-  //
-  // FULL paths, not head words. This was a set of 16 heads matched against
-  // p.split(" ")[0], and 27 of the 33 declared paths are multi-word -- so
-  // `session snapshot` (no case at all) and the five `session stream *` paths
-  // (which threw ReferenceError on an undeclared `args`) all passed the
-  // assertion on the strength of the word `session`.
-  const RUNCMD_DISPATCH = {
-    "submit": { fn: "submit" },
-    "cancel": { fn: "cancel" },
-    "prune": { fn: "prune" },
-    "ls": { fn: "list" },
-    "grid": { fn: "gridSet" },
-    "caps set-parent": { fn: "setParent" },
-    "server dial-runner": { fn: "serverDialRunner" },
-    "exec": { fn: "execRun" },
-    "exec ls": { fn: "execRunList" },
-    "exec kill": { fn: "execRunKill" },
-    "file push": { fn: "filePush" },
-    "file pull": { fn: "filePull" },
-    "file ls": { fn: "fileLs" },
-    "file mkdir": { fn: "fileMkdir" },
-    "file delete": { fn: "fileDelete" },
-    "file edit": { fn: "fileEdit" },
-    "file new": { fn: "fileNew" },
-    "git log": { fn: "gitQuery" },
-    "git diff": { fn: "gitQuery" },
-    "git show": { fn: "gitQuery" },
-    "git status": { fn: "gitQuery" },
-    "git subrepos": { fn: "gitQuery" },
-    "git file": { fn: "gitQuery" },
-    "forward ls": { cache: "lastForwards", stale: "one snapshot poll" },
-    "forward tap": { cache: "lastForwards", stale: "one snapshot poll" },
-    "forward kill": { fn: "forwardKill" },
-    "session await-idle": { fn: "awaitIdle" },
-    "session stream turn": { fn: "streamTurn" },
-    "session stream approve": { fn: "streamApprove" },
-    "session stream interrupt": { fn: "streamInterrupt" },
-    "session stream finish": { fn: "streamFinish" },
-    "session stream attach": { fn: "openChatFor" },
-  };
 
   // Every verb the declaration marks as reachable here must be dispatchable.
   // Asserted from inside the runtime that owns the dispatch: scanning this
@@ -2379,14 +2337,50 @@ const POLL_INTERVAL_MS = 5000;
       throw new Error("webui dispatch names undeclared verbs: " + orphans.join(", "));
     }
     // Each entry must say HOW it answers, so a path served from a stale cache
-    // cannot be added without recording the bound (D17).
+    // cannot be added without recording the bound (D17) -- and when it names a
+    // bridge function, that function must EXIST. A name is a hand-written
+    // string; `{ fn: "streamFinsh" }` passed this check while the verb it
+    // describes failed at typing time.
+    // openChatFor is this page's own function, not a bridge export: `session
+    // stream attach` opens the chat panel rather than calling the server.
+    const local = { openChatFor: true };
     for (const [p, how] of Object.entries(RUNCMD_DISPATCH)) {
       if (!how.fn && !(how.cache && how.stale)) {
         throw new Error(`webui dispatch ${p}: needs {fn} or {cache, stale}`);
       }
+      if (how.fn && !local[how.fn] && typeof window.harness[how.fn] !== "function") {
+        throw new Error(`webui dispatch ${p}: names harness.${how.fn}, which the bridge does not export`);
+      }
     }
   }
 
+
+  // What the page owns and runVerbCommand does not: the compose dropdowns,
+  // the snapshot cache, the panels. Built once; every entry is a function so
+  // the Node test can record the call instead of mimicking the widget.
+  const cmdCtx = {
+    get harness() { return window.harness; },
+    echo: (text) => appendCmdOutput(text, true),
+    refreshSnapshot: () => refreshSnapshot(),
+    composeRepo: () => runnerSelect.value || "",
+    composeHost: () => (hostSelect ? hostSelect.value || "" : ""),
+    composeAgent: () => (agentSelect ? agentSelect.value || "" : ""),
+    resumeTaskID: () => currentResumeTaskID(),
+    claudeArgs: () => currentClaudeArgs(),
+    sessionReq: (o) => sessionReq(o),
+    setParentMessage: (id, swap, r) => setParentMessage(id, swap, r),
+    filteredTaskRows: () =>
+      Array.from(taskList.querySelectorAll(".task-row")).map((r) => r.textContent).join("\n") || "(none)",
+    openSessionPreview: (id) => openSessionPreview(id),
+    openGridSet: (o) => openGridSet(o),
+    execRunToOutput: (id, argv, opts) => execRunToOutput(id, argv, opts),
+    forwards: () => lastForwards || [],
+    findForwardEntry: (id) => findForwardEntry(id),
+    toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
+    tapOpen: (id) => openTaps.has(id),
+    chatTaskID: () => chatTaskId,
+    openChatFor: (id) => openChatFor(id),
+  };
 
   const runCmd = async () => {
     const line = cmdInput.value.trim();
@@ -2394,388 +2388,10 @@ const POLL_INTERVAL_MS = 5000;
     cmdInput.value = "";
     appendCmdOutput(`> ${line}`, true);
     try {
-      const tokens = tokenize(line);   // quote-aware
-      const cmd = tokens[0];
-      let out;
-      switch (cmd) {
-        case "submit": {
-          // Parsed by the shared declaration. The repo comes from the Compose
-          // dropdown through the surface-context tier of --repo's ladder, the
-          // same ladder the CLI reads env and workspace config from -- one
-          // ladder with three injections, instead of three ladders.
-          const dropdownRepo = runnerSelect.value || "";
-          const dropdownHost = hostSelect ? hostSelect.value || "" : "";
-          const b = window.harness.parseCommand(tokens, {
-            repo: dropdownRepo, host: dropdownHost,
-            agent: agentSelect ? agentSelect.value || "" : "",
-          });
-          if (b.error) throw new Error(b.error);
-          // b.flags.repo is already the ladder's answer -- typed flag first,
-          // dropdown second -- because parseCommand applies the
-          // surface-context tier from the object above. Both were read
-          // straight off the dropdown before, so `submit --repo /not/a/repo`
-          // queued against the dropdown's repo instead.
-          const repo = b.flags.repo || dropdownRepo;
-          const resumeTaskId = b.flags.resume || currentResumeTaskID();
-          if (!repo && !resumeTaskId) {
-            throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
-          }
-          const task = b.flags.task || b.trail;
-          if (!task) throw new Error("submit: missing task prompt");
-          const scopeFor = (b.custom && b.custom["scope-for"]) || null;
-          out = await window.harness.submit(sessionReq({
-            repo, task,
-            host: b.flags.host || dropdownHost,
-            // The three runner selectors are mutually exclusive in the
-            // declaration, so at most one of these is non-empty.
-            runner: b.flags.runner || "",
-            ip: b.flags.ip || "",
-            agent: b.flags.agent || (agentSelect ? agentSelect.value || "" : ""),
-            claudeArgs: (b.custom && b.custom["agent-arg"]) || currentClaudeArgs(),
-            // b.set, not truthiness: --caps none is a real grant of nothing.
-            caps: b.set && b.set.caps ? b.flags.caps : null,
-            scope: b.set && b.set.scope ? b.flags.scope : null,
-            scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
-            resumeTaskId,
-            resumeConversation: !!b.flags["resume-conversation"],
-          }));
-          break;
-        }
-        case "caps": {
-          // `caps set-parent` is the canonical path; the WebUI's old
-          // top-level `set-parent` spelling is gone (D16).
-          if (tokens[1] !== "set-parent") {
-            throw new Error("caps: only `caps set-parent` is available here");
-          }
-
-          // `caps set-parent` on the other surfaces; the shared declaration
-          // enforces "exactly one of --parent / --none / --swap".
-          const b = window.harness.parseCommand(["caps", "set-parent", ...tokens.slice(2)], {});
-          if (b.error) throw new Error(b.error);
-          const req = { taskId: b.args[0] };
-          if (b.flags.swap) req.swap = true;
-          else if (b.flags.none) req.parentId = "";
-          else req.parentId = b.flags.parent;
-          out = setParentMessage(
-            b.args[0], req.swap === true, await window.harness.setParent(req));
-          break;
-        }
-        case "ls": {
-          // The shared listing, not the filtered pane. This case used to be
-          // spelled `list` and scraped .task-row out of the DOM -- the
-          // FILTERED render -- while `harness-cli ls` returned the whole
-          // snapshot: one idea, two answers, which is what D17 forbids.
-          // cli.Client.List was already exposed here as harness.list and
-          // simply went unused.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          if (b.flags.filtered) {
-            await refreshSnapshot();
-            out = Array.from(taskList.querySelectorAll(".task-row"))
-                    .map(r => r.textContent).join("\n") || "(none)";
-          } else {
-            // --json and --tree reach cli.Client's own renderers; both parsed
-            // here and were dropped while only the row form was exposed.
-            out = await window.harness.list(
-              b.flags.json ? "json" : b.flags.tree ? "tree" : "");
-          }
-          break;
-        }
-        case "refresh":
-        case "sync":
-          // Force a snapshot re-sync without echoing the rows (TUI parity).
-          await refreshSnapshot();
-          out = "snapshot refreshed";
-          break;
-        case "cancel": {
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          await window.harness.cancel(b.args[0]);
-          out = "cancelled";
-          break;
-        }
-        case "preview":
-          if (!tokens[1]) throw new Error("preview: missing task id");
-          openSessionPreview(tokens[1]);
-          out = `preview ${tokens[1].slice(0, 12)}…`;
-          break;
-        case "grid": {
-          // The grid grammar was already shared (cli.ParseGridArgs, which the
-          // workspace config validates against too); this routes the command
-          // input through the same declaration as everything else.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          // The declaration already refused --descendants without --under, so
-          // the mode follows from what survived the parse.
-          const under = b.flags.under || "";
-          // Full ids only. The TUI resolves a prefix against its task list
-          // (tui/app.go's GridAction case) and this surface has no resolver,
-          // so a half-typed id would silently select nothing.
-          const full = (id) => /^[0-9a-fA-F]{32}$/.test(id);
-          if (under && !full(under)) throw new Error("grid: --under needs a full 32-hex task id");
-          const bad = b.args.filter((id) => !full(id));
-          if (bad.length) throw new Error(`grid: not a full 32-hex task id: ${bad.join(", ")}`);
-          const mode = under ? (b.flags.descendants ? "descendants" : "subtree")
-                     : (b.args.length ? "ids" : "all");
-          out = await openGridSet({ mode, anchor: under, ids: b.args });
-          break;
-        }
-        case "prune": {
-          // Parsed by the shared declaration (cli/verb) through the wasm
-          // bridge, so this surface cannot drift from the grammar the CLI and
-          // the TUI parse. The hand-written --before / -f loop that used to
-          // live here was a third independent copy of it, and the one that
-          // spelled the task listing `list` while the others said `ls`.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          if (b.args.length > 0) {
-            out = await window.harness.prune({ taskIds: b.args, force: !!b.flags.force });
-          } else {
-            out = await window.harness.prune({ before: b.flags.before });
-          }
-          break;
-        }
-        case "file": {
-          // Parsed by the shared declaration through the wasm bridge. The
-          // per-sub-verb argument loops this case used to reach were a third
-          // copy of this grammar -- and the copy where `file push` quietly
-          // accepted no flags at all while the CLI and TUI took -r/-f/-p.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          out = await runFileAction(b);
-          break;
-        }
-        case "git": {
-          // `git <task-id> <sub> ...`: the id sits between the family word and
-          // the sub-verb, so it is peeled before the shared parse, exactly as
-          // the CLI and the TUI do.
-          if (tokens.length < 2) throw new Error("git: usage: git <task-id> {log | diff | show | status | subrepos | file} [...]");
-          const taskID = tokens[1];
-          const g = window.harness.parseGit(["git", ...tokens.slice(2)]);
-          if (g.error) throw new Error(g.error);
-          out = await runGitAction(taskID, g);
-          break;
-        }
-        case "server": {
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          const status = await window.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
-          out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
-          break;
-        }
-        // Same words the TUI cmdline takes, so a hand that learned one surface
-        // knows the other. The sub-verb is decided by the FIRST token only:
-        // `exec <id> ls -la` is a command named ls, because a task id
-        // introduced it.
-        case "exec": {
-          // Parsed by the shared declaration: --shell/--sshd-parent, the
-          // optional `--` before the argv, and the refusal of `exec --shell
-          // kill 3` (a sub-verb where a task id belongs) all come from there.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          const sub = b.path.length > 1 ? b.path[1] : "run";
-          if (sub === "ls") {
-            const es = await window.harness.execRunList(b.flags.task || undefined);
-            // execId / taskId / argvText are what harnessExecRunList emits
-            // (cmd/harness-webui-wasm/main.go). Reading exec_id / task / argv
-            // gave undefined, and `.slice(0,8)` on it threw as soon as one
-            // exec was running -- so this path only ever worked when empty.
-            out = es.length
-              ? (b.flags.json
-                  ? es.map((e) => JSON.stringify(e)).join("\n")
-                  : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n"))
-              : "(no running execs)";
-          } else if (sub === "kill") {
-            // Every id, as on the CLI: this killed args[0] and reported
-            // "killed exec 1" for `exec kill 1 2 3`.
-            for (const id of b.args) await window.harness.execRunKill(Number(id));
-            out = `killed exec ${b.args.join(", ")}`;
-          } else {
-            out = await execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
-          }
-          break;
-        }
-        case "forward": {
-          // forward ls renders from the snapshot the page already polls -- no
-          // extra RPC. Starting a socket-bound forward is CLI-only (a browser
-          // cannot bind a local listener), which the declaration says by
-          // leaving the open form off this surface.
-          const b = window.harness.parseCommand(tokens, {});
-          if (b.error) throw new Error(b.error);
-          const sub = b.path[1];
-          if (sub === "ls") {
-            const fwds = (lastForwards || []).filter(
-              (f) => !b.flags.task || f.task === b.flags.task);
-            out = fwds.length
-              ? (b.flags.json
-                  ? fwds.map((f) => JSON.stringify(f)).join("\n")
-                  : fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n"))
-              : "(no active port forwards)";
-          } else if (sub === "kill") {
-            for (const id of b.args) await window.harness.forwardKill(Number(id));
-            out = `killed forward ${b.args.join(", ")}`;
-          } else {
-            // The command input starts the same tap the row's button does, and
-            // shows it in the same panel: a second rendering path for the same
-            // subscription is how two surfaces end up disagreeing.
-            const id = Number(b.args[0]);
-            const f = (lastForwards || []).find((x) => x.forward_id === id);
-            if (!f) throw new Error(`forward tap: no such forward ${id} in the current snapshot`);
-            const entry = findForwardEntry(id);
-            if (!entry) throw new Error(`forward tap: forward ${id} has no row to attach a panel to`);
-            toggleForwardTap(f, entry.wrap, entry.button, {
-              dir: b.flags.dir || "both",
-              maxBytes: b.flags["max-bytes"] || 0,
-            });
-            out = openTaps.has(id) ? `tapping forward ${id}` : `stopped tapping forward ${id}`;
-          }
-          break;
-        }
-        // The `session` family reaches this surface for the first time here,
-        // and only its `stream` namespace: the lifecycle verbs (new/ls/kill)
-        // have buttons, while these four had no route at all. Recorded as a
-        // partial family rather than pretending the rest exists.
-        case "session": {
-          // `session await-idle` is the canonical path on every surface; the
-          // WebUI's old top-level `await-idle` spelling is gone (D16).
-          if (tokens[1] === "await-idle") {
-            // Parsed by the shared declaration, which also refuses --notify
-            // with --topic: two sinks for one fire.
-            const b = window.harness.parseCommand(["session", "await-idle", ...tokens.slice(2)], {});
-            if (b.error) throw new Error(b.error);
-            const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
-            if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
-            const r = await window.harness.awaitIdle({
-              taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
-              sink, topic: b.flags.topic || undefined,
-            });
-            out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
-            break;
-          }
-          if (tokens[1] !== "stream") {
-            appendCmdOutput("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
-            break;
-          }
-          // Parsed by the shared declaration like every other verb here. It
-          // was a hand-written token walk, whose stated reason -- "this input
-          // is whitespace-split with no flag parser" -- expired when
-          // parseCommand arrived; what it left behind was a `--allow` the CLI
-          // accepts and this surface swallowed as text, and a reference to an
-          // undeclared `args` that made all five paths throw ReferenceError.
-          const verb = tokens[2] || "";
-          if (verb === "requests" || verb === "snapshot") {
-            appendCmdOutput(`session stream ${verb}: specified (design §3) but not built yet`);
-            break;
-          }
-          // The task id defaults to the open chat, so it is spliced in before
-          // the parse rather than after: the declaration has no notion of
-          // "whatever is on screen".
-          const rest = tokens.slice(3);
-          const sid = (rest[0] && /^[0-9a-fA-F]{32}$/.test(rest[0])) ? rest.shift() : chatTaskId;
-          if (!sid) { appendCmdOutput("session stream: a task id is required (or open a chat first)"); break; }
-          const b = window.harness.parseCommand(["session", "stream", verb, sid, ...rest], {});
-          if (b.error) throw new Error(b.error);
-          try {
-            switch (verb) {
-              case "turn":
-                await window.harness.streamTurn(sid, b.trail);
-                appendCmdOutput(`stream turn ${sid.slice(0, 8)}: sent`);
-                break;
-              case "approve": {
-                const verdict = b.flags.allow ? "allow" : "deny";
-                await window.harness.streamApprove(
-                  sid, b.args[1], verdict, b.flags.message || "",
-                  b.set.suggestion ? b.flags.suggestion : -1);
-                appendCmdOutput(`stream approve ${sid.slice(0, 8)} ${b.args[1]}: ${verdict}`);
-                break;
-              }
-              case "interrupt":
-                await window.harness.streamInterrupt(sid);
-                appendCmdOutput(`stream interrupt ${sid.slice(0, 8)}: sent`);
-                break;
-              case "finish":
-                await window.harness.streamFinish(sid);
-                appendCmdOutput(`stream finish ${sid.slice(0, 8)}: sent`);
-                break;
-              case "attach":
-                await openChatFor(sid);
-                appendCmdOutput(`stream attach ${sid.slice(0, 8)}: chat opened`);
-                break;
-              default:
-                appendCmdOutput(`unknown session stream verb ${JSON.stringify(verb)}`);
-            }
-          } catch (err) {
-            appendCmdOutput(`session stream ${verb}: ${err.message}`);
-          }
-          break;
-        }
-
-        case "help":
-          out = [
-            "commands:",
-            "  submit [--resume-conversation] [--agent <name>] <prompt...>",
-            "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
-            "  ls                        refresh the snapshot and echo task rows",
-            "  ls --filtered             only the rows the task-list filter admits",
-            "  session stream turn [<id>] <text...>       send a user turn (id defaults to the open chat)",
-            "  session stream approve [<id>] <req-id> (--allow | --deny [--message M])",
-            "  session stream interrupt|finish|attach [<id>]",
-            "  refresh (alias: sync)     force a snapshot re-sync",
-            "  session await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
-            "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
-            "  cancel <task-id>          cancel a task",
-            "  caps set-parent <task-id> (--parent <id> | --none | --swap)",
-            "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
-            "  preview <task-id>         live screen preview of a session — click it to type (⏸/▶ pause-resume)",
-            "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
-            "  grid --under <task-id> [--descendants]",
-            "                            that task's working set: its subtree PLUS the tasks its own scope names (ids:);",
-            "                            --descendants leaves the task itself out (watching that one elsewhere)",
-            "  prune [--before=DUR]      forget terminal tasks older than DUR",
-            "  prune [--force] <task-id>...",
-            "                            forget specific tasks by id (--force: also active tasks)",
-            "  git <task> log [--max N] [-- <path>]",
-            "                            the task's commits (also: the Git tab)",
-            "  git <task> diff [--staged] [<base>] [<target>] [-- <path>]",
-            "                            revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
-            "  git <task> show [<rev>] [-- <path>]",
-            "                            one commit and its diff",
-            "  git <task> status [-- <path>]",
-            "                            uncommitted and untracked paths (untracked appear in no diff)",
-            "  git <task> subrepos       list git repos nested inside the worktree",
-            "  git <task> file [--staged | --rev REV] <path>",
-            "                            one file's whole content (also: click a file header in a diff)",
-            "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
-            "  file ls <task> [rel]      list a worktree directory",
-            "  file delete [-r] [-f] <task> <rel>",
-            "                            remove a file (no -r) or directory (-r [-f])",
-            "  file push <task> <rel>    upload a local file (file picker opens)",
-            "  file new <task> <rel>     write a new text file in a browser editor and upload it",
-            "  file edit <task> <rel>    pull a text file into the browser editor and push it back",
-            "  file mkdir [-p] <task> <rel>",
-            "                            create a worktree directory (-p: parents, idempotent)",
-            "  file pull [-r] <task> <rel>",
-            "                            download a remote file, or -r for a directory as a .tar",
-            "  server dial-runner <cid> [--via <cid>]",
-            "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
-            "  exec <task-id> [--] <cmd> [args...]",
-            "                            run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
-            "  exec ls [-task <id>] | exec kill <exec-id>",
-            "                            list the running execs / stop one (the task row shows execs=N)",
-            "                            --shell: one line for the runner's own shell, so pipes and redirects mean something",
-            "                            --sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)",
-            "  forward ls                list registered port forwards (from the last snapshot poll)",
-            "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
-            "  forward tap <forward-id>  show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)",
-            "  help                      this list",
-          ].join("\n");
-          break;
-        default:
-          out = `unknown command: ${cmd} (type 'help' for the list)`;
-      }
-      // Only when a case produced one. Several report through
-      // appendCmdOutput themselves and break with `out` unset, which printed
-      // a bare "undefined" under the real message.
+      const out = await runVerbCommand(tokenize(line), cmdCtx);
+      // Only when a case produced one. Several report through ctx.echo
+      // themselves and return undefined, which printed a bare "undefined"
+      // under the real message.
       if (out !== undefined) appendCmdOutput(out, true);
       refreshSnapshot();
     } catch (e) {
@@ -6281,6 +5897,453 @@ async function runGitAction(taskID, g) {
 // used to live in the fileXxxCmd helpers is gone; what remains here is the
 // browser-side execution -- file pickers, progress bars, confirm dialogs --
 // which is exactly the half that differs per surface.
+// How runVerbCommand answers each declared path: the window.harness.* function
+// it reaches, or a named cached value with the bound on its staleness.
+// Design D13 + D17.
+//
+// The name has to be one the bridge actually exports -- it is a hand-written
+// string, and four of these named functions that do not exist (filePush,
+// filePull, fileEdit, fileNew, where the bridge has filePushBytes,
+// filePullBytes and fileEditLoad). Nothing broke, because a descriptor is not
+// called; it just stopped describing anything. The startup assertion and
+// cmd_test.mjs both check the name resolves now.
+//
+// FULL paths, not head words. This was a set of 16 heads matched against
+// p.split(" ")[0], and 27 of the 33 declared paths are multi-word -- so
+// `session snapshot` (no case at all) and the five `session stream *` paths
+// (which threw ReferenceError on an undeclared `args`) all passed the
+// assertion on the strength of the word `session`.
+const RUNCMD_DISPATCH = {
+  "submit": { fn: "submit" },
+  "cancel": { fn: "cancel" },
+  "prune": { fn: "prune" },
+  "ls": { fn: "list" },
+  "grid": { fn: "gridSet" },
+  "caps set-parent": { fn: "setParent" },
+  "server dial-runner": { fn: "serverDialRunner" },
+  "exec": { fn: "execRun" },
+  "exec ls": { fn: "execRunList" },
+  "exec kill": { fn: "execRunKill" },
+  "file push": { fn: "filePushBytes" },
+  "file pull": { fn: "filePullBytes" },
+  "file ls": { fn: "fileLs" },
+  "file mkdir": { fn: "fileMkdir" },
+  "file delete": { fn: "fileDelete" },
+  "file edit": { fn: "fileEditLoad" },
+  "file new": { fn: "filePushBytes" },
+  "git log": { fn: "gitQuery" },
+  "git diff": { fn: "gitQuery" },
+  "git show": { fn: "gitQuery" },
+  "git status": { fn: "gitQuery" },
+  "git subrepos": { fn: "gitQuery" },
+  "git file": { fn: "gitQuery" },
+  "forward ls": { cache: "lastForwards", stale: "one snapshot poll" },
+  "forward tap": { cache: "lastForwards", stale: "one snapshot poll" },
+  "forward kill": { fn: "forwardKill" },
+  "session await-idle": { fn: "awaitIdle" },
+  "session stream turn": { fn: "streamTurn" },
+  "session stream approve": { fn: "streamApprove" },
+  "session stream interrupt": { fn: "streamInterrupt" },
+  "session stream finish": { fn: "streamFinish" },
+  "session stream attach": { fn: "openChatFor" },
+};
+
+// runVerbCommand is the WebUI's command-line dispatch: one parsed verb in,
+// the text to print out (or undefined when the case reported through ctx.echo
+// itself).
+//
+// Top level, like runFileAction and runGitAction above it, and for the reason
+// those two were hoisted: nothing inside the page's IIFE can be executed
+// outside a browser. It sat in there, and every WebUI drop an audit found was
+// in the part no test could reach -- six flags on `submit` silently discarded,
+// `exec ls` throwing on a field name the bridge does not emit, five `session
+// stream` paths referencing an undeclared variable. webui/static/cmd_test.mjs
+// now drives this against the REAL wasm bridge under `node --test`.
+//
+// ctx is everything the page owns and a test does not: the compose dropdowns,
+// the snapshot cache, the panels. Every one is a function so the test can
+// record the call rather than mimic the widget.
+async function runVerbCommand(tokens, ctx) {
+  const cmd = tokens[0];
+  let out;
+  switch (cmd) {
+    case "submit": {
+      // Parsed by the shared declaration. The repo comes from the Compose
+      // dropdown through the surface-context tier of --repo's ladder, the
+      // same ladder the CLI reads env and workspace config from -- one
+      // ladder with three injections, instead of three ladders.
+      const dropdownRepo = ctx.composeRepo();
+      const dropdownHost = ctx.composeHost();
+      const b = ctx.harness.parseCommand(tokens, {
+        repo: dropdownRepo, host: dropdownHost,
+        agent: ctx.composeAgent(),
+      });
+      if (b.error) throw new Error(b.error);
+      // b.flags.repo is already the ladder's answer -- typed flag first,
+      // dropdown second -- because parseCommand applies the
+      // surface-context tier from the object above. Both were read
+      // straight off the dropdown before, so `submit --repo /not/a/repo`
+      // queued against the dropdown's repo instead.
+      const repo = b.flags.repo || dropdownRepo;
+      const resumeTaskId = b.flags.resume || ctx.resumeTaskID();
+      if (!repo && !resumeTaskId) {
+        throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
+      }
+      const task = b.flags.task || b.trail;
+      if (!task) throw new Error("submit: missing task prompt");
+      const scopeFor = (b.custom && b.custom["scope-for"]) || null;
+      out = await ctx.harness.submit(ctx.sessionReq({
+        repo, task,
+        host: b.flags.host || dropdownHost,
+        // The three runner selectors are mutually exclusive in the
+        // declaration, so at most one of these is non-empty.
+        runner: b.flags.runner || "",
+        ip: b.flags.ip || "",
+        agent: b.flags.agent || ctx.composeAgent(),
+        claudeArgs: (b.custom && b.custom["agent-arg"]) || ctx.claudeArgs(),
+        // b.set, not truthiness: --caps none is a real grant of nothing.
+        caps: b.set && b.set.caps ? b.flags.caps : null,
+        scope: b.set && b.set.scope ? b.flags.scope : null,
+        scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
+        resumeTaskId,
+        resumeConversation: !!b.flags["resume-conversation"],
+      }));
+      break;
+    }
+    case "caps": {
+      // `caps set-parent` is the canonical path; the WebUI's old
+      // top-level `set-parent` spelling is gone (D16).
+      if (tokens[1] !== "set-parent") {
+        throw new Error("caps: only `caps set-parent` is available here");
+      }
+
+      // `caps set-parent` on the other surfaces; the shared declaration
+      // enforces "exactly one of --parent / --none / --swap".
+      const b = ctx.harness.parseCommand(["caps", "set-parent", ...tokens.slice(2)], {});
+      if (b.error) throw new Error(b.error);
+      const req = { taskId: b.args[0] };
+      if (b.flags.swap) req.swap = true;
+      else if (b.flags.none) req.parentId = "";
+      else req.parentId = b.flags.parent;
+      out = ctx.setParentMessage(
+        b.args[0], req.swap === true, await ctx.harness.setParent(req));
+      break;
+    }
+    case "ls": {
+      // The shared listing, not the filtered pane. This case used to be
+      // spelled `list` and scraped .task-row out of the DOM -- the
+      // FILTERED render -- while `harness-cli ls` returned the whole
+      // snapshot: one idea, two answers, which is what D17 forbids.
+      // cli.Client.List was already exposed here as harness.list and
+      // simply went unused.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      if (b.flags.filtered) {
+        await ctx.refreshSnapshot();
+        out = ctx.filteredTaskRows();
+      } else {
+        // --json and --tree reach cli.Client's own renderers; both parsed
+        // here and were dropped while only the row form was exposed.
+        out = await ctx.harness.list(
+          b.flags.json ? "json" : b.flags.tree ? "tree" : "");
+      }
+      break;
+    }
+    case "refresh":
+    case "sync":
+      // Force a snapshot re-sync without echoing the rows (TUI parity).
+      await ctx.refreshSnapshot();
+      out = "snapshot refreshed";
+      break;
+    case "cancel": {
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      await ctx.harness.cancel(b.args[0]);
+      out = "cancelled";
+      break;
+    }
+    case "preview":
+      if (!tokens[1]) throw new Error("preview: missing task id");
+      ctx.openSessionPreview(tokens[1]);
+      out = `preview ${tokens[1].slice(0, 12)}…`;
+      break;
+    case "grid": {
+      // The grid grammar was already shared (cli.ParseGridArgs, which the
+      // workspace config validates against too); this routes the command
+      // input through the same declaration as everything else.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      // The declaration already refused --descendants without --under, so
+      // the mode follows from what survived the parse.
+      const under = b.flags.under || "";
+      // Full ids only. The TUI resolves a prefix against its task list
+      // (tui/app.go's GridAction case) and this surface has no resolver,
+      // so a half-typed id would silently select nothing.
+      const full = (id) => /^[0-9a-fA-F]{32}$/.test(id);
+      if (under && !full(under)) throw new Error("grid: --under needs a full 32-hex task id");
+      const bad = b.args.filter((id) => !full(id));
+      if (bad.length) throw new Error(`grid: not a full 32-hex task id: ${bad.join(", ")}`);
+      const mode = under ? (b.flags.descendants ? "descendants" : "subtree")
+                 : (b.args.length ? "ids" : "all");
+      out = await ctx.openGridSet({ mode, anchor: under, ids: b.args });
+      break;
+    }
+    case "prune": {
+      // Parsed by the shared declaration (cli/verb) through the wasm
+      // bridge, so this surface cannot drift from the grammar the CLI and
+      // the TUI parse. The hand-written --before / -f loop that used to
+      // live here was a third independent copy of it, and the one that
+      // spelled the task listing `list` while the others said `ls`.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      if (b.args.length > 0) {
+        out = await ctx.harness.prune({ taskIds: b.args, force: !!b.flags.force });
+      } else {
+        out = await ctx.harness.prune({ before: b.flags.before });
+      }
+      break;
+    }
+    case "file": {
+      // Parsed by the shared declaration through the wasm bridge. The
+      // per-sub-verb argument loops this case used to reach were a third
+      // copy of this grammar -- and the copy where `file push` quietly
+      // accepted no flags at all while the CLI and TUI took -r/-f/-p.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      out = await runFileAction(b);
+      break;
+    }
+    case "git": {
+      // `git <task-id> <sub> ...`: the id sits between the family word and
+      // the sub-verb, so it is peeled before the shared parse, exactly as
+      // the CLI and the TUI do.
+      if (tokens.length < 2) throw new Error("git: usage: git <task-id> {log | diff | show | status | subrepos | file} [...]");
+      const taskID = tokens[1];
+      const g = ctx.harness.parseGit(["git", ...tokens.slice(2)]);
+      if (g.error) throw new Error(g.error);
+      out = await runGitAction(taskID, g);
+      break;
+    }
+    case "server": {
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      const status = await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
+      out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
+      break;
+    }
+    // Same words the TUI cmdline takes, so a hand that learned one surface
+    // knows the other. The sub-verb is decided by the FIRST token only:
+    // `exec <id> ls -la` is a command named ls, because a task id
+    // introduced it.
+    case "exec": {
+      // Parsed by the shared declaration: --shell/--sshd-parent, the
+      // optional `--` before the argv, and the refusal of `exec --shell
+      // kill 3` (a sub-verb where a task id belongs) all come from there.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      const sub = b.path.length > 1 ? b.path[1] : "run";
+      if (sub === "ls") {
+        const es = await ctx.harness.execRunList(b.flags.task || undefined);
+        // execId / taskId / argvText are what harnessExecRunList emits
+        // (cmd/harness-webui-wasm/main.go). Reading exec_id / task / argv
+        // gave undefined, and `.slice(0,8)` on it threw as soon as one
+        // exec was running -- so this path only ever worked when empty.
+        out = es.length
+          ? (b.flags.json
+              ? es.map((e) => JSON.stringify(e)).join("\n")
+              : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n"))
+          : "(no running execs)";
+      } else if (sub === "kill") {
+        // Every id, as on the CLI: this killed args[0] and reported
+        // "killed exec 1" for `exec kill 1 2 3`.
+        for (const id of b.args) await ctx.harness.execRunKill(Number(id));
+        out = `killed exec ${b.args.join(", ")}`;
+      } else {
+        out = await ctx.execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
+      }
+      break;
+    }
+    case "forward": {
+      // forward ls renders from the snapshot the page already polls -- no
+      // extra RPC. Starting a socket-bound forward is CLI-only (a browser
+      // cannot bind a local listener), which the declaration says by
+      // leaving the open form off this surface.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      const sub = b.path[1];
+      if (sub === "ls") {
+        const fwds = ctx.forwards().filter(
+          (f) => !b.flags.task || f.task === b.flags.task);
+        out = fwds.length
+          ? (b.flags.json
+              ? fwds.map((f) => JSON.stringify(f)).join("\n")
+              : fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n"))
+          : "(no active port forwards)";
+      } else if (sub === "kill") {
+        for (const id of b.args) await ctx.harness.forwardKill(Number(id));
+        out = `killed forward ${b.args.join(", ")}`;
+      } else {
+        // The command input starts the same tap the row's button does, and
+        // shows it in the same panel: a second rendering path for the same
+        // subscription is how two surfaces end up disagreeing.
+        const id = Number(b.args[0]);
+        const f = ctx.forwards().find((x) => x.forward_id === id);
+        if (!f) throw new Error(`forward tap: no such forward ${id} in the current snapshot`);
+        const entry = ctx.findForwardEntry(id);
+        if (!entry) throw new Error(`forward tap: forward ${id} has no row to attach a panel to`);
+        ctx.toggleForwardTap(f, entry.wrap, entry.button, {
+          dir: b.flags.dir || "both",
+          maxBytes: b.flags["max-bytes"] || 0,
+        });
+        out = ctx.tapOpen(id) ? `tapping forward ${id}` : `stopped tapping forward ${id}`;
+      }
+      break;
+    }
+    // The `session` family reaches this surface for the first time here,
+    // and only its `stream` namespace: the lifecycle verbs (new/ls/kill)
+    // have buttons, while these four had no route at all. Recorded as a
+    // partial family rather than pretending the rest exists.
+    case "session": {
+      // `session await-idle` is the canonical path on every surface; the
+      // WebUI's old top-level `await-idle` spelling is gone (D16).
+      if (tokens[1] === "await-idle") {
+        // Parsed by the shared declaration, which also refuses --notify
+        // with --topic: two sinks for one fire.
+        const b = ctx.harness.parseCommand(["session", "await-idle", ...tokens.slice(2)], {});
+        if (b.error) throw new Error(b.error);
+        const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
+        if (sink === "reply") ctx.echo("await-idle: waiting for the session to go idle…");
+        const r = await ctx.harness.awaitIdle({
+          taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
+          sink, topic: b.flags.topic || undefined,
+        });
+        out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
+        break;
+      }
+      if (tokens[1] !== "stream") {
+        ctx.echo("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
+        break;
+      }
+      // Parsed by the shared declaration like every other verb here. It
+      // was a hand-written token walk, whose stated reason -- "this input
+      // is whitespace-split with no flag parser" -- expired when
+      // parseCommand arrived; what it left behind was a `--allow` the CLI
+      // accepts and this surface swallowed as text, and a reference to an
+      // undeclared `args` that made all five paths throw ReferenceError.
+      const verb = tokens[2] || "";
+      if (verb === "requests" || verb === "snapshot") {
+        ctx.echo(`session stream ${verb}: specified (design §3) but not built yet`);
+        break;
+      }
+      // The task id defaults to the open chat, so it is spliced in before
+      // the parse rather than after: the declaration has no notion of
+      // "whatever is on screen".
+      const rest = tokens.slice(3);
+      const sid = (rest[0] && /^[0-9a-fA-F]{32}$/.test(rest[0])) ? rest.shift() : ctx.chatTaskID();
+      if (!sid) { ctx.echo("session stream: a task id is required (or open a chat first)"); break; }
+      const b = ctx.harness.parseCommand(["session", "stream", verb, sid, ...rest], {});
+      if (b.error) throw new Error(b.error);
+      try {
+        switch (verb) {
+          case "turn":
+            await ctx.harness.streamTurn(sid, b.trail);
+            ctx.echo(`stream turn ${sid.slice(0, 8)}: sent`);
+            break;
+          case "approve": {
+            const verdict = b.flags.allow ? "allow" : "deny";
+            await ctx.harness.streamApprove(
+              sid, b.args[1], verdict, b.flags.message || "",
+              b.set.suggestion ? b.flags.suggestion : -1);
+            ctx.echo(`stream approve ${sid.slice(0, 8)} ${b.args[1]}: ${verdict}`);
+            break;
+          }
+          case "interrupt":
+            await ctx.harness.streamInterrupt(sid);
+            ctx.echo(`stream interrupt ${sid.slice(0, 8)}: sent`);
+            break;
+          case "finish":
+            await ctx.harness.streamFinish(sid);
+            ctx.echo(`stream finish ${sid.slice(0, 8)}: sent`);
+            break;
+          case "attach":
+            await ctx.openChatFor(sid);
+            ctx.echo(`stream attach ${sid.slice(0, 8)}: chat opened`);
+            break;
+          default:
+            ctx.echo(`unknown session stream verb ${JSON.stringify(verb)}`);
+        }
+      } catch (err) {
+        ctx.echo(`session stream ${verb}: ${err.message}`);
+      }
+      break;
+    }
+
+    case "help":
+      out = [
+        "commands:",
+        "  submit [--resume-conversation] [--agent <name>] <prompt...>",
+        "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
+        "  ls                        refresh the snapshot and echo task rows",
+        "  ls --filtered             only the rows the task-list filter admits",
+        "  session stream turn [<id>] <text...>       send a user turn (id defaults to the open chat)",
+        "  session stream approve [<id>] <req-id> (--allow | --deny [--message M])",
+        "  session stream interrupt|finish|attach [<id>]",
+        "  refresh (alias: sync)     force a snapshot re-sync",
+        "  session await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
+        "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
+        "  cancel <task-id>          cancel a task",
+        "  caps set-parent <task-id> (--parent <id> | --none | --swap)",
+        "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
+        "  preview <task-id>         live screen preview of a session — click it to type (⏸/▶ pause-resume)",
+        "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
+        "  grid --under <task-id> [--descendants]",
+        "                            that task's working set: its subtree PLUS the tasks its own scope names (ids:);",
+        "                            --descendants leaves the task itself out (watching that one elsewhere)",
+        "  prune [--before=DUR]      forget terminal tasks older than DUR",
+        "  prune [--force] <task-id>...",
+        "                            forget specific tasks by id (--force: also active tasks)",
+        "  git <task> log [--max N] [-- <path>]",
+        "                            the task's commits (also: the Git tab)",
+        "  git <task> diff [--staged] [<base>] [<target>] [-- <path>]",
+        "                            revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
+        "  git <task> show [<rev>] [-- <path>]",
+        "                            one commit and its diff",
+        "  git <task> status [-- <path>]",
+        "                            uncommitted and untracked paths (untracked appear in no diff)",
+        "  git <task> subrepos       list git repos nested inside the worktree",
+        "  git <task> file [--staged | --rev REV] <path>",
+        "                            one file's whole content (also: click a file header in a diff)",
+        "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
+        "  file ls <task> [rel]      list a worktree directory",
+        "  file delete [-r] [-f] <task> <rel>",
+        "                            remove a file (no -r) or directory (-r [-f])",
+        "  file push <task> <rel>    upload a local file (file picker opens)",
+        "  file new <task> <rel>     write a new text file in a browser editor and upload it",
+        "  file edit <task> <rel>    pull a text file into the browser editor and push it back",
+        "  file mkdir [-p] <task> <rel>",
+        "                            create a worktree directory (-p: parents, idempotent)",
+        "  file pull [-r] <task> <rel>",
+        "                            download a remote file, or -r for a directory as a .tar",
+        "  server dial-runner <cid> [--via <cid>]",
+        "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
+        "  exec <task-id> [--] <cmd> [args...]",
+        "                            run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
+        "  exec ls [-task <id>] | exec kill <exec-id>",
+        "                            list the running execs / stop one (the task row shows execs=N)",
+        "                            --shell: one line for the runner's own shell, so pipes and redirects mean something",
+        "                            --sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)",
+        "  forward ls                list registered port forwards (from the last snapshot poll)",
+        "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
+        "  forward tap <forward-id>  show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)",
+        "  help                      this list",
+      ].join("\n");
+      break;
+    default:
+      out = `unknown command: ${cmd} (type 'help' for the list)`;
+  }
+  return out;
+}
+
 async function runFileAction(b) {
   const sub = b.path[1];
   const a = b.args;
