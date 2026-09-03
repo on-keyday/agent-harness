@@ -511,7 +511,7 @@ func TestParseServerDialRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(ServerDialRunnerAction)
+	a, ok := got.(verb.ServerDialRunnerAction)
 	if !ok {
 		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
 	}
@@ -556,7 +556,7 @@ func TestParseServerDialRunnerWithVia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(ServerDialRunnerAction)
+	a, ok := got.(verb.ServerDialRunnerAction)
 	if !ok {
 		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
 	}
@@ -573,7 +573,7 @@ func TestParseServerDialRunnerWithoutVia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(ServerDialRunnerAction)
+	a, ok := got.(verb.ServerDialRunnerAction)
 	if !ok {
 		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
 	}
@@ -887,9 +887,9 @@ func TestParseForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	kill, ok := act.(ForwardKillAction)
+	kill, ok := act.(verb.ForwardKillAction)
 	if !ok || kill.ForwardID != 12 {
-		t.Fatalf("got %#v, want ForwardKillAction{12}", act)
+		t.Fatalf("got %#v, want verb.ForwardKillAction{12}", act)
 	}
 	if _, err := ParseCommand("forward kill", ""); err == nil {
 		t.Error("forward kill with no id should be a usage error")
@@ -1448,7 +1448,7 @@ func TestParseWorkspaceDetach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	w, ok := act.(WorkspaceAction)
+	w, ok := act.(verb.WorkspaceAction)
 	if !ok || w.Sub != "detach" || w.Stop {
 		t.Fatalf("action = %+v, want detach with Stop false", act)
 	}
@@ -1457,7 +1457,7 @@ func TestParseWorkspaceDetach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse --stop: %v", err)
 	}
-	if w := act.(WorkspaceAction); !w.Stop {
+	if w := act.(verb.WorkspaceAction); !w.Stop {
 		t.Error("--stop did not reach the action")
 	}
 
@@ -1478,7 +1478,7 @@ func TestCmdlineParsesForwardTap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ta, ok := act.(ForwardTapAction)
+	ta, ok := act.(verb.ForwardTapAction)
 	if !ok {
 		t.Fatalf("action type %T", act)
 	}

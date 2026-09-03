@@ -9,12 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -573,88 +571,55 @@ func main() {
 			os.Exit(2)
 		}
 		switch args[0] {
-		case "ls":
-			fs := flag.NewFlagSet("forward ls", flag.ExitOnError)
-			taskFilter := fs.String("task", "", "only forwards for this task id")
-			asJSON := fs.Bool("json", false, "one JSON object per forward")
-			if err := fs.Parse(args[1:]); err != nil {
-				die(err)
+		case "ls", "kill", "tap":
+			sp, ok := verb.Lookup("forward", args[0])
+			if !ok {
+				die(fmt.Errorf("forward: unknown sub-verb %q", args[0]))
 			}
-			forwards, err := cli.PortForwardList(ctx, parseCID(), *taskFilter)
-			if err != nil {
-				die(err)
-			}
-			if *asJSON {
-				for i := range forwards {
-					fmt.Println(cli.PortForwardInfoJSONLine(&forwards[i]))
-				}
-			} else {
-				for _, line := range cli.PortForwardInfoLines(forwards) {
-					fmt.Println(line)
-				}
-			}
-			return
-		case "tap":
-			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
-				os.Exit(2)
-			}
-			id, perr := strconv.ParseUint(args[1], 10, 64)
+			sp = sp.For(verb.CLI)
+			fs := sp.NewFlagSet(flag.ExitOnError)
+			b, perr := sp.Parse(fs, args[1:])
 			if perr != nil {
-				die(fmt.Errorf("forward tap: bad forward id %q", args[1]))
+				die(perr)
 			}
-			fs := flag.NewFlagSet("forward tap", flag.ExitOnError)
-			dir := fs.String("dir", "both", "to-target, from-target or both")
-			maxBytes := fs.Uint("max-bytes", 0, "cut each record's payload to this many bytes (0 = whole payload)")
-			asHex := fs.Bool("hex", false, "hexdump body (default)")
-			asText := fs.Bool("text", false, "printable body, no offset column")
-			asRaw := fs.Bool("raw", false, "payload bytes only; requires an explicit --dir")
-			asJSON := fs.Bool("json", false, "one JSON object per record")
-			if err := fs.Parse(args[2:]); err != nil {
-				die(err)
+			act, berr := sp.Build(b)
+			if berr != nil {
+				die(berr)
 			}
-			mode, merr := tapMode(*asHex, *asText, *asRaw, *asJSON)
-			if merr != nil {
-				fmt.Fprintln(os.Stderr, merr)
-				os.Exit(2)
-			}
-			// --raw writes payloads with no headers, so two directions
-			// concatenated onto one stdout interleave two conversations into a
-			// byte soup no decoder can read. Refuse rather than produce it.
-			if mode == cli.TapRaw && *dir == "both" {
-				fmt.Fprintln(os.Stderr, "forward tap: --raw needs an explicit --dir (to-target or from-target); "+
-					"both directions on one stdout is not a stream any decoder can read")
-				os.Exit(2)
-			}
-			filter, ferr := cli.ParseTapFilter(*dir)
-			if ferr != nil {
-				die(ferr)
-			}
-			if *maxBytes > math.MaxUint32 {
-				die(fmt.Errorf("forward tap: --max-bytes %d is out of range", *maxBytes))
-			}
-			tctx, cancel := interruptContext("forward tap", ctx)
-			defer cancel()
-			if err := cli.RunForwardTapDial(tctx, parseCID(), id, cli.ForwardTapOpts{
-				Filter: filter, MaxRecordBytes: uint32(*maxBytes), Mode: mode,
-			}, os.Stdout); err != nil {
-				die(err)
-			}
-			return
-		case "kill":
-			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli forward kill <forward-id> [<forward-id> ...]")
-				os.Exit(2)
-			}
-			for _, raw := range args[1:] {
-				id, perr := strconv.ParseUint(raw, 10, 64)
-				if perr != nil {
-					die(fmt.Errorf("forward kill: bad forward id %q", raw))
-				}
-				if err := cli.KillPortForward(ctx, parseCID(), id); err != nil {
+			switch a := act.(type) {
+			case verb.ForwardLsAction:
+				forwards, err := cli.PortForwardList(ctx, parseCID(), a.TaskFilter)
+				if err != nil {
 					die(err)
 				}
-				fmt.Printf("killed forward %d\n", id)
+				if a.JSON {
+					for i := range forwards {
+						fmt.Println(cli.PortForwardInfoJSONLine(&forwards[i]))
+					}
+				} else {
+					for _, line := range cli.PortForwardInfoLines(forwards) {
+						fmt.Println(line)
+					}
+				}
+			case verb.ForwardKillAction:
+				for _, id := range a.ForwardIDs {
+					if err := cli.KillPortForward(ctx, parseCID(), id); err != nil {
+						die(err)
+					}
+					fmt.Printf("killed forward %d\n", id)
+				}
+			case verb.ForwardTapAction:
+				filter, ferr := cli.ParseTapFilter(a.Dir)
+				if ferr != nil {
+					die(ferr)
+				}
+				tctx, cancel := interruptContext("forward tap", ctx)
+				defer cancel()
+				if err := cli.RunForwardTapDial(tctx, parseCID(), a.ForwardID, cli.ForwardTapOpts{
+					Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: tapModeByName(a.Mode),
+				}, os.Stdout); err != nil {
+					die(err)
+				}
 			}
 			return
 		}
@@ -788,11 +753,19 @@ func main() {
 		}
 
 	case "ssh-gateway":
-		fs := flag.NewFlagSet("ssh-gateway", flag.ExitOnError)
-		listen := fs.String("listen", sshgw.DefaultListen, "ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)")
-		hostKey := fs.String("host-key", "", "ssh host key path (default: alongside the workspace config; generated on first run, then reused)")
-		authKeys := fs.String("authorized-keys", "", "OpenSSH authorized_keys file; optional on a loopback bind, required otherwise")
-		fs.Parse(args)
+		sp, _ := verb.Lookup("ssh-gateway")
+		sp = sp.For(verb.CLI)
+		fs := sp.NewFlagSet(flag.ExitOnError)
+		b, perr := sp.Parse(fs, args)
+		if perr != nil {
+			die(perr)
+		}
+		act, berr := sp.Build(b)
+		if berr != nil {
+			die(berr)
+		}
+		g := act.(verb.SSHGatewayAction)
+		listen, hostKey, authKeys := &g.Listen, &g.HostKeyPath, &g.AuthorizedKeys
 		keyPath := *hostKey
 		if keyPath == "" {
 			keyPath = sshgw.DefaultHostKeyPath(*configPath)
@@ -829,23 +802,25 @@ func main() {
 		rest := args[1:]
 		switch ssub {
 		case "dial-runner":
-			fs := flag.NewFlagSet("server dial-runner", flag.ExitOnError)
-			viaCIDStr := fs.String("via", "", "relay through this registered runner CID (copy from `harness-cli ls` output)")
-			dpos, derr := cli.ParsePermuted(fs, rest)
-			if derr != nil {
-				die(derr)
+			sp, _ := verb.Lookup("server", "dial-runner")
+			sp = sp.For(verb.CLI)
+			fs := sp.NewFlagSet(flag.ExitOnError)
+			b, perr := sp.Parse(fs, rest)
+			if perr != nil {
+				die(perr)
 			}
-			if len(dpos) != 1 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner [--via <runner-cid>] <runner-cid>")
-				os.Exit(2)
+			act, berr := sp.Build(b)
+			if berr != nil {
+				die(berr)
 			}
-			targetCID, err := objproto.ParseConnectionID(dpos[0],
+			d := act.(verb.ServerDialRunnerAction)
+			targetCID, err := objproto.ParseConnectionID(d.RunnerCID,
 				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 			if err != nil {
 				die(fmt.Errorf("parse runner-cid: %w", err))
 			}
 			var viaCID objproto.ConnectionID
-			if v := strings.TrimSpace(*viaCIDStr); v != "" {
+			if v := strings.TrimSpace(d.Via); v != "" {
 				viaCID, err = objproto.ParseConnectionID(v,
 					objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 				if err != nil {
@@ -1532,4 +1507,20 @@ func tapMode(asHex, asText, asRaw, asJSON bool) (cli.TapRenderMode, error) {
 		return 0, errors.New("forward tap: --hex, --text, --raw and --json are mutually exclusive")
 	}
 	return mode, nil
+}
+
+// tapModeByName maps the declaration's mode word onto the renderer. The
+// mutual exclusion between the four is enforced in the verb's Build, so by the
+// time this runs exactly one was chosen.
+func tapModeByName(name string) cli.TapRenderMode {
+	switch name {
+	case "text":
+		return cli.TapText
+	case "raw":
+		return cli.TapRaw
+	case "json":
+		return cli.TapJSON
+	default:
+		return cli.TapHex
+	}
 }

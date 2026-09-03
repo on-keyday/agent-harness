@@ -104,6 +104,20 @@ type Flag struct {
 type Trailing struct {
 	Name   string
 	Reason string
+
+	// List keeps the tail as separate words in Bound.TrailArgs instead of only
+	// joining it into Bound.Trail. `exec <task-id> -- <cmd> [args...]` hands
+	// the runner an argv, and joining it would lose the word boundaries the
+	// runner needs; `session send` wants the joined text instead. Both forms
+	// are always populated, so a Build takes whichever it means.
+	List bool
+
+	// AfterSeparator means a literal `--` MAY introduce the tail, and that
+	// anything before it is still positional. The separator is optional: the
+	// CLI's exec required it and the TUI's did not, so accepting both is a
+	// widening that reconciles them. Without this flag the tail simply starts
+	// once the declared positionals are satisfied.
+	AfterSeparator bool
 }
 
 // VerbSpec is one verb path's whole grammar.
@@ -137,6 +151,10 @@ type Bound struct {
 	// Pathspec is whatever followed `--`, joined with spaces. Empty when the
 	// verb does not take one or none was given.
 	Pathspec string
+
+	// TrailArgs is the trailing tail as separate words; Trail is the same
+	// words joined. A verb that hands an argv onward reads TrailArgs.
+	TrailArgs []string
 }
 
 // Str returns a string flag's value.

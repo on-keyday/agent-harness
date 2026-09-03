@@ -103,3 +103,105 @@ type GitAction struct {
 	Max       uint32
 	MaxBytes  uint32
 }
+
+// ExecRunAction runs one command in a task's worktree as its own process --
+// separate stdout and stderr, and the command's exit code becomes the
+// caller's. NOT `session exec`, which types into a session's foreground shell.
+type ExecRunAction struct {
+	ActionMarker
+	TaskID string
+	Argv   []string
+	// Shell hands the words to the RUNNER's shell as one line. Joining is
+	// right only here: the operator asked for shell interpretation, so these
+	// words were never an argv to preserve.
+	Shell bool
+	// SshdParent gives the command line a parent process NAMED sshd, for a
+	// client that checks its own ancestry by process name. Wired on Windows
+	// only, and it needs Shell -- what it renames is the shell.
+	SshdParent bool
+	// Sub distinguishes the run form from ls / kill: the TUI dispatches the
+	// whole family through one action, so folding them here keeps that shape
+	// rather than making every consumer learn three types.
+	Sub        string // run | ls | kill
+	ExecID     uint64
+	ExecIDs    []uint64
+	TaskFilter string
+	JSON       bool
+}
+
+// ForwardLsAction lists registered port forwards.
+type ForwardLsAction struct {
+	ActionMarker
+	TaskFilter string
+	JSON       bool
+}
+
+// ForwardKillAction kills registered forwards by id. ForwardID is the first,
+// kept because a TUI row kills exactly one; ForwardIDs is the whole list the
+// CLI accepts.
+type ForwardKillAction struct {
+	ActionMarker
+	ForwardID  uint64
+	ForwardIDs []uint64
+}
+
+// ForwardTapAction streams the bytes crossing one forward. A tap sees only
+// what crosses after it opens; nothing is recorded server-side.
+type ForwardTapAction struct {
+	ActionMarker
+	ForwardID      uint64
+	Dir            string
+	MaxRecordBytes uint32
+	Mode           string // hex | text | raw | json
+}
+
+// ServerDialRunnerAction asks the server to reverse-dial a Listen-mode runner.
+type ServerDialRunnerAction struct {
+	ActionMarker
+	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
+	Via       string // empty = direct dial; non-empty = relay via this CID
+}
+
+// SSHGatewayAction serves the ssh front door.
+type SSHGatewayAction struct {
+	ActionMarker
+	Listen         string
+	HostKeyPath    string
+	AuthorizedKeys string
+}
+
+// WorkspaceAction is one of the workspace verbs. Sub names which; the fields
+// each one reads differ, which is why the flags carrying them are declared
+// per surface rather than all at once.
+type WorkspaceAction struct {
+	ActionMarker
+	Sub  string // save | apply | detach | ls | show | rm
+	Name string // "" means the installed workspace, except for save
+
+	// CLI-side save knobs: which task to record and what a first-time block
+	// should say about resuming it.
+	TaskID string
+	Resume string
+	Runner string
+	Repo   string
+
+	// All is `save --all`: write every live session without opening the
+	// picker. TUI-only, because the CLI has no picker to skip.
+	All bool
+	// Stop is `detach --stop`: also stop what the workspace started. Off by
+	// default because detach's job is to stop MANAGING -- an operator who
+	// detaches after a reconnect-triggered apply should not lose the tunnels
+	// they are working through.
+	Stop bool
+}
+
+// BoardAction is an operator view of the agentboard. Sub names the query;
+// Seq is the message a retract or purge targets.
+type BoardAction struct {
+	ActionMarker
+	Sub       string
+	Topic     string
+	Seq       uint64
+	InReplyTo uint64
+	JSON      bool
+}

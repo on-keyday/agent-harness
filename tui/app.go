@@ -1465,7 +1465,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.String() == modalKeys.ForwardTap {
 				if id, ok := a.forwardsModal.SelectedID(); ok {
-					return a, a.startForwardTap(ForwardTapAction{ForwardID: id, Dir: "both"})
+					return a, a.startForwardTap(verb.ForwardTapAction{ForwardID: id, Dir: "both"})
 				}
 				return a, nil
 			}
@@ -3355,22 +3355,22 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
-	case WorkspaceAction:
+	case verb.WorkspaceAction:
 		return a, a.runWorkspaceAction(v)
 
-	case ForwardLsAction:
+	case verb.ForwardLsAction:
 		// true: this IS `forward ls` — the text dump is the whole point.
 		return a, DoListForwards(a.client, true)
-	case ForwardKillAction:
+	case verb.ForwardKillAction:
 		// No task/spec context: the operator supplied only a bare id.
 		return a, DoKillForward(a.client, v.ForwardID, "", "")
-	case ForwardTapAction:
+	case verb.ForwardTapAction:
 		return a, a.startForwardTap(v)
-	case ExecRunAction:
+	case verb.ExecRunAction:
 		return a, a.runExecRunAction(v)
 	case SSHGatewayAction:
 		return a, a.runSSHGatewayAction(v)
-	case ServerDialRunnerAction:
+	case verb.ServerDialRunnerAction:
 		if a.client == nil {
 			a.cmdresult.Append(ErrorStyle.Render("server dial-runner: not connected to server"))
 			return a, nil

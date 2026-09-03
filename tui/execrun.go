@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -144,7 +145,7 @@ func execResultLine(taskID string, argv []string, res cli.ExecRunResult) string 
 
 // runExecRunAction dispatches one parsed `exec` command, resolving the task id
 // prefix the way every other id-taking action here does.
-func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
+func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 	switch v.Sub {
 	case "ls":
 		filter := ""

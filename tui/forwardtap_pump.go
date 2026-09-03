@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"github.com/on-keyday/agent-harness/cli/verb"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -27,7 +28,7 @@ type ForwardTapEndedMsg struct {
 // the long-lived connection this TUI already holds — rather than dialling: a
 // fresh dial here would throw away a handshake, which is the pattern every
 // other Do* in this package follows.
-func (a *App) startForwardTap(v ForwardTapAction) tea.Cmd {
+func (a *App) startForwardTap(v verb.ForwardTapAction) tea.Cmd {
 	if a.client == nil {
 		a.cmdresult.Append(ErrorStyle.Render("forward tap: not connected to server"))
 		return nil

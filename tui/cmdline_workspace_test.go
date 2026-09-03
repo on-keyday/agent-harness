@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/on-keyday/agent-harness/cli/verb"
+)
 
 func TestParseWorkspace(t *testing.T) {
 	for _, c := range []struct {
@@ -19,7 +23,7 @@ func TestParseWorkspace(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", c.in, err)
 		}
-		wa, ok := act.(WorkspaceAction)
+		wa, ok := act.(verb.WorkspaceAction)
 		if !ok {
 			t.Fatalf("%q: got %T, want WorkspaceAction", c.in, act)
 		}

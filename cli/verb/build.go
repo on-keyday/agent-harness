@@ -127,7 +127,25 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 			return Bound{}, fmt.Errorf("%s", v.Usage())
 		}
 		b.Args = positionals[:fixed]
-		b.Trail = strings.Join(positionals[fixed:], " ")
+		tail := positionals[fixed:]
+		if v.Trailing.AfterSeparator {
+			// Everything up to `--` is still positional; the tail is what
+			// follows it. Without the separator there is no tail at all, which
+			// is how `exec <id>` with no command is refused rather than run.
+			sep := -1
+			for i, a := range tail {
+				if a == "--" {
+					sep = i
+					break
+				}
+			}
+			if sep >= 0 {
+				b.Args = append(b.Args, tail[:sep]...)
+				tail = tail[sep+1:]
+			}
+		}
+		b.TrailArgs = tail
+		b.Trail = strings.Join(tail, " ")
 		return b, nil
 	}
 	if err := v.checkArity(len(positionals)); err != nil {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"sort"
 	"strings"
 
@@ -209,7 +210,7 @@ func (a *App) gridArgsString() string {
 
 // runWorkspaceAction handles the `workspace` verb. save and apply act on the
 // live client; ls and show read the file.
-func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
+func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 	switch v.Sub {
 	case "apply":
 		if v.Name != "" {

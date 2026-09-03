@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"strings"
 	"testing"
 )
@@ -48,7 +49,7 @@ func TestParseExecRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseExecRun(%v): %v", tc.in, err)
 		}
-		a, ok := act.(ExecRunAction)
+		a, ok := act.(verb.ExecRunAction)
 		if !ok {
 			t.Fatalf("parseExecRun(%v) returned %T", tc.in, act)
 		}
@@ -80,7 +81,7 @@ func TestParseExecRunKeepsArgvVerbatim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseExecRun: %v", err)
 	}
-	a := act.(ExecRunAction)
+	a := act.(verb.ExecRunAction)
 	if len(a.Argv) != 3 || a.Argv[2] != "echo one two" {
 		t.Errorf("argv = %q, want the three-word form with its last argument intact", a.Argv)
 	}
@@ -133,7 +134,7 @@ func TestParseExecRunScansOptionsInAnyOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseExecRun: %v", err)
 	}
-	a, ok := act.(ExecRunAction)
+	a, ok := act.(verb.ExecRunAction)
 	if !ok {
 		t.Fatalf("action = %T, want ExecRunAction", act)
 	}

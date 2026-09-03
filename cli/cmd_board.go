@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -89,8 +90,27 @@ func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []Bo
 	fmt.Fprintln(out, string(line))
 }
 
-func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string, rest []string, out io.Writer) error {
-	switch verb {
+// RunBoardSubcmd parses one `board <sub>` line from the declaration
+// (cli/verb) and runs it. The sub-verb parameter is named sub rather than verb
+// because the package it now parses through carries that name.
+func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, rest []string, out io.Writer) error {
+	sp, ok := verb.Lookup("board", sub)
+	if !ok {
+		return fmt.Errorf("board: unknown sub-verb %q", sub)
+	}
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	bnd, perr := sp.Parse(fs, rest)
+	if perr != nil {
+		return perr
+	}
+	act, berr := sp.Build(bnd)
+	if berr != nil {
+		return berr
+	}
+	ba := act.(verb.BoardAction)
+	switch sub {
 	case "topics":
 		rows, err := BoardTopics(ctx, cid)
 		if err != nil {
@@ -162,21 +182,8 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		}
 
 	case "read":
-		fs := flag.NewFlagSet("board read", flag.ContinueOnError)
-		inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq")
-		asJSON := fs.Bool("json", false, "emit JSON Lines (one record per message: seq/in_reply_to/topic/from/received_at/retracted/reply_to_topic/shown_to, payload_b64, and payload when the body is JSON)")
-		// Permuted: the usage line is `read <topic> [--in-reply-to N] [--json]`,
-		// and stdlib parsing stops at <topic>, so a flag the help text puts after
-		// it would never be read. See ParsePermuted — topic names cannot begin
-		// with '-', which is what makes the peel safe here.
-		pos, err := ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pos) == 0 {
-			return fmt.Errorf("board read: missing <topic>")
-		}
-		topic := pos[0]
+		inReplyTo, asJSON := &ba.InReplyTo, &ba.JSON
+		topic := ba.Topic
 		msgs, found, err := BoardRead(ctx, cid, topic)
 		if err != nil {
 			return err
@@ -262,10 +269,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 	case "subscribers":
 		// Optional <topic>: with it, only the tasks a publish to that topic
 		// would reach; without it, every task known to the board.
-		topic := ""
-		if len(rest) > 0 {
-			topic = rest[0]
-		}
+		topic := ba.Topic
 		rows, err := BoardSubscribers(ctx, cid, topic)
 		if err != nil {
 			return err
@@ -288,22 +292,11 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		}
 
 	case "retract":
-		fs := flag.NewFlagSet("board retract", flag.ContinueOnError)
-		seq := fs.Uint64("seq", 0, "the retained message to withdraw (required)")
-		rargs, err := ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(rargs) == 0 {
-			return fmt.Errorf("board retract: missing <topic>")
-		}
-		topic := rargs[0]
-		if *seq == 0 {
-			// Deliberately NOT purge's "0 means the whole topic": withdrawing a
-			// topic-full of other agents' messages on a mistyped flag is
-			// exactly the accident this verb should not be able to have.
-			return fmt.Errorf("board retract: --seq is required and must be non-zero (there is no whole-topic retract; `board read %s` lists the seqs)", topic)
-		}
+		// --seq required and non-zero is enforced in the verb's Build:
+		// deliberately NOT purge's "0 means the whole topic", because
+		// withdrawing a topic-full of other agents' messages on a mistyped flag
+		// is exactly the accident this verb should not be able to have.
+		topic, seq := ba.Topic, &ba.Seq
 		ok, err := BoardRetract(ctx, cid, topic, *seq)
 		if err != nil {
 			return err
@@ -317,22 +310,13 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"seq\":%d}\n", status, topic, *seq)
 
 	case "purge":
-		fs := flag.NewFlagSet("board purge", flag.ContinueOnError)
-		seq := fs.Uint64("seq", 0, "drop only the retained message with this seq (0 = whole topic)")
-		// Permuted, and here it is load-bearing rather than a convenience: with
-		// stdlib parsing `board purge <topic> --seq N` — the form the usage line
-		// prints — left --seq unread and fell through to seq 0, which is the
-		// WHOLE TOPIC. The operator asked to drop one message and the ring went.
-		// Measured on a live board 2026-08-28: two messages, one named, both
-		// destroyed, `purged:2` the only sign.
-		pargs, err := ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pargs) == 0 {
-			return fmt.Errorf("board purge: missing <topic>")
-		}
-		topic := pargs[0]
+		// Permuted, and load-bearing rather than convenient: with stdlib
+		// parsing `board purge <topic> --seq N` -- the form the usage line
+		// prints -- left --seq unread and fell through to seq 0, which is the
+		// WHOLE TOPIC. Measured on a live board 2026-08-28: two messages, one
+		// named, both destroyed. The declaration marks --seq WidensIfUnset and
+		// an invariant test refuses to let this verb stop permuting.
+		topic, seq := ba.Topic, &ba.Seq
 		purged, found, err := BoardPurge(ctx, cid, topic, *seq)
 		if err != nil {
 			return err
@@ -344,7 +328,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"purged\":%d}\n", status, topic, purged)
 
 	default:
-		return fmt.Errorf("unknown board subcommand: %q", verb)
+		return fmt.Errorf("unknown board subcommand: %q", sub)
 	}
 	return nil
 }

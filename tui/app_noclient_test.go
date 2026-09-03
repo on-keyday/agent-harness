@@ -28,8 +28,8 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 		{"submit", SubmitAction{Repo: "/r", Prompt: "hi"}},
 		{"notify", NotifyAction{Title: "t", Text: "x"}},
 		{"session-ls", SessionLsAction{}},
-		{"forward-ls", ForwardLsAction{}},
-		{"forward-kill", ForwardKillAction{ForwardID: 1}},
+		{"forward-ls", verb.ForwardLsAction{}},
+		{"forward-kill", verb.ForwardKillAction{ForwardID: 1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

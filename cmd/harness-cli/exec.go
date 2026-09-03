@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -22,40 +21,39 @@ import (
 const execExitError = 125
 
 // splitExecArgv peels the command off the tail.
-//
-// A bare "--" ends the flags, exactly as `git`'s pathspec separator does here,
-// and everything after it is the argv VERBATIM — never re-joined and re-split,
-// because an argument containing a space is one argument and splitting it would
-// silently change the command. Without a "--", everything after the task id is
-// the argv.
-func splitExecArgv(args []string) (taskID string, argv []string, err error) {
-	if len(args) == 0 {
-		return "", nil, fmt.Errorf("exec: missing task id")
-	}
-	taskID = args[0]
-	rest := args[1:]
-	for i, a := range rest {
-		if a == "--" {
-			return taskID, rest[i+1:], nil
-		}
-	}
-	return taskID, rest, nil
-}
-
 func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) error {
-	switch args[0] {
+	// Parsed from the declaration (cli/verb). `exec ls` / `exec kill` are
+	// their own paths; anything else is the run form, whose argv follows a
+	// literal `--` and stays a list.
+	path := []string{"exec"}
+	rest := args
+	if args[0] == "ls" || args[0] == "kill" {
+		path = append(path, args[0])
+		rest = args[1:]
+	}
+	sp, ok := verb.Lookup(path...)
+	if !ok {
+		return fmt.Errorf("exec: unknown sub-verb %q", args[0])
+	}
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, rest)
+	if perr != nil {
+		return perr
+	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
+	}
+	run := act.(verb.ExecRunAction)
+	switch run.Sub {
 	case "ls":
-		fs := flag.NewFlagSet("exec ls", flag.ExitOnError)
-		taskFilter := fs.String("task", "", "only execs against this task id")
-		asJSON := fs.Bool("json", false, "one JSON object per exec")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		execs, err := cli.ExecRunList(ctx, cid, *taskFilter)
+		a := run
+		execs, err := cli.ExecRunList(ctx, cid, a.TaskFilter)
 		if err != nil {
 			return err
 		}
-		if *asJSON {
+		if a.JSON {
 			for i := range execs {
 				fmt.Println(cli.ExecRunInfoJSONLine(&execs[i]))
 			}
@@ -65,16 +63,12 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 			fmt.Println(line)
 		}
 		return nil
-
 	case "kill":
-		if len(args) < 2 {
+		a := run
+		if len(a.ExecIDs) == 0 {
 			return fmt.Errorf("usage: harness-cli exec kill <exec-id> [<exec-id> ...]")
 		}
-		for _, raw := range args[1:] {
-			id, perr := strconv.ParseUint(raw, 10, 64)
-			if perr != nil {
-				return fmt.Errorf("exec kill: bad exec id %q", raw)
-			}
+		for _, id := range a.ExecIDs {
 			if err := cli.ExecRunKill(ctx, cid, id); err != nil {
 				return err
 			}
@@ -82,36 +76,7 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		}
 		return nil
 	}
-
-	// These are scanned BEFORE the task id, because everything after the id is
-	// the argv VERBATIM: re-scanning that for flags is how a command whose own
-	// first word is `--shell` would be eaten.
-	shellLine, sshdParent := false, false
-scan:
-	for len(args) > 0 {
-		switch args[0] {
-		case "--shell":
-			shellLine = true
-		case "--sshd-parent":
-			sshdParent = true
-		default:
-			break scan
-		}
-		args = args[1:]
-	}
-	taskID, argv, err := splitExecArgv(args)
-	if err != nil {
-		return err
-	}
-	if len(argv) == 0 {
-		return fmt.Errorf("usage: harness-cli exec [--shell] [--sshd-parent] <task-id> -- <command> [args...]")
-	}
-	if shellLine {
-		// Joining is right here and ONLY here: the operator asked for shell
-		// interpretation, so these words were never an argv to preserve. The
-		// runner picks sh -c or cmd /c from its own platform.
-		argv = []string{strings.Join(argv, " ")}
-	}
+	taskID, argv, shellLine, sshdParent := run.TaskID, run.Argv, run.Shell, run.SshdParent
 
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {

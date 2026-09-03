@@ -184,7 +184,7 @@ const POLL_INTERVAL_MS = 5000;
   // this file from a Go test would be a regex over JavaScript, while this is
   // exact. A verb declared for the WebUI with no case fails at load rather
   // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
+  const WEBUI_DISPATCH = new Set(["prune", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
   for (const p of window.harness.pathsForSurface("webui")) {
     if (!WEBUI_DISPATCH.has(p)) {
       setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
@@ -2531,27 +2531,10 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "server": {
-          if (tokens[1] !== "dial-runner") {
-            throw new Error(`server: unknown subcommand ${tokens[1] || "(empty)"} (try: dial-runner)`);
-          }
-          let via = null, target = null;
-          for (let i = 2; i < tokens.length; i++) {
-            const t = tokens[i];
-            if (t === "--via") {
-              i++;
-              if (i >= tokens.length) throw new Error("--via: missing CID");
-              via = tokens[i];
-            } else if (t.startsWith("--via=")) {
-              via = t.slice("--via=".length);
-            } else if (!target) {
-              target = t;
-            } else {
-              throw new Error(`unexpected arg: ${t}`);
-            }
-          }
-          if (!target) throw new Error("server dial-runner: missing runner CID");
-          const status = await window.harness.serverDialRunner(target, via || undefined);
-          out = `server dial-runner ${target}${via ? ` --via=${via}` : ""}: ${status}`;
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          const status = await window.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
+          out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
           break;
         }
         // Same words the TUI cmdline takes, so a hand that learned one surface
@@ -2559,92 +2542,53 @@ const POLL_INTERVAL_MS = 5000;
         // `exec <id> ls -la` is a command named ls, because a task id
         // introduced it.
         case "exec": {
-          // --shell is scanned BEFORE the task id: everything after the id is
-          // the argv verbatim, so re-scanning it would eat a command whose own
-          // first word is --shell.
-          let rest = tokens.slice(1);
-          let shell = false, sshdParent = false;
-          for (;;) {
-            if (rest[0] === "--shell") shell = true;
-            else if (rest[0] === "--sshd-parent") sshdParent = true;
-            else break;
-            rest = rest.slice(1);
-          }
-          const sub = rest[0];
-          if (!sub) throw new Error("exec: usage: exec [--shell] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
-          if ((shell || sshdParent) && (sub === "ls" || sub === "kill")) {
-            throw new Error(`exec: those options apply to running a command, not to ${sub}`);
-          }
-          // Refused here so the operator is told at the prompt rather than
-          // after a round trip that reports the same thing from the far side.
-          if (sshdParent && !shell) {
-            throw new Error("exec: --sshd-parent needs --shell — what it renames is the shell");
-          }
+          // Parsed by the shared declaration: --shell/--sshd-parent, the
+          // optional `--` before the argv, and the refusal of `exec --shell
+          // kill 3` (a sub-verb where a task id belongs) all come from there.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          const sub = b.path.length > 1 ? b.path[1] : "run";
           if (sub === "ls") {
-            let filter = "";
-            for (let i = 1; i < rest.length; i++) {
-              if (rest[i] === "-task" || rest[i] === "--task") {
-                i++;
-                if (i >= rest.length) throw new Error("exec ls: -task needs a task id");
-                filter = rest[i];
-              } else {
-                throw new Error("exec ls: usage: exec ls [-task <task-id>]");
-              }
-            }
-            const es = await window.harness.execRunList(filter || undefined);
+            const es = await window.harness.execRunList(b.flags.task || undefined);
             out = es.length
-              ? es.map((e) => `#${e.execId}  ${e.taskId.slice(0, 8)}…  ${e.originKind} ${e.originCid}  ${e.argvText}`).join("\n")
+              ? es.map((e) => `#${e.exec_id}  ${e.task.slice(0, 8)}…  ${e.argv}`).join("\n")
               : "(no running execs)";
-            break;
+          } else if (sub === "kill") {
+            await window.harness.execRunKill(Number(b.args[0]));
+            out = `killed exec ${b.args[0]}`;
+          } else {
+            out = await execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
           }
-          if (sub === "kill") {
-            const id = parseInt(rest[1], 10);
-            if (!Number.isFinite(id)) throw new Error("exec kill: usage: exec kill <exec-id>");
-            await window.harness.execRunKill(id);
-            out = `killed exec ${id}`;
-            break;
-          }
-          let argv = rest.slice(1);
-          if (argv[0] === "--") argv = argv.slice(1);
-          if (!argv.length) throw new Error("exec: a command is required");
-          // Joining is right here and only here: the operator asked for shell
-          // interpretation, so these words were never an argv to preserve.
-          if (shell) argv = [argv.join(" ")];
-          out = await execRunToOutput(sub, argv, { shell, sshdParent });
           break;
         }
         case "forward": {
-          // forward ls renders from the snapshot the page already polls — no
-          // extra RPC and no second wasm export (Task 7). forward kill goes
-          // through the wasm bridge; starting a socket-bound forward is
-          // CLI/TUI-only (a browser cannot bind a local listener) — a
-          // browser-endpoint forward is opened from the raw-connect pane
-          // instead, not through this command.
-          const sub = tokens[1];
+          // forward ls renders from the snapshot the page already polls -- no
+          // extra RPC. Starting a socket-bound forward is CLI-only (a browser
+          // cannot bind a local listener), which the declaration says by
+          // leaving the open form off this surface.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          const sub = b.path[1];
           if (sub === "ls") {
-            const fs = lastForwards || [];
-            out = fs.length
-              ? fs.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n")
+            const fwds = (lastForwards || []).filter(
+              (f) => !b.flags.task || f.task === b.flags.task);
+            out = fwds.length
+              ? fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n")
               : "(no active port forwards)";
           } else if (sub === "kill") {
-            const id = parseInt(tokens[2], 10);
-            if (!Number.isFinite(id)) throw new Error("forward kill: usage: forward kill <forward-id>");
-            await window.harness.forwardKill(id);
-            out = `killed forward ${id}`;
-          } else if (sub === "tap") {
+            for (const id of b.args) await window.harness.forwardKill(Number(id));
+            out = `killed forward ${b.args.join(", ")}`;
+          } else {
             // The command input starts the same tap the row's button does, and
             // shows it in the same panel: a second rendering path for the same
             // subscription is how two surfaces end up disagreeing.
-            const id = parseInt(tokens[2], 10);
-            if (!Number.isFinite(id)) throw new Error("forward tap: usage: forward tap <forward-id>");
+            const id = Number(b.args[0]);
             const f = (lastForwards || []).find((x) => x.forward_id === id);
             if (!f) throw new Error(`forward tap: no such forward ${id} in the current snapshot`);
             const entry = findForwardEntry(id);
             if (!entry) throw new Error(`forward tap: forward ${id} has no row to attach a panel to`);
             toggleForwardTap(f, entry.wrap, entry.button);
             out = openTaps.has(id) ? `tapping forward ${id}` : `stopped tapping forward ${id}`;
-          } else {
-            throw new Error("forward: usage: forward ls | forward kill <forward-id> | forward tap <forward-id>");
           }
           break;
         }

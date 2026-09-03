@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/google/shlex"
@@ -173,25 +172,6 @@ type GridAction struct {
 	Mode   cli.GridScopeMode
 	Anchor string
 	IDs    []string
-}
-
-// WorkspaceAction is the `workspace <sub> [name]` family: save the current
-// client state into .harness/config, re-apply a workspace, or inspect what the
-// file holds. There is no `workspace open`-shaped verb for starting one piece
-// at a time; an apply is all-or-nothing by design.
-type WorkspaceAction struct {
-	verb.ActionMarker
-	Sub  string // "save" | "apply" | "detach" | "ls" | "show" | "rm"
-	Name string // "" means the installed workspace, except for save
-	// All is `save --all`: write every live session without opening the
-	// picker. The picker is the default because which tasks belong in a
-	// workspace is a statement, not something a rule can infer.
-	All bool
-	// Stop is `detach --stop`: also stop what the workspace started. Off by
-	// default because detach's job is to stop MANAGING — an operator who
-	// detaches after a reconnect-triggered apply should not lose the tunnels
-	// they are working through.
-	Stop bool
 }
 
 // ForwardLsAction lists every port forward visible to this operator.
@@ -460,50 +440,7 @@ func parseServer(args []string) (Action, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("server: usage: server dial-runner [--via <cid>] <runner-cid>")
 	}
-	switch args[0] {
-	case "dial-runner":
-		// Manually scan args to support --via both before and after the
-		// positional CID argument. Go's flag.FlagSet stops at the first
-		// non-flag token, so mixed order (cid --via cid) would not work
-		// with flag.Parse alone.
-		var via, runnerCID string
-		rest := args[1:]
-		for i := 0; i < len(rest); i++ {
-			t := rest[i]
-			if t == "--via" {
-				i++
-				if i >= len(rest) {
-					return nil, fmt.Errorf("server dial-runner: --via: missing CID value")
-				}
-				via = rest[i]
-			} else if strings.HasPrefix(t, "--via=") {
-				via = t[len("--via="):]
-			} else if t == "--" {
-				// everything after -- is positional
-				i++
-				if i >= len(rest) {
-					break
-				}
-				if runnerCID != "" {
-					return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
-				}
-				runnerCID = rest[i]
-			} else if strings.HasPrefix(t, "-") {
-				return nil, fmt.Errorf("server dial-runner: unknown flag %q", t)
-			} else {
-				if runnerCID != "" {
-					return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
-				}
-				runnerCID = t
-			}
-		}
-		if runnerCID == "" {
-			return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
-		}
-		return ServerDialRunnerAction{RunnerCID: runnerCID, Via: via}, nil
-	default:
-		return nil, fmt.Errorf("server: unknown subcommand %q (try: dial-runner)", args[0])
-	}
+	return parseViaSpec2("server", args[0], args[1:])
 }
 
 func parseInteractive(args []string, defaultRepo string) (Action, error) {
@@ -930,60 +867,9 @@ func parseForward(args []string) (Action, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("forward: sub-verb required (ls | kill | tap)")
 	}
-	switch args[0] {
-	case "ls":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("forward ls: usage: forward ls")
-		}
-		return ForwardLsAction{}, nil
-	case "kill":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("forward kill: usage: forward kill <forward-id>")
-		}
-		id, err := strconv.ParseUint(args[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("forward kill: bad forward id %q", args[1])
-		}
-		return ForwardKillAction{ForwardID: id}, nil
-	case "tap":
-		if len(args) < 2 {
-			return nil, fmt.Errorf("forward tap: usage: forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N]")
-		}
-		id, err := strconv.ParseUint(args[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("forward tap: bad forward id %q", args[1])
-		}
-		act := ForwardTapAction{ForwardID: id, Dir: "both"}
-		rest := args[2:]
-		for len(rest) > 0 {
-			switch rest[0] {
-			case "--dir":
-				if len(rest) < 2 {
-					return nil, fmt.Errorf("forward tap: --dir needs a value")
-				}
-				// Parsed through the shared parser rather than compared here,
-				// so this surface accepts exactly what harness-cli accepts.
-				if _, perr := cli.ParseTapFilter(rest[1]); perr != nil {
-					return nil, perr
-				}
-				act.Dir, rest = rest[1], rest[2:]
-			case "--max-bytes":
-				if len(rest) < 2 {
-					return nil, fmt.Errorf("forward tap: --max-bytes needs a value")
-				}
-				n, nerr := strconv.ParseUint(rest[1], 10, 32)
-				if nerr != nil {
-					return nil, fmt.Errorf("forward tap: bad --max-bytes %q", rest[1])
-				}
-				act.MaxRecordBytes, rest = uint32(n), rest[2:]
-			default:
-				return nil, fmt.Errorf("forward tap: unknown option %q", rest[0])
-			}
-		}
-		return act, nil
-	default:
-		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill | tap)", args[0])
-	}
+	// Opening a forward is not reachable from here: the TUI opens one from its
+	// port-forward pane, which is where the local listener it binds belongs.
+	return parseViaSpec2("forward", args[0], args[1:])
 }
 
 // parseExecRun handles `exec <task-id> [--] <cmd>...`, `exec ls [-task <id>]`
@@ -999,75 +885,13 @@ func parseForward(args []string) (Action, error) {
 // would silently change the command. A bare `--` ends any option scanning, so
 // a command that starts with a dash still reaches the runner intact.
 func parseExecRun(args []string) (Action, error) {
-	const usage = "exec: usage: exec [--shell] [--sshd-parent] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
-	// Scanned BEFORE the task id: everything after the id is the argv verbatim,
-	// so re-scanning that for flags would eat a command whose own first word is
-	// --shell.
-	shell, sshdParent := false, false
-scan:
-	for len(args) > 0 {
-		switch args[0] {
-		case "--shell":
-			shell = true
-		case "--sshd-parent":
-			sshdParent = true
-		default:
-			break scan
-		}
-		args = args[1:]
-	}
 	if len(args) == 0 {
-		return nil, fmt.Errorf("%s", usage)
+		return nil, fmt.Errorf("exec: usage: exec [--shell] [--sshd-parent] <task-id> -- <command> [args...]")
 	}
-	if (shell || sshdParent) && (args[0] == "ls" || args[0] == "kill") {
-		return nil, fmt.Errorf("exec: those options apply to running a command, not to %s", args[0])
+	if args[0] == "ls" || args[0] == "kill" {
+		return parseViaSpec2("exec", args[0], args[1:])
 	}
-	// Refused at parse time so the operator is told at the prompt, rather than
-	// after a round trip that reports the same thing from the far side.
-	if sshdParent && !shell {
-		return nil, fmt.Errorf("exec: --sshd-parent needs --shell — what it renames is the shell")
-	}
-	switch args[0] {
-	case "ls":
-		rest := args[1:]
-		filter := ""
-		for i := 0; i < len(rest); i++ {
-			switch rest[i] {
-			case "-task", "--task":
-				if i+1 >= len(rest) {
-					return nil, fmt.Errorf("exec ls: -task needs a task id")
-				}
-				i++
-				filter = rest[i]
-			default:
-				return nil, fmt.Errorf("exec ls: usage: exec ls [-task <task-id>]")
-			}
-		}
-		return ExecRunAction{Sub: "ls", TaskID: filter}, nil
-	case "kill":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("exec kill: usage: exec kill <exec-id>")
-		}
-		id, err := strconv.ParseUint(args[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("exec kill: bad exec id %q", args[1])
-		}
-		return ExecRunAction{Sub: "kill", ExecID: id}, nil
-	}
-	taskID := args[0]
-	argv := args[1:]
-	if len(argv) > 0 && argv[0] == "--" {
-		argv = argv[1:]
-	}
-	if len(argv) == 0 {
-		return nil, fmt.Errorf("exec: a command is required\n%s", usage)
-	}
-	if shell {
-		// Joining is right here and only here: the operator asked for shell
-		// interpretation, so these words were never an argv to preserve.
-		argv = []string{strings.Join(argv, " ")}
-	}
-	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv, Shell: shell, SshdParent: sshdParent}, nil
+	return parseViaSpec("exec", args)
 }
 
 // parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at
@@ -1110,71 +934,10 @@ func parseSSHGateway(args []string) (Action, error) {
 // would let a slip overwrite one from the live client state; every other verb
 // is read-only or re-runs what is already installed, so they may default.
 func parseWorkspace(args []string) (Action, error) {
-	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace detach [--stop] | workspace rm <name> | workspace ls | workspace show [name]"
 	if len(args) == 0 {
-		return nil, fmt.Errorf("%s", usage)
+		return nil, fmt.Errorf("workspace: sub-verb required (save | rm | ls | show | apply | detach)")
 	}
-	sub := args[0]
-	rest := args[1:]
-	all := false
-	stop := false
-	var positional []string
-	for _, a := range rest {
-		if a == "--all" {
-			all = true
-			continue
-		}
-		if a == "--stop" {
-			stop = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			return nil, fmt.Errorf("workspace %s: unknown flag %q\n%s", sub, a, usage)
-		}
-		positional = append(positional, a)
-	}
-	var name string
-	if len(positional) > 0 {
-		name = positional[0]
-	}
-	switch sub {
-	case "save":
-		if name == "" {
-			return nil, fmt.Errorf("workspace save: needs a name\n%s", usage)
-		}
-	case "rm":
-		// A name is required, and there is no "the current one" shorthand:
-		// deleting is the one verb here that cannot be undone by re-running it.
-		if name == "" {
-			return nil, fmt.Errorf("workspace rm: needs a name\n%s", usage)
-		}
-		if all {
-			return nil, fmt.Errorf("workspace rm: --all applies to save only\n%s", usage)
-		}
-	case "detach":
-		if name != "" {
-			// Detach takes no name on purpose: there is only ever one
-			// installed workspace, and accepting a name would invite
-			// `detach other` to read as "detach that one instead of mine".
-			return nil, fmt.Errorf("workspace detach: takes no name (it detaches the installed one)\n%s", usage)
-		}
-		if all {
-			return nil, fmt.Errorf("workspace detach: --all applies to save only\n%s", usage)
-		}
-	case "apply", "ls", "show":
-		if all {
-			return nil, fmt.Errorf("workspace %s: --all applies to save only\n%s", sub, usage)
-		}
-	default:
-		return nil, fmt.Errorf("workspace: unknown subcommand %q\n%s", sub, usage)
-	}
-	if len(positional) > 1 {
-		return nil, fmt.Errorf("workspace %s: too many arguments\n%s", sub, usage)
-	}
-	if stop && sub != "detach" {
-		return nil, fmt.Errorf("workspace %s: --stop applies to detach only\n%s", sub, usage)
-	}
-	return WorkspaceAction{Sub: sub, Name: name, All: all, Stop: stop}, nil
+	return parseViaSpec2("workspace", args[0], args[1:])
 }
 
 // parsePermutedFlags parses fs while tolerating flags that appear after
