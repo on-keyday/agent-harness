@@ -7,7 +7,35 @@
 
 package verb
 
-import "time"
+import (
+	"fmt"
+	"strconv"
+	"time"
+)
+
+// AgentAction is built by: agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent topics, agent unsubscribe, agent wait.
+type AgentAction struct {
+	ActionMarker
+	// server ConnectionID (env: HARNESS_SERVER_CID)
+	ServerCID string
+	// start from this seq (0 = whole ring)
+	Since uint64
+	// JSON Lines instead of text
+	JSON bool
+	// hook mode: ask for what has not been injected, and mark it injected in the same operation
+	UserPromptSubmitHook bool
+	// only messages replying to this seq
+	InReplyTo uint64
+	Sub       string
+	// topic to wait on
+	Topic string
+	// max block duration
+	Timeout time.Duration
+	// this agent's own chat.<short-id> topic
+	Self bool
+	// drop one message by seq; omitted drops the topic's retained buffer
+	Seq uint64
+}
 
 // BoardAction is built by: board purge, board read, board retract, board subscribers, board topics.
 type BoardAction struct {
@@ -20,6 +48,14 @@ type BoardAction struct {
 	Topic string
 	// the message to withdraw; required — there is no whole-topic retract
 	Seq uint64
+}
+
+// CatalogAction is built by: caps, version, whoami.
+type CatalogAction struct {
+	ActionMarker
+	// output the capability catalog as JSON
+	JSON bool
+	Sub  string
 }
 
 // FileDeleteAction is built by: file delete.
@@ -739,6 +775,24 @@ func init() {
 			}
 			return a, nil
 		},
+		"caps\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "caps"
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"whoami\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "whoami"
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"version\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "version"
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"session attach\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "attach"
@@ -1007,6 +1061,97 @@ func init() {
 			}
 			if len(b.Args) > 1 {
 				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
+		"agent inbox\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "inbox"
+			a.ServerCID = b.Str("server-cid")
+			a.Since = uint64Of(b.Flags["since"])
+			a.JSON = b.Bool("json")
+			a.UserPromptSubmitHook = b.Bool("user-prompt-submit-hook")
+			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
+			return a, nil
+		},
+		"agent wait\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "wait"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Since = uint64Of(b.Flags["since"])
+			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
+			a.Timeout = durationOf(b.Flags["timeout"])
+			return a, nil
+		},
+		"agent subscribe\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "subscribe"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Self = b.Bool("self")
+			return a, nil
+		},
+		"agent unsubscribe\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "unsubscribe"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Self = b.Bool("self")
+			return a, nil
+		},
+		"agent topics\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "topics"
+			a.ServerCID = b.Str("server-cid")
+			return a, nil
+		},
+		"agent subscriptions\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "subscriptions"
+			a.ServerCID = b.Str("server-cid")
+			return a, nil
+		},
+		"agent retained\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "retained"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Self = b.Bool("self")
+			return a, nil
+		},
+		"agent purge\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "purge"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.Self = b.Bool("self")
+			a.Seq = uint64Of(b.Flags["seq"])
+			return a, nil
+		},
+		"agent read\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "read"
+			a.ServerCID = b.Str("server-cid")
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("agent read: seq must be a positive integer, got %q", b.Args[0])
+				}
+				a.Seq = n
+			}
+			return a, nil
+		},
+		"agent retract\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "retract"
+			a.ServerCID = b.Str("server-cid")
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("agent retract: seq must be a positive integer, got %q", b.Args[0])
+				}
+				a.Seq = n
 			}
 			return a, nil
 		},

@@ -1000,21 +1000,24 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"caps"}, Surfaces: CLI,
-		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the capability catalog as JSON"}},
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "caps"},
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the capability catalog as JSON"}},
 		Examples: []string{"caps", "caps --json"},
-		Build:    buildCatalog("caps"),
 	},
 	{
 		Path: []string{"whoami"}, Surfaces: CLI,
-		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the identity as a JSON object"}},
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "whoami"},
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the identity as a JSON object"}},
 		Examples: []string{"whoami"},
-		Build:    buildCatalog("whoami"),
 	},
 	{
 		Path: []string{"version"}, Surfaces: CLI,
-		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the build stamp as a JSON object"}},
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "version"},
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the build stamp as a JSON object"}},
 		Examples: []string{"version"},
-		Build:    buildCatalog("version"),
 	},
 	{
 		Path: []string{"logs"}, Surfaces: CLI,
@@ -1253,80 +1256,102 @@ var Verbs = []VerbSpec{
 	// and read HARNESS_* env, which no operator surface has.
 	{
 		Path: []string{"agent", "inbox"}, Surfaces: CLI,
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "inbox"},
 		Flags: append(agentCommonFlags(),
-			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Help: "start from this seq (0 = whole ring)"},
-			Flag{Name: "json", Type: FlagBool, Default: false, Help: "JSON Lines instead of text"},
-			Flag{Name: "user-prompt-submit-hook", Type: FlagBool, Default: false,
+			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Field: "Since", Help: "start from this seq (0 = whole ring)"},
+			Flag{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+			Flag{Name: "user-prompt-submit-hook", Type: FlagBool, Default: false, Field: "UserPromptSubmitHook",
 				Help: "hook mode: ask for what has not been injected, and mark it injected in the same operation"},
-			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Help: "only messages replying to this seq"},
+			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo", Help: "only messages replying to this seq"},
 		),
 		Examples: []string{"agent inbox", "agent inbox --json"},
-		Build:    buildAgent("inbox"),
 	},
 	{
 		Path: []string{"agent", "wait"}, Surfaces: CLI,
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "wait"},
 		Flags: append(agentCommonFlags(),
-			Flag{Name: "topic", Type: FlagString, Default: "", Help: "topic to wait on"},
-			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Help: "take everything after this seq"},
-			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Help: "only messages replying to this seq"},
-			Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute,
+			Flag{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "topic to wait on"},
+			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Field: "Since", Help: "take everything after this seq"},
+			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo", Help: "only messages replying to this seq"},
+			Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute, Field: "Timeout",
 				Help: "max block duration"},
 		),
 		Examples: []string{"agent wait --topic chat.abcd1234"},
-		Build:    buildAgent("wait"),
 	},
 	{
 		Path: []string{"agent", "subscribe"}, Surfaces: CLI,
-		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
-		Examples: []string{"agent subscribe --topic chat.abcd1234"},
-		Build:    buildAgent("subscribe"),
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "subscribe"},
+		// --self names the agent's own id-directed topic, so pairing it with
+		// --topic asks for two destinations at once.
+		Exclusive: [][]string{{"self", "topic"}},
+		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples:  []string{"agent subscribe --topic chat.abcd1234"},
 	},
 	{
 		Path: []string{"agent", "unsubscribe"}, Surfaces: CLI,
-		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
-		Examples: []string{"agent unsubscribe --topic chat.abcd1234"},
-		Build:    buildAgent("unsubscribe"),
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "unsubscribe"},
+		// --self names the agent's own id-directed topic, so pairing it with
+		// --topic asks for two destinations at once.
+		Exclusive: [][]string{{"self", "topic"}},
+		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples:  []string{"agent unsubscribe --topic chat.abcd1234"},
 	},
 	{
 		Path: []string{"agent", "topics"}, Surfaces: CLI,
+		Action:   "AgentAction",
+		Const:    map[string]string{"Sub": "topics"},
 		Flags:    agentCommonFlags(),
 		Examples: []string{"agent topics"},
-		Build:    buildAgent("topics"),
 	},
 	{
 		Path: []string{"agent", "subscriptions"}, Surfaces: CLI,
+		Action:   "AgentAction",
+		Const:    map[string]string{"Sub": "subscriptions"},
 		Flags:    agentCommonFlags(),
 		Examples: []string{"agent subscriptions"},
-		Build:    buildAgent("subscriptions"),
 	},
 	{
 		Path: []string{"agent", "retained"}, Surfaces: CLI,
-		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
-		Examples: []string{"agent retained --self"},
-		Build:    buildAgent("retained"),
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "retained"},
+		// --self names the agent's own id-directed topic, so pairing it with
+		// --topic asks for two destinations at once.
+		Exclusive: [][]string{{"self", "topic"}},
+		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples:  []string{"agent retained --self"},
 	},
 	{
 		Path: []string{"agent", "purge"}, Surfaces: CLI,
+		Action: "AgentAction",
+		Const:  map[string]string{"Sub": "purge"},
+		// --self names the agent's own id-directed topic, so pairing it with
+		// --topic asks for two destinations at once.
+		Exclusive: [][]string{{"self", "topic"}},
 		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
-			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true, Field: "Seq",
+			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq", WidensIfUnset: true,
 				Help: "drop one message by seq; omitted drops the topic's retained buffer"},
 		),
 		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42"},
-		Build:    buildAgent("purge"),
 	},
 	{
 		Path: []string{"agent", "read"}, Surfaces: CLI,
-		Args:     []Arg{{Name: "seq", Type: ArgUint}},
+		Action:   "AgentAction",
+		Const:    map[string]string{"Sub": "read"},
+		Args:     []Arg{{Name: "seq", Type: ArgUint, Field: "Seq"}},
 		Flags:    agentCommonFlags(),
 		Examples: []string{"agent read 42"},
-		Build:    buildAgentSeq("read"),
 	},
 	{
 		Path: []string{"agent", "retract"}, Surfaces: CLI,
-		Args:     []Arg{{Name: "seq", Type: ArgUint}},
+		Action:   "AgentAction",
+		Const:    map[string]string{"Sub": "retract"},
+		Args:     []Arg{{Name: "seq", Type: ArgUint, Field: "Seq"}},
 		Flags:    agentCommonFlags(),
 		Examples: []string{"agent retract 42"},
-		Build:    buildAgentSeq("retract"),
 	},
 }
 
@@ -1447,19 +1472,12 @@ func buildAgentSend(kind string) func(Bound) (Action, error) {
 	}
 }
 
-// buildCatalog is the Build for the read-only catalogs.
-func buildCatalog(sub string) func(Bound) (Action, error) {
-	return func(b Bound) (Action, error) {
-		return CatalogAction{Sub: sub, JSON: b.Bool("json")}, nil
-	}
-}
-
 // agentCommonFlags is the one flag every agent verb carries. --server-cid is
 // env-primary (HARNESS_SERVER_CID); the auth ticket is env-ONLY and has no
 // flag at all, on purpose.
 func agentCommonFlags() []Flag {
 	return []Flag{{
-		Name: "server-cid", Type: FlagString, Default: "",
+		Name: "server-cid", Type: FlagString, Default: "", Field: "ServerCID",
 		Help:    "server ConnectionID (env: HARNESS_SERVER_CID)",
 		Resolve: []Tier{{Env: "HARNESS_SERVER_CID"}},
 	}}
@@ -1469,47 +1487,7 @@ func agentCommonFlags() []Flag {
 // agent's own id-directed one.
 func agentTopicSelfFlags() []Flag {
 	return []Flag{
-		{Name: "topic", Type: FlagString, Default: "", Help: "agentboard topic"},
-		{Name: "self", Type: FlagBool, Default: false, Help: "this agent's own chat.<short-id> topic"},
-	}
-}
-
-// buildAgent is the Build for the agent verbs that take no positional.
-func buildAgent(sub string) func(Bound) (Action, error) {
-	return func(b Bound) (Action, error) {
-		// --self names the agent's own id-directed topic, so pairing it with
-		// --topic asks for two destinations at once.
-		if b.Bool("self") && b.Str("topic") != "" {
-			return nil, fmt.Errorf("agent %s: --self and --topic are mutually exclusive", sub)
-		}
-		a := AgentAction{Sub: sub, ServerCID: b.Str("server-cid"), Topic: b.Str("topic"),
-			Self: b.Bool("self"), JSON: b.Bool("json"),
-			UserPromptSubmitHook: b.Bool("user-prompt-submit-hook")}
-		if v, ok := b.Flags["seq"].(uint64); ok {
-			a.Seq = v
-		}
-		if v, ok := b.Flags["since"].(uint64); ok {
-			a.Since = v
-		}
-		if v, ok := b.Flags["in-reply-to"].(uint64); ok {
-			a.InReplyTo = v
-		}
-		if v, ok := b.Flags["timeout"].(time.Duration); ok {
-			a.Timeout = v
-		}
-		return a, nil
-	}
-}
-
-// buildAgentSeq is the Build for `agent read` / `agent retract`, whose one
-// positional is a seq. Permuted, because a seq cannot begin with '-'.
-func buildAgentSeq(sub string) func(Bound) (Action, error) {
-	return func(b Bound) (Action, error) {
-		seqs, err := parseUintArgs("agent "+sub, "seq", b.Args)
-		if err != nil {
-			return nil, err
-		}
-		a := AgentAction{Sub: sub, ServerCID: b.Str("server-cid"), Seq: seqs[0]}
-		return a, nil
+		{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "agentboard topic"},
+		{Name: "self", Type: FlagBool, Default: false, Field: "Self", Help: "this agent's own chat.<short-id> topic"},
 	}
 }

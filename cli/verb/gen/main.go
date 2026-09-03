@@ -113,7 +113,11 @@ func main() {
 
 package verb
 
-import "time"
+import (
+	"fmt"
+	"strconv"
+	"time"
+)
 
 `)
 
@@ -191,6 +195,11 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 			}
 			if ar.Variadic && ar.MaxCount != 1 {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
+			} else if ar.Type == verb.ArgUint {
+				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\tn, err := strconv.ParseUint(b.Args[%d], 10, 64)\n"+
+					"\t\t\tif err != nil {\n\t\t\t\treturn nil, fmt.Errorf(%q, b.Args[%d])\n\t\t\t}\n"+
+					"\t\t\ta.%s = n\n\t\t}\n",
+					i, i, v.FlagSetName()+": "+ar.Name+" must be a positive integer, got %q", i, ar.Field)
 			} else {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
 			}
@@ -258,6 +267,12 @@ func goTypeOfFlag(f verb.Flag) string {
 }
 
 func goTypeOfArg(a verb.Arg) string {
+	// An ArgUint positional lands in a numeric field: `agent read 42` and
+	// `forward tap 7` name an id, and every consumer that got a string had to
+	// parse it again -- twice, differently, in the hand-written era.
+	if a.Type == verb.ArgUint && !a.Variadic {
+		return "uint64"
+	}
 	// A variadic capped at one is an OPTIONAL single value, not a list --
 	// `board subscribers [topic]` and `workspace show [name]` are one-or-none,
 	// and giving them a []string would make every consumer index it.

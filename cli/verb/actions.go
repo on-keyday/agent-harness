@@ -243,13 +243,6 @@ type ConnsAction struct {
 	Follow bool
 }
 
-// CatalogAction is the shape of the read-only catalogs: caps, whoami, version.
-type CatalogAction struct {
-	ActionMarker
-	Sub  string
-	JSON bool
-}
-
 // SetCapsAction re-grants a live task's authority. Operator only.
 type SetCapsAction struct {
 	ActionMarker
@@ -287,22 +280,6 @@ type LogsAction struct {
 	ActionMarker
 	TaskID string
 	Follow bool
-}
-
-// AgentAction is the shape of the agentboard verbs an agent calls from inside
-// its own task. ServerCID is env-primary; the ticket is env-only.
-type AgentAction struct {
-	ActionMarker
-	Sub                  string
-	ServerCID            string
-	Topic                string
-	Self                 bool
-	Seq                  uint64
-	Since                uint64
-	InReplyTo            uint64
-	JSON                 bool
-	UserPromptSubmitHook bool
-	Timeout              time.Duration
 }
 
 // CancelAction cancels a queued or running task.
