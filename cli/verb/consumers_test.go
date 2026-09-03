@@ -47,78 +47,82 @@ type verbConsumer struct {
 	files   []string
 }
 
+// tui/dispatch.go is on every TUI row: the surface's verb handlers moved
+// there when they became verb.TUIDispatch methods, and app.go now only routes
+// into them. A row naming app.go alone would report every field as unread.
+//
 // verbConsumers lists the executing sites. Enumerated rather than derived:
 // "executes this verb" is not something the import graph distinguishes from
 // "mentions this type".
 var verbConsumers = []verbConsumer{
 	{"submit", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"submit", verb.TUI, []string{"../../tui/app.go"}},
+	{"submit", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"interactive", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"interactive", verb.TUI, []string{"../../tui/app.go"}},
+	{"interactive", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// session.go parses and holds the PTY knobs; spawnOpts in main.go turns the
 	// shared half into the client's option bag. Both are the CLI's execution of
 	// this verb, so both count as consumers.
 	{"session new", verb.CLI, []string{"../../cmd/harness-cli/session.go", "../../cmd/harness-cli/main.go"}},
-	{"session new", verb.TUI, []string{"../../tui/app.go"}},
+	{"session new", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 
 	{"prune", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"prune", verb.TUI, []string{"../../tui/app.go"}},
+	{"prune", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 
 	{"file push", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"file push", verb.TUI, []string{"../../tui/app.go"}},
+	{"file push", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"file pull", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"file pull", verb.TUI, []string{"../../tui/app.go"}},
+	{"file pull", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 
 	{"git diff", verb.CLI, []string{"../../cmd/harness-cli/git.go"}},
-	{"git diff", verb.TUI, []string{"../../tui/app.go", "../../tui/gitmodal.go"}},
+	{"git diff", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/gitmodal.go"}},
 
 	{"exec", verb.CLI, []string{"../../cmd/harness-cli/exec.go"}},
-	{"exec", verb.TUI, []string{"../../tui/app.go", "../../tui/execrun.go"}},
+	{"exec", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/execrun.go"}},
 
 	{"forward tap", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"forward tap", verb.TUI, []string{"../../tui/app.go", "../../tui/forwardtap_pump.go"}},
+	{"forward tap", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/forwardtap_pump.go"}},
 
 	{"session await-idle", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
-	{"session await-idle", verb.TUI, []string{"../../tui/app.go"}},
+	{"session await-idle", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 
 	{"workspace save", verb.CLI, []string{"../../cmd/harness-cli/workspace.go"}},
-	{"workspace save", verb.TUI, []string{"../../tui/app.go", "../../tui/workspace.go"}},
+	{"workspace save", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/workspace.go"}},
 
 	// The paths whose drops an audit found, each now watched where it broke.
 	// `exec ls` in particular was invisible: the `exec` row above restricts to
 	// the RUN sub-verb's fields, so TaskFilter -- which the TUI read under the
 	// wrong name and silently listed everything -- was in no row at all.
 	{"exec ls", verb.CLI, []string{"../../cmd/harness-cli/exec.go"}},
-	{"exec ls", verb.TUI, []string{"../../tui/app.go", "../../tui/execrun.go"}},
+	{"exec ls", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/execrun.go"}},
 	{"exec kill", verb.CLI, []string{"../../cmd/harness-cli/exec.go"}},
-	{"exec kill", verb.TUI, []string{"../../tui/app.go", "../../tui/execrun.go"}},
+	{"exec kill", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/execrun.go"}},
 	{"forward kill", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"forward kill", verb.TUI, []string{"../../tui/app.go"}},
+	{"forward kill", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"caps set", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"caps set", verb.TUI, []string{"../../tui/app.go"}},
+	{"caps set", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"caps set-parent", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"caps set-parent", verb.TUI, []string{"../../tui/app.go"}},
+	{"caps set-parent", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"notify", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"notify", verb.TUI, []string{"../../tui/app.go"}},
+	{"notify", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"session attach", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
-	{"session attach", verb.TUI, []string{"../../tui/app.go"}},
+	{"session attach", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// git's limits were declared for three surfaces and honoured by one: the
 	// TUI built its query from the modal's state and the WebUI forwarded
 	// neither, so `git <id> log --max 5` showed a default count on both.
 	{"git log", verb.CLI, []string{"../../cmd/harness-cli/git.go"}},
-	{"git log", verb.TUI, []string{"../../tui/app.go"}},
+	{"git log", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"git show", verb.CLI, []string{"../../cmd/harness-cli/git.go"}},
-	{"git show", verb.TUI, []string{"../../tui/app.go"}},
+	{"git show", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// `cancel <a> <b>` cancelled the first and exited 0 here, because this
 	// was the one declared CLI path that never reached verb.Lookup.
 	{"cancel", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
-	{"cancel", verb.TUI, []string{"../../tui/app.go"}},
+	{"cancel", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// prune-local removes WORKTREES, and its --repo ladder was
 	// re-implemented on the VALUE rather than on presence, so `--repo .` was
 	// silently replaced by HARNESS_REPO_PATH.
 	{"prune-local", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
 	{"session stream approve", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
-	{"session stream approve", verb.TUI, []string{"../../tui/app.go", "../../tui/client.go"}},
+	{"session stream approve", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/client.go"}},
 }
 
 // actionFor names the action type a verb path builds, so the walk knows which

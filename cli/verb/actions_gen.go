@@ -4146,1017 +4146,1344 @@ func ParseCmdAgentRetract(sf Surface, args []string) (AgentAction, error) {
 // CLIDispatch is every verb the declaration gives the CLI. A handler type
 // that misses one does not compile, which is what makes the coverage a
 // build property rather than a test.
-type CLIDispatch interface {
+//
+// Generic in the RESULT because the surfaces do not agree on one: the
+// CLI returns an error, the TUI a tea.Cmd. This package sits below
+// both and imports neither (D23), so the shape of an answer is the
+// caller's to name.
+type CLIDispatch[R any] interface {
 	// prune
-	Prune(PruneAction) error
+	Prune(PruneAction) R
 	// file push
-	FilePush(FilePushAction) error
+	FilePush(FilePushAction) R
 	// file pull
-	FilePull(FilePullAction) error
+	FilePull(FilePullAction) R
 	// file ls
-	FileLs(FileLsAction) error
+	FileLs(FileLsAction) R
 	// file mkdir
-	FileMkdir(FileMkdirAction) error
+	FileMkdir(FileMkdirAction) R
 	// file delete
-	FileDelete(FileDeleteAction) error
+	FileDelete(FileDeleteAction) R
 	// file edit
-	FileEdit(FileEditAction) error
+	FileEdit(FileEditAction) R
 	// file new
-	FileNew(FileNewAction) error
+	FileNew(FileNewAction) R
 	// git log
-	GitLog(GitAction) error
+	GitLog(GitAction) R
 	// git diff
-	GitDiff(GitAction) error
+	GitDiff(GitAction) R
 	// git show
-	GitShow(GitAction) error
+	GitShow(GitAction) R
 	// git status
-	GitStatus(GitAction) error
+	GitStatus(GitAction) R
 	// git subrepos
-	GitSubrepos(GitAction) error
+	GitSubrepos(GitAction) R
 	// git file
-	GitFile(GitAction) error
+	GitFile(GitAction) R
 	// exec
-	Exec(ExecRunAction) error
+	Exec(ExecRunAction) R
 	// exec ls
-	ExecLs(ExecRunAction) error
+	ExecLs(ExecRunAction) R
 	// exec kill
-	ExecKill(ExecRunAction) error
+	ExecKill(ExecRunAction) R
 	// forward
-	Forward(ForwardOpenAction) error
+	Forward(ForwardOpenAction) R
 	// forward ls
-	ForwardLs(ForwardLsAction) error
+	ForwardLs(ForwardLsAction) R
 	// forward kill
-	ForwardKill(ForwardKillAction) error
+	ForwardKill(ForwardKillAction) R
 	// forward tap
-	ForwardTap(ForwardTapAction) error
+	ForwardTap(ForwardTapAction) R
 	// server dial-runner
-	ServerDialRunner(ServerDialRunnerAction) error
+	ServerDialRunner(ServerDialRunnerAction) R
 	// ssh-gateway
-	SshGateway(SSHGatewayAction) error
+	SshGateway(SSHGatewayAction) R
 	// workspace save
-	WorkspaceSave(WorkspaceAction) error
+	WorkspaceSave(WorkspaceAction) R
 	// workspace rm
-	WorkspaceRm(WorkspaceAction) error
+	WorkspaceRm(WorkspaceAction) R
 	// workspace ls
-	WorkspaceLs(WorkspaceAction) error
+	WorkspaceLs(WorkspaceAction) R
 	// workspace show
-	WorkspaceShow(WorkspaceAction) error
+	WorkspaceShow(WorkspaceAction) R
 	// board topics
-	BoardTopics(BoardAction) error
+	BoardTopics(BoardAction) R
 	// board read
-	BoardRead(BoardAction) error
+	BoardRead(BoardAction) R
 	// board subscribers
-	BoardSubscribers(BoardAction) error
+	BoardSubscribers(BoardAction) R
 	// board retract
-	BoardRetract(BoardAction) error
+	BoardRetract(BoardAction) R
 	// board purge
-	BoardPurge(BoardAction) error
+	BoardPurge(BoardAction) R
 	// submit
-	Submit(SpawnAction) error
+	Submit(SpawnAction) R
 	// interactive
-	Interactive(SpawnAction) error
+	Interactive(SpawnAction) R
 	// session new
-	SessionNew(SpawnAction) error
+	SessionNew(SpawnAction) R
 	// session send
-	SessionSend(SendAction) error
+	SessionSend(SendAction) R
 	// session exec
-	SessionExec(SessionExecAction) error
+	SessionExec(SessionExecAction) R
 	// session stream turn
-	SessionStreamTurn(SessionAction) error
+	SessionStreamTurn(SessionAction) R
 	// notify
-	Notify(NotifyAction) error
+	Notify(NotifyAction) R
 	// agent send
-	AgentSend(AgentSendAction) error
+	AgentSend(AgentSendAction) R
 	// agent dispatch
-	AgentDispatch(AgentSendAction) error
+	AgentDispatch(AgentSendAction) R
 	// cancel
-	Cancel(CancelAction) error
+	Cancel(CancelAction) R
 	// ls
-	Ls(ListAction) error
+	Ls(ListAction) R
 	// conns
-	Conns(ConnsAction) error
+	Conns(ConnsAction) R
 	// caps
-	Caps(CatalogAction) error
+	Caps(CatalogAction) R
 	// whoami
-	Whoami(CatalogAction) error
+	Whoami(CatalogAction) R
 	// skill
-	Skill(CatalogAction) error
+	Skill(CatalogAction) R
 	// watch
-	Watch(CatalogAction) error
+	Watch(CatalogAction) R
 	// notify-watch
-	NotifyWatch(CatalogAction) error
+	NotifyWatch(CatalogAction) R
 	// version
-	Version(CatalogAction) error
+	Version(CatalogAction) R
 	// logs
-	Logs(LogsAction) error
+	Logs(LogsAction) R
 	// prune-local
-	PruneLocal(PruneLocalAction) error
+	PruneLocal(PruneLocalAction) R
 	// restore
-	Restore(RestoreAction) error
+	Restore(RestoreAction) R
 	// caps set
-	CapsSet(SetCapsAction) error
+	CapsSet(SetCapsAction) R
 	// caps set-parent
-	CapsSetParent(SetParentAction) error
+	CapsSetParent(SetParentAction) R
 	// session attach
-	SessionAttach(SessionAction) error
+	SessionAttach(SessionAction) R
 	// session ls
-	SessionLs(SessionAction) error
+	SessionLs(SessionAction) R
 	// session kill
-	SessionKill(SessionAction) error
+	SessionKill(SessionAction) R
 	// session await-idle
-	SessionAwaitIdle(SessionAction) error
+	SessionAwaitIdle(SessionAction) R
 	// session resize
-	SessionResize(SessionAction) error
+	SessionResize(SessionAction) R
 	// session snapshot
-	SessionSnapshot(SessionAction) error
+	SessionSnapshot(SessionAction) R
 	// session stream attach
-	SessionStreamAttach(SessionAction) error
+	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
-	SessionStreamInterrupt(SessionAction) error
+	SessionStreamInterrupt(SessionAction) R
 	// session stream finish
-	SessionStreamFinish(SessionAction) error
+	SessionStreamFinish(SessionAction) R
 	// session stream approve
-	SessionStreamApprove(SessionAction) error
+	SessionStreamApprove(SessionAction) R
 	// agent inbox
-	AgentInbox(AgentAction) error
+	AgentInbox(AgentAction) R
 	// agent wait
-	AgentWait(AgentAction) error
+	AgentWait(AgentAction) R
 	// agent subscribe
-	AgentSubscribe(AgentAction) error
+	AgentSubscribe(AgentAction) R
 	// agent unsubscribe
-	AgentUnsubscribe(AgentAction) error
+	AgentUnsubscribe(AgentAction) R
 	// agent topics
-	AgentTopics(AgentAction) error
+	AgentTopics(AgentAction) R
 	// agent subscriptions
-	AgentSubscriptions(AgentAction) error
+	AgentSubscriptions(AgentAction) R
 	// agent retained
-	AgentRetained(AgentAction) error
+	AgentRetained(AgentAction) R
 	// agent purge
-	AgentPurge(AgentAction) error
+	AgentPurge(AgentAction) R
 	// agent read
-	AgentRead(AgentAction) error
+	AgentRead(AgentAction) R
 	// agent retract
-	AgentRetract(AgentAction) error
+	AgentRetract(AgentAction) R
 }
 
 // DispatchCLI parses one command line and hands it to the matching method.
 // The switch is GENERATED, so no surface maintains a case list and none
 // can fall through to a verb it forgot.
-func DispatchCLI(h CLIDispatch, cmd string, args []string) (bool, error) {
+//
+// Returns handled=false for a name this surface does not declare, and a
+// parse error before the handler runs -- the caller decides how each
+// reads, which is the half D3 keeps per-surface.
+func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string) (r R, handled bool, err error) {
 	switch cmd {
 	case CmdPrune:
-		a, err := ParseCmdPrune(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdPrune(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Prune(a)
+		return h.Prune(a), true, nil
 	case CmdFilePush:
-		a, err := ParseCmdFilePush(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFilePush(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FilePush(a)
+		return h.FilePush(a), true, nil
 	case CmdFilePull:
-		a, err := ParseCmdFilePull(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFilePull(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FilePull(a)
+		return h.FilePull(a), true, nil
 	case CmdFileLs:
-		a, err := ParseCmdFileLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileLs(a)
+		return h.FileLs(a), true, nil
 	case CmdFileMkdir:
-		a, err := ParseCmdFileMkdir(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileMkdir(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileMkdir(a)
+		return h.FileMkdir(a), true, nil
 	case CmdFileDelete:
-		a, err := ParseCmdFileDelete(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileDelete(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileDelete(a)
+		return h.FileDelete(a), true, nil
 	case CmdFileEdit:
-		a, err := ParseCmdFileEdit(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileEdit(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileEdit(a)
+		return h.FileEdit(a), true, nil
 	case CmdFileNew:
-		a, err := ParseCmdFileNew(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileNew(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileNew(a)
+		return h.FileNew(a), true, nil
 	case CmdGitLog:
-		a, err := ParseCmdGitLog(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitLog(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitLog(a)
+		return h.GitLog(a), true, nil
 	case CmdGitDiff:
-		a, err := ParseCmdGitDiff(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitDiff(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitDiff(a)
+		return h.GitDiff(a), true, nil
 	case CmdGitShow:
-		a, err := ParseCmdGitShow(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitShow(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitShow(a)
+		return h.GitShow(a), true, nil
 	case CmdGitStatus:
-		a, err := ParseCmdGitStatus(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitStatus(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitStatus(a)
+		return h.GitStatus(a), true, nil
 	case CmdGitSubrepos:
-		a, err := ParseCmdGitSubrepos(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitSubrepos(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitSubrepos(a)
+		return h.GitSubrepos(a), true, nil
 	case CmdGitFile:
-		a, err := ParseCmdGitFile(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitFile(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitFile(a)
+		return h.GitFile(a), true, nil
 	case CmdExec:
-		a, err := ParseCmdExec(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExec(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Exec(a)
+		return h.Exec(a), true, nil
 	case CmdExecLs:
-		a, err := ParseCmdExecLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExecLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ExecLs(a)
+		return h.ExecLs(a), true, nil
 	case CmdExecKill:
-		a, err := ParseCmdExecKill(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExecKill(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ExecKill(a)
+		return h.ExecKill(a), true, nil
 	case CmdForward:
-		a, err := ParseCmdForward(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForward(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Forward(a)
+		return h.Forward(a), true, nil
 	case CmdForwardLs:
-		a, err := ParseCmdForwardLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardLs(a)
+		return h.ForwardLs(a), true, nil
 	case CmdForwardKill:
-		a, err := ParseCmdForwardKill(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardKill(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardKill(a)
+		return h.ForwardKill(a), true, nil
 	case CmdForwardTap:
-		a, err := ParseCmdForwardTap(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardTap(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardTap(a)
+		return h.ForwardTap(a), true, nil
 	case CmdServerDialRunner:
-		a, err := ParseCmdServerDialRunner(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdServerDialRunner(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ServerDialRunner(a)
+		return h.ServerDialRunner(a), true, nil
 	case CmdSshGateway:
-		a, err := ParseCmdSshGateway(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSshGateway(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SshGateway(a)
+		return h.SshGateway(a), true, nil
 	case CmdWorkspaceSave:
-		a, err := ParseCmdWorkspaceSave(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceSave(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceSave(a)
+		return h.WorkspaceSave(a), true, nil
 	case CmdWorkspaceRm:
-		a, err := ParseCmdWorkspaceRm(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceRm(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceRm(a)
+		return h.WorkspaceRm(a), true, nil
 	case CmdWorkspaceLs:
-		a, err := ParseCmdWorkspaceLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceLs(a)
+		return h.WorkspaceLs(a), true, nil
 	case CmdWorkspaceShow:
-		a, err := ParseCmdWorkspaceShow(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceShow(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceShow(a)
+		return h.WorkspaceShow(a), true, nil
 	case CmdBoardTopics:
-		a, err := ParseCmdBoardTopics(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdBoardTopics(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.BoardTopics(a)
+		return h.BoardTopics(a), true, nil
 	case CmdBoardRead:
-		a, err := ParseCmdBoardRead(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdBoardRead(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.BoardRead(a)
+		return h.BoardRead(a), true, nil
 	case CmdBoardSubscribers:
-		a, err := ParseCmdBoardSubscribers(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdBoardSubscribers(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.BoardSubscribers(a)
+		return h.BoardSubscribers(a), true, nil
 	case CmdBoardRetract:
-		a, err := ParseCmdBoardRetract(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdBoardRetract(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.BoardRetract(a)
+		return h.BoardRetract(a), true, nil
 	case CmdBoardPurge:
-		a, err := ParseCmdBoardPurge(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdBoardPurge(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.BoardPurge(a)
+		return h.BoardPurge(a), true, nil
 	case CmdSubmit:
-		a, err := ParseCmdSubmit(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSubmit(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Submit(a)
+		return h.Submit(a), true, nil
 	case CmdInteractive:
-		a, err := ParseCmdInteractive(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdInteractive(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Interactive(a)
+		return h.Interactive(a), true, nil
 	case CmdSessionNew:
-		a, err := ParseCmdSessionNew(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionNew(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionNew(a)
+		return h.SessionNew(a), true, nil
 	case CmdSessionSend:
-		a, err := ParseCmdSessionSend(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionSend(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionSend(a)
+		return h.SessionSend(a), true, nil
 	case CmdSessionExec:
-		a, err := ParseCmdSessionExec(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionExec(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionExec(a)
+		return h.SessionExec(a), true, nil
 	case CmdSessionStreamTurn:
-		a, err := ParseCmdSessionStreamTurn(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamTurn(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamTurn(a)
+		return h.SessionStreamTurn(a), true, nil
 	case CmdNotify:
-		a, err := ParseCmdNotify(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdNotify(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Notify(a)
+		return h.Notify(a), true, nil
 	case CmdAgentSend:
-		a, err := ParseCmdAgentSend(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentSend(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentSend(a)
+		return h.AgentSend(a), true, nil
 	case CmdAgentDispatch:
-		a, err := ParseCmdAgentDispatch(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentDispatch(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentDispatch(a)
+		return h.AgentDispatch(a), true, nil
 	case CmdCancel:
-		a, err := ParseCmdCancel(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCancel(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Cancel(a)
+		return h.Cancel(a), true, nil
 	case CmdLs:
-		a, err := ParseCmdLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Ls(a)
+		return h.Ls(a), true, nil
 	case CmdConns:
-		a, err := ParseCmdConns(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdConns(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Conns(a)
+		return h.Conns(a), true, nil
 	case CmdCaps:
-		a, err := ParseCmdCaps(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCaps(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Caps(a)
+		return h.Caps(a), true, nil
 	case CmdWhoami:
-		a, err := ParseCmdWhoami(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWhoami(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Whoami(a)
+		return h.Whoami(a), true, nil
 	case CmdSkill:
-		a, err := ParseCmdSkill(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSkill(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Skill(a)
+		return h.Skill(a), true, nil
 	case CmdWatch:
-		a, err := ParseCmdWatch(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWatch(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Watch(a)
+		return h.Watch(a), true, nil
 	case CmdNotifyWatch:
-		a, err := ParseCmdNotifyWatch(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdNotifyWatch(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.NotifyWatch(a)
+		return h.NotifyWatch(a), true, nil
 	case CmdVersion:
-		a, err := ParseCmdVersion(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdVersion(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Version(a)
+		return h.Version(a), true, nil
 	case CmdLogs:
-		a, err := ParseCmdLogs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdLogs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Logs(a)
+		return h.Logs(a), true, nil
 	case CmdPruneLocal:
-		a, err := ParseCmdPruneLocal(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdPruneLocal(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.PruneLocal(a)
+		return h.PruneLocal(a), true, nil
 	case CmdRestore:
-		a, err := ParseCmdRestore(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdRestore(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Restore(a)
+		return h.Restore(a), true, nil
 	case CmdCapsSet:
-		a, err := ParseCmdCapsSet(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCapsSet(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.CapsSet(a)
+		return h.CapsSet(a), true, nil
 	case CmdCapsSetParent:
-		a, err := ParseCmdCapsSetParent(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCapsSetParent(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.CapsSetParent(a)
+		return h.CapsSetParent(a), true, nil
 	case CmdSessionAttach:
-		a, err := ParseCmdSessionAttach(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionAttach(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionAttach(a)
+		return h.SessionAttach(a), true, nil
 	case CmdSessionLs:
-		a, err := ParseCmdSessionLs(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionLs(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionLs(a)
+		return h.SessionLs(a), true, nil
 	case CmdSessionKill:
-		a, err := ParseCmdSessionKill(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionKill(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionKill(a)
+		return h.SessionKill(a), true, nil
 	case CmdSessionAwaitIdle:
-		a, err := ParseCmdSessionAwaitIdle(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionAwaitIdle(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionAwaitIdle(a)
+		return h.SessionAwaitIdle(a), true, nil
 	case CmdSessionResize:
-		a, err := ParseCmdSessionResize(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionResize(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionResize(a)
+		return h.SessionResize(a), true, nil
 	case CmdSessionSnapshot:
-		a, err := ParseCmdSessionSnapshot(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionSnapshot(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionSnapshot(a)
+		return h.SessionSnapshot(a), true, nil
 	case CmdSessionStreamAttach:
-		a, err := ParseCmdSessionStreamAttach(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamAttach(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamAttach(a)
+		return h.SessionStreamAttach(a), true, nil
 	case CmdSessionStreamInterrupt:
-		a, err := ParseCmdSessionStreamInterrupt(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamInterrupt(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamInterrupt(a)
+		return h.SessionStreamInterrupt(a), true, nil
 	case CmdSessionStreamFinish:
-		a, err := ParseCmdSessionStreamFinish(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamFinish(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamFinish(a)
+		return h.SessionStreamFinish(a), true, nil
 	case CmdSessionStreamApprove:
-		a, err := ParseCmdSessionStreamApprove(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamApprove(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamApprove(a)
+		return h.SessionStreamApprove(a), true, nil
 	case CmdAgentInbox:
-		a, err := ParseCmdAgentInbox(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentInbox(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentInbox(a)
+		return h.AgentInbox(a), true, nil
 	case CmdAgentWait:
-		a, err := ParseCmdAgentWait(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentWait(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentWait(a)
+		return h.AgentWait(a), true, nil
 	case CmdAgentSubscribe:
-		a, err := ParseCmdAgentSubscribe(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentSubscribe(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentSubscribe(a)
+		return h.AgentSubscribe(a), true, nil
 	case CmdAgentUnsubscribe:
-		a, err := ParseCmdAgentUnsubscribe(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentUnsubscribe(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentUnsubscribe(a)
+		return h.AgentUnsubscribe(a), true, nil
 	case CmdAgentTopics:
-		a, err := ParseCmdAgentTopics(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentTopics(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentTopics(a)
+		return h.AgentTopics(a), true, nil
 	case CmdAgentSubscriptions:
-		a, err := ParseCmdAgentSubscriptions(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentSubscriptions(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentSubscriptions(a)
+		return h.AgentSubscriptions(a), true, nil
 	case CmdAgentRetained:
-		a, err := ParseCmdAgentRetained(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentRetained(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentRetained(a)
+		return h.AgentRetained(a), true, nil
 	case CmdAgentPurge:
-		a, err := ParseCmdAgentPurge(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentPurge(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentPurge(a)
+		return h.AgentPurge(a), true, nil
 	case CmdAgentRead:
-		a, err := ParseCmdAgentRead(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentRead(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentRead(a)
+		return h.AgentRead(a), true, nil
 	case CmdAgentRetract:
-		a, err := ParseCmdAgentRetract(CLI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdAgentRetract(CLI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.AgentRetract(a)
+		return h.AgentRetract(a), true, nil
 	}
-	// Not a declared verb for this surface. The caller decides what that
-	// means -- a surface-local verb, or an unknown command.
-	return false, nil
+	return r, false, nil
+}
+
+// DispatchCLIAction routes an ALREADY-PARSED action. The CLI reaches its
+// verbs from two places -- a command line and a keybinding -- and only
+// this half covers both.
+func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) {
+	switch a := act.(type) {
+	case PruneAction:
+		return h.Prune(a), true
+	case FilePushAction:
+		return h.FilePush(a), true
+	case FilePullAction:
+		return h.FilePull(a), true
+	case FileLsAction:
+		return h.FileLs(a), true
+	case FileMkdirAction:
+		return h.FileMkdir(a), true
+	case FileDeleteAction:
+		return h.FileDelete(a), true
+	case FileEditAction:
+		return h.FileEdit(a), true
+	case FileNewAction:
+		return h.FileNew(a), true
+	case GitAction:
+		switch a.Sub {
+		case "log":
+			return h.GitLog(a), true
+		case "diff":
+			return h.GitDiff(a), true
+		case "show":
+			return h.GitShow(a), true
+		case "status":
+			return h.GitStatus(a), true
+		case "subrepos":
+			return h.GitSubrepos(a), true
+		case "file":
+			return h.GitFile(a), true
+		}
+	case ExecRunAction:
+		switch a.Sub {
+		case "run":
+			return h.Exec(a), true
+		case "ls":
+			return h.ExecLs(a), true
+		case "kill":
+			return h.ExecKill(a), true
+		}
+	case ForwardOpenAction:
+		return h.Forward(a), true
+	case ForwardLsAction:
+		return h.ForwardLs(a), true
+	case ForwardKillAction:
+		return h.ForwardKill(a), true
+	case ForwardTapAction:
+		return h.ForwardTap(a), true
+	case ServerDialRunnerAction:
+		return h.ServerDialRunner(a), true
+	case SSHGatewayAction:
+		return h.SshGateway(a), true
+	case WorkspaceAction:
+		switch a.Sub {
+		case "save":
+			return h.WorkspaceSave(a), true
+		case "rm":
+			return h.WorkspaceRm(a), true
+		case "ls":
+			return h.WorkspaceLs(a), true
+		case "show":
+			return h.WorkspaceShow(a), true
+		}
+	case BoardAction:
+		switch a.Sub {
+		case "topics":
+			return h.BoardTopics(a), true
+		case "read":
+			return h.BoardRead(a), true
+		case "subscribers":
+			return h.BoardSubscribers(a), true
+		case "retract":
+			return h.BoardRetract(a), true
+		case "purge":
+			return h.BoardPurge(a), true
+		}
+	case SpawnAction:
+		switch a.Kind {
+		case "submit":
+			return h.Submit(a), true
+		case "interactive":
+			return h.Interactive(a), true
+		case "session-new":
+			return h.SessionNew(a), true
+		}
+	case SendAction:
+		return h.SessionSend(a), true
+	case SessionExecAction:
+		return h.SessionExec(a), true
+	case SessionAction:
+		switch a.Sub {
+		case "stream-turn":
+			return h.SessionStreamTurn(a), true
+		case "attach":
+			return h.SessionAttach(a), true
+		case "ls":
+			return h.SessionLs(a), true
+		case "kill":
+			return h.SessionKill(a), true
+		case "await-idle":
+			return h.SessionAwaitIdle(a), true
+		case "resize":
+			return h.SessionResize(a), true
+		case "snapshot":
+			return h.SessionSnapshot(a), true
+		case "stream-attach":
+			return h.SessionStreamAttach(a), true
+		case "stream-interrupt":
+			return h.SessionStreamInterrupt(a), true
+		case "stream-finish":
+			return h.SessionStreamFinish(a), true
+		case "stream-approve":
+			return h.SessionStreamApprove(a), true
+		}
+	case NotifyAction:
+		return h.Notify(a), true
+	case AgentSendAction:
+		switch a.Kind {
+		case "send":
+			return h.AgentSend(a), true
+		case "dispatch":
+			return h.AgentDispatch(a), true
+		}
+	case CancelAction:
+		return h.Cancel(a), true
+	case ListAction:
+		return h.Ls(a), true
+	case ConnsAction:
+		return h.Conns(a), true
+	case CatalogAction:
+		switch a.Sub {
+		case "caps":
+			return h.Caps(a), true
+		case "whoami":
+			return h.Whoami(a), true
+		case "skill":
+			return h.Skill(a), true
+		case "watch":
+			return h.Watch(a), true
+		case "notify-watch":
+			return h.NotifyWatch(a), true
+		case "version":
+			return h.Version(a), true
+		}
+	case LogsAction:
+		return h.Logs(a), true
+	case PruneLocalAction:
+		return h.PruneLocal(a), true
+	case RestoreAction:
+		return h.Restore(a), true
+	case SetCapsAction:
+		return h.CapsSet(a), true
+	case SetParentAction:
+		return h.CapsSetParent(a), true
+	case AgentAction:
+		switch a.Sub {
+		case "inbox":
+			return h.AgentInbox(a), true
+		case "wait":
+			return h.AgentWait(a), true
+		case "subscribe":
+			return h.AgentSubscribe(a), true
+		case "unsubscribe":
+			return h.AgentUnsubscribe(a), true
+		case "topics":
+			return h.AgentTopics(a), true
+		case "subscriptions":
+			return h.AgentSubscriptions(a), true
+		case "retained":
+			return h.AgentRetained(a), true
+		case "purge":
+			return h.AgentPurge(a), true
+		case "read":
+			return h.AgentRead(a), true
+		case "retract":
+			return h.AgentRetract(a), true
+		}
+	}
+	// A surface-local action (the TUI's clear / quit / grid), which the
+	// declaration does not describe.
+	return r, false
 }
 
 // TUIDispatch is every verb the declaration gives the TUI. A handler type
 // that misses one does not compile, which is what makes the coverage a
 // build property rather than a test.
-type TUIDispatch interface {
+//
+// Generic in the RESULT because the surfaces do not agree on one: the
+// CLI returns an error, the TUI a tea.Cmd. This package sits below
+// both and imports neither (D23), so the shape of an answer is the
+// caller's to name.
+type TUIDispatch[R any] interface {
 	// prune
-	Prune(PruneAction) error
+	Prune(PruneAction) R
 	// file push
-	FilePush(FilePushAction) error
+	FilePush(FilePushAction) R
 	// file pull
-	FilePull(FilePullAction) error
+	FilePull(FilePullAction) R
 	// file ls
-	FileLs(FileLsAction) error
+	FileLs(FileLsAction) R
 	// file mkdir
-	FileMkdir(FileMkdirAction) error
+	FileMkdir(FileMkdirAction) R
 	// file delete
-	FileDelete(FileDeleteAction) error
+	FileDelete(FileDeleteAction) R
 	// file edit
-	FileEdit(FileEditAction) error
+	FileEdit(FileEditAction) R
 	// file new
-	FileNew(FileNewAction) error
+	FileNew(FileNewAction) R
 	// git log
-	GitLog(GitAction) error
+	GitLog(GitAction) R
 	// git diff
-	GitDiff(GitAction) error
+	GitDiff(GitAction) R
 	// git show
-	GitShow(GitAction) error
+	GitShow(GitAction) R
 	// git status
-	GitStatus(GitAction) error
+	GitStatus(GitAction) R
 	// git subrepos
-	GitSubrepos(GitAction) error
+	GitSubrepos(GitAction) R
 	// git file
-	GitFile(GitAction) error
+	GitFile(GitAction) R
 	// exec
-	Exec(ExecRunAction) error
+	Exec(ExecRunAction) R
 	// exec ls
-	ExecLs(ExecRunAction) error
+	ExecLs(ExecRunAction) R
 	// exec kill
-	ExecKill(ExecRunAction) error
+	ExecKill(ExecRunAction) R
 	// forward ls
-	ForwardLs(ForwardLsAction) error
+	ForwardLs(ForwardLsAction) R
 	// forward kill
-	ForwardKill(ForwardKillAction) error
+	ForwardKill(ForwardKillAction) R
 	// forward tap
-	ForwardTap(ForwardTapAction) error
+	ForwardTap(ForwardTapAction) R
 	// server dial-runner
-	ServerDialRunner(ServerDialRunnerAction) error
+	ServerDialRunner(ServerDialRunnerAction) R
 	// ssh-gateway start
-	SshGatewayStart(SSHGatewayAction) error
+	SshGatewayStart(SSHGatewayAction) R
 	// ssh-gateway status
-	SshGatewayStatus(SSHGatewayAction) error
+	SshGatewayStatus(SSHGatewayAction) R
 	// ssh-gateway stop
-	SshGatewayStop(SSHGatewayAction) error
+	SshGatewayStop(SSHGatewayAction) R
 	// workspace save
-	WorkspaceSave(WorkspaceAction) error
+	WorkspaceSave(WorkspaceAction) R
 	// workspace rm
-	WorkspaceRm(WorkspaceAction) error
+	WorkspaceRm(WorkspaceAction) R
 	// workspace ls
-	WorkspaceLs(WorkspaceAction) error
+	WorkspaceLs(WorkspaceAction) R
 	// workspace show
-	WorkspaceShow(WorkspaceAction) error
+	WorkspaceShow(WorkspaceAction) R
 	// workspace apply
-	WorkspaceApply(WorkspaceAction) error
+	WorkspaceApply(WorkspaceAction) R
 	// workspace detach
-	WorkspaceDetach(WorkspaceAction) error
+	WorkspaceDetach(WorkspaceAction) R
 	// submit
-	Submit(SpawnAction) error
+	Submit(SpawnAction) R
 	// interactive
-	Interactive(SpawnAction) error
+	Interactive(SpawnAction) R
 	// session new
-	SessionNew(SpawnAction) error
+	SessionNew(SpawnAction) R
 	// session stream turn
-	SessionStreamTurn(SessionAction) error
+	SessionStreamTurn(SessionAction) R
 	// notify
-	Notify(NotifyAction) error
+	Notify(NotifyAction) R
 	// grid
-	Grid(GridAction) error
+	Grid(GridAction) R
 	// cancel
-	Cancel(CancelAction) error
+	Cancel(CancelAction) R
 	// restore
-	Restore(RestoreAction) error
+	Restore(RestoreAction) R
 	// caps set
-	CapsSet(SetCapsAction) error
+	CapsSet(SetCapsAction) R
 	// caps set-parent
-	CapsSetParent(SetParentAction) error
+	CapsSetParent(SetParentAction) R
 	// session attach
-	SessionAttach(SessionAction) error
+	SessionAttach(SessionAction) R
 	// session ls
-	SessionLs(SessionAction) error
+	SessionLs(SessionAction) R
 	// session kill
-	SessionKill(SessionAction) error
+	SessionKill(SessionAction) R
 	// session await-idle
-	SessionAwaitIdle(SessionAction) error
+	SessionAwaitIdle(SessionAction) R
 	// session stream attach
-	SessionStreamAttach(SessionAction) error
+	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
-	SessionStreamInterrupt(SessionAction) error
+	SessionStreamInterrupt(SessionAction) R
 	// session stream finish
-	SessionStreamFinish(SessionAction) error
+	SessionStreamFinish(SessionAction) R
 	// session stream approve
-	SessionStreamApprove(SessionAction) error
+	SessionStreamApprove(SessionAction) R
 }
 
 // DispatchTUI parses one command line and hands it to the matching method.
 // The switch is GENERATED, so no surface maintains a case list and none
 // can fall through to a verb it forgot.
-func DispatchTUI(h TUIDispatch, cmd string, args []string) (bool, error) {
+//
+// Returns handled=false for a name this surface does not declare, and a
+// parse error before the handler runs -- the caller decides how each
+// reads, which is the half D3 keeps per-surface.
+func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string) (r R, handled bool, err error) {
 	switch cmd {
 	case CmdPrune:
-		a, err := ParseCmdPrune(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdPrune(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Prune(a)
+		return h.Prune(a), true, nil
 	case CmdFilePush:
-		a, err := ParseCmdFilePush(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFilePush(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FilePush(a)
+		return h.FilePush(a), true, nil
 	case CmdFilePull:
-		a, err := ParseCmdFilePull(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFilePull(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FilePull(a)
+		return h.FilePull(a), true, nil
 	case CmdFileLs:
-		a, err := ParseCmdFileLs(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileLs(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileLs(a)
+		return h.FileLs(a), true, nil
 	case CmdFileMkdir:
-		a, err := ParseCmdFileMkdir(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileMkdir(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileMkdir(a)
+		return h.FileMkdir(a), true, nil
 	case CmdFileDelete:
-		a, err := ParseCmdFileDelete(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileDelete(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileDelete(a)
+		return h.FileDelete(a), true, nil
 	case CmdFileEdit:
-		a, err := ParseCmdFileEdit(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileEdit(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileEdit(a)
+		return h.FileEdit(a), true, nil
 	case CmdFileNew:
-		a, err := ParseCmdFileNew(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdFileNew(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.FileNew(a)
+		return h.FileNew(a), true, nil
 	case CmdGitLog:
-		a, err := ParseCmdGitLog(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitLog(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitLog(a)
+		return h.GitLog(a), true, nil
 	case CmdGitDiff:
-		a, err := ParseCmdGitDiff(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitDiff(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitDiff(a)
+		return h.GitDiff(a), true, nil
 	case CmdGitShow:
-		a, err := ParseCmdGitShow(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitShow(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitShow(a)
+		return h.GitShow(a), true, nil
 	case CmdGitStatus:
-		a, err := ParseCmdGitStatus(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitStatus(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitStatus(a)
+		return h.GitStatus(a), true, nil
 	case CmdGitSubrepos:
-		a, err := ParseCmdGitSubrepos(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitSubrepos(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitSubrepos(a)
+		return h.GitSubrepos(a), true, nil
 	case CmdGitFile:
-		a, err := ParseCmdGitFile(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGitFile(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.GitFile(a)
+		return h.GitFile(a), true, nil
 	case CmdExec:
-		a, err := ParseCmdExec(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExec(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Exec(a)
+		return h.Exec(a), true, nil
 	case CmdExecLs:
-		a, err := ParseCmdExecLs(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExecLs(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ExecLs(a)
+		return h.ExecLs(a), true, nil
 	case CmdExecKill:
-		a, err := ParseCmdExecKill(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdExecKill(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ExecKill(a)
+		return h.ExecKill(a), true, nil
 	case CmdForwardLs:
-		a, err := ParseCmdForwardLs(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardLs(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardLs(a)
+		return h.ForwardLs(a), true, nil
 	case CmdForwardKill:
-		a, err := ParseCmdForwardKill(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardKill(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardKill(a)
+		return h.ForwardKill(a), true, nil
 	case CmdForwardTap:
-		a, err := ParseCmdForwardTap(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdForwardTap(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ForwardTap(a)
+		return h.ForwardTap(a), true, nil
 	case CmdServerDialRunner:
-		a, err := ParseCmdServerDialRunner(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdServerDialRunner(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.ServerDialRunner(a)
+		return h.ServerDialRunner(a), true, nil
 	case CmdSshGatewayStart:
-		a, err := ParseCmdSshGatewayStart(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSshGatewayStart(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SshGatewayStart(a)
+		return h.SshGatewayStart(a), true, nil
 	case CmdSshGatewayStatus:
-		a, err := ParseCmdSshGatewayStatus(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSshGatewayStatus(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SshGatewayStatus(a)
+		return h.SshGatewayStatus(a), true, nil
 	case CmdSshGatewayStop:
-		a, err := ParseCmdSshGatewayStop(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSshGatewayStop(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SshGatewayStop(a)
+		return h.SshGatewayStop(a), true, nil
 	case CmdWorkspaceSave:
-		a, err := ParseCmdWorkspaceSave(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceSave(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceSave(a)
+		return h.WorkspaceSave(a), true, nil
 	case CmdWorkspaceRm:
-		a, err := ParseCmdWorkspaceRm(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceRm(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceRm(a)
+		return h.WorkspaceRm(a), true, nil
 	case CmdWorkspaceLs:
-		a, err := ParseCmdWorkspaceLs(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceLs(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceLs(a)
+		return h.WorkspaceLs(a), true, nil
 	case CmdWorkspaceShow:
-		a, err := ParseCmdWorkspaceShow(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceShow(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceShow(a)
+		return h.WorkspaceShow(a), true, nil
 	case CmdWorkspaceApply:
-		a, err := ParseCmdWorkspaceApply(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceApply(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceApply(a)
+		return h.WorkspaceApply(a), true, nil
 	case CmdWorkspaceDetach:
-		a, err := ParseCmdWorkspaceDetach(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdWorkspaceDetach(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.WorkspaceDetach(a)
+		return h.WorkspaceDetach(a), true, nil
 	case CmdSubmit:
-		a, err := ParseCmdSubmit(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSubmit(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Submit(a)
+		return h.Submit(a), true, nil
 	case CmdInteractive:
-		a, err := ParseCmdInteractive(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdInteractive(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Interactive(a)
+		return h.Interactive(a), true, nil
 	case CmdSessionNew:
-		a, err := ParseCmdSessionNew(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionNew(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionNew(a)
+		return h.SessionNew(a), true, nil
 	case CmdSessionStreamTurn:
-		a, err := ParseCmdSessionStreamTurn(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamTurn(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamTurn(a)
+		return h.SessionStreamTurn(a), true, nil
 	case CmdNotify:
-		a, err := ParseCmdNotify(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdNotify(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Notify(a)
+		return h.Notify(a), true, nil
 	case CmdGrid:
-		a, err := ParseCmdGrid(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdGrid(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Grid(a)
+		return h.Grid(a), true, nil
 	case CmdCancel:
-		a, err := ParseCmdCancel(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCancel(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Cancel(a)
+		return h.Cancel(a), true, nil
 	case CmdRestore:
-		a, err := ParseCmdRestore(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdRestore(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.Restore(a)
+		return h.Restore(a), true, nil
 	case CmdCapsSet:
-		a, err := ParseCmdCapsSet(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCapsSet(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.CapsSet(a)
+		return h.CapsSet(a), true, nil
 	case CmdCapsSetParent:
-		a, err := ParseCmdCapsSetParent(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdCapsSetParent(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.CapsSetParent(a)
+		return h.CapsSetParent(a), true, nil
 	case CmdSessionAttach:
-		a, err := ParseCmdSessionAttach(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionAttach(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionAttach(a)
+		return h.SessionAttach(a), true, nil
 	case CmdSessionLs:
-		a, err := ParseCmdSessionLs(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionLs(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionLs(a)
+		return h.SessionLs(a), true, nil
 	case CmdSessionKill:
-		a, err := ParseCmdSessionKill(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionKill(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionKill(a)
+		return h.SessionKill(a), true, nil
 	case CmdSessionAwaitIdle:
-		a, err := ParseCmdSessionAwaitIdle(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionAwaitIdle(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionAwaitIdle(a)
+		return h.SessionAwaitIdle(a), true, nil
 	case CmdSessionStreamAttach:
-		a, err := ParseCmdSessionStreamAttach(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamAttach(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamAttach(a)
+		return h.SessionStreamAttach(a), true, nil
 	case CmdSessionStreamInterrupt:
-		a, err := ParseCmdSessionStreamInterrupt(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamInterrupt(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamInterrupt(a)
+		return h.SessionStreamInterrupt(a), true, nil
 	case CmdSessionStreamFinish:
-		a, err := ParseCmdSessionStreamFinish(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamFinish(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamFinish(a)
+		return h.SessionStreamFinish(a), true, nil
 	case CmdSessionStreamApprove:
-		a, err := ParseCmdSessionStreamApprove(TUI, args)
-		if err != nil {
-			return true, err
+		a, perr := ParseCmdSessionStreamApprove(TUI, args)
+		if perr != nil {
+			return r, true, perr
 		}
-		return true, h.SessionStreamApprove(a)
+		return h.SessionStreamApprove(a), true, nil
 	}
-	// Not a declared verb for this surface. The caller decides what that
-	// means -- a surface-local verb, or an unknown command.
-	return false, nil
+	return r, false, nil
+}
+
+// DispatchTUIAction routes an ALREADY-PARSED action. The TUI reaches its
+// verbs from two places -- a command line and a keybinding -- and only
+// this half covers both.
+func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) {
+	switch a := act.(type) {
+	case PruneAction:
+		return h.Prune(a), true
+	case FilePushAction:
+		return h.FilePush(a), true
+	case FilePullAction:
+		return h.FilePull(a), true
+	case FileLsAction:
+		return h.FileLs(a), true
+	case FileMkdirAction:
+		return h.FileMkdir(a), true
+	case FileDeleteAction:
+		return h.FileDelete(a), true
+	case FileEditAction:
+		return h.FileEdit(a), true
+	case FileNewAction:
+		return h.FileNew(a), true
+	case GitAction:
+		switch a.Sub {
+		case "log":
+			return h.GitLog(a), true
+		case "diff":
+			return h.GitDiff(a), true
+		case "show":
+			return h.GitShow(a), true
+		case "status":
+			return h.GitStatus(a), true
+		case "subrepos":
+			return h.GitSubrepos(a), true
+		case "file":
+			return h.GitFile(a), true
+		}
+	case ExecRunAction:
+		switch a.Sub {
+		case "run":
+			return h.Exec(a), true
+		case "ls":
+			return h.ExecLs(a), true
+		case "kill":
+			return h.ExecKill(a), true
+		}
+	case ForwardLsAction:
+		return h.ForwardLs(a), true
+	case ForwardKillAction:
+		return h.ForwardKill(a), true
+	case ForwardTapAction:
+		return h.ForwardTap(a), true
+	case ServerDialRunnerAction:
+		return h.ServerDialRunner(a), true
+	case SSHGatewayAction:
+		switch a.Sub {
+		case "start":
+			return h.SshGatewayStart(a), true
+		case "status":
+			return h.SshGatewayStatus(a), true
+		case "stop":
+			return h.SshGatewayStop(a), true
+		}
+	case WorkspaceAction:
+		switch a.Sub {
+		case "save":
+			return h.WorkspaceSave(a), true
+		case "rm":
+			return h.WorkspaceRm(a), true
+		case "ls":
+			return h.WorkspaceLs(a), true
+		case "show":
+			return h.WorkspaceShow(a), true
+		case "apply":
+			return h.WorkspaceApply(a), true
+		case "detach":
+			return h.WorkspaceDetach(a), true
+		}
+	case SpawnAction:
+		switch a.Kind {
+		case "submit":
+			return h.Submit(a), true
+		case "interactive":
+			return h.Interactive(a), true
+		case "session-new":
+			return h.SessionNew(a), true
+		}
+	case SessionAction:
+		switch a.Sub {
+		case "stream-turn":
+			return h.SessionStreamTurn(a), true
+		case "attach":
+			return h.SessionAttach(a), true
+		case "ls":
+			return h.SessionLs(a), true
+		case "kill":
+			return h.SessionKill(a), true
+		case "await-idle":
+			return h.SessionAwaitIdle(a), true
+		case "stream-attach":
+			return h.SessionStreamAttach(a), true
+		case "stream-interrupt":
+			return h.SessionStreamInterrupt(a), true
+		case "stream-finish":
+			return h.SessionStreamFinish(a), true
+		case "stream-approve":
+			return h.SessionStreamApprove(a), true
+		}
+	case NotifyAction:
+		return h.Notify(a), true
+	case GridAction:
+		return h.Grid(a), true
+	case CancelAction:
+		return h.Cancel(a), true
+	case RestoreAction:
+		return h.Restore(a), true
+	case SetCapsAction:
+		return h.CapsSet(a), true
+	case SetParentAction:
+		return h.CapsSetParent(a), true
+	}
+	// A surface-local action (the TUI's clear / quit / grid), which the
+	// declaration does not describe.
+	return r, false
 }

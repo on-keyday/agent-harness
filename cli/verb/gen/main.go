@@ -279,25 +279,97 @@ func emitDispatch(buf *bytes.Buffer) {
 		}
 		fmt.Fprintf(buf, "\n// %sDispatch is every verb the declaration gives the %s. A handler type\n"+
 			"// that misses one does not compile, which is what makes the coverage a\n"+
-			"// build property rather than a test.\ntype %sDispatch interface {\n",
+			"// build property rather than a test.\n//\n"+
+			"// Generic in the RESULT because the surfaces do not agree on one: the\n"+
+			"// CLI returns an error, the TUI a tea.Cmd. This package sits below\n"+
+			"// both and imports neither (D23), so the shape of an answer is the\n"+
+			"// caller's to name.\ntype %sDispatch[R any] interface {\n",
 			sf.name, sf.name, sf.name)
 		for _, v := range verbs {
-			fmt.Fprintf(buf, "\t// %s\n\t%s(%s) error\n", v.FlagSetName(), methodName(v), v.Action)
+			fmt.Fprintf(buf, "\t// %s\n\t%s(%s) R\n", v.FlagSetName(), methodName(v), v.Action)
 		}
 		buf.WriteString("}\n")
 
 		fmt.Fprintf(buf, "\n// Dispatch%s parses one command line and hands it to the matching method.\n"+
 			"// The switch is GENERATED, so no surface maintains a case list and none\n"+
-			"// can fall through to a verb it forgot.\nfunc Dispatch%s(h %sDispatch, cmd string, args []string) (bool, error) {\n"+
+			"// can fall through to a verb it forgot.\n//\n"+
+			"// Returns handled=false for a name this surface does not declare, and a\n"+
+			"// parse error before the handler runs -- the caller decides how each\n"+
+			"// reads, which is the half D3 keeps per-surface.\n"+
+			"func Dispatch%s[R any](h %sDispatch[R], cmd string, args []string) (r R, handled bool, err error) {\n"+
 			"\tswitch cmd {\n", sf.name, sf.name, sf.name)
 		for _, v := range verbs {
-			fmt.Fprintf(buf, "\tcase Cmd%s:\n\t\ta, err := ParseCmd%s(%s, args)\n"+
-				"\t\tif err != nil {\n\t\t\treturn true, err\n\t\t}\n\t\treturn true, h.%s(a)\n",
+			fmt.Fprintf(buf, "\tcase Cmd%s:\n\t\ta, perr := ParseCmd%s(%s, args)\n"+
+				"\t\tif perr != nil {\n\t\t\treturn r, true, perr\n\t\t}\n\t\treturn h.%s(a), true, nil\n",
 				methodName(v), methodName(v), sf.name, methodName(v))
 		}
-		buf.WriteString("\t}\n\t// Not a declared verb for this surface. The caller decides what that\n" +
-			"\t// means -- a surface-local verb, or an unknown command.\n\treturn false, nil\n}\n")
+		buf.WriteString("\t}\n\treturn r, false, nil\n}\n")
+
+		emitActionDispatch(buf, sf.name, verbs)
 	}
+}
+
+// emitActionDispatch writes the ACTION-keyed half of a surface's dispatch.
+//
+// The TUI needs it because a command line is not its only source: a keybinding
+// builds an Action directly and hands it to runAction, so a name-keyed
+// dispatcher would cover one path and leave the other a hand-written type
+// switch -- which is what it is today, unchecked, 37 cases long.
+//
+// Several verbs share an Action (SessionAction covers eleven), and they are
+// told apart by the Const value the declaration fixes -- Sub, or Kind for the
+// spawn family. That is the same discriminator the surfaces already switch on
+// by hand; here it comes from the table.
+func emitActionDispatch(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec) {
+	byAction := map[string][]verb.VerbSpec{}
+	var order []string
+	for _, v := range verbs {
+		if _, seen := byAction[v.Action]; !seen {
+			order = append(order, v.Action)
+		}
+		byAction[v.Action] = append(byAction[v.Action], v)
+	}
+	fmt.Fprintf(buf, "\n// Dispatch%sAction routes an ALREADY-PARSED action. The %s reaches its\n"+
+		"// verbs from two places -- a command line and a keybinding -- and only\n"+
+		"// this half covers both.\nfunc Dispatch%sAction[R any](h %sDispatch[R], act Action) (r R, handled bool) {\n"+
+		"\tswitch a := act.(type) {\n", surface, surface, surface, surface)
+	for _, name := range order {
+		vs := byAction[name]
+		fmt.Fprintf(buf, "\tcase %s:\n", name)
+		if len(vs) == 1 && len(vs[0].Const) == 0 {
+			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodName(vs[0]))
+			continue
+		}
+		key := ""
+		for _, v := range vs {
+			for _, k := range sortedKeys(v.Const) {
+				key = k
+			}
+		}
+		if key == "" {
+			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodName(vs[0]))
+			continue
+		}
+		fmt.Fprintf(buf, "\t\tswitch a.%s {\n", key)
+		var fallback string
+		for _, v := range vs {
+			val, has := v.Const[key]
+			if !has {
+				// The one verb of its type with no discriminator -- the CLI's
+				// foreground `ssh-gateway` against its start/stop/status
+				// siblings. It is the default rather than a case.
+				fallback = methodName(v)
+				continue
+			}
+			fmt.Fprintf(buf, "\t\tcase %q:\n\t\t\treturn h.%s(a), true\n", val, methodName(v))
+		}
+		if fallback != "" {
+			fmt.Fprintf(buf, "\t\tdefault:\n\t\t\treturn h.%s(a), true\n", fallback)
+		}
+		buf.WriteString("\t\t}\n")
+	}
+	buf.WriteString("\t}\n\t// A surface-local action (the TUI's clear / quit / grid), which the\n" +
+		"\t// declaration does not describe.\n\treturn r, false\n}\n")
 }
 
 // methodName turns a verb path into a Go identifier: `file push` -> FilePush,
