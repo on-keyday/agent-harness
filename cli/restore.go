@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -17,8 +20,70 @@ type RestoreResult struct {
 	NotInWAL       uint32
 }
 
+// RestorableTask is one task a prune forgot, as the server reports it.
+type RestorableTask struct {
+	TaskID    string
+	PrunedAt  time.Time
+	CreatedAt time.Time
+	RepoPath  string
+	Prompt    string
+}
+
+// Restorable lists what a restore could put back, newest prune first.
+//
+// This is the half that makes `restore` usable at all: the verb takes ids, and
+// the ids of forgotten tasks are in a file on the server host that no listing
+// reads. An operator who did not write the id down before pruning -- which is
+// everyone who pruned by accident -- had no way to learn it.
+func (c *Client) Restorable(ctx context.Context) ([]RestorableTask, error) {
+	rr := protocol.RestoreTasksRequest{ListOnly: 1}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RestoreTasks}
+	req.SetRestoreTasks(rr)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	body := resp.RestoreTasks()
+	if body == nil {
+		return nil, fmt.Errorf("empty restore response")
+	}
+	out := make([]RestorableTask, 0, len(body.Candidates))
+	for i := range body.Candidates {
+		cd := &body.Candidates[i]
+		out = append(out, RestorableTask{
+			TaskID:    hex.EncodeToString(cd.TaskId.Id[:]),
+			PrunedAt:  time.Unix(0, int64(cd.PrunedAt)),
+			CreatedAt: time.Unix(0, int64(cd.CreatedAt)),
+			RepoPath:  string(cd.RepoPath),
+			Prompt:    string(cd.Prompt),
+		})
+	}
+	return out, nil
+}
+
+// WriteRestorable renders the listing.
+func WriteRestorable(rows []RestorableTask, out io.Writer) {
+	if len(rows) == 0 {
+		fmt.Fprintln(out, "restore: nothing to put back — no prune in the WAL is still standing")
+		return
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TASK ID\tPRUNED\tCREATED\tREPO\tPROMPT")
+	for _, r := range rows {
+		prompt := strings.ReplaceAll(r.Prompt, "\n", " ")
+		if len(prompt) > 48 {
+			prompt = prompt[:48] + "…"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.TaskID,
+			r.PrunedAt.Format("2006-01-02 15:04:05"), r.CreatedAt.Format("2006-01-02 15:04"),
+			r.RepoPath, prompt)
+	}
+	tw.Flush() //nolint:errcheck
+}
+
 // RestoreTasks puts back task records a prune forgot, rebuilt from the
-// server's WAL. Operator-only.
+// server's WAL. Requires the `prune` capability and the same scope: what a
+// caller could forget, it can un-forget.
 //
 // The ids are required. There is no sweep-back form: the WAL holds every task
 // the server has ever seen, and restoring "everything" would resurrect years
@@ -60,8 +125,17 @@ func (c *Client) RestoreTasks(ctx context.Context, taskIDs []string) (RestoreRes
 	}, nil
 }
 
-// RestoreWith renders a restore through an existing client.
+// RestoreWith renders a restore through an existing client. With no ids it
+// LISTS what could be put back, which is the only way to learn them.
 func RestoreWith(ctx context.Context, c *Client, taskIDs []string, out io.Writer) error {
+	if len(taskIDs) == 0 {
+		rows, err := c.Restorable(ctx)
+		if err != nil {
+			return err
+		}
+		WriteRestorable(rows, out)
+		return nil
+	}
 	res, err := c.RestoreTasks(ctx, taskIDs)
 	if err != nil {
 		return err

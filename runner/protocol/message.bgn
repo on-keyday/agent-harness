@@ -342,16 +342,16 @@ enum TaskControlKind:
                             # sees only what crosses after it opens.
     restore_tasks           # appended (keeps existing ordinals stable): put back
                             # task records a prune forgot, replayed from the
-                            # server's own WAL. Operator-only, gated the way
-                            # set_caps and set_parent are -- on the caller
-                            # having NO principal task rather than on a bit:
-                            # an agent that could restore any id could resurrect
-                            # a task outside its scope and then act on it,
-                            # and spawn-time intersection can never claw that
-                            # back. prune is the only thing this undoes; a task
-                            # that never existed cannot be invented, because
-                            # every field comes from the WAL record the server
-                            # itself wrote.
+                            # server's own WAL. Requires prune -- the same bit
+                            # and the same target set the destructive half
+                            # takes, because an agent may only prune within its
+                            # scope and one that could not restore there could
+                            # not undo its own mistake. It grants no reach: the
+                            # ids it can name are ids it could already have
+                            # pruned, and anything it does with a restored task
+                            # afterwards passes the ordinary gate. A task that
+                            # never existed cannot be invented, because every
+                            # field comes from a WAL record the server wrote.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -782,11 +782,29 @@ format PruneTasksRequest:
 format RestoreTasksRequest:
     task_ids_len :u16
     task_ids :[task_ids_len]TaskID
+    list_only :u8          # 1 = report what COULD be restored and change nothing.
+                           # A restore takes ids, and the ids of forgotten tasks
+                           # are in a file on the server host that no surface
+                           # reads -- so without this the verb is only usable by
+                           # someone who already wrote the id down.
+
+# RestorableTask is one entry a prune forgot: enough to tell WHICH task it was,
+# from the same WAL records a restore would rebuild it from.
+format RestorableTask:
+    task_id :TaskID
+    pruned_at :u64         # unix nano, from the task_pruned record
+    created_at :u64        # unix nano, from the task_created record
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    prompt_len :u32
+    prompt :[prompt_len]u8
 
 format RestoreTasksResponse:
     restored :u32
     already_present :u32   # the id is in the store; a restore is a no-op
     not_in_wal :u32        # no task_created for that id, so nothing to rebuild
+    candidates_len :u16    # list_only: what a restore could put back, newest first
+    candidates :[candidates_len]RestorableTask
 
 format PruneTasksResponse:
     removed :u32

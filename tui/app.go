@@ -3118,7 +3118,11 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render("restore: not connected to server"))
 			return a, nil
 		}
-		return a, DoRestore(a.client, v.TaskIDs)
+		ids := v.TaskIDs
+		if v.List {
+			ids = nil // the bare form lists; --list says so out loud
+		}
+		return a, DoRestore(a.client, ids)
 	case verb.PruneAction:
 		if len(v.TaskIDs) > 0 {
 			a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
@@ -3529,7 +3533,8 @@ const cmdlinePlaceholder = "submit / interactive / session / file / forward / ss
 func cmdlineHelpLines() []string {
 	return []string{
 		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit",
-		"restore <id>...                - put back task records a prune forgot, rebuilt from the server's WAL (operator-only; the record returns, the task log does not)",
+		"restore [--list]               - list what a prune forgot and could still be put back (ids live only in the server's WAL)",
+		"restore <id>...                - put those back, rebuilt from the WAL (needs `prune` and the same scope; the record returns, the task log does not)",
 		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",
 		"submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task",
 		"interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)",

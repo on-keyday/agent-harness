@@ -84,11 +84,11 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// operator's scope is global.
 	protocol.TaskControlKind_SetCaps:   noTarget,
 	protocol.TaskControlKind_SetParent: noTarget,
-	// restore_tasks names target ids and is operator-only by the same
-	// principal-identity gate. It could not be scope-gated even in principle:
-	// the ids it names are ones a prune already removed, so there is no live
-	// entry left for inScope to walk a parent link from.
-	protocol.TaskControlKind_RestoreTasks: noTarget,
+	// restore_tasks names target ids and is SCOPE-gated on prune, the same bit
+	// and target set the destructive half takes. Its walk needs the WAL: a
+	// pruned task's creator edge survives only in its task_created record, so
+	// walChildIndex feeds scopeSetWith and the ordinary policy decides.
+	protocol.TaskControlKind_RestoreTasks: targetGated,
 	// permission_denied is a RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: noTarget,
 }

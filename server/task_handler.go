@@ -82,6 +82,15 @@ type TaskHandler struct {
 	// no narrower caller to confine.
 	RestoreFn func(ids []string) (restored, alreadyPresent, notInWAL []string)
 
+	// RestorableFn lists what a restore could put back. Separate from
+	// RestoreFn because listing must change nothing.
+	RestorableFn func() []Restorable
+
+	// RestoreEventsFn returns the WAL, for the scope walk: a pruned task's
+	// creator edge survives only in its task_created record, and without it
+	// every forgotten task falls outside every subtree.
+	RestoreEventsFn func() []WALEvent
+
 	// LogsDir is the directory containing per-task log files
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
 	// (always returns Found=0). Server.New wires it from cfg.DataDir.

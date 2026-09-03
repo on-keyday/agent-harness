@@ -130,6 +130,35 @@ func (h *TaskHandler) childIndex() map[string][]string {
 	return children
 }
 
+// walChildIndex adds the creator links of tasks the live store no longer
+// holds. A pruned task's task_created still names its creator, which is the
+// only place that edge survives -- and without it a restore could never be
+// scope-gated, because the subtree walk would stop at the hole the prune left.
+func walChildIndex(base map[string][]string, events []WALEvent) map[string][]string {
+	out := make(map[string][]string, len(base))
+	for k, v := range base {
+		out[k] = append([]string(nil), v...)
+	}
+	seen := map[string]bool{}
+	for k, v := range base {
+		_ = k
+		for _, c := range v {
+			seen[c] = true
+		}
+	}
+	for _, ev := range events {
+		if ev.Type != "task_created" || ev.TaskID == "" || ev.CreatorTaskID == "" {
+			continue
+		}
+		if seen[ev.TaskID] {
+			continue // the live index already carries this edge
+		}
+		seen[ev.TaskID] = true
+		out[ev.CreatorTaskID] = append(out[ev.CreatorTaskID], ev.TaskID)
+	}
+	return out
+}
+
 // descendantsOf marks self and every task reachable through the creator index
 // into allowed.
 //
@@ -164,6 +193,19 @@ func descendantsOf(children map[string][]string, selfHex string, allowed map[str
 // caller holding info_global and cancel would be able to kill anything on the
 // server. visibleToCaller is the wrapper that adds it.
 func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all bool, allowed map[string]bool) {
+	return h.scopeSetWith(connID, want, h.childIndex())
+}
+
+// scopeSetWith is scopeSet over a caller-supplied creator index.
+//
+// It exists for restore, whose targets are ids a prune already removed:
+// childIndex is built from the LIVE store, so a forgotten task has no parent
+// link there and would fall out of every subtree. Restore merges the WAL's
+// creator links in and passes the result here, so the SAME policy decides --
+// base, exclude_self, explicit ids, the subtree walk. A second scope
+// implementation reading the WAL is the drift shape this file exists to
+// prevent.
+func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		// Operator: unrestricted.
@@ -196,7 +238,7 @@ func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all boo
 		// to be applied AFTER the walk. Deleting first would make the walk skip
 		// its own root and return without expanding a single child — the same
 		// trap the visited/allowed split in descendantsOf documents.
-		descendantsOf(h.childIndex(), callerHex, allowed)
+		descendantsOf(children, callerHex, allowed)
 		if excludeSelf {
 			delete(allowed, callerHex)
 		}

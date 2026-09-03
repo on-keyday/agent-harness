@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -36,6 +37,93 @@ import (
 //     WAL never held its contents. The record returns; the transcript does not.
 //   - Bring back the worktree. That is prune-local's half and lives on the
 //     runner, untouched by a server-side prune.
+//
+// Restorable is one task a prune forgot, with enough to tell which it was.
+type Restorable struct {
+	TaskID    string
+	PrunedAt  time.Time
+	CreatedAt time.Time
+	RepoPath  string
+	Prompt    string
+}
+
+// RestorableFromWAL lists what a restore could put back, newest prune first.
+//
+// Without it the restore verb is unusable: it takes ids, and the ids of
+// forgotten tasks live in a file on the server host that no surface reads. An
+// operator who did not write the id down before pruning had no way to learn
+// it -- which is every operator who pruned by accident, the case the verb
+// exists for.
+//
+// Reported straight off the WAL rather than from a replay, because the
+// question is about records the store no longer holds: which task_pruned has
+// no task_restored after it, and what the task_created before it said.
+func RestorableFromWAL(events []WALEvent, live func(id string) bool) []Restorable {
+	type meta struct {
+		created          time.Time
+		repo, prompt     string
+		prunedAt         time.Time
+		pruned, restored bool
+	}
+	byID := map[string]*meta{}
+	order := []string{}
+	get := func(id string) *meta {
+		m, ok := byID[id]
+		if !ok {
+			m = &meta{}
+			byID[id] = m
+			order = append(order, id)
+		}
+		return m
+	}
+	for _, ev := range events {
+		if ev.TaskID == "" {
+			continue
+		}
+		switch ev.Type {
+		case "task_created":
+			m := get(ev.TaskID)
+			m.created = time.Unix(0, ev.Ts)
+			m.repo, m.prompt = ev.RepoPath, ev.Prompt
+			// A resume writes another task_created for the same id, and it
+			// also un-prunes nothing -- the flags are per-id state, so a
+			// later create leaves an earlier prune standing until a restore
+			// or another prune moves it.
+		case "task_pruned":
+			m := get(ev.TaskID)
+			m.pruned, m.restored = true, false
+			m.prunedAt = time.Unix(0, ev.Ts)
+		case "task_restored":
+			get(ev.TaskID).restored = true
+		}
+	}
+	var out []Restorable
+	for _, id := range order {
+		m := byID[id]
+		if !m.pruned || m.restored {
+			continue
+		}
+		if live != nil && live(id) {
+			continue // already back by some other path; not a candidate
+		}
+		out = append(out, Restorable{
+			TaskID: id, PrunedAt: m.prunedAt, CreatedAt: m.created,
+			RepoPath: m.repo, Prompt: m.prompt,
+		})
+	}
+	// Newest prune first: the accident you are undoing is the last one.
+	sort.Slice(out, func(i, j int) bool { return out[i].PrunedAt.After(out[j].PrunedAt) })
+	return out
+}
+
+// Live reports whether an id is in the store, for RestorableFromWAL.
+func (s *TaskStore) Live(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.tasks[id]
+	return ok
+}
+
 func (s *TaskStore) RestoreFromWAL(events []WALEvent, ids []string) (restored, alreadyPresent, notInWAL []string) {
 	want := make(map[string]bool, len(ids))
 	for _, id := range ids {

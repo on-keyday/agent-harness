@@ -232,6 +232,28 @@ func New(cfg Config) *Server {
 			}
 			return s.tasks.RestoreFromWAL(events, ids)
 		},
+		RestoreEventsFn: func() []WALEvent {
+			if restoreWALPath == "" {
+				return nil
+			}
+			events, rerr := ReadWAL(restoreWALPath)
+			if rerr != nil {
+				s.cfg.Logger.Error("restore scope: WAL read failed", "path", restoreWALPath, "err", rerr)
+				return nil
+			}
+			return events
+		},
+		RestorableFn: func() []Restorable {
+			if restoreWALPath == "" {
+				return nil
+			}
+			events, rerr := ReadWAL(restoreWALPath)
+			if rerr != nil {
+				s.cfg.Logger.Error("restorable: WAL read failed", "path", restoreWALPath, "err", rerr)
+				return nil
+			}
+			return RestorableFromWAL(events, s.tasks.Live)
+		},
 		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
 		// wired later in Run (they need the constructed Endpoint), but these
 		// two don't depend on the transport so we set them here.

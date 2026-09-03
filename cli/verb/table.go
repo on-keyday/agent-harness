@@ -1083,10 +1083,18 @@ var Verbs = []VerbSpec{
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, Surfaces: CLI | TUI | WebUI,
-		Action:  "RestoreAction",
-		MinArgs: 1,
-		Args:    []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
+		Action: "RestoreAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
+		// No AtLeastOne here, unlike prune. The bare form LISTS -- it changes
+		// nothing, and it is the only way to learn the ids, which live in a
+		// file on the server host that no other surface reads. A restore verb
+		// whose bare form did nothing would be usable only by someone who
+		// wrote the id down before the accident.
+		Flags: []Flag{{Name: "list", Aliases: []string{"l"}, Type: FlagBool, Default: false, Field: "List",
+			Help: "list what a prune forgot and could still be put back (the default with no ids)"}},
 		Examples: []string{
+			"restore",
+			"restore --list",
 			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},

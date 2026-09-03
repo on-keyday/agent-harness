@@ -6101,7 +6101,10 @@ async function runVerbCommand(tokens, ctx) {
       // the WAL holds every task the server has ever seen.
       const b = ctx.harness.parseCommand(tokens, {});
       if (b.error) throw new Error(b.error);
-      out = await ctx.harness.restore(b.args);
+      // The bare form lists: the ids live in a file on the server host that
+      // no other surface reads, so a restore that only ACTED would be usable
+      // by someone who wrote the id down before the accident.
+      out = await ctx.harness.restore(b.flags.list ? [] : b.args);
       break;
     }
     case "prune": {

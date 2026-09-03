@@ -325,6 +325,8 @@ type PruneLocalAction struct {
 // RestoreAction is built by: restore.
 type RestoreAction struct {
 	ActionMarker
+	// list what a prune forgot and could still be put back (the default with no ids)
+	List    bool
 	TaskIDs []string
 }
 
@@ -1982,6 +1984,7 @@ func init() {
 		},
 		"restore\x00cli": func(b Bound) (Action, error) {
 			a := RestoreAction{}
+			a.List = b.Bool("list")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}
@@ -1989,6 +1992,7 @@ func init() {
 		},
 		"restore\x00tui": func(b Bound) (Action, error) {
 			a := RestoreAction{}
+			a.List = b.Bool("list")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}
@@ -1996,6 +2000,7 @@ func init() {
 		},
 		"restore\x00webui": func(b Bound) (Action, error) {
 			a := RestoreAction{}
+			a.List = b.Bool("list")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}
