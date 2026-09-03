@@ -321,7 +321,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+	cmd.Placeholder = cmdlinePlaceholder
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -2963,55 +2963,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("refreshing snapshot…")
 		return a, RefreshSnapshot(a.client)
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit")
-		a.cmdresult.Append("refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now")
-		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
-		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)")
-		a.cmdresult.Append("session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive")
-		a.cmdresult.Append("caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps all,-spawn / caps none)")
-		a.cmdresult.Append("scope [<spec>]              - show, or set the session-default TARGET scope for spawns: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]")
-		a.cmdresult.Append("caps set <id> [--caps N] [--scope S] [--cascade] [--keep-conns]")
-		a.cmdresult.Append("                            - OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants")
-		a.cmdresult.Append("submit|interactive|session new --caps <names>  - capability mask for THIS spawn only, overriding the default; with --resume it re-grants that mask to the task")
-		a.cmdresult.Append("notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)")
-		a.cmdresult.Append("session new [--detach] [--host NAME | --runner HEX | --ip ADDR] - open detachable interactive session (--detach: background, print id)")
-		a.cmdresult.Append("session attach <id>         - reattach to a session")
-		a.cmdresult.Append("session ls                  - list detachable sessions")
-		a.cmdresult.Append("session kill <id>           - terminate a session")
-		a.cmdresult.Append("session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)")
-		a.cmdresult.Append("grid [<task-id>...]         - live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree)")
-		a.cmdresult.Append("grid --under <id> [--descendants] - that task's working set: its subtree PLUS the tasks its own scope names (ids:); --descendants leaves the task itself out")
-		a.cmdresult.Append("git <task-id> log [--max N] [-- <path>]            - the task's commits (also: tasks-pane G)")
-		a.cmdresult.Append("git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit")
-		a.cmdresult.Append("git <task-id> show [<rev>] [-- <path>]             - one commit and its diff")
-		a.cmdresult.Append("git <task-id> status [-- <path>]                   - uncommitted and untracked paths (untracked appear in no diff)")
-		a.cmdresult.Append("git <task-id> subrepos                             - git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)")
-		a.cmdresult.Append("git <task-id> file [--staged|--rev R] <path>       - one file's whole content (also: o in the modal, from the diff you are reading)")
-		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
-		a.cmdresult.Append("file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)")
-		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
-		a.cmdresult.Append("file pull [-r] [-f] [-o off] [-n len] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
-		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
-		a.cmdresult.Append("file edit <task-id> <rel>                          - open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)")
-		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
-		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
-		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
-		a.cmdresult.Append("exec <task-id> [--] <cmd>...                       - run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)")
-		a.cmdresult.Append("exec ls [-task <id>] | exec kill <exec-id>         - list the running execs / stop one (Obs column shows Nx while any run)")
-		a.cmdresult.Append("  --shell        one line for the runner's own shell, so pipes and redirects mean something")
-		a.cmdresult.Append("  --sshd-parent  give the line a parent process named sshd, for a client that checks its ancestry (Windows only; needs --shell)")
-		a.cmdresult.Append("ssh-gateway [start [bind:port] | stop]             - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches")
-		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)")
-		a.cmdresult.Append("workspace rm <name>                                - delete one workspace from .harness/config")
-		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
-		a.cmdresult.Append("workspace detach [--stop]                          - stop re-applying on reconnect; --stop also stops its forwards and gateway")
-		a.cmdresult.Append("workspace ls | show [name]                         - list the workspaces in .harness/config, or print one")
-		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
-		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.")
-		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
-		a.cmdresult.Append("  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.")
-		a.cmdresult.Append("trsf                        - dump the client↔server transport's internal state (debug)")
-		a.cmdresult.Append("diag [on|off]               - grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)")
+		for _, l := range cmdlineHelpLines() {
+			a.cmdresult.Append(l)
+		}
 		return a, nil
 	case GridDiagAction:
 		want := !GridDiagEnabled()
@@ -3494,4 +3448,80 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
 	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+}
+
+// cmdlinePlaceholder is the cmdline's ghost text: a width-limited SUMMARY, so
+// unlike cmdlineHelpLines it does not name every verb. What it must not do is
+// name one the cmdline cannot parse, which is what
+// TestPlaceholderNamesNothingUnreachable checks -- the placeholder is the
+// first thing an operator reads, and a verb listed there is a promise.
+const cmdlinePlaceholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+
+// cmdlineHelpLines is the `help` command's body, one line per entry.
+//
+// A function rather than a run of Append calls so a test can read it back:
+// the verbs are declared in cli/verb, and TestHelpDescribesEveryDeclaredVerb
+// fails when one is reachable from this cmdline and undescribed. Seven were
+// when that test was written -- caps set-parent, forward tap, session
+// snapshot and the four session stream verbs -- which is the same drift the
+// CLI's usage() had, found the same way: by counting rather than reading.
+func cmdlineHelpLines() []string {
+	return []string{
+		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit",
+		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",
+		"submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task",
+		"interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)",
+		"session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive",
+		"caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps all,-spawn / caps none)",
+		"scope [<spec>]              - show, or set the session-default TARGET scope for spawns: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]",
+		"caps set <id> [--caps N] [--scope S] [--cascade] [--keep-conns]",
+		"                            - OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants",
+		"caps set-parent <id> (--parent <id> | --none | --swap) - OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent",
+		"submit|interactive|session new --caps <names>  - capability mask for THIS spawn only, overriding the default; with --resume it re-grants that mask to the task",
+		"notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)",
+		"session new [--detach] [--host NAME | --runner HEX | --ip ADDR] - open detachable interactive session (--detach: background, print id)",
+		"session attach <id>         - reattach to a session",
+		"session ls                  - list detachable sessions",
+		"session kill <id>           - terminate a session",
+		"session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)",
+		"session snapshot <id> [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--detect] - render the session's current screen without taking the seat",
+		"session stream attach <id>  - follow an event-stream session's events (the counterpart of attaching to a PTY)",
+		"session stream turn <id> <text>...  - send one user turn to an event-stream session",
+		"session stream approve <id> <request-id> (--allow | --deny [--message M]) - answer a tool-approval request the agent is blocked on",
+		"session stream interrupt|finish <id> - interrupt the current turn, or end the session cleanly",
+		"grid [<task-id>...]         - live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree)",
+		"grid --under <id> [--descendants] - that task's working set: its subtree PLUS the tasks its own scope names (ids:); --descendants leaves the task itself out",
+		"git <task-id> log [--max N] [-- <path>]            - the task's commits (also: tasks-pane G)",
+		"git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
+		"git <task-id> show [<rev>] [-- <path>]             - one commit and its diff",
+		"git <task-id> status [-- <path>]                   - uncommitted and untracked paths (untracked appear in no diff)",
+		"git <task-id> subrepos                             - git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)",
+		"git <task-id> file [--staged|--rev R] <path>       - one file's whole content (also: o in the modal, from the diff you are reading)",
+		"file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)",
+		"file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)",
+		"file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)",
+		"file pull [-r] [-f] [-o off] [-n len] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path",
+		"file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)",
+		"file edit <task-id> <rel>                          - open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)",
+		"file new <task-id> <rel>                           - write a new text file in the editor popup and push it",
+		"forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)",
+		"forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)",
+		"forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] - stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens",
+		"exec <task-id> [--] <cmd>...                       - run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
+		"exec ls [-task <id>] | exec kill <exec-id>         - list the running execs / stop one (Obs column shows Nx while any run)",
+		"  --shell        one line for the runner's own shell, so pipes and redirects mean something",
+		"  --sshd-parent  give the line a parent process named sshd, for a client that checks its ancestry (Windows only; needs --shell)",
+		"ssh-gateway [start [bind:port] | stop]             - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
+		"workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)",
+		"workspace rm <name>                                - delete one workspace from .harness/config",
+		"workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)",
+		"workspace detach [--stop]                          - stop re-applying on reconnect; --stop also stops its forwards and gateway",
+		"workspace ls | show [name]                         - list the workspaces in .harness/config, or print one",
+		"server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)",
+		"F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.",
+		"  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.",
+		"  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.",
+		"trsf                        - dump the client↔server transport's internal state (debug)",
+		"diag [on|off]               - grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)",
+	}
 }
