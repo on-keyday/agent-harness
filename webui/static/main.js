@@ -6121,23 +6121,6 @@ function tokenize(line) {
   return out;
 }
 
-// parseFlags is retained for `prune --before 168h` style flags.
-function parseFlags(tokens) {
-  const out = {};
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t.startsWith("--")) {
-      const eq = t.indexOf("=");
-      if (eq !== -1) {
-        out[t.slice(2, eq)] = t.slice(eq + 1);
-      } else {
-        out[t.slice(2)] = tokens[i + 1] || "";
-        i++;
-      }
-    }
-  }
-  return out;
-}
 
 // --- file ops dispatch -------------------------------------------------
 
