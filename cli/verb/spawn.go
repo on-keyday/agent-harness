@@ -124,7 +124,17 @@ func buildSpawn(kind string) func(Bound) (Action, error) {
 			X11: b.Bool("x11"),
 			// Their zero values are meaningful ("none" and "subtree"), so a
 			// resume must not re-grant on a flag nobody passed.
-			CapsPresent: b.Set["caps"], ScopePresent: b.Set["scope"],
+			//
+			// The scope half is ONE unit: naming either --scope or --scope-for
+			// makes it explicit, so a resume re-grants both together. Letting
+			// --scope-for alone ride the session default's scope would write an
+			// authority that is half typed and half inherited -- the TUI said so
+			// in spawnAuthority's comment and derived presence that way, while
+			// the CLI checked only "scope" and dropped a lone --scope-for on
+			// resume. Same flag, two meanings; the declaration settles it on the
+			// side that had the reason written down.
+			CapsPresent:  b.Set["caps"],
+			ScopePresent: b.Set["scope"] || b.Set["scope-for"],
 		}
 		if b.Set["caps"] {
 			c, err := ParseCaps(b.Str("caps"))

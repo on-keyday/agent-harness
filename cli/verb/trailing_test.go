@@ -92,3 +92,46 @@ func TestAgentSendIsTrailing(t *testing.T) {
 		}
 	}
 }
+
+// TestScopeForAloneMarksTheScopeHalfPresent pins a divergence the migration
+// exposed rather than caused: the CLI derived ScopePresent from --scope alone,
+// so `submit --scope-for CAP=SCOPE --resume <id>` dropped the override, while
+// the TUI's spawnAuthority marked the half present for EITHER flag and said
+// why -- "an authority that is half typed and half inherited".
+//
+// Same command line, two answers, on a resume's authority. Now one Build
+// decides, on the side that had the reason written down.
+func TestScopeForAloneMarksTheScopeHalfPresent(t *testing.T) {
+	sp, ok := Lookup("submit")
+	if !ok {
+		t.Fatal("submit is not in the table")
+	}
+	spawn := func(t *testing.T, args ...string) SpawnAction {
+		t.Helper()
+		v := sp.For(CLI)
+		fs := v.NewFlagSet(flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		b, err := v.Parse(fs, args)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", args, err)
+		}
+		act, err := v.Build(b)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", args, err)
+		}
+		return act.(SpawnAction)
+	}
+
+	const resume = "--resume"
+	if a := spawn(t, "--repo", "/r", "--scope-for", "spawn=none", resume, idA, "x"); !a.ScopePresent {
+		t.Error("--scope-for alone did not mark the scope half present; on a resume the override is dropped")
+	}
+	if a := spawn(t, "--repo", "/r", "--scope", "none", resume, idA, "x"); !a.ScopePresent {
+		t.Error("--scope alone did not mark the scope half present")
+	}
+	// And an unqualified resume still must not re-grant: the session default
+	// has to stay unable to silently rewrite a resumed task's scope.
+	if a := spawn(t, "--repo", "/r", resume, idA, "x"); a.ScopePresent {
+		t.Error("a resume naming neither flag marked the scope half present")
+	}
+}
