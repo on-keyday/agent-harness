@@ -888,7 +888,7 @@ func TestParseForward(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	kill, ok := act.(verb.ForwardKillAction)
-	if !ok || kill.ForwardID != 12 {
+	if !ok || len(kill.ForwardIDs) != 1 || kill.ForwardIDs[0] != 12 {
 		t.Fatalf("got %#v, want verb.ForwardKillAction{12}", act)
 	}
 	if _, err := ParseCommand("forward kill", ""); err == nil {

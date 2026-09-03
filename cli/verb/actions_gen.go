@@ -73,6 +73,24 @@ type ConnsAction struct {
 	Follow bool
 }
 
+// ExecRunAction is built by: exec, exec kill, exec ls.
+type ExecRunAction struct {
+	ActionMarker
+	// hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)
+	Shell bool
+	// run under the task's sshd parent process
+	SshdParent bool
+	TaskID     string
+	// everything after `--` is the argv verbatim; re-scanning it for flags is how a command whose own firs…
+	Argv []string
+	Sub  string
+	// only execs against this task id
+	TaskFilter string
+	// one JSON object per exec
+	JSON    bool
+	ExecIDs []uint64
+}
+
 // FileDeleteAction is built by: file delete.
 type FileDeleteAction struct {
 	ActionMarker
@@ -144,6 +162,21 @@ type FilePushAction struct {
 	RemoteDst string
 }
 
+// ForwardKillAction is built by: forward kill.
+type ForwardKillAction struct {
+	ActionMarker
+	ForwardIDs []uint64
+}
+
+// ForwardLsAction is built by: forward ls.
+type ForwardLsAction struct {
+	ActionMarker
+	// only forwards for this task id
+	TaskFilter string
+	// one JSON object per forward
+	JSON bool
+}
+
 // GitAction is built by: git diff, git file, git log, git show, git status, git subrepos.
 type GitAction struct {
 	ActionMarker
@@ -183,6 +216,17 @@ type LogsAction struct {
 	// after dumping history, keep streaming live chunks (no-op when the task is terminal)
 	Follow bool
 	TaskID string
+}
+
+// NotifyAction is built by: notify.
+type NotifyAction struct {
+	ActionMarker
+	// short heading for the notification
+	Title string
+	// severity: info|warn|error
+	Level string
+	// the notification body is free-form
+	Text string
 }
 
 // PruneAction is built by: prune.
@@ -818,6 +862,159 @@ func init() {
 			}
 			return a, nil
 		},
+		"exec\x00cli": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "run"
+			a.Shell = b.Bool("shell")
+			a.SshdParent = b.Bool("sshd-parent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if b.Bool("shell") {
+				a.Argv = []string{b.Trail}
+			} else {
+				a.Argv = b.TrailArgs
+			}
+			return a, nil
+		},
+		"exec\x00tui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "run"
+			a.Shell = b.Bool("shell")
+			a.SshdParent = b.Bool("sshd-parent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if b.Bool("shell") {
+				a.Argv = []string{b.Trail}
+			} else {
+				a.Argv = b.TrailArgs
+			}
+			return a, nil
+		},
+		"exec\x00webui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "run"
+			a.Shell = b.Bool("shell")
+			a.SshdParent = b.Bool("sshd-parent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if b.Bool("shell") {
+				a.Argv = []string{b.Trail}
+			} else {
+				a.Argv = b.TrailArgs
+			}
+			return a, nil
+		},
+		"exec ls\x00cli": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"exec ls\x00tui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"exec ls\x00webui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"exec kill\x00cli": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec kill: bad exec id %q", raw)
+				}
+				a.ExecIDs = append(a.ExecIDs, n)
+			}
+			return a, nil
+		},
+		"exec kill\x00tui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec kill: bad exec id %q", raw)
+				}
+				a.ExecIDs = append(a.ExecIDs, n)
+			}
+			return a, nil
+		},
+		"exec kill\x00webui": func(b Bound) (Action, error) {
+			a := ExecRunAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec kill: bad exec id %q", raw)
+				}
+				a.ExecIDs = append(a.ExecIDs, n)
+			}
+			return a, nil
+		},
+		"forward ls\x00cli": func(b Bound) (Action, error) {
+			a := ForwardLsAction{}
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"forward ls\x00tui": func(b Bound) (Action, error) {
+			a := ForwardLsAction{}
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"forward ls\x00webui": func(b Bound) (Action, error) {
+			a := ForwardLsAction{}
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"forward kill\x00cli": func(b Bound) (Action, error) {
+			a := ForwardKillAction{}
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward kill: bad forward id %q", raw)
+				}
+				a.ForwardIDs = append(a.ForwardIDs, n)
+			}
+			return a, nil
+		},
+		"forward kill\x00tui": func(b Bound) (Action, error) {
+			a := ForwardKillAction{}
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward kill: bad forward id %q", raw)
+				}
+				a.ForwardIDs = append(a.ForwardIDs, n)
+			}
+			return a, nil
+		},
+		"forward kill\x00webui": func(b Bound) (Action, error) {
+			a := ForwardKillAction{}
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward kill: bad forward id %q", raw)
+				}
+				a.ForwardIDs = append(a.ForwardIDs, n)
+			}
+			return a, nil
+		},
 		"server dial-runner\x00cli": func(b Bound) (Action, error) {
 			a := ServerDialRunnerAction{}
 			a.Via = b.Str("via")
@@ -965,6 +1162,20 @@ func init() {
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}
+			return a, nil
+		},
+		"notify\x00cli": func(b Bound) (Action, error) {
+			a := NotifyAction{}
+			a.Title = b.Str("title")
+			a.Level = b.Str("level")
+			a.Text = b.Trail
+			return a, nil
+		},
+		"notify\x00tui": func(b Bound) (Action, error) {
+			a := NotifyAction{}
+			a.Title = b.Str("title")
+			a.Level = b.Str("level")
+			a.Text = b.Trail
 			return a, nil
 		},
 		"cancel\x00cli": func(b Bound) (Action, error) {
@@ -1386,7 +1597,7 @@ func init() {
 			if len(b.Args) > 0 {
 				n, err := strconv.ParseUint(b.Args[0], 10, 64)
 				if err != nil {
-					return nil, fmt.Errorf("agent read: seq must be a positive integer, got %q", b.Args[0])
+					return nil, fmt.Errorf("agent read: bad seq %q", b.Args[0])
 				}
 				a.Seq = n
 			}
@@ -1399,7 +1610,7 @@ func init() {
 			if len(b.Args) > 0 {
 				n, err := strconv.ParseUint(b.Args[0], 10, 64)
 				if err != nil {
-					return nil, fmt.Errorf("agent retract: seq must be a positive integer, got %q", b.Args[0])
+					return nil, fmt.Errorf("agent retract: bad seq %q", b.Args[0])
 				}
 				a.Seq = n
 			}

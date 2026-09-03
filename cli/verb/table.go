@@ -325,71 +325,59 @@ var Verbs = []VerbSpec{
 	{
 		Path:     []string{"exec"},
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action:   "ExecRunAction",
+		Const:    map[string]string{"Sub": "run"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// The argv follows a literal `--` and stays a LIST: the runner needs
 		// the word boundaries. --shell is the one case that joins, and it does
-		// so because the operator asked for shell interpretation.
+		// so because the operator asked for shell interpretation -- which is
+		// why this verb keeps a Build.
 		Trailing: &Trailing{
-			Name: "command", List: true, AfterSeparator: true,
+			Name: "command", List: true, AfterSeparator: true, Required: true, FieldArgs: "Argv", JoinWhen: "shell",
 			Reason: "everything after `--` is the argv verbatim; re-scanning it for flags is how a command whose own first word is --shell gets eaten",
 		},
 		Flags: []Flag{
-			{Name: "shell", Type: FlagBool, Default: false,
+			{Name: "shell", Type: FlagBool, Default: false, Field: "Shell",
 				Help: "hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)"},
-			{Name: "sshd-parent", Type: FlagBool, Default: false,
+			{Name: "sshd-parent", Type: FlagBool, Default: false, Field: "SshdParent",
 				Help: "run under the task's sshd parent process"},
 		},
-		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
-		Build: func(b Bound) (Action, error) {
-			if len(b.TrailArgs) == 0 {
-				return nil, fmt.Errorf("exec: a command is required after `--`")
-			}
+		// What it renames IS the shell, so it cannot rename an argv.
+		Requires: map[string]string{"sshd-parent": "shell"},
+		Validate: func(b Bound) error {
 			// `exec --shell kill 3` used to parse as "run `3` on a task named
 			// kill". ls and kill are sub-verbs, and the run flags do not apply
 			// to them, so naming one here is a mistake rather than a task id.
 			if sub := b.Args[0]; sub == "ls" || sub == "kill" {
-				return nil, fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent do not apply to it", sub)
+				return fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent do not apply to it", sub)
 			}
-			if b.Bool("sshd-parent") && !b.Bool("shell") {
-				return nil, fmt.Errorf("exec: --sshd-parent needs --shell; what it renames is the shell")
-			}
-			argv := b.TrailArgs
-			if b.Bool("shell") {
-				argv = []string{b.Trail}
-			}
-			return ExecRunAction{Sub: "run", TaskID: b.Args[0], Argv: argv,
-				Shell: b.Bool("shell"), SshdParent: b.Bool("sshd-parent")}, nil
+			return nil
 		},
+		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
 	},
 	{
 		Path:     []string{"exec", "ls"},
+		Action:   "ExecRunAction",
+		Const:    map[string]string{"Sub": "ls"},
 		Surfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
-			{Name: "task", Type: FlagString, Default: "", Help: "only execs against this task id"},
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only execs against this task id"},
 			// --json was CLI-only before the migration; declaring it once gives
 			// it to the surfaces that silently lacked it.
-			{Name: "json", Type: FlagBool, Default: false, Help: "one JSON object per exec"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON object per exec"},
 		},
 		Examples: []string{"exec ls", "exec ls --json"},
-		Build: func(b Bound) (Action, error) {
-			return ExecRunAction{Sub: "ls", TaskID: b.Str("task"), TaskFilter: b.Str("task"), JSON: b.Bool("json")}, nil
-		},
 	},
 	{
-		Path:     []string{"exec", "kill"},
+		Path: []string{"exec", "kill"},
+		// At least one id: `forward kill` with none is a mistyped line, not a
+		// request to kill nothing.
+		MinArgs:  1,
+		Action:   "ExecRunAction",
+		Const:    map[string]string{"Sub": "kill"},
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "exec-id", Type: ArgUint, Variadic: true}},
+		Args:     []Arg{{Name: "exec-id", Type: ArgUint, Variadic: true, Field: "ExecIDs"}},
 		Examples: []string{"exec kill 3"},
-		Build: func(b Bound) (Action, error) {
-			ids, err := parseUintArgs("exec kill", "exec id", b.Args)
-			if err != nil {
-				return nil, err
-			}
-			if len(ids) == 0 {
-				return nil, fmt.Errorf("exec kill: at least one exec id")
-			}
-			return ExecRunAction{Sub: "kill", ExecID: ids[0], ExecIDs: ids}, nil
-		},
 	},
 
 	// --- forward ---
@@ -445,31 +433,23 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:     []string{"forward", "ls"},
+		Action:   "ForwardLsAction",
 		Surfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
-			{Name: "task", Type: FlagString, Default: "", Help: "only forwards for this task id"},
-			{Name: "json", Type: FlagBool, Default: false, Help: "one JSON object per forward"},
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only forwards for this task id"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON object per forward"},
 		},
 		Examples: []string{"forward ls", "forward ls --json"},
-		Build: func(b Bound) (Action, error) {
-			return ForwardLsAction{TaskFilter: b.Str("task"), JSON: b.Bool("json")}, nil
-		},
 	},
 	{
-		Path:     []string{"forward", "kill"},
+		Path: []string{"forward", "kill"},
+		// At least one id: `forward kill` with none is a mistyped line, not a
+		// request to kill nothing.
+		MinArgs:  1,
+		Action:   "ForwardKillAction",
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Variadic: true}},
+		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Variadic: true, Field: "ForwardIDs"}},
 		Examples: []string{"forward kill 7"},
-		Build: func(b Bound) (Action, error) {
-			ids, err := parseUintArgs("forward kill", "forward id", b.Args)
-			if err != nil {
-				return nil, err
-			}
-			if len(ids) == 0 {
-				return nil, fmt.Errorf("forward kill: at least one forward id")
-			}
-			return ForwardKillAction{ForwardID: ids[0], ForwardIDs: ids}, nil
-		},
 	},
 	{
 		Path:     []string{"forward", "tap"},
@@ -879,24 +859,16 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:     []string{"notify"},
+		Action:   "NotifyAction",
 		Surfaces: CLI | TUI,
-		Trailing: &Trailing{Name: "text", Reason: "the notification body is free-form"},
+		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
+			Reason: "the notification body is free-form"},
 		Flags: []Flag{
-			{Name: "title", Type: FlagString, Default: "", Help: "short heading for the notification"},
-			{Name: "level", Type: FlagString, Default: "info", Help: "severity: info|warn|error"},
+			{Name: "title", Type: FlagString, Default: "", Field: "Title", Help: "short heading for the notification"},
+			{Name: "level", Type: FlagString, Default: "info", Field: "Level",
+				OneOf: []string{"info", "warn", "error"}, Help: "severity: info|warn|error"},
 		},
 		Examples: []string{"notify --level warn --title build the tree is red"},
-		Build: func(b Bound) (Action, error) {
-			if b.Trail == "" {
-				return nil, fmt.Errorf("notify: missing text")
-			}
-			switch b.Str("level") {
-			case "info", "warn", "error":
-			default:
-				return nil, fmt.Errorf("notify: --level %q (want info, warn or error)", b.Str("level"))
-			}
-			return NotifyAction{Level: b.Str("level"), Title: b.Str("title"), Text: b.Trail}, nil
-		},
 	},
 	{
 		Path:     []string{"agent", "send"},

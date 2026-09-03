@@ -3300,8 +3300,13 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		// true: this IS `forward ls` — the text dump is the whole point.
 		return a, DoListForwards(a.client, true)
 	case verb.ForwardKillAction:
-		// No task/spec context: the operator supplied only a bare id.
-		return a, DoKillForward(a.client, v.ForwardID, "", "")
+		// No task/spec context: the operator supplied only a bare id. The
+		// declaration carries a list because the CLI takes several; a TUI row
+		// kills the one it names.
+		if len(v.ForwardIDs) == 0 {
+			return a, nil
+		}
+		return a, DoKillForward(a.client, v.ForwardIDs[0], "", "")
 	case verb.ForwardTapAction:
 		return a, a.startForwardTap(v)
 	case verb.ExecRunAction:

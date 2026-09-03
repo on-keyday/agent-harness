@@ -193,13 +193,21 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 			if ar.Field == "" {
 				continue
 			}
-			if ar.Variadic && ar.MaxCount != 1 {
+			if ar.Variadic && ar.MaxCount != 1 && ar.Type == verb.ArgUint {
+				// `exec kill 1 2 3` names ids, so the slice is numeric and the
+				// parse happens once here rather than in each consumer.
+				fmt.Fprintf(buf, "\t\tfor _, raw := range b.Args[%d:] {\n"+
+					"\t\t\tn, err := strconv.ParseUint(raw, 10, 64)\n"+
+					"\t\t\tif err != nil {\n\t\t\t\treturn nil, fmt.Errorf(%q, raw)\n\t\t\t}\n"+
+					"\t\t\ta.%s = append(a.%s, n)\n\t\t}\n",
+					i, v.FlagSetName()+": bad "+singular(ar.Name)+" %q", ar.Field, ar.Field)
+			} else if ar.Variadic && ar.MaxCount != 1 {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
 			} else if ar.Type == verb.ArgUint {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\tn, err := strconv.ParseUint(b.Args[%d], 10, 64)\n"+
 					"\t\t\tif err != nil {\n\t\t\t\treturn nil, fmt.Errorf(%q, b.Args[%d])\n\t\t\t}\n"+
 					"\t\t\ta.%s = n\n\t\t}\n",
-					i, i, v.FlagSetName()+": "+ar.Name+" must be a positive integer, got %q", i, ar.Field)
+					i, i, v.FlagSetName()+": bad "+singular(ar.Name)+" %q", i, ar.Field)
 			} else {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
 			}
@@ -215,7 +223,12 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 				fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
 			}
 			if v.Trailing.FieldArgs != "" {
-				fmt.Fprintf(buf, "\t\ta.%s = b.TrailArgs\n", v.Trailing.FieldArgs)
+				if v.Trailing.JoinWhen != "" {
+					fmt.Fprintf(buf, "\t\tif b.Bool(%q) {\n\t\t\ta.%s = []string{b.Trail}\n\t\t} else {\n\t\t\ta.%s = b.TrailArgs\n\t\t}\n",
+						v.Trailing.JoinWhen, v.Trailing.FieldArgs, v.Trailing.FieldArgs)
+				} else {
+					fmt.Fprintf(buf, "\t\ta.%s = b.TrailArgs\n", v.Trailing.FieldArgs)
+				}
 			}
 		}
 		buf.WriteString("\t\t\treturn a, nil\n\t\t},\n")
@@ -270,7 +283,10 @@ func goTypeOfArg(a verb.Arg) string {
 	// An ArgUint positional lands in a numeric field: `agent read 42` and
 	// `forward tap 7` name an id, and every consumer that got a string had to
 	// parse it again -- twice, differently, in the hand-written era.
-	if a.Type == verb.ArgUint && !a.Variadic {
+	if a.Type == verb.ArgUint {
+		if a.Variadic {
+			return "[]uint64"
+		}
 		return "uint64"
 	}
 	// A variadic capped at one is an OPTIONAL single value, not a list --
@@ -323,6 +339,12 @@ func sortedConst(m map[string]string) map[string][2]string {
 		out[k] = [2]string{k, m[k]}
 	}
 	return out
+}
+
+// singular renders a positional's name the way the hand-written errors did:
+// `forward-id` reads as "forward id" in a sentence.
+func singular(name string) string {
+	return strings.ReplaceAll(name, "-", " ")
 }
 
 func firstLine(s string) string {

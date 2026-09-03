@@ -188,6 +188,12 @@ type Trailing struct {
 	// not a no-op send.
 	Required bool
 
+	// JoinWhen names a bool flag that collapses the tail into ONE word.
+	// `exec --shell` is the case: the operator asked for shell
+	// interpretation, so those words were never an argv to preserve, and
+	// joining them anywhere else would lose the boundaries the runner needs.
+	JoinWhen string
+
 	// List keeps the tail as separate words in Bound.TrailArgs instead of only
 	// joining it into Bound.Trail. `exec <task-id> -- <cmd> [args...]` hands
 	// the runner an argv, and joining it would lose the word boundaries the
@@ -253,6 +259,11 @@ type VerbSpec struct {
 	AtLeastOne [][]string
 	// Requires maps a flag to the one it cannot be used without.
 	Requires map[string]string
+
+	// MinArgs refuses a verb whose variadic positional came back empty:
+	// `exec kill` and `forward kill` with no id are mistyped lines, not
+	// requests to kill nothing.
+	MinArgs int
 
 	Examples []string
 

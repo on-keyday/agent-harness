@@ -53,14 +53,26 @@ func TestParseExecRun(t *testing.T) {
 		if !ok {
 			t.Fatalf("parseExecRun(%v) returned %T", tc.in, act)
 		}
-		if a.Sub != tc.wantSub || a.TaskID != tc.wantID {
+		// `exec ls --task <id>` filters rather than naming the run's task, so
+		// the declaration lands it in TaskFilter.
+		gotID := a.TaskID
+		if a.Sub == "ls" {
+			gotID = a.TaskFilter
+		}
+		if a.Sub != tc.wantSub || gotID != tc.wantID {
 			t.Errorf("parseExecRun(%v) = %+v, want sub=%q id=%q", tc.in, a, tc.wantSub, tc.wantID)
 		}
 		if a.Shell != tc.wantShell {
 			t.Errorf("parseExecRun(%v) shell = %v, want %v", tc.in, a.Shell, tc.wantShell)
 		}
-		if a.ExecID != tc.wantKill {
-			t.Errorf("parseExecRun(%v) exec id = %d, want %d", tc.in, a.ExecID, tc.wantKill)
+		// wantKill 0 means "no id on this line"; the declaration carries a
+		// list because the CLI form takes several.
+		var gotKill uint64
+		if len(a.ExecIDs) > 0 {
+			gotKill = a.ExecIDs[0]
+		}
+		if gotKill != tc.wantKill {
+			t.Errorf("parseExecRun(%v) exec ids = %v, want first %d", tc.in, a.ExecIDs, tc.wantKill)
 		}
 		if len(a.Argv) != len(tc.wantCmd) {
 			t.Fatalf("parseExecRun(%v) argv = %v, want %v", tc.in, a.Argv, tc.wantCmd)

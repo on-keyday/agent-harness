@@ -234,6 +234,9 @@ func (v VerbSpec) checkArity(n int) error {
 	if n < fixed {
 		return fmt.Errorf("%s", v.Usage())
 	}
+	if n < v.MinArgs {
+		return fmt.Errorf("%s: at least %d positional(s)\n%s", v.FlagSetName(), v.MinArgs, v.Usage())
+	}
 	if max := v.maxArgs(); max >= 0 && n > max {
 		return fmt.Errorf("%s: at most %d positional(s), got %d\n%s", v.FlagSetName(), max, n, v.Usage())
 	}

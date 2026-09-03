@@ -161,7 +161,11 @@ func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 		// the result pane. The `e` modal passes false.
 		return DoExecRunList(a.client, filter, true)
 	case "kill":
-		return DoExecRunKill(a.client, v.ExecID)
+		// One per invocation here; the CLI's form takes several.
+		if len(v.ExecIDs) == 0 {
+			return nil
+		}
+		return DoExecRunKill(a.client, v.ExecIDs[0])
 	default:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
