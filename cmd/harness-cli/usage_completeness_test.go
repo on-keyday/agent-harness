@@ -25,7 +25,16 @@ func usageText() string {
 		var sub bytes.Buffer
 		fn(&sub)
 		for _, l := range strings.Split(sub.String(), "\n") {
-			b.WriteString("  " + ns + " " + strings.TrimSpace(l) + "\n")
+			// A sub-usage's SUBCOMMAND entries are indented exactly two;
+			// everything else is a header, a `usage:` synopsis or explanatory
+			// prose. Both halves need the namespace prefixed for the forward
+			// check, and only the first may be read as naming a verb -- so
+			// the rest is pushed to a deeper indent the reverse check skips.
+			indent := "      "
+			if strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   ") {
+				indent = "  "
+			}
+			b.WriteString(indent + ns + " " + strings.TrimSpace(l) + "\n")
 		}
 	}
 	return b.String()
@@ -106,6 +115,20 @@ func TestUsageNamesNothingUnreachable(t *testing.T) {
 	} {
 		reachable[extra] = true
 	}
+	// Head words that lead a family, so a second word on their line is a
+	// sub-verb rather than an argument.
+	families := map[string]bool{}
+	for _, p := range verb.PathsForSurface(verb.CLI) {
+		fs := strings.Fields(p)
+		if len(fs) >= 2 {
+			families[fs[0]] = true
+			reachable[fs[0]+" "+fs[1]] = true
+		}
+	}
+	// The sub-usages' own verbs, reachable under their namespace.
+	for _, ns := range []string{"server", "board", "agent", "workspace"} {
+		families[ns] = true
+	}
 	for _, l := range strings.Split(usageText(), "\n") {
 		if !strings.HasPrefix(l, "  ") || strings.HasPrefix(l, "    ") {
 			continue // continuation lines describe, they do not name
@@ -122,6 +145,33 @@ func TestUsageNamesNothingUnreachable(t *testing.T) {
 			t.Errorf("usage() prints a line starting with %q, which harness-cli does not accept:\n  %s\n"+
 				"A help that names an unreachable verb is worse than one that omits a "+
 				"reachable one: the operator types it and gets an error.", w, strings.TrimSpace(l))
+			continue
+		}
+		// The SUB-verb too, when the head word names a family. Checking only
+		// f[0] is the same p.split(" ")[0] defect this work removed from the
+		// WebUI's startup assertion: `session frobnicate <id>` passed on the
+		// strength of the word `session`.
+		if len(f) < 2 || !families[w] {
+			continue
+		}
+		// Each alternative in `{a|b|c}` or `a|b`, and nothing that is a
+		// placeholder: an ALL-CAPS word or one in angle brackets is an
+		// argument, not a sub-verb -- `git TASK_ID log` puts the id in the
+		// MIDDLE of its path.
+		// `<task-id>` is an argument in the MIDDLE of a path (`git <id> log`),
+		// not a sub-verb.
+		if strings.HasPrefix(f[1], "<") || strings.HasPrefix(f[1], "[<") {
+			continue
+		}
+		for _, sub := range strings.Split(strings.Trim(f[1], "[]{}()"), "|") {
+			sub = strings.Trim(sub, "[]{}()<>")
+			if sub == "" || strings.HasPrefix(sub, "-") || sub == strings.ToUpper(sub) {
+				continue
+			}
+			if !reachable[w+" "+sub] && !reachable[sub] {
+				t.Errorf("usage() prints %q, and harness-cli has no such sub-verb:\n  %s",
+					w+" "+sub, strings.TrimSpace(l))
+			}
 		}
 	}
 }

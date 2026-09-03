@@ -238,117 +238,6 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	return parseSpawnTUI("submit", args, defaultRepo)
 }
 
-// repeatableStrings is a flag.Value that accumulates one entry per occurrence,
-// mirroring the same idiom used by cmd/harness-cli for --claude-arg. Local
-// definition because the cmdline parser uses its own flag.FlagSet and we
-// don't want a cross-package dependency from tui → cmd/harness-cli.
-type repeatableStrings []string
-
-func (r *repeatableStrings) String() string {
-	if r == nil {
-		return ""
-	}
-	return strings.Join([]string(*r), " ")
-}
-
-func (r *repeatableStrings) Set(v string) error {
-	*r = append(*r, v)
-	return nil
-}
-
-// capsFlag is the optional --caps flag on submit / interactive / session new.
-// It has to tell "not given" apart from "none": Capability_None is a real
-// grantable value — a shell session with no capabilities is a normal thing to
-// want — so a zero mask cannot stand in for absence. Value() returns nil when
-// the flag never appeared and app.go falls back to the session default.
-type capsFlag struct {
-	set bool
-	val protocol.Capability
-}
-
-func (c *capsFlag) String() string {
-	if c == nil || !c.set {
-		return ""
-	}
-	return cli.CapsLabel(c.val)
-}
-
-func (c *capsFlag) Set(v string) error {
-	parsed, err := cli.ParseCaps(v)
-	if err != nil {
-		return err
-	}
-	c.set, c.val = true, parsed
-	return nil
-}
-
-func (c *capsFlag) Value() *protocol.Capability {
-	if c == nil || !c.set {
-		return nil
-	}
-	v := c.val
-	return &v
-}
-
-const capsFlagUsage = "capability mask for this spawn (overrides the `caps` default); " +
-	"names are comma-separated and may be subtracted, e.g. all,-spawn"
-
-// scopeForFlag collects repeatable --scope-for values, parsing and merging on
-// each Set so an overlapping capability list is refused at the flag rather
-// than a round trip later. Mirrors cmd/harness-cli's, deliberately: the two
-// surfaces must reject the same input for the same reason.
-type scopeForFlag struct{ out []protocol.ScopeOverride }
-
-func (f *scopeForFlag) String() string { return cli.OverridesLabel(f.out) }
-
-func (f *scopeForFlag) Set(v string) error {
-	_, ov, err := cli.ParseScopeFor(v)
-	if err != nil {
-		return err
-	}
-	merged, err := cli.MergeScopeOverride(f.out, ov)
-	if err != nil {
-		return err
-	}
-	f.out = merged
-	return nil
-}
-
-// scopeFlag is the optional --scope flag on submit / interactive / session
-// new — the target-set half of capsFlag, with the same "not given" vs "given
-// the zero value" distinction (base subtree is the zero TaskScope).
-type scopeFlag struct {
-	set bool
-	val protocol.TaskScope
-}
-
-func (s *scopeFlag) String() string {
-	if s == nil || !s.set {
-		return ""
-	}
-	return cli.ScopeLabel(s.val)
-}
-
-func (s *scopeFlag) Set(v string) error {
-	parsed, err := cli.ParseScope(v)
-	if err != nil {
-		return err
-	}
-	s.set, s.val = true, parsed
-	return nil
-}
-
-func (s *scopeFlag) Value() *protocol.TaskScope {
-	if s == nil || !s.set {
-		return nil
-	}
-	v := s.val
-	return &v
-}
-
-const scopeFlagUsage = "target scope for this spawn (overrides the `scope` default): " +
-	cli.ScopeGrammar + "; on a resume it re-grants the scope (omitted = keep the task's), independently of --caps"
-
 func parseCancel(args []string) (Action, error) {
 	return parseViaSpec("cancel", args)
 }
@@ -490,11 +379,6 @@ func parseWorkspace(args []string) (Action, error) {
 	return parseViaSpec2("workspace", args[0], args[1:])
 }
 
-// parsePermutedFlags parses fs while tolerating flags that appear after
-// positional arguments, by peeling positionals one at a time and re-parsing
-// the remainder. Go's flag package stops at the first non-flag token, so
-// without this `git <id> diff HEAD --staged` would silently drop --staged.
-//
 // parseGit parses `git <task-id> {log|diff|show|status} ...` with the same
 // grammar harness-cli uses, so a hand that learned one surface knows the other.
 func parseGit(args []string) (Action, error) {

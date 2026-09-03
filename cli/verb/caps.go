@@ -224,11 +224,14 @@ func CapsLabel(c protocol.Capability) string {
 	return strings.Join(names, ",")
 }
 
-// CapsFlagUsage is the --caps help text shared by submit / interactive /
-// session new (cmd/harness-cli). It lived as three identical literals, which is
-// exactly the shape that ends up describing two different defaults after one
-// edit. The TUI keeps its own text because its flag overrides a session
-// default rather than the parser default (tui/cmdline.go capsFlagUsage).
+// CapsFlagUsage is the --caps help text for submit / interactive / session
+// new. It lived as three identical literals, which is exactly the shape that
+// ends up describing two different defaults after one edit.
+//
+// One text on every surface now. The TUI used to carry its own (capsFlagUsage
+// there, deleted with the rest of its hand-written flag types) because its
+// flag overrode a session default rather than the parser default; it parses
+// from the declaration, so there is one --caps and one description of it.
 const CapsFlagUsage = "comma-separated capability names to grant the task " +
 	"(e.g. spawn,file_read / all / none); a name may be subtracted with a " +
 	"leading dash, as in all,-spawn; default: none — a spawn grants nothing " +

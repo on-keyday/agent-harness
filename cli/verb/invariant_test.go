@@ -237,12 +237,21 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 		"parseSpawnTUI": true, "Lookup": true,
 	}
 	seen := map[string]bool{}
+	// EVERY top-level func in the file, not just the ones spelled `parse*`.
+	// Scanning by name prefix left two ways through, both confirmed by
+	// negative control: the same hand walk moved inline into ParseCommand (a
+	// capital P), and parseNotify renamed to handleNotify.
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "parse") {
+		if !ok || fn.Recv != nil || fn.Body == nil {
 			continue
 		}
 		if gateways[fn.Name.Name] {
+			continue
+		}
+		// A function that never looks at argv is not a parser. The tell is
+		// indexing or ranging a []string parameter.
+		if !takesArgs(fn) {
 			continue
 		}
 		seen[fn.Name.Name] = true
@@ -279,6 +288,23 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 				"tuiParseNotDeclared with the reason.", fn.Name.Name, fn.Name.Name)
 		}
 	}
+}
+
+// takesArgs reports whether a function has a []string parameter -- the shape
+// every verb parser in this file has, and the thing a hand-written token walk
+// needs.
+func takesArgs(fn *ast.FuncDecl) bool {
+	if fn.Type.Params == nil {
+		return false
+	}
+	for _, p := range fn.Type.Params.List {
+		if at, ok := p.Type.(*ast.ArrayType); ok {
+			if id, ok := at.Elt.(*ast.Ident); ok && id.Name == "string" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // An exemption that outlives its function is a rule nobody is following.

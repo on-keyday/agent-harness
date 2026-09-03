@@ -3,7 +3,9 @@ package verb
 import (
 	"flag"
 	"io"
+	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -334,82 +336,59 @@ func valueFor(a Arg) string {
 	return "probe-arg"
 }
 
-// TestBuildReadsNoUndeclaredFlagName is the other direction: a Build that
-// looks up a name the verb does not declare gets a zero value with no error,
-// so a rename in the table leaves the Build silently reading nothing.
+// TestBuildLookupNamesAreDeclared is the other direction, and the docstring
+// above promised it by name long before it existed: `grep` for it returned one
+// hit, that promise.
 //
-// Checked by parsing with EVERY declared flag set to a distinctive value and
-// then asserting the built Action carries no zero-valued string field that a
-// declared flag should have filled. It is coarse -- it cannot see a lookup
-// whose result is discarded -- so the exact-name check lives in
-// TestBuildLookupNamesAreDeclared, which reads the source.
-func TestBuildReadsNoUndeclaredFlagName(t *testing.T) {
+// Bound.Str / Bool / Flags / Set / Custom are map lookups whose comma-ok is
+// discarded, so a name the declaration does not have yields "" or false with
+// no error. In GENERATED code that cannot happen -- the key and the Field come
+// from one Flag -- but every hand-written reader is exposed: Validate funcs,
+// the Derived and Convert helpers, and the surfaces.
+//
+// So this reads the source rather than probing behaviour. The version it
+// replaces built an all-flags-set line and looked for each probe value in the
+// result, which skipped every Trailing verb outright and gave up whenever a
+// cross-flag rule refused the all-flags form: measured, it reached 20 of 80
+// verb paths and could not see `notify`'s title read as "titel".
+func TestBuildLookupNamesAreDeclared(t *testing.T) {
+	declared := map[string]bool{}
 	for _, v := range Verbs {
-		if v.Trailing != nil {
-			continue
-		}
-		var args []string
 		for _, f := range v.Flags {
-			if f.Custom != nil {
-				continue
-			}
-			switch f.Type {
-			case FlagBool:
-				if d, _ := f.Default.(bool); !d {
-					args = append(args, "--"+f.Name)
-				}
-			case FlagString:
-				args = append(args, "--"+f.Name, "probe-"+f.Name)
-			case FlagUint, FlagUint64:
-				args = append(args, "--"+f.Name, "7")
-			case FlagDuration:
-				args = append(args, "--"+f.Name, "3m")
+			declared[f.Name] = true
+			for _, a := range f.Aliases {
+				declared[a] = true
 			}
 		}
-		args = append(args, positionalsFor(v)...)
+	}
+	// b.Str("x") / b.Bool("x") / b.Flags["x"] / b.Set["x"] / b.Custom["x"],
+	// however the receiver is spelled.
+	pat := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.(?:Str|Bool)\("([^"]+)"\)|\b[A-Za-z_][A-Za-z0-9_]*\.(?:Flags|Set|Custom)\["([^"]+)"\]`)
 
-		fs := v.NewFlagSet(flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		b, err := v.Parse(fs, args)
-		if err != nil {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		act, err := v.BuildFunc()(b)
-		if err != nil {
-			continue // a cross-flag rule refused the all-flags-set form
+		src, rerr := os.ReadFile(e.Name())
+		if rerr != nil {
+			t.Fatal(rerr)
 		}
-		// Every declared string flag's probe value must appear somewhere in
-		// the built action; one that does not is either unread (the test
-		// above) or read under a different name.
-		rv := reflect.ValueOf(act)
-		var seen []string
-		for i := 0; i < rv.NumField(); i++ {
-			if s, ok := rv.Field(i).Interface().(string); ok && s != "" {
-				seen = append(seen, s)
+		for _, m := range pat.FindAllStringSubmatch(string(src), -1) {
+			name := m[1]
+			if name == "" {
+				name = m[2]
 			}
-		}
-		for _, f := range v.Flags {
-			if f.Type != FlagString || f.Custom != nil {
+			if declared[name] {
 				continue
 			}
-			if _, exempt := flagNotInAction[v.FlagSetName()+"."+f.Name]; exempt {
-				continue
-			}
-			want := "probe-" + f.Name
-			found := false
-			for _, s := range seen {
-				if strings.Contains(s, want) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("%s: --%s parses but its value is not in the built Action (looked for %q among %q).\n"+
-					"Bound.Str is a map lookup whose comma-ok is discarded, so reading a name the "+
-					"declaration does not have returns \"\" silently -- which is what a rename in "+
-					"the table leaves behind.",
-					v.FlagSetName(), f.Name, want, seen)
-			}
+			t.Errorf("%s: reads %q off a Bound, and no verb declares a flag by that name.\n"+
+				"These are map lookups with the comma-ok discarded, so the value is \"\" or "+
+				"false and nothing fails -- which is what a rename in the table leaves behind.",
+				e.Name(), name)
 		}
 	}
 }
