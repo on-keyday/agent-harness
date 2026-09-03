@@ -15,8 +15,12 @@ func (v VerbSpec) Usage() string {
 	b.WriteString("usage: ")
 	b.WriteString(v.FlagSetName())
 	for _, f := range v.Flags {
-		b.WriteString(" [--")
-		b.WriteString(f.Name)
+		// One dash for a single letter. `forward -W host:port` is how it is
+		// typed, and a usage line printing --W describes a flag that does not
+		// exist -- which is the `board purge` failure shape exactly: a
+		// documented invocation the parser refuses.
+		b.WriteString(" [")
+		b.WriteString(dashList([]string{f.Name}))
 		if f.Type != FlagBool {
 			b.WriteString(" ")
 			b.WriteString(strings.ToUpper(f.Name))

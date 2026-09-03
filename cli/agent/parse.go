@@ -27,7 +27,7 @@ func parseAgentVerb(sub string, args []string) (verb.AgentAction, error) {
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, args)
 	if err != nil {
-		return verb.AgentAction{}, fmt.Errorf("agent %s: %w", sub, err)
+		return verb.AgentAction{}, err // Parse names the verb itself
 	}
 	act, err := sp.BuildFunc()(b)
 	if err != nil {

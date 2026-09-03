@@ -253,7 +253,7 @@ func parseViaSpec(path string, args []string) (Action, error) {
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, args)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err // Parse names the verb itself
 	}
 	return sp.BuildFunc()(b)
 }
@@ -892,7 +892,7 @@ func parseViaSpec2(head, sub string, args []string) (Action, error) {
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, args)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", head, sub, err)
+		return nil, err // Parse names the verb itself
 	}
 	return sp.BuildFunc()(b)
 }
@@ -916,7 +916,7 @@ func parseSpawnTUI(kind string, args []string, defaultRepo string) (Action, erro
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, args)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", kind, err)
+		return nil, err // Parse names the verb itself
 	}
 	act, err := sp.BuildFunc()(b)
 	if err != nil {

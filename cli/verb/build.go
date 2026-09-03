@@ -103,7 +103,13 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 		positionals = fs.Args()
 	}
 	if err != nil {
-		return Bound{}, err
+		// Named HERE, once. `flag`'s own message is "flag provided but not
+		// defined: -x" with no hint which verb refused it, and the callers
+		// were split: four wrapped it with the verb name and eleven returned
+		// it bare -- so the same mistake read differently depending on where
+		// it was typed, and the four produced "agent subscribe: agent
+		// subscribe: …" once the declared checks started naming it too.
+		return Bound{}, fmt.Errorf("%s: %w", v.FlagSetName(), err)
 	}
 
 	b := Bound{
@@ -235,7 +241,16 @@ func (v VerbSpec) checkArity(n int) error {
 		return fmt.Errorf("%s", v.Usage())
 	}
 	if n < v.MinArgs {
-		return fmt.Errorf("%s: at least %d positional(s)\n%s", v.FlagSetName(), v.MinArgs, v.Usage())
+		what := "argument"
+		if len(v.Args) > 0 {
+			what = v.Args[len(v.Args)-1].Name
+		}
+		plural := ""
+		if v.MinArgs > 1 {
+			plural = "s"
+		}
+		return fmt.Errorf("%s: needs at least %d %s%s\n%s",
+			v.FlagSetName(), v.MinArgs, what, plural, v.Usage())
 	}
 	if max := v.maxArgs(); max >= 0 && n > max {
 		return fmt.Errorf("%s: at most %d positional(s), got %d\n%s", v.FlagSetName(), max, n, v.Usage())
