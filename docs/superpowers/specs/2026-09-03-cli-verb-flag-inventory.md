@@ -132,6 +132,53 @@ This also refines the design spec's claim that `cli.ParsePermuted` has zero
 callers under `tui/`: literally true, and misleading. The TUI has its own copy
 and applies it to one family out of twelve.
 
+## What was tested, and what this inventory does not establish
+
+Four falsifiers were run against the census rather than asserting it was
+complete. All came back clean:
+
+| Falsifier | Result |
+| --- | --- |
+| Repo-wide `grep -c NewFlagSet` vs the AST walk's count | 70 = 70. The only FlagSet outside the scanned directories is `cmd/harness-stream-adapter`'s own process flags |
+| Every `tokenize(` call in `main.js` | Three: the definition, `runCmd`, and `currentClaudeArgs` (:458-463) — an option's value field, not a second verb parser |
+| Every `ParseCommand` / `shlex` site under `tui/` | One parse site (`app.go:2473`); `popup.go:133-141` is the submit popup's args field, the TUI twin of `currentClaudeArgs` |
+| Non-literal flag names in `main.js` (`"--" +`, comparison against a variable) | None. The regex count is sound for that file |
+
+Also confirmed shared rather than duplicated: the forward spec grammar
+(`cli.ParseForwardSpec` / `ParseRemoteForwardSpec` / `ParseStdioForwardSpec`,
+called from `tui/portforward.go:294` with no self-split) — a fourth existing
+SSOT precedent alongside `ParseCaps`/`ParseScope`, `ParseGridArgs`, and the
+`ParsePermuted` that got copied instead.
+
+**Five things this inventory does NOT establish.** They are named because a
+count that hides its own limits is the failure this document exists to fix.
+
+1. **It counts names, not meanings.** The `list` / `ls` case (D17) proved two
+   surfaces can share a verb and return different things. The equivalent check
+   has not been done per flag: if `--force` means something different on two
+   surfaces, this census reports them as identical. That is D17 one level
+   down, and it is unchecked.
+2. **The WebUI numbers are a reading, not a parse.** `runCmd`, `runFileCmd`,
+   `runGitCmd` and the handlers they call were read; 7747 lines were not. A
+   flag consumed somewhere else in that file would be missed.
+3. **Widgets that carry typed values are not enumerated.** The forward spec
+   was checked and is shared. The grid selection, cap chips, resize dialog and
+   the rest were not: they feed the same actions without going through verb
+   grammar, and any one of them that parses a string by its own rules is an
+   uncounted consumer.
+4. **Prose consumers are not enumerated per flag.** `SKILL.md` mentions this
+   grammar 67 times and README is 1222 lines; both drift like `usage()` does.
+5. **The scanned directory set was chosen, not derived.** Falsifier 1 tests
+   that choice for FlagSets, but a hand-rolled parser in some other client
+   file contains no `NewFlagSet` and would not be caught by it. The
+   `tokenize`/`shlex`/`ParseCommand` sweep mitigates this with keywords that
+   were also chosen.
+
+Items 1 and 3 are the ones most likely to bite, and both are cheap to close
+once the declaration exists: a shared path's flags become comparable by
+construction, and a widget that feeds an action becomes visible when the
+action is declared.
+
 ## Consequences for the design
 
 1. **`Arg` needs `Surfaces` too, not just `Flag` (D19).** `file push` and `file
