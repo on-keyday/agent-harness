@@ -148,9 +148,13 @@ func execResultLine(taskID string, argv []string, res cli.ExecRunResult) string 
 func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 	switch v.Sub {
 	case "ls":
+		// TaskFilter, not TaskID: `exec ls --task <id>` NARROWS a listing,
+		// where every other exec verb's id names the task to act on. They
+		// were one field until the declaration split them, and reading the
+		// wrong one here made the filter silently list everything.
 		filter := ""
-		if v.TaskID != "" {
-			full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if v.TaskFilter != "" {
+			full, errStr := a.resolveTaskIDPrefix(v.TaskFilter)
 			if errStr != "" {
 				a.cmdresult.Append(ErrorStyle.Render("exec ls: " + errStr))
 				return nil

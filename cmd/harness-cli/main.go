@@ -257,6 +257,7 @@ func main() {
 		if !ok {
 			die(fmt.Errorf("prune: not in the verb table"))
 		}
+		sp = sp.For(verb.CLI) // every other call site narrows; BuildFunc keys on it
 		fs := sp.NewFlagSet(flag.ExitOnError)
 		b, perr := sp.Parse(fs, args)
 		if perr != nil {

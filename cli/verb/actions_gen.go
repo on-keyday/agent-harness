@@ -427,8 +427,10 @@ type SessionAction struct {
 	Deny bool
 	// with --deny, the reason. It reaches the AGENT verbatim as a failed tool result
 	Message string
-	// with --allow, an updated input
-	Suggestion string
+	// whether --suggestion was typed, which its zero value cannot say
+	SuggestionSet bool
+	// accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop …
+	Suggestion uint
 	RequestID  string
 }
 
@@ -514,7 +516,7 @@ type SpawnAction struct {
 	Kind string
 	// forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server
 	X11 bool
-	// with --x11: the local display number (0..99)
+	// with --x11: the local display number (0..99, default 10)
 	X11Display uint
 	// start the session and exit immediately (don't attach the terminal)
 	Detach bool
@@ -2144,44 +2146,6 @@ func init() {
 			}
 			return a, nil
 		},
-		"session snapshot\x00tui": func(b Bound) (Action, error) {
-			a := SessionAction{}
-			a.Sub = "snapshot"
-			a.Rows = uintOf(b.Flags["rows"])
-			a.Cols = uintOf(b.Flags["cols"])
-			a.SettleMs = uintOf(b.Flags["settle-ms"])
-			a.Style = b.Bool("style")
-			a.Color = b.Bool("color")
-			a.WithoutSynth = b.Bool("without-synth")
-			a.Raw = b.Bool("raw")
-			a.JSON = b.Bool("json")
-			a.ANSI = b.Bool("ansi")
-			a.Detect = b.Bool("detect")
-			a.DetectAgent = b.Str("detect-agent")
-			if len(b.Args) > 0 {
-				a.TaskID = b.Args[0]
-			}
-			return a, nil
-		},
-		"session snapshot\x00webui": func(b Bound) (Action, error) {
-			a := SessionAction{}
-			a.Sub = "snapshot"
-			a.Rows = uintOf(b.Flags["rows"])
-			a.Cols = uintOf(b.Flags["cols"])
-			a.SettleMs = uintOf(b.Flags["settle-ms"])
-			a.Style = b.Bool("style")
-			a.Color = b.Bool("color")
-			a.WithoutSynth = b.Bool("without-synth")
-			a.Raw = b.Bool("raw")
-			a.JSON = b.Bool("json")
-			a.ANSI = b.Bool("ansi")
-			a.Detect = b.Bool("detect")
-			a.DetectAgent = b.Str("detect-agent")
-			if len(b.Args) > 0 {
-				a.TaskID = b.Args[0]
-			}
-			return a, nil
-		},
 		"session stream attach\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "stream-attach"
@@ -2266,7 +2230,8 @@ func init() {
 			a.Allow = b.Bool("allow")
 			a.Deny = b.Bool("deny")
 			a.Message = b.Str("message")
-			a.Suggestion = b.Str("suggestion")
+			a.SuggestionSet = b.Set["suggestion"]
+			a.Suggestion = uintOf(b.Flags["suggestion"])
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -2282,7 +2247,8 @@ func init() {
 			a.Allow = b.Bool("allow")
 			a.Deny = b.Bool("deny")
 			a.Message = b.Str("message")
-			a.Suggestion = b.Str("suggestion")
+			a.SuggestionSet = b.Set["suggestion"]
+			a.Suggestion = uintOf(b.Flags["suggestion"])
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -2298,7 +2264,8 @@ func init() {
 			a.Allow = b.Bool("allow")
 			a.Deny = b.Bool("deny")
 			a.Message = b.Str("message")
-			a.Suggestion = b.Str("suggestion")
+			a.SuggestionSet = b.Set["suggestion"]
+			a.Suggestion = uintOf(b.Flags["suggestion"])
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]

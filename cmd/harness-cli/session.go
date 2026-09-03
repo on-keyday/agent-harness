@@ -186,14 +186,17 @@ func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
 	resp := streamagent.Response{ID: a.RequestID}
 	if a.Allow {
 		resp.Behavior = streamagent.BehaviorAllow
-		if a.Suggestion != "" {
-			// The suggestion is a JSON object the agent gets as its updated
-			// tool input, so it crosses as raw JSON rather than a string.
-			resp.UpdatedInput = json.RawMessage(a.Suggestion)
-		}
 	} else {
 		resp.Behavior = streamagent.BehaviorDeny
 		resp.Message = a.Message
+	}
+	// Outside the verdict: a suggestion is a STANDING change ("stop asking for
+	// this tool"), so it accompanies a deny as readily as an allow. The TUI
+	// (tui/chat.go) and the WebUI both send it; the CLI stopped being able to
+	// when this flag was re-read as a JSON payload.
+	if a.SuggestionSet {
+		n := int(a.Suggestion)
+		resp.AcceptSuggestion = &n
 	}
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)

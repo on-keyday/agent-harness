@@ -70,6 +70,22 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"exec kill", nil, "at least"},
 		{"forward kill", nil, "at least"},
 
+		// session snapshot: three refusals that were deleted with its Build and
+		// only came back after an audit read the deleted lines.
+		{"session snapshot", []string{id, "--raw", "--ansi"}, "mutually exclusive"},
+		{"session snapshot", []string{id, "--json", "--ansi"}, "mutually exclusive"},
+		{"session snapshot", []string{id, "--detect-agent", "codex"}, "needs --detect"},
+
+		// session stream approve: --message is the DENY reason.
+		{"session stream approve", []string{id, "req-1", "--allow", "--message", "why"}, "mutually exclusive"},
+
+		// forward tap --max-bytes is uint32 on the wire; a larger number was
+		// silently truncated (4294967297 read as a 1-byte cut).
+		{"forward tap", []string{"7", "--max-bytes", "4294967297"}, "out of range"},
+
+		// board retract has no whole-topic form, so --seq 0 is not an answer.
+		{"board retract", []string{"chat.abcd1234", "--seq", "0"}, "non-zero"},
+
 		// The agent verbs name a topic or their own, never both.
 		{"agent subscribe", []string{"--self", "--topic", "chat.abcd1234"}, "mutually exclusive"},
 	} {
@@ -113,6 +129,13 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"grid", []string{id}},
 		{"caps set", []string{id, "--scope", "subtree", "--scope-for", "spawn=none"}},
 		{"caps set-parent", []string{id, "--none"}},
+		{"session snapshot", []string{id, "--raw"}},
+		{"session snapshot", []string{id, "--detect", "--detect-agent", "codex"}},
+		{"session stream approve", []string{id, "req-1", "--allow"}},
+		{"session stream approve", []string{id, "req-1", "--deny", "--message", "no"}},
+		{"session stream approve", []string{id, "req-1", "--allow", "--suggestion", "0"}},
+		{"forward tap", []string{"7", "--max-bytes", "4096"}},
+		{"board retract", []string{"chat.abcd1234", "--seq", "5"}},
 	} {
 		v, ok := Lookup(strings.Fields(tc.verb)...)
 		if !ok {

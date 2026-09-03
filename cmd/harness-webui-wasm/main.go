@@ -3526,13 +3526,20 @@ func harnessForwardTap(this js.Value, args []js.Value) any {
 // Action, because an Action boundary would need one marshaller per action
 // type, which is the duplication this design removes.
 //
-//	harness.parseCommand(line, {repo, host, agent}) -> {path, args, flags, set, trail}
-//	                                                 | {error: "..."}
+//	harness.parseCommand(tokens, {repo, host, agent}) -> {path, args, flags, set, trail}
+//	                                                   | {error: "..."}
+//
+// tokens is the caller's ALREADY-TOKENIZED array. A raw string was accepted
+// once and split with strings.Fields, which splits inside quotes: `submit
+// --task "hello world"` arrived as --task=`"hello` with `world"` trailing, and
+// `file mkdir <id> "my dir"` became three positionals. The page tokenizes
+// quote-aware already (tokenize() in main.js); it just was not handing the
+// result over. A string is still accepted for callers with nothing to quote.
 func harnessParseCommand(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return js.ValueOf(map[string]any{"error": "parseCommand: missing line"})
 	}
-	fields := strings.Fields(args[0].String())
+	fields := commandFields(args[0])
 	if len(fields) == 0 {
 		return js.ValueOf(map[string]any{"error": "parseCommand: empty line"})
 	}
@@ -3645,15 +3652,32 @@ func harnessPathsForSurface(this js.Value, args []js.Value) any {
 // lookupPath resolves the longest declared verb path that prefixes fields,
 // and returns the arguments after it.
 func lookupPath(fields []string) (verb.VerbSpec, []string, bool) {
-	if len(fields) >= 2 {
-		if sp, ok := verb.Lookup(fields[0], fields[1]); ok {
-			return sp, fields[2:], true
+	// Longest first, and up to verb.MaxPathLen rather than a literal 2: the
+	// three-word paths (`session stream turn` and its four siblings) are all
+	// declared for this surface and none of them could be looked up while this
+	// stopped at two.
+	for n := verb.MaxPathLen; n >= 1; n-- {
+		if len(fields) < n {
+			continue
+		}
+		if sp, ok := verb.Lookup(fields[:n]...); ok {
+			return sp, fields[n:], true
 		}
 	}
-	if sp, ok := verb.Lookup(fields[0]); ok {
-		return sp, fields[1:], true
-	}
 	return verb.VerbSpec{}, nil, false
+}
+
+// commandFields takes either the caller's tokenized array or a bare string.
+func commandFields(v js.Value) []string {
+	if v.Type() == js.TypeObject && v.Get("length").Type() == js.TypeNumber {
+		n := v.Get("length").Int()
+		out := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, v.Index(i).String())
+		}
+		return out
+	}
+	return strings.Fields(v.String())
 }
 
 // harnessParseGit parses one `git <sub> ...` line and returns the RESOLVED
@@ -3675,7 +3699,7 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return js.ValueOf(map[string]any{"error": "parseGit: missing line"})
 	}
-	fields := strings.Fields(args[0].String())
+	fields := commandFields(args[0])
 	if len(fields) < 2 || fields[0] != "git" {
 		return js.ValueOf(map[string]any{"error": "parseGit: want `git <sub> ...`"})
 	}

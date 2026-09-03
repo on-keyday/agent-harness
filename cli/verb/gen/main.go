@@ -56,6 +56,7 @@ func main() {
 
 	actions := map[string]*action{}
 	var names []string
+	builds := 0
 
 	for _, v := range verb.Verbs {
 		if v.Action == "" {
@@ -97,7 +98,7 @@ func main() {
 				a.add(field{name: v.Trailing.FieldArgs, goType: "[]string", comment: v.Trailing.Reason})
 			}
 		}
-		for name := range v.Const {
+		for _, name := range sortedKeys(v.Const) {
 			a.add(field{name: name, goType: "string"})
 		}
 		for _, d := range v.Derived {
@@ -108,8 +109,8 @@ func main() {
 			a.add(field{name: v.Modes.Field, goType: "string",
 				comment: strings.Join(v.Modes.Names, " | ")})
 		}
-		for name, typ := range v.ExtraFields {
-			a.add(field{name: name, goType: typ,
+		for _, name := range sortedKeys(v.ExtraFields) {
+			a.add(field{name: name, goType: v.ExtraFields[name],
 				comment: "set by the surface after Build, not by the parse"})
 		}
 	}
@@ -170,6 +171,7 @@ import (
 			}
 			nv := v.For(sf.s)
 			emitBuild(&buf, nv, v.FlagSetName()+"\x00"+sf.name, v.Action)
+			builds++
 		}
 	}
 	buf.WriteString("\t})\n}\n")
@@ -184,16 +186,15 @@ import (
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("gen: %d action types, %d builds\n", len(names), countGenerated())
+	fmt.Printf("gen: %d action types, %d verbs, %d builds\n", len(names), countGenerated(), builds)
 }
 
 // emitBuild writes one build func for a verb already narrowed to a surface.
 func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 	{
 		fmt.Fprintf(buf, "\t\t%q: func(b Bound) (Action, error) {\n\t\t\ta := %s{}\n", key, action)
-		for name, val := range sortedConst(v.Const) {
-			_ = name
-			fmt.Fprintf(buf, "\t\ta.%s = %q\n", val[0], val[1])
+		for _, name := range sortedKeys(v.Const) {
+			fmt.Fprintf(buf, "\t\ta.%s = %q\n", name, v.Const[name])
 		}
 		for _, f := range v.Flags {
 			if f.PresenceField != "" {
@@ -309,6 +310,8 @@ func (a *action) add(f field) {
 	a.order = append(a.order, f.name)
 }
 
+// countGenerated counts VERBS carrying an Action -- not builds, of which
+// there is one per (verb, surface) and therefore about twice as many.
 func countGenerated() int {
 	n := 0
 	for _, v := range verb.Verbs {
@@ -416,18 +419,18 @@ func readerForFlag(f verb.Flag) string {
 	return fmt.Sprintf("b.Str(%q)", f.Name)
 }
 
-// sortedConst yields Const in a stable order so the output does not churn.
-func sortedConst(m map[string]string) map[string][2]string {
-	out := map[string][2]string{}
-	var keys []string
+// sortedKeys yields a map's keys in a stable order so the output does not
+// churn. It returns a SLICE: the first version sorted into another map and the
+// caller ranged that, which discards the sort entirely. Harmless only while no
+// verb declared two Const keys -- the day one did, the staleness test would
+// have started failing on ~40% of runs, blaming table.go.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	for _, k := range keys {
-		out[k] = [2]string{k, m[k]}
-	}
-	return out
+	return keys
 }
 
 // singular renders a positional's name the way the hand-written errors did:

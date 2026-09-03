@@ -2307,23 +2307,72 @@ const POLL_INTERVAL_MS = 5000;
     }
   };
 
-  // RUNCMD_HEADS lists the head words the switch below actually
-  // dispatches on, so the startup check tests the REAL dispatch. The
-  // first version of that check compared the declaration against a
-  // hand-written set instead, which is how `ls` shipped declared for
-  // this surface with no case to reach it: the set said "ls", the
-  // declaration said "ls", and nobody had written the case.
-  const RUNCMD_HEADS = new Set(["cancel", "caps", "exec", "file", "forward", "git", "grid", "help", "ls", "preview", "prune", "refresh", "server", "session", "submit", "sync"]);
+  // How runCmd answers each declared path: a window.harness.* function, or a
+  // named cached value with the bound on its staleness. Design D13 + D17.
+  //
+  // FULL paths, not head words. This was a set of 16 heads matched against
+  // p.split(" ")[0], and 27 of the 33 declared paths are multi-word -- so
+  // `session snapshot` (no case at all) and the five `session stream *` paths
+  // (which threw ReferenceError on an undeclared `args`) all passed the
+  // assertion on the strength of the word `session`.
+  const RUNCMD_DISPATCH = {
+    "submit": { fn: "submit" },
+    "cancel": { fn: "cancel" },
+    "prune": { fn: "prune" },
+    "ls": { fn: "list" },
+    "grid": { fn: "gridSet" },
+    "caps set-parent": { fn: "setParent" },
+    "server dial-runner": { fn: "serverDialRunner" },
+    "exec": { fn: "execRun" },
+    "exec ls": { fn: "execRunList" },
+    "exec kill": { fn: "execRunKill" },
+    "file push": { fn: "filePush" },
+    "file pull": { fn: "filePull" },
+    "file ls": { fn: "fileLs" },
+    "file mkdir": { fn: "fileMkdir" },
+    "file delete": { fn: "fileDelete" },
+    "file edit": { fn: "fileEdit" },
+    "file new": { fn: "fileNew" },
+    "git log": { fn: "gitQuery" },
+    "git diff": { fn: "gitQuery" },
+    "git show": { fn: "gitQuery" },
+    "git status": { fn: "gitQuery" },
+    "git subrepos": { fn: "gitQuery" },
+    "git file": { fn: "gitQuery" },
+    "forward ls": { cache: "lastForwards", stale: "one snapshot poll" },
+    "forward tap": { cache: "lastForwards", stale: "one snapshot poll" },
+    "forward kill": { fn: "forwardKill" },
+    "session await-idle": { fn: "awaitIdle" },
+    "session stream turn": { fn: "streamTurn" },
+    "session stream approve": { fn: "streamApprove" },
+    "session stream interrupt": { fn: "streamInterrupt" },
+    "session stream finish": { fn: "streamFinish" },
+    "session stream attach": { fn: "openChatFor" },
+  };
 
   // Every verb the declaration marks as reachable here must be dispatchable.
   // Asserted from inside the runtime that owns the dispatch: scanning this
   // file from a Go test would be a regex over JavaScript.
   {
     const declared = window.harness.pathsForSurface("webui");
-    const missing = declared.filter((p) => !RUNCMD_HEADS.has(p.split(" ")[0]));
+    const missing = declared.filter((p) => !RUNCMD_DISPATCH[p]);
     if (missing.length) {
       setStatus("webui: declared but not dispatchable: " + missing.join(", "), "error");
       throw new Error("webui dispatch is missing declared verbs: " + missing.join(", "));
+    }
+    // The other direction: an entry for a path the declaration does not give
+    // this surface is a promise nothing keeps.
+    const declaredSet = new Set(declared);
+    const orphans = Object.keys(RUNCMD_DISPATCH).filter((p) => !declaredSet.has(p));
+    if (orphans.length) {
+      throw new Error("webui dispatch names undeclared verbs: " + orphans.join(", "));
+    }
+    // Each entry must say HOW it answers, so a path served from a stale cache
+    // cannot be added without recording the bound (D17).
+    for (const [p, how] of Object.entries(RUNCMD_DISPATCH)) {
+      if (!how.fn && !(how.cache && how.stale)) {
+        throw new Error(`webui dispatch ${p}: needs {fn} or {cache, stale}`);
+      }
     }
   }
 
@@ -2348,7 +2397,7 @@ const POLL_INTERVAL_MS = 5000;
           if (!repo && !resumeTaskId) {
             throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
           }
-          const b = window.harness.parseCommand(line, {
+          const b = window.harness.parseCommand(tokens, {
             repo, host: hostSelect ? hostSelect.value || "" : "",
             agent: agentSelect ? agentSelect.value || "" : "",
           });
@@ -2374,14 +2423,14 @@ const POLL_INTERVAL_MS = 5000;
 
           // `caps set-parent` on the other surfaces; the shared declaration
           // enforces "exactly one of --parent / --none / --swap".
-          const b = window.harness.parseCommand("caps set-parent " + tokens.slice(2).join(" "), {});
+          const b = window.harness.parseCommand(["caps", "set-parent", ...tokens.slice(2)], {});
           if (b.error) throw new Error(b.error);
           const req = { taskId: b.args[0] };
           if (b.flags.swap) req.swap = true;
           else if (b.flags.none) req.parentId = "";
           else req.parentId = b.flags.parent;
-          out = await window.harness.setParent(req);
-          break;
+          out = setParentMessage(
+            b.args[0], req.swap === true, await window.harness.setParent(req));
           break;
         }
         case "ls": {
@@ -2391,7 +2440,7 @@ const POLL_INTERVAL_MS = 5000;
           // snapshot: one idea, two answers, which is what D17 forbids.
           // cli.Client.List was already exposed here as harness.list and
           // simply went unused.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           if (b.flags.filtered) {
             await refreshSnapshot();
@@ -2409,7 +2458,7 @@ const POLL_INTERVAL_MS = 5000;
           out = "snapshot refreshed";
           break;
         case "cancel": {
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           await window.harness.cancel(b.args[0]);
           out = "cancelled";
@@ -2424,11 +2473,18 @@ const POLL_INTERVAL_MS = 5000;
           // The grid grammar was already shared (cli.ParseGridArgs, which the
           // workspace config validates against too); this routes the command
           // input through the same declaration as everything else.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           // The declaration already refused --descendants without --under, so
           // the mode follows from what survived the parse.
           const under = b.flags.under || "";
+          // Full ids only. The TUI resolves a prefix against its task list
+          // (tui/app.go's GridAction case) and this surface has no resolver,
+          // so a half-typed id would silently select nothing.
+          const full = (id) => /^[0-9a-fA-F]{32}$/.test(id);
+          if (under && !full(under)) throw new Error("grid: --under needs a full 32-hex task id");
+          const bad = b.args.filter((id) => !full(id));
+          if (bad.length) throw new Error(`grid: not a full 32-hex task id: ${bad.join(", ")}`);
           const mode = under ? (b.flags.descendants ? "descendants" : "subtree")
                      : (b.args.length ? "ids" : "all");
           out = await openGridSet({ mode, anchor: under, ids: b.args });
@@ -2440,7 +2496,7 @@ const POLL_INTERVAL_MS = 5000;
           // the TUI parse. The hand-written --before / -f loop that used to
           // live here was a third independent copy of it, and the one that
           // spelled the task listing `list` while the others said `ls`.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           if (b.args.length > 0) {
             out = await window.harness.prune({ taskIds: b.args, force: !!b.flags.force });
@@ -2454,7 +2510,7 @@ const POLL_INTERVAL_MS = 5000;
           // per-sub-verb argument loops this case used to reach were a third
           // copy of this grammar -- and the copy where `file push` quietly
           // accepted no flags at all while the CLI and TUI took -r/-f/-p.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           out = await runFileAction(b);
           break;
@@ -2465,13 +2521,13 @@ const POLL_INTERVAL_MS = 5000;
           // the CLI and the TUI do.
           if (tokens.length < 2) throw new Error("git: usage: git <task-id> {log | diff | show | status | subrepos | file} [...]");
           const taskID = tokens[1];
-          const g = window.harness.parseGit("git " + tokens.slice(2).join(" "));
+          const g = window.harness.parseGit(["git", ...tokens.slice(2)]);
           if (g.error) throw new Error(g.error);
           out = await runGitAction(taskID, g);
           break;
         }
         case "server": {
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           const status = await window.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
           out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
@@ -2485,13 +2541,17 @@ const POLL_INTERVAL_MS = 5000;
           // Parsed by the shared declaration: --shell/--sshd-parent, the
           // optional `--` before the argv, and the refusal of `exec --shell
           // kill 3` (a sub-verb where a task id belongs) all come from there.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           const sub = b.path.length > 1 ? b.path[1] : "run";
           if (sub === "ls") {
             const es = await window.harness.execRunList(b.flags.task || undefined);
+            // execId / taskId / argvText are what harnessExecRunList emits
+            // (cmd/harness-webui-wasm/main.go). Reading exec_id / task / argv
+            // gave undefined, and `.slice(0,8)` on it threw as soon as one
+            // exec was running -- so this path only ever worked when empty.
             out = es.length
-              ? es.map((e) => `#${e.exec_id}  ${e.task.slice(0, 8)}…  ${e.argv}`).join("\n")
+              ? es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n")
               : "(no running execs)";
           } else if (sub === "kill") {
             await window.harness.execRunKill(Number(b.args[0]));
@@ -2506,7 +2566,7 @@ const POLL_INTERVAL_MS = 5000;
           // extra RPC. Starting a socket-bound forward is CLI-only (a browser
           // cannot bind a local listener), which the declaration says by
           // leaving the open form off this surface.
-          const b = window.harness.parseCommand(line, {});
+          const b = window.harness.parseCommand(tokens, {});
           if (b.error) throw new Error(b.error);
           const sub = b.path[1];
           if (sub === "ls") {
@@ -2540,68 +2600,67 @@ const POLL_INTERVAL_MS = 5000;
           // `session await-idle` is the canonical path on every surface; the
           // WebUI's old top-level `await-idle` spelling is gone (D16).
           if (tokens[1] === "await-idle") {
-
-          // Parsed by the shared declaration, which also refuses --notify with
-          // --topic: two sinks for one fire.
-          const b = window.harness.parseCommand("session await-idle " + tokens.slice(2).join(" "), {});
-          if (b.error) throw new Error(b.error);
-          const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
-          if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
-          const r = await window.harness.awaitIdle({
-            taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
-            sink, topic: b.flags.topic || undefined,
-          });
-          out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
-          break;
+            // Parsed by the shared declaration, which also refuses --notify
+            // with --topic: two sinks for one fire.
+            const b = window.harness.parseCommand(["session", "await-idle", ...tokens.slice(2)], {});
+            if (b.error) throw new Error(b.error);
+            const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
+            if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
+            const r = await window.harness.awaitIdle({
+              taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
+              sink, topic: b.flags.topic || undefined,
+            });
+            out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
             break;
           }
-          if (args[0] !== "stream") {
+          if (tokens[1] !== "stream") {
             appendCmdOutput("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
             break;
           }
-          const verb = args[1] || "";
-          const id = args[2] || chatTaskId;
-          if (!id) { appendCmdOutput("session stream: a task id is required (or open a chat first)"); break; }
+          // Parsed by the shared declaration like every other verb here. It
+          // was a hand-written token walk, whose stated reason -- "this input
+          // is whitespace-split with no flag parser" -- expired when
+          // parseCommand arrived; what it left behind was a `--allow` the CLI
+          // accepts and this surface swallowed as text, and a reference to an
+          // undeclared `args` that made all five paths throw ReferenceError.
+          const verb = tokens[2] || "";
+          if (verb === "requests" || verb === "snapshot") {
+            appendCmdOutput(`session stream ${verb}: specified (design §3) but not built yet`);
+            break;
+          }
+          // The task id defaults to the open chat, so it is spliced in before
+          // the parse rather than after: the declaration has no notion of
+          // "whatever is on screen".
+          const rest = tokens.slice(3);
+          const sid = (rest[0] && /^[0-9a-fA-F]{32}$/.test(rest[0])) ? rest.shift() : chatTaskId;
+          if (!sid) { appendCmdOutput("session stream: a task id is required (or open a chat first)"); break; }
+          const b = window.harness.parseCommand(["session", "stream", verb, sid, ...rest], {});
+          if (b.error) throw new Error(b.error);
           try {
             switch (verb) {
-              case "turn": {
-                const text = args.slice(3).join(" ");
-                if (!text) { appendCmdOutput("session stream turn: <id> <text...>"); break; }
-                await window.harness.streamTurn(id, text);
-                appendCmdOutput(`stream turn ${id.slice(0, 8)}: sent`);
+              case "turn":
+                await window.harness.streamTurn(sid, b.trail);
+                appendCmdOutput(`stream turn ${sid.slice(0, 8)}: sent`);
                 break;
-              }
               case "approve": {
-                // The verdict is a bare word, as in the TUI's command line and
-                // for the same reason: this input is whitespace-split with no
-                // flag parser, so a word cannot be silently dropped the way a
-                // misplaced --allow can — and this is the verb where that would
-                // be worst, since it decides the answer.
-                const reqID = args[3] || "";
-                const verdict = args[4] || "";
-                if (!reqID || (verdict !== "allow" && verdict !== "deny")) {
-                  appendCmdOutput("session stream approve: <id> <request-id> allow|deny [reason...]");
-                  break;
-                }
-                await window.harness.streamApprove(id, reqID, verdict, args.slice(5).join(" "), -1);
-                appendCmdOutput(`stream approve ${id.slice(0, 8)} ${reqID}: ${verdict}`);
+                const verdict = b.flags.allow ? "allow" : "deny";
+                await window.harness.streamApprove(
+                  sid, b.args[1], verdict, b.flags.message || "",
+                  b.set.suggestion ? b.flags.suggestion : -1);
+                appendCmdOutput(`stream approve ${sid.slice(0, 8)} ${b.args[1]}: ${verdict}`);
                 break;
               }
               case "interrupt":
-                await window.harness.streamInterrupt(id);
-                appendCmdOutput(`stream interrupt ${id.slice(0, 8)}: sent`);
+                await window.harness.streamInterrupt(sid);
+                appendCmdOutput(`stream interrupt ${sid.slice(0, 8)}: sent`);
                 break;
               case "finish":
-                await window.harness.streamFinish(id);
-                appendCmdOutput(`stream finish ${id.slice(0, 8)}: sent`);
+                await window.harness.streamFinish(sid);
+                appendCmdOutput(`stream finish ${sid.slice(0, 8)}: sent`);
                 break;
               case "attach":
-                await openChatFor(id);
-                appendCmdOutput(`stream attach ${id.slice(0, 8)}: chat opened`);
-                break;
-              case "requests":
-              case "snapshot":
-                appendCmdOutput(`session stream ${verb}: specified (design §3) but not built yet`);
+                await openChatFor(sid);
+                appendCmdOutput(`stream attach ${sid.slice(0, 8)}: chat opened`);
                 break;
               default:
                 appendCmdOutput(`unknown session stream verb ${JSON.stringify(verb)}`);
@@ -2617,15 +2676,16 @@ const POLL_INTERVAL_MS = 5000;
             "commands:",
             "  submit [--resume-conversation] [--agent <name>] <prompt...>",
             "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
-            "  list                      refresh the snapshot and echo task rows",
+            "  ls                        refresh the snapshot and echo task rows",
+            "  ls --filtered             only the rows the task-list filter admits",
             "  session stream turn [<id>] <text...>       send a user turn (id defaults to the open chat)",
-            "  session stream approve [<id>] <req-id> allow|deny [reason...]",
+            "  session stream approve [<id>] <req-id> (--allow | --deny [--message M])",
             "  session stream interrupt|finish|attach [<id>]",
             "  refresh (alias: sync)     force a snapshot re-sync",
-            "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
+            "  session await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
-            "  set-parent <task-id> (--parent <id> | --none | --swap)",
+            "  caps set-parent <task-id> (--parent <id> | --none | --swap)",
             "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
             "  preview <task-id>         live screen preview of a session — click it to type (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",

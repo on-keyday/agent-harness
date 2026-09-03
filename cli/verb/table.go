@@ -3,6 +3,7 @@ package verb
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -471,6 +472,11 @@ var Verbs = []VerbSpec{
 		// byte soup no decoder can read. No attribute says "this VALUE of one
 		// flag forbids that value of another", so it stays code.
 		Validate: func(b Bound) error {
+			// The field is uint32 on the wire, so a larger number silently
+			// became a small cut: 4294967297 read as 1 byte.
+			if mb := uintOf(b.Flags["max-bytes"]); uint64(mb) > math.MaxUint32 {
+				return fmt.Errorf("forward tap: --max-bytes %d is out of range", mb)
+			}
 			if b.Bool("raw") && b.Str("dir") == "both" {
 				return fmt.Errorf("forward tap: --raw needs an explicit --dir (to-target or from-target); " +
 					"both directions on one stdout is not a stream any decoder can read")
@@ -644,6 +650,16 @@ var Verbs = []VerbSpec{
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "retract"},
 		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		// Required is presence, and presence is not enough here: --seq 0 is
+		// purge's "the whole topic", and withdrawing a topic-full of other
+		// agents' messages on a mistyped flag is exactly the accident this
+		// verb must not be able to have. There is no whole-topic retract.
+		Validate: func(b Bound) error {
+			if uint64Of(b.Flags["seq"]) == 0 {
+				return fmt.Errorf("board retract: --seq must be non-zero (there is no whole-topic retract; `board read %s` lists the seqs)", b.Args[0])
+			}
+			return nil
+		},
 		Flags: []Flag{
 			{Name: "seq", Type: FlagUint64, Default: uint64(0), Required: true, Field: "Seq",
 				Help: "the message to withdraw; required — there is no whole-topic retract"},
@@ -1063,13 +1079,28 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session resize aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --size 40x150"},
 	},
 	{
-		Path: []string{"session", "snapshot"}, Surfaces: CLI | TUI | WebUI,
+		// CLI only. It renders a session's screen to STDOUT for something that
+		// reads text -- an agent driving a loop, a script. The TUI has its own
+		// session viewer and the WebUI a live preview panel, so neither has a
+		// route for a text render, and neither ever grew one: declared for all
+		// three, it was reachable on one, and the TUI's help was made to
+		// advertise a line its cmdline refuses.
+		Path: []string{"session", "snapshot"}, Surfaces: CLI,
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "snapshot"},
 		// --raw is the verbatim byte stream, so the renderers have nothing to
 		// act on: combining them asks for two different outputs at once.
-		Exclusive: []Rule{{Flags: []string{"raw", "style"}}, {Flags: []string{"raw", "color"}}, {Flags: []string{"raw", "json"}}, {Flags: []string{"raw", "detect"}}},
-		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Exclusive: []Rule{
+			{Flags: []string{"raw", "style"}}, {Flags: []string{"raw", "color"}},
+			{Flags: []string{"raw", "json"}}, {Flags: []string{"raw", "detect"}},
+			{Flags: []string{"ansi", "raw"},
+				Reason: "--ansi re-emits the final screen; --raw emits the whole replay verbatim"},
+			{Flags: []string{"ansi", "json"},
+				Reason: "--json encodes the render for a reader that parses; --ansi paints it for one that looks"},
+		},
+		Requires: []Requirement{{Flags: []string{"detect-agent"}, Needs: "detect",
+			Reason: "there is nothing to judge by without a judgement"}},
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
 			{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "fallback rows when the session reports no size"},
 			{Name: "cols", Type: FlagUint, Default: uint(120), Field: "Cols", Help: "fallback cols when the session reports no size"},
@@ -1118,6 +1149,10 @@ var Verbs = []VerbSpec{
 		// The verdict is the whole point of the verb, so neither omitting it
 		// nor giving both is an answer.
 		ExactlyOne: []Rule{{Flags: []string{"allow", "deny"}}},
+		// --message is the DENY reason. On an allow the agent gets no text at
+		// all, so naming one is a mistyped verdict, not a note.
+		Exclusive: []Rule{{Flags: []string{"allow", "message"},
+			Reason: "--message is the deny reason; an allow carries none"}},
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "request-id", Type: ArgString, Field: "RequestID"},
@@ -1127,7 +1162,13 @@ var Verbs = []VerbSpec{
 			{Name: "deny", Type: FlagBool, Default: false, Field: "Deny", Help: "refuse it"},
 			{Name: "message", Type: FlagString, Default: "", Field: "Message",
 				Help: "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result"},
-			{Name: "suggestion", Type: FlagString, Default: "", Field: "Suggestion", Help: "with --allow, an updated input"},
+			// An INDEX into the request's suggestions, not a payload. Its zero
+			// is the first suggestion, so presence is what says whether the
+			// operator picked one -- the pre-migration flag used -1 for that
+			// and this is the same distinction spelled in the declaration.
+			{Name: "suggestion", Type: FlagUint, Default: uint(0), Field: "Suggestion",
+				PresenceField: "SuggestionSet",
+				Help:          "accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop asking for this tool), not an answer to this one call"},
 			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs", Help: "ms to let the line drain"},
 		},
 		Examples: []string{"session stream approve aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa req-1 --allow"},
@@ -1244,6 +1285,20 @@ var Verbs = []VerbSpec{
 // Wiring it here rather than in the table literal is what keeps table.go free
 // of generated names -- so the package still compiles when actions_gen.go is
 // missing, which is the only way the generator can be run to produce it.
+// MaxPathLen is the longest verb path in the table -- `session stream turn` and
+// its siblings are three words. A lookup that walks candidate prefixes must
+// start here, not at a literal 2: the WebUI bridge hard-coded 2 and left every
+// three-word path unreachable.
+var MaxPathLen = func() int {
+	n := 0
+	for _, v := range Verbs {
+		if len(v.Path) > n {
+			n = len(v.Path)
+		}
+	}
+	return n
+}()
+
 func Lookup(path ...string) (VerbSpec, bool) {
 	for _, v := range Verbs {
 		if len(v.Path) != len(path) {

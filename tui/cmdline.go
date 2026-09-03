@@ -249,6 +249,12 @@ func parseViaSpec(path string, args []string) (Action, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s: not in the verb table", path)
 	}
+	// For(TUI) before anything else, like every sibling here: BuildFunc keys
+	// on the surface the spec was narrowed to, and an un-narrowed spec falls
+	// back to the FIRST declared surface -- the CLI for most of these. Latent
+	// while no verb on this path narrows a positional away, and silent when it
+	// stops being: a narrowed-away positional shifts every index after it.
+	sp = sp.For(verb.TUI)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, args)
