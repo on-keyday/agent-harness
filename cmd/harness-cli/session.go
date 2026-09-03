@@ -182,49 +182,26 @@ func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
 // flags-first, and this is the verb where a misplaced --allow/--deny would be
 // worst: it decides the answer.
 func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session stream approve", flag.ExitOnError)
-	allow := fs.Bool("allow", false, "run the tool as requested")
-	deny := fs.Bool("deny", false, "refuse it")
-	message := fs.String("message", "", "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result — operator-authored text entering a model's context, not a private note")
-	suggestion := fs.Int("suggestion", -1, "accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop asking for this tool), not an answer to this one call")
-	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
-	pos, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) != 2 {
-		return fmt.Errorf(`usage: session stream approve <id> <request-id> --allow | --deny [--message "reason"]
-The request id is the staleness guard: the adapter refuses an id it is not
-holding, so an answer aimed at a request that has gone is REFUSED rather than
-applied to whatever happens to be pending now. Read the pending request with
-` + "`session snapshot --raw <id>`" + ` (its input rides the stream verbatim; the
-task log's rendering drops it).`)
-	}
-	if *allow == *deny {
-		return fmt.Errorf("session stream approve: give exactly one of --allow or --deny")
-	}
-	if *allow && *message != "" {
-		return fmt.Errorf("session stream approve: --message is the DENY reason; an allow carries no message")
-	}
-	resp := streamagent.Response{ID: pos[1]}
-	if *allow {
+	a := parseSession("session stream approve", args)
+	resp := streamagent.Response{ID: a.RequestID}
+	if a.Allow {
 		resp.Behavior = streamagent.BehaviorAllow
+		if a.Suggestion != "" {
+			// The suggestion is a JSON object the agent gets as its updated
+			// tool input, so it crosses as raw JSON rather than a string.
+			resp.UpdatedInput = json.RawMessage(a.Suggestion)
+		}
 	} else {
 		resp.Behavior = streamagent.BehaviorDeny
-		resp.Message = *message
+		resp.Message = a.Message
 	}
-	if *suggestion >= 0 {
-		s := *suggestion
-		resp.AcceptSuggestion = &s
-	}
-
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.StreamApprove(ctx, pos[0], resp, time.Duration(*flushMs)*time.Millisecond)
+	return c.StreamApprove(ctx, a.TaskID, resp, time.Duration(a.FlushMs)*time.Millisecond)
 }
 
 // runSessionStreamSimple serves the two verbs that carry no payload.
@@ -232,16 +209,10 @@ task log's rendering drops it).`)
 // interrupt abandons the running TURN and the agent survives to take the next
 // one; finish closes the agent's stdin so it completes the turn in flight and
 // exits 0. Neither is `session kill`, which is a signal and discards the work.
-func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb string) error {
-	fs := flag.NewFlagSet("session stream "+verb, flag.ExitOnError)
-	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
-	pos, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) != 1 {
-		return fmt.Errorf("usage: session stream %s <id>", verb)
-	}
+func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verbName string) error {
+	a := parseSession("session stream "+verbName, args)
+	flush := time.Duration(a.FlushMs) * time.Millisecond
+	pos := []string{a.TaskID}
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -249,8 +220,7 @@ func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb strin
 		return err
 	}
 	defer c.Close()
-	flush := time.Duration(*flushMs) * time.Millisecond
-	if verb == "interrupt" {
+	if verbName == "interrupt" {
 		return c.StreamInterrupt(ctx, pos[0], flush)
 	}
 	return c.StreamFinish(ctx, pos[0], flush)
@@ -260,16 +230,8 @@ func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb strin
 // text — the live counterpart of reading its task log, plus the ring replay.
 // Read-only; Ctrl+C detaches and the task keeps running.
 func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session stream attach", flag.ExitOnError)
-	pos, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) != 1 {
-		return fmt.Errorf("usage: session stream attach <id>")
-	}
-	taskIDHex := pos[0]
-
+	a := parseSession("session stream attach", args)
+	taskIDHex := a.TaskID
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -285,59 +247,12 @@ func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
 // take over the controlling client. Works from a non-TTY context (no raw mode),
 // unlike `session attach`.
 func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session snapshot", flag.ExitOnError)
-	rows := fs.Uint("rows", 40, "fallback rows when the session reports no size")
-	cols := fs.Uint("cols", 120, "fallback cols when the session reports no size")
-	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
-	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
-	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
-	withoutSynth := fs.Bool("without-synth", false, "render/emit ONLY what the PTY produced, dropping the bytes the server synthesised for the replay (its terminal-mode preamble and the screen repaint built from its own model of the screen). Both are included by DEFAULT, because they are what the server actually sends and what every other renderer already draws — the repaint is what makes a screen reconstruct at all once the ring has evicted the bytes that drew it. Reach for this when the screen or the replay looks wrong and the question is whether the server's own additions caused it; their size is reported on stderr either way")
-	raw := fs.Bool("raw", false, "write the verbatim replay bytes to stdout instead of the VT-rendered screen — the burst AS IT ARRIVED, the server's own replay additions (mode preamble, screen repaint) included and their size reported on stderr; --without-synth drops them for the PTY-only view — cat into a real terminal to reproduce an attach exactly, which is also why reply-soliciting sequences (OSC ?-queries, DSR, DA) are absent: the server strips them from every replay so a re-attach cannot make your terminal answer questions the session asked long ago; --rows/--cols are ignored and --style/--color are not allowed")
-	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,live{window_ms,frames,bytes,anchored},attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor, alt_screen and live are not cells and appear only here: the text forms print the screen, which cannot show where the cursor is, which buffer it is on, or how much output arrived while it was being captured")
-	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
-	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
-	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
-	pos, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--ansi] [--detect [--detect-agent NAME]] [--json] [--raw] [--without-synth] <id>")
-	}
-	// A typed option that silently does nothing is the failure this repo keeps
-	// re-fixing, so naming an agent without asking for detection is an error
-	// rather than a no-op.
-	if !*detect && flagExplicitlySet(fs, "detect-agent") {
-		return fmt.Errorf("--detect-agent takes effect only with --detect")
-	}
-	if *raw && (*style || *colorOut) {
-		return fmt.Errorf("--raw cannot be combined with --style/--color (those report the VT render, which --raw bypasses)")
-	}
-	// Same axis as the check above: --json is an ENCODING of the VT render,
-	// --raw is a different artifact (replay bytes). Base64-wrapping them into
-	// the object would invent a third thing rather than format an existing one.
-	if *raw && *asJSON {
-		return fmt.Errorf("--raw cannot be combined with --json (--json encodes the VT render; --raw emits replay bytes — redirect --raw to a file instead)")
-	}
-	// Same axis again: detection reads the RENDER (and the title captured while
-	// rendering), which --raw never produces.
-	if *raw && *detect {
-		return fmt.Errorf("--raw cannot be combined with --detect (detection judges the VT render; --raw emits replay bytes)")
-	}
-	// --ansi and --raw are both "escape sequences to stdout" and are still
-	// different artifacts: --ansi is the FINAL SCREEN re-emitted, --raw is the
-	// whole replay verbatim. Silently picking one would make the other's flag a
-	// no-op.
-	if *ansi && *raw {
-		return fmt.Errorf("--ansi cannot be combined with --raw (--ansi re-emits the final screen; --raw emits the whole replay verbatim)")
-	}
-	// --json is an encoding of the render for a machine; --ansi is the render
-	// for an eye. Embedding one in the other would invent a third thing.
-	if *ansi && *asJSON {
-		return fmt.Errorf("--ansi cannot be combined with --json (--json encodes the render for a reader that parses; --ansi paints it for one that looks)")
-	}
-	taskIDHex := pos[0]
-
+	a := parseSession("session snapshot", args)
+	taskIDHex := a.TaskID
+	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
+	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
+	raw, asJSON, ansi := &a.Raw, &a.JSON, &a.ANSI
+	detect, detectAgent := &a.Detect, &a.DetectAgent
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -636,22 +551,13 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 // With --view the attach is read-only: the server discards keystrokes from
 // this client but continues streaming PTY output.
 func runSessionAttach(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session attach", flag.ExitOnError)
-	view := fs.Bool("view", false, "attach in view-only mode (output only; your input is discarded by the server)")
-	pos, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) < 1 {
-		return fmt.Errorf("usage: session attach [--view] <id>")
-	}
-	taskIDHex := pos[0]
-
+	a := parseSession("session attach", args)
+	taskIDHex := a.TaskID
+	// --view attaches without taking the seat: output only, input discarded.
 	mode := protocol.AttachMode_Control
-	if *view {
+	if a.View {
 		mode = protocol.AttachMode_View
 	}
-
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -925,29 +831,18 @@ func runSessionKill(cid objproto.ConnectionID, args []string) error {
 // `--topic chat.<its-short-id>` and ends its turn, the fire arrives via its
 // inbox hook.
 func runSessionAwaitIdle(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session await-idle", flag.ExitOnError)
-	thresholdMs := fs.Uint("threshold-ms", 0, "quiescence threshold in ms (0 = server default 2500)")
-	notify := fs.Bool("notify", false, "fire as an operator notification instead of long-polling")
-	topic := fs.String("topic", "", "fire as an agentboard message to this topic instead of long-polling")
-	// Positional is a hex task id (never '-'-leading), so flag position is free.
-	pargs, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pargs) != 1 {
-		return fmt.Errorf("usage: session await-idle [--threshold-ms N] [--notify | --topic T] <id>")
-	}
-	if *notify && *topic != "" {
-		return fmt.Errorf("--notify and --topic are mutually exclusive")
-	}
+	a := parseSession("session await-idle", args)
+	taskIDHex := a.TaskID
+	thresholdMs, topic := &a.ThresholdMs, &a.Topic
+	// The sink is where the fire lands: an operator notification, an
+	// agentboard publish, or this call's own long poll.
 	sink := protocol.AwaitIdleSink_Reply
 	switch {
-	case *notify:
+	case a.Notify:
 		sink = protocol.AwaitIdleSink_Notify
-	case *topic != "":
+	case a.Topic != "":
 		sink = protocol.AwaitIdleSink_Board
 	}
-
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -955,7 +850,7 @@ func runSessionAwaitIdle(cid objproto.ConnectionID, args []string) error {
 	}
 	defer c.Close()
 
-	resp, err := c.AwaitIdle(ctx, pargs[0], uint32(*thresholdMs), sink, *topic)
+	resp, err := c.AwaitIdle(ctx, taskIDHex, uint32(*thresholdMs), sink, *topic)
 	if err != nil {
 		return err
 	}
@@ -1031,27 +926,13 @@ func parseResizeSpec(spec string) (rows, cols uint16, err error) {
 // terminal emits, wrong for someone who typed this command. Exit 3 on "not
 // applied" so a script can branch without parsing text.
 func runSessionResize(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session resize", flag.ExitOnError)
-	spec := fs.String("size", "", "new PTY size as ROWSxCOLS (e.g. 40x150)")
-	waitMs := fs.Uint("wait-ms", 2000, "ms to wait for the server to echo the new size back — that echo is the acknowledgement")
-	quiet := fs.Bool("quiet", false, "suppress the one-line result on stderr")
-	pargs, err := cli.ParsePermuted(fs, args)
-	if err != nil {
-		return err
+	a := parseSession("session resize", args)
+	taskIDHex := a.TaskID
+	waitMs, quiet := &a.WaitMs, &a.Quiet
+	rows, cols, perr := parseResizeSpec(a.Size)
+	if perr != nil {
+		return perr
 	}
-	if len(pargs) < 1 || *spec == "" {
-		return fmt.Errorf(`usage: session resize --size ROWSxCOLS [--wait-ms MS] [-quiet] <id>
-Sets the PTY size WITHOUT taking the session over. Needs exec_view to attach and
-exec_resize to be honoured, and applies only while no control client is attached
-— the control attach owns the size whenever it holds the seat. Exits 3 when the
-size was not applied.`)
-	}
-	rows, cols, err := parseResizeSpec(*spec)
-	if err != nil {
-		return err
-	}
-	taskIDHex := pargs[0]
-
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -1071,4 +952,27 @@ size was not applied.`)
 		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
 	}
 	return nil
+}
+
+// parseSession parses one of the single-task session verbs from the
+// declaration. The CLI's error mode ends the process with usage, which is what
+// a bad command line should do here.
+func parseSession(path string, args []string) verb.SessionAction {
+	parts := strings.Fields(path)
+	sp, ok := verb.Lookup(parts...)
+	if !ok {
+		die(fmt.Errorf("%s: not in the verb table", path))
+	}
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		die(perr)
+	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		fmt.Fprintln(os.Stderr, berr)
+		os.Exit(2)
+	}
+	return act.(verb.SessionAction)
 }

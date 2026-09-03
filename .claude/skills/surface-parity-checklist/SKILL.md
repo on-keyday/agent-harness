@@ -35,13 +35,30 @@ when their trigger fires, with the same three verdicts.
 
 ## Input surfaces (new flag / option / request field)
 
-1. CLI flags — `cmd/harness-cli/main.go` (submit / interactive / caps set),
-   `cmd/harness-cli/session.go` (session new), and their help text.
-2. CLI parse helpers — `cli/caps.go` (`ParseCaps`, `CapsCatalog`),
-   `cli/scope.go` (`ParseScope`, `ScopesCatalog`) — one grammar, one parser;
-   never a per-surface copy.
-3. TUI cmdline verbs — `tui/cmdline.go` (`parseSetCaps`, per-command flag
-   loops).
+1. **The verb declaration — `cli/verb/table.go`.** One `VerbSpec` per verb
+   path carries the flags, aliases, positional arity, trailing-text rule and
+   fallback ladder, and all three command lines parse from it: the CLI builds
+   its FlagSet with `VerbSpec.NewFlagSet`, `tui/cmdline.go` calls
+   `parseViaSpec`, and the WebUI reaches it over the wasm bridge
+   (`harness.parseCommand`). **Adding an option is a row here, not three
+   edits.** An option that means something on only some surfaces sets
+   `Flag.Surfaces` (or `Arg.Surfaces`) WITH a `SurfaceReason`, which an
+   invariant test requires.
+   This item used to be six (CLI flags, CLI parse helpers, TUI cmdline verbs,
+   WebUI command input, the wasm bridge's `opts.Get` names, and "every OTHER
+   verb family"), because each surface parsed for itself. The census that
+   ended that found `--agent-arg` missing from the TUI entirely, `--max-bytes`
+   missing from the TUI's git, the WebUI accepting every git flag on every
+   sub-verb, and `file pull`'s `-o`/`-n` existing only in the TUI.
+   `cli/verb`'s `TestNoHandWrittenVerbFlagSetsRemain` fails if a surface goes
+   back to building its own `flag.FlagSet`.
+2. Cross-flag validity lives in the verb's `Build`, not in a surface. "--x11
+   with --detach", "--raw with --dir both", "--seq is required", "--allow xor
+   --deny" — each was enforced in one surface and absent from the others
+   before the migration.
+3. Buttons, keys and pickers still need their own walk — they invoke actions
+   without going through a grammar, so item 1 does not reach them. That is
+   items 4, 5, 6 and 9 below.
 4. TUI keybindings — `tui/keys.go` (mainKeyMap + mainKeyBindings row —
    keys_test enforces the pair), dispatcher in `tui/app.go`.
 5. TUI pickers/popups — `tui/authoritypicker.go`, `tui/popup.go` — remember
@@ -49,17 +66,19 @@ when their trigger fires, with the same three verdicts.
 6. WebUI controls — `webui/index.html` + `webui/static/main.js` (chips via
    `buildCapChips`, checklists via `buildTaskChecklist`, dialogs via
    `<dialog class="picker-modal …">`).
-7. WebUI command input — `runCmd` in `main.js` — a separate parser from the
-   buttons.
-8. wasm bridge — `cmd/harness-webui-wasm/main.go` `opts.Get("…")` names must
-   match the JS request keys.
+7. WebUI dispatch coverage — `WEBUI_DISPATCH` in `main.js` must name every
+   path `harness.pathsForSurface("webui")` returns; a startup assertion
+   throws otherwise, so a verb declared for the WebUI with no case fails at
+   load rather than telling whoever types it first that it is unknown.
+8. Actions that carry values across the wasm bridge — `Bound` crosses
+   generically (flags, args, trail, custom), but an action whose `Build`
+   INTERPRETS its positionals needs its own bridge function; `harness.parseGit`
+   is the one such case, because git counts revisions its own way.
 9. Session-default state — TUI `App.sessionCaps`/`sessionScope`; WebUI
    `spawnCaps`/`spawnScope` — every spawn call site must read them.
-10. Every OTHER verb family — `file` / `git` / `forward` / `prune` /
-    `notify` / `board` / `session` sub-verbs / `caps set`: each exists as a
-    CLI flag set, a TUI cmdline parser, and (subset) a WebUI control or
-    `runCmd` case. A new option on one family member (`file pull -n`) has
-    the same per-UI parity obligations as a spawn flag.
+10. Result rendering is deliberately NOT shared — the CLI writes stdout and an
+    exit code, the TUI returns a `tea.Cmd`, the WebUI touches the DOM. Item 1
+    ends at the parse; items 29–31 are where the output conventions live.
 
 ## Display surfaces (field must be VISIBLE, not just accepted)
 
@@ -86,10 +105,16 @@ when their trigger fires, with the same three verdicts.
 ## Semantics axes — ask these PER OPTION, not per surface
 
 Items 1–23 find missing knobs and missing pixels; these find wrong
-MEANINGS. They apply to EVERY verb family (item 10), not just spawns: any
-option reachable from more than one verb, mode, or path needs its meaning
-written down per path (`prune` with ids vs the bare age sweep, `file push
--f` vs `pull -f`, a forward flag on register vs kill — same discipline).
+MEANINGS. They apply to EVERY verb family, not just spawns: any option
+reachable from more than one verb, mode, or path needs its meaning written
+down per path (`prune` with ids vs the bare age sweep, `file push -f` vs
+`pull -f`, a forward flag on register vs kill — same discipline).
+
+The declaration (item 1) removes the "is this option even ACCEPTED here"
+half of the problem; it does not touch this half. Two surfaces can parse
+one flag identically and still do different things with it, which is the
+`ls` / `list` case: same idea, one reading the filtered DOM and one the
+whole snapshot.
 
 24. Same option, other path — for every option on a multi-path verb: what
     happens on EACH path? "Applied", "kept", "ignored-with-error" — written

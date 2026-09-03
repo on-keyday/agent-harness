@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -14,16 +13,17 @@ import (
 )
 
 func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind agentboard.AgentMessageKind) error {
-	fs := flag.NewFlagSet("agent subscribe", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	pattern := fs.String("topic", "", "topic to subscribe (exact match in v1)")
-	self := fs.Bool("self", false, "subscribe to this agent's inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
-	if err := fs.Parse(args); err != nil {
-		return err
+	sub := "subscribe"
+	if kind == agentboard.AgentMessageKind_Unsubscribe {
+		sub = "unsubscribe"
 	}
-	if *self && *pattern != "" {
-		return errors.New("--self and --topic are mutually exclusive")
+	// The --self / --topic exclusion lives in the verb's Build now, so both
+	// spellings of this one parser get it from the same place.
+	a, perr := parseAgentVerb(sub, args)
+	if perr != nil {
+		return perr
 	}
+	serverCID, pattern, self := &a.ServerCID, &a.Topic, &a.Self
 	if *self {
 		tid, err := cliopts.ResolveTaskID("")
 		if err != nil {

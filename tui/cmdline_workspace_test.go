@@ -50,7 +50,7 @@ func TestGridArgsStringRoundTripsThroughTheApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grid %q: %v", a.gridArgsString(), err)
 	}
-	ga, ok := act.(GridAction)
+	ga, ok := act.(verb.GridAction)
 	if !ok {
 		t.Fatalf("got %T, want GridAction", act)
 	}

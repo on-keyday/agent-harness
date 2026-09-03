@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -11,7 +9,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
 )
 
 // Retract is the entry for `harness-cli agent retract <seq>`: withdraw ONE
@@ -36,21 +33,14 @@ import (
 // (`agent send` prints it), or from `agent retained --topic <t>`, which lists
 // each retained message's seq and sender.
 func Retract(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent retract", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	// Permuted: --server-cid after the seq would otherwise be read as a
-	// positional and silently ignored. A seq is decimal, so it can never look
-	// like a flag (see cli.ParsePermuted).
-	pos, perr := cli.ParsePermuted(fs, args)
+	a, perr := parseAgentVerb("retract", args)
 	if perr != nil {
 		return perr
 	}
-	if len(pos) != 1 {
-		return errors.New("usage: agent retract <seq>")
-	}
-	seq, perr := strconv.ParseUint(pos[0], 10, 64)
+	serverCID := &a.ServerCID
+	seq, perr := strconv.ParseUint(fmt.Sprint(a.Seq), 10, 64)
 	if perr != nil || seq == 0 {
-		return fmt.Errorf("seq must be a positive integer, got %q", pos[0])
+		return fmt.Errorf("seq must be a positive integer, got %q", fmt.Sprint(a.Seq))
 	}
 
 	conn, err := ConnectAgent(ctx, Flags{

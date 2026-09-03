@@ -157,9 +157,9 @@ func TestParseCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(CancelAction)
-	if a.IDPrefix != "ab12cd" {
-		t.Errorf("IDPrefix=%q", a.IDPrefix)
+	a := got.(verb.CancelAction)
+	if a.TaskID != "ab12cd" {
+		t.Errorf("IDPrefix=%q", a.TaskID)
 	}
 }
 
@@ -824,11 +824,11 @@ func TestParseSessionAwaitIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ai, ok := act.(SessionAwaitIdleAction)
+	ai, ok := act.(verb.SessionAction)
 	if !ok {
 		t.Fatalf("got %T, want SessionAwaitIdleAction", act)
 	}
-	if ai.IDPrefix != "abc123" || ai.Notify || ai.Topic != "" || ai.ThresholdMs != 0 {
+	if ai.TaskID != "abc123" || ai.Notify || ai.Topic != "" || ai.ThresholdMs != 0 {
 		t.Errorf("unexpected defaults: %+v", ai)
 	}
 
@@ -836,7 +836,7 @@ func TestParseSessionAwaitIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse notify: %v", err)
 	}
-	ai = act.(SessionAwaitIdleAction)
+	ai = act.(verb.SessionAction)
 	if !ai.Notify || ai.ThresholdMs != 5000 {
 		t.Errorf("notify/threshold not parsed: %+v", ai)
 	}
@@ -845,7 +845,7 @@ func TestParseSessionAwaitIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse topic: %v", err)
 	}
-	if ai = act.(SessionAwaitIdleAction); ai.Topic != "chat.me" {
+	if ai = act.(verb.SessionAction); ai.Topic != "chat.me" {
 		t.Errorf("topic not parsed: %+v", ai)
 	}
 
@@ -1298,7 +1298,7 @@ func TestParseGrid_Modes(t *testing.T) {
 			t.Errorf("%q: %v", tc.line, err)
 			continue
 		}
-		a, ok := got.(GridAction)
+		a, ok := got.(verb.GridAction)
 		if !ok {
 			t.Errorf("%q: got %T, want GridAction", tc.line, got)
 			continue

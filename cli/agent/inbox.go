@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -35,15 +34,15 @@ import (
 // presentational only: the advancing read still marks every message the server
 // returned, so a filtered run does not re-deliver what it hid.
 func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent inbox", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	since := fs.Uint64("since", 0, "return messages above this seq (0 = the whole ring)")
-	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
-	promptHook := fs.Bool("user-prompt-submit-hook", false, "advancing read, wrapped as Claude Code UserPromptSubmit additionalContext")
-	inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq (client-side filter)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("inbox", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
+	since := &a.Since
+	asJSON := &a.JSON
+	promptHook := &a.UserPromptSubmitHook
+	inReplyTo := &a.InReplyTo
 	_ = asJSON // currently always JSON Lines
 
 	conn, err := ConnectAgent(ctx, Flags{

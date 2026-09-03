@@ -3,11 +3,9 @@ package agent
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
-	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -41,15 +39,15 @@ import (
 // --in-reply-to narrows the wait to the answer to one seq; a non-matching
 // publish on the topic does not end it.
 func Wait(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent wait", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	topic := fs.String("topic", "", "topic to wait on")
-	since := fs.Uint64("since", 0, "return messages above this seq; 0 (the default) matches the whole ring, so a non-empty topic returns at once")
-	inReplyTo := fs.Uint64("in-reply-to", 0, "only accept a message replying to this seq (0 = any)")
-	timeout := fs.Duration("timeout", 5*time.Minute, "max block duration")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("wait", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
+	topic := &a.Topic
+	since := &a.Since
+	inReplyTo := &a.InReplyTo
+	timeout := &a.Timeout
 	if *topic == "" {
 		return errors.New("--topic required")
 	}

@@ -3134,13 +3134,15 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		// One action for submit / interactive / session new: they differ in
 		// what this surface DOES with the result, not in what was typed.
 		return a.runSpawnAction(v)
-	case CancelAction:
-		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+	case verb.CancelAction:
+		// The declaration carries the id as typed; resolving a half-typed one
+		// against the live task list is this surface's job, not the grammar's.
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
-		return a, DoCancel(a.client, v.IDPrefix, full)
+		return a, DoCancel(a.client, v.TaskID, full)
 	case verb.PruneAction:
 		if len(v.TaskIDs) > 0 {
 			a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
@@ -3179,8 +3181,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
-	case SessionAwaitIdleAction:
-		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+	case verb.SessionAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
@@ -3198,8 +3200,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		// appCtx, not a round-trip timeout: the reply sink long-polls until
 		// the session actually goes idle. The cmd goroutine carries it; the
 		// UI stays fully interactive meanwhile.
-		return a, DoAwaitIdle(a.appCtx, a.client, full, v.ThresholdMs, sink, v.Topic)
-	case GridAction:
+		return a, DoAwaitIdle(a.appCtx, a.client, full, uint32(v.ThresholdMs), sink, v.Topic)
+	case verb.GridAction:
 		// Prefixes are resolved HERE, before the set is built: cli.GridSet
 		// compares full ids, and a half-typed one must be reported as
 		// ambiguous rather than silently matching nothing.

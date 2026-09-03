@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -99,22 +99,10 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		return nil
 
 	case "save":
-		if len(args) < 2 {
-			workspaceUsage()
-			os.Exit(2)
-		}
-		name := args[1]
-		fs := flag.NewFlagSet("workspace save", flag.ExitOnError)
-		taskID := fs.String("task", "", "record only this task (32 hex); omitted = every task the registry reports a forward for")
-		resume := fs.String("resume", string(workspace.ResumeContinue), "no | continue | fresh — for a task block being written for the FIRST time")
-		runner := fs.String("runner", string(workspace.RunnerAssigned), "assigned | any — for a task block being written for the FIRST time")
-		repo := fs.String("repo", "", "repo identifier to record in the workspace")
-		fs.Parse(args[2:])
-		if *taskID != "" {
-			if _, err := hex.DecodeString(*taskID); err != nil || len(*taskID) != 32 {
-				return fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", *taskID)
-			}
-		}
+		// `ws` is taken below by the workspace.Workspace being built.
+		act := parseOne[verb.WorkspaceAction]("workspace save", args[1:])
+		name := act.Name
+		taskID, resume, runner, repo := &act.TaskID, &act.Resume, &act.Runner, &act.Repo
 
 		// An empty filter lists every forward the caller may see, so a bare
 		// `workspace save <name>` records the same set the TUI would rather than

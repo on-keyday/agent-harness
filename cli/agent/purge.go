@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -19,14 +18,14 @@ import (
 // resurface it. The cursor stays valid: the board seq counter is global, so a
 // post-purge message gets a strictly higher seq.
 func Purge(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent purge", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	topic := fs.String("topic", "", "topic whose retained buffer to purge (exact match in v1)")
-	self := fs.Bool("self", false, "purge this agent's own inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
-	seq := fs.Uint64("seq", 0, "drop only the retained message with this seq (0 = the whole topic). Find seqs with `agent retained`.")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("purge", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
+	topic := &a.Topic
+	self := &a.Self
+	seq := &a.Seq
 	if *self && *topic != "" {
 		return errors.New("--self and --topic are mutually exclusive")
 	}

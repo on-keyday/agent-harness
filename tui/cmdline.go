@@ -23,11 +23,6 @@ import (
 // unexported method declared in cli/verb could not be implemented from here.
 type Action = verb.Action
 
-type CancelAction struct {
-	verb.ActionMarker
-	IDPrefix string
-}
-
 // PruneAction forgets tasks server-side. Two mutually-exclusive modes,
 // mirroring `harness-cli prune`:
 //   - time mode (TaskIDs empty): terminal tasks older than Before are removed;
@@ -102,19 +97,6 @@ type SessionKillAction struct {
 	IDPrefix string
 }
 
-// SessionAwaitIdleAction arms a one-shot idle watcher on a live session.
-// Default sink is reply: the long-poll runs in a tea.Cmd goroutine and the
-// fire lands in cmdresult as an AwaitIdleResultMsg (non-blocking for the UI).
-// Notify routes the fire through the operator-notification egress; Topic
-// publishes it to an agentboard topic instead.
-type SessionAwaitIdleAction struct {
-	verb.ActionMarker
-	IDPrefix    string
-	ThresholdMs uint32
-	Notify      bool
-	Topic       string
-}
-
 // RepoAction switches the TUI session's default repo. Subsequent submit
 // popups, interactive opens, and slash-command --repo defaults all use the
 // new value. Per-action --repo overrides still win on a single call.
@@ -128,15 +110,6 @@ type RepoAction struct {
 // set. Mode and the two selectors are handed straight to cli.GridSet, so the
 // TUI, the WebUI command line and the keys all agree on what each mode means.
 //
-// Anchor and IDs are id PREFIXES here; app.go resolves them against the task
-// table before the set is built, the same as every other id-taking action.
-type GridAction struct {
-	verb.ActionMarker
-	Mode   cli.GridScopeMode
-	Anchor string
-	IDs    []string
-}
-
 // ForwardLsAction lists every port forward visible to this operator.
 type ForwardLsAction struct{ verb.ActionMarker }
 
@@ -521,15 +494,7 @@ const scopeFlagUsage = "target scope for this spawn (overrides the `scope` defau
 	cli.ScopeGrammar + "; on a resume it re-grants the scope (omitted = keep the task's), independently of --caps"
 
 func parseCancel(args []string) (Action, error) {
-	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("cancel: %w", err)
-	}
-	if fs.NArg() == 0 {
-		return nil, fmt.Errorf("cancel: task id required")
-	}
-	return CancelAction{IDPrefix: fs.Arg(0)}, nil
+	return parseViaSpec("cancel", args)
 }
 
 // parseSession dispatches session sub-verbs: new / attach / ls / kill.
@@ -610,29 +575,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		}
 		return SessionKillAction{IDPrefix: rest[0]}, nil
 	case "await-idle":
-		fs := flag.NewFlagSet("session await-idle", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		thresholdMs := fs.Uint("threshold-ms", 0, "quiescence threshold in ms (0 = server default)")
-		notify := fs.Bool("notify", false, "fire via the operator-notification egress instead of an in-TUI result line")
-		topic := fs.String("topic", "", "fire via an agentboard publish to this topic")
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("session await-idle: %w", err)
-		}
-		if fs.NArg() == 0 {
-			return nil, fmt.Errorf("session await-idle: task id required")
-		}
-		if fs.NArg() > 1 {
-			return nil, fmt.Errorf("session await-idle: too many arguments (got %d, want 1)", fs.NArg())
-		}
-		if *notify && *topic != "" {
-			return nil, fmt.Errorf("session await-idle: --notify and --topic are mutually exclusive")
-		}
-		return SessionAwaitIdleAction{
-			IDPrefix:    fs.Arg(0),
-			ThresholdMs: uint32(*thresholdMs),
-			Notify:      *notify,
-			Topic:       *topic,
-		}, nil
+		return parseViaSpec2("session", "await-idle", rest)
 	default:
 		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id> | await-idle <id>)", verb)
 	}
@@ -891,11 +834,7 @@ func parseSetCaps(args []string) (Action, error) {
 // the same argument string and cannot import this package, so a copy here would
 // be a mirror with no way to fail loudly when the grammar grows.
 func parseGrid(args []string) (Action, error) {
-	mode, anchor, ids, err := cli.ParseGridArgs(args)
-	if err != nil {
-		return nil, err
-	}
-	return GridAction{Mode: mode, Anchor: anchor, IDs: ids}, nil
+	return parseViaSpec("grid", args)
 }
 
 // parseSetParent backs `caps set-parent <task-id> (--parent <task-id> |

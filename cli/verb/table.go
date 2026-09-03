@@ -1,6 +1,7 @@
 package verb
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -465,6 +466,52 @@ var Verbs = []VerbSpec{
 	// pane and a browser cannot bind a local listener at all. ls / kill / tap
 	// are on all three.
 	{
+		// Opening a forward. CLI-only: the TUI opens one from its port-forward
+		// pane and a browser cannot bind a local listener. The id used to be
+		// read before the FlagSet was built, which meant the positional had to
+		// come FIRST -- the inverse of what ParsePermuted guarantees
+		// everywhere else. Declaring it removes that constraint.
+		Path:     []string{"forward"},
+		Surfaces: CLI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "L", Type: FlagString, Custom: argListValue,
+				Help: "local forward [bind:]localport:remotehost:remoteport (repeatable)"},
+			{Name: "R", Type: FlagString, Custom: argListValue,
+				Help: "remote forward [bind:]runnerport:dialhost:dialport (repeatable)"},
+			{Name: "W", Type: FlagString, Default: "",
+				Help: "raw stdio forward host:port (mutually exclusive with -L / -R)"},
+			{Name: "http-method", Type: FlagString, Default: "GET", Help: "with -W --http-path: HTTP method"},
+			{Name: "http-path", Type: FlagString, Default: "",
+				Help: "with -W: send this HTTP request path instead of splicing stdin"},
+			{Name: "http-body", Type: FlagString, Default: "",
+				Help: "with --http-path: request body (literal, @file, or - for stdin)"},
+			{Name: "http-header", Type: FlagString, Custom: argListValue,
+				Help: `with --http-path: "Name: value" (repeatable)`},
+		},
+		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
+		Build: func(b Bound) (Action, error) {
+			a := ForwardOpenAction{TaskID: b.Args[0], W: b.Str("W"),
+				HTTPMethod: b.Str("http-method"), HTTPPath: b.Str("http-path"), HTTPBody: b.Str("http-body")}
+			a.L, _ = b.Custom["L"].([]string)
+			a.R, _ = b.Custom["R"].([]string)
+			a.HTTPHeaders, _ = b.Custom["http-header"].([]string)
+			if a.HTTPPath != "" && a.W == "" {
+				return nil, fmt.Errorf("forward: --http-path needs -W host:port")
+			}
+			// -W owns the foreground and exits with its peer, while -L/-R are
+			// long-lived listeners. ssh makes the same pair exclusive, for the
+			// same reason: one invocation, one lifetime.
+			if a.W != "" && (len(a.L) > 0 || len(a.R) > 0) {
+				return nil, fmt.Errorf("forward: -W cannot be combined with -L / -R")
+			}
+			if len(a.L) == 0 && len(a.R) == 0 && a.W == "" {
+				return nil, fmt.Errorf("forward: at least one of -L, -R or -W")
+			}
+			return a, nil
+		},
+	},
+	{
 		Path:     []string{"forward", "ls"},
 		Surfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
@@ -605,9 +652,17 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"workspace save dev"},
 		Build: func(b Bound) (Action, error) {
-			return WorkspaceAction{Sub: "save", Name: b.Args[0], TaskID: b.Str("task"),
+			a := WorkspaceAction{Sub: "save", Name: b.Args[0], TaskID: b.Str("task"),
 				Resume: b.Str("resume"), Runner: b.Str("runner"), Repo: b.Str("repo"),
-				All: b.Bool("all")}, nil
+				All: b.Bool("all")}
+			// A half-typed id would filter to nothing and record an empty
+			// workspace, which reads as "this task has no forwards".
+			if a.TaskID != "" {
+				if _, err := hex.DecodeString(a.TaskID); err != nil || len(a.TaskID) != 32 {
+					return nil, fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", a.TaskID)
+				}
+			}
+			return a, nil
 		},
 	},
 	{
@@ -946,6 +1001,433 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent dispatch --topic chat.abcd1234 do the thing"},
 		Build:    buildAgentSend("dispatch"),
 	},
+	// --- listings and catalogs ---
+	{
+		// The grid grammar was ALREADY shared before this migration --
+		// cli.ParseGridArgs, which the workspace config validates against so a
+		// saved selection cannot name a spelling the command rejects. This
+		// entry routes the command inputs through the same table as the rest;
+		// the parse itself still delegates to that function.
+		Path: []string{"grid"}, Surfaces: TUI | WebUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true}},
+		Flags: []Flag{
+			{Name: "under", Type: FlagString, Default: "",
+				Help: "the anchor whose working set to show: itself, its descendants, and the tasks its own scope names"},
+			{Name: "descendants", Type: FlagBool, Default: false,
+				Help: "with --under: the descendants only, leaving the anchor out"},
+		},
+		Examples: []string{"grid", "grid --under aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			// Rebuilt into ParseGridArgs's own argument form rather than
+			// duplicated: --descendants without --under is refused there, and
+			// one grammar means one place that decides.
+			args := make([]string, 0, len(b.Args)+3)
+			if u := b.Str("under"); u != "" {
+				args = append(args, "--under", u)
+			}
+			if b.Bool("descendants") {
+				args = append(args, "--descendants")
+			}
+			args = append(args, b.Args...)
+			mode, anchor, ids, err := ParseGridArgs(args)
+			if err != nil {
+				return nil, err
+			}
+			return GridAction{Mode: mode, Anchor: anchor, IDs: ids}, nil
+		},
+	},
+	{
+		Path: []string{"cancel"}, Surfaces: CLI | TUI | WebUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Examples: []string{"cancel aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return CancelAction{TaskID: b.Args[0]}, nil
+		},
+	},
+	{
+		Path: []string{"ls"}, Surfaces: CLI | WebUI,
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false,
+				Help: `emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table`},
+			{Name: "tree", Type: FlagBool, Default: false,
+				Help: "order tasks by their creator link and draw the hierarchy"},
+		},
+		Examples: []string{"ls", "ls --json", "ls --tree"},
+		Build: func(b Bound) (Action, error) {
+			if b.Bool("tree") && b.Bool("json") {
+				// Not silently ignored: --json already carries created_by on
+				// every row, so a consumer builds the tree itself. Nesting the
+				// JSON to match would give the same data two shapes.
+				return nil, fmt.Errorf("ls: --tree and --json are mutually exclusive (--json rows carry created_by; build the tree from those)")
+			}
+			return ListAction{JSON: b.Bool("json"), Tree: b.Bool("tree")}, nil
+		},
+	},
+	{
+		Path: []string{"conns"}, Surfaces: CLI,
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Help: "output JSON lines instead of a table"},
+			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+				Help: "stream live connection events (conns.status)"},
+		},
+		Examples: []string{"conns", "conns -f --json"},
+		Build: func(b Bound) (Action, error) {
+			return ConnsAction{JSON: b.Bool("json"), Follow: b.Bool("follow")}, nil
+		},
+	},
+	{
+		Path: []string{"caps"}, Surfaces: CLI,
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the capability catalog as JSON"}},
+		Examples: []string{"caps", "caps --json"},
+		Build:    buildCatalog("caps"),
+	},
+	{
+		Path: []string{"whoami"}, Surfaces: CLI,
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the identity as a JSON object"}},
+		Examples: []string{"whoami"},
+		Build:    buildCatalog("whoami"),
+	},
+	{
+		Path: []string{"version"}, Surfaces: CLI,
+		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Help: "output the build stamp as a JSON object"}},
+		Examples: []string{"version"},
+		Build:    buildCatalog("version"),
+	},
+	{
+		Path: []string{"logs"}, Surfaces: CLI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+				Help: "after dumping history, keep streaming live chunks (no-op when the task is terminal)"},
+		},
+		Examples: []string{"logs aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "logs -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return LogsAction{TaskID: b.Args[0], Follow: b.Bool("follow")}, nil
+		},
+	},
+	{
+		Path: []string{"prune-local"}, Surfaces: CLI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true}},
+		Flags: []Flag{
+			{Name: "repo", Type: FlagString, Default: ".", Help: "repo to prune",
+				Resolve: []Tier{{Env: "HARNESS_REPO_PATH"}, {Workspace: "repo"}}},
+			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour,
+				Help: "remove worktrees older than this (ignored when TASK_IDs are passed)"},
+			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+				Help: "with TASK_IDs: remove even when the server still considers the task active"},
+		},
+		Examples: []string{"prune-local", "prune-local --before 24h"},
+		Build: func(b Bound) (Action, error) {
+			d, _ := b.Flags["before"].(time.Duration)
+			return PruneLocalAction{Repo: b.Str("repo"), Before: d, TaskIDs: b.Args, Force: b.Bool("force")}, nil
+		},
+	},
+
+	// --- caps set / set-parent ---
+	{
+		Path: []string{"caps", "set"}, Surfaces: CLI | TUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "caps", Type: FlagString, Default: "",
+				Help: "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps"},
+			{Name: "scope", Type: FlagString, Default: "",
+				Help: "new scope; omitted = keep the task's current scope"},
+			{Name: "scope-for", Type: FlagString, Custom: scopeForValue,
+				Help: "narrow ONE capability below --scope (written with --scope; they are one half of the authority)"},
+			{Name: "cascade", Type: FlagBool, Default: false, WidensIfUnset: true,
+				Help: "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider"},
+			{Name: "keep-conns", Type: FlagBool, Default: false,
+				Help: "on a narrowing, leave the affected tasks' connections open"},
+		},
+		Examples: []string{"caps set aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps spawn,file_read"},
+		Build: func(b Bound) (Action, error) {
+			a := SetCapsAction{TaskID: b.Args[0], Cascade: b.Bool("cascade"),
+				KeepConns: b.Bool("keep-conns"), CapsPresent: b.Set["caps"], ScopePresent: b.Set["scope"]}
+			if b.Set["caps"] {
+				c, err := ParseCaps(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --caps: %w", err)
+				}
+				a.Caps = &c
+			}
+			if b.Set["scope"] {
+				sc, err := ParseScope(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --scope: %w", err)
+				}
+				a.Scope = &sc
+				if specs, ok := b.Custom["scope-for"].([]string); ok {
+					for _, one := range specs {
+						_, ov, perr := ParseScopeFor(one)
+						if perr != nil {
+							return nil, fmt.Errorf("caps set: --scope-for: %w", perr)
+						}
+						merged, merr := MergeScopeOverride(a.Overrides, ov)
+						if merr != nil {
+							return nil, fmt.Errorf("caps set: --scope-for: %w", merr)
+						}
+						a.Overrides = merged
+					}
+				}
+			}
+			if a.Caps == nil && a.Scope == nil {
+				return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
+			}
+			return a, nil
+		},
+	},
+	{
+		Path: []string{"caps", "set-parent"}, Surfaces: CLI | TUI | WebUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "parent", Type: FlagString, Default: "",
+				Help: "new parent task id (32 hex); the target and its whole subtree move under it"},
+			{Name: "none", Type: FlagBool, Default: false, Help: "detach the task to the operator root"},
+			{Name: "swap", Type: FlagBool, Default: false,
+				Help: "invert the task with its CURRENT parent"},
+		},
+		Examples: []string{"caps set-parent aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --none"},
+		Build: func(b Bound) (Action, error) {
+			a := SetParentAction{TaskID: b.Args[0], ParentID: b.Str("parent"),
+				None: b.Bool("none"), Swap: b.Bool("swap")}
+			picked := 0
+			for _, on := range []bool{a.ParentID != "", a.None, a.Swap} {
+				if on {
+					picked++
+				}
+			}
+			if picked != 1 {
+				return nil, fmt.Errorf("caps set-parent: pass exactly one of --parent <task-id>, --none, --swap")
+			}
+			return a, nil
+		},
+	},
+
+	// --- single-task session verbs ---
+	{
+		Path: []string{"session", "attach"}, Surfaces: CLI | TUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags:    []Flag{{Name: "view", Type: FlagBool, Default: false, Help: "attach in view-only mode"}},
+		Examples: []string{"session attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "attach", TaskID: b.Args[0], View: b.Bool("view")}, nil
+		},
+	},
+	{
+		Path: []string{"session", "ls"}, Surfaces: CLI | TUI,
+		Examples: []string{"session ls"},
+		Build:    func(b Bound) (Action, error) { return SessionAction{Sub: "ls"}, nil },
+	},
+	{
+		Path: []string{"session", "kill"}, Surfaces: CLI | TUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Examples: []string{"session kill aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "kill", TaskID: b.Args[0]}, nil
+		},
+	},
+	{
+		Path: []string{"session", "await-idle"}, Surfaces: CLI | TUI | WebUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "threshold-ms", Type: FlagUint, Default: uint(0), Help: "quiescence threshold in ms (0 = server default)"},
+			{Name: "notify", Type: FlagBool, Default: false, Help: "fire via the operator-notification egress"},
+			{Name: "topic", Type: FlagString, Default: "", Help: "fire via an agentboard publish to this topic"},
+		},
+		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			if b.Bool("notify") && b.Str("topic") != "" {
+				return nil, fmt.Errorf("session await-idle: --notify and --topic are mutually exclusive")
+			}
+			return SessionAction{Sub: "await-idle", TaskID: b.Args[0],
+				ThresholdMs: uintFlag(b, "threshold-ms"), Notify: b.Bool("notify"), Topic: b.Str("topic")}, nil
+		},
+	},
+	{
+		Path: []string{"session", "resize"}, Surfaces: CLI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "size", Type: FlagString, Default: "", Help: "new PTY size as ROWSxCOLS (e.g. 40x150)"},
+			{Name: "wait-ms", Type: FlagUint, Default: uint(2000),
+				Help: "ms to wait for the server to echo the new size back — that echo is the acknowledgement"},
+			{Name: "quiet", Type: FlagBool, Default: false, Help: "suppress the one-line result on stderr"},
+		},
+		Examples: []string{"session resize aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --size 40x150"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "resize", TaskID: b.Args[0], Size: b.Str("size"),
+				WaitMs: uintFlag(b, "wait-ms"), Quiet: b.Bool("quiet")}, nil
+		},
+	},
+	{
+		Path: []string{"session", "snapshot"}, Surfaces: CLI | TUI | WebUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags: []Flag{
+			{Name: "rows", Type: FlagUint, Default: uint(40), Help: "fallback rows when the session reports no size"},
+			{Name: "cols", Type: FlagUint, Default: uint(120), Help: "fallback cols when the session reports no size"},
+			{Name: "settle-ms", Type: FlagUint, Default: uint(1500), Help: "ms to collect output before rendering"},
+			{Name: "style", Type: FlagBool, Default: false, Help: "also print attribute spans"},
+			{Name: "color", Type: FlagBool, Default: false, Help: "also print fg/bg colour spans"},
+			{Name: "without-synth", Type: FlagBool, Default: false,
+				Help: "render only what the PTY produced, dropping the server's replay additions"},
+			{Name: "raw", Type: FlagBool, Default: false,
+				Help: "write the verbatim replay bytes instead of the VT-rendered screen"},
+			{Name: "json", Type: FlagBool, Default: false, Help: "emit the screen as one JSON object"},
+			{Name: "ansi", Type: FlagBool, Default: false, Help: "re-emit the screen WITH its colours and attributes"},
+			{Name: "detect", Type: FlagBool, Default: false,
+				Help: "also judge what STATE the screen shows (working / blocked / idle / unknown)"},
+			{Name: "detect-agent", Type: FlagString, Default: "claude", Help: "with --detect: which agent's rule set"},
+		},
+		Examples: []string{"session snapshot aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			a := SessionAction{Sub: "snapshot", TaskID: b.Args[0],
+				Rows: uintFlag(b, "rows"), Cols: uintFlag(b, "cols"), SettleMs: uintFlag(b, "settle-ms"),
+				Style: b.Bool("style"), Color: b.Bool("color"), Raw: b.Bool("raw"),
+				JSON: b.Bool("json"), ANSI: b.Bool("ansi"), WithoutSynth: b.Bool("without-synth"),
+				Detect: b.Bool("detect"), DetectAgent: b.Str("detect-agent")}
+			// --raw is the verbatim byte stream, so the renderers have nothing
+			// to act on: combining them asks for two different outputs at once.
+			if a.Raw {
+				var with []string
+				for _, n := range []string{"style", "color", "json", "detect"} {
+					if b.Set[n] {
+						with = append(with, "--"+n)
+					}
+				}
+				if len(with) > 0 {
+					return nil, fmt.Errorf("session snapshot: --raw cannot be combined with %s", strings.Join(with, ", "))
+				}
+			}
+			return a, nil
+		},
+	},
+	{
+		Path: []string{"session", "stream", "attach"}, Surfaces: CLI | TUI | WebUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Examples: []string{"session stream attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "stream-attach", TaskID: b.Args[0]}, nil
+		},
+	},
+	{
+		Path: []string{"session", "stream", "interrupt"}, Surfaces: CLI | TUI | WebUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"}},
+		Examples: []string{"session stream interrupt aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "stream-interrupt", TaskID: b.Args[0], FlushMs: uintFlag(b, "flush-ms")}, nil
+		},
+	},
+	{
+		Path: []string{"session", "stream", "finish"}, Surfaces: CLI | TUI | WebUI,
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Flags:    []Flag{{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"}},
+		Examples: []string{"session stream finish aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Build: func(b Bound) (Action, error) {
+			return SessionAction{Sub: "stream-finish", TaskID: b.Args[0], FlushMs: uintFlag(b, "flush-ms")}, nil
+		},
+	},
+	{
+		Path: []string{"session", "stream", "approve"}, Surfaces: CLI | TUI | WebUI,
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID}, {Name: "request-id", Type: ArgString}},
+		Flags: []Flag{
+			{Name: "allow", Type: FlagBool, Default: false, Help: "run the tool as requested"},
+			{Name: "deny", Type: FlagBool, Default: false, Help: "refuse it"},
+			{Name: "message", Type: FlagString, Default: "",
+				Help: "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result"},
+			{Name: "suggestion", Type: FlagString, Default: "", Help: "with --allow, an updated input"},
+			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Help: "ms to let the line drain"},
+		},
+		Examples: []string{"session stream approve aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa req-1 --allow"},
+		Build: func(b Bound) (Action, error) {
+			if b.Bool("allow") == b.Bool("deny") {
+				return nil, fmt.Errorf("session stream approve: pass exactly one of --allow or --deny")
+			}
+			return SessionAction{Sub: "stream-approve", TaskID: b.Args[0], RequestID: b.Args[1],
+				Allow: b.Bool("allow"), Deny: b.Bool("deny"), Message: b.Str("message"),
+				Suggestion: b.Str("suggestion"), FlushMs: uintFlag(b, "flush-ms")}, nil
+		},
+	},
+
+	// --- the agent-runtime verbs ---
+	//
+	// CLI-only by construction: they are called from inside a task's Bash tool
+	// and read HARNESS_* env, which no operator surface has.
+	{
+		Path: []string{"agent", "inbox"}, Surfaces: CLI,
+		Flags: append(agentCommonFlags(),
+			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Help: "start from this seq (0 = whole ring)"},
+			Flag{Name: "json", Type: FlagBool, Default: false, Help: "JSON Lines instead of text"},
+			Flag{Name: "user-prompt-submit-hook", Type: FlagBool, Default: false,
+				Help: "hook mode: ask for what has not been injected, and mark it injected in the same operation"},
+			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Help: "only messages replying to this seq"},
+		),
+		Examples: []string{"agent inbox", "agent inbox --json"},
+		Build:    buildAgent("inbox"),
+	},
+	{
+		Path: []string{"agent", "wait"}, Surfaces: CLI,
+		Flags: append(agentCommonFlags(),
+			Flag{Name: "topic", Type: FlagString, Default: "", Help: "topic to wait on"},
+			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Help: "take everything after this seq"},
+			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Help: "only messages replying to this seq"},
+			Flag{Name: "timeout", Type: FlagDuration, Default: 0, Help: "max wait"},
+		),
+		Examples: []string{"agent wait --topic chat.abcd1234"},
+		Build:    buildAgent("wait"),
+	},
+	{
+		Path: []string{"agent", "subscribe"}, Surfaces: CLI,
+		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples: []string{"agent subscribe --topic chat.abcd1234"},
+		Build:    buildAgent("subscribe"),
+	},
+	{
+		Path: []string{"agent", "unsubscribe"}, Surfaces: CLI,
+		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples: []string{"agent unsubscribe --topic chat.abcd1234"},
+		Build:    buildAgent("unsubscribe"),
+	},
+	{
+		Path: []string{"agent", "topics"}, Surfaces: CLI,
+		Flags:    agentCommonFlags(),
+		Examples: []string{"agent topics"},
+		Build:    buildAgent("topics"),
+	},
+	{
+		Path: []string{"agent", "subscriptions"}, Surfaces: CLI,
+		Flags:    agentCommonFlags(),
+		Examples: []string{"agent subscriptions"},
+		Build:    buildAgent("subscriptions"),
+	},
+	{
+		Path: []string{"agent", "retained"}, Surfaces: CLI,
+		Flags:    append(agentCommonFlags(), agentTopicSelfFlags()...),
+		Examples: []string{"agent retained --self"},
+		Build:    buildAgent("retained"),
+	},
+	{
+		Path: []string{"agent", "purge"}, Surfaces: CLI,
+		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
+			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true,
+				Help: "drop one message by seq; omitted drops the topic's retained buffer"},
+		),
+		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42"},
+		Build:    buildAgent("purge"),
+	},
+	{
+		Path: []string{"agent", "read"}, Surfaces: CLI,
+		Args:     []Arg{{Name: "seq", Type: ArgUint}},
+		Flags:    agentCommonFlags(),
+		Examples: []string{"agent read 42"},
+		Build:    buildAgentSeq("read"),
+	},
+	{
+		Path: []string{"agent", "retract"}, Surfaces: CLI,
+		Args:     []Arg{{Name: "seq", Type: ArgUint}},
+		Flags:    agentCommonFlags(),
+		Examples: []string{"agent retract 42"},
+		Build:    buildAgentSeq("retract"),
+	},
 }
 
 // Lookup finds the spec for a verb path.
@@ -1056,6 +1538,73 @@ func buildAgentSend(kind string) func(Bound) (Action, error) {
 		if d, ok := b.Flags["timeout"].(time.Duration); ok {
 			a.Timeout = d
 		}
+		return a, nil
+	}
+}
+
+// buildCatalog is the Build for the read-only catalogs.
+func buildCatalog(sub string) func(Bound) (Action, error) {
+	return func(b Bound) (Action, error) {
+		return CatalogAction{Sub: sub, JSON: b.Bool("json")}, nil
+	}
+}
+
+// agentCommonFlags is the one flag every agent verb carries. --server-cid is
+// env-primary (HARNESS_SERVER_CID); the auth ticket is env-ONLY and has no
+// flag at all, on purpose.
+func agentCommonFlags() []Flag {
+	return []Flag{{
+		Name: "server-cid", Type: FlagString, Default: "",
+		Help:    "server ConnectionID (env: HARNESS_SERVER_CID)",
+		Resolve: []Tier{{Env: "HARNESS_SERVER_CID"}},
+	}}
+}
+
+// agentTopicSelfFlags is the --topic / --self pair: name a topic, or the
+// agent's own id-directed one.
+func agentTopicSelfFlags() []Flag {
+	return []Flag{
+		{Name: "topic", Type: FlagString, Default: "", Help: "agentboard topic"},
+		{Name: "self", Type: FlagBool, Default: false, Help: "this agent's own chat.<short-id> topic"},
+	}
+}
+
+// buildAgent is the Build for the agent verbs that take no positional.
+func buildAgent(sub string) func(Bound) (Action, error) {
+	return func(b Bound) (Action, error) {
+		// --self names the agent's own id-directed topic, so pairing it with
+		// --topic asks for two destinations at once.
+		if b.Bool("self") && b.Str("topic") != "" {
+			return nil, fmt.Errorf("agent %s: --self and --topic are mutually exclusive", sub)
+		}
+		a := AgentAction{Sub: sub, ServerCID: b.Str("server-cid"), Topic: b.Str("topic"),
+			Self: b.Bool("self"), JSON: b.Bool("json"),
+			UserPromptSubmitHook: b.Bool("user-prompt-submit-hook")}
+		if v, ok := b.Flags["seq"].(uint64); ok {
+			a.Seq = v
+		}
+		if v, ok := b.Flags["since"].(uint64); ok {
+			a.Since = v
+		}
+		if v, ok := b.Flags["in-reply-to"].(uint64); ok {
+			a.InReplyTo = v
+		}
+		if v, ok := b.Flags["timeout"].(time.Duration); ok {
+			a.Timeout = v
+		}
+		return a, nil
+	}
+}
+
+// buildAgentSeq is the Build for `agent read` / `agent retract`, whose one
+// positional is a seq. Permuted, because a seq cannot begin with '-'.
+func buildAgentSeq(sub string) func(Bound) (Action, error) {
+	return func(b Bound) (Action, error) {
+		seqs, err := parseUintArgs("agent "+sub, "seq", b.Args)
+		if err != nil {
+			return nil, err
+		}
+		a := AgentAction{Sub: sub, ServerCID: b.Str("server-cid"), Seq: seqs[0]}
 		return a, nil
 	}
 }

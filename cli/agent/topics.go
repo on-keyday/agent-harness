@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -16,11 +15,11 @@ import (
 
 // Topics fetches the board-wide topic list and emits one JSON Lines record per topic.
 func Topics(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent topics", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("topics", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,

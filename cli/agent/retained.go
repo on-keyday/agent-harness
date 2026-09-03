@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -24,13 +23,13 @@ import (
 // already-named topic and surfaces a strict subset of what subscribing + inbox
 // already returns uncapped. Output is JSON Lines, one object per retained message.
 func Retained(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent retained", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	topic := fs.String("topic", "", "topic whose retained ring to list (exact match in v1)")
-	self := fs.Bool("self", false, "list this agent's own inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("retained", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
+	topic := &a.Topic
+	self := &a.Self
 	if *self && *topic != "" {
 		return errors.New("--self and --topic are mutually exclusive")
 	}

@@ -184,7 +184,7 @@ const POLL_INTERVAL_MS = 5000;
   // this file from a Go test would be a regex over JavaScript, while this is
   // exact. A verb declared for the WebUI with no case fails at load rather
   // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune", "submit", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
+  const WEBUI_DISPATCH = new Set(["prune", "submit", "cancel", "ls", "grid", "session await-idle", "caps set-parent", "session snapshot", "session stream attach", "session stream turn", "session stream interrupt", "session stream finish", "session stream approve", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
   for (const p of window.harness.pathsForSurface("webui")) {
     if (!WEBUI_DISPATCH.has(p)) {
       setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
@@ -2371,57 +2371,36 @@ const POLL_INTERVAL_MS = 5000;
           out = "snapshot refreshed";
           break;
         case "await-idle": {
-          // await-idle <task-id> [--notify | --topic T] [--threshold-ms N]
-          // Default (reply sink) keeps the promise open until the session
-          // goes idle, then prints; --notify arms and returns immediately
-          // (fire lands in the notification feed + notify-hook egress).
-          let notify = false, topic = null, thresholdMs = 0, target = null;
-          for (let i = 1; i < tokens.length; i++) {
-            const t = tokens[i];
-            if (t === "--notify") notify = true;
-            else if (t === "--topic") { i++; topic = tokens[i]; }
-            else if (t.startsWith("--topic=")) topic = t.slice("--topic=".length);
-            else if (t === "--threshold-ms") { i++; thresholdMs = parseInt(tokens[i], 10) || 0; }
-            else if (t.startsWith("--threshold-ms=")) thresholdMs = parseInt(t.slice("--threshold-ms=".length), 10) || 0;
-            else if (!target) target = t;
-            else throw new Error(`await-idle: unexpected arg ${t}`);
-          }
-          if (!target) throw new Error("await-idle: missing task id (32 hex)");
-          if (notify && topic) throw new Error("await-idle: --notify and --topic are mutually exclusive");
-          const sink = notify ? "notify" : (topic ? "board" : "reply");
+          // Parsed by the shared declaration, which also refuses --notify with
+          // --topic: two sinks for one fire.
+          const b = window.harness.parseCommand("session await-idle " + tokens.slice(1).join(" "), {});
+          if (b.error) throw new Error(b.error);
+          const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
           if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
-          const r = await window.harness.awaitIdle({ taskId: target, thresholdMs, sink, topic: topic || undefined });
-          out = `await-idle ${target.slice(0, 12)}: ${r.status}`;
+          const r = await window.harness.awaitIdle({
+            taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
+            sink, topic: b.flags.topic || undefined,
+          });
+          out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
           break;
         }
-        case "cancel":
-          if (!tokens[1]) throw new Error("cancel: missing task id");
-          await window.harness.cancel(tokens[1]);
+        case "cancel": {
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          await window.harness.cancel(b.args[0]);
           out = "cancelled";
           break;
+        }
         case "set-parent": {
-          // set-parent <task-id> (--parent <id> | --none | --swap)
-          // Mirrors harness-cli caps set-parent; ids are full 32-hex.
-          let parent = null, none = false, swap = false, target = null;
-          for (let i = 1; i < tokens.length; i++) {
-            const t = tokens[i];
-            if (t === "--none") none = true;
-            else if (t === "--swap") swap = true;
-            else if (t === "--parent") { i++; parent = tokens[i]; }
-            else if (t.startsWith("--parent=")) parent = t.slice("--parent=".length);
-            else if (t.startsWith("-")) throw new Error(`set-parent: unknown flag ${t}`);
-            else if (!target) target = t;
-            else throw new Error(`set-parent: unexpected arg ${t}`);
-          }
-          if (!target) throw new Error("set-parent: missing task id");
-          const picked = [parent !== null, none, swap].filter(Boolean).length;
-          if (picked !== 1) throw new Error("set-parent: pass exactly one of --parent <id>, --none, --swap");
-          const req = { taskId: target };
-          if (swap) req.swap = true;
-          else if (parent !== null) req.parentId = parent;
-          const r = await window.harness.setParent(req);
-          out = setParentMessage(target, swap, r);
-          await refreshSnapshot();
+          // `caps set-parent` on the other surfaces; the shared declaration
+          // enforces "exactly one of --parent / --none / --swap".
+          const b = window.harness.parseCommand("caps set-parent " + tokens.slice(1).join(" "), {});
+          if (b.error) throw new Error(b.error);
+          const req = { taskId: b.args[0] };
+          if (b.flags.swap) req.swap = true;
+          else if (b.flags.none) req.parentId = "";
+          else req.parentId = b.flags.parent;
+          out = await window.harness.setParent(req);
           break;
         }
         case "preview":
@@ -2430,56 +2409,17 @@ const POLL_INTERVAL_MS = 5000;
           out = `preview ${tokens[1].slice(0, 12)}…`;
           break;
         case "grid": {
-          // grid [--under <id> [--descendants]] [id...] — flags before
-          // positionals, as in the file verbs, and the same spellings the TUI's
-          // grid verb takes. --under is a task's WORKING set: its subtree plus
-          // whatever its own scope names individually; --descendants drops the
-          // task itself, for when you are watching that one elsewhere. Bare ids
-          // stay an EXPLICIT list and are never expanded into subtrees, matching
-          // `--scope ids:` which also names tasks one at a time.
-          let under = null;
-          let descendants = false;
-          const gridIds = [];
-          for (let i = 1; i < tokens.length; i++) {
-            const tok = tokens[i];
-            if (tok === "--descendants") {
-              descendants = true;
-            } else if (tok === "--under") {
-              i++;
-              if (i >= tokens.length) throw new Error("grid: --under: missing task id");
-              under = tokens[i];
-            } else if (tok.startsWith("--under=")) {
-              under = tok.slice("--under=".length);
-            } else if (tok.startsWith("-")) {
-              throw new Error(`grid: unknown flag ${tok}`);
-            } else {
-              gridIds.push(tok);
-            }
-          }
-          // Full 32-hex only, no prefix resolution: same rule as `prune`, so a
-          // mistype misses instead of resolving onto a neighbouring task.
-          const full = (id) => /^[0-9a-fA-F]{32}$/.test(id);
-          if (under !== null) {
-            if (gridIds.length) throw new Error("grid: --under names one subtree — drop the extra ids");
-            if (!full(under)) throw new Error("grid: --under needs a full 32-hex task id");
-            out = await openGridSet({ mode: descendants ? "descendants" : "subtree", anchor: under });
-            break;
-          }
-          if (descendants) {
-            throw new Error("grid: --descendants needs --under <task-id> to take the descendants OF");
-          }
-          if (gridIds.length) {
-            const bad = gridIds.filter((id) => !full(id));
-            if (bad.length) throw new Error(`grid: not a full 32-hex task id: ${bad.join(", ")}`);
-            out = await openGridSet({ mode: "ids", ids: gridIds });
-            break;
-          }
-          // No ids at all: the currently-included live sessions (respects the
-          // per-session グリッドに含める toggles), same as the show button.
-          const paneIds = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
-          if (paneIds.length === 0) { out = "grid: no included live interactive sessions"; break; }
-          openSessionGrid(paneIds, "all");
-          out = `grid: ${paneIds.length} pane(s)${paneIds.length > 9 ? " (capped at 9)" : ""}`;
+          // The grid grammar was already shared (cli.ParseGridArgs, which the
+          // workspace config validates against too); this routes the command
+          // input through the same declaration as everything else.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          // The declaration already refused --descendants without --under, so
+          // the mode follows from what survived the parse.
+          const under = b.flags.under || "";
+          const mode = under ? (b.flags.descendants ? "descendants" : "subtree")
+                     : (b.args.length ? "ids" : "all");
+          out = await openGridSet({ mode, anchor: under, ids: b.args });
           break;
         }
         case "prune": {

@@ -328,3 +328,143 @@ type AgentSendAction struct {
 	Timeout         time.Duration
 	ServerCID       string
 }
+
+// ListAction lists runners and tasks. Tree orders by the creator link.
+type ListAction struct {
+	ActionMarker
+	JSON bool
+	Tree bool
+}
+
+// ConnsAction snapshots live connections, or streams their events.
+type ConnsAction struct {
+	ActionMarker
+	JSON   bool
+	Follow bool
+}
+
+// CatalogAction is the shape of the read-only catalogs: caps, whoami, version.
+type CatalogAction struct {
+	ActionMarker
+	Sub  string
+	JSON bool
+}
+
+// SetCapsAction re-grants a live task's authority. Operator only.
+type SetCapsAction struct {
+	ActionMarker
+	TaskID       string
+	Caps         *protocol.Capability
+	Scope        *protocol.TaskScope
+	Overrides    []protocol.ScopeOverride
+	Cascade      bool
+	KeepConns    bool
+	CapsPresent  bool
+	ScopePresent bool
+}
+
+// SetParentAction re-points a live task's parent link -- the edge subtree
+// scopes walk. Caps and scope are untouched; `caps set` is the verb for those.
+type SetParentAction struct {
+	ActionMarker
+	TaskID   string
+	ParentID string
+	None     bool
+	Swap     bool
+}
+
+// PruneLocalAction removes worktrees under <repo>/.harness-worktrees/.
+type PruneLocalAction struct {
+	ActionMarker
+	Repo    string
+	Before  time.Duration
+	TaskIDs []string
+	Force   bool
+}
+
+// LogsAction dumps a task's log, optionally following it.
+type LogsAction struct {
+	ActionMarker
+	TaskID string
+	Follow bool
+}
+
+// SessionAction is the shape of the single-task session verbs that carry only
+// a task id and a few knobs: attach, ls, kill, await-idle, snapshot, resize,
+// and the stream sub-verbs.
+type SessionAction struct {
+	ActionMarker
+	Sub    string
+	TaskID string
+
+	View bool // attach
+
+	ThresholdMs uint // await-idle
+	Notify      bool
+	Topic       string
+
+	Rows, Cols   uint // snapshot
+	SettleMs     uint
+	Style, Color bool
+	Raw, JSON    bool
+	ANSI         bool
+	WithoutSynth bool
+	Detect       bool
+	DetectAgent  string
+
+	Size    string // resize
+	WaitMs  uint
+	Quiet   bool
+	FlushMs uint // stream verbs
+
+	Allow      bool // stream approve
+	Deny       bool
+	Message    string
+	Suggestion string
+	RequestID  string
+}
+
+// AgentAction is the shape of the agentboard verbs an agent calls from inside
+// its own task. ServerCID is env-primary; the ticket is env-only.
+type AgentAction struct {
+	ActionMarker
+	Sub                  string
+	ServerCID            string
+	Topic                string
+	Self                 bool
+	Seq                  uint64
+	Since                uint64
+	InReplyTo            uint64
+	JSON                 bool
+	UserPromptSubmitHook bool
+	Timeout              time.Duration
+}
+
+// CancelAction cancels a queued or running task.
+type CancelAction struct {
+	ActionMarker
+	TaskID string
+}
+
+// ForwardOpenAction opens one or more port forwards and holds them until the
+// process ends. CLI-only: a forward's lifetime is the lifetime of the client
+// holding its control stream.
+type ForwardOpenAction struct {
+	ActionMarker
+	TaskID string
+	L, R   []string
+	W      string
+
+	HTTPMethod  string
+	HTTPPath    string
+	HTTPBody    string
+	HTTPHeaders []string
+}
+
+// GridAction selects which sessions a grid shows.
+type GridAction struct {
+	ActionMarker
+	Mode   GridScopeMode
+	Anchor string
+	IDs    []string
+}

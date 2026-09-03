@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -15,11 +14,11 @@ import (
 // Subscriptions fetches the calling task's subscription pattern list and emits
 // one JSON Lines record per subscription.
 func Subscriptions(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent subscriptions", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	if err := fs.Parse(args); err != nil {
-		return err
+	a, perr := parseAgentVerb("subscriptions", args)
+	if perr != nil {
+		return perr
 	}
+	serverCID := &a.ServerCID
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,

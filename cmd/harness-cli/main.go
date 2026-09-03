@@ -118,21 +118,13 @@ func main() {
 		fmt.Println(id)
 
 	case "ls":
-		fs := flag.NewFlagSet("ls", flag.ExitOnError)
-		asJSON := fs.Bool("json", false, "emit a single JSON object {\"runners\":[...],\"tasks\":[...]} instead of the human-readable table")
-		asTree := fs.Bool("tree", false, "order tasks by their creator link and draw the hierarchy; shows every visible task, orphans included")
-		fs.Parse(args)
+		l := parseOne[verb.ListAction]("ls", args)
 		switch {
-		case *asTree && *asJSON:
-			// Not silently ignored: --json already carries created_by on every
-			// row, so a consumer builds the tree itself. Nesting the JSON to
-			// match would give the same data two shapes.
-			die(errors.New("ls: --tree and --json are mutually exclusive (--json rows carry created_by; build the tree from those)"))
-		case *asTree:
+		case l.Tree:
 			if err := cli.ListTree(ctx, parseCID(), os.Stdout); err != nil {
 				die(err)
 			}
-		case *asJSON:
+		case l.JSON:
 			if err := cli.ListJSON(ctx, parseCID(), os.Stdout); err != nil {
 				die(err)
 			}
@@ -143,14 +135,10 @@ func main() {
 		}
 
 	case "conns":
-		fs := flag.NewFlagSet("conns", flag.ExitOnError)
-		asJSON := fs.Bool("json", false, "output JSON lines instead of a human-readable table")
-		follow := fs.Bool("follow", false, "stream live connection events (conns.status)")
-		fs.BoolVar(follow, "f", false, "shorthand for --follow")
-		fs.Parse(args)
-		if *follow {
+		cn := parseOne[verb.ConnsAction]("conns", args)
+		if cn.Follow {
 			var err error
-			if *asJSON {
+			if cn.JSON {
 				err = cli.WatchConnsJSON(ctx, parseCID(), os.Stdout)
 			} else {
 				err = cli.WatchConns(ctx, parseCID(), os.Stdout)
@@ -163,7 +151,7 @@ func main() {
 			if err != nil {
 				die(err)
 			}
-			if *asJSON {
+			if cn.JSON {
 				for i := range conns {
 					fmt.Fprintln(os.Stdout, cli.ConnInfoJSONLine(&conns[i]))
 				}
@@ -183,30 +171,24 @@ func main() {
 			runCapsSetParent(ctx, parseCID(), args[1:])
 			return
 		}
-		fs := flag.NewFlagSet("caps", flag.ExitOnError)
-		asJSON := fs.Bool("json", false, "output the capability catalog as JSON")
-		fs.Parse(args)
-		if err := cli.WriteCaps(os.Stdout, *asJSON); err != nil {
+		cp := parseOne[verb.CatalogAction]("caps", args)
+		if err := cli.WriteCaps(os.Stdout, cp.JSON); err != nil {
 			die(err)
 		}
 
 	case "whoami":
-		fs := flag.NewFlagSet("whoami", flag.ExitOnError)
-		asJSON := fs.Bool("json", false, "output the identity as a JSON object")
-		fs.Parse(args)
+		w := parseOne[verb.CatalogAction]("whoami", args)
 		resp, err := cli.WhoAmI(ctx, parseCID())
 		if err != nil {
 			die(err)
 		}
-		if err := cli.WriteWhoAmI(os.Stdout, resp, *asJSON); err != nil {
+		if err := cli.WriteWhoAmI(os.Stdout, resp, w.JSON); err != nil {
 			die(err)
 		}
 
 	case "version":
-		fs := flag.NewFlagSet("version", flag.ExitOnError)
-		asJSON := fs.Bool("json", false, "output the build stamp as a JSON object")
-		fs.Parse(args)
-		if err := writeVersion(os.Stdout, *asJSON); err != nil {
+		vr := parseOne[verb.CatalogAction]("version", args)
+		if err := writeVersion(os.Stdout, vr.JSON); err != nil {
 			die(err)
 		}
 
@@ -290,16 +272,8 @@ func main() {
 		}
 
 	case "prune-local":
-		fs := flag.NewFlagSet("prune-local", flag.ExitOnError)
-		repo := fs.String("repo", ".", "repo to prune (env: HARNESS_REPO_PATH; default \".\")")
-		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this (ignored when TASK_IDs are passed)")
-		force := fs.Bool("force", false, "with TASK_IDs: remove even when the server still considers the task active (Queued/Running/Detached)")
-		fs.BoolVar(force, "f", false, "shorthand for --force")
-		taskIDs, perr := cli.ParsePermuted(fs, args)
-		if perr != nil {
-			die(perr)
-		}
-		repoVal := *repo
+		pl := parseOne[verb.PruneLocalAction]("prune-local", args)
+		repoVal := pl.Repo
 		if repoVal == "." {
 			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
 				repoVal = env
@@ -311,13 +285,13 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		if len(taskIDs) == 0 {
-			if err := cli.PruneLocal(ctx, abs, *before, nil, os.Stdout); err != nil {
+		if len(pl.TaskIDs) == 0 {
+			if err := cli.PruneLocal(ctx, abs, pl.Before, nil, os.Stdout); err != nil {
 				die(err)
 			}
 			break
 		}
-		safe, err := classifyForLocalPrune(ctx, parseCID(), taskIDs, *force, os.Stdout)
+		safe, err := classifyForLocalPrune(ctx, parseCID(), pl.TaskIDs, pl.Force, os.Stdout)
 		if err != nil {
 			die(err)
 		}
@@ -330,18 +304,8 @@ func main() {
 		}
 
 	case "logs":
-		fs := flag.NewFlagSet("logs", flag.ExitOnError)
-		follow := fs.Bool("follow", false, "after dumping history, keep streaming live log chunks (no-op when task is terminal)")
-		fs.BoolVar(follow, "f", false, "shorthand for --follow")
-		rest, perr := cli.ParsePermuted(fs, args)
-		if perr != nil {
-			die(perr)
-		}
-		if len(rest) == 0 {
-			fmt.Fprintln(os.Stderr, "logs: missing task id")
-			os.Exit(2)
-		}
-		if err := cli.Logs(ctx, parseCID(), rest[0], os.Stdout, *follow); err != nil {
+		lg := parseOne[verb.LogsAction]("logs", args)
+		if err := cli.Logs(ctx, parseCID(), lg.TaskID, os.Stdout, lg.Follow); err != nil {
 			die(err)
 		}
 
@@ -518,40 +482,12 @@ func main() {
 			}
 			return
 		}
-		taskID := args[0]
-		fs := flag.NewFlagSet("forward", flag.ExitOnError)
-		var specs repeatableStrings
-		var rspecs repeatableStrings
-		fs.Var(&specs, "L", "local forward [bind:]localport:remotehost:remoteport (repeatable)")
-		fs.Var(&rspecs, "R", "remote forward [bind:]runnerport:dialhost:dialport (repeatable)")
-		// -W mirrors ssh -W: no local listener, this process's stdin/stdout is
-		// the forward's client endpoint. ssh makes -W exclusive with -L/-R
-		// (it implies ClearAllForwardings) for the same reason we do: -W owns
-		// the foreground and exits with its peer, while -L/-R are long-lived
-		// listeners. One invocation, one lifetime.
-		wspec := fs.String("W", "", "raw stdio forward host:port (mutually exclusive with -L / -R)")
-		// With --http-path, -W stops splicing stdin and sends one built request
-		// instead, streaming the response to stdout. Ordinary flags rather than
-		// a "GET /x" mini-syntax: that reads well until the first header or
-		// body and then needs a parser and an escaping rule of its own.
-		httpMethod := fs.String("http-method", "GET", "with -W --http-path: HTTP method")
-		httpPath := fs.String("http-path", "", "with -W: send this HTTP request path instead of splicing stdin")
-		httpBody := fs.String("http-body", "", "with --http-path: request body (literal, @file, or - for stdin)")
-		var httpHeaders stringList
-		fs.Var(&httpHeaders, "http-header", "with --http-path: \"Name: value\" (repeatable)")
-		fs.Parse(args[1:])
-		if *httpPath != "" && *wspec == "" {
-			fmt.Fprintln(os.Stderr, "forward: --http-path needs -W host:port")
-			os.Exit(2)
-		}
-		if forwardWConflictsWithLR(*wspec, len(specs), len(rspecs)) {
-			fmt.Fprintln(os.Stderr, "forward: -W cannot be combined with -L / -R")
-			os.Exit(2)
-		}
-		if len(specs) == 0 && len(rspecs) == 0 && *wspec == "" {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] [-W host:port] ...")
-			os.Exit(2)
-		}
+		fo := parseOne[verb.ForwardOpenAction]("forward", args)
+		taskID := fo.TaskID
+		specs, rspecs := fo.L, fo.R
+		wspec, httpMethod := &fo.W, &fo.HTTPMethod
+		httpPath, httpBody := &fo.HTTPPath, &fo.HTTPBody
+		httpHeaders := fo.HTTPHeaders
 		var wHost string
 		var wPort int
 		if *wspec != "" {
@@ -1196,50 +1132,16 @@ func flagExplicitlySet(fs *flag.FlagSet, name string) bool {
 // re-grant of a task's capabilities and/or scope. It takes effect on the
 // target's next request — nothing restarts.
 func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
-	fs := flag.NewFlagSet("caps set", flag.ExitOnError)
-	capsFlag := fs.String("caps", "", "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps")
-	scopeFlag := fs.String("scope", "", "new scope: "+cli.ScopeGrammar+"; omitted = keep the task's current scope")
-	var scopeFor scopeForFlag
-	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage+" (written with --scope; they are one half of the authority)")
-	cascade := fs.Bool("cascade", false, "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider")
-	keepConns := fs.Bool("keep-conns", false, "on a narrowing, leave the affected tasks' connections open (default: close them, so in-flight attaches and transfers die with the grant)")
-	// Interspersed parse: Go's flag package stops at the first non-flag
-	// argument, so `caps set <id> --caps X` would silently leave --caps unset
-	// with the id in front. Re-parsing after each positional accepts either
-	// order, which is what anyone types.
-	// One implementation of the peel, shared with every other verb that takes a
-	// hex id and flags in either order — this used to be a copy of it.
-	positional, perr := cli.ParsePermuted(fs, args)
-	if perr != nil {
-		os.Exit(2)
+	// Parsed from the declaration: the permuted parse, the --caps/--scope
+	// grammar and the "pass at least one" rule all live there.
+	a := parseOne[verb.SetCapsAction]("caps set", args)
+	opts := cli.SetCapsOpts{TaskID: a.TaskID, Cascade: a.Cascade, KeepConns: a.KeepConns}
+	if a.Caps != nil {
+		opts.Caps = cli.CapsPtr(*a.Caps)
 	}
-
-	if len(positional) != 1 {
-		fmt.Fprintln(os.Stderr, "caps set: exactly one task id required")
-		fmt.Fprintln(os.Stderr, "  usage: harness-cli caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]")
-		os.Exit(2)
-	}
-	opts := cli.SetCapsOpts{TaskID: positional[0], Cascade: *cascade, KeepConns: *keepConns}
-	if flagExplicitlySet(fs, "caps") {
-		caps, err := cli.ParseCaps(*capsFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "caps set: --caps:", err)
-			os.Exit(2)
-		}
-		opts.Caps = cli.CapsPtr(caps)
-	}
-	if flagExplicitlySet(fs, "scope") {
-		scope, err := cli.ParseScope(*scopeFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "caps set: --scope:", err)
-			os.Exit(2)
-		}
-		opts.Scope = &scope
-		opts.Overrides = scopeFor.out
-	}
-	if opts.Caps == nil && opts.Scope == nil {
-		fmt.Fprintln(os.Stderr, "caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
-		os.Exit(2)
+	if a.Scope != nil {
+		opts.Scope = a.Scope
+		opts.Overrides = a.Overrides
 	}
 
 	res, err := cli.SetCaps(ctx, serverCID, opts)
@@ -1258,40 +1160,11 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 // scopes walk), or --swap to invert the task with its current parent. Caps
 // and scope are untouched — `caps set` is the verb that changes authority.
 func runCapsSetParent(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
-	fs := flag.NewFlagSet("caps set-parent", flag.ExitOnError)
-	parentFlag := fs.String("parent", "", "new parent task id (32 hex); the target and its whole subtree move under it")
-	noneFlag := fs.Bool("none", false, "detach the task to the operator root")
-	swapFlag := fs.Bool("swap", false, "invert the task with its CURRENT parent: the task takes the parent's place and the parent becomes its child")
-	// Interspersed parse, same as runCapsSet: Go's flag package stops at the
-	// first non-flag argument, so `caps set-parent <id> --swap` would silently
-	// leave --swap unset with the id in front.
-	// One implementation of the peel, shared with every other verb that takes a
-	// hex id and flags in either order — this used to be a copy of it.
-	positional, perr := cli.ParsePermuted(fs, args)
-	if perr != nil {
-		os.Exit(2)
-	}
+	// The "exactly one of --parent / --none / --swap" rule is in the verb's
+	// Build, so every surface gets it rather than the CLI alone.
+	a := parseOne[verb.SetParentAction]("caps set-parent", args)
 
-	usage := func() {
-		fmt.Fprintln(os.Stderr, "  usage: harness-cli caps set-parent <task-id> (--parent <task-id> | --none | --swap)")
-		os.Exit(2)
-	}
-	if len(positional) != 1 {
-		fmt.Fprintln(os.Stderr, "caps set-parent: exactly one task id required")
-		usage()
-	}
-	picked := 0
-	for _, on := range []bool{*parentFlag != "", *noneFlag, *swapFlag} {
-		if on {
-			picked++
-		}
-	}
-	if picked != 1 {
-		fmt.Fprintln(os.Stderr, "caps set-parent: pass exactly one of --parent <task-id>, --none, --swap")
-		usage()
-	}
-
-	opts := cli.SetParentOpts{TaskID: positional[0], ParentID: *parentFlag, Swap: *swapFlag}
+	opts := cli.SetParentOpts{TaskID: a.TaskID, ParentID: a.ParentID, Swap: a.Swap}
 	res, err := cli.SetParent(ctx, serverCID, opts)
 	if err != nil {
 		die(err)
@@ -1481,4 +1354,30 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
 		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
 	}
+}
+
+// parseOne parses a verb from the declaration and returns its action, already
+// type-asserted. Every simple CLI case is this shape, so it is written once.
+func parseOne[T verb.Action](path string, args []string) T {
+	parts := strings.Fields(path)
+	sp, ok := verb.Lookup(parts...)
+	if !ok {
+		die(fmt.Errorf("%s: not in the verb table", path))
+	}
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		die(perr)
+	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		fmt.Fprintln(os.Stderr, berr)
+		os.Exit(2)
+	}
+	out, isT := act.(T)
+	if !isT {
+		die(fmt.Errorf("%s: built %T", path, act))
+	}
+	return out
 }

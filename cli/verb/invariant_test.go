@@ -3,6 +3,8 @@ package verb
 import (
 	"flag"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -10,17 +12,17 @@ import (
 // The invariants below are asserted on the TABLE, not inferred from the shape
 // of code. That distinction is the point.
 //
-// cli/flagorder_test.go infers the same class of property from source: it
-// looks for verbs that define flags, read positionals, and parse with stdlib
-// flag. The inference has two blind spots a declaration cannot have --
+// cli/flagorder_test.go used to infer the same class of property from source:
+// it looked for verbs that define flags, read positionals, and parse with
+// stdlib flag. That inference had two blind spots a declaration cannot have --
 //
-//   - a positional read behind a helper call. `agent send` reads its payload
-//     inside resolvePayload(fs, ...), so the scan sees a verb with no
-//     positionals, and it is therefore neither reported nor required to be on
+//   - a positional read behind a helper call. `agent send` read its payload
+//     inside resolvePayload(fs, ...), so the scan saw a verb with no
+//     positionals, and it was therefore neither reported nor required to be on
 //     the flags-must-precede allowlist. It takes free-form trailing text all
 //     the same.
 //   - a FlagSet whose name is built rather than literal.
-//     `flag.NewFlagSet("session stream "+verb, ...)` is skipped entirely.
+//     `flag.NewFlagSet("session stream "+verb, ...)` was skipped entirely.
 //
 // Both were found by counting the surface; neither is reachable from here,
 // because Trailing is stated by the verb rather than deduced from how it
@@ -140,6 +142,57 @@ func TestUsageNamesItsVerb(t *testing.T) {
 			fs.SetOutput(io.Discard)
 			if _, err := v.Parse(fs, nil); err != nil {
 				t.Errorf("%s: takes no positionals but the bare form fails: %v", v.FlagSetName(), err)
+			}
+		}
+	}
+}
+
+// TestNoHandWrittenVerbFlagSetsRemain replaces cli/flagorder_test.go, which
+// guarded the same defect class by walking Go source for verbs that define
+// flags, read positionals, and parse with stdlib flag -- the shape that
+// silently drops a flag written after a positional.
+//
+// That guard is gone because what it searched for is gone: every verb's
+// FlagSet is now built by VerbSpec.NewFlagSet and parsed by VerbSpec.Parse,
+// which permutes unless Trailing says it cannot. This test keeps the property
+// from coming back by hand.
+//
+// It also closes the two blind spots the AST scan had, both found by counting
+// the surface rather than by review: a positional read behind a helper call
+// (agent send reads its payload inside resolvePayload, so the scan saw a verb
+// with no positionals) and a FlagSet whose name is built rather than literal
+// (`flag.NewFlagSet("session stream "+verb)` was skipped entirely). A
+// declaration cannot have either, because Trailing is stated by the verb
+// instead of deduced from how it happens to parse.
+func TestNoHandWrittenVerbFlagSetsRemain(t *testing.T) {
+	// Directories that hold verb parsing. cli/verb itself is excluded: it is
+	// where the one remaining NewFlagSet call belongs.
+	dirs := []string{
+		filepath.Join("..", "..", "cmd", "harness-cli"),
+		filepath.Join("..", "..", "cli"),
+		filepath.Join("..", "..", "cli", "agent"),
+		filepath.Join("..", "..", "tui"),
+	}
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue // a layout change should not fail this as a false alarm
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			src, rerr := os.ReadFile(path)
+			if rerr != nil {
+				t.Fatalf("read %s: %v", path, rerr)
+			}
+			if strings.Contains(string(src), "flag.NewFlagSet(") {
+				t.Errorf("%s builds a FlagSet by hand.\n"+
+					"Verb flags are declared in cli/verb and the FlagSet comes from "+
+					"VerbSpec.NewFlagSet, which is what makes the permuted parse, the "+
+					"alias grouping and the arity check apply everywhere instead of "+
+					"per surface. Add a VerbSpec entry rather than a FlagSet here.", path)
 			}
 		}
 	}

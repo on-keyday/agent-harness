@@ -22,7 +22,7 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 	}{
 		{"prune-id", verb.PruneAction{TaskIDs: []string{id}}},
 		{"prune-time", verb.PruneAction{Before: 0}},
-		{"cancel", CancelAction{IDPrefix: id}},
+		{"cancel", verb.CancelAction{TaskID: id}},
 		{"caps-set", SetCapsAction{TaskID: id}},
 		{"caps-set-parent", SetParentAction{TaskID: id, Detach: true}},
 		{"submit", verb.SpawnAction{Repo: "/r", Task: "hi"}},
