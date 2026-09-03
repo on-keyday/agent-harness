@@ -256,6 +256,12 @@ func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
 			return
 		}
 	}
+	// A Required flag is demanded on its own, with no group to pick from.
+	for _, f := range v.Flags {
+		if f.Required && f.Name != probeName {
+			add([]string{f.Name})
+		}
+	}
 	for _, r := range v.ExactlyOne {
 		add(r.Flags)
 	}

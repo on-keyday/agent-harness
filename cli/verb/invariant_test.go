@@ -153,6 +153,73 @@ func TestUsageNamesItsVerb(t *testing.T) {
 	}
 }
 
+// TestUsagePositionalsParse holds the synopsis to the parser, positional by
+// positional. TestUsageNamesItsVerb checked only the prefix, and
+// TestExamplesParse checks lines an author chose -- neither reads the
+// <angle-bracket> half, which is how `skill [--list] <name>...` came to print
+// an ellipsis on an argument capped at one and `git diff <base> <target>`
+// printed as required two revisions that are both optional.
+//
+// The check: build a line from the synopsis' own positional shapes -- fill
+// each required one, omit every bracketed one -- and parse it. A synopsis
+// that describes a call the parser refuses is the `board purge` shape, which
+// is the whole reason Usage() is generated.
+func TestUsagePositionalsParse(t *testing.T) {
+	for _, v := range Verbs {
+		if v.Trailing != nil || v.Pathspec {
+			continue // free-form tails and `--` pathspecs are their own grammar
+		}
+		u := v.Usage()
+		var args []string
+		for _, a := range v.Args {
+			optional := a.Optional || (a.Variadic && a.MaxCount == 1)
+			var want string
+			switch {
+			case optional:
+				want = "[<" + a.Name + ">]"
+			case a.Variadic:
+				want = "<" + a.Name + ">..."
+			default:
+				want = "<" + a.Name + ">"
+			}
+			// Checked for the optional ones TOO. The first version of this
+			// `continue`d before the check, which left it inert for exactly
+			// the shape it exists to pin -- confirmed by reverting the fix and
+			// watching it stay green.
+			if !strings.Contains(u, want) {
+				t.Errorf("%s: Usage() does not spell %s as %q:\n  %s", v.FlagSetName(), a.Name, want, u)
+			}
+			if !optional {
+				args = append(args, valueFor(a))
+			}
+		}
+		// Brackets mean "may be omitted", so a Required flag must not wear
+		// them: `board retract [--seq SEQ]` described the one call this verb
+		// refuses.
+		for _, f := range v.Flags {
+			named := dashList([]string{f.Name})
+			if f.Required {
+				if strings.Contains(u, "["+named) {
+					t.Errorf("%s: %s is Required and the synopsis brackets it:\n  %s", v.FlagSetName(), named, u)
+				}
+				continue
+			}
+			if !strings.Contains(u, "["+named) {
+				t.Errorf("%s: %s may be omitted and the synopsis does not bracket it:\n  %s", v.FlagSetName(), named, u)
+			}
+		}
+		// Plus whatever the cross-flag rules demand -- `forward` needs one of
+		// -L/-R/-W and `caps set-parent` one of three. Those are rules the
+		// synopsis does not render, not positional shapes it gets wrong.
+		fs := v.NewFlagSet(flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		if _, err := v.Parse(fs, append(satisfyingFlags(v, nil, false), args...)); err != nil {
+			t.Errorf("%s: the synopsis' own minimal positional form does not parse: %v\n  %s",
+				v.FlagSetName(), err, u)
+		}
+	}
+}
+
 // TestNoHandWrittenVerbFlagSetsRemain replaces cli/flagorder_test.go, which
 // guarded the same defect class by walking Go source for verbs that define
 // flags, read positionals, and parse with stdlib flag -- the shape that
