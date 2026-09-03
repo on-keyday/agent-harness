@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -18,7 +19,7 @@ import (
 // resume presence bit) was hand-written into seven cli.SessionOpts literals in
 // this package. Six of them — every interactive and session path — predated
 // TaskScope.Overrides and never grew the field, so `session new --scope-for
-// spawn=global` parsed, rode SessionNewAction and spawnAuthority, and then
+// spawn=global` parsed, rode verb.SpawnAction and spawnAuthority, and then
 // spawned with the bare scope. Only DoSubmitWithOpts carried it.
 //
 // The tests below pin the fix rather than the symptom: one builder, and a
@@ -179,9 +180,9 @@ func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	v, ok := act.(SessionNewAction)
+	v, ok := act.(verb.SpawnAction)
 	if !ok {
-		t.Fatalf("action = %T, want SessionNewAction", act)
+		t.Fatalf("action = %T, want verb.SpawnAction", act)
 	}
 	if len(v.Overrides) != 1 {
 		t.Fatalf("parsed overrides = %d, want 1", len(v.Overrides))

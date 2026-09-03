@@ -25,7 +25,7 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 		{"cancel", CancelAction{IDPrefix: id}},
 		{"caps-set", SetCapsAction{TaskID: id}},
 		{"caps-set-parent", SetParentAction{TaskID: id, Detach: true}},
-		{"submit", SubmitAction{Repo: "/r", Prompt: "hi"}},
+		{"submit", verb.SpawnAction{Repo: "/r", Task: "hi"}},
 		{"notify", NotifyAction{Title: "t", Text: "x"}},
 		{"session-ls", SessionLsAction{}},
 		{"forward-ls", verb.ForwardLsAction{}},

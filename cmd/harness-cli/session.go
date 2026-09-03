@@ -565,84 +565,15 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 // With -d / --detach the stream is closed immediately after open and the task
 // id is printed — mirroring `docker run -d`.
 func runSessionNew(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session new", flag.ExitOnError)
-	repo := fs.String("repo", "", "repo path (required; env: HARNESS_REPO_PATH)")
-	runner := fs.String("runner", "", "pin to runner by ConnectionID hex")
-	host := fs.String("host", "", "pin to runner by hostname")
-	ip := fs.String("ip", "", "pin to runner by IP address")
-	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
-	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-	capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
-	scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
-	var scopeFor scopeForFlag
-	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
-	var extraArgs repeatableStrings
-	fs.Var(&extraArgs, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
-	fs.Var(&extraArgs, "claude-arg", "deprecated alias for --agent-arg")
-	detach := false
-	fs.BoolVar(&detach, "detach", false, "start the session and immediately detach (run in background, print task id, exit)")
-	fs.BoolVar(&detach, "d", false, "shorthand for --detach")
-	stream := fs.Bool("stream", false,
-		"open an EVENT-STREAM session instead of a PTY one: the runner runs the "+
-			"profile's stream adapter and the session carries structured events "+
-			"rather than terminal bytes. Requires a profile with a stream adapter "+
-			"configured; the runner refuses rather than falling back to a terminal")
-	x11 := false
-	fs.BoolVar(&x11, "x11", false, "forward X11: inject DISPLAY/XAUTHORITY so GUI apps in the session render on your local X server (requires xauth + a running local X server)")
-	x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N; default 10)")
-	// Sizes the session's PTY, unlike `session snapshot --rows/--cols`, which
-	// sizes the offscreen renderer and never touches the PTY. Both must be
-	// given to take effect. Matters most with -d: a detached session's PTY has
-	// no size at all until a client attaches, and a resize needs a CONTROL attach (exec_control),
-	// which the spawner may not hold.
-	rows := fs.Uint("rows", 0, "initial PTY rows for the session (0 = unset; needs --cols too)")
-	cols := fs.Uint("cols", 0, "initial PTY columns for the session (0 = unset; needs --rows too)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	repoVal := *repo
-	if repoVal == "" {
-		repoVal = os.Getenv("HARNESS_REPO_PATH")
-	}
-	if repoVal == "" {
-		// Third tier: a --workspace's repo. Below the environment, per
-		// workspaceRepo's note in main.go.
-		repoVal = workspaceRepo
-	}
-	if repoVal == "" && *resume == "" {
-		return fmt.Errorf("session new: --repo required (or set HARNESS_REPO_PATH) — except when --resume is set, which uses the existing task's repo")
-	}
-
-	if x11 && detach {
-		return fmt.Errorf("session new: --x11 is incompatible with --detach (a detached session has no client to host the X tunnel)")
-	}
-	if x11 && (*x11Display < 0 || *x11Display > 99) {
-		return fmt.Errorf("session new: --x11-display must be 0..99")
-	}
-	if *stream && x11 {
-		return fmt.Errorf("session new: --stream is incompatible with --x11 (X11 is a terminal-session concept; the server refuses the pair too)")
-	}
-
-	scope, err := cli.ParseScope(*scopeFlag)
-	if err != nil {
-		return fmt.Errorf("session new: --scope: %w", err)
-	}
-	caps, err := cli.ParseCaps(*capsFlag)
-	if err != nil {
-		return fmt.Errorf("session new: --caps: %w", err)
-	}
-
-	opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
-	if err := opts.ValidateSelector(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	sel, err := cli.BuildSelector(opts)
-	if err != nil {
-		return err
-	}
+	// Parsed from the declaration, which carries this family's flags, its
+	// three cross-flag rules (x11 with detach, x11 with stream, the display
+	// range) and the repo ladder that used to be spelled out here.
+	a := parseSpawn("session-new", args, nil)
+	repoVal := a.Repo
+	sopts := spawnOpts(a)
+	sopts.EventStream = a.Stream
+	sopts.InitialRows, sopts.InitialCols = uint16(a.Rows), uint16(a.Cols)
+	detach, x11, x11Display := a.Detach, a.X11, int(a.X11Display)
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -650,17 +581,6 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	defer c.Close()
-
-	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
-	sopts := cli.SessionOpts{
-		Selector: sel, ExtraArgs: []string(extraArgs), ResumeTaskID: *resume,
-		Caps: caps, Scope: scope, ResumeCapsOverride: resumeCapsOverride,
-		Overrides:          scopeFor.out,
-		EventStream:        *stream,
-		ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
-		ResumeConversation: *resumeConversation, AgentProfile: *agent,
-		InitialRows: uint16(*rows), InitialCols: uint16(*cols),
-	}
 
 	if detach {
 		stream, taskIDHex, err := c.OpenInteractive(ctx, repoVal, sopts)
@@ -682,7 +602,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sopts, *x11Display)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sopts, x11Display)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -690,7 +610,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	if *stream {
+	if a.Stream {
 		// The non-detach interactive path hands the local TERMINAL to the new
 		// session (raw mode + byte splice), which for this kind would paint
 		// raw NDJSON. "Open and stay" for an event-stream session means open

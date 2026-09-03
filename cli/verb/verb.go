@@ -87,6 +87,19 @@ type Flag struct {
 	Default any
 	Help    string
 
+	// Custom supplies a flag.Value for options the stdlib types cannot carry:
+	// --agent-arg accumulates one entry per occurrence, and --scope-for parses
+	// and merges on every Set so an overlapping capability list is refused at
+	// the flag rather than one round trip later. New() returns a fresh value
+	// per FlagSet; Get() reads it back after parsing.
+	Custom *CustomValue
+
+	// Resolve names the tiers consulted when the flag is absent, in order.
+	// The CLI reads flag > env > workspace config; the TUI and WebUI supply a
+	// surface context instead (the TUI's defaultRepo, the WebUI's dropdowns).
+	// Declared here because all three had their own version of this ladder.
+	Resolve []Tier
+
 	// WidensIfUnset marks a flag whose ABSENCE makes the operation cover more.
 	// `board purge <topic> --seq N` -- the line the help text printed -- left
 	// --seq at its zero value, which is the whole-topic form, and destroyed
@@ -96,6 +109,23 @@ type Flag struct {
 
 	Surfaces      Surface
 	SurfaceReason string
+}
+
+// CustomValue is a flag whose value type the stdlib does not cover.
+type CustomValue struct {
+	New func() flag.Value
+	Get func(flag.Value) any
+}
+
+// Tier is one step of a flag's fallback ladder.
+type Tier struct {
+	// Env names an environment variable; SurfaceContext takes the value the
+	// calling surface injected under the flag's own name. Exactly one is set.
+	Env            string
+	SurfaceContext bool
+	// Workspace names a key in .harness/config, resolved by the caller because
+	// the file is read once per process and this package parses only.
+	Workspace string
 }
 
 // Trailing describes free-form words after the positionals. Non-nil means the
@@ -155,6 +185,9 @@ type Bound struct {
 	// TrailArgs is the trailing tail as separate words; Trail is the same
 	// words joined. A verb that hands an argv onward reads TrailArgs.
 	TrailArgs []string
+
+	// Custom holds the parsed values of Custom flags, by canonical name.
+	Custom map[string]any
 }
 
 // Str returns a string flag's value.

@@ -23,6 +23,16 @@ func (v VerbSpec) NewFlagSet(eh ErrorHandling) *flag.FlagSet {
 	fs := flag.NewFlagSet(v.FlagSetName(), eh)
 	for _, f := range v.Flags {
 		names := append([]string{f.Name}, f.Aliases...)
+		if f.Custom != nil {
+			// One value shared by every spelling, same as the typed cases:
+			// --agent-arg and its deprecated alias --claude-arg accumulate
+			// into ONE list, in the order the flags appear.
+			val := f.Custom.New()
+			for _, n := range names {
+				fs.Var(val, n, f.Help)
+			}
+			continue
+		}
 		switch f.Type {
 		case FlagBool:
 			p := new(bool)
@@ -108,7 +118,14 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 	canonical := map[string]string{}
 	for _, f := range v.Flags {
 		if fl := fs.Lookup(f.Name); fl != nil {
-			b.Flags[f.Name] = flagValue(fl)
+			if f.Custom != nil {
+				if b.Custom == nil {
+					b.Custom = map[string]any{}
+				}
+				b.Custom[f.Name] = f.Custom.Get(fl.Value)
+			} else {
+				b.Flags[f.Name] = flagValue(fl)
+			}
 		}
 		canonical[f.Name] = f.Name
 		for _, a := range f.Aliases {
@@ -219,4 +236,47 @@ func (v VerbSpec) For(s Surface) VerbSpec {
 		}
 	}
 	return out
+}
+
+// Resolve applies a flag's fallback ladder: the value as parsed if the caller
+// supplied it, otherwise each declared tier in order.
+//
+// It exists because all three surfaces had their own version of this. The CLI
+// called cliopts.ResolveString(flag, env), the TUI passed defaultRepo as the
+// FlagSet's default, and the WebUI read a dropdown -- three ladders for one
+// question, which is why --config's workspace tier reached only the CLI.
+//
+// env and ws are supplied by the caller: this package parses and does not read
+// the environment or the config file.
+func (v VerbSpec) Resolve(b Bound, name string, env func(string) string, ws func(string) string, ctx map[string]string) string {
+	if b.Set[name] {
+		return b.Str(name)
+	}
+	var f *Flag
+	for i := range v.Flags {
+		if v.Flags[i].Name == name {
+			f = &v.Flags[i]
+			break
+		}
+	}
+	if f == nil {
+		return b.Str(name)
+	}
+	for _, t := range f.Resolve {
+		switch {
+		case t.Env != "" && env != nil:
+			if val := env(t.Env); val != "" {
+				return val
+			}
+		case t.Workspace != "" && ws != nil:
+			if val := ws(t.Workspace); val != "" {
+				return val
+			}
+		case t.SurfaceContext && ctx != nil:
+			if val := ctx[name]; val != "" {
+				return val
+			}
+		}
+	}
+	return b.Str(name)
 }

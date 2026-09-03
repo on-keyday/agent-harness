@@ -739,6 +739,41 @@ var Verbs = []VerbSpec{
 			return BoardAction{Sub: "purge", Topic: b.Args[0], Seq: seq}, nil
 		},
 	},
+	// --- spawning: submit / interactive / session new ---
+	//
+	// One shape, three verbs. The inventory found the TUI's submit had no
+	// --runner/--host/--ip at all and its session new no --repo/--rows/--cols,
+	// and that none of the three accepted --agent-arg -- only the CLI's
+	// deprecated --claude-arg spelling, because the TUI's copy was written
+	// before the rename and its comment still says so. Declaring the family
+	// once gives every surface the same set.
+	{
+		Path:     []string{"submit"},
+		Surfaces: CLI | TUI | WebUI,
+		// The prompt is a positional on the TUI and the WebUI and --task on the
+		// CLI. Both work everywhere now: the flag wins when given, the trailing
+		// words are the prompt otherwise.
+		Trailing: &Trailing{
+			Name: "prompt", Reason: "the prompt is free-form text, so a word beginning with '-' cannot be told from a flag",
+		},
+		Flags:    spawnFlags(spawnSubmit),
+		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
+		Build:    buildSpawn("submit"),
+	},
+	{
+		Path:     []string{"interactive"},
+		Surfaces: CLI | TUI,
+		Flags:    spawnFlags(spawnInteractive),
+		Examples: []string{"interactive --repo /r"},
+		Build:    buildSpawn("interactive"),
+	},
+	{
+		Path:     []string{"session", "new"},
+		Surfaces: CLI | TUI,
+		Flags:    spawnFlags(spawnSessionNew),
+		Examples: []string{"session new --repo /r", "session new --repo /r -d"},
+		Build:    buildSpawn("session-new"),
+	},
 }
 
 // Lookup finds the spec for a verb path.

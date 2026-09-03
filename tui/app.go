@@ -3130,12 +3130,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, DoSetParent(a.client, cli.SetParentOpts{
 			TaskID: full, ParentID: parentFull, Swap: v.Swap,
 		})
-	case InteractiveAction:
-		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
-	case SubmitAction:
-		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
+	case verb.SpawnAction:
+		// One action for submit / interactive / session new: they differ in
+		// what this surface DOES with the result, not in what was typed.
+		return a.runSpawnAction(v)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -3150,22 +3148,6 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 		}
 		return a, DoPruneTasks(a.client, v.Before, v.TaskIDs, v.Force)
-	case SessionNewAction:
-		repo := v.Repo
-		if repo == "" {
-			repo = a.defaultRepo
-		}
-		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
-		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
-		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
-		}
-		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
-		}
-		// v.Stream without Detach cannot reach here: parseSession refuses it.
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionStreamAttachAction:
@@ -3483,4 +3465,31 @@ func (a *App) gitReload(taskID string) tea.Cmd {
 		DoGitSubrepos(a.client, taskID, q),
 		DoGitDiff(a.client, taskID, diffQ),
 	)
+}
+
+// runSpawnAction executes a parsed spawn. The three verbs share their grammar
+// (cli/verb) and differ only here, in what the TUI does with the result:
+// submit queues, interactive attaches now, session new opens a detachable one.
+func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
+	repo := v.Repo
+	if repo == "" {
+		repo = a.defaultRepo
+	}
+	caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
+	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
+	switch v.Kind {
+	case "submit":
+		return a, DoSubmitWithOpts(a.client, repo, v.Task, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	case "interactive":
+		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	}
+	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
+	if v.X11 {
+		return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Agent)
+	}
+	if v.Detach {
+		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
+	}
+	// Stream without Detach cannot reach here: the declaration refuses it.
+	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
 }

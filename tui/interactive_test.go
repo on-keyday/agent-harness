@@ -39,7 +39,7 @@ func TestResumeSelectorOpts(t *testing.T) {
 // two dispatch sites that populate pendingInteractive (the `S` key and the
 // actionResume case of `r`/`R`) may open the runner picker on an
 // AmbiguousRunner error. Every other interactive-open path (`i`,
-// InteractiveAction, SessionNewAction, X11) must fall back to the flat
+// verb.SpawnAction, verb.SpawnAction, X11) must fall back to the flat
 // cmdresult error line instead, since pendingInteractive was never (re)armed
 // for them and could carry a stale resumeTaskID from a prior r/R.
 func TestInteractiveReadyMsg_PickerArmGate(t *testing.T) {

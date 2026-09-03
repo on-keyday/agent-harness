@@ -23,19 +23,6 @@ import (
 // unexported method declared in cli/verb could not be implemented from here.
 type Action = verb.Action
 
-type SubmitAction struct {
-	verb.ActionMarker
-	Repo               string
-	Caps               *protocol.Capability
-	Scope              *protocol.TaskScope
-	Overrides          []protocol.ScopeOverride
-	Prompt             string
-	ExtraArgs          []string
-	ResumeTaskID       string
-	ResumeConversation bool
-	AgentProfile       string
-}
-
 type CancelAction struct {
 	verb.ActionMarker
 	IDPrefix string
@@ -78,30 +65,6 @@ type TrsfDebugAction struct{ verb.ActionMarker }
 // immediately (Docker-style background start); the task id is printed to
 // cmdresult and the TUI is not suspended.
 //
-// Host / Runner / IP carry the runner pin selector, mutually exclusive and
-// validated at parse time via cli.SelectorOpts.ValidateSelector.
-type SessionNewAction struct {
-	verb.ActionMarker
-	Repo               string
-	Caps               *protocol.Capability
-	Scope              *protocol.TaskScope
-	Overrides          []protocol.ScopeOverride
-	ExtraArgs          []string
-	ResumeTaskID       string
-	ResumeConversation bool
-	Detach             bool
-	Host               string
-	Runner             string
-	IP                 string
-	X11                bool
-	X11Display         int
-	AgentProfile       string
-	// Stream opens the session as an event-stream one (`--stream`). TUI-side
-	// it requires Detach: the interactive handover is a terminal splice, and
-	// this kind has no terminal — its events are followed in the logs pane.
-	Stream bool
-}
-
 // SessionAttachAction re-attaches to an existing detachable session by ID.
 type SessionAttachAction struct {
 	verb.ActionMarker
@@ -222,21 +185,6 @@ type SSHGatewayAction struct {
 	verb.ActionMarker
 	Sub    string
 	Listen string
-}
-
-// InteractiveAction opens an interactive PTY claude session in Repo —
-// the slash-command equivalent of the 'i' key, useful when chaining
-// after /repo or when the user is already in cmdline focus.
-type InteractiveAction struct {
-	verb.ActionMarker
-	Repo               string
-	Caps               *protocol.Capability
-	Scope              *protocol.TaskScope
-	Overrides          []protocol.ScopeOverride
-	ExtraArgs          []string
-	ResumeTaskID       string
-	ResumeConversation bool
-	AgentProfile       string
 }
 
 // ServerDialRunnerAction asks the server to dial out to a Listen-mode
@@ -444,27 +392,7 @@ func parseServer(args []string) (Action, error) {
 }
 
 func parseInteractive(args []string, defaultRepo string) (Action, error) {
-	fs := flag.NewFlagSet("interactive", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", defaultRepo, "")
-	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume")
-	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
-	var extra repeatableStrings
-	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
-	var caps capsFlag
-	fs.Var(&caps, "caps", capsFlagUsage)
-	var scope scopeFlag
-	fs.Var(&scope, "scope", scopeFlagUsage)
-	var scopeFor scopeForFlag
-	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("interactive: %w", err)
-	}
-	if fs.NArg() > 0 {
-		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
-	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value(), Overrides: scopeFor.out}, nil
+	return parseSpawnTUI("interactive", args, defaultRepo)
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -478,28 +406,7 @@ func parseRepo(args []string) (Action, error) {
 }
 
 func parseSubmit(args []string, defaultRepo string) (Action, error) {
-	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", defaultRepo, "")
-	resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch")
-	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
-	var extra repeatableStrings
-	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
-	var caps capsFlag
-	fs.Var(&caps, "caps", capsFlagUsage)
-	var scope scopeFlag
-	fs.Var(&scope, "scope", scopeFlagUsage)
-	var scopeFor scopeForFlag
-	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("submit: %w", err)
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		return nil, fmt.Errorf("submit: prompt is required")
-	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value(), Overrides: scopeFor.out}, nil
+	return parseSpawnTUI("submit", args, defaultRepo)
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -634,69 +541,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 	rest := args[1:]
 	switch verb {
 	case "new":
-		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
-		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
-		// The CLI registers -d as a shorthand (cmd/harness-cli/session.go); an
-		// operator who learned the command there types it here and gets "flag
-		// provided but not defined".
-		fs.BoolVar(detach, "d", false, "shorthand for --detach")
-		host := fs.String("host", "", "pin to a runner by reported hostname (mutually exclusive with --runner / --ip)")
-		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
-		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
-		x11 := fs.Bool("x11", false, "X11-forward GUI apps to your local X server")
-		stream := fs.Bool("stream", false, "open an event-stream session (structured events, no PTY); requires --detach here — follow it in the logs pane")
-		x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N)")
-		agent := fs.String("agent", "", "agent profile name (empty = runner default; on --resume, the resumed task's own profile)")
-		var extra repeatableStrings
-		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
-		var caps capsFlag
-		fs.Var(&caps, "caps", capsFlagUsage)
-		var scope scopeFlag
-		fs.Var(&scope, "scope", scopeFlagUsage)
-		var scopeFor scopeForFlag
-		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("session new: %w", err)
-		}
-		if fs.NArg() > 0 {
-			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
-		}
-		if err := (cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}).ValidateSelector(); err != nil {
-			return nil, fmt.Errorf("session new: %w", err)
-		}
-		if *x11 && *detach {
-			return nil, fmt.Errorf("session new: --x11 is incompatible with --detach")
-		}
-		if *stream && *x11 {
-			return nil, fmt.Errorf("session new: --stream is incompatible with --x11 (X11 is a terminal-session concept)")
-		}
-		if *stream && !*detach {
-			// The non-detach path hands the TERMINAL to the new session, and an
-			// event-stream session has no terminal to hand it to. The CLI's
-			// non-detach form follows events instead; the TUI's follower is the
-			// logs pane, which needs no live handover.
-			return nil, fmt.Errorf("session new: --stream needs -d in the TUI (then select the task; its events render in the logs pane)")
-		}
-		return SessionNewAction{
-			Repo:               defaultRepo,
-			ExtraArgs:          []string(extra),
-			ResumeTaskID:       *resume,
-			ResumeConversation: *resumeConversation,
-			Detach:             *detach,
-			Host:               *host,
-			Runner:             *runner,
-			IP:                 *ip,
-			X11:                *x11,
-			X11Display:         *x11Display,
-			AgentProfile:       *agent,
-			Caps:               caps.Value(),
-			Scope:              scope.Value(),
-			Overrides:          scopeFor.out,
-			Stream:             *stream,
-		}, nil
+		return parseSpawnTUI("session-new", rest, defaultRepo)
+
 	case "attach":
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session attach: task id required")
@@ -1110,4 +956,34 @@ func parseViaSpec2(head, sub string, args []string) (Action, error) {
 		return nil, fmt.Errorf("%s %s: %w", head, sub, err)
 	}
 	return sp.Build(b)
+}
+
+// parseSpawnTUI parses one of the three spawn verbs from the declaration.
+//
+// defaultRepo is the surface-context tier of --repo's ladder: the TUI knows a
+// repo from its session, the WebUI from a dropdown, and the CLI from nothing.
+// One ladder, three injections, instead of three ladders.
+func parseSpawnTUI(kind string, args []string, defaultRepo string) (Action, error) {
+	path := []string{kind}
+	if kind == "session-new" {
+		path = []string{"session", "new"}
+	}
+	sp, ok := verb.Lookup(path...)
+	if !ok {
+		return nil, fmt.Errorf("%s: not in the verb table", kind)
+	}
+	sp = sp.For(verb.TUI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
+	act, err := sp.Build(b)
+	if err != nil {
+		return nil, err
+	}
+	a := act.(verb.SpawnAction)
+	a.Repo = sp.Resolve(b, "repo", nil, nil, map[string]string{"repo": defaultRepo})
+	return a, nil
 }

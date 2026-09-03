@@ -15,15 +15,15 @@ func TestParseSubmitWithRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(SubmitAction)
+	a, ok := got.(verb.SpawnAction)
 	if !ok {
-		t.Fatalf("got %T, want SubmitAction", got)
+		t.Fatalf("got %T, want verb.SpawnAction", got)
 	}
 	if a.Repo != "/foo" {
 		t.Errorf("Repo=%q", a.Repo)
 	}
-	if a.Prompt != "long prompt with spaces" {
-		t.Errorf("Prompt=%q", a.Prompt)
+	if a.Task != "long prompt with spaces" {
+		t.Errorf("Prompt=%q", a.Task)
 	}
 }
 
@@ -32,12 +32,12 @@ func TestParseSubmitDefaultRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SubmitAction)
+	a := got.(verb.SpawnAction)
 	if a.Repo != "/cwd" {
 		t.Errorf("Repo=%q, want /cwd", a.Repo)
 	}
-	if a.Prompt != "hello" {
-		t.Errorf("Prompt=%q", a.Prompt)
+	if a.Task != "hello" {
+		t.Errorf("Prompt=%q", a.Task)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestParseSubmitWithClaudeArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SubmitAction)
-	if a.Prompt != "do work" {
-		t.Errorf("Prompt=%q", a.Prompt)
+	a := got.(verb.SpawnAction)
+	if a.Task != "do work" {
+		t.Errorf("Prompt=%q", a.Task)
 	}
 	want := []string{"--resume", "deadbeef"}
 	if len(a.ExtraArgs) != len(want) {
@@ -73,15 +73,15 @@ func TestParseSubmitResumeConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SubmitAction)
+	a := got.(verb.SpawnAction)
 	if a.ResumeTaskID != "abc123" {
 		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
 	}
 	if !a.ResumeConversation {
 		t.Fatal("ResumeConversation=false want true")
 	}
-	if a.Prompt != "do work" {
-		t.Errorf("Prompt=%q want do work", a.Prompt)
+	if a.Task != "do work" {
+		t.Errorf("Prompt=%q want do work", a.Task)
 	}
 }
 
@@ -90,9 +90,9 @@ func TestParseSubmitWithAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SubmitAction)
-	if a.AgentProfile != "codex" {
-		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
+	a := got.(verb.SpawnAction)
+	if a.Agent != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.Agent)
 	}
 }
 
@@ -101,9 +101,9 @@ func TestParseSubmitDefaultAgentEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SubmitAction)
-	if a.AgentProfile != "" {
-		t.Errorf("AgentProfile=%q want empty (runner default)", a.AgentProfile)
+	a := got.(verb.SpawnAction)
+	if a.Agent != "" {
+		t.Errorf("AgentProfile=%q want empty (runner default)", a.Agent)
 	}
 }
 
@@ -112,7 +112,7 @@ func TestParseInteractiveWithClaudeArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(InteractiveAction)
+	a := got.(verb.SpawnAction)
 	if a.Repo != "/r" {
 		t.Errorf("Repo=%q", a.Repo)
 	}
@@ -132,7 +132,7 @@ func TestParseInteractiveResumeConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(InteractiveAction)
+	a := got.(verb.SpawnAction)
 	if a.ResumeTaskID != "abc123" {
 		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
 	}
@@ -146,9 +146,9 @@ func TestParseInteractiveWithAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(InteractiveAction)
-	if a.AgentProfile != "codex" {
-		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
+	a := got.(verb.SpawnAction)
+	if a.Agent != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.Agent)
 	}
 }
 
@@ -277,7 +277,7 @@ func TestParseSessionNewNoFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if a.Repo != "/cwd" {
 		t.Errorf("Repo=%q want /cwd", a.Repo)
 	}
@@ -294,7 +294,7 @@ func TestParseSessionNewWithHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if a.Host != "raspi" {
 		t.Errorf("Host=%q want raspi", a.Host)
 	}
@@ -308,9 +308,9 @@ func TestParseSessionNewWithAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
-	if a.AgentProfile != "codex" {
-		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
+	a := got.(verb.SpawnAction)
+	if a.Agent != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.Agent)
 	}
 }
 
@@ -319,7 +319,7 @@ func TestParseSessionNewResumeConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if a.ResumeTaskID != "abc123" {
 		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
 	}
@@ -334,7 +334,7 @@ func TestParseSessionNewWithRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if a.Runner != hex32 {
 		t.Errorf("Runner=%q want %s", a.Runner, hex32)
 	}
@@ -345,7 +345,7 @@ func TestParseSessionNewWithIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if a.IP != "192.168.1.10" {
 		t.Errorf("IP=%q want 192.168.1.10", a.IP)
 	}
@@ -356,7 +356,7 @@ func TestParseSessionNewDetachAndHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if !a.Detach {
 		t.Errorf("Detach=false want true")
 	}
@@ -370,7 +370,7 @@ func TestParseSessionNewStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionNewAction)
+	a := got.(verb.SpawnAction)
 	if !a.Stream || !a.Detach {
 		t.Errorf("Stream=%v Detach=%v want true/true", a.Stream, a.Detach)
 	}
@@ -700,7 +700,7 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	if c := act.(SubmitAction).Caps; c != nil {
+	if c := act.(verb.SpawnAction).Caps; c != nil {
 		t.Errorf("submit without --caps: Caps = %v, want nil", *c)
 	}
 
@@ -708,7 +708,7 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit --caps: %v", err)
 	}
-	c := act.(SubmitAction).Caps
+	c := act.(verb.SpawnAction).Caps
 	if c == nil {
 		t.Fatal("submit --caps: Caps is nil")
 	}
@@ -720,7 +720,7 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session new --caps none: %v", err)
 	}
-	sc := act.(SessionNewAction).Caps
+	sc := act.(verb.SpawnAction).Caps
 	if sc == nil {
 		t.Fatal("session new --caps none: Caps is nil — none must be distinguishable from unset")
 	}
@@ -732,7 +732,7 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("interactive --caps: %v", err)
 	}
-	ic := act.(InteractiveAction).Caps
+	ic := act.(verb.SpawnAction).Caps
 	if ic == nil || *ic != protocol.Capability_ExecControl {
 		t.Errorf("interactive --caps exec_control = %v", ic)
 	}
@@ -750,7 +750,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	if s := act.(SubmitAction).Scope; s != nil {
+	if s := act.(verb.SpawnAction).Scope; s != nil {
 		t.Errorf("submit without --scope: Scope = %v, want nil", *s)
 	}
 
@@ -758,7 +758,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit --scope none: %v", err)
 	}
-	s := act.(SubmitAction).Scope
+	s := act.(verb.SpawnAction).Scope
 	if s == nil || s.Base != protocol.ScopeBase_None {
 		t.Fatalf("submit --scope none = %v, want base none", s)
 	}
@@ -767,7 +767,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("interactive --scope: %v", err)
 	}
-	is := act.(InteractiveAction).Scope
+	is := act.(verb.SpawnAction).Scope
 	if is == nil || is.Base != protocol.ScopeBase_Global {
 		t.Errorf("interactive --scope global = %v", is)
 	}
@@ -776,7 +776,7 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session new --scope subtree: %v", err)
 	}
-	ss := act.(SessionNewAction).Scope
+	ss := act.(verb.SpawnAction).Scope
 	if ss == nil || ss.Base != protocol.ScopeBase_Subtree {
 		t.Fatal("session new --scope subtree: explicit subtree must be distinguishable from unset")
 	}
@@ -794,7 +794,7 @@ func TestParseScopeOnResumeStandsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lone --scope on resume must parse: %v", err)
 	}
-	sa := act.(SubmitAction)
+	sa := act.(verb.SpawnAction)
 	if sa.Scope == nil || sa.Scope.Base != protocol.ScopeBase_None {
 		t.Fatalf("Scope = %v, want explicit none", sa.Scope)
 	}
@@ -1335,15 +1335,15 @@ func TestSessionNewDetachShorthand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", spelling, err)
 		}
-		v, ok := got.(SessionNewAction)
+		v, ok := got.(verb.SpawnAction)
 		if !ok {
-			t.Fatalf("%s: action = %T, want SessionNewAction", spelling, got)
+			t.Fatalf("%s: action = %T, want verb.SpawnAction", spelling, got)
 		}
 		if !v.Detach {
 			t.Errorf("%s: Detach = false", spelling)
 		}
-		if v.AgentProfile != "bash" {
-			t.Errorf("%s: AgentProfile = %q, want bash", spelling, v.AgentProfile)
+		if v.Agent != "bash" {
+			t.Errorf("%s: AgentProfile = %q, want bash", spelling, v.Agent)
 		}
 	}
 }

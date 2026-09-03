@@ -184,7 +184,7 @@ const POLL_INTERVAL_MS = 5000;
   // this file from a Go test would be a regex over JavaScript, while this is
   // exact. A verb declared for the WebUI with no case fails at load rather
   // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
+  const WEBUI_DISPATCH = new Set(["prune", "submit", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
   for (const p of window.harness.pathsForSurface("webui")) {
     if (!WEBUI_DISPATCH.has(p)) {
       setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
@@ -2331,42 +2331,30 @@ const POLL_INTERVAL_MS = 5000;
       let out;
       switch (cmd) {
         case "submit": {
+          // Parsed by the shared declaration. The repo comes from the Compose
+          // dropdown through the surface-context tier of --repo's ladder, the
+          // same ladder the CLI reads env and workspace config from -- one
+          // ladder with three injections, instead of three ladders.
           const repo = runnerSelect.value || "";
           const resumeTaskId = currentResumeTaskID();
-          // repo is optional on resume — server uses the existing task's
-          // RepoPath. Reject only when neither is supplied.
           if (!repo && !resumeTaskId) {
             throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
           }
-          let resumeConversation = false;
-          // agent defaults to the Compose dropdown's current selection (mirrors
-          // repo/host, which also fall back to the Compose selects); --agent
-          // overrides it, same pattern as the TUI cmdline's --agent (Task 9/10).
-          let agent = agentSelect ? (agentSelect.value || "") : "";
-          const promptTokens = [];
-          for (let i = 1; i < tokens.length; i++) {
-            const t = tokens[i];
-            if (t === "--resume-conversation") {
-              resumeConversation = true;
-            } else if (t === "--agent") {
-              i++;
-              if (i >= tokens.length) throw new Error("--agent: missing profile name");
-              agent = tokens[i];
-            } else if (t.startsWith("--agent=")) {
-              agent = t.slice("--agent=".length);
-            } else {
-              promptTokens.push(t);
-            }
-          }
-          // Everything after `submit` (except command flags) is the task prompt. We join the
-          // tokenize() result with single spaces — quoted segments have
-          // already been collapsed into single tokens, so a multi-word
-          // task is preserved verbatim.
-          const task = promptTokens.join(" ");
+          const b = window.harness.parseCommand(line, {
+            repo, host: hostSelect ? hostSelect.value || "" : "",
+            agent: agentSelect ? agentSelect.value || "" : "",
+          });
+          if (b.error) throw new Error(b.error);
+          const task = b.flags.task || b.trail;
           if (!task) throw new Error("submit: missing task prompt");
-          const host = hostSelect ? (hostSelect.value || "") : "";
-          const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit(sessionReq({ repo, task, host, agent, claudeArgs: claudeArgsList, resumeTaskId, resumeConversation }));
+          out = await window.harness.submit(sessionReq({
+            repo, task,
+            host: hostSelect ? hostSelect.value || "" : "",
+            agent: b.flags.agent || (agentSelect ? agentSelect.value || "" : ""),
+            claudeArgs: (b.custom && b.custom["agent-arg"]) || currentClaudeArgs(),
+            resumeTaskId,
+            resumeConversation: !!b.flags["resume-conversation"],
+          }));
           break;
         }
         case "list":

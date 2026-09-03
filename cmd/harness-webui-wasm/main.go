@@ -3585,13 +3585,25 @@ func boundToJS(b verb.Bound) map[string]any {
 	for k := range b.Set {
 		set[k] = true
 	}
+	// Custom flags (--agent-arg's repeatable list, --scope-for's specs) cross
+	// as arrays; a JS caller reads them the same way it reads flags.
+	custom := map[string]any{}
+	for k, v := range b.Custom {
+		if list, ok := v.([]string); ok {
+			out := make([]any, 0, len(list))
+			for _, one := range list {
+				out = append(out, one)
+			}
+			custom[k] = out
+		}
+	}
 	ta := make([]any, 0, len(b.TrailArgs))
 	for _, t := range b.TrailArgs {
 		ta = append(ta, t)
 	}
 	return map[string]any{
 		"path": path, "args": as, "flags": flags, "set": set,
-		"trail": b.Trail, "trailArgs": ta, "pathspec": b.Pathspec,
+		"trail": b.Trail, "trailArgs": ta, "pathspec": b.Pathspec, "custom": custom,
 	}
 }
 

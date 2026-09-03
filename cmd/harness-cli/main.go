@@ -103,89 +103,15 @@ func main() {
 		return cid
 	}
 
-	// addAgentArgFlags registers --agent-arg as a repeatable flag and returns
-	// the underlying slice (populated after fs.Parse). Each occurrence appends
-	// one CLI argument forwarded verbatim to the spawned agent process; e.g.
-	//   submit --agent-arg --resume --agent-arg <uuid>
-	// works around the 2.1.123 /resume picker regression that requires the
-	// caller to be in the original CWD by letting the user push --resume
-	// through harness-cli without an interactive picker.
-	addAgentArgFlags := func(fs *flag.FlagSet) *[]string {
-		var args repeatableStrings
-		fs.Var(&args, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
-		fs.Var(&args, "claude-arg", "deprecated alias for --agent-arg")
-		return (*[]string)(&args)
-	}
-
-	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
-	// function that resolves them to a RunnerSelector after fs.Parse.
-	addSelectorFlags := func(fs *flag.FlagSet) func() protocol.RunnerSelector {
-		runner := fs.String("runner", "", "pin to a specific runner by ConnectionID (the id= value from `harness-cli ls`)")
-		host := fs.String("host", "", "pin to runner by hostname")
-		ip := fs.String("ip", "", "pin to runner by IP address")
-		return func() protocol.RunnerSelector {
-			opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
-			if err := opts.ValidateSelector(); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(2)
-			}
-			sel, err := cli.BuildSelector(opts)
-			if err != nil {
-				die(err)
-			}
-			return sel
-		}
-	}
-
 	switch sub {
 	case "submit":
-		fs := flag.NewFlagSet("submit", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
-		task := fs.String("task", "", "prompt text")
-		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
-		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-		capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
-		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
-		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
-		var scopeFor scopeForFlag
-		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-		resolveSelector := addSelectorFlags(fs)
-		extraArgs := addAgentArgFlags(fs)
-		fs.Parse(args)
-		if *task == "" {
-			fmt.Fprintln(os.Stderr, "submit: --task is required")
-			os.Exit(2)
-		}
-		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
-		if repoVal == "" && *resume == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
-			os.Exit(2)
-		}
-		caps, err := cli.ParseCaps(*capsFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "submit: --caps:", err)
-			os.Exit(2)
-		}
-		scope, err := cli.ParseScope(*scopeFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "submit: --scope:", err)
-			os.Exit(2)
-		}
-		sel := resolveSelector()
-		// Dial sends the merged PSK+identity handshake (kind=Cli or auto-upgrades
-		// to Agent when in-task env is present); no separate SayHelloAuto needed.
+		act := parseSpawn("submit", args, parseCID)
 		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		id, err := c.Submit(ctx, repoVal, *task, cli.SessionOpts{
-			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: caps, Scope: scope, Overrides: scopeFor.out,
-			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
-			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
-			ResumeConversation: *resumeConversation, AgentProfile: *agent,
-		})
+		id, err := c.Submit(ctx, act.Repo, act.Task, spawnOpts(act))
 		if err != nil {
 			die(err)
 		}
@@ -427,35 +353,7 @@ func main() {
 		}
 
 	case "interactive":
-		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
-		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
-		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-		capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
-		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
-		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
-		var scopeFor scopeForFlag
-		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
-		resolveSelector := addSelectorFlags(fs)
-		extraArgs := addAgentArgFlags(fs)
-		fs.Parse(args)
-		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
-		if repoVal == "" && *resume == "" {
-			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
-			os.Exit(2)
-		}
-		caps, err := cli.ParseCaps(*capsFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "interactive: --caps:", err)
-			os.Exit(2)
-		}
-		scope, err := cli.ParseScope(*scopeFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "interactive: --scope:", err)
-			os.Exit(2)
-		}
-		sel := resolveSelector()
-		// Dial sends the merged PSK+identity handshake; no separate SayHelloAuto needed.
+		act := parseSpawn("interactive", args, parseCID)
 		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
@@ -463,13 +361,7 @@ func main() {
 		defer c.Close()
 		// The session survives a client disconnect (tmux-like) and any
 		// operator client can take it over via reattach.
-		if _, err := c.Interactive(ctx, repoVal, cli.SessionOpts{
-			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: caps, Scope: scope, Overrides: scopeFor.out,
-			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
-			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
-			ResumeConversation: *resumeConversation, AgentProfile: *agent,
-		}); err != nil {
+		if _, err := c.Interactive(ctx, act.Repo, spawnOpts(act)); err != nil {
 			die(err)
 		}
 
@@ -1522,5 +1414,68 @@ func tapModeByName(name string) cli.TapRenderMode {
 		return cli.TapJSON
 	default:
 		return cli.TapHex
+	}
+}
+
+// parseSpawn parses one of the three spawn verbs from the declaration and
+// resolves the flags that have a fallback ladder.
+//
+// The ladder is flag > env > workspace, and it is applied HERE rather than in
+// cli/verb because that package parses and does not read the environment or
+// the config file.
+func parseSpawn(kind string, args []string, _ func() objproto.ConnectionID) verb.SpawnAction {
+	path := []string{kind}
+	if kind == "session-new" {
+		path = []string{"session", "new"}
+	}
+	sp, ok := verb.Lookup(path...)
+	if !ok {
+		die(fmt.Errorf("%s: not in the verb table", kind))
+	}
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		die(perr)
+	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		fmt.Fprintln(os.Stderr, berr)
+		os.Exit(2)
+	}
+	a := act.(verb.SpawnAction)
+	a.Repo = sp.Resolve(b, "repo", os.Getenv, func(string) string { return workspaceRepo }, nil)
+	if a.Repo == "" && a.ResumeTaskID == "" {
+		fmt.Fprintf(os.Stderr, "%s: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo\n", kind)
+		os.Exit(2)
+	}
+	return a
+}
+
+// spawnOpts turns the shared action into the client's option bag.
+//
+// --caps / --scope / --scope-for are already parsed and merged by the verb's
+// Build, which is where that grammar lives; the pointers carry "the operator
+// said nothing" separately from "the operator said none", because both zero
+// values are meaningful.
+func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
+	var caps protocol.Capability
+	if a.Caps != nil {
+		caps = *a.Caps
+	}
+	var scope protocol.TaskScope
+	if a.Scope != nil {
+		scope = *a.Scope
+	}
+	sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
+	if err != nil {
+		die(err)
+	}
+	return cli.SessionOpts{
+		Selector: sel, ExtraArgs: a.ExtraArgs, ResumeTaskID: a.ResumeTaskID,
+		Caps: caps, Scope: scope, Overrides: a.Overrides,
+		ResumeCapsOverride: a.ResumeTaskID != "" && a.CapsPresent,
+		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
+		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
 	}
 }
