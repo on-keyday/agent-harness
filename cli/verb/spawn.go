@@ -111,13 +111,20 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 	if k == spawnSubmit {
 		return excl, nil // a queued submit has no terminal, so none of the rest apply
 	}
-	excl = append(excl, Rule{Flags: []string{"x11", "detach"},
-		Reason: "a detached session has no client to host the X tunnel"})
 	if k != spawnSessionNew {
+		// --detach and --stream exist only on `session new`, so the rules
+		// naming them belong there and nowhere else. Declaring them on
+		// `interactive` looked harmless -- b.Set is false for a flag the verb
+		// does not have -- but it reads as a constraint an operator could
+		// trip, and there is no line that trips it.
 		return excl, nil
 	}
-	excl = append(excl, Rule{Flags: []string{"stream", "x11"},
-		Reason: "X11 is a terminal-session concept; the server refuses the pair too"})
+	excl = append(excl,
+		Rule{Flags: []string{"x11", "detach"},
+			Reason: "a detached session has no client to host the X tunnel"},
+		Rule{Flags: []string{"stream", "x11"},
+			Reason: "X11 is a terminal-session concept; the server refuses the pair too"},
+	)
 	return excl, []Requirement{{
 		Flags: []string{"stream"}, Needs: "detach",
 		Reason: "an event-stream session has no terminal to attach; follow it with `session stream attach`",
