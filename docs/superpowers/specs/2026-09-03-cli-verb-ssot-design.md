@@ -23,7 +23,7 @@ author chose it while writing — those are the rows worth a second look.
 | D9 | Required capabilities are **not** in the declaration. `server/capabilities.go` owns that mapping and a second copy would be a second source of truth | this spec |
 | D10 | Result rendering is **not** in the declaration. Three surfaces render differently on purpose | this spec |
 | D11 | `Flag.WidensIfUnset` marks flags whose absence widens the operation, so `board purge --seq`'s failure mode is expressible in the type | this spec |
-| D12 | Usage text is generated from the declaration; the per-verb inline usage strings are deleted | this spec |
+| D12 | Usage text is generated from the declaration; the per-verb inline usage strings are deleted | this spec — **amended**: the CLI's prose is kept and its COVERAGE is tested instead; see *What items 1–3 actually mean* |
 | D13 | WebUI completeness is enforced by a startup assertion in JS against `verb.PathsForSurface(WebUI)` exposed on the bridge, not by scanning `main.js` from Go | this spec |
 | D14 | Where the three surfaces' existing resolution orders disagree, the CLI's order is authoritative and the other surface is fixed | this spec |
 | D15 | `board` migrates in Phase 3, not Phase 6, so `WidensIfUnset` is exercised on the verb that motivated it | this spec |
@@ -786,6 +786,68 @@ last in the order for that reason, and its `Examples` must cover `-e`,
 2. `runCmd` in `webui/static/main.js` holds no argument branches — `parseCommand` plus dispatch.
 3. `cli/flagorder_test.go`'s offender scan reports zero and is deleted, along with the alias-grouping test.
 4. `.claude/skills/surface-parity-checklist/SKILL.md` items 1, 2, 3, 7, 8 and 10 collapse into one instruction: add a row to `cli/verb`. **The checklist getting shorter is the deliverable this work is measured by.**
-5. Every one of the 74 verb paths carries an `Action` name and builds from
+5. Every one of the 80 verb paths carries an `Action` name and builds from
    `actions_gen.go`; `VerbSpec.Build` no longer exists, so there is no place
    for a hand-written build to come back to (D29).
+
+### What items 1–3 actually mean, and what they were reported as
+
+Each of the first three was reported done before it was, and an independent
+review found all three still open. The corrections are recorded here rather
+than in the item, because the way each was *checked* is the reusable part.
+
+**Item 1** was reported done while twelve declared TUI paths still parsed by
+hand — `caps set`, `caps set-parent`, `notify`, `session attach/ls/kill` and
+the five `session stream *`. None of them built a `flag.FlagSet`; they walked
+argv with a `for` loop and a switch, and the guard for this (`grep
+flag.NewFlagSet(`) is blind to that shape by construction. Three had diverged
+in ways only an operator finds: `caps set --caps X --scope-for Y` was refused
+by the CLI and accepted here with the override silently dropped, `notify
+--level warn --title T body` produced a notification TITLED `--level`, and
+`session attach <id> --view` was "too many arguments" on the one surface where
+`--view` is declared. The replacement guard asserts the positive property — a
+`parse*` function in that file must reach the declaration or carry a written
+reason — and `parseRepo` is the only exemption. Item 1 is true now.
+
+**Item 2** was reported done while `runCmd`'s `session` case hand-parsed the
+whole stream namespace, referencing an `args` variable declared nowhere in its
+scope: five declared paths threw `ReferenceError` on every invocation. It
+survived the D13 startup assertion because that assertion compared declared
+paths against sixteen **head words** via `p.split(" ")[0]`, and 27 of 33
+declared paths are multi-word. The assertion takes full paths now and carries
+D17's answer descriptor (`{fn}` or `{cache, stale}`), which the design
+specified and nobody had implemented. `parseCommand` also could not resolve a
+three-word path at all — `lookupPath` tried two words then one — and it split
+the raw line with `strings.Fields`, so every quoted argument broke. Item 2 is
+true now.
+
+**Item 3's second half — D12, usage generated from the declaration — is NOT
+done and is amended here.** `usage()` is still 217 hand-written lines. The
+prose is worth keeping: it explains what `--caps` means on a resume, which no
+generator knows. What is mechanical is the **coverage**, and that is now a
+test: every declared CLI path must appear in `usage()`, and nothing printed
+may be unparseable — the same shape `tui/cmdline_help_test.go` has had all
+along. It went red on exactly the ten omissions the Problem section measured
+(`caps set-parent`, `file edit`, `file new`, `forward tap`, `session resize`,
+the five `session stream *`), which had survived the entire migration. The
+reverse direction found three verbs — `skill`, `watch`, `notify-watch` — that
+`usage()` printed and the table had never declared, so every completeness
+check had passed over them. That is why the count above is 80 and not 77.
+
+### The gate this migration did not run
+
+The Migration section says a phase is complete when the differential test
+passes for that family. Three paths of eighty ever got one: `prune`, `file
+push`, `file pull`. Every other family's parser was deleted with no such
+proof, and that is the direct cause of the drops `cli/verb/rules_test.go` now
+pins — `exec ls --task` filtering nothing on the TUI, `--x11-display`
+defaulting to 0 where it was 10, `session stream approve --suggestion` turning
+from a suggestion index into a JSON payload, `session snapshot` losing three
+refusals, `forward tap --max-bytes` truncating instead of refusing, `board
+retract --seq 0` becoming legal.
+
+The lesson is not "write more differentials" — the legacy parsers are gone and
+cannot be one now. It is that **deleting a parser needs a positive record of
+what it enforced**, read out of the deleted lines before they go. `rules_test.go`
+is that record, written after the fact, and everything in it was recovered by
+reading `git show` of the deleting commits rather than by any test.

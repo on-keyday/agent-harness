@@ -8,9 +8,15 @@ import (
 )
 
 // legacyFlagSets pairs a verb path with the FlagSet the pre-migration code
-// built for it. Entries are ADDED as families migrate and REMOVED with the
-// last legacy parser, so this file empties itself out -- it is scaffolding
-// with a defined end, not a permanent guard.
+// built for it. Scaffolding with a defined end, and the end has arrived: the
+// legacy parsers are deleted, so there is no longer a ground truth to add an
+// entry FROM. What remains is one verb of the thirteen that declare aliases,
+// and this file cannot grow past it.
+//
+// Read that as the scope, not as coverage. The case that motivated the whole
+// alias rule -- `session send`'s --enter and -e being two flags, not a long
+// form and its short form -- is pinned permanently and by behaviour in
+// trailing_test.go, which is where to add the next one.
 var legacyFlagSets = map[string]func() *flag.FlagSet{
 	// cmd/harness-cli/main.go's prune, as it stood before the migration.
 	"prune": func() *flag.FlagSet {

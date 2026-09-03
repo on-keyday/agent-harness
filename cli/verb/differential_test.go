@@ -10,9 +10,15 @@ import (
 )
 
 // legacyPrune is cmd/harness-cli/main.go's prune parser as it stood before the
-// migration, kept here for the length of it. When the last surface stops
-// parsing prune by hand this function is the only remaining copy, and deleting
-// it is the final step of the family's migration.
+// migration. It is now the only copy: all three surfaces parse prune from the
+// declaration, so this is a hand-written reference implementation rather than
+// a differential against live code.
+//
+// Kept deliberately, and worth knowing the scope of: prune, `file push` and
+// `file pull` are the THREE paths of eighty that ever got a differential. Every
+// other family's parser was deleted with no such proof, which is how the drops
+// this file's siblings now pin -- exec ls's filter, --x11-display's default,
+// approve's suggestion index -- shipped green.
 func legacyPrune(args []string) (time.Duration, []string, bool, error) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
