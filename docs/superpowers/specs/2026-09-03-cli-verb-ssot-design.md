@@ -34,6 +34,8 @@ author chose it while writing — those are the rows worth a second look.
 | D20 | `Arg.Surfaces` likewise: positional arity is per-surface. `file push` / `file pull` take one fewer positional in a browser, which has no local path. Declaring them as separate `Path`s instead would give one verb two names | this spec |
 | D21 | Divergences the inventory found are reconciled, not preserved: the WebUI stops accepting git flags its sub-verb has no use for, `--max-bytes` is either honoured there or removed, the TUI gains `--agent-arg`, and `notify`'s TUI form adopts the CLI's flags | this spec |
 | D22 | `forward tap` and `workspace save` read their positional before building a FlagSet, so today the positional must precede the flags — the inverse of `ParsePermuted`. That constraint is removed, not declared: it is an artifact of the construction order, and losing it only widens what parses | this spec |
+| D23 | The grammar primitives (`ParseCaps`, `ParseScope`, `ParseGridArgs`, `ParsePermuted` and their catalogs) MOVE into `cli/verb`, and `cli` imports `cli/verb` — never the reverse. Leaving them in `cli` deadlocks: `cli/cmd_board.go` parses the `board` family inside package `cli` itself | this spec |
+| D24 | The client binaries' global flags (`--server-cid`, `--ws-path`, `--config`, `--workspace`, and the TUI's four reconnect options) stay OUT of v1 — they are process-startup options, not verb grammar. `--repo`, global in the TUI and per-verb in the CLI, is already handled by `Flag.Resolve`'s `SurfaceContext` tier | this spec |
 
 ## Problem
 
@@ -227,6 +229,33 @@ OUT, each with its reason:
 - **`flag` package replacement.** `flag.FlagSet` remains the parsing engine;
   the declaration builds it. A custom parser would be a second behaviour
   change riding along with the restructure.
+- **Global flags** (`--server-cid`, `--ws-path`, `--config`, `--workspace`,
+  and the TUI's `--persist` / `--no-persist` / `--reconnect-*`). Process
+  options, not verb grammar; see Appendix C of the inventory and D24.
+- **The SSH gateway's user-name grammar.** `<32-hex>`, `.control`, `.view`,
+  `.control,sshd-parent` (`cli/sshgw/user.go:41-71`) select the same
+  `AttachMode` as `session attach --view`, but they are an ssh user name:
+  no flags, no positionals, and the syntax is ssh's, not ours. Declaring it
+  would mean modelling a grammar the declaration cannot generate a parser for.
+- **Runner and server flags** (`cmd/agent-runner`, `cmd/harness-server`,
+  `cmd/harness-stream-adapter`, `cmd/sandbox-connect-proxy`) and the
+  `scripts/` CLIs. Different binaries, different operators, no shared surface.
+- **TUI keybindings and WebUI buttons.** They invoke the same actions without
+  going through a grammar; surface-parity checklist items 4-6 stay manual.
+
+### One consumer that is out of scope and still drifts
+
+`runner/agentskills/harness-cli/SKILL.md` is `go:embed`-ed into the runner and
+written into every task worktree, and it documents this grammar in 67 places.
+It is prose, so no declaration can generate it — but it is the copy agents
+actually read, and it drifts the way `usage()` drifts.
+
+It is also evidence for what the guard missed: line 411 documents `harness-cli
+agent send --topic T 'hello'`, the positional-payload form, while
+`cli/flagorder_test.go`'s allowlist does not know that verb takes trailing
+text at all. The knowledge existed; it just lived in Markdown, unconnected to
+the test. Regenerating the skill's synopsis lines from the declaration is a
+natural follow-up and is **not** part of this design.
 
 ## The declaration
 
@@ -360,6 +389,42 @@ not less — `board purge --seq` being the case that cost two messages. In this
 spec it has one consumer: the invariant test asserting such a flag's verb is
 permuted. It exists so the property is stated where the flag is declared
 rather than in a comment in `cli/permute.go`.
+
+## Package layout, and the cycle it avoids
+
+`cli/verb` cannot simply sit beside `cli` and borrow its helpers.
+`cli/cmd_board.go` parses the whole `board` family **inside package `cli`**
+(`cli.RunBoardSubcmd`, reached from `cmd/harness-cli/main.go:940`), so
+migrating `board` makes `cli` a consumer of the declaration. Meanwhile the
+declaration needs `ParseCaps` (`cli/caps.go`), `ParseScope` (`cli/scope.go`),
+`ParseGridArgs` (`cli/gridargs.go`) and `ParsePermuted` (`cli/permute.go`),
+all in package `cli`. Both directions at once is a cycle.
+
+So the primitives move down into `cli/verb` (D23), which then imports only
+`runner/protocol` and `flag`, and everything else imports `cli/verb`:
+
+```
+runner/protocol
+      ↑
+   cli/verb        ← declaration + ParseCaps/ParseScope/ParseGridArgs/ParsePermuted
+      ↑        ↖
+    cli          cli/workspace
+   ↑   ↑              ↑
+ tui  cmd/harness-cli, cmd/harness-webui-wasm
+```
+
+`cli.ParseCaps` and friends stay as thin re-exports so the ~30 existing call
+sites keep compiling; the migration does not have to touch them.
+
+**This also settles the fourth consumer.** `.harness/config` is not a UI, but
+it accepts verb grammar: `cli/workspace/validate.go:47-65` splits a
+workspace's `grid` value shell-style and validates it through
+`cli.ParseGridArgs`, and `config.go:8` states the intent — "the config can
+never accept a spelling the [command does not]". `cli/workspace` already
+imports `cli` (`validate.go:10`) and `cli` does not import it back, so under
+the layout above it reaches `cli/verb` directly. A persisted file is exactly
+the consumer that must not drift from the live grammar, since it is validated
+long after it was written.
 
 ## Derivation per surface
 

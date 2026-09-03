@@ -324,6 +324,42 @@ migrated: `exec kill`, `forward kill`, `file ls`, `workspace ls`/`rm`/`show`,
 | `submit` | 0 (`--task`) | **1 + text** (prompt positional) | **1 + text** |
 | `notify` | 1 + text | **1 level word + 1 + text** | absent |
 
+## Appendix C — global flags, and why they are out of scope
+
+Counted last, because they are a surface of their own and the verb census
+never touched them.
+
+| Flag | harness-cli | harness-tui | WebUI |
+| --- | --- | --- | --- |
+| `--server-cid` | ✓ | ✓ | URL / PSK fragment |
+| `--ws-path` | ✓ | ✓ | — |
+| `--config` | ✓ | ✓ | — |
+| `--workspace` | ✓ | ✓ | — |
+| `--repo` | **per-verb** (submit, interactive, prune-local, workspace save, session new) | **global** | dropdown |
+| `--persist` / `--no-persist` | — | ✓ | — |
+| `--reconnect-initial` / `--reconnect-max` | — | ✓ | — |
+
+Four for the CLI, nine for the TUI (`cmd/harness-tui/main.go:32-41`).
+
+**Decision: out of v1 (D24).** These configure a process, not a verb: the
+CLI is one-shot, so `--persist` and the reconnect backoffs have nothing to
+mean there, and the WebUI has no argv at all. Folding them into the verb
+table would put three genuinely different things — a verb option, a
+process option, and a URL fragment — under one declaration.
+
+The one row that looks like drift is not: `--repo` being global in the TUI and
+per-verb in the CLI is exactly the `SurfaceContext` tier of `Flag.Resolve`.
+The TUI's global `--repo` is the `defaultRepo` it already threads into
+`parseSubmit` (`tui/cmdline.go:618`), and the WebUI's dropdown is the same
+tier. That mechanism is in the design; this table just names where its value
+comes from on each surface.
+
+`--persist` and `--no-persist` are worth one note for whoever migrates them
+later: they are neither aliases nor independent — `--no-persist` is documented
+as "shortcut for `--persist=false`" and the two bools are reconciled after
+parsing. `Flag.Aliases` would model them wrongly, since aliases share a target
+and these invert one.
+
 ### Two things this pass found
 
 **`forward ls` and `exec ls` accept surplus positionals and drop them.**
