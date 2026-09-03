@@ -116,7 +116,13 @@ export function recordingCtx(page, overrides = {}) {
   const record = (name) => (...a) => { calls.push([name, ...a]); return undefined; };
   // The bridge is the REAL one for parseCommand / parseGit / pathsForSurface
   // (pure, no client) and a recorder for everything that would need a server.
-  const pure = new Set(["parseCommand", "parseGit", "pathsForSurface"]);
+  // capsCatalog and parseAuthority are pure too: one renders a compiled-in
+  // table, the other parses a string. Recording them instead would test that
+  // the page CALLS the grammar rather than that the grammar answers, and the
+  // whole point of routing `caps set-defaults` through the bridge is that the
+  // page does not own a second copy of it.
+  const pure = new Set(["parseCommand", "parseGit", "pathsForSurface",
+    "capsCatalog", "parseAuthority"]);
   const harness = new Proxy({}, {
     get: (_, name) => {
       if (pure.has(name)) return page.bridge[name];
@@ -154,6 +160,11 @@ export function recordingCtx(page, overrides = {}) {
     tapOpen: () => true,
     chatTaskID: () => overrides.chatTaskID ?? "",
     openChatFor: async (id) => { calls.push(["openChatFor", id]); },
+    spawnDefaults: () => {
+      calls.push(["spawnDefaults"]);
+      return overrides.spawnDefaults ?? { caps: 0, capsLabel: "none", scope: "" };
+    },
+    setSpawnDefaults: (d) => { calls.push(["setSpawnDefaults", d]); },
   };
   return ctx;
 }

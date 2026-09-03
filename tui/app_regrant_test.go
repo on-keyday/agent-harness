@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -134,7 +135,7 @@ func TestPickerAllNoneQuickKeys(t *testing.T) {
 // forms open the picker in session mode instead of printing.
 func TestCapsNoArgOpensPicker(t *testing.T) {
 	a := New(Config{})
-	a.runAction(CapsAction{Show: true})
+	a.runAction(verb.SetDefaultsAction{})
 	if !a.authorityPicker.IsOpen() || a.authorityPicker.Mode() != PickerModeSession {
 		t.Fatal("caps (no arg) must open the picker in session mode")
 	}
@@ -142,7 +143,7 @@ func TestCapsNoArgOpensPicker(t *testing.T) {
 
 func TestScopeNoArgOpensPicker(t *testing.T) {
 	a := New(Config{})
-	a.runAction(ScopeAction{Show: true})
+	a.runAction(verb.SetDefaultsAction{})
 	if !a.authorityPicker.IsOpen() || a.authorityPicker.Mode() != PickerModeSession {
 		t.Fatal("scope (no arg) must open the picker in session mode")
 	}
@@ -153,7 +154,7 @@ func TestScopeNoArgOpensPicker(t *testing.T) {
 func TestPickerSessionApplyWritesDefaults(t *testing.T) {
 	a := New(Config{})
 	before := a.sessionCaps
-	a.runAction(ScopeAction{Show: true})
+	a.runAction(verb.SetDefaultsAction{})
 	// Toggle the first cap row, then cycle base to none. Which DIRECTION it
 	// toggles follows the session default (none since default-deny), so the
 	// assertion below is on the flip, not on the resulting level.

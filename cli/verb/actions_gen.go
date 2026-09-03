@@ -490,6 +490,17 @@ type SetCapsAction struct {
 	TaskID    string
 }
 
+// SetDefaultsAction is built by: caps set-defaults, scope.
+type SetDefaultsAction struct {
+	ActionMarker
+	// capability set future spawns carry by default; omitted = leave it as it is
+	Caps *protocol.Capability
+	// scope future spawns carry by default; omitted = leave it as it is
+	Scope *protocol.TaskScope
+	// narrow ONE capability below --scope in that default (written with --scope)
+	Overrides []protocol.ScopeOverride
+}
+
 // SetParentAction is built by: caps set-parent.
 type SetParentAction struct {
 	ActionMarker
@@ -1944,6 +1955,18 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"caps\x00tui": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "caps"
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"caps\x00webui": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "caps"
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"whoami\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "whoami"
@@ -2125,6 +2148,106 @@ func init() {
 			a.KeepConns = b.Bool("keep-conns")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
+			a := SetDefaultsAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			return a, nil
+		},
+		"caps set-defaults\x00webui": func(b Bound) (Action, error) {
+			a := SetDefaultsAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			return a, nil
+		},
+		"scope\x00tui": func(b Bound) (Action, error) {
+			a := SetDefaultsAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			return a, nil
+		},
+		"scope\x00webui": func(b Bound) (Action, error) {
+			a := SetDefaultsAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --scope-for: %w", err)
+				}
+				a.Overrides = v
 			}
 			return a, nil
 		},
@@ -2561,6 +2684,8 @@ const (
 	CmdDiag                   = "diag"
 	CmdRepo                   = "repo"
 	CmdCapsSet                = "caps set"
+	CmdCapsSetDefaults        = "caps set-defaults"
+	CmdScope                  = "scope"
 	CmdCapsSetParent          = "caps set-parent"
 	CmdSessionAttach          = "session attach"
 	CmdSessionLs              = "session ls"
@@ -4047,6 +4172,48 @@ func ParseCmdCapsSet(sf Surface, args []string, ctx map[string]string) (SetCapsA
 		return zero, err
 	}
 	a := act.(SetCapsAction)
+	return a, nil
+}
+
+func ParseCmdCapsSetDefaults(sf Surface, args []string, ctx map[string]string) (SetDefaultsAction, error) {
+	var zero SetDefaultsAction
+	sp, ok := Lookup("caps", "set-defaults")
+	if !ok {
+		return zero, fmt.Errorf("caps set-defaults: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SetDefaultsAction)
+	return a, nil
+}
+
+func ParseCmdScope(sf Surface, args []string, ctx map[string]string) (SetDefaultsAction, error) {
+	var zero SetDefaultsAction
+	sp, ok := Lookup("scope")
+	if !ok {
+		return zero, fmt.Errorf("scope: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SetDefaultsAction)
 	return a, nil
 }
 
@@ -5857,6 +6024,8 @@ type TUIDispatch[R any] interface {
 	Grid(GridAction) R
 	// cancel
 	Cancel(CancelAction) R
+	// caps
+	Caps(CatalogAction) R
 	// restore
 	Restore(RestoreAction) R
 	// clear
@@ -5875,6 +6044,8 @@ type TUIDispatch[R any] interface {
 	Repo(ScreenAction) R
 	// caps set
 	CapsSet(SetCapsAction) R
+	// caps set-defaults (also: scope)
+	CapsSetDefaults(SetDefaultsAction) R
 	// caps set-parent
 	CapsSetParent(SetParentAction) R
 	// session attach
@@ -6126,6 +6297,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Cancel(a), true, nil
+	case CmdCaps:
+		a, perr := ParseCmdCaps(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Caps(a), true, nil
 	case CmdRestore:
 		a, perr := ParseCmdRestore(TUI, args, ctx)
 		if perr != nil {
@@ -6192,6 +6369,18 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsSet(a), true, nil
+	case CmdCapsSetDefaults:
+		a, perr := ParseCmdCapsSetDefaults(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsSetDefaults(a), true, nil
+	case CmdScope:
+		a, perr := ParseCmdScope(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsSetDefaults(a), true, nil
 	case CmdCapsSetParent:
 		a, perr := ParseCmdCapsSetParent(TUI, args, ctx)
 		if perr != nil {
@@ -6363,6 +6552,11 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.Grid(a), true
 	case CancelAction:
 		return h.Cancel(a), true
+	case CatalogAction:
+		switch a.Sub {
+		case "caps":
+			return h.Caps(a), true
+		}
 	case RestoreAction:
 		return h.Restore(a), true
 	case ScreenAction:
@@ -6384,6 +6578,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		}
 	case SetCapsAction:
 		return h.CapsSet(a), true
+	case SetDefaultsAction:
+		return h.CapsSetDefaults(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
 	}
@@ -6630,6 +6826,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdCaps:
+			a, perr := ParseCmdCaps(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdRestore:
 			a, perr := ParseCmdRestore(TUI, tokens[n:], ctx)
 			if perr != nil {
@@ -6692,6 +6894,18 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCapsSet:
 			a, perr := ParseCmdCapsSet(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsSetDefaults:
+			a, perr := ParseCmdCapsSetDefaults(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdScope:
+			a, perr := ParseCmdScope(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

@@ -20,32 +20,6 @@ import (
 // unexported method declared in cli/verb could not be implemented from here.
 type Action = verb.Action
 
-// CapsAction sets or shows the session-default capability mask applied to
-// spawns that do not carry their own --caps.
-// Show=true (no args): display current caps in the status line.
-// Show=false: update sessionCaps to Caps.
-//
-// The default deliberately does not apply on resume — a resumed task keeps its
-// persisted caps unless the resuming command names --caps explicitly. The old
-// `caps --on-resume on` toggle re-granted from whatever the mode happened to
-// hold at the time, silently, on every resume; it rewrote at least one live
-// task's caps by accident and is gone.
-type CapsAction struct {
-	verb.ActionMarker
-	Caps protocol.Capability
-	Show bool // true = display current set (no args), false = set to Caps
-}
-
-// ScopeAction is the target-set companion to CapsAction: caps say which verbs
-// a spawned task may use, scope says which tasks it may point them at. Same
-// show/set shape, same "does not apply on resume" rule.
-type ScopeAction struct {
-	verb.ActionMarker
-	Scope     protocol.TaskScope
-	Overrides []protocol.ScopeOverride
-	Show      bool
-}
-
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
 // Returns (nil, nil) for empty / whitespace-only input.
@@ -97,32 +71,6 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 			return nil, fmt.Errorf("session stream %s: specified (design §3) but not built yet", tokens[2])
 		}
 		return nil, fmt.Errorf("session: unknown sub-verb %q", strings.Join(tokens[1:], " "))
-	case "caps":
-		// `caps <mask>` and `scope <mask>` set this TUI session's spawn
-		// defaults. They are the one pair the design says should be SHARED
-		// (the WebUI has the same state as chips) and are not declared yet --
-		// tracked as `caps set-defaults`. Until then they stay here, and
-		// saying so is the difference between a known gap and a silent one.
-		if len(tokens) == 1 {
-			return CapsAction{Show: true}, nil
-		}
-		if tokens[1] == "--on-resume" {
-			return nil, fmt.Errorf("caps --on-resume was removed: pass --caps on the resuming command instead (e.g. `session new --resume <id> --caps all,-spawn`), which re-grants that mask for that one resume")
-		}
-		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
-		if err != nil {
-			return nil, err
-		}
-		return CapsAction{Caps: c}, nil
-	case "scope":
-		if len(tokens) == 1 {
-			return ScopeAction{Show: true}, nil
-		}
-		sc, err := cli.ParseScope(strings.Join(tokens[1:], ""))
-		if err != nil {
-			return nil, err
-		}
-		return ScopeAction{Scope: sc}, nil
 	}
 	return nil, fmt.Errorf("unknown command: %q", tokens[0])
 }

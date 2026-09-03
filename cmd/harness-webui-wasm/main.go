@@ -133,6 +133,8 @@ func main() {
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
+		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
+		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
 		"scopeSpec":          js.FuncOf(harnessScopeSpec),
 		"setCaps":            js.FuncOf(harnessSetCaps),
@@ -657,6 +659,98 @@ func harnessCapList(this js.Value, args []js.Value) any {
 			continue
 		}
 		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint32(c))})
+	}
+	return js.ValueOf(out)
+}
+
+// harnessCapsCatalog renders the capability catalog -- every grantable
+// capability with the sentence saying what it gates, plus the scope grammar --
+// exactly as `harness-cli caps` prints it. Backs `caps` on this surface.
+//
+// The text comes from verb.WriteCaps rather than being rebuilt from capList:
+// capList carries names and bits, and the DESCRIPTIONS are the half that makes
+// the difference between "forward_tap is part of forwarding" and "forward_tap
+// reads the cleartext crossing it".
+//
+//	harness.capsCatalog(asJSON) -> string | {error}
+func harnessCapsCatalog(this js.Value, args []js.Value) any {
+	asJSON := len(args) > 0 && args[0].Truthy()
+	var buf strings.Builder
+	if err := verb.WriteCaps(&buf, asJSON); err != nil {
+		return js.ValueOf(map[string]any{"error": err.Error()})
+	}
+	return js.ValueOf(buf.String())
+}
+
+// harnessParseAuthority validates the --caps / --scope / --scope-for strings a
+// `caps set-defaults` line carried and returns the bitmask the page stores plus
+// the labels it echoes.
+//
+// It exists so the page does not reimplement the grammar. `all,-spawn`,
+// `subtree+ids:<id>`, `global/subtree`, `+vis-ids:` and `CAP=SCOPE` narrowing
+// are the declaration's, and a JS half-copy of them would accept a spec the
+// server then rejects -- after the spawn.
+//
+// Absent fields stay absent: a key is present in the result only when the
+// caller passed a non-empty string, which is how "leave it as it is" survives
+// the round trip.
+//
+//	harness.parseAuthority({caps, scope, scopeFor: [..]}) ->
+//	  {caps?, capsLabel?, scope?, scopeLabel?} | {error}
+func harnessParseAuthority(this js.Value, args []js.Value) any {
+	out := map[string]any{}
+	if len(args) < 1 || args[0].Type() != js.TypeObject {
+		return js.ValueOf(map[string]any{"error": "parseAuthority: missing options object"})
+	}
+	o := args[0]
+	if v := o.Get("caps"); v.Type() == js.TypeString && v.String() != "" {
+		c, err := cli.ParseCaps(v.String())
+		if err != nil {
+			return js.ValueOf(map[string]any{"error": err.Error()})
+		}
+		out["caps"] = float64(uint32(c))
+		out["capsLabel"] = cli.CapsLabel(c)
+	}
+	if v := o.Get("scope"); v.Type() == js.TypeString && v.String() != "" {
+		sc, err := cli.ParseScope(v.String())
+		if err != nil {
+			return js.ValueOf(map[string]any{"error": err.Error()})
+		}
+		// The page stores and submits the SPEC STRING, so the parse is a
+		// validation and the label is what it produces. Re-serialising the
+		// parsed scope would be a second spelling of the operator's own.
+		out["scope"] = v.String()
+		// DECOMPOSED into the compose panel's own controls, because that
+		// panel's spawnScope is DERIVED from them: writing the string alone
+		// would show the operator their scope and then lose it the next time
+		// any radio moved. This is what makes the command line and the chips
+		// two doors onto one value rather than two values.
+		out["scopeBase"] = sc.Base.String()
+		out["scopeExcludeSelf"] = sc.ExcludeSelf()
+		out["scopeIds"] = scopeIDStrings(sc)
+		// "" is the visibility radio's third state -- unstated, follows the
+		// action base -- and is what an absent presence bit means, not global.
+		visBase := ""
+		if sc.VisBasePresent() {
+			visBase = sc.VisBase.String()
+		}
+		out["scopeVisBase"] = visBase
+		out["scopeVisIds"] = scopeVisIDStrings(sc)
+		label := cli.ScopeLabel(sc)
+		if fv := o.Get("scopeFor"); fv.Type() == js.TypeObject {
+			var overrides []protocol.ScopeOverride
+			for i := 0; i < fv.Length(); i++ {
+				_, ov, err := cli.ParseScopeFor(fv.Index(i).String())
+				if err != nil {
+					return js.ValueOf(map[string]any{"error": err.Error()})
+				}
+				overrides = append(overrides, ov)
+			}
+			if ol := cli.OverridesLabel(overrides); ol != "" {
+				label += " +" + ol
+			}
+		}
+		out["scopeLabel"] = label
 	}
 	return js.ValueOf(out)
 }

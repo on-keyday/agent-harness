@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -665,5 +666,60 @@ outer:
 	}
 	a.defaultRepo = path
 	a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
+	return nil
+}
+
+// --- the session's authority defaults -----------------------------------
+
+// Caps prints the capability catalog: every grantable capability with the
+// sentence describing what it actually gates, plus the scope grammar.
+//
+// It was `harness-cli caps` alone. An operator picking chips in this surface
+// had the NAMES and none of the sentences, which is how `forward_tap` reads
+// as "part of forwarding" rather than "reads the cleartext crossing it".
+func (h tuiVerbs) Caps(v verb.CatalogAction) tea.Cmd {
+	a := h.a
+	var buf strings.Builder
+	if err := verb.WriteCaps(&buf, v.JSON); err != nil {
+		a.cmdresult.Append(ErrorStyle.Render("caps: " + err.Error()))
+		return nil
+	}
+	for _, l := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		a.cmdresult.Append(l)
+	}
+	return nil
+}
+
+// CapsSetDefaults sets what a spawn from THIS session carries when its own
+// line names no --caps / --scope. Also answers the shorter `scope`.
+//
+// Naming nothing opens the picker rather than printing: the picker shows the
+// current value AND edits it, so "show me" and "change it" are one door. The
+// flags exist for the half of the time the operator already knows the mask.
+func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
+	a := h.a
+	if v.Caps == nil && v.Scope == nil && v.Overrides == nil {
+		a.authorityPicker.SetSize(a.width, a.height)
+		a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
+		return nil
+	}
+	if v.Caps != nil {
+		a.sessionCaps = *v.Caps
+		a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps))
+	}
+	if v.Scope != nil {
+		a.sessionScope = *v.Scope
+		// Overrides travel WITH the scope they narrow: a --scope-for without
+		// --scope is refused at the parse, so a call that carries a base is
+		// the only one that can replace the narrowings under it. Clearing
+		// them here is what keeps a stale narrowing from surviving onto a
+		// base it was never written against.
+		a.sessionOverrides = v.Overrides
+		label := cli.ScopeLabel(a.sessionScope)
+		if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
+			label += " +" + ov
+		}
+		a.cmdresult.Append(OKStyle.Render("scope set: ") + label)
+	}
 	return nil
 }

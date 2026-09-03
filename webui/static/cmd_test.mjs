@@ -232,3 +232,85 @@ test("the spellings D16 removed stay removed", async () => {
     assert.match(String(out), /unknown command/, line);
   }
 });
+
+// --- the session's spawn defaults ---------------------------------------
+//
+// `caps <mask>` / `scope <spec>` were a TUI-only grammar; they are now
+// `caps set-defaults`, declared for both surfaces. Here the value they set is
+// the compose panel's own -- the same spawnCaps / spawnScope the chips write
+// -- so these check the command reaches the PANEL, not a second copy.
+
+test("bare `caps` prints the catalog, descriptions and all", async () => {
+  const { out, err } = await run("caps");
+  assert.equal(err, undefined);
+  assert.match(String(out), /CAPABILITY\s+BIT\s+DESCRIPTION/);
+  // The half capList cannot carry: what the capability actually gates.
+  assert.match(String(out), /forward_tap/);
+  assert.match(String(out), /cleartext/);
+  // The scope grammar rides along, as it does on the CLI.
+  assert.match(String(out), /subtree\+ids:/);
+});
+
+test("`caps --json` reaches the JSON renderer", async () => {
+  const { out, err } = await run("caps --json");
+  assert.equal(err, undefined);
+  const parsed = JSON.parse(String(out));
+  assert.ok(Array.isArray(parsed.capabilities) && parsed.capabilities.length > 5);
+  assert.ok(Array.isArray(parsed.scopes) && parsed.scopes.length > 3);
+});
+
+test("`caps set-defaults --caps` writes the compose panel's mask", async () => {
+  const { out, err, calls } = await run("caps set-defaults --caps spawn,file_read");
+  assert.equal(err, undefined);
+  const set = named(calls, "setSpawnDefaults");
+  assert.equal(set.length, 1, "the panel is written exactly once");
+  // The bitmask comes from the declaration's own ParseCaps, so `all,-spawn`
+  // and the rest cannot mean one thing here and another on the CLI.
+  assert.equal(typeof set[0][1].caps, "number");
+  assert.ok(set[0][1].caps > 0);
+  // An omitted --scope must leave the scope controls alone rather than
+  // clearing them: "I did not say" is not "I said none".
+  assert.equal(set[0][1].scopeBase, undefined);
+  assert.match(String(out), /caps set: .*spawn/);
+});
+
+test("`scope --scope` is the same verb, decomposed onto the panel's controls", async () => {
+  const { out, err, calls } = await run("scope --scope none+ids:" + ID);
+  assert.equal(err, undefined);
+  const set = named(calls, "setSpawnDefaults");
+  assert.equal(set.length, 1);
+  const d = set[0][1];
+  // Decomposed, because spawnScope is DERIVED from these controls: storing
+  // the spec string alone would lose it the next time a radio moved.
+  assert.equal(d.scopeBase, "none");
+  eq(d.scopeIds, [ID]);
+  assert.equal(d.scopeExcludeSelf, false);
+  // "" is the visibility radio's third state (follows the action base), not
+  // an absent field and not global.
+  assert.equal(d.scopeVisBase, "");
+  assert.equal(d.caps, undefined, "no --caps means the chips are untouched");
+  assert.match(String(out), /scope set:/);
+});
+
+test("naming nothing asks rather than writes", async () => {
+  const { out, err, calls } = await run("caps set-defaults", {
+    spawnDefaults: { caps: 3, capsLabel: "spawn,cancel", scope: "none" },
+  });
+  assert.equal(err, undefined);
+  assert.equal(named(calls, "setSpawnDefaults").length, 0, "nothing was set");
+  assert.match(String(out), /caps: spawn,cancel/);
+  assert.match(String(out), /scope: none/);
+});
+
+test("a bad mask is refused by the declaration, not accepted and dropped", async () => {
+  for (const line of ["caps set-defaults --caps bogus", "scope --scope bogus"]) {
+    const { err, calls } = await run(line);
+    assert.ok(err, `${line} was accepted`);
+    assert.equal(named(calls, "setSpawnDefaults").length, 0, `${line} still wrote the panel`);
+  }
+});
+
+test("--scope-for without --scope is refused: a narrowing needs a base", async () => {
+  const { err } = await run("caps set-defaults --scope-for spawn=none");
+  assert.ok(err, "a lone --scope-for parsed");
+});

@@ -54,9 +54,9 @@ func TestRunAction_NilClientAllowsLocalActions(t *testing.T) {
 	}{
 		{"help", verb.ScreenAction{Sub: "help"}},
 		{"clear", verb.ScreenAction{Sub: "clear"}},
-		{"caps-show", CapsAction{Show: true}},
-		{"scope-show", ScopeAction{Show: true}},
-		{"scope-set", ScopeAction{Scope: protocol.TaskScope{Base: protocol.ScopeBase_None}}},
+		{"caps-catalog", verb.CatalogAction{Sub: "caps"}},
+		{"defaults-show", verb.SetDefaultsAction{}},
+		{"defaults-set", verb.SetDefaultsAction{Scope: &protocol.TaskScope{Base: protocol.ScopeBase_None}}},
 		{"repo", verb.ScreenAction{Sub: "repo", Arg: "/tmp"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

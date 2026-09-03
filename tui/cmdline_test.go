@@ -636,54 +636,60 @@ func TestParseNotifyOldPositionalFormIsPlainText(t *testing.T) {
 	}
 }
 
+// The session's spawn defaults. `caps <mask>` was a grammar this surface
+// alone had -- the mask joined out of the raw tokens -- and is now `caps
+// set-defaults --caps <mask>`, the same flags `caps set` takes minus the id.
 func TestParseCapsCommand(t *testing.T) {
-	act, err := ParseCommand("caps spawn,file_read", "repo")
+	act, err := ParseCommand("caps set-defaults --caps spawn,file_read", "repo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca, ok := act.(CapsAction)
+	ca, ok := act.(verb.SetDefaultsAction)
 	if !ok {
-		t.Fatalf("got %T, want CapsAction", act)
+		t.Fatalf("got %T, want verb.SetDefaultsAction", act)
 	}
-	if ca.Show {
-		t.Fatal("with args, Show should be false")
+	if ca.Caps == nil || *ca.Caps != (protocol.Capability_Spawn|protocol.Capability_FileRead) {
+		t.Fatalf("caps = %#v", ca.Caps)
 	}
-	if ca.Caps != (protocol.Capability_Spawn | protocol.Capability_FileRead) {
-		t.Fatalf("caps = %#x", ca.Caps)
+	// No flags: nothing to change, so the three stay nil and the handler
+	// opens the picker instead of writing a default nobody named.
+	act, err = ParseCommand("caps set-defaults", "repo")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// no args → Show
-	act, _ = ParseCommand("caps", "repo")
-	if ca, _ := act.(CapsAction); !ca.Show {
-		t.Fatal("no args → Show=true")
+	if ca, _ := act.(verb.SetDefaultsAction); ca.Caps != nil || ca.Scope != nil || ca.Overrides != nil {
+		t.Fatalf("bare `caps set-defaults` = %#v, want all-nil (show)", ca)
 	}
 	// bad name → error
-	if _, err := ParseCommand("caps bogus", "repo"); err == nil {
+	if _, err := ParseCommand("caps set-defaults --caps bogus", "repo"); err == nil {
 		t.Fatal("expected error for unknown cap")
+	}
+	// Bare `caps` is the CATALOG now -- every capability with the sentence
+	// saying what it gates -- reachable from all three surfaces rather than
+	// the CLI alone.
+	act, err = ParseCommand("caps", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := act.(verb.CatalogAction); !ok || c.Sub != "caps" {
+		t.Fatalf("bare `caps` = %#v, want CatalogAction{Sub: caps}", act)
 	}
 }
 
+// The `--on-resume` toggle is gone: a resumed task keeps its persisted caps
+// unless the resuming command names --caps. Nothing declares the flag, on any
+// of the three verbs it could be typed against, so every one of them refuses
+// it -- which is the property, rather than a hand-written hint that has to be
+// kept in step with the removal.
 func TestParseCapsOnResumeRemoved(t *testing.T) {
-	// The toggle is gone; the parser must say so rather than fall through to
-	// ParseCaps and report "--on-resume" as an unknown capability name.
-	_, err := ParseCommand("caps --on-resume on", "r")
-	if err == nil {
-		t.Fatal("caps --on-resume should be rejected")
-	}
-	if !strings.Contains(err.Error(), "--caps") {
-		t.Errorf("error should point at the replacement flag, got: %v", err)
-	}
-
-	// Plain `caps` still shows the current default.
-	act, err := ParseCommand("caps", "r")
-	if err != nil {
-		t.Fatalf("caps plain: unexpected error: %v", err)
-	}
-	ca, ok := act.(CapsAction)
-	if !ok {
-		t.Fatalf("got %T, want CapsAction", act)
-	}
-	if !ca.Show {
-		t.Fatal("caps plain: Show should be true")
+	for _, line := range []string{
+		"caps --on-resume on",
+		"caps set-defaults --on-resume on",
+		"scope --on-resume on",
+	} {
+		if _, err := ParseCommand(line, "r"); err == nil {
+			t.Errorf("%q parsed; --on-resume should be refused", line)
+		}
 	}
 }
 
@@ -1185,18 +1191,20 @@ func TestParseScopeCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scope: %v", err)
 	}
-	if sa, ok := act.(ScopeAction); !ok || !sa.Show {
-		t.Fatalf("bare `scope` = %#v, want ScopeAction{Show:true}", act)
+	// `scope` is a declared path of the same verb as `caps set-defaults`,
+	// the way `exit` is `quit`: one Action, one handler method.
+	if sa, ok := act.(verb.SetDefaultsAction); !ok || sa.Scope != nil {
+		t.Fatalf("bare `scope` = %#v, want SetDefaultsAction with nothing set", act)
 	}
-	act, err = ParseCommand("scope none+ids:"+id, "/cwd")
+	act, err = ParseCommand("scope --scope none+ids:"+id, "/cwd")
 	if err != nil {
 		t.Fatalf("scope none+ids: %v", err)
 	}
-	sa, ok := act.(ScopeAction)
-	if !ok || sa.Show || sa.Scope.Base != protocol.ScopeBase_None || sa.Scope.IdsLen != 1 {
+	sa, ok := act.(verb.SetDefaultsAction)
+	if !ok || sa.Scope == nil || sa.Scope.Base != protocol.ScopeBase_None || sa.Scope.IdsLen != 1 {
 		t.Fatalf("scope none+ids = %#v", act)
 	}
-	if _, err := ParseCommand("scope bogus", "/cwd"); err == nil {
+	if _, err := ParseCommand("scope --scope bogus", "/cwd"); err == nil {
 		t.Fatal("an unknown scope base parsed")
 	}
 }

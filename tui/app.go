@@ -2949,45 +2949,17 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	// treated as client-requiring, so a future Do*-dispatching action is
 	// guarded by default rather than silently re-opening this panic.
 	switch act.(type) {
-	case verb.ScreenAction, CapsAction, ScopeAction:
+	case verb.ScreenAction, verb.CatalogAction, verb.SetDefaultsAction:
 		// no client needed. ScreenAction is the screen-state family --
 		// clear / quit / help / refresh / trsf / diag / repo -- where refresh
 		// and trsf carry their own nil-client notice and the rest touch no RPC
-		// at all.
+		// at all. CatalogAction (`caps`) reads a compiled-in table, and
+		// SetDefaultsAction only writes this process's own spawn defaults.
 	default:
 		if a.client == nil {
 			a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
 			return a, nil
 		}
-	}
-	switch v := act.(type) {
-	case CapsAction:
-		if v.Show {
-			// `caps` with no argument opens the session-default picker — it
-			// shows the current value AND lets it be edited by selection.
-			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
-		} else {
-			a.sessionCaps = v.Caps
-			a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps))
-		}
-		return a, nil
-	case ScopeAction:
-		if v.Show {
-			// Same picker as `caps` — the session default is one caps+scope
-			// pair, edited together.
-			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
-		} else {
-			a.sessionScope = v.Scope
-			a.sessionOverrides = v.Overrides
-			label := cli.ScopeLabel(a.sessionScope)
-			if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
-				label += " +" + ov
-			}
-			a.cmdresult.Append(OKStyle.Render("scope set: ") + label)
-		}
-		return a, nil
 	}
 	// Every verb the declaration gives this surface, routed by the GENERATED
 	// dispatcher: tuiVerbs implements one method per declared verb, and a
@@ -3148,15 +3120,17 @@ const cmdlinePlaceholder = "submit / interactive / session / file / forward / ss
 // CLI's usage() had, found the same way: by counting rather than reading.
 func cmdlineHelpLines() []string {
 	return []string{
-		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit (alias: exit)",
+		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / caps set-defaults / caps set <id> / refresh / clear / help / quit (alias: exit)",
 		"restore [--list]               - list what a prune forgot and could still be put back (ids live only in the server's WAL)",
 		"restore <id>...                - put those back, rebuilt from the WAL (needs `prune` and the same scope; the record returns, the task log does not)",
 		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",
 		"submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task",
 		"interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)",
 		"session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive",
-		"caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps all,-spawn / caps none)",
-		"scope [<spec>]              - show, or set the session-default TARGET scope for spawns: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]",
+		"caps [--json]               - the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar",
+		"caps set-defaults (alias: scope) [--caps <names>] [--scope <spec>] [--scope-for C=S]",
+		"                            - the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker.",
+		"                              --caps: spawn,file_read / all / all,-spawn / none.  --scope: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]",
 		"caps set <id> [--caps N] [--scope S] [--cascade] [--keep-conns]",
 		"                            - OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants",
 		"caps set-parent <id> (--parent <id> | --none | --swap) - OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent",

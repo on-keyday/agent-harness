@@ -1002,7 +1002,11 @@ var Verbs = []VerbSpec{
 		Examples: []string{"conns", "conns -f --json"},
 	},
 	{
-		Path: []string{"caps"}, Surfaces: CLI,
+		// All three surfaces. The catalog is the only place the granular
+		// capabilities carry a description of what they actually gate, and it
+		// used to be reachable from the CLI alone -- so a TUI or WebUI
+		// operator picking chips had the names and not the sentences.
+		Path: []string{"caps"}, Surfaces: CLI | TUI | WebUI,
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "caps"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the capability catalog as JSON"}},
@@ -1204,6 +1208,65 @@ var Verbs = []VerbSpec{
 				Help: "on a narrowing, leave the affected tasks' connections open"},
 		},
 		Examples: []string{"caps set aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps spawn,file_read"},
+	},
+	{
+		// The session's SPAWN DEFAULTS: what a submit / interactive / session
+		// new on this surface carries when its own line names no --caps or
+		// --scope. Not a request to the server -- nothing is sent -- which is
+		// why there is no task id and why the CLI does not have it: a CLI
+		// invocation is one command, so there is no later command to default.
+		//
+		// It was `caps <mask>` and `scope <mask>` in the TUI, two grammars
+		// this surface alone had, with the mask joined out of the raw tokens.
+		// The flags are `caps set`'s, minus the id: the two verbs set the same
+		// three things, and reading them side by side is how a reader sees
+		// that one takes effect now and the other at the next spawn.
+		//
+		// The WebUI holds the same state as the chips in the compose panel
+		// (spawnCaps / spawnScope), so this is a second door onto one value,
+		// not a second value.
+		Path: []string{"caps", "set-defaults"}, Surfaces: TUI | WebUI,
+		Action: "SetDefaultsAction",
+		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
+		// show the current defaults (the TUI opens the picker on it) -- where
+		// on a re-grant it would be a no-op request against a live task.
+		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
+			Reason: "a narrowing has no base to narrow unless this call names one"}},
+		Flags: []Flag{
+			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
+				Help: "capability set future spawns carry by default; omitted = leave it as it is"},
+			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
+				Help: "scope future spawns carry by default; omitted = leave it as it is"},
+			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
+				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
+				Help: "narrow ONE capability below --scope in that default (written with --scope)"},
+		},
+		Examples: []string{"caps set-defaults", "caps set-defaults --caps spawn,file_read",
+			"caps set-defaults --scope subtree"},
+	},
+	{
+		// `scope` is the same verb under a shorter name, the way `exit` is
+		// `quit`: same Action, no Const on either, so the generator collapses
+		// them onto ONE handler method rather than minting a second one
+		// nothing calls.
+		Path: []string{"scope"}, Surfaces: TUI | WebUI,
+		Action: "SetDefaultsAction",
+		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
+			Reason: "a narrowing has no base to narrow unless this call names one"}},
+		Flags: []Flag{
+			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
+				Help: "capability set future spawns carry by default; omitted = leave it as it is"},
+			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
+				Help: "scope future spawns carry by default; omitted = leave it as it is"},
+			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
+				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
+				Help: "narrow ONE capability below --scope in that default (written with --scope)"},
+		},
+		Examples: []string{"scope", "scope --scope none"},
 	},
 	{
 		Path: []string{"caps", "set-parent"}, Surfaces: CLI | TUI | WebUI,

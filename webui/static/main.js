@@ -2380,6 +2380,14 @@ const POLL_INTERVAL_MS = 5000;
     tapOpen: (id) => openTaps.has(id),
     chatTaskID: () => chatTaskId,
     openChatFor: (id) => openChatFor(id),
+    // The compose panel's spawn defaults, as ONE value with two doors: the
+    // chips write them and `caps set-defaults` writes them, and both read
+    // back through here. spawnScope is derived from the scope controls, so
+    // the setter drives the CONTROLS and lets the existing updateSpawnScope
+    // recompute the spec -- writing spawnScope directly would show the
+    // operator their scope and lose it the next time a radio moved.
+    spawnDefaults: () => ({ caps: spawnCaps, capsLabel: capsLabelFor(spawnCaps), scope: spawnScope }),
+    setSpawnDefaults: (d) => setSpawnDefaults(d),
   };
 
   const runCmd = async () => {
@@ -3357,6 +3365,45 @@ const POLL_INTERVAL_MS = 5000;
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
     }
+  }
+
+  // setSpawnDefaults applies a parsed `caps set-defaults` to the compose
+  // panel's own controls. Fields are applied only when present: an omitted
+  // --caps leaves the chips alone rather than clearing them, which is the
+  // difference between "I did not say" and "I said none".
+  function setSpawnDefaults(d) {
+    if (typeof d.caps === "number") {
+      spawnCaps = d.caps;
+      renderCaps(); // the chips re-render FROM spawnCaps, so this is the echo
+    }
+    if (typeof d.scopeBase === "string") {
+      spawnBase = d.scopeBase;
+      spawnExcludeSelf = !!d.scopeExcludeSelf;
+      spawnVisBase = d.scopeVisBase || "";
+      spawnScopeIds.clear();
+      for (const id of (d.scopeIds || [])) spawnScopeIds.add(id);
+      spawnVisIds.clear();
+      for (const id of (d.scopeVisIds || [])) spawnVisIds.add(id);
+      // Re-render the radios and checklists from the new state, then let the
+      // existing updater derive spawnScope -- one derivation, not two.
+      syncScopeControls();
+      refreshSpawnScopeChecklist();
+    }
+  }
+
+  // syncScopeControls pushes spawnBase / spawnExcludeSelf / spawnVisBase back
+  // onto the radios and checkbox. Without it the command line would change the
+  // value and leave the controls showing the old one, and the next click on an
+  // untouched radio would restore what the operator just replaced.
+  function syncScopeControls() {
+    for (const r of document.querySelectorAll('input[name="spawn-base"]')) {
+      r.checked = r.value === spawnBase;
+    }
+    for (const r of document.querySelectorAll('input[name="spawn-vis-base"]')) {
+      r.checked = r.value === spawnVisBase;
+    }
+    const ex = document.getElementById("spawn-exclude-self");
+    if (ex) ex.checked = spawnExcludeSelf;
   }
 
   function refreshSpawnScopeChecklist() {
@@ -5927,6 +5974,12 @@ const RUNCMD_DISPATCH = {
   "restore": { fn: "restore" },
   "ls": { fn: "list" },
   "grid": { fn: "gridSet" },
+  "caps": { fn: "capsCatalog" },
+  // Page-local: the spawn defaults live in this page's compose panel, so
+  // there is no server call to name. parseAuthority is the bridge half --
+  // the grammar is the declaration's, not a JS copy of it.
+  "caps set-defaults": { fn: "parseAuthority" },
+  "scope": { fn: "parseAuthority" },
   "caps set-parent": { fn: "setParent" },
   "server dial-runner": { fn: "serverDialRunner" },
   "exec": { fn: "execRun" },
@@ -6018,11 +6071,54 @@ async function runVerbCommand(tokens, ctx) {
       }));
       break;
     }
+    case "scope":
     case "caps": {
-      // `caps set-parent` is the canonical path; the WebUI's old
-      // top-level `set-parent` spelling is gone (D16).
-      if (tokens[1] !== "set-parent") {
-        throw new Error("caps: only `caps set-parent` is available here");
+      // Which of the three, by the SUB-VERB word rather than by counting
+      // tokens: `caps --json` has two tokens and is still the catalog, and a
+      // count test dropped the declared flag while reporting "only ... are
+      // available here".
+      const sub = cmd === "caps" ? (tokens[1] || "") : "";
+      // `caps set-defaults`, and `scope` -- its shorter declared spelling --
+      // set what a spawn from this page carries when the compose panel's own
+      // controls are not overridden. Same state as the chips (D17: one idea,
+      // one answer), so this drives them rather than keeping a second copy.
+      if (cmd === "scope" || sub === "set-defaults") {
+        const b = ctx.harness.parseCommand(tokens, {});
+        if (b.error) throw new Error(b.error);
+        const raw = {
+          caps: b.flags.caps || "",
+          scope: b.flags.scope || "",
+          scopeFor: b.flags["scope-for"] || [],
+        };
+        if (!raw.caps && !raw.scope) {
+          // Naming nothing is a question. The TUI opens its picker; here the
+          // panel is already on screen, so the answer is the current value.
+          const d = ctx.spawnDefaults();
+          out = "caps: " + d.capsLabel + "\nscope: " + (d.scope || "subtree (default)");
+          break;
+        }
+        const parsed = ctx.harness.parseAuthority(raw);
+        if (parsed.error) throw new Error(parsed.error);
+        ctx.setSpawnDefaults(parsed);
+        const lines = [];
+        if (parsed.capsLabel !== undefined) lines.push("caps set: " + parsed.capsLabel);
+        if (parsed.scopeLabel !== undefined) lines.push("scope set: " + parsed.scopeLabel);
+        out = lines.join("\n");
+        break;
+      }
+      if (sub !== "set-parent") {
+        // Everything else on `caps` is the catalog: every grantable
+        // capability with the sentence saying what it gates, from the same
+        // verb.WriteCaps the CLI prints. The chips carry the names and none
+        // of the sentences. A word that is not a declared sub-verb reaches
+        // the declaration and is refused there, rather than by a second list
+        // of sub-verbs kept here.
+        const b = ctx.harness.parseCommand(["caps", ...tokens.slice(1)], {});
+        if (b.error) throw new Error(b.error);
+        const text = ctx.harness.capsCatalog(!!b.flags.json);
+        if (text && text.error) throw new Error(text.error);
+        out = text;
+        break;
       }
 
       // `caps set-parent` on the other surfaces; the shared declaration
