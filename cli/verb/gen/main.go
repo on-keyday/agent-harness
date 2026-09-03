@@ -127,7 +127,9 @@ func main() {
 package verb
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 %s)
@@ -176,6 +178,9 @@ import (
 	}
 	buf.WriteString("\t})\n}\n")
 
+	emitNamesAndParsers(&buf)
+	emitDispatch(&buf)
+
 	src, err := format.Source(buf.Bytes())
 	if err != nil {
 		os.WriteFile(*out, buf.Bytes(), 0o644)
@@ -187,6 +192,136 @@ import (
 		os.Exit(1)
 	}
 	fmt.Printf("gen: %d action types, %d verbs, %d builds\n", len(names), countGenerated(), builds)
+}
+
+// emitNamesAndParsers writes the half a CALLER touches: a name constant and a
+// typed parse function per verb, then one dispatch interface and one dispatch
+// function per surface.
+//
+// Before this, every call site spelled the verb as a STRING, looked it up,
+// narrowed it, built a FlagSet, parsed, built, and type-asserted -- seven
+// steps the compiler could not check, repeated in seven hand-written helpers
+// (parseOne, parseSession, parseSpawn, parseViaSpec, parseViaSpec2,
+// parseViaPath, parseCatalog) that differ only in which type they assert to.
+// The failures that shape allows are the ones this migration kept finding:
+// `.For(surface)` forgotten in two places, `cancel` never reaching Lookup at
+// all, three verbs dispatched that the table did not declare.
+//
+// The interface is the part that replaces a TEST with a compile error. Go has
+// no exhaustive switch, but a type that does not implement every method does
+// not build -- so "every declared verb is dispatched" stops being something
+// cmd/harness-cli/usage_completeness_test.go has to check after the fact.
+func emitNamesAndParsers(buf *bytes.Buffer) {
+	fmt.Fprintf(buf, "\n// Verb names. The dispatch case labels and the help headings both take\n"+
+		"// these, so a rename in the table reaches every caller as a build error\n"+
+		"// rather than as a case nothing matches.\nconst (\n")
+	for _, v := range verb.Verbs {
+		fmt.Fprintf(buf, "\tCmd%s = %q\n", methodName(v), v.FlagSetName())
+	}
+	buf.WriteString(")\n")
+
+	buf.WriteString("\n// Typed parsers. One per verb, and the only entry a caller needs: the\n" +
+		"// name lives here, the surface narrowing is not forgettable, and the\n" +
+		"// result is already the right type -- so a call site has no string, no\n" +
+		"// ok-check and no assertion to get wrong.\n//\n" +
+		"// Named ParseCmdXxx rather than ParseXxx because ParseCaps and\n" +
+		"// ParseScope in this package are the capability and scope GRAMMARS,\n" +
+		"// which a verb of the same name would shadow.\n")
+	for _, v := range verb.Verbs {
+		if v.Action == "" {
+			continue
+		}
+		// ParseCmd, not Parse: ParseCaps and ParseScope are already the
+		// capability and scope GRAMMAR parsers in this package, and a verb
+		// named caps would silently shadow one of them.
+		fmt.Fprintf(buf, "func ParseCmd%s(sf Surface, args []string) (%s, error) {\n"+
+			"\tvar zero %s\n"+
+			"\tsp, ok := Lookup(%s)\n"+
+			"\tif !ok {\n\t\treturn zero, fmt.Errorf(%q)\n\t}\n"+
+			"\tsp = sp.For(sf)\n"+
+			"\tfs := sp.NewFlagSet(flag.ContinueOnError)\n"+
+			"\tfs.SetOutput(io.Discard)\n"+
+			"\tb, err := sp.Parse(fs, args)\n"+
+			"\tif err != nil {\n\t\treturn zero, err\n\t}\n"+
+			"\tact, err := sp.BuildFunc()(b)\n"+
+			"\tif err != nil {\n\t\treturn zero, err\n\t}\n"+
+			"\treturn act.(%s), nil\n}\n\n",
+			methodName(v), v.Action, v.Action, quotedPath(v),
+			v.FlagSetName()+": not in the verb table", v.Action)
+	}
+}
+
+// emitDispatch writes, per surface, an interface with one method per declared
+// verb and the function that routes a command line into it.
+//
+// The interface is the point. Go has no exhaustive switch, so "every declared
+// verb is dispatched" was a TEST -- and the test could only see what it was
+// told to look at, which is how `cancel` shipped reading args[0] with no
+// arity check while the TUI refused the same line, and how three verbs got
+// dispatched that the table did not declare. A type that does not implement
+// every method does not build.
+//
+// What it does NOT unify is the method BODIES. Design D3: the CLI writes
+// stdout and an exit code, the TUI returns a tea.Cmd, the WebUI touches the
+// DOM, and forcing one output model on the other two is the thing the
+// declaration was never meant to do. This fixes WHICH verbs each surface
+// answers, not what answering means there.
+func emitDispatch(buf *bytes.Buffer) {
+	for _, sf := range []struct {
+		s    verb.Surface
+		name string
+	}{{verb.CLI, "CLI"}, {verb.TUI, "TUI"}} {
+		var verbs []verb.VerbSpec
+		for _, v := range verb.Verbs {
+			if v.Action != "" && v.Surfaces.Has(sf.s) {
+				verbs = append(verbs, v)
+			}
+		}
+		fmt.Fprintf(buf, "\n// %sDispatch is every verb the declaration gives the %s. A handler type\n"+
+			"// that misses one does not compile, which is what makes the coverage a\n"+
+			"// build property rather than a test.\ntype %sDispatch interface {\n",
+			sf.name, sf.name, sf.name)
+		for _, v := range verbs {
+			fmt.Fprintf(buf, "\t// %s\n\t%s(%s) error\n", v.FlagSetName(), methodName(v), v.Action)
+		}
+		buf.WriteString("}\n")
+
+		fmt.Fprintf(buf, "\n// Dispatch%s parses one command line and hands it to the matching method.\n"+
+			"// The switch is GENERATED, so no surface maintains a case list and none\n"+
+			"// can fall through to a verb it forgot.\nfunc Dispatch%s(h %sDispatch, cmd string, args []string) (bool, error) {\n"+
+			"\tswitch cmd {\n", sf.name, sf.name, sf.name)
+		for _, v := range verbs {
+			fmt.Fprintf(buf, "\tcase Cmd%s:\n\t\ta, err := ParseCmd%s(%s, args)\n"+
+				"\t\tif err != nil {\n\t\t\treturn true, err\n\t\t}\n\t\treturn true, h.%s(a)\n",
+				methodName(v), methodName(v), sf.name, methodName(v))
+		}
+		buf.WriteString("\t}\n\t// Not a declared verb for this surface. The caller decides what that\n" +
+			"\t// means -- a surface-local verb, or an unknown command.\n\treturn false, nil\n}\n")
+	}
+}
+
+// methodName turns a verb path into a Go identifier: `file push` -> FilePush,
+// `caps set-parent` -> CapsSetParent.
+func methodName(v verb.VerbSpec) string {
+	var b strings.Builder
+	for _, word := range v.Path {
+		for _, part := range strings.Split(word, "-") {
+			if part == "" {
+				continue
+			}
+			b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+		}
+	}
+	return b.String()
+}
+
+// quotedPath renders a verb's path as Lookup arguments.
+func quotedPath(v verb.VerbSpec) string {
+	parts := make([]string, 0, len(v.Path))
+	for _, p := range v.Path {
+		parts = append(parts, fmt.Sprintf("%q", p))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // emitBuild writes one build func for a verb already narrowed to a surface.

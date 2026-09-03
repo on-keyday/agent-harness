@@ -8,7 +8,9 @@
 package verb
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -2424,4 +2426,2737 @@ func init() {
 			return a, nil
 		},
 	})
+}
+
+// Verb names. The dispatch case labels and the help headings both take
+// these, so a rename in the table reaches every caller as a build error
+// rather than as a case nothing matches.
+const (
+	CmdPrune                  = "prune"
+	CmdFilePush               = "file push"
+	CmdFilePull               = "file pull"
+	CmdFileLs                 = "file ls"
+	CmdFileMkdir              = "file mkdir"
+	CmdFileDelete             = "file delete"
+	CmdFileEdit               = "file edit"
+	CmdFileNew                = "file new"
+	CmdGitLog                 = "git log"
+	CmdGitDiff                = "git diff"
+	CmdGitShow                = "git show"
+	CmdGitStatus              = "git status"
+	CmdGitSubrepos            = "git subrepos"
+	CmdGitFile                = "git file"
+	CmdExec                   = "exec"
+	CmdExecLs                 = "exec ls"
+	CmdExecKill               = "exec kill"
+	CmdForward                = "forward"
+	CmdForwardLs              = "forward ls"
+	CmdForwardKill            = "forward kill"
+	CmdForwardTap             = "forward tap"
+	CmdServerDialRunner       = "server dial-runner"
+	CmdSshGateway             = "ssh-gateway"
+	CmdSshGatewayStart        = "ssh-gateway start"
+	CmdSshGatewayStatus       = "ssh-gateway status"
+	CmdSshGatewayStop         = "ssh-gateway stop"
+	CmdWorkspaceSave          = "workspace save"
+	CmdWorkspaceRm            = "workspace rm"
+	CmdWorkspaceLs            = "workspace ls"
+	CmdWorkspaceShow          = "workspace show"
+	CmdWorkspaceApply         = "workspace apply"
+	CmdWorkspaceDetach        = "workspace detach"
+	CmdBoardTopics            = "board topics"
+	CmdBoardRead              = "board read"
+	CmdBoardSubscribers       = "board subscribers"
+	CmdBoardRetract           = "board retract"
+	CmdBoardPurge             = "board purge"
+	CmdSubmit                 = "submit"
+	CmdInteractive            = "interactive"
+	CmdSessionNew             = "session new"
+	CmdSessionSend            = "session send"
+	CmdSessionExec            = "session exec"
+	CmdSessionStreamTurn      = "session stream turn"
+	CmdNotify                 = "notify"
+	CmdAgentSend              = "agent send"
+	CmdAgentDispatch          = "agent dispatch"
+	CmdGrid                   = "grid"
+	CmdCancel                 = "cancel"
+	CmdLs                     = "ls"
+	CmdConns                  = "conns"
+	CmdCaps                   = "caps"
+	CmdWhoami                 = "whoami"
+	CmdSkill                  = "skill"
+	CmdWatch                  = "watch"
+	CmdNotifyWatch            = "notify-watch"
+	CmdVersion                = "version"
+	CmdLogs                   = "logs"
+	CmdPruneLocal             = "prune-local"
+	CmdRestore                = "restore"
+	CmdCapsSet                = "caps set"
+	CmdCapsSetParent          = "caps set-parent"
+	CmdSessionAttach          = "session attach"
+	CmdSessionLs              = "session ls"
+	CmdSessionKill            = "session kill"
+	CmdSessionAwaitIdle       = "session await-idle"
+	CmdSessionResize          = "session resize"
+	CmdSessionSnapshot        = "session snapshot"
+	CmdSessionStreamAttach    = "session stream attach"
+	CmdSessionStreamInterrupt = "session stream interrupt"
+	CmdSessionStreamFinish    = "session stream finish"
+	CmdSessionStreamApprove   = "session stream approve"
+	CmdAgentInbox             = "agent inbox"
+	CmdAgentWait              = "agent wait"
+	CmdAgentSubscribe         = "agent subscribe"
+	CmdAgentUnsubscribe       = "agent unsubscribe"
+	CmdAgentTopics            = "agent topics"
+	CmdAgentSubscriptions     = "agent subscriptions"
+	CmdAgentRetained          = "agent retained"
+	CmdAgentPurge             = "agent purge"
+	CmdAgentRead              = "agent read"
+	CmdAgentRetract           = "agent retract"
+)
+
+// Typed parsers. One per verb, and the only entry a caller needs: the
+// name lives here, the surface narrowing is not forgettable, and the
+// result is already the right type -- so a call site has no string, no
+// ok-check and no assertion to get wrong.
+//
+// Named ParseCmdXxx rather than ParseXxx because ParseCaps and
+// ParseScope in this package are the capability and scope GRAMMARS,
+// which a verb of the same name would shadow.
+func ParseCmdPrune(sf Surface, args []string) (PruneAction, error) {
+	var zero PruneAction
+	sp, ok := Lookup("prune")
+	if !ok {
+		return zero, fmt.Errorf("prune: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(PruneAction), nil
+}
+
+func ParseCmdFilePush(sf Surface, args []string) (FilePushAction, error) {
+	var zero FilePushAction
+	sp, ok := Lookup("file", "push")
+	if !ok {
+		return zero, fmt.Errorf("file push: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FilePushAction), nil
+}
+
+func ParseCmdFilePull(sf Surface, args []string) (FilePullAction, error) {
+	var zero FilePullAction
+	sp, ok := Lookup("file", "pull")
+	if !ok {
+		return zero, fmt.Errorf("file pull: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FilePullAction), nil
+}
+
+func ParseCmdFileLs(sf Surface, args []string) (FileLsAction, error) {
+	var zero FileLsAction
+	sp, ok := Lookup("file", "ls")
+	if !ok {
+		return zero, fmt.Errorf("file ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FileLsAction), nil
+}
+
+func ParseCmdFileMkdir(sf Surface, args []string) (FileMkdirAction, error) {
+	var zero FileMkdirAction
+	sp, ok := Lookup("file", "mkdir")
+	if !ok {
+		return zero, fmt.Errorf("file mkdir: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FileMkdirAction), nil
+}
+
+func ParseCmdFileDelete(sf Surface, args []string) (FileDeleteAction, error) {
+	var zero FileDeleteAction
+	sp, ok := Lookup("file", "delete")
+	if !ok {
+		return zero, fmt.Errorf("file delete: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FileDeleteAction), nil
+}
+
+func ParseCmdFileEdit(sf Surface, args []string) (FileEditAction, error) {
+	var zero FileEditAction
+	sp, ok := Lookup("file", "edit")
+	if !ok {
+		return zero, fmt.Errorf("file edit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FileEditAction), nil
+}
+
+func ParseCmdFileNew(sf Surface, args []string) (FileNewAction, error) {
+	var zero FileNewAction
+	sp, ok := Lookup("file", "new")
+	if !ok {
+		return zero, fmt.Errorf("file new: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(FileNewAction), nil
+}
+
+func ParseCmdGitLog(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "log")
+	if !ok {
+		return zero, fmt.Errorf("git log: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdGitDiff(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "diff")
+	if !ok {
+		return zero, fmt.Errorf("git diff: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdGitShow(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "show")
+	if !ok {
+		return zero, fmt.Errorf("git show: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdGitStatus(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "status")
+	if !ok {
+		return zero, fmt.Errorf("git status: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdGitSubrepos(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "subrepos")
+	if !ok {
+		return zero, fmt.Errorf("git subrepos: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdGitFile(sf Surface, args []string) (GitAction, error) {
+	var zero GitAction
+	sp, ok := Lookup("git", "file")
+	if !ok {
+		return zero, fmt.Errorf("git file: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GitAction), nil
+}
+
+func ParseCmdExec(sf Surface, args []string) (ExecRunAction, error) {
+	var zero ExecRunAction
+	sp, ok := Lookup("exec")
+	if !ok {
+		return zero, fmt.Errorf("exec: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ExecRunAction), nil
+}
+
+func ParseCmdExecLs(sf Surface, args []string) (ExecRunAction, error) {
+	var zero ExecRunAction
+	sp, ok := Lookup("exec", "ls")
+	if !ok {
+		return zero, fmt.Errorf("exec ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ExecRunAction), nil
+}
+
+func ParseCmdExecKill(sf Surface, args []string) (ExecRunAction, error) {
+	var zero ExecRunAction
+	sp, ok := Lookup("exec", "kill")
+	if !ok {
+		return zero, fmt.Errorf("exec kill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ExecRunAction), nil
+}
+
+func ParseCmdForward(sf Surface, args []string) (ForwardOpenAction, error) {
+	var zero ForwardOpenAction
+	sp, ok := Lookup("forward")
+	if !ok {
+		return zero, fmt.Errorf("forward: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ForwardOpenAction), nil
+}
+
+func ParseCmdForwardLs(sf Surface, args []string) (ForwardLsAction, error) {
+	var zero ForwardLsAction
+	sp, ok := Lookup("forward", "ls")
+	if !ok {
+		return zero, fmt.Errorf("forward ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ForwardLsAction), nil
+}
+
+func ParseCmdForwardKill(sf Surface, args []string) (ForwardKillAction, error) {
+	var zero ForwardKillAction
+	sp, ok := Lookup("forward", "kill")
+	if !ok {
+		return zero, fmt.Errorf("forward kill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ForwardKillAction), nil
+}
+
+func ParseCmdForwardTap(sf Surface, args []string) (ForwardTapAction, error) {
+	var zero ForwardTapAction
+	sp, ok := Lookup("forward", "tap")
+	if !ok {
+		return zero, fmt.Errorf("forward tap: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ForwardTapAction), nil
+}
+
+func ParseCmdServerDialRunner(sf Surface, args []string) (ServerDialRunnerAction, error) {
+	var zero ServerDialRunnerAction
+	sp, ok := Lookup("server", "dial-runner")
+	if !ok {
+		return zero, fmt.Errorf("server dial-runner: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ServerDialRunnerAction), nil
+}
+
+func ParseCmdSshGateway(sf Surface, args []string) (SSHGatewayAction, error) {
+	var zero SSHGatewayAction
+	sp, ok := Lookup("ssh-gateway")
+	if !ok {
+		return zero, fmt.Errorf("ssh-gateway: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SSHGatewayAction), nil
+}
+
+func ParseCmdSshGatewayStart(sf Surface, args []string) (SSHGatewayAction, error) {
+	var zero SSHGatewayAction
+	sp, ok := Lookup("ssh-gateway", "start")
+	if !ok {
+		return zero, fmt.Errorf("ssh-gateway start: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SSHGatewayAction), nil
+}
+
+func ParseCmdSshGatewayStatus(sf Surface, args []string) (SSHGatewayAction, error) {
+	var zero SSHGatewayAction
+	sp, ok := Lookup("ssh-gateway", "status")
+	if !ok {
+		return zero, fmt.Errorf("ssh-gateway status: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SSHGatewayAction), nil
+}
+
+func ParseCmdSshGatewayStop(sf Surface, args []string) (SSHGatewayAction, error) {
+	var zero SSHGatewayAction
+	sp, ok := Lookup("ssh-gateway", "stop")
+	if !ok {
+		return zero, fmt.Errorf("ssh-gateway stop: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SSHGatewayAction), nil
+}
+
+func ParseCmdWorkspaceSave(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "save")
+	if !ok {
+		return zero, fmt.Errorf("workspace save: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdWorkspaceRm(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "rm")
+	if !ok {
+		return zero, fmt.Errorf("workspace rm: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdWorkspaceLs(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "ls")
+	if !ok {
+		return zero, fmt.Errorf("workspace ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdWorkspaceShow(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "show")
+	if !ok {
+		return zero, fmt.Errorf("workspace show: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdWorkspaceApply(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "apply")
+	if !ok {
+		return zero, fmt.Errorf("workspace apply: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdWorkspaceDetach(sf Surface, args []string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "detach")
+	if !ok {
+		return zero, fmt.Errorf("workspace detach: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(WorkspaceAction), nil
+}
+
+func ParseCmdBoardTopics(sf Surface, args []string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "topics")
+	if !ok {
+		return zero, fmt.Errorf("board topics: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(BoardAction), nil
+}
+
+func ParseCmdBoardRead(sf Surface, args []string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "read")
+	if !ok {
+		return zero, fmt.Errorf("board read: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(BoardAction), nil
+}
+
+func ParseCmdBoardSubscribers(sf Surface, args []string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "subscribers")
+	if !ok {
+		return zero, fmt.Errorf("board subscribers: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(BoardAction), nil
+}
+
+func ParseCmdBoardRetract(sf Surface, args []string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "retract")
+	if !ok {
+		return zero, fmt.Errorf("board retract: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(BoardAction), nil
+}
+
+func ParseCmdBoardPurge(sf Surface, args []string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "purge")
+	if !ok {
+		return zero, fmt.Errorf("board purge: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(BoardAction), nil
+}
+
+func ParseCmdSubmit(sf Surface, args []string) (SpawnAction, error) {
+	var zero SpawnAction
+	sp, ok := Lookup("submit")
+	if !ok {
+		return zero, fmt.Errorf("submit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SpawnAction), nil
+}
+
+func ParseCmdInteractive(sf Surface, args []string) (SpawnAction, error) {
+	var zero SpawnAction
+	sp, ok := Lookup("interactive")
+	if !ok {
+		return zero, fmt.Errorf("interactive: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SpawnAction), nil
+}
+
+func ParseCmdSessionNew(sf Surface, args []string) (SpawnAction, error) {
+	var zero SpawnAction
+	sp, ok := Lookup("session", "new")
+	if !ok {
+		return zero, fmt.Errorf("session new: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SpawnAction), nil
+}
+
+func ParseCmdSessionSend(sf Surface, args []string) (SendAction, error) {
+	var zero SendAction
+	sp, ok := Lookup("session", "send")
+	if !ok {
+		return zero, fmt.Errorf("session send: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SendAction), nil
+}
+
+func ParseCmdSessionExec(sf Surface, args []string) (SessionExecAction, error) {
+	var zero SessionExecAction
+	sp, ok := Lookup("session", "exec")
+	if !ok {
+		return zero, fmt.Errorf("session exec: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionExecAction), nil
+}
+
+func ParseCmdSessionStreamTurn(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "turn")
+	if !ok {
+		return zero, fmt.Errorf("session stream turn: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdNotify(sf Surface, args []string) (NotifyAction, error) {
+	var zero NotifyAction
+	sp, ok := Lookup("notify")
+	if !ok {
+		return zero, fmt.Errorf("notify: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(NotifyAction), nil
+}
+
+func ParseCmdAgentSend(sf Surface, args []string) (AgentSendAction, error) {
+	var zero AgentSendAction
+	sp, ok := Lookup("agent", "send")
+	if !ok {
+		return zero, fmt.Errorf("agent send: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentSendAction), nil
+}
+
+func ParseCmdAgentDispatch(sf Surface, args []string) (AgentSendAction, error) {
+	var zero AgentSendAction
+	sp, ok := Lookup("agent", "dispatch")
+	if !ok {
+		return zero, fmt.Errorf("agent dispatch: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentSendAction), nil
+}
+
+func ParseCmdGrid(sf Surface, args []string) (GridAction, error) {
+	var zero GridAction
+	sp, ok := Lookup("grid")
+	if !ok {
+		return zero, fmt.Errorf("grid: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(GridAction), nil
+}
+
+func ParseCmdCancel(sf Surface, args []string) (CancelAction, error) {
+	var zero CancelAction
+	sp, ok := Lookup("cancel")
+	if !ok {
+		return zero, fmt.Errorf("cancel: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CancelAction), nil
+}
+
+func ParseCmdLs(sf Surface, args []string) (ListAction, error) {
+	var zero ListAction
+	sp, ok := Lookup("ls")
+	if !ok {
+		return zero, fmt.Errorf("ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ListAction), nil
+}
+
+func ParseCmdConns(sf Surface, args []string) (ConnsAction, error) {
+	var zero ConnsAction
+	sp, ok := Lookup("conns")
+	if !ok {
+		return zero, fmt.Errorf("conns: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(ConnsAction), nil
+}
+
+func ParseCmdCaps(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("caps")
+	if !ok {
+		return zero, fmt.Errorf("caps: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdWhoami(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("whoami")
+	if !ok {
+		return zero, fmt.Errorf("whoami: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdSkill(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("skill")
+	if !ok {
+		return zero, fmt.Errorf("skill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdWatch(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("watch")
+	if !ok {
+		return zero, fmt.Errorf("watch: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdNotifyWatch(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("notify-watch")
+	if !ok {
+		return zero, fmt.Errorf("notify-watch: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdVersion(sf Surface, args []string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("version")
+	if !ok {
+		return zero, fmt.Errorf("version: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(CatalogAction), nil
+}
+
+func ParseCmdLogs(sf Surface, args []string) (LogsAction, error) {
+	var zero LogsAction
+	sp, ok := Lookup("logs")
+	if !ok {
+		return zero, fmt.Errorf("logs: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(LogsAction), nil
+}
+
+func ParseCmdPruneLocal(sf Surface, args []string) (PruneLocalAction, error) {
+	var zero PruneLocalAction
+	sp, ok := Lookup("prune-local")
+	if !ok {
+		return zero, fmt.Errorf("prune-local: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(PruneLocalAction), nil
+}
+
+func ParseCmdRestore(sf Surface, args []string) (RestoreAction, error) {
+	var zero RestoreAction
+	sp, ok := Lookup("restore")
+	if !ok {
+		return zero, fmt.Errorf("restore: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(RestoreAction), nil
+}
+
+func ParseCmdCapsSet(sf Surface, args []string) (SetCapsAction, error) {
+	var zero SetCapsAction
+	sp, ok := Lookup("caps", "set")
+	if !ok {
+		return zero, fmt.Errorf("caps set: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SetCapsAction), nil
+}
+
+func ParseCmdCapsSetParent(sf Surface, args []string) (SetParentAction, error) {
+	var zero SetParentAction
+	sp, ok := Lookup("caps", "set-parent")
+	if !ok {
+		return zero, fmt.Errorf("caps set-parent: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SetParentAction), nil
+}
+
+func ParseCmdSessionAttach(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "attach")
+	if !ok {
+		return zero, fmt.Errorf("session attach: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionLs(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "ls")
+	if !ok {
+		return zero, fmt.Errorf("session ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionKill(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "kill")
+	if !ok {
+		return zero, fmt.Errorf("session kill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionAwaitIdle(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "await-idle")
+	if !ok {
+		return zero, fmt.Errorf("session await-idle: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionResize(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "resize")
+	if !ok {
+		return zero, fmt.Errorf("session resize: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionSnapshot(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "snapshot")
+	if !ok {
+		return zero, fmt.Errorf("session snapshot: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionStreamAttach(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "attach")
+	if !ok {
+		return zero, fmt.Errorf("session stream attach: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionStreamInterrupt(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "interrupt")
+	if !ok {
+		return zero, fmt.Errorf("session stream interrupt: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionStreamFinish(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "finish")
+	if !ok {
+		return zero, fmt.Errorf("session stream finish: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdSessionStreamApprove(sf Surface, args []string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "approve")
+	if !ok {
+		return zero, fmt.Errorf("session stream approve: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(SessionAction), nil
+}
+
+func ParseCmdAgentInbox(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "inbox")
+	if !ok {
+		return zero, fmt.Errorf("agent inbox: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentWait(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "wait")
+	if !ok {
+		return zero, fmt.Errorf("agent wait: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentSubscribe(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "subscribe")
+	if !ok {
+		return zero, fmt.Errorf("agent subscribe: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentUnsubscribe(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "unsubscribe")
+	if !ok {
+		return zero, fmt.Errorf("agent unsubscribe: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentTopics(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "topics")
+	if !ok {
+		return zero, fmt.Errorf("agent topics: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentSubscriptions(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "subscriptions")
+	if !ok {
+		return zero, fmt.Errorf("agent subscriptions: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentRetained(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "retained")
+	if !ok {
+		return zero, fmt.Errorf("agent retained: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentPurge(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "purge")
+	if !ok {
+		return zero, fmt.Errorf("agent purge: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentRead(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "read")
+	if !ok {
+		return zero, fmt.Errorf("agent read: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+func ParseCmdAgentRetract(sf Surface, args []string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "retract")
+	if !ok {
+		return zero, fmt.Errorf("agent retract: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	return act.(AgentAction), nil
+}
+
+// CLIDispatch is every verb the declaration gives the CLI. A handler type
+// that misses one does not compile, which is what makes the coverage a
+// build property rather than a test.
+type CLIDispatch interface {
+	// prune
+	Prune(PruneAction) error
+	// file push
+	FilePush(FilePushAction) error
+	// file pull
+	FilePull(FilePullAction) error
+	// file ls
+	FileLs(FileLsAction) error
+	// file mkdir
+	FileMkdir(FileMkdirAction) error
+	// file delete
+	FileDelete(FileDeleteAction) error
+	// file edit
+	FileEdit(FileEditAction) error
+	// file new
+	FileNew(FileNewAction) error
+	// git log
+	GitLog(GitAction) error
+	// git diff
+	GitDiff(GitAction) error
+	// git show
+	GitShow(GitAction) error
+	// git status
+	GitStatus(GitAction) error
+	// git subrepos
+	GitSubrepos(GitAction) error
+	// git file
+	GitFile(GitAction) error
+	// exec
+	Exec(ExecRunAction) error
+	// exec ls
+	ExecLs(ExecRunAction) error
+	// exec kill
+	ExecKill(ExecRunAction) error
+	// forward
+	Forward(ForwardOpenAction) error
+	// forward ls
+	ForwardLs(ForwardLsAction) error
+	// forward kill
+	ForwardKill(ForwardKillAction) error
+	// forward tap
+	ForwardTap(ForwardTapAction) error
+	// server dial-runner
+	ServerDialRunner(ServerDialRunnerAction) error
+	// ssh-gateway
+	SshGateway(SSHGatewayAction) error
+	// workspace save
+	WorkspaceSave(WorkspaceAction) error
+	// workspace rm
+	WorkspaceRm(WorkspaceAction) error
+	// workspace ls
+	WorkspaceLs(WorkspaceAction) error
+	// workspace show
+	WorkspaceShow(WorkspaceAction) error
+	// board topics
+	BoardTopics(BoardAction) error
+	// board read
+	BoardRead(BoardAction) error
+	// board subscribers
+	BoardSubscribers(BoardAction) error
+	// board retract
+	BoardRetract(BoardAction) error
+	// board purge
+	BoardPurge(BoardAction) error
+	// submit
+	Submit(SpawnAction) error
+	// interactive
+	Interactive(SpawnAction) error
+	// session new
+	SessionNew(SpawnAction) error
+	// session send
+	SessionSend(SendAction) error
+	// session exec
+	SessionExec(SessionExecAction) error
+	// session stream turn
+	SessionStreamTurn(SessionAction) error
+	// notify
+	Notify(NotifyAction) error
+	// agent send
+	AgentSend(AgentSendAction) error
+	// agent dispatch
+	AgentDispatch(AgentSendAction) error
+	// cancel
+	Cancel(CancelAction) error
+	// ls
+	Ls(ListAction) error
+	// conns
+	Conns(ConnsAction) error
+	// caps
+	Caps(CatalogAction) error
+	// whoami
+	Whoami(CatalogAction) error
+	// skill
+	Skill(CatalogAction) error
+	// watch
+	Watch(CatalogAction) error
+	// notify-watch
+	NotifyWatch(CatalogAction) error
+	// version
+	Version(CatalogAction) error
+	// logs
+	Logs(LogsAction) error
+	// prune-local
+	PruneLocal(PruneLocalAction) error
+	// restore
+	Restore(RestoreAction) error
+	// caps set
+	CapsSet(SetCapsAction) error
+	// caps set-parent
+	CapsSetParent(SetParentAction) error
+	// session attach
+	SessionAttach(SessionAction) error
+	// session ls
+	SessionLs(SessionAction) error
+	// session kill
+	SessionKill(SessionAction) error
+	// session await-idle
+	SessionAwaitIdle(SessionAction) error
+	// session resize
+	SessionResize(SessionAction) error
+	// session snapshot
+	SessionSnapshot(SessionAction) error
+	// session stream attach
+	SessionStreamAttach(SessionAction) error
+	// session stream interrupt
+	SessionStreamInterrupt(SessionAction) error
+	// session stream finish
+	SessionStreamFinish(SessionAction) error
+	// session stream approve
+	SessionStreamApprove(SessionAction) error
+	// agent inbox
+	AgentInbox(AgentAction) error
+	// agent wait
+	AgentWait(AgentAction) error
+	// agent subscribe
+	AgentSubscribe(AgentAction) error
+	// agent unsubscribe
+	AgentUnsubscribe(AgentAction) error
+	// agent topics
+	AgentTopics(AgentAction) error
+	// agent subscriptions
+	AgentSubscriptions(AgentAction) error
+	// agent retained
+	AgentRetained(AgentAction) error
+	// agent purge
+	AgentPurge(AgentAction) error
+	// agent read
+	AgentRead(AgentAction) error
+	// agent retract
+	AgentRetract(AgentAction) error
+}
+
+// DispatchCLI parses one command line and hands it to the matching method.
+// The switch is GENERATED, so no surface maintains a case list and none
+// can fall through to a verb it forgot.
+func DispatchCLI(h CLIDispatch, cmd string, args []string) (bool, error) {
+	switch cmd {
+	case CmdPrune:
+		a, err := ParseCmdPrune(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Prune(a)
+	case CmdFilePush:
+		a, err := ParseCmdFilePush(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FilePush(a)
+	case CmdFilePull:
+		a, err := ParseCmdFilePull(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FilePull(a)
+	case CmdFileLs:
+		a, err := ParseCmdFileLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileLs(a)
+	case CmdFileMkdir:
+		a, err := ParseCmdFileMkdir(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileMkdir(a)
+	case CmdFileDelete:
+		a, err := ParseCmdFileDelete(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileDelete(a)
+	case CmdFileEdit:
+		a, err := ParseCmdFileEdit(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileEdit(a)
+	case CmdFileNew:
+		a, err := ParseCmdFileNew(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileNew(a)
+	case CmdGitLog:
+		a, err := ParseCmdGitLog(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitLog(a)
+	case CmdGitDiff:
+		a, err := ParseCmdGitDiff(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitDiff(a)
+	case CmdGitShow:
+		a, err := ParseCmdGitShow(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitShow(a)
+	case CmdGitStatus:
+		a, err := ParseCmdGitStatus(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitStatus(a)
+	case CmdGitSubrepos:
+		a, err := ParseCmdGitSubrepos(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitSubrepos(a)
+	case CmdGitFile:
+		a, err := ParseCmdGitFile(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitFile(a)
+	case CmdExec:
+		a, err := ParseCmdExec(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Exec(a)
+	case CmdExecLs:
+		a, err := ParseCmdExecLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ExecLs(a)
+	case CmdExecKill:
+		a, err := ParseCmdExecKill(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ExecKill(a)
+	case CmdForward:
+		a, err := ParseCmdForward(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Forward(a)
+	case CmdForwardLs:
+		a, err := ParseCmdForwardLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardLs(a)
+	case CmdForwardKill:
+		a, err := ParseCmdForwardKill(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardKill(a)
+	case CmdForwardTap:
+		a, err := ParseCmdForwardTap(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardTap(a)
+	case CmdServerDialRunner:
+		a, err := ParseCmdServerDialRunner(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ServerDialRunner(a)
+	case CmdSshGateway:
+		a, err := ParseCmdSshGateway(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SshGateway(a)
+	case CmdWorkspaceSave:
+		a, err := ParseCmdWorkspaceSave(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceSave(a)
+	case CmdWorkspaceRm:
+		a, err := ParseCmdWorkspaceRm(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceRm(a)
+	case CmdWorkspaceLs:
+		a, err := ParseCmdWorkspaceLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceLs(a)
+	case CmdWorkspaceShow:
+		a, err := ParseCmdWorkspaceShow(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceShow(a)
+	case CmdBoardTopics:
+		a, err := ParseCmdBoardTopics(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.BoardTopics(a)
+	case CmdBoardRead:
+		a, err := ParseCmdBoardRead(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.BoardRead(a)
+	case CmdBoardSubscribers:
+		a, err := ParseCmdBoardSubscribers(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.BoardSubscribers(a)
+	case CmdBoardRetract:
+		a, err := ParseCmdBoardRetract(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.BoardRetract(a)
+	case CmdBoardPurge:
+		a, err := ParseCmdBoardPurge(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.BoardPurge(a)
+	case CmdSubmit:
+		a, err := ParseCmdSubmit(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Submit(a)
+	case CmdInteractive:
+		a, err := ParseCmdInteractive(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Interactive(a)
+	case CmdSessionNew:
+		a, err := ParseCmdSessionNew(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionNew(a)
+	case CmdSessionSend:
+		a, err := ParseCmdSessionSend(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionSend(a)
+	case CmdSessionExec:
+		a, err := ParseCmdSessionExec(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionExec(a)
+	case CmdSessionStreamTurn:
+		a, err := ParseCmdSessionStreamTurn(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamTurn(a)
+	case CmdNotify:
+		a, err := ParseCmdNotify(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Notify(a)
+	case CmdAgentSend:
+		a, err := ParseCmdAgentSend(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentSend(a)
+	case CmdAgentDispatch:
+		a, err := ParseCmdAgentDispatch(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentDispatch(a)
+	case CmdCancel:
+		a, err := ParseCmdCancel(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Cancel(a)
+	case CmdLs:
+		a, err := ParseCmdLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Ls(a)
+	case CmdConns:
+		a, err := ParseCmdConns(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Conns(a)
+	case CmdCaps:
+		a, err := ParseCmdCaps(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Caps(a)
+	case CmdWhoami:
+		a, err := ParseCmdWhoami(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Whoami(a)
+	case CmdSkill:
+		a, err := ParseCmdSkill(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Skill(a)
+	case CmdWatch:
+		a, err := ParseCmdWatch(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Watch(a)
+	case CmdNotifyWatch:
+		a, err := ParseCmdNotifyWatch(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.NotifyWatch(a)
+	case CmdVersion:
+		a, err := ParseCmdVersion(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Version(a)
+	case CmdLogs:
+		a, err := ParseCmdLogs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Logs(a)
+	case CmdPruneLocal:
+		a, err := ParseCmdPruneLocal(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.PruneLocal(a)
+	case CmdRestore:
+		a, err := ParseCmdRestore(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Restore(a)
+	case CmdCapsSet:
+		a, err := ParseCmdCapsSet(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.CapsSet(a)
+	case CmdCapsSetParent:
+		a, err := ParseCmdCapsSetParent(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.CapsSetParent(a)
+	case CmdSessionAttach:
+		a, err := ParseCmdSessionAttach(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionAttach(a)
+	case CmdSessionLs:
+		a, err := ParseCmdSessionLs(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionLs(a)
+	case CmdSessionKill:
+		a, err := ParseCmdSessionKill(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionKill(a)
+	case CmdSessionAwaitIdle:
+		a, err := ParseCmdSessionAwaitIdle(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionAwaitIdle(a)
+	case CmdSessionResize:
+		a, err := ParseCmdSessionResize(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionResize(a)
+	case CmdSessionSnapshot:
+		a, err := ParseCmdSessionSnapshot(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionSnapshot(a)
+	case CmdSessionStreamAttach:
+		a, err := ParseCmdSessionStreamAttach(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamAttach(a)
+	case CmdSessionStreamInterrupt:
+		a, err := ParseCmdSessionStreamInterrupt(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamInterrupt(a)
+	case CmdSessionStreamFinish:
+		a, err := ParseCmdSessionStreamFinish(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamFinish(a)
+	case CmdSessionStreamApprove:
+		a, err := ParseCmdSessionStreamApprove(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamApprove(a)
+	case CmdAgentInbox:
+		a, err := ParseCmdAgentInbox(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentInbox(a)
+	case CmdAgentWait:
+		a, err := ParseCmdAgentWait(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentWait(a)
+	case CmdAgentSubscribe:
+		a, err := ParseCmdAgentSubscribe(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentSubscribe(a)
+	case CmdAgentUnsubscribe:
+		a, err := ParseCmdAgentUnsubscribe(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentUnsubscribe(a)
+	case CmdAgentTopics:
+		a, err := ParseCmdAgentTopics(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentTopics(a)
+	case CmdAgentSubscriptions:
+		a, err := ParseCmdAgentSubscriptions(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentSubscriptions(a)
+	case CmdAgentRetained:
+		a, err := ParseCmdAgentRetained(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentRetained(a)
+	case CmdAgentPurge:
+		a, err := ParseCmdAgentPurge(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentPurge(a)
+	case CmdAgentRead:
+		a, err := ParseCmdAgentRead(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentRead(a)
+	case CmdAgentRetract:
+		a, err := ParseCmdAgentRetract(CLI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.AgentRetract(a)
+	}
+	// Not a declared verb for this surface. The caller decides what that
+	// means -- a surface-local verb, or an unknown command.
+	return false, nil
+}
+
+// TUIDispatch is every verb the declaration gives the TUI. A handler type
+// that misses one does not compile, which is what makes the coverage a
+// build property rather than a test.
+type TUIDispatch interface {
+	// prune
+	Prune(PruneAction) error
+	// file push
+	FilePush(FilePushAction) error
+	// file pull
+	FilePull(FilePullAction) error
+	// file ls
+	FileLs(FileLsAction) error
+	// file mkdir
+	FileMkdir(FileMkdirAction) error
+	// file delete
+	FileDelete(FileDeleteAction) error
+	// file edit
+	FileEdit(FileEditAction) error
+	// file new
+	FileNew(FileNewAction) error
+	// git log
+	GitLog(GitAction) error
+	// git diff
+	GitDiff(GitAction) error
+	// git show
+	GitShow(GitAction) error
+	// git status
+	GitStatus(GitAction) error
+	// git subrepos
+	GitSubrepos(GitAction) error
+	// git file
+	GitFile(GitAction) error
+	// exec
+	Exec(ExecRunAction) error
+	// exec ls
+	ExecLs(ExecRunAction) error
+	// exec kill
+	ExecKill(ExecRunAction) error
+	// forward ls
+	ForwardLs(ForwardLsAction) error
+	// forward kill
+	ForwardKill(ForwardKillAction) error
+	// forward tap
+	ForwardTap(ForwardTapAction) error
+	// server dial-runner
+	ServerDialRunner(ServerDialRunnerAction) error
+	// ssh-gateway start
+	SshGatewayStart(SSHGatewayAction) error
+	// ssh-gateway status
+	SshGatewayStatus(SSHGatewayAction) error
+	// ssh-gateway stop
+	SshGatewayStop(SSHGatewayAction) error
+	// workspace save
+	WorkspaceSave(WorkspaceAction) error
+	// workspace rm
+	WorkspaceRm(WorkspaceAction) error
+	// workspace ls
+	WorkspaceLs(WorkspaceAction) error
+	// workspace show
+	WorkspaceShow(WorkspaceAction) error
+	// workspace apply
+	WorkspaceApply(WorkspaceAction) error
+	// workspace detach
+	WorkspaceDetach(WorkspaceAction) error
+	// submit
+	Submit(SpawnAction) error
+	// interactive
+	Interactive(SpawnAction) error
+	// session new
+	SessionNew(SpawnAction) error
+	// session stream turn
+	SessionStreamTurn(SessionAction) error
+	// notify
+	Notify(NotifyAction) error
+	// grid
+	Grid(GridAction) error
+	// cancel
+	Cancel(CancelAction) error
+	// restore
+	Restore(RestoreAction) error
+	// caps set
+	CapsSet(SetCapsAction) error
+	// caps set-parent
+	CapsSetParent(SetParentAction) error
+	// session attach
+	SessionAttach(SessionAction) error
+	// session ls
+	SessionLs(SessionAction) error
+	// session kill
+	SessionKill(SessionAction) error
+	// session await-idle
+	SessionAwaitIdle(SessionAction) error
+	// session stream attach
+	SessionStreamAttach(SessionAction) error
+	// session stream interrupt
+	SessionStreamInterrupt(SessionAction) error
+	// session stream finish
+	SessionStreamFinish(SessionAction) error
+	// session stream approve
+	SessionStreamApprove(SessionAction) error
+}
+
+// DispatchTUI parses one command line and hands it to the matching method.
+// The switch is GENERATED, so no surface maintains a case list and none
+// can fall through to a verb it forgot.
+func DispatchTUI(h TUIDispatch, cmd string, args []string) (bool, error) {
+	switch cmd {
+	case CmdPrune:
+		a, err := ParseCmdPrune(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Prune(a)
+	case CmdFilePush:
+		a, err := ParseCmdFilePush(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FilePush(a)
+	case CmdFilePull:
+		a, err := ParseCmdFilePull(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FilePull(a)
+	case CmdFileLs:
+		a, err := ParseCmdFileLs(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileLs(a)
+	case CmdFileMkdir:
+		a, err := ParseCmdFileMkdir(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileMkdir(a)
+	case CmdFileDelete:
+		a, err := ParseCmdFileDelete(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileDelete(a)
+	case CmdFileEdit:
+		a, err := ParseCmdFileEdit(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileEdit(a)
+	case CmdFileNew:
+		a, err := ParseCmdFileNew(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.FileNew(a)
+	case CmdGitLog:
+		a, err := ParseCmdGitLog(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitLog(a)
+	case CmdGitDiff:
+		a, err := ParseCmdGitDiff(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitDiff(a)
+	case CmdGitShow:
+		a, err := ParseCmdGitShow(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitShow(a)
+	case CmdGitStatus:
+		a, err := ParseCmdGitStatus(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitStatus(a)
+	case CmdGitSubrepos:
+		a, err := ParseCmdGitSubrepos(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitSubrepos(a)
+	case CmdGitFile:
+		a, err := ParseCmdGitFile(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.GitFile(a)
+	case CmdExec:
+		a, err := ParseCmdExec(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Exec(a)
+	case CmdExecLs:
+		a, err := ParseCmdExecLs(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ExecLs(a)
+	case CmdExecKill:
+		a, err := ParseCmdExecKill(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ExecKill(a)
+	case CmdForwardLs:
+		a, err := ParseCmdForwardLs(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardLs(a)
+	case CmdForwardKill:
+		a, err := ParseCmdForwardKill(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardKill(a)
+	case CmdForwardTap:
+		a, err := ParseCmdForwardTap(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ForwardTap(a)
+	case CmdServerDialRunner:
+		a, err := ParseCmdServerDialRunner(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.ServerDialRunner(a)
+	case CmdSshGatewayStart:
+		a, err := ParseCmdSshGatewayStart(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SshGatewayStart(a)
+	case CmdSshGatewayStatus:
+		a, err := ParseCmdSshGatewayStatus(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SshGatewayStatus(a)
+	case CmdSshGatewayStop:
+		a, err := ParseCmdSshGatewayStop(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SshGatewayStop(a)
+	case CmdWorkspaceSave:
+		a, err := ParseCmdWorkspaceSave(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceSave(a)
+	case CmdWorkspaceRm:
+		a, err := ParseCmdWorkspaceRm(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceRm(a)
+	case CmdWorkspaceLs:
+		a, err := ParseCmdWorkspaceLs(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceLs(a)
+	case CmdWorkspaceShow:
+		a, err := ParseCmdWorkspaceShow(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceShow(a)
+	case CmdWorkspaceApply:
+		a, err := ParseCmdWorkspaceApply(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceApply(a)
+	case CmdWorkspaceDetach:
+		a, err := ParseCmdWorkspaceDetach(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.WorkspaceDetach(a)
+	case CmdSubmit:
+		a, err := ParseCmdSubmit(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Submit(a)
+	case CmdInteractive:
+		a, err := ParseCmdInteractive(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Interactive(a)
+	case CmdSessionNew:
+		a, err := ParseCmdSessionNew(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionNew(a)
+	case CmdSessionStreamTurn:
+		a, err := ParseCmdSessionStreamTurn(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamTurn(a)
+	case CmdNotify:
+		a, err := ParseCmdNotify(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Notify(a)
+	case CmdGrid:
+		a, err := ParseCmdGrid(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Grid(a)
+	case CmdCancel:
+		a, err := ParseCmdCancel(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Cancel(a)
+	case CmdRestore:
+		a, err := ParseCmdRestore(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.Restore(a)
+	case CmdCapsSet:
+		a, err := ParseCmdCapsSet(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.CapsSet(a)
+	case CmdCapsSetParent:
+		a, err := ParseCmdCapsSetParent(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.CapsSetParent(a)
+	case CmdSessionAttach:
+		a, err := ParseCmdSessionAttach(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionAttach(a)
+	case CmdSessionLs:
+		a, err := ParseCmdSessionLs(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionLs(a)
+	case CmdSessionKill:
+		a, err := ParseCmdSessionKill(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionKill(a)
+	case CmdSessionAwaitIdle:
+		a, err := ParseCmdSessionAwaitIdle(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionAwaitIdle(a)
+	case CmdSessionStreamAttach:
+		a, err := ParseCmdSessionStreamAttach(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamAttach(a)
+	case CmdSessionStreamInterrupt:
+		a, err := ParseCmdSessionStreamInterrupt(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamInterrupt(a)
+	case CmdSessionStreamFinish:
+		a, err := ParseCmdSessionStreamFinish(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamFinish(a)
+	case CmdSessionStreamApprove:
+		a, err := ParseCmdSessionStreamApprove(TUI, args)
+		if err != nil {
+			return true, err
+		}
+		return true, h.SessionStreamApprove(a)
+	}
+	// Not a declared verb for this surface. The caller decides what that
+	// means -- a surface-local verb, or an unknown command.
+	return false, nil
 }
