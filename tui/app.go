@@ -3073,12 +3073,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
-		// None, not "ParentID is empty": the declaration makes the three
-		// mutually exclusive on PRESENCE, so `--parent ""` is a picked
-		// --parent with a bad value, and reading it as a detach would move
-		// the task to the root on a typo.
+		// An empty ParentID IS the detach request, which is why the
+		// declaration refuses `--parent ""` at the value: no condition here
+		// could tell it from --none, since the presence rule has already
+		// decided which of the three was picked.
 		parentFull := ""
-		if !v.None && !v.Swap {
+		if v.ParentID != "" {
 			parentFull, errStr = a.resolveTaskIDPrefix(v.ParentID)
 			if errStr != "" {
 				a.cmdresult.Append(ErrorStyle.Render(errStr))

@@ -664,6 +664,12 @@ func harnessCapList(this js.Value, args []js.Value) any {
 // An optional "host" field pins the task to a specific runner by hostname.
 //
 //	harness.submit({repo: "/abs/path", task: "...", host: "raspi", agent: "codex"}) -> Promise<taskIDHex>
+//
+// runner / host / ip are the declared selector trio and all three are read
+// here. Only host was, and the fix for that landed in harnessStartInteractive
+// -- a function the command input cannot reach, since `interactive` is not
+// declared for this surface. So `submit --runner X` and `--ip Y` kept being
+// dropped after the commit that said they were not.
 func harnessSubmit(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -681,18 +687,18 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			opts := args[0]
 			repo := opts.Get("repo").String()
 			task := opts.Get("task").String()
-			hostVal := opts.Get("host")
-			host := ""
-			if hostVal.Type() == js.TypeString {
-				host = hostVal.String()
-			}
 			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
 			resumeVal := opts.Get("resumeTaskId")
 			resumeTaskID := ""
 			if resumeVal.Type() == js.TypeString {
 				resumeTaskID = resumeVal.String()
 			}
-			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+			selOpts, selErr := selectorFromOpts(opts)
+			if selErr != nil {
+				rejectErr(reject, fmt.Errorf("submit: selector: %w", selErr))
+				return
+			}
+			sel, err := cli.BuildSelector(selOpts)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
 				return
@@ -3576,7 +3582,13 @@ func harnessForwardTap(this js.Value, args []js.Value) any {
 // type, which is the duplication this design removes.
 //
 //	harness.parseCommand(tokens, {repo, host, agent}) -> {path, args, flags, set, trail}
-//	                                                   | {error: "..."}
+//
+// The second argument is the SURFACE-CONTEXT tier of each flag's declared
+// ladder (D7): a value the page knows from a dropdown, used only when the
+// operator did not type the flag. It was documented and never read, so the
+// tier was dead here.
+//
+//	| {error: "..."}
 //
 // tokens is the caller's ALREADY-TOKENIZED array. A raw string was accepted
 // once and split with strings.Fields, which splits inside quotes: `submit
@@ -3592,9 +3604,8 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	if len(fields) == 0 {
 		return js.ValueOf(map[string]any{"error": "parseCommand: empty line"})
 	}
-	// Two-word paths first (`file push`), then one (`prune`): the longer match
-	// wins, so a family verb is never mistaken for a bare one with a stray
-	// positional.
+	// Longest path first, so a family verb is never mistaken for a bare one
+	// with a stray positional.
 	sp, rest, ok := lookupPath(fields)
 	if !ok {
 		return js.ValueOf(map[string]any{"error": "unknown command: " + strings.Join(fields, " ")})
@@ -3621,13 +3632,19 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	if _, berr := sp.BuildFunc()(b); berr != nil {
 		return js.ValueOf(map[string]any{"error": berr.Error()})
 	}
-	return js.ValueOf(boundToJS(b))
+	return js.ValueOf(boundToJSWith(b, sp, args))
 }
 
 // boundToJS renders a Bound as a plain JS object. Durations cross as strings
 // so the page never has to know Go's nanosecond representation, and numbers as
 // float64 because that is what a JS Number is.
 func boundToJS(b verb.Bound) map[string]any {
+	return boundToJSWith(b, verb.VerbSpec{}, nil)
+}
+
+// boundToJSWith additionally applies the surface-context tier of each flag's
+// declared ladder, from the caller's {repo, host, agent} object.
+func boundToJSWith(b verb.Bound, sp verb.VerbSpec, rawArgs []js.Value) map[string]any {
 	path := make([]any, 0, len(b.Path))
 	for _, p := range b.Path {
 		path = append(path, p)
@@ -3647,6 +3664,26 @@ func boundToJS(b verb.Bound) map[string]any {
 			flags[k] = float64(t)
 		default:
 			flags[k] = t
+		}
+	}
+	// The surface-context tier of every ladder the declaration carries. This
+	// function documented a {repo, host, agent} second argument and never read
+	// it, so D7's SurfaceContext tier was dead here and the page re-derived
+	// `flag || dropdown` by hand for the two it remembered.
+	if len(rawArgs) > 1 && rawArgs[1].Type() == js.TypeObject {
+		ctx := map[string]string{}
+		for _, f := range sp.Flags {
+			if v := rawArgs[1].Get(f.Name); v.Type() == js.TypeString {
+				ctx[f.Name] = v.String()
+			}
+		}
+		for _, f := range sp.Flags {
+			if len(f.Resolve) == 0 || f.Type != verb.FlagString {
+				continue
+			}
+			if r := sp.Resolve(b, f.Name, nil, nil, ctx); r != "" {
+				flags[f.Name] = r
+			}
 		}
 	}
 	set := map[string]any{}

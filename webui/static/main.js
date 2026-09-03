@@ -2403,22 +2403,29 @@ const POLL_INTERVAL_MS = 5000;
           // dropdown through the surface-context tier of --repo's ladder, the
           // same ladder the CLI reads env and workspace config from -- one
           // ladder with three injections, instead of three ladders.
-          const repo = runnerSelect.value || "";
-          const resumeTaskId = currentResumeTaskID();
-          if (!repo && !resumeTaskId) {
-            throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
-          }
+          const dropdownRepo = runnerSelect.value || "";
+          const dropdownHost = hostSelect ? hostSelect.value || "" : "";
           const b = window.harness.parseCommand(tokens, {
-            repo, host: hostSelect ? hostSelect.value || "" : "",
+            repo: dropdownRepo, host: dropdownHost,
             agent: agentSelect ? agentSelect.value || "" : "",
           });
           if (b.error) throw new Error(b.error);
+          // b.flags.repo is already the ladder's answer -- typed flag first,
+          // dropdown second -- because parseCommand applies the
+          // surface-context tier from the object above. Both were read
+          // straight off the dropdown before, so `submit --repo /not/a/repo`
+          // queued against the dropdown's repo instead.
+          const repo = b.flags.repo || dropdownRepo;
+          const resumeTaskId = b.flags.resume || currentResumeTaskID();
+          if (!repo && !resumeTaskId) {
+            throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
+          }
           const task = b.flags.task || b.trail;
           if (!task) throw new Error("submit: missing task prompt");
           const scopeFor = (b.custom && b.custom["scope-for"]) || null;
           out = await window.harness.submit(sessionReq({
             repo, task,
-            host: hostSelect ? hostSelect.value || "" : "",
+            host: b.flags.host || dropdownHost,
             // The three runner selectors are mutually exclusive in the
             // declaration, so at most one of these is non-empty.
             runner: b.flags.runner || "",
@@ -2429,7 +2436,7 @@ const POLL_INTERVAL_MS = 5000;
             caps: b.set && b.set.caps ? b.flags.caps : null,
             scope: b.set && b.set.scope ? b.flags.scope : null,
             scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
-            resumeTaskId: b.flags.resume || resumeTaskId,
+            resumeTaskId,
             resumeConversation: !!b.flags["resume-conversation"],
           }));
           break;

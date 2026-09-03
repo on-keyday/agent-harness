@@ -51,6 +51,10 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		// caps set-parent: one destination, not none and not two.
 		{"caps set-parent", []string{id}, "exactly one"},
 		{"caps set-parent", []string{id, "--none", "--swap"}, "exactly one"},
+		// ExactlyOne is decided on presence, so this one gets past it and an
+		// empty ParentID is the detach request on the wire. It moved the task
+		// to the operator root, silently, exit 0.
+		{"caps set-parent", []string{id, "--parent", ""}, "needs a task id"},
 
 		// spawn: the prompt, the terminal rules, the one-runner rule.
 		{"submit", []string{"--repo", "/r"}, "a prompt is required"},

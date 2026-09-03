@@ -200,6 +200,14 @@ var surfaceLocal = map[string]string{
 	"file pull.LocalDst/TUI": "the TUI writes through its own file picker",
 	"file push.LocalSrc/TUI": "the TUI reads through its own file picker",
 
+	// An empty ParentID IS the detach request on the wire, so a consumer that
+	// forwards ParentID has already carried --none. The declaration refuses
+	// `--parent ""` at the value, which is the only place the two can be told
+	// apart: ExactlyOne is decided on presence, so by the time a consumer
+	// runs, the branch has been chosen and no condition on None can narrow it.
+	"caps set-parent.None/CLI": "an empty ParentID is the detach request; refused at the flag, not sorted out here",
+	"caps set-parent.None/TUI": "an empty ParentID is the detach request; refused at the flag, not sorted out here",
+
 	// --allow and --deny are complements under ExactlyOne, so a consumer
 	// branches on ONE of them and the other is that branch's else. Both are
 	// declared because both are typed.

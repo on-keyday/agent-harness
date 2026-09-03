@@ -1100,6 +1100,20 @@ var Verbs = []VerbSpec{
 		// a narrowing but a contradiction, and none of them names nothing to
 		// do.
 		ExactlyOne: []Rule{{Flags: []string{"parent", "none", "swap"}}},
+		// ExactlyOne is decided on PRESENCE, so `--parent ""` counts as
+		// having picked --parent -- and every consumer then reads an empty
+		// ParentID as "detach to the operator root", which is --none. A typo
+		// moved the task somewhere nobody asked for, silently and with exit 0.
+		// Refused at the value, which is the only place that can see it: a
+		// consumer-side `if !None && !Swap` guard cannot, because by then the
+		// presence rule has already guaranteed that branch.
+		Validate: func(b Bound) error {
+			if b.Set["parent"] && b.Str("parent") == "" {
+				return fmt.Errorf("caps set-parent: --parent needs a task id; " +
+					"pass --none to detach to the operator root")
+			}
+			return nil
+		},
 		Flags: []Flag{
 			{Name: "parent", Type: FlagString, Default: "", Field: "ParentID",
 				Help: "new parent task id (32 hex); the target and its whole subtree move under it"},

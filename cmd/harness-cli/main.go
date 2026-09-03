@@ -1198,14 +1198,12 @@ func runCapsSetParent(ctx context.Context, serverCID objproto.ConnectionID, args
 	// Build, so every surface gets it rather than the CLI alone.
 	a := parseOne[verb.SetParentAction]("caps set-parent", args)
 
-	// --none is read as itself, not as "ParentID happens to be empty": the
-	// three forms are exclusive on PRESENCE, so `--parent ""` is a picked
-	// --parent with a bad value, and treating it as a detach would move the
-	// task to the operator root on a typo.
-	opts := cli.SetParentOpts{TaskID: a.TaskID, Swap: a.Swap}
-	if !a.None && !a.Swap {
-		opts.ParentID = a.ParentID
-	}
+	// An empty ParentID IS the detach request on the wire, which is why
+	// `--parent ""` had to be refused at the flag rather than sorted out
+	// here: the presence rule has already decided which of the three was
+	// picked, so no condition on None or Swap can tell them apart.
+	opts := cli.SetParentOpts{TaskID: a.TaskID, Swap: a.Swap, ParentID: a.ParentID}
+	_ = a.None
 	res, err := cli.SetParent(ctx, serverCID, opts)
 	if err != nil {
 		die(err)
