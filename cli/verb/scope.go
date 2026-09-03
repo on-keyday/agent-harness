@@ -1,4 +1,4 @@
-package cli
+package verb
 
 import (
 	"encoding/hex"
