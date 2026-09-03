@@ -259,3 +259,72 @@ type SpawnAction struct {
 	CapsPresent  bool
 	ScopePresent bool
 }
+
+// SendAction types text into a live session as a co-writer -- no takeover.
+type SendAction struct {
+	ActionMarker
+	TaskID string
+	Text   string
+	// Enter appends a carriage return, i.e. actually submits. Interp
+	// interprets backslash escapes. They are DIFFERENT flags: --enter and -e.
+	// Merging them would inject a spurious Enter into a live PTY.
+	Enter   bool
+	Interp  bool
+	Quiet   bool
+	FlushMs uint
+	Resize  string
+	// Snapshot renders the screen after sending, which is what makes a
+	// drive loop stateless: send, then look.
+	Snapshot     bool
+	Rows, Cols   uint
+	SettleMs     uint
+	Style, Color bool
+	JSON, ANSI   bool
+	WithoutSynth bool
+	Detect       bool
+	DetectAgent  string
+}
+
+// SessionExecAction runs one shell command line in a session's foreground
+// shell and blocks. NOT `exec`, which runs its own process in the worktree.
+type SessionExecAction struct {
+	ActionMarker
+	TaskID   string
+	Cmd      string
+	Timeout  time.Duration
+	JSON     bool
+	ExitOnly bool
+	Raw      bool
+}
+
+// StreamTurnAction sends one user turn to an event-stream session.
+type StreamTurnAction struct {
+	ActionMarker
+	TaskID  string
+	Text    string
+	FlushMs uint
+}
+
+// NotifyAction sends one operator notification.
+type NotifyAction struct {
+	ActionMarker
+	Level string
+	Title string
+	Text  string
+}
+
+// AgentSendAction publishes one agentboard message. The body is the trailing
+// words, or --data, or stdin -- resolved by the caller, which owns stdin.
+type AgentSendAction struct {
+	ActionMarker
+	Kind            string // send | dispatch
+	Topic           string
+	Data            string
+	DataSet         bool
+	Positional      string
+	InReplyTo       uint64
+	ReplyTo         string
+	NoRetireOnReply bool
+	Timeout         time.Duration
+	ServerCID       string
+}

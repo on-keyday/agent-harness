@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Dispatch publishes to --topic and blocks until a message ANSWERING that
@@ -68,15 +69,24 @@ func deadlineOf(ctx context.Context) time.Time {
 // This is a shell-level tool for scripting OUTSIDE an agent's turn loop, for
 // the same reason `agent wait` is.
 func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent dispatch", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "")
-	topic := fs.String("topic", "", "topic to send to")
-	replyTo := fs.String("reply-to", "", "declare THIS topic as where the reply goes, and wait there; default is your own chat.<short-id>")
-	data := fs.String("data", "-", `payload string or "-" for stdin`)
-	timeout := fs.Duration("timeout", 5*time.Minute, "max wait for the whole call (publish ack + reply)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Same declaration as `agent send`: these two verbs publish to one board
+	// through one flag surface, so a positional that means the body on one and
+	// nothing on the other is a trap. `dispatch --topic T 'question'` used to
+	// ignore the word and block on a stdin nobody was writing to.
+	sp, _ := verb.Lookup("agent", "dispatch")
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		return perr
 	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
+	}
+	a := act.(verb.AgentSendAction)
+	serverCID, topic, replyTo := &a.ServerCID, &a.Topic, &a.ReplyTo
+	data, timeout := &a.Data, &a.Timeout
 	if *topic == "" {
 		return errors.New("--topic required")
 	}
@@ -90,7 +100,7 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	// on one and nothing at all on the other is a trap, not a distinction:
 	// `dispatch --topic T 'question'` used to ignore the word and block on a
 	// stdin nobody was writing to.
-	payload, source, err := resolvePayload(fs, *data, stdin)
+	payload, source, err := resolvePayloadFrom(a.DataSet, *data, a.Positional, stdin)
 	if err != nil {
 		return err
 	}

@@ -35,17 +35,22 @@ func resolvePayload(fs *flag.FlagSet, data string, stdin io.Reader) ([]byte, str
 			dataSet = true
 		}
 	})
+	return resolvePayloadFrom(dataSet, data, strings.Join(fs.Args(), " "), stdin)
+}
 
+// resolvePayloadFrom is the same decision made from already-parsed values, for
+// callers that got theirs from the declaration rather than a FlagSet.
+func resolvePayloadFrom(dataSet bool, data, positional string, stdin io.Reader) ([]byte, string, error) {
 	switch {
 	case dataSet && data != "-":
 		// explicit literal payload via --data
 		return []byte(data), sourceData, nil
-	case !dataSet && fs.NArg() > 0:
+	case !dataSet && positional != "":
 		// payload given as positional argument(s), joined ssh-style. This matches
 		// the common `cmd <payload>` instinct so a forgotten --data doesn't
 		// silently send an empty body (we used to ignore positionals entirely and
 		// fall through to reading stdin).
-		return []byte(strings.Join(fs.Args(), " ")), sourcePositional, nil
+		return []byte(positional), sourcePositional, nil
 	default:
 		// explicit `--data -`, or neither --data nor a positional given: read stdin.
 		b, err := io.ReadAll(stdin)

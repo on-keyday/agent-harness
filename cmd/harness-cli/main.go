@@ -248,17 +248,20 @@ func main() {
 		}
 
 	case "notify":
-		fs := flag.NewFlagSet("notify", flag.ExitOnError)
-		title := fs.String("title", "", "short heading for the notification")
-		level := fs.String("level", "info", "severity: info|warn|error")
-		_ = fs.Parse(args)
-		rest := fs.Args()
-		if len(rest) == 0 {
-			fmt.Fprintln(os.Stderr, "notify: missing text")
+		sp, _ := verb.Lookup("notify")
+		sp = sp.For(verb.CLI)
+		fs := sp.NewFlagSet(flag.ExitOnError)
+		b, perr := sp.Parse(fs, args)
+		if perr != nil {
+			die(perr)
+		}
+		act, berr := sp.Build(b)
+		if berr != nil {
+			fmt.Fprintln(os.Stderr, berr)
 			os.Exit(2)
 		}
-		text := strings.Join(rest, " ")
-		if err := cli.Notify(ctx, parseCID(), *level, *title, text); err != nil {
+		n := act.(verb.NotifyAction)
+		if err := cli.Notify(ctx, parseCID(), n.Level, n.Title, n.Text); err != nil {
 			die(err)
 		}
 

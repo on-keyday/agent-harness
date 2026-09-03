@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -148,23 +149,20 @@ func runSessionStream(cid objproto.ConnectionID, args []string) error {
 // '-', which is indistinguishable from a flag, so the permuted parse must not
 // be used here.
 func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session stream turn", flag.ExitOnError)
-	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
-	if err := fs.Parse(args); err != nil {
-		return err
+	sp, _ := verb.Lookup("session", "stream", "turn")
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		return perr
 	}
-	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session stream turn [--flush-ms MS] <id> <text>...
-flags must precede <id>; everything after <id> is joined with spaces and sent as
-one user turn (ssh-style), so multi-word text needs no quoting.
-
-This is the structured counterpart of ` + "`session send`" + `: it builds the
-adapter-protocol line and appends the newline that frames it. ` + "`session send`" + `
-stays the raw route and appends nothing — a line without a newline sits in the
-adapter's buffer, invisible, until something else flushes it.`)
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
 	}
-	taskIDHex := fs.Arg(0)
-	text := strings.Join(fs.Args()[1:], " ")
+	a := act.(verb.StreamTurnAction)
+	taskIDHex, text := a.TaskID, a.Text
+	flushMs := &a.FlushMs
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -672,95 +670,37 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 // the same call, which is the whole drive loop — send keystrokes, read what the
 // program made of them — without a second dial or a guessed sleep.
 func runSessionSend(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session send", flag.ExitOnError)
-	enter := fs.Bool("enter", false, "append a carriage return (Enter) after the text")
-	interp := fs.Bool("e", false, `interpret backslash escapes (\n \r \t \e \xHH \\)`)
-	flushMs := fs.Uint("flush-ms", 400, "ms to let the input drain to the runner before detaching")
-	quiet := fs.Bool("quiet", false, "suppress the one-line summary of what was sent (stderr)")
-	// send→snapshot is the documented way to drive a non-shell foreground, and
-	// running it as two commands means two dials and a guessed sleep between
-	// them. --snapshot folds the read into this invocation on the SAME client:
-	// send, let the input drain, then view-attach and render.
-	//
-	// Opt-in, because `send` writes nothing to stdout today (its summary goes
-	// to stderr) and a caller piping it must keep getting that.
-	snapshot := fs.Bool("snapshot", false, "after sending, render the session's screen to stdout — the same view-attach render `session snapshot` prints")
-	rows := fs.Uint("rows", 40, "with --snapshot: fallback rows when the session reports no size (sizes the offscreen renderer only, never the PTY)")
-	cols := fs.Uint("cols", 120, "with --snapshot: fallback cols when the session reports no size (sizes the offscreen renderer only, never the PTY)")
-	settleMs := fs.Uint("settle-ms", 1500, "with --snapshot: ms to collect output before rendering — the window the program has to react to what was just sent")
-	// Sizing then driving is one intent, and doing it as two commands lets the
-	// program receive keystrokes before it knows how big it is — a full-screen
-	// TUI then paints at the wrong size or refuses to paint at all. Applied
-	// BEFORE the text for exactly that reason.
-	//
-	// Spelled ROWSxCOLS rather than reusing --rows/--cols, which on this very
-	// command already mean the offscreen RENDER size for --snapshot.
-	resize := fs.String("resize", "", "before sending, set the session's PTY size to ROWSxCOLS (e.g. 40x150) — needs exec_resize and an unattached control seat; fails the command if it does not take")
-	style := fs.Bool("style", false, "with --snapshot: also print attribute spans (faint/bold/reverse/...) — the plain render drops SGR, so a faint placeholder reads like real typed text and WHICH ROW IS SELECTED is invisible without this")
-	// --color and --json exist here for the same reason --style does: this
-	// command renders through the very same printSessionScreen, so a flag it
-	// understands that this command does not accept is a hole an agent finds by
-	// having its drive loop fall back to a second dial. They carry `session
-	// snapshot`'s meanings unchanged.
-	colorOut := fs.Bool("color", false, "with --snapshot: also print fg/bg colour spans (hex) — verbose (most cells carry a colour); same flag as on `session snapshot`")
-	asJSON := fs.Bool("json", false, "with --snapshot: emit the screen as one JSON object instead of text — same shape as `session snapshot --json`")
-	ansi := fs.Bool("ansi", false, "with --snapshot: re-emit the screen WITH its colours and attributes rather than as plain text — same flag as on `session snapshot`")
-	withoutSynth := fs.Bool("without-synth", false, "with --snapshot: render/emit ONLY what the PTY produced, dropping the bytes the server synthesised for the replay (its terminal-mode preamble and the screen repaint built from its own model of the screen). Both are included by DEFAULT, because they are what the server actually sends and what every other renderer already draws — the repaint is what makes a screen reconstruct at all once the ring has evicted the bytes that drew it. Reach for this when the screen or the replay looks wrong and the question is whether the server's own additions caused it; their size is reported on stderr either way")
-	detect := fs.Bool("detect", false, "with --snapshot: also judge the resulting state (working / blocked / idle / unknown) — the drive loop's real question after sending a key")
-	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Parsed from the declaration. --enter and -e stay two flags there, and a
+	// test refuses to let them become one: merging them would type a spurious
+	// Enter into a live PTY.
+	sp, _ := verb.Lookup("session", "send")
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		return perr
 	}
-	// A snapshot-only flag given without --snapshot has no effect, so refuse
-	// rather than ignore it: a typed option that silently does nothing is the
-	// failure mode this repo keeps re-fixing. fs.Visit reports only the flags
-	// actually given, which is what distinguishes "left at the default 40"
-	// from "asked for 40".
-	if !*snapshot {
-		var stray []string
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "rows", "cols", "settle-ms", "style", "color", "json", "ansi", "without-synth", "detect", "detect-agent":
-				stray = append(stray, "--"+f.Name)
-			}
-		})
-		if len(stray) > 0 {
-			return fmt.Errorf("session send: %s take effect only with --snapshot", strings.Join(stray, ", "))
-		}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
 	}
-	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json] [--without-synth]] <id> <text>...
-  -enter     append a carriage return, i.e. actually SUBMIT the line
-  -e         interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
-             -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
-             without -enter the text is typed onto the prompt and just sits there.
-  -quiet     suppress the one-line summary of what was sent (stderr)
-  --snapshot after sending, render the screen to stdout (send + session snapshot
-             in one call, one dial). --rows/--cols/--settle-ms/--style/--color/
-             --json mean what they mean on ` + "`session snapshot`" + ` and require
-             --snapshot.
-  --resize   ROWSxCOLS: set the PTY size BEFORE sending, so a full-screen
-             program is the right size when the keys land. NOT --rows/--cols,
-             which on this command size the --snapshot render instead.
-flags must precede <id>; everything after <id> is joined with spaces and sent
-literally (ssh-style), so multi-word text needs no quoting. Quote it as one
-argument to preserve exact whitespace.`)
-	}
-	taskIDHex := fs.Arg(0)
+	a := act.(verb.SendAction)
+	taskIDHex := a.TaskID
+	enter, interp, quiet := &a.Enter, &a.Interp, &a.Quiet
+	flushMs := &a.FlushMs
 	var resizeRows, resizeCols uint16
-	if *resize != "" {
+	if a.Resize != "" {
 		var perr error
-		resizeRows, resizeCols, perr = parseResizeSpec(*resize)
+		resizeRows, resizeCols, perr = parseResizeSpec(a.Resize)
 		if perr != nil {
 			return perr
 		}
 	}
-	// Join everything after <id> as the text to send, ssh-style (`ssh host cmd
-	// args...`). This matches the common instinct of typing words without
-	// quoting; otherwise a stray space would silently drop all but the first
-	// word (we only ever read fs.Arg(1) before). Flags stay strictly before
-	// <id> so a '-'-leading word here is still sent literally.
-	text := strings.Join(fs.Args()[1:], " ")
+	snapshot, ansi, asJSON := &a.Snapshot, &a.ANSI, &a.JSON
+	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
+	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
+	detect, detectAgent := &a.Detect, &a.DetectAgent
+	text := a.Text
 	data := []byte(text)
 	if *interp {
 		d, err := unescapeInput(text)
@@ -858,29 +798,20 @@ argument to preserve exact whitespace.`)
 // command's own exit code (124 on timeout, 125 on transport/attach error).
 // Flags must precede <id>; everything after <id> is one shell command line.
 func runSessionExec(cid objproto.ConnectionID, args []string) error {
-	fs := flag.NewFlagSet("session exec", flag.ExitOnError)
-	timeout := fs.Duration("timeout", 30*time.Second, "max wait for the command to finish before giving up (exit 124)")
-	jsonOut := fs.Bool("json", false, `emit {"exit":N,"output":"…","timed_out":bool,"duration_ms":N} as one JSON object`)
-	exitOnly := fs.Bool("exit-only", false, "print no output; only propagate the exit code")
-	raw := fs.Bool("raw", false, "return the verbatim output bytes (escape sequences intact) instead of the interpreted plain text")
-	if err := fs.Parse(args); err != nil {
-		return err
+	sp, _ := verb.Lookup("session", "exec")
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ExitOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		return perr
 	}
-	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...
-flags must precede <id>; everything after <id> is joined with spaces and run as
-one shell command line (ssh-style) in the session's foreground shell. The
-process exits with the command's exit code (124 timeout, 125 error, 126 the
-foreground shell exited). The foreground must be a POSIX shell (bash/zsh/sh);
-otherwise use send/snapshot.
-
-exec types into the LIVE foreground shell, so state persists across calls AND
-shell-terminating commands bite: exit/exec end the shell (killing the session),
-and cd/export carry over to later calls. To test an exit code without killing
-the shell, wrap it: bash -c 'exit N' or (exit N).`)
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
 	}
-	taskIDHex := fs.Arg(0)
-	cmd := strings.Join(fs.Args()[1:], " ")
+	a := act.(verb.SessionExecAction)
+	taskIDHex, cmd := a.TaskID, a.Cmd
+	timeout, jsonOut, exitOnly, raw := &a.Timeout, &a.JSON, &a.ExitOnly, &a.Raw
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)

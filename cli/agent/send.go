@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // sendTargetArgs validates the destination pair and returns the topic to put on
@@ -28,22 +29,31 @@ func sendTargetArgs(topic string, inReplyTo uint64) (string, error) {
 
 // Send is the entry for `harness-cli agent send`.
 func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	fs := flag.NewFlagSet("agent send", flag.ContinueOnError)
-	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	topic := fs.String("topic", "", "agentboard topic")
-	data := fs.String("data", "-", `payload string, or "-" to read stdin`)
-	inReplyTo := fs.Uint64("in-reply-to", 0, "seq of the message being replied to; with it, --topic may be omitted and the server routes to the parent's sender")
-	replyTo := fs.String("reply-to", "", "route replies to THIS message to this topic instead of your own chat.<short-id>; the peer needs no knowledge of it and answers with --in-reply-to alone")
-	noRetireOnReply := fs.Bool("no-retire-on-reply", false, "keep this message on the board even after its recipient replies (default: a reply withdraws it, so a peer whose context resets cannot re-read a spent instruction)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Parsed from the declaration (cli/verb), which knows this verb takes a
+	// joined-positional payload -- something cli/flagorder_test.go's guard
+	// could not see, because the read happens inside resolvePayload rather
+	// than off the FlagSet, so `agent send` was never on its allowlist.
+	sp, _ := verb.Lookup("agent", "send")
+	sp = sp.For(verb.CLI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	b, perr := sp.Parse(fs, args)
+	if perr != nil {
+		return perr
 	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
+	}
+	a := act.(verb.AgentSendAction)
+	serverCID, topic, data := &a.ServerCID, &a.Topic, &a.Data
+	inReplyTo, replyTo := &a.InReplyTo, &a.ReplyTo
+	noRetireOnReply := &a.NoRetireOnReply
 	wireTopic, err := sendTargetArgs(*topic, *inReplyTo)
 	if err != nil {
 		return err
 	}
 
-	payload, source, err := resolvePayload(fs, *data, stdin)
+	payload, source, err := resolvePayloadFrom(a.DataSet, *data, a.Positional, stdin)
 	if err != nil {
 		return err
 	}
