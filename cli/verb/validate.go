@@ -18,7 +18,7 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 
 	for _, f := range v.Flags {
 		if f.Required && !b.Set[f.Name] {
-			return fmt.Errorf("%s: --%s is required", name, f.Name)
+			return fmt.Errorf("%s: %s is required", name, dashList([]string{f.Name}))
 		}
 		if len(f.OneOf) == 0 || !b.Set[f.Name] {
 			continue
@@ -32,10 +32,15 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 			}
 		}
 		if !ok {
-			return fmt.Errorf("%s: --%s %q (want %s)", name, f.Name, got, strings.Join(f.OneOf, ", "))
+			return fmt.Errorf("%s: %s %q (want %s)", name, dashList([]string{f.Name}), got, strings.Join(f.OneOf, ", "))
 		}
 	}
 
+	if v.Modes != nil {
+		if named := b.namedIn(v.Modes.Names); len(named) > 1 {
+			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))
+		}
+	}
 	for _, group := range v.Exclusive {
 		if named := b.namedIn(group); len(named) > 1 {
 			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))
@@ -65,7 +70,7 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 			}
 		}
 		if len(orphans) > 0 {
-			return fmt.Errorf("%s: %s need --%s", name, dashList(orphans), needed)
+			return fmt.Errorf("%s: %s need %s", name, dashList(orphans), dashList([]string{needed}))
 		}
 	}
 
@@ -99,10 +104,16 @@ func (b Bound) namedIn(group []string) []string {
 	return out
 }
 
-// dashList renders flag names as the operator wrote them.
+// dashList renders flag names as the operator wrote them -- ONE dash for a
+// single-letter flag, because `forward -W host:port` is how it is typed and an
+// error naming `--W` sends the reader looking for a flag that does not exist.
 func dashList(names []string) string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
+		if len(n) == 1 {
+			out = append(out, "-"+n)
+			continue
+		}
 		out = append(out, "--"+n)
 	}
 	return strings.Join(out, ", ")

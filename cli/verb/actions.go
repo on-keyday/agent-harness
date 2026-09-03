@@ -12,16 +12,6 @@ import (
 // same way -- tui's screen-state verbs (clear, quit, grid, trsf) stay in tui
 // and satisfy Action by embedding this marker, which is why it is exported.
 
-// ForwardTapAction streams the bytes crossing one forward. A tap sees only
-// what crosses after it opens; nothing is recorded server-side.
-type ForwardTapAction struct {
-	ActionMarker
-	ForwardID      uint64
-	Dir            string
-	MaxRecordBytes uint32
-	Mode           string // hex | text | raw | json
-}
-
 // SpawnAction starts a task: submit (queued, one-shot), interactive (a PTY
 // attached now) or session new (a detachable PTY). One action for all three
 // because they differ in what the surface DOES with the result, not in what
@@ -93,21 +83,6 @@ type SetParentAction struct {
 	ParentID string
 	None     bool
 	Swap     bool
-}
-
-// ForwardOpenAction opens one or more port forwards and holds them until the
-// process ends. CLI-only: a forward's lifetime is the lifetime of the client
-// holding its control stream.
-type ForwardOpenAction struct {
-	ActionMarker
-	TaskID string
-	L, R   []string
-	W      string
-
-	HTTPMethod  string
-	HTTPPath    string
-	HTTPBody    string
-	HTTPHeaders []string
 }
 
 // GridAction selects which sessions a grid shows.

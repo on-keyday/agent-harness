@@ -100,6 +100,10 @@ func main() {
 		for name := range v.Const {
 			a.add(field{name: name, goType: "string"})
 		}
+		if v.Modes != nil {
+			a.add(field{name: v.Modes.Field, goType: "string",
+				comment: strings.Join(v.Modes.Names, " | ")})
+		}
 		for name, typ := range v.ExtraFields {
 			a.add(field{name: name, goType: typ,
 				comment: "set by the surface after Build, not by the parse"})
@@ -221,6 +225,15 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 					i, i, v.FlagSetName()+": bad "+singular(ar.Name)+" %q", i, ar.Field)
 			} else {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
+			}
+		}
+		if v.Modes != nil {
+			fmt.Fprintf(buf, "\t\ta.%s = %q\n", v.Modes.Field, v.Modes.Default)
+			for _, m := range v.Modes.Names {
+				if m == v.Modes.Default {
+					continue
+				}
+				fmt.Fprintf(buf, "\t\tif b.Bool(%q) {\n\t\t\ta.%s = %q\n\t\t}\n", m, v.Modes.Field, m)
 			}
 		}
 		if v.PathspecField != "" {

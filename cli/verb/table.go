@@ -392,43 +392,32 @@ var Verbs = []VerbSpec{
 		// everywhere else. Declaring it removes that constraint.
 		Path:     []string{"forward"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action:   "ForwardOpenAction",
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		// -W owns the foreground and exits with its peer, while -L/-R are
+		// long-lived listeners. ssh makes the same pair exclusive, for the
+		// same reason: one invocation, one lifetime. Two pairs rather than one
+		// group of three, because -L WITH -R is the ordinary case.
+		Exclusive:  [][]string{{"W", "L"}, {"W", "R"}},
+		AtLeastOne: [][]string{{"L", "R", "W"}},
+		Requires:   map[string]string{"http-path": "W"},
 		Flags: []Flag{
-			{Name: "L", Type: FlagString, Custom: argListValue,
+			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
 				Help: "local forward [bind:]localport:remotehost:remoteport (repeatable)"},
-			{Name: "R", Type: FlagString, Custom: argListValue,
+			{Name: "R", Type: FlagString, Custom: argListValue, Field: "R",
 				Help: "remote forward [bind:]runnerport:dialhost:dialport (repeatable)"},
-			{Name: "W", Type: FlagString, Default: "",
+			{Name: "W", Type: FlagString, Default: "", Field: "W",
 				Help: "raw stdio forward host:port (mutually exclusive with -L / -R)"},
-			{Name: "http-method", Type: FlagString, Default: "GET", Help: "with -W --http-path: HTTP method"},
-			{Name: "http-path", Type: FlagString, Default: "",
+			{Name: "http-method", Type: FlagString, Default: "GET", Field: "HTTPMethod",
+				Help: "with -W --http-path: HTTP method"},
+			{Name: "http-path", Type: FlagString, Default: "", Field: "HTTPPath",
 				Help: "with -W: send this HTTP request path instead of splicing stdin"},
-			{Name: "http-body", Type: FlagString, Default: "",
+			{Name: "http-body", Type: FlagString, Default: "", Field: "HTTPBody",
 				Help: "with --http-path: request body (literal, @file, or - for stdin)"},
-			{Name: "http-header", Type: FlagString, Custom: argListValue,
+			{Name: "http-header", Type: FlagString, Custom: argListValue, Field: "HTTPHeaders",
 				Help: `with --http-path: "Name: value" (repeatable)`},
 		},
 		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
-		Build: func(b Bound) (Action, error) {
-			a := ForwardOpenAction{TaskID: b.Args[0], W: b.Str("W"),
-				HTTPMethod: b.Str("http-method"), HTTPPath: b.Str("http-path"), HTTPBody: b.Str("http-body")}
-			a.L, _ = b.Custom["L"].([]string)
-			a.R, _ = b.Custom["R"].([]string)
-			a.HTTPHeaders, _ = b.Custom["http-header"].([]string)
-			if a.HTTPPath != "" && a.W == "" {
-				return nil, fmt.Errorf("forward: --http-path needs -W host:port")
-			}
-			// -W owns the foreground and exits with its peer, while -L/-R are
-			// long-lived listeners. ssh makes the same pair exclusive, for the
-			// same reason: one invocation, one lifetime.
-			if a.W != "" && (len(a.L) > 0 || len(a.R) > 0) {
-				return nil, fmt.Errorf("forward: -W cannot be combined with -L / -R")
-			}
-			if len(a.L) == 0 && len(a.R) == 0 && a.W == "" {
-				return nil, fmt.Errorf("forward: at least one of -L, -R or -W")
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"forward", "ls"},
@@ -453,52 +442,38 @@ var Verbs = []VerbSpec{
 	{
 		Path:     []string{"forward", "tap"},
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "forward-id", Type: ArgUint}},
+		Action:   "ForwardTapAction",
+		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Field: "ForwardID"}},
+		// The four render modes are one choice, not four bools.
+		// They were CLI-only before -- the TUI took only --dir/--max-bytes.
+		Modes: &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
 		Flags: []Flag{
-			{Name: "dir", Type: FlagString, Default: "both", Help: "to-target, from-target or both"},
-			{Name: "max-bytes", Type: FlagUint, Default: uint(0),
+			{Name: "dir", Type: FlagString, Default: "both", Field: "Dir",
+				OneOf: []string{"to-target", "from-target", "both"},
+				Help:  "to-target, from-target or both"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxRecordBytes", FieldType: "uint32",
 				Help: "cut each record's payload to this many bytes (0 = whole payload)"},
-			// The four render modes are mutually exclusive; Build refuses two.
-			// They were CLI-only before -- the TUI took only --dir/--max-bytes.
-			{Name: "hex", Type: FlagBool, Default: false, Help: "hexdump body (default)"},
-			{Name: "text", Type: FlagBool, Default: false, Help: "printable body, no offset column"},
-			{Name: "raw", Type: FlagBool, Default: false, Help: "payload bytes only; requires an explicit --dir"},
-			{Name: "json", Type: FlagBool, Default: false, Help: "one JSON object per record"},
+			{Name: "hex", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Help: "hexdump body (default)"},
+			{Name: "text", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Help: "printable body, no offset column"},
+			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Help: "payload bytes only; requires an explicit --dir"},
+			{Name: "json", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				Help: "one JSON object per record"},
 		},
-		Examples: []string{"forward tap 7", "forward tap 7 --dir to-target --text"},
-		Build: func(b Bound) (Action, error) {
-			ids, err := parseUintArgs("forward tap", "forward id", b.Args)
-			if err != nil {
-				return nil, err
-			}
-			switch b.Str("dir") {
-			case "to-target", "from-target", "both":
-			default:
-				return nil, fmt.Errorf("forward tap: --dir %q (want to-target, from-target or both)", b.Str("dir"))
-			}
-			mode, n := "hex", 0
-			for _, m := range []string{"hex", "text", "raw", "json"} {
-				if b.Bool(m) {
-					n++
-					mode = m
-				}
-			}
-			if n > 1 {
-				return nil, fmt.Errorf("forward tap: --hex, --text, --raw and --json are mutually exclusive")
-			}
-			// --raw writes payloads with no headers, so two directions
-			// concatenated onto one stdout interleave two conversations into a
-			// byte soup no decoder can read.
-			if mode == "raw" && b.Str("dir") == "both" {
-				return nil, fmt.Errorf("forward tap: --raw needs an explicit --dir (to-target or from-target); " +
+		// --raw writes payloads with no headers, so two directions
+		// concatenated onto one stdout interleave two conversations into a
+		// byte soup no decoder can read. No attribute says "this VALUE of one
+		// flag forbids that value of another", so it stays code.
+		Validate: func(b Bound) error {
+			if b.Bool("raw") && b.Str("dir") == "both" {
+				return fmt.Errorf("forward tap: --raw needs an explicit --dir (to-target or from-target); " +
 					"both directions on one stdout is not a stream any decoder can read")
 			}
-			a := ForwardTapAction{ForwardID: ids[0], Dir: b.Str("dir"), Mode: mode}
-			if mb, ok := b.Flags["max-bytes"].(uint); ok {
-				a.MaxRecordBytes = uint32(mb)
-			}
-			return a, nil
+			return nil
 		},
+		Examples: []string{"forward tap 7", "forward tap 7 --dir to-target --text"},
 	},
 
 	// --- server ---

@@ -201,6 +201,38 @@ type ForwardLsAction struct {
 	JSON bool
 }
 
+// ForwardOpenAction is built by: forward.
+type ForwardOpenAction struct {
+	ActionMarker
+	// local forward [bind:]localport:remotehost:remoteport (repeatable)
+	L []string
+	// remote forward [bind:]runnerport:dialhost:dialport (repeatable)
+	R []string
+	// raw stdio forward host:port (mutually exclusive with -L / -R)
+	W string
+	// with -W --http-path: HTTP method
+	HTTPMethod string
+	// with -W: send this HTTP request path instead of splicing stdin
+	HTTPPath string
+	// with --http-path: request body (literal, @file, or - for stdin)
+	HTTPBody string
+	// with --http-path: "Name: value" (repeatable)
+	HTTPHeaders []string
+	TaskID      string
+}
+
+// ForwardTapAction is built by: forward tap.
+type ForwardTapAction struct {
+	ActionMarker
+	// to-target, from-target or both
+	Dir string
+	// cut each record's payload to this many bytes (0 = whole payload)
+	MaxRecordBytes uint32
+	ForwardID      uint64
+	// hex | text | raw | json
+	Mode string
+}
+
 // GitAction is built by: git diff, git file, git log, git show, git status, git subrepos.
 type GitAction struct {
 	ActionMarker
@@ -1054,6 +1086,20 @@ func init() {
 			}
 			return a, nil
 		},
+		"forward\x00cli": func(b Bound) (Action, error) {
+			a := ForwardOpenAction{}
+			a.L = stringsOf(b.Custom["L"])
+			a.R = stringsOf(b.Custom["R"])
+			a.W = b.Str("W")
+			a.HTTPMethod = b.Str("http-method")
+			a.HTTPPath = b.Str("http-path")
+			a.HTTPBody = b.Str("http-body")
+			a.HTTPHeaders = stringsOf(b.Custom["http-header"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
 		"forward ls\x00cli": func(b Bound) (Action, error) {
 			a := ForwardLsAction{}
 			a.TaskFilter = b.Str("task")
@@ -1102,6 +1148,75 @@ func init() {
 					return nil, fmt.Errorf("forward kill: bad forward id %q", raw)
 				}
 				a.ForwardIDs = append(a.ForwardIDs, n)
+			}
+			return a, nil
+		},
+		"forward tap\x00cli": func(b Bound) (Action, error) {
+			a := ForwardTapAction{}
+			a.Dir = b.Str("dir")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward tap: bad forward id %q", b.Args[0])
+				}
+				a.ForwardID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
+			}
+			return a, nil
+		},
+		"forward tap\x00tui": func(b Bound) (Action, error) {
+			a := ForwardTapAction{}
+			a.Dir = b.Str("dir")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward tap: bad forward id %q", b.Args[0])
+				}
+				a.ForwardID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
+			}
+			return a, nil
+		},
+		"forward tap\x00webui": func(b Bound) (Action, error) {
+			a := ForwardTapAction{}
+			a.Dir = b.Str("dir")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("forward tap: bad forward id %q", b.Args[0])
+				}
+				a.ForwardID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
 			}
 			return a, nil
 		},

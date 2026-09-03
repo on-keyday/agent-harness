@@ -169,6 +169,18 @@ type Flag struct {
 	OneOf []string
 }
 
+// Modes turns a set of mutually exclusive bool flags into one string field.
+type Modes struct {
+	// Field is the Action field carrying the chosen name.
+	Field string
+	// Names are the flag names, which are also the values Field takes.
+	Names []string
+	// Default is the name when the operator picked none. It must be one of
+	// Names: a mode flag that names the default still has to be writable,
+	// which is why --hex exists at all.
+	Default string
+}
+
 // CustomValue is a flag whose value type the stdlib does not cover.
 type CustomValue struct {
 	New func() flag.Value
@@ -258,6 +270,13 @@ type VerbSpec struct {
 	// SessionAction.Sub is "snapshot" for one path and "await-idle" for
 	// another. Generated as literal assignments.
 	Const map[string]string
+
+	// Modes is a group of bool flags naming ONE choice out of several --
+	// `forward tap --hex|--text|--raw|--json` is the case. Declared rather
+	// than written as four bool fields plus a hand-rolled count, because the
+	// consumer wants the chosen name and every hand-rolled version of this
+	// spelled the exclusivity check again.
+	Modes *Modes
 
 	// Validate is the residue: rules no attribute expresses. It runs on Bound
 	// AFTER the declarative checks and BEFORE the Action is built, which is
