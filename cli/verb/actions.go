@@ -65,46 +65,6 @@ type ForwardTapAction struct {
 	Mode           string // hex | text | raw | json
 }
 
-// ServerDialRunnerAction asks the server to reverse-dial a Listen-mode runner.
-type ServerDialRunnerAction struct {
-	ActionMarker
-	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
-	Via       string // empty = direct dial; non-empty = relay via this CID
-}
-
-// SSHGatewayAction serves the ssh front door.
-type SSHGatewayAction struct {
-	ActionMarker
-	Listen         string
-	HostKeyPath    string
-	AuthorizedKeys string
-}
-
-// WorkspaceAction is one of the workspace verbs. Sub names which; the fields
-// each one reads differ, which is why the flags carrying them are declared
-// per surface rather than all at once.
-type WorkspaceAction struct {
-	ActionMarker
-	Sub  string // save | apply | detach | ls | show | rm
-	Name string // "" means the installed workspace, except for save
-
-	// CLI-side save knobs: which task to record and what a first-time block
-	// should say about resuming it.
-	TaskID string
-	Resume string
-	Runner string
-	Repo   string
-
-	// All is `save --all`: write every live session without opening the
-	// picker. TUI-only, because the CLI has no picker to skip.
-	All bool
-	// Stop is `detach --stop`: also stop what the workspace started. Off by
-	// default because detach's job is to stop MANAGING -- an operator who
-	// detaches after a reconnect-triggered apply should not lose the tunnels
-	// they are working through.
-	Stop bool
-}
-
 // SpawnAction starts a task: submit (queued, one-shot), interactive (a PTY
 // attached now) or session new (a detachable PTY). One action for all three
 // because they differ in what the surface DOES with the result, not in what
@@ -224,25 +184,6 @@ type AgentSendAction struct {
 	ServerCID       string
 }
 
-// ListAction lists runners and tasks. Tree orders by the creator link.
-type ListAction struct {
-	ActionMarker
-	JSON bool
-	Tree bool
-	// Filtered is the WebUI's task-list filter pane: the rows it currently
-	// admits, rather than the whole snapshot. Declared for that surface alone,
-	// and carried here so the Action says what was asked rather than the page
-	// reading the flag behind the Action's back.
-	Filtered bool
-}
-
-// ConnsAction snapshots live connections, or streams their events.
-type ConnsAction struct {
-	ActionMarker
-	JSON   bool
-	Follow bool
-}
-
 // SetCapsAction re-grants a live task's authority. Operator only.
 type SetCapsAction struct {
 	ActionMarker
@@ -264,28 +205,6 @@ type SetParentAction struct {
 	ParentID string
 	None     bool
 	Swap     bool
-}
-
-// PruneLocalAction removes worktrees under <repo>/.harness-worktrees/.
-type PruneLocalAction struct {
-	ActionMarker
-	Repo    string
-	Before  time.Duration
-	TaskIDs []string
-	Force   bool
-}
-
-// LogsAction dumps a task's log, optionally following it.
-type LogsAction struct {
-	ActionMarker
-	TaskID string
-	Follow bool
-}
-
-// CancelAction cancels a queued or running task.
-type CancelAction struct {
-	ActionMarker
-	TaskID string
 }
 
 // ForwardOpenAction opens one or more port forwards and holds them until the

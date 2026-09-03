@@ -50,12 +50,27 @@ type BoardAction struct {
 	Seq uint64
 }
 
+// CancelAction is built by: cancel.
+type CancelAction struct {
+	ActionMarker
+	TaskID string
+}
+
 // CatalogAction is built by: caps, version, whoami.
 type CatalogAction struct {
 	ActionMarker
 	// output the capability catalog as JSON
 	JSON bool
 	Sub  string
+}
+
+// ConnsAction is built by: conns.
+type ConnsAction struct {
+	ActionMarker
+	// output JSON lines instead of a table
+	JSON bool
+	// stream live connection events (conns.status)
+	Follow bool
 }
 
 // FileDeleteAction is built by: file delete.
@@ -151,6 +166,25 @@ type GitAction struct {
 	TaskID string
 }
 
+// ListAction is built by: ls.
+type ListAction struct {
+	ActionMarker
+	// emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table
+	JSON bool
+	// order tasks by their creator link and draw the hierarchy
+	Tree bool
+	// list only the rows the task-list filter currently admits
+	Filtered bool
+}
+
+// LogsAction is built by: logs.
+type LogsAction struct {
+	ActionMarker
+	// after dumping history, keep streaming live chunks (no-op when the task is terminal)
+	Follow bool
+	TaskID string
+}
+
 // PruneAction is built by: prune.
 type PruneAction struct {
 	ActionMarker
@@ -159,6 +193,37 @@ type PruneAction struct {
 	// with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)
 	Force   bool
 	TaskIDs []string
+}
+
+// PruneLocalAction is built by: prune-local.
+type PruneLocalAction struct {
+	ActionMarker
+	// repo to prune
+	Repo string
+	// remove worktrees older than this (ignored when TASK_IDs are passed)
+	Before time.Duration
+	// with TASK_IDs: remove even when the server still considers the task active
+	Force   bool
+	TaskIDs []string
+}
+
+// SSHGatewayAction is built by: ssh-gateway.
+type SSHGatewayAction struct {
+	ActionMarker
+	// ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)
+	Listen string
+	// ssh host key path (default: alongside the workspace config; generated on first run)
+	HostKeyPath string
+	// OpenSSH authorized_keys file; optional on a loopback bind, required otherwise
+	AuthorizedKeys string
+}
+
+// ServerDialRunnerAction is built by: server dial-runner.
+type ServerDialRunnerAction struct {
+	ActionMarker
+	// relay through this registered runner CID (copy from `harness-cli ls`)
+	Via       string
+	RunnerCID string
 }
 
 // SessionAction is built by: session attach, session await-idle, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt.
@@ -213,6 +278,25 @@ type SessionAction struct {
 	// with --allow, an updated input
 	Suggestion string
 	RequestID  string
+}
+
+// WorkspaceAction is built by: workspace apply, workspace detach, workspace ls, workspace rm, workspace save, workspace show.
+type WorkspaceAction struct {
+	ActionMarker
+	// record only this task (32 hex); omitted = every task the registry reports a forward for
+	TaskID string
+	// no | continue | fresh — for a task block being written for the FIRST time
+	Resume string
+	// assigned | any — for a task block being written for the FIRST time
+	Runner string
+	// repo identifier to record in the workspace
+	Repo string
+	// write every live session without opening the picker
+	All  bool
+	Name string
+	Sub  string
+	// also stop what the workspace started
+	Stop bool
 }
 
 // The builds the declaration implies, one per verb path, registered into
@@ -734,6 +818,114 @@ func init() {
 			}
 			return a, nil
 		},
+		"server dial-runner\x00cli": func(b Bound) (Action, error) {
+			a := ServerDialRunnerAction{}
+			a.Via = b.Str("via")
+			if len(b.Args) > 0 {
+				a.RunnerCID = b.Args[0]
+			}
+			return a, nil
+		},
+		"server dial-runner\x00tui": func(b Bound) (Action, error) {
+			a := ServerDialRunnerAction{}
+			a.Via = b.Str("via")
+			if len(b.Args) > 0 {
+				a.RunnerCID = b.Args[0]
+			}
+			return a, nil
+		},
+		"server dial-runner\x00webui": func(b Bound) (Action, error) {
+			a := ServerDialRunnerAction{}
+			a.Via = b.Str("via")
+			if len(b.Args) > 0 {
+				a.RunnerCID = b.Args[0]
+			}
+			return a, nil
+		},
+		"ssh-gateway\x00cli": func(b Bound) (Action, error) {
+			a := SSHGatewayAction{}
+			a.Listen = b.Str("listen")
+			a.HostKeyPath = b.Str("host-key")
+			a.AuthorizedKeys = b.Str("authorized-keys")
+			return a, nil
+		},
+		"workspace save\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "save"
+			a.TaskID = b.Str("task")
+			a.Resume = b.Str("resume")
+			a.Runner = b.Str("runner")
+			a.Repo = b.Str("repo")
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace save\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "save"
+			a.All = b.Bool("all")
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace rm\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "rm"
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace rm\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "rm"
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace ls\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "ls"
+			return a, nil
+		},
+		"workspace ls\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "ls"
+			return a, nil
+		},
+		"workspace show\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "show"
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace show\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "show"
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace apply\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "apply"
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			return a, nil
+		},
+		"workspace detach\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "detach"
+			a.Stop = b.Bool("stop")
+			return a, nil
+		},
 		"board topics\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "topics"
@@ -775,6 +967,46 @@ func init() {
 			}
 			return a, nil
 		},
+		"cancel\x00cli": func(b Bound) (Action, error) {
+			a := CancelAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"cancel\x00tui": func(b Bound) (Action, error) {
+			a := CancelAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"cancel\x00webui": func(b Bound) (Action, error) {
+			a := CancelAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"ls\x00cli": func(b Bound) (Action, error) {
+			a := ListAction{}
+			a.JSON = b.Bool("json")
+			a.Tree = b.Bool("tree")
+			return a, nil
+		},
+		"ls\x00webui": func(b Bound) (Action, error) {
+			a := ListAction{}
+			a.JSON = b.Bool("json")
+			a.Tree = b.Bool("tree")
+			a.Filtered = b.Bool("filtered")
+			return a, nil
+		},
+		"conns\x00cli": func(b Bound) (Action, error) {
+			a := ConnsAction{}
+			a.JSON = b.Bool("json")
+			a.Follow = b.Bool("follow")
+			return a, nil
+		},
 		"caps\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "caps"
@@ -791,6 +1023,24 @@ func init() {
 			a := CatalogAction{}
 			a.Sub = "version"
 			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"logs\x00cli": func(b Bound) (Action, error) {
+			a := LogsAction{}
+			a.Follow = b.Bool("follow")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"prune-local\x00cli": func(b Bound) (Action, error) {
+			a := PruneLocalAction{}
+			a.Repo = b.Str("repo")
+			a.Before = durationOf(b.Flags["before"])
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
 			return a, nil
 		},
 		"session attach\x00cli": func(b Bound) (Action, error) {

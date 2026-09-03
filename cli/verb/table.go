@@ -525,16 +525,14 @@ var Verbs = []VerbSpec{
 	// --- server ---
 	{
 		Path:     []string{"server", "dial-runner"},
+		Action:   "ServerDialRunnerAction",
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "runner-cid", Type: ArgString}},
+		Args:     []Arg{{Name: "runner-cid", Type: ArgString, Field: "RunnerCID"}},
 		Flags: []Flag{
-			{Name: "via", Type: FlagString, Default: "",
+			{Name: "via", Type: FlagString, Default: "", Field: "Via",
 				Help: "relay through this registered runner CID (copy from `harness-cli ls`)"},
 		},
 		Examples: []string{"server dial-runner ws:127.0.0.1:9000-abcd"},
-		Build: func(b Bound) (Action, error) {
-			return ServerDialRunnerAction{RunnerCID: b.Args[0], Via: b.Str("via")}, nil
-		},
 	},
 
 	// --- ssh-gateway ---
@@ -544,109 +542,106 @@ var Verbs = []VerbSpec{
 	// separate paths because they are separate operations wearing one name.
 	{
 		Path:     []string{"ssh-gateway"},
+		Action:   "SSHGatewayAction",
 		Surfaces: CLI,
 		Flags: []Flag{
-			{Name: "listen", Type: FlagString, Default: "127.0.0.1:2222",
+			{Name: "listen", Type: FlagString, Default: "127.0.0.1:2222", Field: "Listen",
 				Help: "ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)"},
-			{Name: "host-key", Type: FlagString, Default: "",
+			{Name: "host-key", Type: FlagString, Default: "", Field: "HostKeyPath",
 				Help: "ssh host key path (default: alongside the workspace config; generated on first run)"},
-			{Name: "authorized-keys", Type: FlagString, Default: "",
+			{Name: "authorized-keys", Type: FlagString, Default: "", Field: "AuthorizedKeys",
 				Help: "OpenSSH authorized_keys file; optional on a loopback bind, required otherwise"},
 		},
 		Examples: []string{"ssh-gateway", "ssh-gateway --listen 127.0.0.1:2223"},
-		Build: func(b Bound) (Action, error) {
-			return SSHGatewayAction{Listen: b.Str("listen"), HostKeyPath: b.Str("host-key"),
-				AuthorizedKeys: b.Str("authorized-keys")}, nil
-		},
 	},
 
 	// --- workspace ---
 	{
-		Path:     []string{"workspace", "save"},
+		Path:   []string{"workspace", "save"},
+		Action: "WorkspaceAction",
+		Const:  map[string]string{"Sub": "save"},
+		// A half-typed id would filter to nothing and record an empty
+		// workspace, which reads as "this task has no forwards".
+		Validate: func(b Bound) error {
+			id := b.Str("task")
+			if id == "" {
+				return nil
+			}
+			if _, err := hex.DecodeString(id); err != nil || len(id) != 32 {
+				return fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", id)
+			}
+			return nil
+		},
 		Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString}},
+		Args:     []Arg{{Name: "name", Type: ArgString, Field: "Name"}},
 		Flags: []Flag{
-			{Name: "task", Type: FlagString, Default: "", Surfaces: CLI,
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskID", Surfaces: CLI,
 				SurfaceReason: "the TUI picks the tasks in a picker instead of naming one on the line",
 				Help:          "record only this task (32 hex); omitted = every task the registry reports a forward for"},
-			{Name: "resume", Type: FlagString, Default: "continue", Surfaces: CLI,
+			{Name: "resume", Type: FlagString, Default: "continue", Field: "Resume", Surfaces: CLI,
 				SurfaceReason: "written through the TUI's picker rather than a flag",
 				Help:          "no | continue | fresh — for a task block being written for the FIRST time"},
-			{Name: "runner", Type: FlagString, Default: "assigned", Surfaces: CLI,
+			{Name: "runner", Type: FlagString, Default: "assigned", Field: "Runner", Surfaces: CLI,
 				SurfaceReason: "written through the TUI's picker rather than a flag",
 				Help:          "assigned | any — for a task block being written for the FIRST time"},
-			{Name: "repo", Type: FlagString, Default: "", Surfaces: CLI,
+			{Name: "repo", Type: FlagString, Default: "", Field: "Repo", Surfaces: CLI,
 				SurfaceReason: "the TUI already knows its repo from the session",
 				Help:          "repo identifier to record in the workspace"},
-			{Name: "all", Type: FlagBool, Default: false, Surfaces: TUI,
+			{Name: "all", Type: FlagBool, Default: false, Field: "All", Surfaces: TUI,
 				SurfaceReason: "skips the TUI's task picker; the CLI has no picker to skip",
 				Help:          "write every live session without opening the picker"},
 		},
 		Examples: []string{"workspace save dev"},
-		Build: func(b Bound) (Action, error) {
-			a := WorkspaceAction{Sub: "save", Name: b.Args[0], TaskID: b.Str("task"),
-				Resume: b.Str("resume"), Runner: b.Str("runner"), Repo: b.Str("repo"),
-				All: b.Bool("all")}
-			// A half-typed id would filter to nothing and record an empty
-			// workspace, which reads as "this task has no forwards".
-			if a.TaskID != "" {
-				if _, err := hex.DecodeString(a.TaskID); err != nil || len(a.TaskID) != 32 {
-					return nil, fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", a.TaskID)
-				}
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"workspace", "rm"},
+		Action:   "WorkspaceAction",
+		Const:    map[string]string{"Sub": "rm"},
 		Surfaces: CLI | TUI,
 		// A name is required, and there is no "the current one" shorthand:
 		// deleting is the one verb here that cannot be undone by re-running it.
-		Args:     []Arg{{Name: "name", Type: ArgString}},
+		Args:     []Arg{{Name: "name", Type: ArgString, Field: "Name"}},
 		Examples: []string{"workspace rm dev"},
-		Build: func(b Bound) (Action, error) {
-			return WorkspaceAction{Sub: "rm", Name: b.Args[0]}, nil
-		},
 	},
 	{
 		Path:     []string{"workspace", "ls"},
+		Action:   "WorkspaceAction",
+		Const:    map[string]string{"Sub": "ls"},
 		Surfaces: CLI | TUI,
 		Examples: []string{"workspace ls"},
-		Build: func(b Bound) (Action, error) {
-			return WorkspaceAction{Sub: "ls"}, nil
-		},
 	},
 	{
 		Path:     []string{"workspace", "show"},
+		Action:   "WorkspaceAction",
+		Const:    map[string]string{"Sub": "show"},
 		Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true}},
+		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
 		Examples: []string{"workspace show", "workspace show dev"},
-		Build:    buildWorkspaceOptionalName("show"),
 	},
 	{
-		Path: []string{"workspace", "apply"},
+		Path:   []string{"workspace", "apply"},
+		Action: "WorkspaceAction",
+		Const:  map[string]string{"Sub": "apply"},
 		// TUI-only: applying establishes forwards and resumes tasks, and a
 		// forward dies with the process that holds it -- so there is nothing
 		// for a one-shot CLI invocation to apply. usage() says as much.
 		Surfaces: TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true}},
+		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
 		Examples: []string{"workspace apply", "workspace apply dev"},
-		Build:    buildWorkspaceOptionalName("apply"),
 	},
 	{
 		Path:     []string{"workspace", "detach"},
+		Action:   "WorkspaceAction",
+		Const:    map[string]string{"Sub": "detach"},
 		Surfaces: TUI,
 		// Takes no name on purpose: there is only ever one installed
 		// workspace, and accepting a name would invite `detach other` to read
 		// as "detach that one instead of mine".
 		Flags: []Flag{
-			{Name: "stop", Type: FlagBool, Default: false,
+			{Name: "stop", Type: FlagBool, Default: false, Field: "Stop",
 				Help: "also stop what the workspace started"},
 		},
 		Examples: []string{"workspace detach", "workspace detach --stop"},
-		Build: func(b Bound) (Action, error) {
-			return WorkspaceAction{Sub: "detach", Stop: b.Bool("stop")}, nil
-		},
 	},
 
 	// --- board ---
@@ -956,47 +951,39 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"cancel"}, Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action:   "CancelAction",
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Examples: []string{"cancel aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return CancelAction{TaskID: b.Args[0]}, nil
-		},
 	},
 	{
 		Path: []string{"ls"}, Surfaces: CLI | WebUI,
+		Action: "ListAction",
+		// --json already carries created_by on every row, so a consumer
+		// builds the tree itself; nesting the JSON to match would give the
+		// same data two shapes.
+		Exclusive: [][]string{{"tree", "json"}},
 		Flags: []Flag{
-			{Name: "json", Type: FlagBool, Default: false,
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
 				Help: `emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table`},
-			{Name: "tree", Type: FlagBool, Default: false,
+			{Name: "tree", Type: FlagBool, Default: false, Field: "Tree",
 				Help: "order tasks by their creator link and draw the hierarchy"},
 			{
-				Name: "filtered", Type: FlagBool, Default: false, Surfaces: WebUI,
+				Name: "filtered", Type: FlagBool, Default: false, Surfaces: WebUI, Field: "Filtered",
 				SurfaceReason: "only the WebUI has a task-list filter pane; the CLI has no filter to honour and the TUI's only filter is on the logs panel",
 				Help:          "list only the rows the task-list filter currently admits",
 			},
 		},
 		Examples: []string{"ls", "ls --json", "ls --tree"},
-		Build: func(b Bound) (Action, error) {
-			if b.Bool("tree") && b.Bool("json") {
-				// Not silently ignored: --json already carries created_by on
-				// every row, so a consumer builds the tree itself. Nesting the
-				// JSON to match would give the same data two shapes.
-				return nil, fmt.Errorf("ls: --tree and --json are mutually exclusive (--json rows carry created_by; build the tree from those)")
-			}
-			return ListAction{JSON: b.Bool("json"), Tree: b.Bool("tree"), Filtered: b.Bool("filtered")}, nil
-		},
 	},
 	{
 		Path: []string{"conns"}, Surfaces: CLI,
+		Action: "ConnsAction",
 		Flags: []Flag{
-			{Name: "json", Type: FlagBool, Default: false, Help: "output JSON lines instead of a table"},
-			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output JSON lines instead of a table"},
+			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Follow",
 				Help: "stream live connection events (conns.status)"},
 		},
 		Examples: []string{"conns", "conns -f --json"},
-		Build: func(b Bound) (Action, error) {
-			return ConnsAction{JSON: b.Bool("json"), Follow: b.Bool("follow")}, nil
-		},
 	},
 	{
 		Path: []string{"caps"}, Surfaces: CLI,
@@ -1021,32 +1008,27 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"logs"}, Surfaces: CLI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "LogsAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
-			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Follow",
 				Help: "after dumping history, keep streaming live chunks (no-op when the task is terminal)"},
 		},
 		Examples: []string{"logs aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "logs -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			return LogsAction{TaskID: b.Args[0], Follow: b.Bool("follow")}, nil
-		},
 	},
 	{
 		Path: []string{"prune-local"}, Surfaces: CLI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true}},
+		Action: "PruneLocalAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
 		Flags: []Flag{
-			{Name: "repo", Type: FlagString, Default: ".", Help: "repo to prune",
+			{Name: "repo", Type: FlagString, Default: ".", Field: "Repo", Help: "repo to prune",
 				Resolve: []Tier{{Env: "HARNESS_REPO_PATH"}, {Workspace: "repo"}}},
-			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour,
+			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Field: "Before",
 				Help: "remove worktrees older than this (ignored when TASK_IDs are passed)"},
-			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "with TASK_IDs: remove even when the server still considers the task active"},
 		},
 		Examples: []string{"prune-local", "prune-local --before 24h"},
-		Build: func(b Bound) (Action, error) {
-			d, _ := b.Flags["before"].(time.Duration)
-			return PruneLocalAction{Repo: b.Str("repo"), Before: d, TaskIDs: b.Args, Force: b.Bool("force")}, nil
-		},
 	},
 
 	// --- caps set / set-parent ---
@@ -1390,21 +1372,6 @@ func PathsForSurface(s Surface) []string {
 		}
 	}
 	return out
-}
-
-// buildWorkspaceOptionalName is the Build for the workspace verbs whose name
-// may be omitted, meaning the installed workspace.
-func buildWorkspaceOptionalName(sub string) func(Bound) (Action, error) {
-	return func(b Bound) (Action, error) {
-		a := WorkspaceAction{Sub: sub}
-		if len(b.Args) > 1 {
-			return nil, fmt.Errorf("workspace %s: at most one name", sub)
-		}
-		if len(b.Args) == 1 {
-			a.Name = b.Args[0]
-		}
-		return a, nil
-	}
 }
 
 // parseUintArgs converts positional ids, naming the verb and what the number

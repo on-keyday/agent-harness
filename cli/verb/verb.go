@@ -286,9 +286,22 @@ func (v VerbSpec) BuildFunc() func(Bound) (Action, error) {
 	if b, ok := generatedBuilds[v.FlagSetName()+"\x00"+v.narrowedFor]; ok {
 		return b
 	}
-	// A spec that was never narrowed (a test, or a caller that skipped For)
-	// gets the CLI build, which is the widest.
-	return generatedBuilds[v.FlagSetName()+"\x00cli"]
+	// A spec that was never narrowed -- a test, or a caller that skipped For --
+	// gets the build for the first surface this verb declares, in CLI, TUI,
+	// WebUI order. Defaulting to CLI alone left `workspace apply` (TUI-only)
+	// with no build at all, which reads as a verb nobody wired.
+	for _, sf := range []struct {
+		s    Surface
+		name string
+	}{{CLI, "cli"}, {TUI, "tui"}, {WebUI, "webui"}} {
+		if !v.Surfaces.Has(sf.s) {
+			continue
+		}
+		if b, ok := generatedBuilds[v.FlagSetName()+"\x00"+sf.name]; ok {
+			return b
+		}
+	}
+	return nil
 }
 
 // Bound is a parsed command before Build: the neutral form the wasm bridge
