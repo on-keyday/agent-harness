@@ -23,11 +23,20 @@ var Verbs = []VerbSpec{
 		Path:     []string{"prune"},
 		Surfaces: CLI | TUI | WebUI,
 		Action:   "PruneAction",
+		// The widest form has to be ASKED for. A bare `prune` forgot every
+		// terminal task older than the default, and the server deletes the
+		// TaskEntry and its log -- after which `submit --resume <id>` answers
+		// resume_not_found, because handleSubmitResume's first precondition is
+		// that the entry still exists. Naming neither ids nor a cutoff is the
+		// `board purge --seq` shape one step earlier: there the value was
+		// dropped, here it was never typed.
+		AtLeastOne: []Rule{{Flags: []string{"task-id", "before"},
+			Reason: "a bare prune forgets every terminal task older than the default; say which"}},
 		Args: []Arg{
 			// Variadic and optional: no ids means time mode, which is the
 			// difference between "forget old terminal tasks" and "forget
 			// exactly these".
-			{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"},
+			{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs", WidensIfUnset: true},
 		},
 		Flags: []Flag{
 			{
@@ -40,7 +49,8 @@ var Verbs = []VerbSpec{
 			},
 		},
 		Examples: []string{
-			"prune",
+			// No bare `prune` here any more: the widest form is the one that
+			// has to be typed out.
 			"prune --before 24h",
 			"prune --force aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			// The flag AFTER the ids, which is the form stdlib parsing drops
@@ -1046,7 +1056,12 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"prune-local"}, Surfaces: CLI,
 		Action: "PruneLocalAction",
-		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
+		// Same shape as `prune`, and it removes WORKTREES -- the half a
+		// server-side prune leaves behind, and the only remaining copy of an
+		// agent's work once the task entry is gone.
+		AtLeastOne: []Rule{{Flags: []string{"task-id", "before"},
+			Reason: "a bare prune-local removes every worktree older than the default; say which"}},
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs", WidensIfUnset: true}},
 		Flags: []Flag{
 			{Name: "repo", Type: FlagString, Default: ".", Field: "Repo", Help: "repo to prune",
 				Resolve: []Tier{{Env: "HARNESS_REPO_PATH"}, {Workspace: "repo"}}},
@@ -1055,7 +1070,7 @@ var Verbs = []VerbSpec{
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "with TASK_IDs: remove even when the server still considers the task active"},
 		},
-		Examples: []string{"prune-local", "prune-local --before 24h"},
+		Examples: []string{"prune-local --before 24h"},
 	},
 
 	// --- caps set / set-parent ---

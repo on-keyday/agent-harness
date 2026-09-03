@@ -66,6 +66,25 @@ type Arg struct {
 	// Every Optional must follow the required ones.
 	Optional bool
 
+	// WidensIfUnset marks a positional whose ABSENCE makes a DESTRUCTIVE
+	// operation cover more. `prune <task-id>...` is the case: naming ids
+	// narrows the sweep to those tasks, and naming none forgets every
+	// terminal task older than the default.
+	//
+	// Breadth alone is not the trigger. `grid` with no ids shows every live
+	// session and that is the useful default -- it opens a viewer and destroys
+	// nothing, so making an operator type a cutoff for it would be a tax with
+	// no accident behind it. What this marks is a bare verb that TAKES
+	// something away.
+	//
+	// Flag.WidensIfUnset says the same thing for a flag, and exists because
+	// `board purge --seq` cost two live messages when the flag went unread.
+	// This is the other half: there the value was dropped, here it was never
+	// typed. A positional carrying it must appear in an AtLeastOne group, so
+	// the widest form has to be asked for -- TestWidestFormIsNeverTheBareOne
+	// requires it.
+	WidensIfUnset bool
+
 	// MaxCount caps a variadic positional. Zero means unbounded. `board
 	// subscribers` takes at most one topic and `git diff` at most two
 	// revisions -- both were `if len(b.Args) > N` inside a Build, which is a
@@ -196,7 +215,10 @@ type Flag struct {
 // hand-written check with its reason in the message, and moving them to
 // attributes dropped those sentences until this field existed to hold them.
 type Rule struct {
-	// Flags are the names the rule constrains.
+	// Flags are the names the rule constrains. A name matching a POSITIONAL
+	// rather than a flag counts as supplied when any positional was given:
+	// `prune` needs either ids or --before, and one half of that choice is
+	// not a flag.
 	Flags []string
 	// Reason is appended in parentheses. Optional: a group whose names say
 	// it themselves does not need one.

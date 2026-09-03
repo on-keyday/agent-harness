@@ -170,8 +170,15 @@ func TestParseCancelMissingID(t *testing.T) {
 	}
 }
 
-func TestParsePruneDefault(t *testing.T) {
-	got, err := ParseCommand(`prune`, "/cwd")
+// The default is still 7 days -- what changed is that the sweep has to be
+// ASKED for. A bare `prune` forgot every terminal task older than it, and the
+// server deletes each TaskEntry and its log, after which `submit --resume
+// <id>` answers resume_not_found.
+func TestParsePruneRefusesTheBareSweep(t *testing.T) {
+	if _, err := ParseCommand(`prune`, "/cwd"); err == nil {
+		t.Fatal("a bare `prune` parsed; the widest form must be typed out")
+	}
+	got, err := ParseCommand(`prune --before 168h`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}

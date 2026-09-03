@@ -102,6 +102,21 @@ var verbConsumers = []verbConsumer{
 	{"notify", verb.TUI, []string{"../../tui/app.go"}},
 	{"session attach", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
 	{"session attach", verb.TUI, []string{"../../tui/app.go"}},
+	// git's limits were declared for three surfaces and honoured by one: the
+	// TUI built its query from the modal's state and the WebUI forwarded
+	// neither, so `git <id> log --max 5` showed a default count on both.
+	{"git log", verb.CLI, []string{"../../cmd/harness-cli/git.go"}},
+	{"git log", verb.TUI, []string{"../../tui/app.go"}},
+	{"git show", verb.CLI, []string{"../../cmd/harness-cli/git.go"}},
+	{"git show", verb.TUI, []string{"../../tui/app.go"}},
+	// `cancel <a> <b>` cancelled the first and exited 0 here, because this
+	// was the one declared CLI path that never reached verb.Lookup.
+	{"cancel", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
+	{"cancel", verb.TUI, []string{"../../tui/app.go"}},
+	// prune-local removes WORKTREES, and its --repo ladder was
+	// re-implemented on the VALUE rather than on presence, so `--repo .` was
+	// silently replaced by HARNESS_REPO_PATH.
+	{"prune-local", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
 	{"session stream approve", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
 	{"session stream approve", verb.TUI, []string{"../../tui/app.go", "../../tui/client.go"}},
 }
@@ -121,6 +136,10 @@ var actionFor = map[string]any{
 	"session await-idle":     verb.SessionAction{},
 	"workspace save":         verb.WorkspaceAction{},
 	"exec ls":                verb.ExecRunAction{},
+	"git log":                verb.GitAction{},
+	"git show":               verb.GitAction{},
+	"cancel":                 verb.CancelAction{},
+	"prune-local":            verb.PruneLocalAction{},
 	"exec kill":              verb.ExecRunAction{},
 	"forward kill":           verb.ForwardKillAction{},
 	"caps set":               verb.SetCapsAction{},

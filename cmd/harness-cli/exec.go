@@ -68,13 +68,21 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		if len(a.ExecIDs) == 0 {
 			return fmt.Errorf("usage: harness-cli exec kill <exec-id> [<exec-id> ...]")
 		}
+		// Every id, even after one fails. Returning on the first error made
+		// `exec kill 1 2 3` with a stale first id stop before touching 2 and
+		// 3 -- while the TUI, whose comment says "as on the CLI", killed
+		// them. One declared verb, two meanings, decided by which id went
+		// away first.
+		var failed error
 		for _, id := range a.ExecIDs {
 			if err := cli.ExecRunKill(ctx, cid, id); err != nil {
-				return err
+				fmt.Fprintf(os.Stderr, "exec kill %d: %v\n", id, err)
+				failed = err
+				continue
 			}
 			fmt.Printf("killed exec %d\n", id)
 		}
-		return nil
+		return failed
 	}
 	taskID, argv, shellLine, sshdParent := run.TaskID, run.Argv, run.Shell, run.SshdParent
 

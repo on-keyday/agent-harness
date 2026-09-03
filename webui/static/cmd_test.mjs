@@ -178,6 +178,15 @@ test("session stream reaches its five verbs", async () => {
   }
 });
 
+// A flags-first line put the OPEN CHAT's id in and typed the rest -- flags,
+// the real id, the text -- into that agent as one message. Wrong task, wrong
+// content, delivered.
+test("session stream refuses to guess the id when flags lead", async () => {
+  const { calls } = await run(`session stream turn --flush-ms 900 ${ID} hi`, { chatTaskID: ID2 });
+  assert.equal(named(calls, "streamTurn").length, 0, "must not send to the open chat");
+  assert.match(String(named(calls, "echo")[0][1]), /name the task id after the flags/);
+});
+
 test("session stream defaults the id to the open chat", async () => {
   const { calls } = await run("session stream turn hello", { chatTaskID: ID2 });
   eq(named(calls, "streamTurn")[0], ["streamTurn", ID2, "hello"]);

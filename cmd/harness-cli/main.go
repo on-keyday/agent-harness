@@ -228,11 +228,11 @@ func main() {
 		os.Stdout.Write(md)
 
 	case "cancel":
-		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "cancel: missing task id")
-			os.Exit(2)
-		}
-		if err := cli.Cancel(ctx, parseCID(), args[0]); err != nil {
+		// Through the declaration like every other verb. Hand-read args[0]
+		// meant `cancel <a> <b>` cancelled the first and exited 0 while the
+		// TUI refused the same line -- one declared verb, two arities.
+		cn := parseOne[verb.CancelAction]("cancel", args)
+		if err := cli.Cancel(ctx, parseCID(), cn.TaskID); err != nil {
 			die(err)
 		}
 
@@ -280,15 +280,31 @@ func main() {
 		}
 
 	case "prune-local":
-		pl := parseOne[verb.PruneLocalAction]("prune-local", args)
-		repoVal := pl.Repo
-		if repoVal == "." {
-			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
-				repoVal = env
-			} else if workspaceRepo != "" {
-				repoVal = workspaceRepo
-			}
+		plSpec, _ := verb.Lookup("prune-local")
+		plSpec = plSpec.For(verb.CLI)
+		plFS := plSpec.NewFlagSet(flag.ExitOnError)
+		plB, plErr := plSpec.Parse(plFS, args)
+		if plErr != nil {
+			die(plErr)
 		}
+		plAct, plBErr := plSpec.BuildFunc()(plB)
+		if plBErr != nil {
+			die(plBErr)
+		}
+		pl := plAct.(verb.PruneLocalAction)
+		// The ladder the declaration carries, keyed on PRESENCE. It was
+		// re-implemented here keyed on the VALUE (`if repoVal == "."`), so an
+		// operator who typed `--repo .` got HARNESS_REPO_PATH instead --
+		// silently, on the verb that removes worktrees.
+		// Written back into the action, the way parseSpawnTUI does it for
+		// submit: one resolved value, read from one place.
+		pl.Repo = plSpec.Resolve(plB, "repo", os.Getenv, func(k string) string {
+			if k == "repo" {
+				return workspaceRepo
+			}
+			return ""
+		}, nil)
+		repoVal := pl.Repo
 		abs, err := filepath.Abs(repoVal)
 		if err != nil {
 			die(err)
@@ -471,11 +487,19 @@ func main() {
 					}
 				}
 			case verb.ForwardKillAction:
+				// Every id, even after one fails -- see exec kill. die() on
+				// the first left the rest untouched while the TUI killed them.
+				var failed error
 				for _, id := range a.ForwardIDs {
 					if err := cli.KillPortForward(ctx, parseCID(), id); err != nil {
-						die(err)
+						fmt.Fprintf(os.Stderr, "forward kill %d: %v\n", id, err)
+						failed = err
+						continue
 					}
 					fmt.Printf("killed forward %d\n", id)
+				}
+				if failed != nil {
+					die(failed)
 				}
 			case verb.ForwardTapAction:
 				filter, ferr := cli.ParseTapFilter(a.Dir)

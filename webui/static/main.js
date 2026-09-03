@@ -5480,7 +5480,7 @@ const POLL_INTERVAL_MS = 5000;
     }
   }
 
-  async function refreshGit(preserveSelection) {
+  async function refreshGit(preserveSelection, limits = {}) {
     if (!gitTaskSelect || !gitTaskSelect.value) {
       gitRows = [];
       renderGitRows();
@@ -5502,7 +5502,7 @@ const POLL_INTERVAL_MS = 5000;
 
     const fail = (err) => { if (gen === gitGeneration) gitSetError(err.message); };
 
-    gitQuery("log", {}).then(log => {
+    gitQuery("log", { ...limits }).then(log => {
       if (gen !== gitGeneration) return;
       gitCommits = log.commits || [];
       if (gitNoteEl) {
@@ -5585,6 +5585,13 @@ const POLL_INTERVAL_MS = 5000;
   // a task, and run one query there rather than dumping a diff into the
   // command output where it cannot be scrolled.
   window.__openGitTabFor = async (taskID, sub, opts) => {
+    // --max and --max-bytes are declared for this surface and reached
+    // nothing: runGitAction forwarded maxBytes and dropped max, and every
+    // gitQuery below built its own options object without either. `git <id>
+    // log --max 5` showed the panel's default count.
+    const limits = {};
+    if (opts && opts.max) limits.maxCommits = opts.max;
+    if (opts && opts.maxBytes) limits.maxBytes = opts.maxBytes;
     const btn = tabbar.querySelector('.tab-btn[data-tab="git"]');
     if (btn) btn.click();
     if (gitTaskSelect) gitTaskSelect.value = taskID;
@@ -5593,17 +5600,17 @@ const POLL_INTERVAL_MS = 5000;
     gitSubrepoStack = opts.subrepo ? [opts.subrepo] : [];
     gitSubmodule = !!opts.submodule;
     gitSetBase(opts.baseRev || "HEAD");
-    await refreshGit(false);
+    await refreshGit(false, limits);
     if (sub === "status") {
       await gitShowStatusListing();
       return;
     }
     if (sub === "file") {
-      await openGitFileFromCmd(opts);
+      await openGitFileFromCmd(opts, limits);
       return;
     }
     if (sub === "subrepos") {
-      const res = await gitQuery("subrepos", {});
+      const res = await gitQuery("subrepos", { ...limits });
       gitContentEl.textContent = (res.subrepos || []).length
         ? (res.subrepos || []).join("\n")
         : "(no nested repositories)";
@@ -5612,7 +5619,7 @@ const POLL_INTERVAL_MS = 5000;
     if (sub === "show") {
       try {
         gitLastContent = { kind: "show", baseRev: opts.baseRev };
-        const res = await gitQuery("show", { baseRev: opts.baseRev, path: opts.path });
+        const res = await gitQuery("show", { baseRev: opts.baseRev, path: opts.path, ...limits });
         renderGitText(res.text || "(no difference)", true);
       } catch (err) {
         gitSetError(err.message);
@@ -5624,7 +5631,7 @@ const POLL_INTERVAL_MS = 5000;
       try {
         gitLastContent = { kind: "diff", baseRev: opts.baseRev, targetRev: opts.targetRev, target };
         const res = await gitQuery("diff", {
-          baseRev: opts.baseRev, targetRev: opts.targetRev, target, path: opts.path,
+          baseRev: opts.baseRev, targetRev: opts.targetRev, target, path: opts.path, ...limits,
         });
         renderGitText(res.text || "(no difference)", true);
       } catch (err) {
@@ -5635,8 +5642,8 @@ const POLL_INTERVAL_MS = 5000;
 
   // openGitFileFromCmd is the cmdline route into the file view; the side comes
   // from the flags rather than from whatever diff happens to be on screen.
-  async function openGitFileFromCmd(opts) {
-    const q = { path: opts.path };
+  async function openGitFileFromCmd(opts, limits) {
+    const q = { path: opts.path, ...(limits || {}) };
     if (opts.rev) { q.target = "rev"; q.targetRev = opts.rev; }
     else if (opts.staged) { q.target = "index"; }
     else { q.target = "worktree"; }
@@ -5887,7 +5894,7 @@ async function runGitAction(taskID, g) {
     staged: g.staged, submodule: g.submodule, subrepo: g.subrepo,
     // `git file --rev X` resolves into targetRev; the panel reads `rev`.
     rev: g.sub === "file" ? g.targetRev : "",
-    maxBytes: g.maxBytes,
+    maxBytes: g.maxBytes, max: g.max,
   });
   return `git ${g.sub}: shown in the Git tab`;
 }
@@ -6156,7 +6163,14 @@ async function runVerbCommand(tokens, ctx) {
       } else if (sub === "kill") {
         // Every id, as on the CLI: this killed args[0] and reported
         // "killed exec 1" for `exec kill 1 2 3`.
-        for (const id of b.args) await ctx.harness.execRunKill(Number(id));
+        // Every id, even after one fails: an `await` in the loop aborted the
+            // rest, and the TUI killed them.
+            const failedexecRunKill = [];
+            for (const id of b.args) {
+              try { await ctx.harness.execRunKill(Number(id)); }
+              catch (e) { failedexecRunKill.push(`${id}: ${e.message}`); }
+            }
+            if (failedexecRunKill.length) throw new Error(`exec kill: ${failedexecRunKill.join("; ")}`);
         out = `killed exec ${b.args.join(", ")}`;
       } else {
         out = await ctx.execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
@@ -6180,7 +6194,14 @@ async function runVerbCommand(tokens, ctx) {
               : fwds.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}\n    ${f.traffic || ""}`).join("\n"))
           : "(no active port forwards)";
       } else if (sub === "kill") {
-        for (const id of b.args) await ctx.harness.forwardKill(Number(id));
+        // Every id, even after one fails: an `await` in the loop aborted the
+            // rest, and the TUI killed them.
+            const failedforwardKill = [];
+            for (const id of b.args) {
+              try { await ctx.harness.forwardKill(Number(id)); }
+              catch (e) { failedforwardKill.push(`${id}: ${e.message}`); }
+            }
+            if (failedforwardKill.length) throw new Error(`forward kill: ${failedforwardKill.join("; ")}`);
         out = `killed forward ${b.args.join(", ")}`;
       } else {
         // The command input starts the same tap the row's button does, and
@@ -6239,7 +6260,23 @@ async function runVerbCommand(tokens, ctx) {
       // the parse rather than after: the declaration has no notion of
       // "whatever is on screen".
       const rest = tokens.slice(3);
-      const sid = (rest[0] && /^[0-9a-fA-F]{32}$/.test(rest[0])) ? rest.shift() : ctx.chatTaskID();
+      // Only when the line starts with the id, or with nothing. These are
+      // Trailing verbs -- everything after the positional is literal text --
+      // so a line whose first token is a FLAG has the id somewhere this
+      // surface cannot find without re-implementing the flag parse, and
+      // guessing put it in the wrong place: `session stream turn --flush-ms
+      // 900 <id> hi` spliced the OPEN CHAT's id and typed
+      // "--flush-ms 900 <id> hi" into that agent. Wrong task, wrong text.
+      let sid;
+      if (rest[0] && /^[0-9a-fA-F]{32}$/.test(rest[0])) {
+        sid = rest.shift();
+      } else if (rest[0] && rest[0].startsWith("-")) {
+        ctx.echo(`session stream ${verb}: name the task id after the flags ` +
+                 `(the id only defaults to the open chat when it leads the line)`);
+        break;
+      } else {
+        sid = ctx.chatTaskID();
+      }
       if (!sid) { ctx.echo("session stream: a task id is required (or open a chat first)"); break; }
       const b = ctx.harness.parseCommand(["session", "stream", verb, sid, ...rest], {});
       if (b.error) throw new Error(b.error);
@@ -6353,7 +6390,11 @@ async function runFileAction(b) {
     case "delete":
       return fileDeleteCmd(a[0], a[1], !!b.flags.recursive, !!b.flags.force);
     case "push":
-      return filePushCmd(a[0], a[1]);
+      // -r / -f / -p parsed here and were dropped: pushBytesWithPrompts
+      // started from false and only escalated through a confirm dialog.
+      return filePushCmd(a[0], a[1], {
+        recursive: !!b.flags.recursive, force: !!b.flags.force, parents: !!b.flags.parents,
+      });
     case "pull":
       // --offset / --length reach filePullBytesRange, which this surface has
       // had all along for the HTML preview. They parsed here and were dropped.
@@ -6395,7 +6436,7 @@ async function fileMkdirCmd(taskID, rel, parents) {
   return `mkdir ok: ${rel}`;
 }
 
-async function filePushCmd(taskID, remoteRel) {
+async function filePushCmd(taskID, remoteRel, flags = {}) {
   // Open the hidden file picker; abort if the user closes it without
   // selecting anything.
   const file = await pickLocalFile();
@@ -6403,7 +6444,7 @@ async function filePushCmd(taskID, remoteRel) {
   const buf = new Uint8Array(await file.arrayBuffer());
   const fp = beginFileProgress(file.name);
   try {
-    const res = await pushBytesWithPrompts(taskID, remoteRel, buf, file.name, fp.onProgress);
+    const res = await pushBytesWithPrompts(taskID, remoteRel, buf, file.name, fp.onProgress, flags);
     return res.msg;
   } finally {
     fp.end();
@@ -6495,9 +6536,12 @@ async function editRemoteFile(taskID, rel) {
 // not_found. Returns { ok, msg }; ok=false means the user declined a
 // confirm. Any other error is thrown for the caller to render on its own
 // surface (fileResultPre vs cmd-output).
-async function pushBytesWithPrompts(taskID, remoteRel, buf, displayName, onProgress) {
-  let force = false;
-  let parents = false;
+async function pushBytesWithPrompts(taskID, remoteRel, buf, displayName, onProgress, flags = {}) {
+  // Typed flags START the loop rather than being asked for: `file push -f -p`
+  // parsed on this surface and was dropped, so an operator who said
+  // "overwrite, make parents" still got both confirm dialogs.
+  let force = !!flags.force;
+  let parents = !!flags.parents;
   for (;;) {
     try {
       await window.harness.filePushBytes(taskID, remoteRel, buf, force, parents, onProgress);

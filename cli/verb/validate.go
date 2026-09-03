@@ -37,23 +37,23 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 	}
 
 	if v.Modes != nil {
-		if named := b.namedIn(v.Modes.Names); len(named) > 1 {
+		if named := v.namedIn(b, v.Modes.Names); len(named) > 1 {
 			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))
 		}
 	}
 	for _, r := range v.Exclusive {
-		if named := b.namedIn(r.Flags); len(named) > 1 {
-			return fmt.Errorf("%s: %s are mutually exclusive%s", name, dashList(named), why(r))
+		if named := v.namedIn(b, r.Flags); len(named) > 1 {
+			return fmt.Errorf("%s: %s are mutually exclusive%s", name, v.nameList(named), why(r))
 		}
 	}
 	for _, r := range v.ExactlyOne {
-		if named := b.namedIn(r.Flags); len(named) != 1 {
-			return fmt.Errorf("%s: pass exactly one of %s%s", name, dashList(r.Flags), why(r))
+		if named := v.namedIn(b, r.Flags); len(named) != 1 {
+			return fmt.Errorf("%s: pass exactly one of %s%s", name, v.nameList(r.Flags), why(r))
 		}
 	}
 	for _, r := range v.AtLeastOne {
-		if len(b.namedIn(r.Flags)) == 0 {
-			return fmt.Errorf("%s: pass at least one of %s%s", name, dashList(r.Flags), why(r))
+		if len(v.namedIn(b, r.Flags)) == 0 {
+			return fmt.Errorf("%s: pass at least one of %s%s", name, v.nameList(r.Flags), why(r))
 		}
 	}
 	for _, r := range v.Requires {
@@ -62,13 +62,13 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 		}
 		// Every orphan at once: fixing them one per run is how a caller
 		// discovers the second one only after correcting the first.
-		if orphans := b.namedIn(r.Flags); len(orphans) > 0 {
+		if orphans := v.namedIn(b, r.Flags); len(orphans) > 0 {
 			verb := "needs"
 			if len(orphans) > 1 {
 				verb = "need"
 			}
-			return fmt.Errorf("%s: %s %s %s%s", name, dashList(orphans), verb,
-				dashList([]string{r.Needs}), why(Rule{Reason: r.Reason}))
+			return fmt.Errorf("%s: %s %s %s%s", name, v.nameList(orphans), verb,
+				v.nameList([]string{r.Needs}), why(Rule{Reason: r.Reason}))
 		}
 	}
 
@@ -86,15 +86,49 @@ func why(r Rule) string {
 	return " (" + r.Reason + ")"
 }
 
-// namedIn returns which of these flags the caller actually supplied.
-func (b Bound) namedIn(group []string) []string {
+// namedIn returns which of these the caller actually supplied. A name is
+// looked up as a flag first and as a POSITIONAL second, so a rule can span
+// both -- `prune` is a choice between naming ids and naming a cutoff, and
+// only one of those is a flag.
+func (v VerbSpec) namedIn(b Bound, group []string) []string {
 	var out []string
 	for _, n := range group {
 		if b.Set[n] {
 			out = append(out, n)
+			continue
+		}
+		for _, a := range v.Args {
+			if a.Name == n && len(b.Args) > 0 {
+				out = append(out, n)
+				break
+			}
 		}
 	}
 	return out
+}
+
+// nameList renders a rule's names the way the operator types them: a flag
+// with its dashes, a POSITIONAL in angle brackets. A group may span both, and
+// printing `--task-id` for a positional sends the reader looking for a flag
+// that does not exist -- the same failure dashList's one-dash rule exists to
+// avoid for -W.
+func (v VerbSpec) nameList(names []string) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		positional := false
+		for _, a := range v.Args {
+			if a.Name == n {
+				positional = true
+				break
+			}
+		}
+		if positional {
+			out = append(out, "<"+n+">")
+			continue
+		}
+		out = append(out, dashList([]string{n}))
+	}
+	return strings.Join(out, ", ")
 }
 
 // dashList renders flag names as the operator wrote them -- ONE dash for a

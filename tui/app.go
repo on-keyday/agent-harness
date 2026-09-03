@@ -1578,7 +1578,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// repository we are leaving.
 					a.gitModal.EnterSubrepo(row.Subrepo)
 					a.gitModal.SetSize(a.width, a.height)
-					return a, a.gitReload(taskID)
+					return a, a.gitReload(taskID, nil)
 				}
 				kind, target, rev := a.gitModal.GitQueryForRow(row)
 				q := a.gitModal.Query()
@@ -1610,7 +1610,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return a, DoGitFile(a.client, taskID, fq)
 			case modalKeys.BoardRefresh:
-				return a, a.gitReload(taskID)
+				return a, a.gitReload(taskID, nil)
 			case modalKeys.GitStatus:
 				a.gitStatusToContent = true
 				return a, DoGitStatus(a.client, taskID, a.gitModal.Query())
@@ -1619,7 +1619,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				a.gitModal.SetSize(a.width, a.height)
-				return a, a.gitReload(taskID)
+				return a, a.gitReload(taskID, nil)
 			case modalKeys.GitSubmodule:
 				a.gitModal.ToggleSubmodule()
 				// Re-issue the current row so the toggle is visible at once
@@ -2236,7 +2236,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.gitModal.Open(taskID)
 			a.gitModal.SetSize(a.width, a.height)
 			a.gitStatusToContent = false
-			return a, a.gitReload(taskID)
+			return a, a.gitReload(taskID, nil)
 		}
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.FilePicker {
 			if a.focus != focusTasks {
@@ -3207,12 +3207,25 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		if v.BaseRev != "" && v.Sub == "diff" {
 			a.gitModal.SetBaseRev(v.BaseRev)
 		}
-		cmds := []tea.Cmd{a.gitReload(full)}
+		// --max and --max-bytes are declared for this surface and reached
+		// nothing: the query came from the modal's own state and the parsed
+		// limits were never copied in, so `git <id> log --max 5` showed the
+		// modal's default count.
+		applyLimits := func(q cli.GitQuery) cli.GitQuery {
+			if v.Max > 0 {
+				q.MaxCommits = uint32(v.Max)
+			}
+			if v.MaxBytes > 0 {
+				q.MaxBytes = uint32(v.MaxBytes)
+			}
+			return q
+		}
+		cmds := []tea.Cmd{a.gitReload(full, applyLimits)}
 		switch v.Sub {
 		case "log", "status", "subrepos":
 			// gitReload already asked for all three.
 		case "file":
-			q := a.gitModal.Query()
+			q := applyLimits(a.gitModal.Query())
 			q.Path = v.Path
 			switch {
 			case v.TargetRev != "":
@@ -3225,12 +3238,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, DoGitFile(a.client, full, q))
 		case "show":
-			q := a.gitModal.Query()
+			q := applyLimits(a.gitModal.Query())
 			q.BaseRev = v.BaseRev
 			q.Path = v.Path
 			cmds = append(cmds, DoGitShow(a.client, full, q))
 		default: // diff
-			q := a.gitModal.Query()
+			q := applyLimits(a.gitModal.Query())
 			q.BaseRev = v.BaseRev
 			q.TargetRev = v.TargetRev
 			q.Path = v.Path
@@ -3432,8 +3445,14 @@ func uniqueAgentProfiles(rs []protocol.RunnerInfo) []string {
 // the default selection. One helper because a re-root, a refresh and the
 // initial open all need the same four answers, and a route that forgot one
 // would silently show the previous repository's data.
-func (a *App) gitReload(taskID string) tea.Cmd {
+// gitReload issues the three panel queries. limits, when non-nil, applies the
+// command line's --max / --max-bytes -- the keyboard route passes nil and
+// keeps the modal's own settings.
+func (a *App) gitReload(taskID string, limits func(cli.GitQuery) cli.GitQuery) tea.Cmd {
 	q := a.gitModal.Query()
+	if limits != nil {
+		q = limits(q)
+	}
 	diffQ := q
 	diffQ.BaseRev = a.gitModal.BaseRev()
 	diffQ.Target = protocol.GitDiffTarget_Worktree

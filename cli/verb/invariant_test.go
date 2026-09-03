@@ -213,7 +213,8 @@ func TestUsagePositionalsParse(t *testing.T) {
 		// synopsis does not render, not positional shapes it gets wrong.
 		fs := v.NewFlagSet(flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		if _, err := v.Parse(fs, append(satisfyingFlags(v, nil, false), args...)); err != nil {
+		sat, satPositionals := satisfying(v, nil, false)
+		if _, err := v.Parse(fs, append(append(sat, args...), satPositionals...)); err != nil {
 			t.Errorf("%s: the synopsis' own minimal positional form does not parse: %v\n  %s",
 				v.FlagSetName(), err, u)
 		}
@@ -395,4 +396,54 @@ var tuiParseNotDeclared = map[string]string{
 	// is the SurfaceContext tier of --repo's ladder rather than a verb the
 	// other surfaces have.
 	"parseRepo": "sets this TUI session's default repo; the surface-context tier, not a request",
+}
+
+// TestWidestFormIsNeverTheBareOne holds the property `board purge` cost two
+// live messages for, one step earlier in the sequence.
+//
+// There, --seq's zero value meant "the whole topic" and stdlib parsing dropped
+// the flag, so a narrowing the operator TYPED went unread. Flag.WidensIfUnset
+// plus permuted parsing closed that. This is the other half: a positional
+// whose ABSENCE is the widest form. `prune` with no ids forgets every terminal
+// task older than the default -- deleting each TaskEntry and its log, after
+// which `submit --resume <id>` answers resume_not_found -- and typing nothing
+// at all was the way to ask for it.
+//
+// So: a positional carrying WidensIfUnset must appear in an AtLeastOne group,
+// which is what makes the widest form something the operator has to say rather
+// than something they fall into. Checked by PARSING the bare line, not by
+// reading the table: an attribute that does not reach the parse is a comment.
+func TestWidestFormIsNeverTheBareOne(t *testing.T) {
+	for _, v := range Verbs {
+		widening := ""
+		for _, a := range v.Args {
+			if a.WidensIfUnset {
+				widening = a.Name
+			}
+		}
+		if widening == "" {
+			continue
+		}
+		named := false
+		for _, r := range v.AtLeastOne {
+			for _, n := range r.Flags {
+				if n == widening {
+					named = true
+				}
+			}
+		}
+		if !named {
+			t.Errorf("%s: <%s> widens when omitted and no AtLeastOne rule names it.\n"+
+				"The widest form has to be asked for; leaving it as the bare verb is how "+
+				"`prune` forgot every terminal task on a line typed to read its usage.",
+				v.FlagSetName(), widening)
+			continue
+		}
+		fs := v.NewFlagSet(flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		if _, err := v.Parse(fs, nil); err == nil {
+			t.Errorf("%s: <%s> widens when omitted and the BARE form still parses.\n"+
+				"The rule is declared and does not reach the parse.", v.FlagSetName(), widening)
+		}
+	}
 }

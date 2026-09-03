@@ -173,8 +173,13 @@ func buildWith(t *testing.T, v VerbSpec, f *Flag, set bool) (any, bool) {
 	// (verb, flag) pairs dropped, including -L / -R / -W on the verb that
 	// opens listeners. The comment there named a fallback "below" that does
 	// not exist.
-	args = append(args, satisfyingFlags(v, f, set)...)
+	sat, satPositionals := satisfying(v, f, set)
+	args = append(args, sat...)
 	args = append(args, positionalsFor(v)...)
+	// A rule whose alternative is a POSITIONAL -- `prune` takes either ids or
+	// --before -- cannot be satisfied by a flag at all, so the synthesis has
+	// to be able to add one.
+	args = append(args, satPositionals...)
 	if v.Trailing != nil {
 		args = append(args, "trailing", "words")
 	}
@@ -192,9 +197,10 @@ func buildWith(t *testing.T, v VerbSpec, f *Flag, set bool) (any, bool) {
 	return act, true
 }
 
-// satisfyingFlags adds the minimum the declared rules demand, skipping
+// satisfying adds the minimum the declared rules demand -- flags, and a
+// positional when the alternative IS one -- skipping
 // anything that would conflict with the flag being probed.
-func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
+func satisfying(v VerbSpec, probe *Flag, probeSet bool) (flags, positionals []string) {
 	probeName := ""
 	if probe != nil {
 		probeName = probe.Name
@@ -222,7 +228,6 @@ func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
 		}
 		return false
 	}
-	var out []string
 	add := func(names []string) {
 		if probeSet {
 			for _, n := range names {
@@ -236,6 +241,12 @@ func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
 			if n == probeName || conflicts(n) {
 				continue
 			}
+			for _, a := range v.Args {
+				if a.Name == n && len(positionals) == 0 {
+					positionals = append(positionals, valueFor(a))
+					return
+				}
+			}
 			for _, f := range v.Flags {
 				if f.Name != n {
 					continue
@@ -243,14 +254,14 @@ func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
 				switch f.Type {
 				case FlagBool:
 					if d, _ := f.Default.(bool); !d {
-						out = append(out, "--"+n)
+						flags = append(flags, "--"+n)
 					}
 				case FlagString:
-					out = append(out, "--"+n, probeValue(f))
+					flags = append(flags, "--"+n, probeValue(f))
 				case FlagUint, FlagUint64:
-					out = append(out, "--"+n, "1")
+					flags = append(flags, "--"+n, "1")
 				case FlagDuration:
-					out = append(out, "--"+n, "1m")
+					flags = append(flags, "--"+n, "1m")
 				}
 			}
 			return
@@ -281,7 +292,7 @@ func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
 			}
 		}
 	}
-	return out
+	return flags, positionals
 }
 
 // probeValue is a value the flag will actually accept. A few flags carry a

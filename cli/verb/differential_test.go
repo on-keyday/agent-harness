@@ -35,7 +35,12 @@ func legacyPrune(args []string) (time.Duration, []string, bool, error) {
 // pruneCorpus is every prune form the three surfaces document or test:
 // tui/cmdline_test.go supplies the first five, the CLI's usage line the rest.
 var pruneCorpus = [][]string{
-	{},
+	// The bare form is deliberately absent: the legacy parser accepted it and
+	// the declaration refuses it now. `prune` with no ids and no cutoff forgot
+	// every terminal task older than the default, deleting each TaskEntry and
+	// its log -- after which `submit --resume <id>` answers resume_not_found.
+	// This test asserts the migration changed NO behaviour, so the one place
+	// it deliberately did says so here.
 	{"--before=1h"},
 	{"--before", "1h"},
 	{"--force", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},

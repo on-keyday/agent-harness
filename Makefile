@@ -56,9 +56,15 @@ test: js-test
 # Windows runners too, and a missing JS runtime must not stop `make test`
 # from checking the Go half. No packages -- node --test and node:vm ship with
 # the runtime, and there is no package.json to install from.
+#
+# ONE shell line, not a guard line plus a command line. make runs each recipe
+# line in its own shell, so an `exit 0` in the guard ended only the guard --
+# the next line ran node anyway and `make test` died with 127 on exactly the
+# host the skip was written for, having run zero Go tests.
 js-test: webui-build
-	@command -v node >/dev/null 2>&1 || { echo "js-test: no node on PATH, skipping"; exit 0; }
-	node --test webui/static/cmd_test.mjs
+	@command -v node >/dev/null 2>&1 \
+	  && node --test webui/static/cmd_test.mjs \
+	  || echo "js-test: no node on PATH, skipping"
 
 # The integration suite lives behind the `integration` build tag and is NOT
 # part of `make test` / `go test ./...`. Run it explicitly (CI mirrors this in
