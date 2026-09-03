@@ -17,6 +17,9 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 	name := v.FlagSetName()
 
 	for _, f := range v.Flags {
+		if f.Required && !b.Set[f.Name] {
+			return fmt.Errorf("%s: --%s is required", name, f.Name)
+		}
 		if len(f.OneOf) == 0 || !b.Set[f.Name] {
 			continue
 		}

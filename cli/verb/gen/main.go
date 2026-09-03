@@ -148,7 +148,7 @@ import "time"
 			if ar.Field == "" {
 				continue
 			}
-			if ar.Variadic {
+			if ar.Variadic && ar.MaxCount != 1 {
 				fmt.Fprintf(&buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
 			} else {
 				fmt.Fprintf(&buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
@@ -223,7 +223,10 @@ func goTypeOfFlag(f verb.Flag) string {
 }
 
 func goTypeOfArg(a verb.Arg) string {
-	if a.Variadic {
+	// A variadic capped at one is an OPTIONAL single value, not a list --
+	// `board subscribers [topic]` and `workspace show [name]` are one-or-none,
+	// and giving them a []string would make every consumer index it.
+	if a.Variadic && a.MaxCount != 1 {
 		return "[]string"
 	}
 	return "string"

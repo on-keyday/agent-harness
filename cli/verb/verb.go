@@ -53,6 +53,12 @@ type Arg struct {
 	Type     ArgType
 	Variadic bool // absorbs the rest; only valid as the last Arg
 
+	// MaxCount caps a variadic positional. Zero means unbounded. `board
+	// subscribers` takes at most one topic and `git diff` at most two
+	// revisions -- both were `if len(b.Args) > N` inside a Build, which is a
+	// count the declaration already knew.
+	MaxCount int
+
 	// Surfaces narrower than the verb's requires a reason: `file push` takes
 	// one fewer positional in a browser, which has no local path to name.
 	Surfaces      Surface
@@ -125,6 +131,10 @@ type Flag struct {
 	// spelled with FieldReason.
 	Field       string
 	FieldReason string
+
+	// Required refuses the verb when the flag is absent. `board retract --seq`
+	// is required because there is no whole-topic retract, unlike purge.
+	Required bool
 
 	// OneOf restricts a string flag to a vocabulary. A value outside it is
 	// refused with the list, rather than passed through to mean whatever the

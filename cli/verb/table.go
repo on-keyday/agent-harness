@@ -720,73 +720,59 @@ var Verbs = []VerbSpec{
 		Path:     []string{"board", "topics"},
 		Surfaces: CLI,
 		Examples: []string{"board topics"},
-		Build:    func(b Bound) (Action, error) { return BoardAction{Sub: "topics"}, nil },
+		Action:   "BoardAction",
+		Const:    map[string]string{"Sub": "topics"},
 	},
 	{
 		Path:     []string{"board", "read"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "topic", Type: ArgTopic}},
+		Action:   "BoardAction",
+		Const:    map[string]string{"Sub": "read"},
+		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Flags: []Flag{
-			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0),
+			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
 				Help: "only messages replying to this seq"},
-			{Name: "json", Type: FlagBool, Default: false, Help: "JSON Lines instead of text"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
 		},
 		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json"},
-		Build: func(b Bound) (Action, error) {
-			irt, _ := b.Flags["in-reply-to"].(uint64)
-			return BoardAction{Sub: "read", Topic: b.Args[0], InReplyTo: irt, JSON: b.Bool("json")}, nil
-		},
 	},
 	{
 		Path:     []string{"board", "subscribers"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "topic", Type: ArgTopic, Variadic: true}},
+		Action:   "BoardAction",
+		Const:    map[string]string{"Sub": "subscribers"},
+		// At most one, expressed as arity rather than as a check in Build:
+		// MaxArgs is what the declaration already knows.
+		Args:     []Arg{{Name: "topic", Type: ArgTopic, Variadic: true, MaxCount: 1, Field: "Topic"}},
 		Examples: []string{"board subscribers", "board subscribers chat.abcd1234"},
-		Build: func(b Bound) (Action, error) {
-			a := BoardAction{Sub: "subscribers"}
-			if len(b.Args) > 1 {
-				return nil, fmt.Errorf("board subscribers: at most one topic")
-			}
-			if len(b.Args) == 1 {
-				a.Topic = b.Args[0]
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"board", "retract"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "topic", Type: ArgTopic}},
+		Action:   "BoardAction",
+		Const:    map[string]string{"Sub": "retract"},
+		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Flags: []Flag{
-			{Name: "seq", Type: FlagUint64, Default: uint64(0),
+			{Name: "seq", Type: FlagUint64, Default: uint64(0), Required: true, Field: "Seq",
 				Help: "the message to withdraw; required — there is no whole-topic retract"},
 		},
 		Examples: []string{"board retract chat.abcd1234 --seq 42"},
-		Build: func(b Bound) (Action, error) {
-			seq, _ := b.Flags["seq"].(uint64)
-			if seq == 0 {
-				return nil, fmt.Errorf("board retract: --seq is required; there is no whole-topic retract")
-			}
-			return BoardAction{Sub: "retract", Topic: b.Args[0], Seq: seq}, nil
-		},
 	},
 	{
 		Path:     []string{"board", "purge"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "topic", Type: ArgTopic}},
+		Action:   "BoardAction",
+		Const:    map[string]string{"Sub": "purge"},
+		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Flags: []Flag{
 			// THE flag this whole design is named after. `board purge <topic>
 			// --seq N` -- the exact line the help text printed -- left --seq at
 			// its zero value under stdlib parsing, which is the WHOLE-TOPIC
 			// form, and destroyed two messages on a live board.
-			{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true,
+			{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true, Field: "Seq",
 				Help: "drop one message by seq; omitted drops the whole topic ring"},
 		},
 		Examples: []string{"board purge chat.abcd1234", "board purge chat.abcd1234 --seq 42"},
-		Build: func(b Bound) (Action, error) {
-			seq, _ := b.Flags["seq"].(uint64)
-			return BoardAction{Sub: "purge", Topic: b.Args[0], Seq: seq}, nil
-		},
 	},
 	// --- spawning: submit / interactive / session new ---
 	//
@@ -1407,7 +1393,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"agent", "purge"}, Surfaces: CLI,
 		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
-			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true,
+			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), WidensIfUnset: true, Field: "Seq",
 				Help: "drop one message by seq; omitted drops the topic's retained buffer"},
 		),
 		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42"},

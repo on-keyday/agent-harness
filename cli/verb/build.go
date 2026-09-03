@@ -205,14 +205,18 @@ func (v VerbSpec) fixedArgs() int {
 // parsePrune had no check at all, so a dropped flag arrived as a task id.
 func (v VerbSpec) checkArity(n int) error {
 	fixed := v.fixedArgs()
-	variadic := false
+	variadic, maxCount := false, 0
 	for _, a := range v.Args {
 		if a.Variadic {
 			variadic = true
+			maxCount = a.MaxCount
 		}
 	}
 	if n < fixed || (!variadic && n > fixed) {
 		return fmt.Errorf("%s", v.Usage())
+	}
+	if variadic && maxCount > 0 && n-fixed > maxCount {
+		return fmt.Errorf("%s: at most %d (got %d)\n%s", v.FlagSetName(), maxCount, n-fixed, v.Usage())
 	}
 	return nil
 }

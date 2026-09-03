@@ -188,17 +188,6 @@ type WorkspaceAction struct {
 	Stop bool
 }
 
-// BoardAction is an operator view of the agentboard. Sub names the query;
-// Seq is the message a retract or purge targets.
-type BoardAction struct {
-	ActionMarker
-	Sub       string
-	Topic     string
-	Seq       uint64
-	InReplyTo uint64
-	JSON      bool
-}
-
 // SpawnAction starts a task: submit (queued, one-shot), interactive (a PTY
 // attached now) or session new (a detachable PTY). One action for all three
 // because they differ in what the surface DOES with the result, not in what

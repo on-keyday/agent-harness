@@ -9,6 +9,19 @@ package verb
 
 import "time"
 
+// BoardAction is built by: board purge, board read, board retract, board subscribers, board topics.
+type BoardAction struct {
+	ActionMarker
+	Sub string
+	// only messages replying to this seq
+	InReplyTo uint64
+	// JSON Lines instead of text
+	JSON  bool
+	Topic string
+	// the message to withdraw; required — there is no whole-topic retract
+	Seq uint64
+}
+
 // PruneAction is built by: prune.
 type PruneAction struct {
 	ActionMarker
@@ -31,6 +44,47 @@ func init() {
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"board topics": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "topics"
+			return a, nil
+		},
+		"board read": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "read"
+			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board subscribers": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "subscribers"
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board retract": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "retract"
+			a.Seq = uint64Of(b.Flags["seq"])
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
+		"board purge": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "purge"
+			a.Seq = uint64Of(b.Flags["seq"])
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
 			}
 			return a, nil
 		},
