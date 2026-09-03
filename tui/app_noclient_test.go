@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"strings"
 	"testing"
 
@@ -19,8 +20,8 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 		name string
 		act  Action
 	}{
-		{"prune-id", PruneAction{TaskIDs: []string{id}}},
-		{"prune-time", PruneAction{Before: 0}},
+		{"prune-id", verb.PruneAction{TaskIDs: []string{id}}},
+		{"prune-time", verb.PruneAction{Before: 0}},
 		{"cancel", CancelAction{IDPrefix: id}},
 		{"caps-set", SetCapsAction{TaskID: id}},
 		{"caps-set-parent", SetParentAction{TaskID: id, Detach: true}},

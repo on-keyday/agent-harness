@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
@@ -3142,7 +3143,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
-	case PruneAction:
+	case verb.PruneAction:
 		if len(v.TaskIDs) > 0 {
 			a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
 		} else {

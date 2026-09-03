@@ -6,19 +6,26 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// Action is the typed result of parsing one cmdline input.
-// app.go switches on the concrete type.
-type Action interface{ isAction() }
+// Action is the typed result of parsing one cmdline input; app.go switches on
+// the concrete type. It is an alias of the shared interface (cli/verb), so a
+// verb declared once is one type on every surface.
+//
+// The TUI keeps its own screen-state actions -- Clear, Quit, Help, Refresh,
+// Repo, TrsfDebug, GridDiag, Grid -- which satisfy it by embedding
+// verb.ActionMarker. That marker is exported for exactly this reason: an
+// unexported method declared in cli/verb could not be implemented from here.
+type Action = verb.Action
 
 type SubmitAction struct {
+	verb.ActionMarker
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
@@ -31,6 +38,7 @@ type SubmitAction struct {
 }
 
 type CancelAction struct {
+	verb.ActionMarker
 	IDPrefix string
 }
 
@@ -42,19 +50,13 @@ type CancelAction struct {
 //     ignored, and active (Queued/Running/Detached) tasks are skipped unless
 //     Force. Ids must be full 32-hex — no prefix resolution, deliberately, so a
 //     mistype misses (safe no-op) rather than resolving onto the wrong task.
-type PruneAction struct {
-	Before  time.Duration
-	TaskIDs []string
-	Force   bool
-}
-
-type ClearAction struct{}
-type QuitAction struct{}
-type HelpAction struct{}
+type ClearAction struct{ verb.ActionMarker }
+type QuitAction struct{ verb.ActionMarker }
+type HelpAction struct{ verb.ActionMarker }
 
 // RefreshAction forces a full snapshot re-sync (runners + tasks) right now,
 // without waiting for the next event or resubscribe gap-fill.
-type RefreshAction struct{}
+type RefreshAction struct{ verb.ActionMarker }
 
 // GridDiagAction turns the grid panes' per-pane diagnostic overlay on or off.
 // On means every pane replaces its top body row with rx/rate/size/content-row
@@ -63,11 +65,14 @@ type RefreshAction struct{}
 // Set is nil for a bare `diag`, which TOGGLES. An explicit on/off is not the
 // same request as a toggle: a script or a second operator saying `diag on`
 // must not turn it OFF because someone already did.
-type GridDiagAction struct{ Set *bool }
+type GridDiagAction struct {
+	verb.ActionMarker
+	Set *bool
+}
 
 // TrsfDebugAction dumps the client↔server trsf transport's internal state into
 // the command-result panel (debug aid).
-type TrsfDebugAction struct{}
+type TrsfDebugAction struct{ verb.ActionMarker }
 
 // SessionNewAction opens a new detachable interactive PTY session.
 // When Detach is true the session is opened and the local stream is closed
@@ -77,6 +82,7 @@ type TrsfDebugAction struct{}
 // Host / Runner / IP carry the runner pin selector, mutually exclusive and
 // validated at parse time via cli.SelectorOpts.ValidateSelector.
 type SessionNewAction struct {
+	verb.ActionMarker
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
@@ -99,6 +105,7 @@ type SessionNewAction struct {
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
 type SessionAttachAction struct {
+	verb.ActionMarker
 	TaskID string
 }
 
@@ -107,6 +114,7 @@ type SessionAttachAction struct {
 // all four verbs rather than four near-identical ones: they differ only in
 // which message gets built, and that choice already lives in cli.
 type SessionStreamWriteAction struct {
+	verb.ActionMarker
 	Verb      string // turn | approve | interrupt | finish
 	IDPrefix  string
 	RequestID string // approve only
@@ -118,15 +126,17 @@ type SessionStreamWriteAction struct {
 // that is the logs pane — the runner renders this kind's events into the task
 // log, so following the log IS following the stream; no second renderer.
 type SessionStreamAttachAction struct {
+	verb.ActionMarker
 	IDPrefix string
 }
 
 // SessionLsAction lists interactive+detachable tasks in the cmdresult area.
-type SessionLsAction struct{}
+type SessionLsAction struct{ verb.ActionMarker }
 
 // SessionKillAction is an alias for CancelAction targeting a session.
 // It reuses CancelAction so app.go's existing cancel dispatch handles it.
 type SessionKillAction struct {
+	verb.ActionMarker
 	IDPrefix string
 }
 
@@ -136,6 +146,7 @@ type SessionKillAction struct {
 // Notify routes the fire through the operator-notification egress; Topic
 // publishes it to an agentboard topic instead.
 type SessionAwaitIdleAction struct {
+	verb.ActionMarker
 	IDPrefix    string
 	ThresholdMs uint32
 	Notify      bool
@@ -146,6 +157,7 @@ type SessionAwaitIdleAction struct {
 // popups, interactive opens, and slash-command --repo defaults all use the
 // new value. Per-action --repo overrides still win on a single call.
 type RepoAction struct {
+	verb.ActionMarker
 	Path string
 }
 
@@ -153,6 +165,7 @@ type RepoAction struct {
 // one of log / diff / show / status; the revision fields follow git's own
 // positional counting (see parseGit).
 type GitAction struct {
+	verb.ActionMarker
 	TaskID    string
 	Sub       string
 	BaseRev   string
@@ -173,6 +186,7 @@ type GitAction struct {
 // Anchor and IDs are id PREFIXES here; app.go resolves them against the task
 // table before the set is built, the same as every other id-taking action.
 type GridAction struct {
+	verb.ActionMarker
 	Mode   cli.GridScopeMode
 	Anchor string
 	IDs    []string
@@ -181,6 +195,7 @@ type GridAction struct {
 // FileLsAction lists a directory under a task's worktree. RelPath empty
 // means the worktree root.
 type FileLsAction struct {
+	verb.ActionMarker
 	TaskID  string
 	RelPath string
 }
@@ -191,6 +206,7 @@ type FileLsAction struct {
 // (dir_push). Parents creates missing parent directories of RemoteDst
 // (mkdir -p semantics) before the push.
 type FilePushAction struct {
+	verb.ActionMarker
 	TaskID    string
 	LocalSrc  string
 	RemoteDst string
@@ -203,6 +219,7 @@ type FilePushAction struct {
 // Parents=false is strict mkdir (missing parent → error, existing dir
 // → error); Parents=true is mkdir -p (parents created, idempotent).
 type FileMkdirAction struct {
+	verb.ActionMarker
 	TaskID  string
 	RelPath string
 	Parents bool
@@ -210,12 +227,14 @@ type FileMkdirAction struct {
 
 // FileEditAction opens a worktree file in the editor popup.
 type FileEditAction struct {
+	verb.ActionMarker
 	TaskID  string
 	RelPath string
 }
 
 // FileNewAction opens the editor popup on a path that does not exist yet.
 type FileNewAction struct {
+	verb.ActionMarker
 	TaskID  string
 	RelPath string
 }
@@ -223,6 +242,7 @@ type FileNewAction struct {
 // FilePullAction copies from a task's worktree to a local destination.
 // Recursive uses dir_pull. Force permits overwriting the local path.
 type FilePullAction struct {
+	verb.ActionMarker
 	TaskID    string
 	RemoteSrc string
 	LocalDst  string
@@ -237,6 +257,7 @@ type FilePullAction struct {
 // os.RemoveAll on the runner side. Force without Recursive is a no-op
 // (single-file delete has no force semantics).
 type FileDeleteAction struct {
+	verb.ActionMarker
 	TaskID    string
 	RelPath   string
 	Recursive bool
@@ -248,6 +269,7 @@ type FileDeleteAction struct {
 // file holds. There is no `workspace open`-shaped verb for starting one piece
 // at a time; an apply is all-or-nothing by design.
 type WorkspaceAction struct {
+	verb.ActionMarker
 	Sub  string // "save" | "apply" | "detach" | "ls" | "show" | "rm"
 	Name string // "" means the installed workspace, except for save
 	// All is `save --all`: write every live session without opening the
@@ -262,15 +284,19 @@ type WorkspaceAction struct {
 }
 
 // ForwardLsAction lists every port forward visible to this operator.
-type ForwardLsAction struct{}
+type ForwardLsAction struct{ verb.ActionMarker }
 
 // ForwardKillAction closes one registered forward by id.
-type ForwardKillAction struct{ ForwardID uint64 }
+type ForwardKillAction struct {
+	verb.ActionMarker
+	ForwardID uint64
+}
 
 // ForwardTapAction opens a live view of one forward's traffic. Dir and
 // MaxRecordBytes carry the same meaning as harness-cli's --dir / --max-bytes,
 // parsed by the same cli.ParseTapFilter so the two surfaces cannot drift.
 type ForwardTapAction struct {
+	verb.ActionMarker
 	ForwardID      uint64
 	Dir            string
 	MaxRecordBytes uint32
@@ -283,6 +309,7 @@ type ForwardTapAction struct {
 // filter for "ls"; Argv is the command for "run"; ExecID names the victim for
 // "kill".
 type ExecRunAction struct {
+	verb.ActionMarker
 	Sub    string
 	TaskID string
 	Argv   []string
@@ -301,6 +328,7 @@ type ExecRunAction struct {
 // SSHGatewayAction starts, stops or reports the ssh gateway this TUI hosts.
 // Sub is "start", "stop" or "status".
 type SSHGatewayAction struct {
+	verb.ActionMarker
 	Sub    string
 	Listen string
 }
@@ -309,6 +337,7 @@ type SSHGatewayAction struct {
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
 type InteractiveAction struct {
+	verb.ActionMarker
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
@@ -325,6 +354,7 @@ type InteractiveAction struct {
 // Via, when non-empty, requests a relay through the named runner CID
 // (Phase B: objproto EstablishRelay).
 type ServerDialRunnerAction struct {
+	verb.ActionMarker
 	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
 	Via       string // empty = direct dial; non-empty = relay via this CID
 }
@@ -334,6 +364,7 @@ type ServerDialRunnerAction struct {
 // Title is the first word of text when not using --level / explicit title
 // syntax; see parseNotify for the full grammar.
 type NotifyAction struct {
+	verb.ActionMarker
 	Level string
 	Title string
 	Text  string
@@ -350,6 +381,7 @@ type NotifyAction struct {
 // hold at the time, silently, on every resume; it rewrote at least one live
 // task's caps by accident and is gone.
 type CapsAction struct {
+	verb.ActionMarker
 	Caps protocol.Capability
 	Show bool // true = display current set (no args), false = set to Caps
 }
@@ -358,6 +390,7 @@ type CapsAction struct {
 // a spawned task may use, scope says which tasks it may point them at. Same
 // show/set shape, same "does not apply on resume" rule.
 type ScopeAction struct {
+	verb.ActionMarker
 	Scope     protocol.TaskScope
 	Overrides []protocol.ScopeOverride
 	Show      bool
@@ -371,6 +404,7 @@ type ScopeAction struct {
 // neither has a spare value to mean "unset" (Capability(0) is "none",
 // TaskScope{} is "subtree").
 type SetCapsAction struct {
+	verb.ActionMarker
 	TaskID string
 	Caps   *protocol.Capability
 	Scope  *protocol.TaskScope
@@ -386,51 +420,31 @@ type SetCapsAction struct {
 // scopes walk. Operator-only, enforced server-side. Exactly one of ParentID /
 // Detach / Swap is set — the parser rejects zero or two.
 type SetParentAction struct {
+	verb.ActionMarker
 	TaskID   string
 	ParentID string
 	Detach   bool
 	Swap     bool
 }
 
-func (SubmitAction) isAction()              {}
-func (ScopeAction) isAction()               {}
-func (SetCapsAction) isAction()             {}
-func (SetParentAction) isAction()           {}
-func (CancelAction) isAction()              {}
-func (PruneAction) isAction()               {}
-func (ClearAction) isAction()               {}
-func (QuitAction) isAction()                {}
-func (HelpAction) isAction()                {}
-func (RefreshAction) isAction()             {}
-func (TrsfDebugAction) isAction()           {}
-func (GridDiagAction) isAction()            {}
-func (RepoAction) isAction()                {}
-func (InteractiveAction) isAction()         {}
-func (SessionNewAction) isAction()          {}
-func (SessionAttachAction) isAction()       {}
-func (SessionStreamWriteAction) isAction()  {}
-func (SessionStreamAttachAction) isAction() {}
-func (SessionLsAction) isAction()           {}
-func (SessionKillAction) isAction()         {}
-func (SessionAwaitIdleAction) isAction()    {}
-func (GitAction) isAction()                 {}
-func (GridAction) isAction()                {}
-func (FileLsAction) isAction()              {}
-func (FilePushAction) isAction()            {}
-func (FileMkdirAction) isAction()           {}
-func (FilePullAction) isAction()            {}
-func (FileDeleteAction) isAction()          {}
-func (FileEditAction) isAction()            {}
-func (FileNewAction) isAction()             {}
-func (WorkspaceAction) isAction()           {}
-func (ForwardLsAction) isAction()           {}
-func (ForwardKillAction) isAction()         {}
-func (ForwardTapAction) isAction()          {}
-func (ExecRunAction) isAction()             {}
-func (SSHGatewayAction) isAction()          {}
-func (ServerDialRunnerAction) isAction()    {}
-func (NotifyAction) isAction()              {}
-func (CapsAction) isAction()                {}
+// parseViaSpec routes one verb through the shared declaration (cli/verb).
+//
+// ContinueOnError with a discarded writer, because a typo here is a line in
+// the results pane rather than an exit -- the CLI wants ExitOnError for the
+// same input, which is why the error mode is a parameter of NewFlagSet.
+func parseViaSpec(path string, args []string) (Action, error) {
+	sp, ok := verb.Lookup(path)
+	if !ok {
+		return nil, fmt.Errorf("%s: not in the verb table", path)
+	}
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return sp.Build(b)
+}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -449,7 +463,7 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 	case "cancel":
 		return parseCancel(tokens[1:])
 	case "prune":
-		return parsePrune(tokens[1:])
+		return parseViaSpec("prune", tokens[1:])
 	case "clear":
 		return ClearAction{}, nil
 	case "refresh", "sync":
@@ -761,18 +775,6 @@ func parseCancel(args []string) (Action, error) {
 		return nil, fmt.Errorf("cancel: task id required")
 	}
 	return CancelAction{IDPrefix: fs.Arg(0)}, nil
-}
-
-func parsePrune(args []string) (Action, error) {
-	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	before := fs.Duration("before", 7*24*time.Hour, "")
-	force := fs.Bool("force", false, "")
-	fs.BoolVar(force, "f", false, "")
-	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("prune: %w", err)
-	}
-	return PruneAction{Before: *before, TaskIDs: fs.Args(), Force: *force}, nil
 }
 
 // parseSession dispatches session sub-verbs: new / attach / ls / kill.

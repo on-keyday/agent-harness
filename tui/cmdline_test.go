@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"strings"
 	"testing"
 	"time"
@@ -174,7 +175,7 @@ func TestParsePruneDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(PruneAction)
+	a := got.(verb.PruneAction)
 	if a.Before != 7*24*time.Hour {
 		t.Errorf("Before=%v, want 168h", a.Before)
 	}
@@ -185,7 +186,7 @@ func TestParsePruneFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(PruneAction)
+	a := got.(verb.PruneAction)
 	if a.Before != time.Hour {
 		t.Errorf("Before=%v", a.Before)
 	}
@@ -198,7 +199,7 @@ func TestParsePruneByID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(PruneAction)
+	a := got.(verb.PruneAction)
 	if !a.Force {
 		t.Errorf("Force=false, want true")
 	}
@@ -216,7 +217,7 @@ func TestParsePruneShortForceFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(PruneAction)
+	a := got.(verb.PruneAction)
 	if !a.Force || len(a.TaskIDs) != 1 {
 		t.Errorf("got Force=%v TaskIDs=%v, want Force=true, 1 id", a.Force, a.TaskIDs)
 	}
@@ -1498,5 +1499,29 @@ func TestCmdlineForwardTapRejectsBadDir(t *testing.T) {
 	}
 	if _, err := ParseCommand("forward tap notanumber", ""); err == nil {
 		t.Fatal("a non-numeric forward id must be refused")
+	}
+}
+
+// TestPruneFlagAfterIDsIsRead pins the one behaviour the declaration changes
+// on this surface. The old parsePrune had no arity check and used stdlib
+// Parse, so `prune <id> --force` put "--force" into TaskIDs and left Force
+// false; cli/prune.go then rejected it as a bad task id, making it a confusing
+// error rather than a destructive one. Permuting is what the CLI always did,
+// and the TUI now matches.
+func TestPruneFlagAfterIDsIsRead(t *testing.T) {
+	const id = "deadbeefdeadbeefdeadbeefdeadbeef"
+	got, err := ParseCommand("prune "+id+" --force", "/cwd")
+	if err != nil {
+		t.Fatalf("ParseCommand: %v", err)
+	}
+	act, ok := got.(verb.PruneAction)
+	if !ok {
+		t.Fatalf("got %T, want verb.PruneAction", got)
+	}
+	if !act.Force {
+		t.Error("--force written after the id was dropped")
+	}
+	if len(act.TaskIDs) != 1 || act.TaskIDs[0] != id {
+		t.Errorf("TaskIDs = %q, want [%s]", act.TaskIDs, id)
 	}
 }
