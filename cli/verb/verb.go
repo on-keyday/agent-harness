@@ -157,6 +157,19 @@ type Flag struct {
 	// is required because there is no whole-topic retract, unlike purge.
 	Required bool
 
+	// Convert names a package-level function that turns the flag's parsed
+	// value into Field's type: func(string) (T, error), or func([]string)
+	// (T, error) for a Custom list. It exists because --caps and --scope
+	// carry a GRAMMAR, not a string, and that grammar lives in this package
+	// (ParseCaps / ParseScope) rather than in the generator. Named as a
+	// string so the declaration never imports the generator's output; the
+	// compiler still checks the name and the signature, because the emitted
+	// build calls it.
+	//
+	// The value is converted only when the operator typed the flag, so a
+	// pointer field keeps "said nothing" distinct from "said none".
+	Convert string
+
 	// FieldType overrides the Go type the generator gives Field. A wire struct
 	// wanting uint32 where the flag parses as uint is the whole use: without
 	// it every consumer casts, and one that forgets reads a different number.
@@ -167,6 +180,33 @@ type Flag struct {
 	// consumer makes of it -- `forward tap --dir sideways` used to reach the
 	// server.
 	OneOf []string
+}
+
+// Rule is one cross-flag constraint together with the sentence saying why.
+//
+// The reason is not decoration. "--x11 is incompatible with --detach" leaves
+// the operator guessing; "(a detached session has no client to host the X
+// tunnel)" tells them what is actually wrong. Every one of these rules was a
+// hand-written check with its reason in the message, and moving them to
+// attributes dropped those sentences until this field existed to hold them.
+type Rule struct {
+	// Flags are the names the rule constrains.
+	Flags []string
+	// Reason is appended in parentheses. Optional: a group whose names say
+	// it themselves does not need one.
+	Reason string
+}
+
+// Requirement says that naming any of Flags needs Needs.
+//
+// A GROUP rather than one flag per entry, because `session send --rows 10
+// --style` without --snapshot has two orphans and reporting one at a time
+// makes the operator re-run to discover the next. It was a map before, whose
+// iteration order is random -- so which orphan got named was arbitrary.
+type Requirement struct {
+	Flags  []string
+	Needs  string
+	Reason string
 }
 
 // Modes turns a set of mutually exclusive bool flags into one string field.
@@ -213,6 +253,12 @@ type Trailing struct {
 	// Required refuses an empty tail. Sending nothing is a mistyped command,
 	// not a no-op send.
 	Required bool
+
+	// IfFieldEmpty writes Field only when a flag has not already filled it.
+	// `submit --task "do it"` and `submit do it` are the same prompt written
+	// two ways -- the flag wins, and the trailing words are the prompt
+	// otherwise.
+	IfFieldEmpty bool
 
 	// JoinWhen names a bool flag that collapses the tail into ONE word.
 	// `exec --shell` is the case: the operator asked for shell
@@ -285,13 +331,13 @@ type VerbSpec struct {
 	Validate func(Bound) error
 
 	// Exclusive lists flag groups where naming more than one is refused.
-	Exclusive [][]string
+	Exclusive []Rule
 	// ExactlyOne lists groups where naming exactly one is required.
-	ExactlyOne [][]string
+	ExactlyOne []Rule
 	// AtLeastOne lists groups where naming none is refused.
-	AtLeastOne [][]string
-	// Requires maps a flag to the one it cannot be used without.
-	Requires map[string]string
+	AtLeastOne []Rule
+	// Requires lists flags that cannot be used without another one.
+	Requires []Requirement
 
 	// MinArgs refuses a verb whose variadic positional came back empty:
 	// `exec kill` and `forward kill` with no id are mistyped lines, not

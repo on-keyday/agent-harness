@@ -84,7 +84,7 @@ var Verbs = []VerbSpec{
 		Action: "FilePullAction",
 		// A directory pull is a generated tar, whose byte offsets are not a
 		// stable thing to index into.
-		Exclusive: [][]string{{"recursive", "offset"}, {"recursive", "length"}},
+		Exclusive: []Rule{{Flags: []string{"recursive", "offset"}}, {Flags: []string{"recursive", "length"}}},
 		Surfaces:  CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
@@ -342,7 +342,7 @@ var Verbs = []VerbSpec{
 				Help: "run under the task's sshd parent process"},
 		},
 		// What it renames IS the shell, so it cannot rename an argv.
-		Requires: map[string]string{"sshd-parent": "shell"},
+		Requires: []Requirement{{Flags: []string{"sshd-parent"}, Needs: "shell"}},
 		Validate: func(b Bound) error {
 			// `exec --shell kill 3` used to parse as "run `3` on a task named
 			// kill". ls and kill are sub-verbs, and the run flags do not apply
@@ -398,9 +398,13 @@ var Verbs = []VerbSpec{
 		// long-lived listeners. ssh makes the same pair exclusive, for the
 		// same reason: one invocation, one lifetime. Two pairs rather than one
 		// group of three, because -L WITH -R is the ordinary case.
-		Exclusive:  [][]string{{"W", "L"}, {"W", "R"}},
-		AtLeastOne: [][]string{{"L", "R", "W"}},
-		Requires:   map[string]string{"http-path": "W"},
+		Exclusive: []Rule{
+			{Flags: []string{"W", "L"}, Reason: "-W owns the foreground and exits with its peer; -L is a long-lived listener"},
+			{Flags: []string{"W", "R"}, Reason: "-W owns the foreground and exits with its peer; -R is a long-lived listener"},
+		},
+		AtLeastOne: []Rule{{Flags: []string{"L", "R", "W"}, Reason: "a forward with no direction opens nothing"}},
+		Requires: []Requirement{{Flags: []string{"http-path"}, Needs: "W",
+			Reason: "an HTTP request needs a target to send it to"}},
 		Flags: []Flag{
 			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
 				Help: "local forward [bind:]localport:remotehost:remoteport (repeatable)"},
@@ -676,26 +680,59 @@ var Verbs = []VerbSpec{
 		// The prompt is a positional on the TUI and the WebUI and --task on the
 		// CLI. Both work everywhere now: the flag wins when given, the trailing
 		// words are the prompt otherwise.
+		Action: "SpawnAction",
+		Const:  map[string]string{"Kind": "submit"},
 		Trailing: &Trailing{
-			Name: "prompt", Reason: "the prompt is free-form text, so a word beginning with '-' cannot be told from a flag",
+			Name: "prompt", Field: "Task", IfFieldEmpty: true,
+			Reason: "the prompt is free-form text, so a word beginning with '-' cannot be told from a flag",
 		},
-		Flags:    spawnFlags(spawnSubmit),
+		Flags:     spawnFlags(spawnSubmit),
+		Exclusive: spawnExclusive(spawnSubmit),
+		Requires:  spawnRequires(spawnSubmit),
+		// A rule spanning a flag and the trailing text, which no attribute
+		// reaches: Trailing.Required would refuse the --task form.
+		Validate: func(b Bound) error {
+			if err := spawnValidate(b); err != nil {
+				return fmt.Errorf("submit: %w", err)
+			}
+			if b.Str("task") == "" && b.Trail == "" {
+				return fmt.Errorf("submit: a prompt is required, as --task or as the trailing words")
+			}
+			return nil
+		},
 		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
-		Build:    buildSpawn("submit"),
 	},
 	{
-		Path:     []string{"interactive"},
-		Surfaces: CLI | TUI,
-		Flags:    spawnFlags(spawnInteractive),
+		Path:      []string{"interactive"},
+		Surfaces:  CLI | TUI,
+		Action:    "SpawnAction",
+		Const:     map[string]string{"Kind": "interactive"},
+		Flags:     spawnFlags(spawnInteractive),
+		Exclusive: spawnExclusive(spawnInteractive),
+		Requires:  spawnRequires(spawnInteractive),
+		Validate: func(b Bound) error {
+			if err := spawnValidate(b); err != nil {
+				return fmt.Errorf("interactive: %w", err)
+			}
+			return nil
+		},
 		Examples: []string{"interactive --repo /r"},
-		Build:    buildSpawn("interactive"),
 	},
 	{
-		Path:     []string{"session", "new"},
-		Surfaces: CLI | TUI,
-		Flags:    spawnFlags(spawnSessionNew),
+		Path:      []string{"session", "new"},
+		Surfaces:  CLI | TUI,
+		Action:    "SpawnAction",
+		Const:     map[string]string{"Kind": "session-new"},
+		Flags:     spawnFlags(spawnSessionNew),
+		Exclusive: spawnExclusive(spawnSessionNew),
+		Requires:  spawnRequires(spawnSessionNew),
+		Validate: func(b Bound) error {
+			if err := spawnValidate(b); err != nil {
+				return fmt.Errorf("session new: %w", err)
+			}
+			return nil
+		},
 		Examples: []string{"session new --repo /r", "session new --repo /r -d"},
-		Build:    buildSpawn("session-new"),
 	},
 	// --- the six Trailing verbs ---
 	//
@@ -715,12 +752,11 @@ var Verbs = []VerbSpec{
 		// The snapshot knobs only mean something with --snapshot. Naming one
 		// without it is refused rather than ignored: a caller who asked for 80
 		// columns and silently got the default is debugging the wrong thing.
-		Requires: map[string]string{
-			"rows": "snapshot", "cols": "snapshot", "settle-ms": "snapshot",
-			"style": "snapshot", "color": "snapshot", "json": "snapshot",
-			"ansi": "snapshot", "without-synth": "snapshot",
-			"detect": "snapshot", "detect-agent": "snapshot",
-		},
+		Requires: []Requirement{{
+			Flags: []string{"rows", "cols", "settle-ms", "style", "color", "json",
+				"ansi", "without-synth", "detect", "detect-agent"},
+			Needs: "snapshot",
+		}},
 		Flags: []Flag{
 			// THE pair this design's alias rule exists for. --enter appends a
 			// carriage return; -e interprets backslash escapes. They are two
@@ -872,7 +908,7 @@ var Verbs = []VerbSpec{
 		// --json already carries created_by on every row, so a consumer
 		// builds the tree itself; nesting the JSON to match would give the
 		// same data two shapes.
-		Exclusive: [][]string{{"tree", "json"}},
+		Exclusive: []Rule{{Flags: []string{"tree", "json"}}},
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
 				Help: `emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table`},
@@ -945,81 +981,50 @@ var Verbs = []VerbSpec{
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, Surfaces: CLI | TUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "SetCapsAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		// Naming neither leaves nothing to change. And --scope-for narrows
+		// BELOW a base scope, so on this verb it needs --scope: unlike a
+		// spawn, where the base comes from the session default, a re-grant
+		// that names only the narrowing has no base to narrow. The Build
+		// dropped a lone --scope-for silently; this says so.
+		AtLeastOne: []Rule{{Flags: []string{"caps", "scope"}, Reason: "there is nothing to change otherwise"}},
+		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
+			Reason: "a narrowing has no base to narrow unless this call names one"}},
 		Flags: []Flag{
-			{Name: "caps", Type: FlagString, Default: "",
+			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag", PresenceField: "CapsPresent",
 				Help: "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps"},
-			{Name: "scope", Type: FlagString, Default: "",
+			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag", PresenceField: "ScopePresent",
 				Help: "new scope; omitted = keep the task's current scope"},
-			{Name: "scope-for", Type: FlagString, Custom: scopeForValue,
+			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
+				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
 				Help: "narrow ONE capability below --scope (written with --scope; they are one half of the authority)"},
-			{Name: "cascade", Type: FlagBool, Default: false, WidensIfUnset: true,
+			{Name: "cascade", Type: FlagBool, Default: false, WidensIfUnset: true, Field: "Cascade",
 				Help: "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider"},
-			{Name: "keep-conns", Type: FlagBool, Default: false,
+			{Name: "keep-conns", Type: FlagBool, Default: false, Field: "KeepConns",
 				Help: "on a narrowing, leave the affected tasks' connections open"},
 		},
 		Examples: []string{"caps set aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps spawn,file_read"},
-		Build: func(b Bound) (Action, error) {
-			a := SetCapsAction{TaskID: b.Args[0], Cascade: b.Bool("cascade"),
-				KeepConns: b.Bool("keep-conns"), CapsPresent: b.Set["caps"], ScopePresent: b.Set["scope"]}
-			if b.Set["caps"] {
-				c, err := ParseCaps(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("caps set: --caps: %w", err)
-				}
-				a.Caps = &c
-			}
-			if b.Set["scope"] {
-				sc, err := ParseScope(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("caps set: --scope: %w", err)
-				}
-				a.Scope = &sc
-				if specs, ok := b.Custom["scope-for"].([]string); ok {
-					for _, one := range specs {
-						_, ov, perr := ParseScopeFor(one)
-						if perr != nil {
-							return nil, fmt.Errorf("caps set: --scope-for: %w", perr)
-						}
-						merged, merr := MergeScopeOverride(a.Overrides, ov)
-						if merr != nil {
-							return nil, fmt.Errorf("caps set: --scope-for: %w", merr)
-						}
-						a.Overrides = merged
-					}
-				}
-			}
-			if a.Caps == nil && a.Scope == nil {
-				return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
-			}
-			return a, nil
-		},
 	},
 	{
 		Path: []string{"caps", "set-parent"}, Surfaces: CLI | TUI | WebUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID}},
+		Action: "SetParentAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		// The three name one destination. Two of them name two, which is not
+		// a narrowing but a contradiction, and none of them names nothing to
+		// do.
+		ExactlyOne: []Rule{{Flags: []string{"parent", "none", "swap"}}},
 		Flags: []Flag{
-			{Name: "parent", Type: FlagString, Default: "",
+			{Name: "parent", Type: FlagString, Default: "", Field: "ParentID",
 				Help: "new parent task id (32 hex); the target and its whole subtree move under it"},
-			{Name: "none", Type: FlagBool, Default: false, Help: "detach the task to the operator root"},
-			{Name: "swap", Type: FlagBool, Default: false,
+			{Name: "none", Type: FlagBool, Default: false, Field: "None",
+				Help: "detach the task to the operator root"},
+			{Name: "swap", Type: FlagBool, Default: false, Field: "Swap",
 				Help: "invert the task with its CURRENT parent"},
 		},
 		Examples: []string{"caps set-parent aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --none"},
-		Build: func(b Bound) (Action, error) {
-			a := SetParentAction{TaskID: b.Args[0], ParentID: b.Str("parent"),
-				None: b.Bool("none"), Swap: b.Bool("swap")}
-			picked := 0
-			for _, on := range []bool{a.ParentID != "", a.None, a.Swap} {
-				if on {
-					picked++
-				}
-			}
-			if picked != 1 {
-				return nil, fmt.Errorf("caps set-parent: pass exactly one of --parent <task-id>, --none, --swap")
-			}
-			return a, nil
-		},
 	},
 
 	// --- single-task session verbs ---
@@ -1050,7 +1055,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "await-idle"},
 		// Two sinks for one fire: the reply long-poll, the notification
 		// egress, or an agentboard publish. Naming two asks for two.
-		Exclusive: [][]string{{"notify", "topic"}},
+		Exclusive: []Rule{{Flags: []string{"notify", "topic"}}},
 		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
 			{Name: "threshold-ms", Type: FlagUint, Default: uint(0), Field: "ThresholdMs", Help: "quiescence threshold in ms (0 = server default)"},
@@ -1078,7 +1083,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "snapshot"},
 		// --raw is the verbatim byte stream, so the renderers have nothing to
 		// act on: combining them asks for two different outputs at once.
-		Exclusive: [][]string{{"raw", "style"}, {"raw", "color"}, {"raw", "json"}, {"raw", "detect"}},
+		Exclusive: []Rule{{Flags: []string{"raw", "style"}}, {Flags: []string{"raw", "color"}}, {Flags: []string{"raw", "json"}}, {Flags: []string{"raw", "detect"}}},
 		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
 			{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "fallback rows when the session reports no size"},
@@ -1127,7 +1132,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "stream-approve"},
 		// The verdict is the whole point of the verb, so neither omitting it
 		// nor giving both is an answer.
-		ExactlyOne: [][]string{{"allow", "deny"}},
+		ExactlyOne: []Rule{{Flags: []string{"allow", "deny"}}},
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "request-id", Type: ArgString, Field: "RequestID"},
@@ -1179,7 +1184,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "subscribe"},
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
-		Exclusive: [][]string{{"self", "topic"}},
+		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
 		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
 		Examples:  []string{"agent subscribe --topic chat.abcd1234"},
 	},
@@ -1189,7 +1194,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "unsubscribe"},
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
-		Exclusive: [][]string{{"self", "topic"}},
+		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
 		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
 		Examples:  []string{"agent unsubscribe --topic chat.abcd1234"},
 	},
@@ -1213,7 +1218,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "retained"},
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
-		Exclusive: [][]string{{"self", "topic"}},
+		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
 		Flags:     append(agentCommonFlags(), agentTopicSelfFlags()...),
 		Examples:  []string{"agent retained --self"},
 	},
@@ -1223,7 +1228,7 @@ var Verbs = []VerbSpec{
 		Const:  map[string]string{"Sub": "purge"},
 		// --self names the agent's own id-directed topic, so pairing it with
 		// --topic asks for two destinations at once.
-		Exclusive: [][]string{{"self", "topic"}},
+		Exclusive: []Rule{{Flags: []string{"self", "topic"}}},
 		Flags: append(append(agentCommonFlags(), agentTopicSelfFlags()...),
 			Flag{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq", WidensIfUnset: true,
 				Help: "drop one message by seq; omitted drops the topic's retained buffer"},

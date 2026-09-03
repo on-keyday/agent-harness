@@ -125,9 +125,9 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-)
+%s)
 
-`)
+`, protocolImport(actions))
 
 	for _, n := range names {
 		a := actions[n]
@@ -202,6 +202,17 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 			if f.Field == "" {
 				continue
 			}
+			if f.Convert != "" {
+				// Only on presence: the conversion produces a pointer or a
+				// slice whose nil says the operator named nothing, and
+				// converting the default would erase that.
+				fmt.Fprintf(buf, "\t\tif b.Set[%q] {\n\t\t\tv, err := %s(%s)\n"+
+					"\t\t\tif err != nil {\n\t\t\t\treturn nil, fmt.Errorf(%q, err)\n\t\t\t}\n"+
+					"\t\t\ta.%s = v\n\t\t}\n",
+					f.Name, f.Convert, rawReaderForFlag(f),
+					v.FlagSetName()+": "+dashed(f.Name)+": %w", f.Field)
+				continue
+			}
 			fmt.Fprintf(buf, "\t\ta.%s = %s\n", f.Field, readerForFlag(f))
 		}
 		for i, ar := range v.Args {
@@ -244,7 +255,12 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 		}
 		if v.Trailing != nil {
 			if v.Trailing.Field != "" {
-				fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
+				if v.Trailing.IfFieldEmpty {
+					fmt.Fprintf(buf, "\t\tif a.%s == \"\" {\n\t\t\ta.%s = b.Trail\n\t\t}\n",
+						v.Trailing.Field, v.Trailing.Field)
+				} else {
+					fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
+				}
 			}
 			if v.Trailing.FieldArgs != "" {
 				if v.Trailing.JoinWhen != "" {
@@ -257,6 +273,20 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 		}
 		buf.WriteString("\t\t\treturn a, nil\n\t\t},\n")
 	}
+}
+
+// protocolImport adds the protocol import only when a generated field names
+// it. An unconditional import breaks the build the day no action carries a
+// capability.
+func protocolImport(actions map[string]*action) string {
+	for _, a := range actions {
+		for _, f := range a.fields {
+			if strings.Contains(f.goType, "protocol.") {
+				return "\n\t\"github.com/on-keyday/agent-harness/runner/protocol\"\n"
+			}
+		}
+	}
+	return ""
 }
 
 func (a *action) add(f field) {
@@ -320,6 +350,33 @@ func goTypeOfArg(a verb.Arg) string {
 		return "[]string"
 	}
 	return "string"
+}
+
+// rawReaderForFlag is the flag's value in its PARSED type, before any
+// Convert -- what a converter takes as its argument.
+func rawReaderForFlag(f verb.Flag) string {
+	if f.Custom != nil {
+		return fmt.Sprintf("stringsOf(b.Custom[%q])", f.Name)
+	}
+	switch f.Type {
+	case verb.FlagBool:
+		return fmt.Sprintf("b.Bool(%q)", f.Name)
+	case verb.FlagUint:
+		return fmt.Sprintf("uintOf(b.Flags[%q])", f.Name)
+	case verb.FlagUint64:
+		return fmt.Sprintf("uint64Of(b.Flags[%q])", f.Name)
+	case verb.FlagDuration:
+		return fmt.Sprintf("durationOf(b.Flags[%q])", f.Name)
+	}
+	return fmt.Sprintf("b.Str(%q)", f.Name)
+}
+
+// dashed spells a flag the way the operator types it.
+func dashed(name string) string {
+	if len(name) == 1 {
+		return "-" + name
+	}
+	return "--" + name
 }
 
 func readerForFlag(f verb.Flag) string {

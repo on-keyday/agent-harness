@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // AgentAction is built by: agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent topics, agent unsubscribe, agent wait.
@@ -434,6 +436,84 @@ type SessionExecAction struct {
 	TaskID string
 	// the command line to run in the session's foreground shell
 	Cmd string
+}
+
+// SetCapsAction is built by: caps set.
+type SetCapsAction struct {
+	ActionMarker
+	// whether --caps was typed, which its zero value cannot say
+	CapsPresent bool
+	// new capability set (same syntax as --caps on submit); omitted = keep the task's current caps
+	Caps *protocol.Capability
+	// whether --scope was typed, which its zero value cannot say
+	ScopePresent bool
+	// new scope; omitted = keep the task's current scope
+	Scope *protocol.TaskScope
+	// narrow ONE capability below --scope (written with --scope; they are one half of the authority)
+	Overrides []protocol.ScopeOverride
+	// also clamp every descendant to the new authority — without this a revoked task can still act throu…
+	Cascade bool
+	// on a narrowing, leave the affected tasks' connections open
+	KeepConns bool
+	TaskID    string
+}
+
+// SetParentAction is built by: caps set-parent.
+type SetParentAction struct {
+	ActionMarker
+	// new parent task id (32 hex); the target and its whole subtree move under it
+	ParentID string
+	// detach the task to the operator root
+	None bool
+	// invert the task with its CURRENT parent
+	Swap   bool
+	TaskID string
+}
+
+// SpawnAction is built by: interactive, session new, submit.
+type SpawnAction struct {
+	ActionMarker
+	// repo identifier; must match a runner-registered RepoPath verbatim
+	Repo string
+	// task id (32 hex) to resume — the server reuses the id and worktree branch, so the agent's project …
+	ResumeTaskID string
+	// with --resume, also ask the runner to resume the agent's own conversation state
+	ResumeConversation bool
+	// whether --caps was typed, which its zero value cannot say
+	CapsPresent bool
+	// comma-separated capability names to grant (e.g. spawn,file_read / all / none)
+	Caps *protocol.Capability
+	// whether --scope was typed, which its zero value cannot say
+	ScopePresent bool
+	// which tasks those capabilities may target; default subtree (self + descendants)
+	Scope *protocol.TaskScope
+	// agent profile name (empty = runner default; not to be confused with --agent-arg)
+	Agent string
+	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
+	Overrides []protocol.ScopeOverride
+	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
+	ExtraArgs []string
+	// pin to a specific runner by ConnectionID (the id= value from `ls`)
+	Runner string
+	// pin to a runner by hostname
+	Host string
+	// pin to a runner by IP address
+	IP string
+	// prompt text
+	Task string
+	Kind string
+	// forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server
+	X11 bool
+	// with --x11: the local display number (0..99)
+	X11Display uint
+	// start the session and exit immediately (don't attach the terminal)
+	Detach bool
+	// open an event-stream session (structured events, no PTY)
+	Stream bool
+	// initial PTY rows (0 = unset; needs --cols too)
+	Rows uint
+	// initial PTY columns (0 = unset; needs --rows too)
+	Cols uint
 }
 
 // StreamTurnAction is built by: session stream turn.
@@ -1369,6 +1449,286 @@ func init() {
 			}
 			return a, nil
 		},
+		"submit\x00cli": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "submit"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.Task = b.Str("task")
+			if a.Task == "" {
+				a.Task = b.Trail
+			}
+			return a, nil
+		},
+		"submit\x00tui": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "submit"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.Task = b.Str("task")
+			if a.Task == "" {
+				a.Task = b.Trail
+			}
+			return a, nil
+		},
+		"submit\x00webui": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "submit"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.Task = b.Str("task")
+			if a.Task == "" {
+				a.Task = b.Trail
+			}
+			return a, nil
+		},
+		"interactive\x00cli": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "interactive"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.X11 = b.Bool("x11")
+			a.X11Display = uintOf(b.Flags["x11-display"])
+			return a, nil
+		},
+		"interactive\x00tui": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "interactive"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("interactive: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.X11 = b.Bool("x11")
+			a.X11Display = uintOf(b.Flags["x11-display"])
+			return a, nil
+		},
+		"session new\x00cli": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "session-new"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.X11 = b.Bool("x11")
+			a.X11Display = uintOf(b.Flags["x11-display"])
+			a.Detach = b.Bool("detach")
+			a.Stream = b.Bool("stream")
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			return a, nil
+		},
+		"session new\x00tui": func(b Bound) (Action, error) {
+			a := SpawnAction{}
+			a.Kind = "session-new"
+			a.Repo = b.Str("repo")
+			a.ResumeTaskID = b.Str("resume")
+			a.ResumeConversation = b.Bool("resume-conversation")
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			a.Agent = b.Str("agent")
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
+			a.Runner = b.Str("runner")
+			a.Host = b.Str("host")
+			a.IP = b.Str("ip")
+			a.X11 = b.Bool("x11")
+			a.X11Display = uintOf(b.Flags["x11-display"])
+			a.Detach = b.Bool("detach")
+			a.Stream = b.Bool("stream")
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			return a, nil
+		},
 		"session send\x00cli": func(b Bound) (Action, error) {
 			a := SendAction{}
 			a.Enter = b.Bool("enter")
@@ -1544,6 +1904,100 @@ func init() {
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"caps set\x00cli": func(b Bound) (Action, error) {
+			a := SetCapsAction{}
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.Cascade = b.Bool("cascade")
+			a.KeepConns = b.Bool("keep-conns")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps set\x00tui": func(b Bound) (Action, error) {
+			a := SetCapsAction{}
+			a.CapsPresent = b.Set["caps"]
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			a.ScopePresent = b.Set["scope"]
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			a.Cascade = b.Bool("cascade")
+			a.KeepConns = b.Bool("keep-conns")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps set-parent\x00cli": func(b Bound) (Action, error) {
+			a := SetParentAction{}
+			a.ParentID = b.Str("parent")
+			a.None = b.Bool("none")
+			a.Swap = b.Bool("swap")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps set-parent\x00tui": func(b Bound) (Action, error) {
+			a := SetParentAction{}
+			a.ParentID = b.Str("parent")
+			a.None = b.Bool("none")
+			a.Swap = b.Bool("swap")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps set-parent\x00webui": func(b Bound) (Action, error) {
+			a := SetParentAction{}
+			a.ParentID = b.Str("parent")
+			a.None = b.Bool("none")
+			a.Swap = b.Bool("swap")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
 			}
 			return a, nil
 		},

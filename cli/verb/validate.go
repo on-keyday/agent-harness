@@ -41,36 +41,34 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))
 		}
 	}
-	for _, group := range v.Exclusive {
-		if named := b.namedIn(group); len(named) > 1 {
-			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))
+	for _, r := range v.Exclusive {
+		if named := b.namedIn(r.Flags); len(named) > 1 {
+			return fmt.Errorf("%s: %s are mutually exclusive%s", name, dashList(named), why(r))
 		}
 	}
-	for _, group := range v.ExactlyOne {
-		named := b.namedIn(group)
-		if len(named) != 1 {
-			return fmt.Errorf("%s: pass exactly one of %s", name, dashList(group))
+	for _, r := range v.ExactlyOne {
+		if named := b.namedIn(r.Flags); len(named) != 1 {
+			return fmt.Errorf("%s: pass exactly one of %s%s", name, dashList(r.Flags), why(r))
 		}
 	}
-	for _, group := range v.AtLeastOne {
-		if len(b.namedIn(group)) == 0 {
-			return fmt.Errorf("%s: pass at least one of %s", name, dashList(group))
+	for _, r := range v.AtLeastOne {
+		if len(b.namedIn(r.Flags)) == 0 {
+			return fmt.Errorf("%s: pass at least one of %s%s", name, dashList(r.Flags), why(r))
 		}
 	}
-	// Grouped by what they need, and reported together: `session send --rows
-	// 10 --style` names two orphans, and one-at-a-time would make the operator
-	// re-run once per flag to discover the next. Walked in DECLARATION order
-	// rather than map order, which is random -- with two orphans the ungrouped
-	// form named an arbitrary one of them.
-	for _, needed := range v.requiredTargets() {
-		var orphans []string
-		for _, f := range v.Flags {
-			if v.Requires[f.Name] == needed && b.Set[f.Name] && !b.Set[needed] {
-				orphans = append(orphans, f.Name)
+	for _, r := range v.Requires {
+		if b.Set[r.Needs] {
+			continue
+		}
+		// Every orphan at once: fixing them one per run is how a caller
+		// discovers the second one only after correcting the first.
+		if orphans := b.namedIn(r.Flags); len(orphans) > 0 {
+			verb := "needs"
+			if len(orphans) > 1 {
+				verb = "need"
 			}
-		}
-		if len(orphans) > 0 {
-			return fmt.Errorf("%s: %s need %s", name, dashList(orphans), dashList([]string{needed}))
+			return fmt.Errorf("%s: %s %s %s%s", name, dashList(orphans), verb,
+				dashList([]string{r.Needs}), why(Rule{Reason: r.Reason}))
 		}
 	}
 
@@ -80,17 +78,12 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 	return nil
 }
 
-// requiredTargets lists the flags something Requires, in declaration order.
-func (v VerbSpec) requiredTargets() []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, f := range v.Flags {
-		if t, ok := v.Requires[f.Name]; ok && !seen[t] {
-			seen[t] = true
-			out = append(out, t)
-		}
+// why renders a rule's reason, or nothing when it has none.
+func why(r Rule) string {
+	if r.Reason == "" {
+		return ""
 	}
-	return out
+	return " (" + r.Reason + ")"
 }
 
 // namedIn returns which of these flags the caller actually supplied.
