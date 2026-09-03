@@ -190,12 +190,29 @@ func (v VerbSpec) check(b Bound) error {
 }
 
 // fixedArgs counts the non-variadic positionals.
+// fixedArgs counts the positionals that must be present.
 func (v VerbSpec) fixedArgs() int {
 	n := 0
 	for _, a := range v.Args {
-		if !a.Variadic {
+		if !a.Variadic && !a.Optional {
 			n++
 		}
+	}
+	return n
+}
+
+// maxArgs is the most positionals this verb accepts, or -1 when variadic.
+func (v VerbSpec) maxArgs() int {
+	n := 0
+	for _, a := range v.Args {
+		if a.Variadic {
+			if a.MaxCount > 0 {
+				n += a.MaxCount
+				continue
+			}
+			return -1
+		}
+		n++
 	}
 	return n
 }
@@ -212,11 +229,13 @@ func (v VerbSpec) checkArity(n int) error {
 			maxCount = a.MaxCount
 		}
 	}
-	if n < fixed || (!variadic && n > fixed) {
+	_ = variadic
+	_ = maxCount
+	if n < fixed {
 		return fmt.Errorf("%s", v.Usage())
 	}
-	if variadic && maxCount > 0 && n-fixed > maxCount {
-		return fmt.Errorf("%s: at most %d (got %d)\n%s", v.FlagSetName(), maxCount, n-fixed, v.Usage())
+	if max := v.maxArgs(); max >= 0 && n > max {
+		return fmt.Errorf("%s: at most %d positional(s), got %d\n%s", v.FlagSetName(), max, n, v.Usage())
 	}
 	return nil
 }

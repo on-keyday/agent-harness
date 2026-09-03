@@ -93,6 +93,28 @@ type FilePushAction struct {
 	RemoteDst string
 }
 
+// GitAction is built by: git diff, git file, git log, git show, git status, git subrepos.
+type GitAction struct {
+	ActionMarker
+	// maximum commits (0 = 100, capped at 1000)
+	Max uint32
+	// run the query inside this worktree-relative nested repo
+	Subrepo string
+	BaseRev string
+	// the pathspec after `--`, which filters within a repository
+	Path string
+	Sub  string
+	// diff the index instead of the working tree
+	Staged bool
+	// inline a submodule's own file-level changes (the output is then not an applyable patch)
+	Submodule bool
+	// maximum diff bytes (0 = 2MiB, capped at 8MiB)
+	MaxBytes  uint32
+	TargetRev string
+	// set by the surface after Build, not by the parse
+	TaskID string
+}
+
 // PruneAction is built by: prune.
 type PruneAction struct {
 	ActionMarker
@@ -439,6 +461,240 @@ func init() {
 			}
 			if len(b.Args) > 1 {
 				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"git log\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "log"
+			a.Max = uint32(uintOf(b.Flags["max"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git log\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "log"
+			a.Max = uint32(uintOf(b.Flags["max"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git log\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "log"
+			a.Max = uint32(uintOf(b.Flags["max"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git diff\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "diff"
+			a.Staged = b.Bool("staged")
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TargetRev = b.Args[1]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git diff\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "diff"
+			a.Staged = b.Bool("staged")
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TargetRev = b.Args[1]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git diff\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "diff"
+			a.Staged = b.Bool("staged")
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TargetRev = b.Args[1]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git show\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "show"
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git show\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "show"
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git show\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "show"
+			a.Submodule = b.Bool("submodule")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.BaseRev = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git status\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "status"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git status\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "status"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git status\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "status"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git subrepos\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "subrepos"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git subrepos\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "subrepos"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git subrepos\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "subrepos"
+			a.Subrepo = b.Str("subrepo")
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git file\x00cli": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "file"
+			a.Staged = b.Bool("staged")
+			a.TargetRev = b.Str("rev")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.Path = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git file\x00tui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "file"
+			a.Staged = b.Bool("staged")
+			a.TargetRev = b.Str("rev")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.Path = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
+			}
+			return a, nil
+		},
+		"git file\x00webui": func(b Bound) (Action, error) {
+			a := GitAction{}
+			a.Sub = "file"
+			a.Staged = b.Bool("staged")
+			a.TargetRev = b.Str("rev")
+			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.Path = b.Args[0]
+			}
+			if b.Pathspec != "" {
+				a.Path = b.Pathspec
 			}
 			return a, nil
 		},

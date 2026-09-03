@@ -81,6 +81,10 @@ func main() {
 			}
 			a.add(field{name: ar.Field, goType: goTypeOfArg(ar)})
 		}
+		if v.PathspecField != "" {
+			a.add(field{name: v.PathspecField, goType: "string",
+				comment: "the pathspec after `--`, which filters within a repository"})
+		}
 		if v.Trailing != nil {
 			if v.Trailing.Field != "" {
 				a.add(field{name: v.Trailing.Field, goType: "string", comment: v.Trailing.Reason})
@@ -91,6 +95,10 @@ func main() {
 		}
 		for name := range v.Const {
 			a.add(field{name: name, goType: "string"})
+		}
+		for name, typ := range v.ExtraFields {
+			a.add(field{name: name, goType: typ,
+				comment: "set by the surface after Build, not by the parse"})
 		}
 	}
 	sort.Strings(names)
@@ -187,6 +195,12 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
 			}
 		}
+		if v.PathspecField != "" {
+			// Only when present: git file lets the path arrive as a positional
+			// OR after the separator, and both write the same field, so an
+			// unconditional assignment would blank the positional form.
+			fmt.Fprintf(buf, "\t\tif b.Pathspec != \"\" {\n\t\t\ta.%s = b.Pathspec\n\t\t}\n", v.PathspecField)
+		}
 		if v.Trailing != nil {
 			if v.Trailing.Field != "" {
 				fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
@@ -222,6 +236,9 @@ func countGenerated() int {
 }
 
 func goTypeOfFlag(f verb.Flag) string {
+	if f.FieldType != "" {
+		return f.FieldType
+	}
 	switch f.Type {
 	case verb.FlagBool:
 		return "bool"
@@ -253,6 +270,16 @@ func goTypeOfArg(a verb.Arg) string {
 func readerForFlag(f verb.Flag) string {
 	if f.Custom != nil {
 		return fmt.Sprintf("stringsOf(b.Custom[%q])", f.Name)
+	}
+	if f.FieldType != "" {
+		// A cast the declaration asked for, written once here rather than at
+		// every consumer that would otherwise do it by hand.
+		switch f.Type {
+		case verb.FlagUint:
+			return fmt.Sprintf("%s(uintOf(b.Flags[%q]))", f.FieldType, f.Name)
+		case verb.FlagUint64:
+			return fmt.Sprintf("%s(uint64Of(b.Flags[%q]))", f.FieldType, f.Name)
+		}
 	}
 	switch f.Type {
 	case verb.FlagBool:

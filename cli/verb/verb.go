@@ -53,6 +53,13 @@ type Arg struct {
 	Type     ArgType
 	Variadic bool // absorbs the rest; only valid as the last Arg
 
+	// Optional is a fixed position that may be omitted. Unlike Variadic it
+	// keeps its index, so a verb can take two of them: `git diff [base]
+	// [target]` counts revisions the way git does -- none, one, or two -- and
+	// each lands in its own field rather than being interpreted from a slice.
+	// Every Optional must follow the required ones.
+	Optional bool
+
 	// MaxCount caps a variadic positional. Zero means unbounded. `board
 	// subscribers` takes at most one topic and `git diff` at most two
 	// revisions -- both were `if len(b.Args) > N` inside a Build, which is a
@@ -136,6 +143,11 @@ type Flag struct {
 	// is required because there is no whole-topic retract, unlike purge.
 	Required bool
 
+	// FieldType overrides the Go type the generator gives Field. A wire struct
+	// wanting uint32 where the flag parses as uint is the whole use: without
+	// it every consumer casts, and one that forgets reads a different number.
+	FieldType string
+
 	// OneOf restricts a string flag to a vocabulary. A value outside it is
 	// refused with the list, rather than passed through to mean whatever the
 	// consumer makes of it -- `forward tap --dir sideways` used to reach the
@@ -199,6 +211,9 @@ type VerbSpec struct {
 	Flags    []Flag
 	Trailing *Trailing
 
+	// PathspecField is the Action field the trailing `-- <path>` lands in.
+	PathspecField string
+
 	// Pathspec means the verb accepts a trailing `-- <path>...`, peeled BEFORE
 	// flags are read because Go's flag package consumes a bare "--" as its
 	// end-of-flags marker and the path would silently vanish. The result
@@ -211,6 +226,13 @@ type VerbSpec struct {
 	// snapshot and session await-idle both build SessionAction) names the same
 	// type and the generator unions their fields.
 	Action string
+
+	// ExtraFields are Action fields the PARSE does not fill: each surface sets
+	// them after Build. `git <task-id> diff` is the case -- the id sits between
+	// the family word and the sub-verb, so every surface peels it before the
+	// shared parse and writes it back afterwards. Declared here so the
+	// generated struct has somewhere for it to go.
+	ExtraFields map[string]string // field name -> Go type
 
 	// Const carries values that are fixed per verb rather than parsed --
 	// SessionAction.Sub is "snapshot" for one path and "await-idle" for
