@@ -872,6 +872,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// leaving the user looking at a stub that arrived via TaskEventMsg.
 		return a, RefreshSnapshot(a.client)
 
+	case RestoreResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("restore failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		for _, line := range strings.Split(msg.Text, "\n") {
+			a.cmdresult.Append(line)
+		}
+		return a, nil
 	case CancelResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("cancel failed: " + msg.Err.Error()))
@@ -3101,6 +3110,15 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoCancel(a.client, v.TaskID, full)
+	case verb.RestoreAction:
+		// Ids as typed, not prefix-resolved: a pruned task is not in the list
+		// a prefix would be resolved against, which is the whole reason this
+		// verb exists.
+		if a.client == nil {
+			a.cmdresult.Append(ErrorStyle.Render("restore: not connected to server"))
+			return a, nil
+		}
+		return a, DoRestore(a.client, v.TaskIDs)
 	case verb.PruneAction:
 		if len(v.TaskIDs) > 0 {
 			a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
@@ -3510,7 +3528,8 @@ const cmdlinePlaceholder = "submit / interactive / session / file / forward / ss
 // CLI's usage() had, found the same way: by counting rather than reading.
 func cmdlineHelpLines() []string {
 	return []string{
-		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit",
+		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit",
+		"restore <id>...                - put back task records a prune forgot, rebuilt from the server's WAL (operator-only; the record returns, the task log does not)",
 		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",
 		"submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task",
 		"interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)",

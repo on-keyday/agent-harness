@@ -340,6 +340,18 @@ enum TaskControlKind:
                             # forward_tap AND that the forward is visible to the
                             # caller. Nothing is recorded server-side — a tap
                             # sees only what crosses after it opens.
+    restore_tasks           # appended (keeps existing ordinals stable): put back
+                            # task records a prune forgot, replayed from the
+                            # server's own WAL. Operator-only, gated the way
+                            # set_caps and set_parent are -- on the caller
+                            # having NO principal task rather than on a bit:
+                            # an agent that could restore any id could resurrect
+                            # a task outside its scope and then act on it,
+                            # and spawn-time intersection can never claw that
+                            # back. prune is the only thing this undoes; a task
+                            # that never existed cannot be invented, because
+                            # every field comes from the WAL record the server
+                            # itself wrote.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -763,6 +775,18 @@ format PruneTasksRequest:
     task_ids_len :u16
     task_ids :[task_ids_len]TaskID    # when non-empty: prune only these ids, ignoring before_ts
     force :u8                          # 1 = also prune ids whose tasks are still active (Queued/Running/Detached)
+
+# RestoreTasks puts back what a prune forgot. The ids are required: there is no
+# "restore everything" form, because the WAL holds every task the server has
+# ever seen and a sweep back would resurrect years of them.
+format RestoreTasksRequest:
+    task_ids_len :u16
+    task_ids :[task_ids_len]TaskID
+
+format RestoreTasksResponse:
+    restored :u32
+    already_present :u32   # the id is in the store; a restore is a no-op
+    not_in_wal :u32        # no task_created for that id, so nothing to rebuild
 
 format PruneTasksResponse:
     removed :u32
@@ -1188,6 +1212,7 @@ format TaskControlRequest:
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillRequest
         TaskControlKind.board_retract         => board_retract         :BoardRetractRequest
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapRequest
+        TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1242,6 +1267,7 @@ format TaskControlResponse:
         TaskControlKind.exec_run_kill         => exec_run_kill         :ExecRunKillResponse
         TaskControlKind.board_retract         => board_retract         :BoardRetractResponse
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapResponse
+        TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksResponse
 
 enum SetCapsStatus:
     :u8

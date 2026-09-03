@@ -783,7 +783,18 @@ func (s *TaskStore) NextQueuedForRepoFunc(repo string, eligible func(TaskEntry) 
 func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, ev := range events {
+	// A task_restored CANCELS the task_pruned before it. Both records stay in
+	// the log -- the WAL is append-only -- so a replay that honoured every
+	// prune would undo every restore on the next restart, which is what
+	// TestRestoreSurvivesAReplayOfTheWholeWAL found. Per OCCURRENCE, not per
+	// id: prune, restore, prune ends pruned, and the last record wins.
+	lastRestore := map[string]int{}
+	for i, ev := range events {
+		if ev.Type == "task_restored" {
+			lastRestore[ev.TaskID] = i
+		}
+	}
+	for i, ev := range events {
 		switch ev.Type {
 		case "task_created":
 			// OriginKind is best-effort: legacy WAL entries (pre-ii) lack
@@ -900,7 +911,13 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				}
 				t.CreatorTaskID = p
 			}
+		case "task_restored":
+			// Nothing to apply: the entry is rebuilt by the events this
+			// record protects from the prune above it.
 		case "task_pruned":
+			if at, restored := lastRestore[ev.TaskID]; restored && at > i {
+				continue // a restore after this prune puts it back
+			}
 			if _, ok := s.tasks[ev.TaskID]; ok {
 				delete(s.tasks, ev.TaskID)
 				// Rebuild order to drop this id.

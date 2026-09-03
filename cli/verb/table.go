@@ -1073,6 +1073,25 @@ var Verbs = []VerbSpec{
 		Examples: []string{"prune-local --before 24h"},
 	},
 
+	{
+		// The undo half of prune, and the reason prune's bare form had to go:
+		// a sweep with no way back is a one-line accident. Rebuilt from the
+		// server's own WAL -- every field comes from a record it wrote --
+		// so this puts back what was forgotten and cannot invent a task.
+		//
+		// Ids are required and there is no --before: the WAL holds every task
+		// the server has ever seen, and a sweep back would resurrect years of
+		// them. The asymmetry with prune is deliberate.
+		Path: []string{"restore"}, Surfaces: CLI | TUI | WebUI,
+		Action:  "RestoreAction",
+		MinArgs: 1,
+		Args:    []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
+		Examples: []string{
+			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	},
+
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, Surfaces: CLI | TUI,

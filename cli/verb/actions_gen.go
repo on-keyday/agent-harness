@@ -322,6 +322,12 @@ type PruneLocalAction struct {
 	TaskIDs []string
 }
 
+// RestoreAction is built by: restore.
+type RestoreAction struct {
+	ActionMarker
+	TaskIDs []string
+}
+
 // SSHGatewayAction is built by: ssh-gateway, ssh-gateway start, ssh-gateway status, ssh-gateway stop.
 type SSHGatewayAction struct {
 	ActionMarker
@@ -1969,6 +1975,27 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.Before = durationOf(b.Flags["before"])
 			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"restore\x00cli": func(b Bound) (Action, error) {
+			a := RestoreAction{}
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"restore\x00tui": func(b Bound) (Action, error) {
+			a := RestoreAction{}
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"restore\x00webui": func(b Bound) (Action, error) {
+			a := RestoreAction{}
 			if len(b.Args) > 0 {
 				a.TaskIDs = b.Args[0:]
 			}

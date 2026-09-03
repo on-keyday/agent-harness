@@ -313,6 +313,23 @@ func DoStreamWrite(c *cli.Client, v verb.SessionAction, resolved string) tea.Cmd
 	}
 }
 
+// DoRestore puts back pruned task records from the server's WAL.
+func DoRestore(c *cli.Client, ids []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var buf strings.Builder
+		err := cli.RestoreWith(ctx, c, ids, &buf)
+		return RestoreResultMsg{Text: strings.TrimSpace(buf.String()), Err: err}
+	}
+}
+
+// RestoreResultMsg carries a restore's outcome to the results pane.
+type RestoreResultMsg struct {
+	Text string
+	Err  error
+}
+
 func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 	return func() tea.Msg {
 		if resolved == "" {

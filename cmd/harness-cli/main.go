@@ -227,6 +227,14 @@ func main() {
 		}
 		os.Stdout.Write(md)
 
+	case "restore":
+		// The undo half of prune. Operator-only, gated server-side on the
+		// caller having no principal task.
+		rs := parseOne[verb.RestoreAction]("restore", args)
+		if err := cli.Restore(ctx, parseCID(), rs.TaskIDs, os.Stdout); err != nil {
+			die(err)
+		}
+
 	case "cancel":
 		// Through the declaration like every other verb. Hand-read args[0]
 		// meant `cancel <a> <b>` cancelled the first and exited 0 while the
@@ -898,6 +906,8 @@ func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "                                      ask the server to forget tasks")
 	fmt.Fprintln(w, "                                      no TASK_IDs: terminal tasks older than --before")
 	fmt.Fprintln(w, "                                      with TASK_IDs: only those (refuses active tasks unless --force)")
+	fmt.Fprintln(w, "  restore TASK_ID [TASK_ID ...]")
+	fmt.Fprintln(w, "                                      OPERATOR ONLY: put back task records a prune forgot, rebuilt from the server's WAL. The RECORD returns; the task log does not (prune removed the file) and the worktree was never touched. An id with no task_created in the WAL cannot be rebuilt")
 	fmt.Fprintln(w, "  prune-local [--repo PATH] [--before DUR] [-f|--force] [TASK_ID ...]")
 	fmt.Fprintln(w, "                                      remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(w, "                                      with no TASK_IDs: time-based, removes entries older than --before")

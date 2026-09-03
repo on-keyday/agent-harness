@@ -84,12 +84,17 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// operator's scope is global.
 	protocol.TaskControlKind_SetCaps:   noTarget,
 	protocol.TaskControlKind_SetParent: noTarget,
+	// restore_tasks names target ids and is operator-only by the same
+	// principal-identity gate. It could not be scope-gated even in principle:
+	// the ids it names are ones a prune already removed, so there is no live
+	// entry left for inScope to walk a parent link from.
+	protocol.TaskControlKind_RestoreTasks: noTarget,
 	// permission_denied is a RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_OpenForwardTap); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_RestoreTasks); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -104,12 +109,13 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// open_forward_tap is the last kind; if the enum grows past it the loop above
-// stops short and silently covers nothing new.
-func TestOpenForwardTapIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_OpenForwardTap) + 1)
+// restore_tasks is the last kind; if the enum grows past it the loop above
+// stops short and silently covers nothing new. It caught restore_tasks itself:
+// the bound was open_forward_tap and this is what said so.
+func TestRestoreTasksIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_RestoreTasks) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after open_forward_tap (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after restore_tasks (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
 	}
 }

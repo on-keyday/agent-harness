@@ -132,6 +132,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseCancel(tokens[1:])
 	case "prune":
 		return parseViaSpec("prune", tokens[1:])
+	case "restore":
+		return parseViaSpec("restore", tokens[1:])
 	case "clear":
 		return ClearAction{}, nil
 	case "refresh", "sync":

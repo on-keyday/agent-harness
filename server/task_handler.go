@@ -77,6 +77,11 @@ type TaskHandler struct {
 	// to TaskStore.PruneTerminal (time mode) or TaskStore.PruneByIDs (id mode).
 	PruneFn func(allowed map[string]bool, req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int)
 
+	// RestoreFn puts back records a prune forgot, rebuilt from the WAL. It
+	// takes no scope set: the handler gates on operator identity, so there is
+	// no narrower caller to confine.
+	RestoreFn func(ids []string) (restored, alreadyPresent, notInWAL []string)
+
 	// LogsDir is the directory containing per-task log files
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
 	// (always returns Found=0). Server.New wires it from cfg.DataDir.
@@ -682,6 +687,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_RestoreTasks:
+		// Operator-identity gate, like SetCaps below; deliberately NOT in
+		// requiredCap, for the same self-amplification reason.
+		rt := req.RestoreTasks()
+		if rt == nil {
+			slog.Error("TaskHandler: RestoreTasks variant is nil")
+			return
+		}
+		h.handleRestoreTasks(conn, req.RequestId, cid, rt)
 
 	case protocol.TaskControlKind_SetCaps:
 		// Deliberately NOT in requiredCap: the gate is operator identity, and a

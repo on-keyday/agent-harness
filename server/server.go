@@ -184,9 +184,12 @@ func New(cfg Config) *Server {
 	}
 	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay
-	logsDir := ""
+	logsDir, restoreWALPath := "", ""
 	if s.cfg.DataDir != "" {
 		logsDir = filepath.Join(s.cfg.DataDir, "logs")
+		// Same file serve() replays from at startup. Named here because
+		// RestoreFn re-reads it per call, and both must be the one WAL.
+		restoreWALPath = filepath.Join(s.cfg.DataDir, "events.log")
 	}
 	s.taskHandler = &TaskHandler{
 		Tasks:          s.tasks,
@@ -213,6 +216,21 @@ func New(cfg Config) *Server {
 				ids = append(ids, hex.EncodeToString(req.TaskIds[i].Id[:]))
 			}
 			return s.tasks.PruneByIDs(allowed, ids, req.Force != 0, logsDir)
+		},
+		// The undo half of PruneFn. It re-reads the WAL from disk each time
+		// rather than holding the events in memory: a restore is rare, the
+		// file is the authority, and keeping a parallel copy in RAM is a
+		// second source for the same history.
+		RestoreFn: func(ids []string) (restored, alreadyPresent, notInWAL []string) {
+			if restoreWALPath == "" {
+				return nil, nil, ids // no DataDir: nothing was ever persisted
+			}
+			events, rerr := ReadWAL(restoreWALPath)
+			if rerr != nil {
+				s.cfg.Logger.Error("restore: WAL read failed", "path", restoreWALPath, "err", rerr)
+				return nil, nil, ids
+			}
+			return s.tasks.RestoreFromWAL(events, ids)
 		},
 		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
 		// wired later in Run (they need the constructed Endpoint), but these
@@ -583,7 +601,7 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
 			return fmt.Errorf("create data dir: %w", err)
 		}
-		walPath := filepath.Join(s.cfg.DataDir, "events.log")
+		walPath := filepath.Join(s.cfg.DataDir, "events.log") // == restoreWALPath
 		// Replay WAL if present. A corrupted WAL is logged but does not prevent
 		// server startup — an empty store is recoverable.
 		events, rerr := ReadWAL(walPath)

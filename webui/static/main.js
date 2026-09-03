@@ -5924,6 +5924,7 @@ const RUNCMD_DISPATCH = {
   "submit": { fn: "submit" },
   "cancel": { fn: "cancel" },
   "prune": { fn: "prune" },
+  "restore": { fn: "restore" },
   "ls": { fn: "list" },
   "grid": { fn: "gridSet" },
   "caps set-parent": { fn: "setParent" },
@@ -6093,6 +6094,14 @@ async function runVerbCommand(tokens, ctx) {
       const mode = under ? (b.flags.descendants ? "descendants" : "subtree")
                  : (b.args.length ? "ids" : "all");
       out = await ctx.openGridSet({ mode, anchor: under, ids: b.args });
+      break;
+    }
+    case "restore": {
+      // The undo half of prune. Ids only -- there is no sweep back, because
+      // the WAL holds every task the server has ever seen.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      out = await ctx.harness.restore(b.args);
       break;
     }
     case "prune": {

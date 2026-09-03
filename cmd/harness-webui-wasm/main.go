@@ -92,6 +92,7 @@ func main() {
 		"connect":            js.FuncOf(harnessConnect),
 		"submit":             js.FuncOf(harnessSubmit),
 		"list":               js.FuncOf(harnessList),
+		"restore":            js.FuncOf(harnessRestore),
 		"snapshot":           js.FuncOf(harnessSnapshot),
 		"gridSet":            js.FuncOf(harnessGridSet),
 		"previewStart":       js.FuncOf(harnessPreviewStart),
@@ -1783,6 +1784,38 @@ func harnessWatch(this js.Value, args []js.Value) any {
 //
 //	harness.prune({before: "168h"}) -> Promise<string>                       // time mode
 //	harness.prune({taskIds: ["<32hex>", ...], force: true}) -> Promise<string> // id mode
+//
+// harnessRestore puts back task records a prune forgot, rebuilt from the
+// server's WAL. Operator-only, enforced server-side.
+//
+//	harness.restore([taskIDHex, ...]) -> Promise<string>
+func harnessRestore(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("restore: missing task ids"))
+				return
+			}
+			var buf bytesBuffer
+			if err := cli.RestoreWith(rootCtx, c, jsArrayToStringSlice(args[0]), &buf); err != nil {
+				rejectErr(reject, fmt.Errorf("restore: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(buf.String()))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 func harnessPrune(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
