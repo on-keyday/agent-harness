@@ -319,7 +319,7 @@ type PruneLocalAction struct {
 	TaskIDs []string
 }
 
-// SSHGatewayAction is built by: ssh-gateway.
+// SSHGatewayAction is built by: ssh-gateway, ssh-gateway start, ssh-gateway status, ssh-gateway stop.
 type SSHGatewayAction struct {
 	ActionMarker
 	// ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)
@@ -328,6 +328,7 @@ type SSHGatewayAction struct {
 	HostKeyPath string
 	// OpenSSH authorized_keys file; optional on a loopback bind, required otherwise
 	AuthorizedKeys string
+	Sub            string
 }
 
 // SendAction is built by: session send.
@@ -378,13 +379,17 @@ type ServerDialRunnerAction struct {
 	RunnerCID string
 }
 
-// SessionAction is built by: session attach, session await-idle, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt.
+// SessionAction is built by: session attach, session await-idle, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
 type SessionAction struct {
 	ActionMarker
+	// ms to let the line drain to the runner before detaching
+	FlushMs uint
+	TaskID  string
+	// the user turn's text
+	Text string
+	Sub  string
 	// attach in view-only mode
-	View   bool
-	TaskID string
-	Sub    string
+	View bool
 	// quiescence threshold in ms (0 = server default)
 	ThresholdMs uint
 	// fire via the operator-notification egress
@@ -419,8 +424,6 @@ type SessionAction struct {
 	Detect bool
 	// with --detect: which agent's rule set
 	DetectAgent string
-	// ms to let the line drain
-	FlushMs uint
 	// run the tool as requested
 	Allow bool
 	// refuse it
@@ -526,16 +529,6 @@ type SpawnAction struct {
 	Rows uint
 	// initial PTY columns (0 = unset; needs --rows too)
 	Cols uint
-}
-
-// StreamTurnAction is built by: session stream turn.
-type StreamTurnAction struct {
-	ActionMarker
-	// ms to let the line drain to the runner before detaching
-	FlushMs uint
-	TaskID  string
-	// the user turn's text
-	Text string
 }
 
 // WorkspaceAction is built by: workspace apply, workspace detach, workspace ls, workspace rm, workspace save, workspace show.
@@ -1343,6 +1336,24 @@ func init() {
 			a.AuthorizedKeys = b.Str("authorized-keys")
 			return a, nil
 		},
+		"ssh-gateway start\x00tui": func(b Bound) (Action, error) {
+			a := SSHGatewayAction{}
+			a.Sub = "start"
+			if len(b.Args) > 0 {
+				a.Listen = b.Args[0]
+			}
+			return a, nil
+		},
+		"ssh-gateway status\x00tui": func(b Bound) (Action, error) {
+			a := SSHGatewayAction{}
+			a.Sub = "status"
+			return a, nil
+		},
+		"ssh-gateway stop\x00tui": func(b Bound) (Action, error) {
+			a := SSHGatewayAction{}
+			a.Sub = "stop"
+			return a, nil
+		},
 		"workspace save\x00cli": func(b Bound) (Action, error) {
 			a := WorkspaceAction{}
 			a.Sub = "save"
@@ -1778,7 +1789,8 @@ func init() {
 			return a, nil
 		},
 		"session stream turn\x00cli": func(b Bound) (Action, error) {
-			a := StreamTurnAction{}
+			a := SessionAction{}
+			a.Sub = "stream-turn"
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -1787,7 +1799,8 @@ func init() {
 			return a, nil
 		},
 		"session stream turn\x00tui": func(b Bound) (Action, error) {
-			a := StreamTurnAction{}
+			a := SessionAction{}
+			a.Sub = "stream-turn"
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -1796,7 +1809,8 @@ func init() {
 			return a, nil
 		},
 		"session stream turn\x00webui": func(b Bound) (Action, error) {
-			a := StreamTurnAction{}
+			a := SessionAction{}
+			a.Sub = "stream-turn"
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]

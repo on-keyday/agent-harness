@@ -12,15 +12,15 @@ import (
 // the declaration. Two kinds: screen-state operations another surface has no
 // equivalent of (clear, refresh, trsf, diag), and this TUI's own session
 // state -- `caps` / `scope` set the default a spawn carries when the command
-// line does not name its own, `repo` sets the default repo those spawns use,
-// and `ssh-gateway start|stop` runs the gateway this process hosts, where the
-// CLI's form is a foreground server.
+// line does not name its own, and `repo` sets the default repo those spawns
+// use. (`ssh-gateway start|stop|status` used to be here too; it is declared
+// now, as three TUI-only paths beside the CLI's foreground form.)
 //
 // Listed rather than skipped, because the help must still describe them: an
 // operator reading it cannot tell which half of the cmdline a verb came from.
 var helpLocalVerbs = []string{
 	"clear", "refresh", "quit", "help", "trsf", "diag",
-	"caps", "scope", "ssh-gateway", "repo",
+	"caps", "scope", "repo",
 }
 
 // TestHelpDescribesEveryDeclaredVerb holds the `help` body to the declaration.

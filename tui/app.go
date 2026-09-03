@@ -3057,7 +3057,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(OKStyle.Render("scope set: ") + label)
 		}
 		return a, nil
-	case SetCapsAction:
+	case verb.SetCapsAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3067,7 +3067,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			TaskID: full, Caps: v.Caps, Scope: v.Scope, Overrides: v.Overrides,
 			Cascade: v.Cascade, KeepConns: v.KeepConns,
 		})
-	case SetParentAction:
+	case verb.SetParentAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3104,41 +3104,43 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 		}
 		return a, DoPruneTasks(a.client, v.Before, v.TaskIDs, v.Force)
-	case SessionAttachAction:
-		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
-	case SessionStreamAttachAction:
-		// Following an event-stream task in the TUI IS following its log: the
-		// runner renders this kind's events into the task log, so the logs
-		// pane is the follower — same content as the CLI's
-		// `session stream attach`, already live via the topic subscription.
-		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
-		if errStr != "" {
-			a.cmdresult.Append(ErrorStyle.Render(errStr))
-			return a, nil
-		}
-		a.cmdresult.Append(fmt.Sprintf("stream attach %s: following its events in the logs pane", shortTaskID(full)))
-		a.setFocus(focusLogs)
-		return a, a.followTask(full)
-	case SessionStreamWriteAction:
-		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
-		if errStr != "" {
-			a.cmdresult.Append(ErrorStyle.Render(errStr))
-			return a, nil
-		}
-		return a, DoStreamWrite(a.client, v, full)
-	case SessionLsAction:
-		return a, DoSessionList(a.client)
-	case SessionKillAction:
-		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
-		if errStr != "" {
-			a.cmdresult.Append(ErrorStyle.Render(errStr))
-			return a, nil
-		}
-		return a, DoCancel(a.client, v.IDPrefix, full)
 	case verb.SessionAction:
+		// One action for the whole family, dispatched on the Sub the
+		// declaration fixed. These were five TUI-local action types with five
+		// hand-written parsers, which is how `session attach <id> --view`
+		// became "too many arguments" on the one surface where --view is
+		// declared.
+		if v.Sub == "ls" {
+			return a, DoSessionList(a.client)
+		}
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		switch v.Sub {
+		case "attach":
+			mode := protocol.AttachMode_Control
+			if v.View {
+				mode = protocol.AttachMode_View
+			}
+			return a, DoAttachSession(a.client, full, mode)
+		case "kill":
+			return a, DoCancel(a.client, v.TaskID, full)
+		case "stream-attach":
+			// Following an event-stream task in the TUI IS following its log:
+			// the runner renders this kind's events into the task log, so the
+			// logs pane is the follower — same content as the CLI's
+			// `session stream attach`, already live via the topic
+			// subscription.
+			a.cmdresult.Append(fmt.Sprintf("stream attach %s: following its events in the logs pane", shortTaskID(full)))
+			a.setFocus(focusLogs)
+			return a, a.followTask(full)
+		case "stream-turn", "stream-approve", "stream-interrupt", "stream-finish":
+			return a, DoStreamWrite(a.client, v, full)
+		case "await-idle":
+		default:
+			a.cmdresult.Append(WarnStyle.Render("session " + v.Sub + ": not reachable from this surface"))
 			return a, nil
 		}
 		sink := protocol.AwaitIdleSink_Reply
@@ -3311,7 +3313,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, a.startForwardTap(v)
 	case verb.ExecRunAction:
 		return a, a.runExecRunAction(v)
-	case SSHGatewayAction:
+	case verb.SSHGatewayAction:
 		return a, a.runSSHGatewayAction(v)
 	case verb.ServerDialRunnerAction:
 		if a.client == nil {
@@ -3319,7 +3321,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoServerDialRunner(a.client, v.RunnerCID, v.Via)
-	case NotifyAction:
+	case verb.NotifyAction:
 		if a.client == nil {
 			a.cmdresult.Append(ErrorStyle.Render("notify: not connected to server"))
 			return a, nil
@@ -3516,7 +3518,7 @@ func cmdlineHelpLines() []string {
 		"exec ls [-task <id>] | exec kill <exec-id>         - list the running execs / stop one (Obs column shows Nx while any run)",
 		"  --shell        one line for the runner's own shell, so pipes and redirects mean something",
 		"  --sshd-parent  give the line a parent process named sshd, for a client that checks its ancestry (Windows only; needs --shell)",
-		"ssh-gateway [start [bind:port] | stop]             - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
+		"ssh-gateway [start [bind:port] | stop | status]    - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
 		"workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)",
 		"workspace rm <name>                                - delete one workspace from .harness/config",
 		"workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)",

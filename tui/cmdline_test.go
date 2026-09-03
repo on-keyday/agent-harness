@@ -396,9 +396,9 @@ func TestParseSessionStreamAttach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(SessionStreamAttachAction)
-	if a.IDPrefix != "deadbeef" {
-		t.Errorf("IDPrefix=%q want deadbeef", a.IDPrefix)
+	a := got.(verb.SessionAction)
+	if a.Sub != "stream-attach" || a.TaskID != "deadbeef" {
+		t.Errorf("got %#v, want stream-attach deadbeef", a)
 	}
 }
 
@@ -582,62 +582,47 @@ func TestParseServerDialRunnerWithoutVia(t *testing.T) {
 	}
 }
 
-func TestParseNotifySimple(t *testing.T) {
-	// "notify hello" — no explicit level; Level is empty (defaults to info at dispatch),
-	// title = "hello", text = "".
-	got, err := ParseCommand(`notify hello`, "/cwd")
+// notify takes the CLI's flags here now. It was a positional grammar --
+// `notify [info|warn|error] <title> [text...]` -- which meant the declaration's
+// own example, `notify --level warn --title T body`, parsed on this surface as
+// a notification TITLED "--level" (D21).
+func TestParseNotifyUsesTheDeclaredFlags(t *testing.T) {
+	got, err := ParseCommand(`notify --level warn --title build the tree is red`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(NotifyAction)
+	a, ok := got.(verb.NotifyAction)
 	if !ok {
-		t.Fatalf("got %T, want NotifyAction", got)
+		t.Fatalf("got %T, want verb.NotifyAction", got)
 	}
-	if a.Level != "" {
-		t.Errorf("Level=%q, want empty (defaulted)", a.Level)
-	}
-	if a.Title != "hello" {
-		t.Errorf("Title=%q, want hello", a.Title)
-	}
-	if a.Text != "" {
-		t.Errorf("Text=%q, want empty", a.Text)
+	if a.Level != "warn" || a.Title != "build" || a.Text != "the tree is red" {
+		t.Fatalf("got %#v", a)
 	}
 }
 
-func TestParseNotifyWarnWithText(t *testing.T) {
-	// "notify warn foo bar" — explicit warn level, title = "foo", text = "bar".
+// The body is required, and --level takes the declared vocabulary only.
+func TestParseNotifyRejects(t *testing.T) {
+	for _, line := range []string{
+		`notify`,
+		`notify --level bogus x`,
+	} {
+		if _, err := ParseCommand(line, "/cwd"); err == nil {
+			t.Errorf("%q parsed, want an error", line)
+		}
+	}
+}
+
+// The old positional form is gone, and it must not parse as something ELSE:
+// `notify warn foo` used to mean level=warn, and silently becoming a body of
+// "warn foo" would be the worse failure.
+func TestParseNotifyOldPositionalFormIsPlainText(t *testing.T) {
 	got, err := ParseCommand(`notify warn foo bar`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ok := got.(NotifyAction)
-	if !ok {
-		t.Fatalf("got %T, want NotifyAction", got)
-	}
-	if a.Level != "warn" {
-		t.Errorf("Level=%q, want warn", a.Level)
-	}
-	if a.Title != "foo" {
-		t.Errorf("Title=%q, want foo", a.Title)
-	}
-	if a.Text != "bar" {
-		t.Errorf("Text=%q, want bar", a.Text)
-	}
-}
-
-func TestParseNotifyEmpty(t *testing.T) {
-	// "notify" with no arguments must return an error.
-	_, err := ParseCommand(`notify`, "/cwd")
-	if err == nil {
-		t.Fatal("expected error on empty notify")
-	}
-}
-
-func TestParseNotifyLevelOnlyNoTitle(t *testing.T) {
-	// "notify error" — "error" is consumed as the level, leaving no title → error.
-	_, err := ParseCommand(`notify error`, "/cwd")
-	if err == nil {
-		t.Fatal("expected error: level consumed but no title provided")
+	a := got.(verb.NotifyAction)
+	if a.Level != "info" || a.Text != "warn foo bar" {
+		t.Fatalf("got %#v, want the whole tail as text at the default level", a)
 	}
 }
 
@@ -1212,9 +1197,9 @@ func TestParseCapsSetCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("caps set: %v", err)
 	}
-	sc, ok := act.(SetCapsAction)
+	sc, ok := act.(verb.SetCapsAction)
 	if !ok {
-		t.Fatalf("act = %#v, want SetCapsAction", act)
+		t.Fatalf("act = %#v, want verb.SetCapsAction", act)
 	}
 	if sc.TaskID != id || sc.Caps == nil || *sc.Caps != protocol.Capability_Spawn {
 		t.Fatalf("caps set = %#v", sc)
@@ -1244,8 +1229,8 @@ func TestParseCapsSetParentCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set-parent --parent: %v", err)
 	}
-	sp, ok := act.(SetParentAction)
-	if !ok || sp.TaskID != id || sp.ParentID != pid || sp.Detach || sp.Swap {
+	sp, ok := act.(verb.SetParentAction)
+	if !ok || sp.TaskID != id || sp.ParentID != pid || sp.None || sp.Swap {
 		t.Fatalf("set-parent --parent = %#v", act)
 	}
 
@@ -1253,8 +1238,8 @@ func TestParseCapsSetParentCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set-parent --none: %v", err)
 	}
-	sp, ok = act.(SetParentAction)
-	if !ok || sp.TaskID != id || !sp.Detach || sp.Swap || sp.ParentID != "" {
+	sp, ok = act.(verb.SetParentAction)
+	if !ok || sp.TaskID != id || !sp.None || sp.Swap || sp.ParentID != "" {
 		t.Fatalf("set-parent --none = %#v", act)
 	}
 
@@ -1262,8 +1247,8 @@ func TestParseCapsSetParentCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set-parent --swap (flag first): %v", err)
 	}
-	sp, ok = act.(SetParentAction)
-	if !ok || sp.TaskID != id || !sp.Swap || sp.Detach {
+	sp, ok = act.(verb.SetParentAction)
+	if !ok || sp.TaskID != id || !sp.Swap || sp.None {
 		t.Fatalf("set-parent --swap = %#v", act)
 	}
 
@@ -1355,42 +1340,44 @@ func TestParseSessionStreamWriteVerbs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("turn: %v", err)
 	}
-	turn, ok := got.(SessionStreamWriteAction)
-	if !ok || turn.Verb != "turn" || turn.IDPrefix != "deadbeef" {
+	turn, ok := got.(verb.SessionAction)
+	if !ok || turn.Sub != "stream-turn" || turn.TaskID != "deadbeef" {
 		t.Fatalf("turn: got %#v", got)
 	}
 	if turn.Text != "hello there" {
 		t.Errorf("turn text = %q, want the words joined", turn.Text)
 	}
 
-	got, err = ParseCommand(`session stream approve deadbeef req-ab-1 deny use the Makefile`, "/cwd")
+	// --deny / --message, the CLI's spelling. The bare-word verdict this
+	// surface used carried a reason -- "whitespace-split with no flag parser"
+	// -- that was the WebUI's, copied here, where a FlagSet has always run.
+	got, err = ParseCommand(`session stream approve deadbeef req-ab-1 --deny --message "use the Makefile"`, "/cwd")
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	ap := got.(SessionStreamWriteAction)
-	if ap.RequestID != "req-ab-1" || ap.Verdict != "deny" || ap.Text != "use the Makefile" {
+	ap := got.(verb.SessionAction)
+	if ap.RequestID != "req-ab-1" || !ap.Deny || ap.Message != "use the Makefile" {
 		t.Fatalf("approve: got %#v", ap)
 	}
 
-	for _, verb := range []string{"interrupt", "finish"} {
-		got, err := ParseCommand("session stream "+verb+" deadbeef", "/cwd")
+	for _, sub := range []string{"interrupt", "finish"} {
+		got, err := ParseCommand("session stream "+sub+" deadbeef", "/cwd")
 		if err != nil {
-			t.Fatalf("%s: %v", verb, err)
+			t.Fatalf("%s: %v", sub, err)
 		}
-		if w := got.(SessionStreamWriteAction); w.Verb != verb || w.IDPrefix != "deadbeef" {
-			t.Errorf("%s: got %#v", verb, w)
+		if w := got.(verb.SessionAction); w.Sub != "stream-"+sub || w.TaskID != "deadbeef" {
+			t.Errorf("%s: got %#v", sub, w)
 		}
 	}
 }
 
-// The verdict is a bare word here, so a typo must be refused rather than read
-// as a reason — and an allow must not silently swallow trailing text meant as
-// one, since an allow carries no message.
+// A verdict is required, only one of them, and an allow carries no message --
+// the message IS the deny reason, and it reaches the agent verbatim.
 func TestParseSessionStreamApproveRejectsBadShapes(t *testing.T) {
 	for _, line := range []string{
 		`session stream approve deadbeef req-ab-1`,
-		`session stream approve deadbeef req-ab-1 maybe`,
-		`session stream approve deadbeef req-ab-1 allow because I said so`,
+		`session stream approve deadbeef req-ab-1 --allow --deny`,
+		`session stream approve deadbeef req-ab-1 --allow --message "because I said so"`,
 	} {
 		if _, err := ParseCommand(line, "/cwd"); err == nil {
 			t.Errorf("%q parsed, want an error", line)

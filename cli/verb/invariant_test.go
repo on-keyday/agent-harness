@@ -2,6 +2,9 @@ package verb
 
 import (
 	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -199,4 +202,104 @@ func TestNoHandWrittenVerbFlagSetsRemain(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestEveryTuiParseFuncGoesThroughTheDeclaration closes the hole the test
+// above cannot see.
+//
+// That one greps for `flag.NewFlagSet(`. Every parser that survived the
+// migration in tui/cmdline.go walked argv BY HAND -- `for i := 0; i <
+// len(args); i++` with a switch on the token -- so it built no FlagSet and the
+// guard stayed green with twelve declared paths parsed somewhere else. Three
+// of them had diverged: `caps set --caps X --scope-for Y` was refused by the
+// CLI and silently accepted here with the override dropped, `notify --level
+// warn --title T body` produced a notification TITLED "--level", and `session
+// attach <id> --view` was "too many arguments" on the one surface where
+// --view is declared.
+//
+// So this checks the positive property instead of a negative pattern: a
+// function in that file whose name begins with `parse` must reach the
+// declaration, directly or through one of the helpers that does.
+func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
+	const path = "../../tui/cmdline.go"
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("read %s: %v", path, err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	// Reaching the declaration means calling one of these, or being one.
+	gateways := map[string]bool{
+		"parseViaPath": true, "parseViaSpec": true, "parseViaSpec2": true,
+		"parseSpawnTUI": true, "Lookup": true,
+	}
+	seen := map[string]bool{}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "parse") {
+			continue
+		}
+		if gateways[fn.Name.Name] {
+			continue
+		}
+		seen[fn.Name.Name] = true
+		if reason, exempt := tuiParseNotDeclared[fn.Name.Name]; exempt {
+			if strings.TrimSpace(reason) == "" {
+				t.Errorf("%s: an exemption needs a reason", fn.Name.Name)
+			}
+			continue
+		}
+		reaches := false
+		ast.Inspect(fn, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch c := call.Fun.(type) {
+			case *ast.Ident:
+				if gateways[c.Name] || strings.HasPrefix(c.Name, "parse") {
+					reaches = true
+				}
+			case *ast.SelectorExpr:
+				if gateways[c.Sel.Name] {
+					reaches = true
+				}
+			}
+			return !reaches
+		})
+		if !reaches {
+			t.Errorf("tui/cmdline.go: %s parses argv without reaching the declaration.\n"+
+				"A hand-written token walk builds no FlagSet, so "+
+				"TestNoHandWrittenVerbFlagSetsRemain cannot see it -- which is how "+
+				"`caps set`, `caps set-parent` and `notify` kept grammars this "+
+				"surface alone had. Route it through parseViaPath, or add %q to "+
+				"tuiParseNotDeclared with the reason.", fn.Name.Name, fn.Name.Name)
+		}
+	}
+}
+
+// An exemption that outlives its function is a rule nobody is following.
+func TestTuiParseExemptionsAreLive(t *testing.T) {
+	src, err := os.ReadFile("../../tui/cmdline.go")
+	if err != nil {
+		t.Skip(err)
+	}
+	for name := range tuiParseNotDeclared {
+		if !strings.Contains(string(src), "func "+name+"(") {
+			t.Errorf("stale exemption: tui/cmdline.go has no %s", name)
+		}
+	}
+}
+
+// tuiParseNotDeclared names parse functions that deliberately do not reach the
+// declaration, with the reason.
+var tuiParseNotDeclared = map[string]string{
+	// `repo <path>` sets what a later submit inherits when its line names no
+	// --repo. It is this process's own session state, not a request, and it
+	// is the SurfaceContext tier of --repo's ladder rather than a verb the
+	// other surfaces have.
+	"parseRepo": "sets this TUI session's default repo; the surface-context tier, not a request",
 }

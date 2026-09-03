@@ -518,6 +518,39 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"ssh-gateway", "ssh-gateway --listen 127.0.0.1:2223"},
 	},
+	// The TUI's form is a different SHAPE, not the same verb with a narrower
+	// flag set: the CLI runs the gateway in the foreground with flags, while
+	// the TUI starts and stops a background one it hosts. Two paths, as the
+	// design says -- and declared here rather than hand-parsed, which is what
+	// they were: the last verb-shaped token walk in tui/cmdline.go.
+	{
+		Path:     []string{"ssh-gateway", "start"},
+		Action:   "SSHGatewayAction",
+		Const:    map[string]string{"Sub": "start"},
+		Surfaces: TUI,
+		Args: []Arg{{Name: "bind-addr", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Listen",
+			Surfaces: TUI, SurfaceReason: "the CLI names the same address with --listen, in the foreground form"}},
+		Examples: []string{"ssh-gateway start", "ssh-gateway start 127.0.0.1:2223"},
+	},
+	{
+		// Bare `ssh-gateway` reports; declared as its own path so the family
+		// answers with ONE type. It had a local type for the status form and
+		// the declaration's for the other two, which is the shadowing footgun
+		// exactly: two types with the same name, both satisfying Action, and a
+		// `case SSHGatewayAction:` written by habit never matches.
+		Path:     []string{"ssh-gateway", "status"},
+		Action:   "SSHGatewayAction",
+		Const:    map[string]string{"Sub": "status"},
+		Surfaces: TUI,
+		Examples: []string{"ssh-gateway status"},
+	},
+	{
+		Path:     []string{"ssh-gateway", "stop"},
+		Action:   "SSHGatewayAction",
+		Const:    map[string]string{"Sub": "stop"},
+		Surfaces: TUI,
+		Examples: []string{"ssh-gateway stop"},
+	},
 
 	// --- workspace ---
 	{
@@ -836,7 +869,11 @@ var Verbs = []VerbSpec{
 		Path:     []string{"session", "stream", "turn"},
 		Surfaces: CLI | TUI | WebUI,
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
-		Action:   "StreamTurnAction",
+		// SessionAction like the rest of the family, not a type of its own:
+		// the TUI dispatches the namespace on Sub, and one verb answering with
+		// a different type made that verb the one that stayed hand-parsed.
+		Action:   "SessionAction",
+		Const:    map[string]string{"Sub": "stream-turn"},
 		Trailing: &Trailing{Name: "text", Field: "Text", Required: true, Reason: "the user turn's text"},
 		Flags: []Flag{
 			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs",

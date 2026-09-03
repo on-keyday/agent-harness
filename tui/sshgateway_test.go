@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/on-keyday/agent-harness/cli/verb"
+)
 
 func TestParseSSHGateway(t *testing.T) {
 	cases := []struct {
@@ -28,7 +32,7 @@ func TestParseSSHGateway(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseSSHGateway(%v): %v", tc.in, err)
 		}
-		g, ok := act.(SSHGatewayAction)
+		g, ok := act.(verb.SSHGatewayAction)
 		if !ok {
 			t.Fatalf("parseSSHGateway(%v) returned %T", tc.in, act)
 		}
@@ -52,7 +56,7 @@ func TestSSHGateway_StartStopLifecycle(t *testing.T) {
 		t.Errorf("Listen = %q, want 127.0.0.1:2222", got)
 	}
 
-	cmd := a.runSSHGatewayAction(SSHGatewayAction{Sub: "start", Listen: "127.0.0.1:2300"})
+	cmd := a.runSSHGatewayAction(verb.SSHGatewayAction{Sub: "start", Listen: "127.0.0.1:2300"})
 	if cmd != nil {
 		t.Error("a second start must be refused, not dispatched")
 	}
@@ -68,7 +72,7 @@ func TestSSHGateway_StartStopLifecycle(t *testing.T) {
 
 func TestSSHGateway_StopWithNoneRunning(t *testing.T) {
 	a := New(Config{})
-	if cmd := a.runSSHGatewayAction(SSHGatewayAction{Sub: "stop"}); cmd != nil {
+	if cmd := a.runSSHGatewayAction(verb.SSHGatewayAction{Sub: "stop"}); cmd != nil {
 		t.Error("stopping with nothing running must report, not dispatch")
 	}
 }

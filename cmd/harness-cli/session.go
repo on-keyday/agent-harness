@@ -160,7 +160,7 @@ func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
 	if berr != nil {
 		return berr
 	}
-	a := act.(verb.StreamTurnAction)
+	a := act.(verb.SessionAction)
 	taskIDHex, text := a.TaskID, a.Text
 	flushMs := &a.FlushMs
 

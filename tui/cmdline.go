@@ -55,131 +55,12 @@ type GridDiagAction struct {
 // the command-result panel (debug aid).
 type TrsfDebugAction struct{ verb.ActionMarker }
 
-// SessionNewAction opens a new detachable interactive PTY session.
-// When Detach is true the session is opened and the local stream is closed
-// immediately (Docker-style background start); the task id is printed to
-// cmdresult and the TUI is not suspended.
-//
-// SessionAttachAction re-attaches to an existing detachable session by ID.
-type SessionAttachAction struct {
-	verb.ActionMarker
-	TaskID string
-}
-
-// SessionStreamWriteAction is one write on an event-stream task's data plane —
-// the cmdline route to what the chat view (r) does with keys. One action for
-// all four verbs rather than four near-identical ones: they differ only in
-// which message gets built, and that choice already lives in cli.
-type SessionStreamWriteAction struct {
-	verb.ActionMarker
-	Verb      string // turn | approve | interrupt | finish
-	IDPrefix  string
-	RequestID string // approve only
-	Verdict   string // approve only: allow | deny
-	Text      string // turn: the message; approve --deny: the reason
-}
-
-// SessionStreamAttachAction follows an event-stream task's events. In the TUI
-// that is the logs pane — the runner renders this kind's events into the task
-// log, so following the log IS following the stream; no second renderer.
-type SessionStreamAttachAction struct {
-	verb.ActionMarker
-	IDPrefix string
-}
-
-// SessionLsAction lists interactive+detachable tasks in the cmdresult area.
-type SessionLsAction struct{ verb.ActionMarker }
-
-// SessionKillAction is an alias for CancelAction targeting a session.
-// It reuses CancelAction so app.go's existing cancel dispatch handles it.
-type SessionKillAction struct {
-	verb.ActionMarker
-	IDPrefix string
-}
-
 // RepoAction switches the TUI session's default repo. Subsequent submit
 // popups, interactive opens, and slash-command --repo defaults all use the
 // new value. Per-action --repo overrides still win on a single call.
 type RepoAction struct {
 	verb.ActionMarker
 	Path string
-}
-
-// GridAction opens the live session viewer grid over a chosen set of tasks —
-// the cmdline form of the g / z / Z keys, and the only way to name an arbitrary
-// set. Mode and the two selectors are handed straight to cli.GridSet, so the
-// TUI, the WebUI command line and the keys all agree on what each mode means.
-//
-// ForwardLsAction lists every port forward visible to this operator.
-type ForwardLsAction struct{ verb.ActionMarker }
-
-// ForwardKillAction closes one registered forward by id.
-type ForwardKillAction struct {
-	verb.ActionMarker
-	ForwardID uint64
-}
-
-// ForwardTapAction opens a live view of one forward's traffic. Dir and
-// MaxRecordBytes carry the same meaning as harness-cli's --dir / --max-bytes,
-// parsed by the same cli.ParseTapFilter so the two surfaces cannot drift.
-type ForwardTapAction struct {
-	verb.ActionMarker
-	ForwardID      uint64
-	Dir            string
-	MaxRecordBytes uint32
-}
-
-// ExecRunAction is the `exec` family: run one argv in a task's worktree as its
-// own process, list the running ones, or stop one.
-//
-// Sub is "run", "ls" or "kill". TaskID is the target for "run" and the optional
-// filter for "ls"; Argv is the command for "run"; ExecID names the victim for
-// "kill".
-type ExecRunAction struct {
-	verb.ActionMarker
-	Sub    string
-	TaskID string
-	Argv   []string
-	ExecID uint64
-	// Shell hands the runner ONE line for its own shell instead of an argv.
-	// It is what makes a pipe or a redirect mean anything: without it the
-	// words reach the child untouched, which is right for `make test` and
-	// useless for `ls | wc -l`.
-	Shell bool
-	// SshdParent gives the command line a parent process NAMED sshd, for a
-	// client that checks its own ancestry by process name. Wired on Windows
-	// only, and it needs Shell — what it renames is the shell.
-	SshdParent bool
-}
-
-// SSHGatewayAction starts, stops or reports the ssh gateway this TUI hosts.
-// Sub is "start", "stop" or "status".
-type SSHGatewayAction struct {
-	verb.ActionMarker
-	Sub    string
-	Listen string
-}
-
-// ServerDialRunnerAction asks the server to dial out to a Listen-mode
-// runner (Phase A reverse-dial / Phase B relayed-dial). Used in ACL
-// environments where the runner cannot dial the server directly.
-// Via, when non-empty, requests a relay through the named runner CID
-// (Phase B: objproto EstablishRelay).
-type ServerDialRunnerAction struct {
-	verb.ActionMarker
-	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
-	Via       string // empty = direct dial; non-empty = relay via this CID
-}
-
-// NotifyAction sends a notification via the server's notify hook.
-// Level is one of "info", "warn", "error" (empty defaults to "info").
-// Title is the first word of text when not using --level / explicit title
-// syntax; see parseNotify for the full grammar.
-type NotifyAction struct {
-	verb.ActionMarker
-	Level string
-	Title string
-	Text  string
 }
 
 // CapsAction sets or shows the session-default capability mask applied to
@@ -206,37 +87,6 @@ type ScopeAction struct {
 	Scope     protocol.TaskScope
 	Overrides []protocol.ScopeOverride
 	Show      bool
-}
-
-// SetCapsAction re-grants a LIVE task's authority. Operator-only, enforced by
-// the server on the caller having no principal task — the TUI is always an
-// operator connection, so there is no client-side gate to add here.
-//
-// Caps and Scope are pointers: omitting either keeps what the task has, and
-// neither has a spare value to mean "unset" (Capability(0) is "none",
-// TaskScope{} is "subtree").
-type SetCapsAction struct {
-	verb.ActionMarker
-	TaskID string
-	Caps   *protocol.Capability
-	Scope  *protocol.TaskScope
-	// Overrides travels with Scope under the same presence, matching the CLI
-	// and the wire: they are one half of the authority, so writing the scope
-	// while keeping the old overrides would store something nobody described.
-	Overrides []protocol.ScopeOverride
-	Cascade   bool
-	KeepConns bool
-}
-
-// SetParentAction re-points a LIVE task's parent link, the edge subtree
-// scopes walk. Operator-only, enforced server-side. Exactly one of ParentID /
-// Detach / Swap is set — the parser rejects zero or two.
-type SetParentAction struct {
-	verb.ActionMarker
-	TaskID   string
-	ParentID string
-	Detach   bool
-	Swap     bool
 }
 
 // parseViaSpec routes one verb through the shared declaration (cli/verb).
@@ -506,85 +356,26 @@ func parseCancel(args []string) (Action, error) {
 // parseSession dispatches session sub-verbs: new / attach / ls / kill.
 func parseSession(args []string, defaultRepo string) (Action, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("session: sub-verb required (new | attach <id> | ls | kill <id>)")
+		return nil, fmt.Errorf("session: sub-verb required (new | attach <id> | ls | kill <id> | await-idle <id> | stream ...)")
 	}
-	verb := args[0]
+	sub := args[0]
 	rest := args[1:]
-	switch verb {
-	case "new":
+	if sub == "new" {
 		return parseSpawnTUI("session-new", rest, defaultRepo)
-
-	case "attach":
-		if len(rest) == 0 {
-			return nil, fmt.Errorf("session attach: task id required")
-		}
-		if len(rest) > 1 {
-			return nil, fmt.Errorf("session attach: too many arguments (got %d, want 1)", len(rest))
-		}
-		return SessionAttachAction{TaskID: rest[0]}, nil
-	case "stream":
+	}
+	if sub == "stream" {
 		// The event-stream namespace (design §3): one verb per inbound kind.
 		// requests/snapshot are the two still unbuilt; naming one reports that
 		// instead of "unknown".
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session stream: sub-verb required (attach|turn|approve|interrupt|finish <id>)")
 		}
-		switch rest[0] {
-		case "attach":
-			if len(rest) != 2 {
-				return nil, fmt.Errorf("session stream attach: exactly one task id required")
-			}
-			return SessionStreamAttachAction{IDPrefix: rest[1]}, nil
-		case "turn":
-			if len(rest) < 3 {
-				return nil, fmt.Errorf("session stream turn: <id> and the text (`session stream turn <id> hello there`)")
-			}
-			return SessionStreamWriteAction{Verb: "turn", IDPrefix: rest[1],
-				Text: strings.Join(rest[2:], " ")}, nil
-		case "approve":
-			// <id> <request-id> allow|deny [reason...]. The verdict is a WORD
-			// here rather than the CLI's --allow/--deny: this line is
-			// whitespace-split with no flag parser, so a bare word cannot be
-			// mistaken for one and cannot be silently dropped.
-			if len(rest) < 4 {
-				return nil, fmt.Errorf("session stream approve: <id> <request-id> allow|deny [reason...]")
-			}
-			verdict := rest[3]
-			if verdict != "allow" && verdict != "deny" {
-				return nil, fmt.Errorf("session stream approve: want allow or deny, got %q", verdict)
-			}
-			act := SessionStreamWriteAction{Verb: "approve", IDPrefix: rest[1], RequestID: rest[2], Verdict: verdict}
-			if verdict == "deny" {
-				act.Text = strings.Join(rest[4:], " ")
-			} else if len(rest) > 4 {
-				return nil, fmt.Errorf("session stream approve: an allow carries no message (the reason is a deny's)")
-			}
-			return act, nil
-		case "interrupt", "finish":
-			if len(rest) != 2 {
-				return nil, fmt.Errorf("session stream %s: exactly one task id required", rest[0])
-			}
-			return SessionStreamWriteAction{Verb: rest[0], IDPrefix: rest[1]}, nil
-		case "requests", "snapshot":
+		if rest[0] == "requests" || rest[0] == "snapshot" {
 			return nil, fmt.Errorf("session stream %s: specified (design §3) but not built yet", rest[0])
-		default:
-			return nil, fmt.Errorf("unknown session stream verb %q", rest[0])
 		}
-	case "ls":
-		return SessionLsAction{}, nil
-	case "kill":
-		if len(rest) == 0 {
-			return nil, fmt.Errorf("session kill: task id required")
-		}
-		if len(rest) > 1 {
-			return nil, fmt.Errorf("session kill: too many arguments (got %d, want 1)", len(rest))
-		}
-		return SessionKillAction{IDPrefix: rest[0]}, nil
-	case "await-idle":
-		return parseViaSpec2("session", "await-idle", rest)
-	default:
-		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id> | await-idle <id>)", verb)
+		return parseViaPath([]string{"session", "stream", rest[0]}, rest[1:])
 	}
+	return parseViaPath([]string{"session", sub}, rest)
 }
 
 // capsLabel formats a Capability bitmask for human display:
@@ -608,35 +399,15 @@ func capsLabel(c protocol.Capability) string {
 	return strings.Join(names, ",")
 }
 
-// parseNotify parses `notify [<level>] <text>`.
+// parseNotify parses `notify` from the declaration.
 //
-// Grammar:
-//
-//	notify <text>                 — level defaults to "info", title = first word, text = remainder
-//	notify <level> <text>         — level ∈ {info,warn,error}, title = first word of text, text = remainder
-//
-// The first argument is treated as a level only when it is exactly one of
-// "info", "warn", or "error". Otherwise the entire argument list is the text.
-// The first whitespace-delimited token of the text becomes the title; the rest
-// (if any) is the notification body. To include spaces in the title, quote the
-// whole first argument (shlex splitting has already run).
+// It used to be a positional grammar here -- `notify [info|warn|error] <title>
+// [text...]` -- while the CLI took --level and --title. Same verb name, two
+// grammars: the declaration's own example, `notify --level warn --title build
+// the tree is red`, parsed on this surface as a notification TITLED "--level".
+// D21 settles it on the CLI's spelling.
 func parseNotify(args []string) (Action, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("notify: usage: notify [info|warn|error] <title> [<text>...]")
-	}
-	level := ""
-	rest := args
-	switch args[0] {
-	case "info", "warn", "error":
-		level = args[0]
-		rest = args[1:]
-	}
-	if len(rest) == 0 {
-		return nil, fmt.Errorf("notify: title required")
-	}
-	title := rest[0]
-	text := strings.Join(rest[1:], " ")
-	return NotifyAction{Level: level, Title: title, Text: text}, nil
+	return parseViaPath([]string{"notify"}, args)
 }
 
 // parseFile dispatches file sub-verbs: ls / push / pull / mkdir /
@@ -689,38 +460,22 @@ func parseExecRun(args []string) (Action, error) {
 	return parseViaSpec("exec", args)
 }
 
-// parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at
-// all as a status report.
-//
-// Unlike a forward there is no modal: a forward spec is four fields with no
-// default, while a gateway takes one optional address. And unlike `forward`,
-// STARTING one is a cmdline verb — a forward is started by a task-pane key
-// because it belongs to the selected task, and a gateway belongs to no task,
-// so there is no row for a key to act on.
+// parseSSHGateway routes the TUI's start/stop pair through the declaration.
+// Bare `ssh-gateway` is the status report, which has no CLI counterpart and so
+// no path of its own.
 func parseSSHGateway(args []string) (Action, error) {
-	const usage = "ssh-gateway: usage: ssh-gateway [start [bind:port] | stop]"
 	if len(args) == 0 {
-		return SSHGatewayAction{Sub: "status"}, nil
+		args = []string{"status"}
 	}
-	switch args[0] {
-	case "start":
-		addr := sshgw.DefaultListen
-		switch len(args) {
-		case 1:
-		case 2:
-			addr = args[1]
-		default:
-			return nil, fmt.Errorf("%s", usage)
-		}
-		return SSHGatewayAction{Sub: "start", Listen: addr}, nil
-	case "stop":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("%s", usage)
-		}
-		return SSHGatewayAction{Sub: "stop"}, nil
-	default:
-		return nil, fmt.Errorf("ssh-gateway: unknown sub-verb %q (want start | stop, or no argument for status)", args[0])
+	act, err := parseViaPath([]string{"ssh-gateway", args[0]}, args[1:])
+	if err != nil {
+		return nil, err
 	}
+	g := act.(verb.SSHGatewayAction)
+	if g.Sub == "start" && g.Listen == "" {
+		g.Listen = sshgw.DefaultListen
+	}
+	return g, nil
 }
 
 // parseWorkspace handles the `workspace <sub> [name]` family.
@@ -759,139 +514,40 @@ func parseGit(args []string) (Action, error) {
 	return g, nil
 }
 
-// parseSetCaps backs `caps set <task-id> [--caps NAMES] [--scope SPEC]
-// [--cascade] [--keep-conns]`, the TUI form of harness-cli caps set.
+// parseSetCaps and parseSetParent parse from the declaration.
+//
+// Both were hand-written token walks, and both diverged from it: `caps set
+// --caps X --scope-for Y` was refused by the CLI (a narrowing needs a base to
+// narrow) and ACCEPTED here, where cli/set_caps.go then writes Overrides only
+// when Scope is non-nil -- so the operator typed --scope-for, saw no error,
+// and nothing happened. `--caps=X` and `--parent=<id>` were refused here and
+// accepted everywhere else.
 func parseSetCaps(args []string) (Action, error) {
-	usage := "caps set: usage: caps set <task-id> [--caps NAMES] [--scope SPEC] " +
-		"[--scope-for CAPS=SCOPE ...] [--cascade] [--keep-conns]"
-	act := SetCapsAction{}
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--cascade":
-			act.Cascade = true
-		case "--keep-conns":
-			act.KeepConns = true
-		case "--scope-for":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("caps set: --scope-for needs a value")
-			}
-			i++
-			_, ov, err := cli.ParseScopeFor(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("caps set: %w", err)
-			}
-			merged, err := cli.MergeScopeOverride(act.Overrides, ov)
-			if err != nil {
-				return nil, fmt.Errorf("caps set: %w", err)
-			}
-			act.Overrides = merged
-		case "--caps":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("caps set: --caps needs a value")
-			}
-			i++
-			c, err := cli.ParseCaps(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("caps set: --caps: %w", err)
-			}
-			act.Caps = &c
-		case "--scope":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("caps set: --scope needs a value")
-			}
-			i++
-			sc, err := cli.ParseScope(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("caps set: --scope: %w", err)
-			}
-			act.Scope = &sc
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return nil, fmt.Errorf("caps set: unknown flag %q\n%s", args[i], usage)
-			}
-			if act.TaskID != "" {
-				return nil, fmt.Errorf("caps set: more than one task id\n%s", usage)
-			}
-			act.TaskID = args[i]
-		}
-	}
-	if act.TaskID == "" {
-		return nil, fmt.Errorf("%s", usage)
-	}
-	if act.Caps == nil && act.Scope == nil {
-		return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
-	}
-	return act, nil
+	return parseViaPath([]string{"caps", "set"}, args)
 }
 
-// parseGrid backs the `grid` verb. The modes are cli.GridScopeMode's, spelled
-// the same here as in the WebUI's grid command:
-//
-//	grid                                 every visible task (the g key)
-//	grid <id>...                         exactly these, in this order
-//	grid --under <id>                    id + its descendants (the z key)
-//	grid --under <id> --descendants      its descendants only (the Z key)
-//
-// --under's set is the task's WORKING set: its subtree plus whatever its own
-// scope names individually (cli.GridSubtree). --descendants without --under is
-// rejected rather than silently ignored — there is no subtree to strip a root
-// from.
-// The grammar itself lives in cli.ParseGridArgs. The workspace config accepts
-// the same argument string and cannot import this package, so a copy here would
-// be a mirror with no way to fail loudly when the grammar grows.
+func parseSetParent(args []string) (Action, error) {
+	return parseViaPath([]string{"caps", "set-parent"}, args)
+}
+
 func parseGrid(args []string) (Action, error) {
 	return parseViaSpec("grid", args)
-}
-
-// parseSetParent backs `caps set-parent <task-id> (--parent <task-id> |
-// --none | --swap)`, the TUI form of harness-cli caps set-parent.
-func parseSetParent(args []string) (Action, error) {
-	usage := "caps set-parent: usage: caps set-parent <task-id> (--parent <task-id> | --none | --swap)"
-	act := SetParentAction{}
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--none":
-			act.Detach = true
-		case "--swap":
-			act.Swap = true
-		case "--parent":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("caps set-parent: --parent needs a value")
-			}
-			i++
-			act.ParentID = args[i]
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return nil, fmt.Errorf("caps set-parent: unknown flag %q\n%s", args[i], usage)
-			}
-			if act.TaskID != "" {
-				return nil, fmt.Errorf("caps set-parent: more than one task id\n%s", usage)
-			}
-			act.TaskID = args[i]
-		}
-	}
-	if act.TaskID == "" {
-		return nil, fmt.Errorf("%s", usage)
-	}
-	picked := 0
-	for _, on := range []bool{act.ParentID != "", act.Detach, act.Swap} {
-		if on {
-			picked++
-		}
-	}
-	if picked != 1 {
-		return nil, fmt.Errorf("caps set-parent: pass exactly one of --parent <task-id>, --none, --swap\n%s", usage)
-	}
-	return act, nil
 }
 
 // parseViaSpec2 is parseViaSpec for a two-word verb path (`file push`,
 // `git diff`, `session new`). Split from the one-word form only because a
 // variadic path would make every call site pass a slice literal.
 func parseViaSpec2(head, sub string, args []string) (Action, error) {
-	sp, ok := verb.Lookup(head, sub)
+	return parseViaPath([]string{head, sub}, args)
+}
+
+// parseViaPath parses any declared path, however many words it is. The
+// two-word wrapper above came first and `session stream turn` is three, which
+// is how the whole stream namespace ended up hand-parsed.
+func parseViaPath(path []string, args []string) (Action, error) {
+	sp, ok := verb.Lookup(path...)
 	if !ok {
-		return nil, fmt.Errorf("%s: unknown sub-verb %q", head, sub)
+		return nil, fmt.Errorf("%s: unknown sub-verb %q", path[0], strings.Join(path[1:], " "))
 	}
 	sp = sp.For(verb.TUI)
 	fs := sp.NewFlagSet(flag.ContinueOnError)

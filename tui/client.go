@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
@@ -276,31 +277,37 @@ type StreamWriteResultMsg struct {
 // other Do* here follows), and each verb routes to the cli helper that builds
 // its message — the TUI never assembles a streamagent.Msg itself, so it cannot
 // drift from what the CLI sends.
-func DoStreamWrite(c *cli.Client, v SessionStreamWriteAction, resolved string) tea.Cmd {
+func DoStreamWrite(c *cli.Client, v verb.SessionAction, resolved string) tea.Cmd {
 	return func() tea.Msg {
-		out := StreamWriteResultMsg{Verb: v.Verb, Resolved: resolved}
+		short := strings.TrimPrefix(v.Sub, "stream-")
+		out := StreamWriteResultMsg{Verb: short, Resolved: resolved}
 		if resolved == "" {
-			out.Err = fmt.Errorf("no task matching prefix %q", v.IDPrefix)
+			out.Err = fmt.Errorf("no task matching prefix %q", v.TaskID)
 			return out
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		const flush = 400 * time.Millisecond
-		switch v.Verb {
-		case "turn":
+		flush := time.Duration(v.FlushMs) * time.Millisecond
+		switch v.Sub {
+		case "stream-turn":
 			out.Err = c.StreamTurn(ctx, resolved, v.Text, flush)
-		case "approve":
+		case "stream-approve":
 			resp := streamagent.Response{ID: v.RequestID, Behavior: streamagent.BehaviorAllow}
-			if v.Verdict == "deny" {
-				resp.Behavior, resp.Message = streamagent.BehaviorDeny, v.Text
+			if v.Deny {
+				resp.Behavior, resp.Message = streamagent.BehaviorDeny, v.Message
+			}
+			// A suggestion is a STANDING change, so it rides either verdict.
+			if v.SuggestionSet {
+				n := int(v.Suggestion)
+				resp.AcceptSuggestion = &n
 			}
 			out.Err = c.StreamApprove(ctx, resolved, resp, flush)
-		case "interrupt":
+		case "stream-interrupt":
 			out.Err = c.StreamInterrupt(ctx, resolved, flush)
-		case "finish":
+		case "stream-finish":
 			out.Err = c.StreamFinish(ctx, resolved, flush)
 		default:
-			out.Err = fmt.Errorf("unknown stream verb %q", v.Verb)
+			out.Err = fmt.Errorf("unknown stream verb %q", v.Sub)
 		}
 		return out
 	}

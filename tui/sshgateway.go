@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // SSHGatewaySession is the ssh listener this TUI hosts. There is at most one:
@@ -86,7 +87,7 @@ func sshGatewayStartedLines(addr string) []string {
 
 // runSSHGatewayAction handles the `ssh-gateway` command line verb. Returns nil
 // when there is nothing to dispatch — the report has already been appended.
-func (a *App) runSSHGatewayAction(v SSHGatewayAction) tea.Cmd {
+func (a *App) runSSHGatewayAction(v verb.SSHGatewayAction) tea.Cmd {
 	switch v.Sub {
 	case "status":
 		if a.sshGateway == nil {
