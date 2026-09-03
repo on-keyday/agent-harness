@@ -216,7 +216,7 @@ func TestEverySurfaceReadsEveryActionField(t *testing.T) {
 
 		read := map[string]bool{}
 		for _, f := range c.files {
-			for name := range fieldsMentionedIn(t, f) {
+			for name := range fieldsMentionedFor(t, f, rt.Name()) {
 				read[name] = true
 			}
 		}
@@ -240,22 +240,32 @@ func TestEverySurfaceReadsEveryActionField(t *testing.T) {
 	}
 }
 
-// fieldsMentionedIn returns the field names this file selects off a variable
-// that holds the action -- `a.Overrides`, `v.ExtraArgs`.
+// fieldsMentionedFor returns the field names this file selects off a variable
+// holding ONE action type -- `a.Overrides`, `v.ExtraArgs`.
 //
-// The receiver names are found first (the variables assigned from a parse or
-// bound in a `case verb.XxxAction:`), and only selectors on THOSE are counted.
-// The earlier version counted every `x.Foo` in the file, which made the check
-// nearly inert: `Overrides` and `ExtraArgs` are field names on the client's
-// option structs too, so dropping them from the action still left the name
-// present somewhere in the file and the test passed. Measured, not assumed --
-// both drops were made deliberately and the test stayed green.
+// Scoped to the type, which is the whole difficulty. Two earlier versions were
+// inert and both looked reasonable:
 //
-// It is still an over-approximation within one variable: `a.Overrides` counts
-// whether or not the value goes anywhere useful. What it now rules out is the
-// specific failure that motivated it -- a field NO code path on this surface
-// takes off the action at all.
-func fieldsMentionedIn(t *testing.T, path string) map[string]bool {
+//   - counting every `x.Foo` in the file: `Overrides` and `ExtraArgs` are
+//     field names on the client's option structs too, so dropping them from
+//     the action left the name present and the test green.
+//   - counting selectors on the variables that hold AN action: tui/app.go
+//     dispatches ~37 action types from a single `switch v := act.(type)`, so
+//     one `v` covers the whole file. Measured: 127 distinct names, including
+//     App fields like Width and Reconnecting. Deleting both reads of
+//     PruneAction.Force left the suite green, because `Force` survives in the
+//     `file push` / `file pull` / `file delete` cases.
+//
+// So the collection is per type: selectors inside the `case verb.T:` clause
+// that binds the switch variable, plus the bodies of functions taking a
+// parameter of that type (tui/app.go hands most cases straight to a
+// runXxxAction helper), plus assignments from `act.(verb.T)`.
+//
+// It is still an over-approximation WITHIN that scope: `a.Overrides` counts
+// whether or not the value goes anywhere useful. What it rules out is the
+// specific failure that motivated it -- a field no code path on this surface
+// takes off this action at all.
+func fieldsMentionedFor(t *testing.T, path, typeName string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
 	src, err := os.ReadFile(filepath.Clean(path))
@@ -268,60 +278,167 @@ func fieldsMentionedIn(t *testing.T, path string) map[string]bool {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 
-	// Receivers: `x := parseSpawn(...)` / `x := act.(verb.XxxAction)` /
-	// `case verb.XxxAction:` (which binds the switch's own variable), AND a
-	// PARAMETER of that type -- `func (a *App) startForwardTap(v
-	// verb.ForwardTapAction)`. Missing the parameter form reported two fields
-	// as unread that both surfaces do read; found by checking every report
-	// against the source rather than trusting the count.
-	recv := map[string]bool{}
+	// Functions in this package that RETURN the type, so an assignment from
+	// one is a scope too: the CLI writes `a := parseSpawn("session-new", …)`,
+	// which is neither a type assertion nor a parameter.
+	returns := funcsReturning(t, filepath.Dir(path), typeName)
+
+	// Bodies to walk, each with the variable naming the action inside it.
+	type scope struct {
+		node ast.Node
+		recv string
+	}
+	var scopes []scope
+	// Helper functions whose PARAMETER is this action type, and the names of
+	// those functions -- a case clause that only calls one of them reads the
+	// fields there.
+	helpers := map[string]bool{}
 	ast.Inspect(f, func(n ast.Node) bool {
-		if fn, ok := n.(*ast.FuncDecl); ok && fn.Type.Params != nil {
-			for _, p := range fn.Type.Params.List {
-				if !mentionsVerbAction(p.Type) {
-					continue
-				}
-				for _, nm := range p.Names {
-					if nm.Name != "_" {
-						recv[nm.Name] = true
-					}
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Type.Params == nil || fn.Body == nil {
+			return true
+		}
+		for _, p := range fn.Type.Params.List {
+			if !namesType(p.Type, typeName) {
+				continue
+			}
+			helpers[fn.Name.Name] = true
+			for _, nm := range p.Names {
+				if nm.Name != "_" {
+					scopes = append(scopes, scope{fn.Body, nm.Name})
 				}
 			}
 		}
-		switch t := n.(type) {
-		case *ast.AssignStmt:
-			if len(t.Lhs) == 0 || len(t.Rhs) != 1 {
-				return true
-			}
-			if !mentionsVerbAction(t.Rhs[0]) {
-				return true
-			}
-			for _, lhs := range t.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
-					recv[id.Name] = true
+		return true
+	})
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch st := n.(type) {
+		case *ast.TypeSwitchStmt:
+			bound := ""
+			if as, ok := st.Assign.(*ast.AssignStmt); ok && len(as.Lhs) == 1 {
+				if id, ok := as.Lhs[0].(*ast.Ident); ok {
+					bound = id.Name
 				}
 			}
-		case *ast.TypeSwitchStmt:
-			if as, ok := t.Assign.(*ast.AssignStmt); ok && len(as.Lhs) == 1 {
-				if id, ok := as.Lhs[0].(*ast.Ident); ok {
-					recv[id.Name] = true
+			if bound == "" || st.Body == nil {
+				return true
+			}
+			for _, stmt := range st.Body.List {
+				cc, ok := stmt.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, e := range cc.List {
+					if namesType(e, typeName) {
+						for _, s := range cc.Body {
+							scopes = append(scopes, scope{s, bound})
+						}
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			// `x := act.(verb.T)` / `x, ok := act.(verb.T)` / `x := parseX(…)`
+			if len(st.Rhs) != 1 {
+				return true
+			}
+			if !namesType(st.Rhs[0], typeName) && !callsReturning(st.Rhs[0], returns) {
+				return true
+			}
+			for _, lhs := range st.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+					scopes = append(scopes, scope{f, id.Name})
 				}
 			}
 		}
 		return true
 	})
 
-	ast.Inspect(f, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
+	for _, sc := range scopes {
+		ast.Inspect(sc.node, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == sc.recv {
+				out[sel.Sel.Name] = true
+			}
 			return true
-		}
-		if id, ok := sel.X.(*ast.Ident); ok && recv[id.Name] {
-			out[sel.Sel.Name] = true
-		}
-		return true
-	})
+		})
+	}
 	return out
+}
+
+// funcsReturning names every function in a directory whose single result is
+// verb.<typeName>.
+func funcsReturning(t *testing.T, dir, typeName string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		if perr != nil {
+			continue
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Type.Results == nil {
+				continue
+			}
+			for _, r := range fn.Type.Results.List {
+				if namesType(r.Type, typeName) {
+					out[fn.Name.Name] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// callsReturning reports whether an expression is a call to one of them.
+func callsReturning(e ast.Expr, returns map[string]bool) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return returns[fn.Name]
+	case *ast.SelectorExpr:
+		return returns[fn.Sel.Name]
+	}
+	return false
+}
+
+// namesType reports whether an expression names verb.<typeName> -- as a type,
+// a type assertion, or a composite literal.
+func namesType(e ast.Expr, typeName string) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch t := n.(type) {
+		case *ast.SelectorExpr:
+			if t.Sel.Name == typeName {
+				if id, ok := t.X.(*ast.Ident); ok && id.Name == "verb" {
+					found = true
+				}
+			}
+		case *ast.Ident:
+			// Inside package tui the surface-local actions are unqualified;
+			// none of them share a name with a generated one any more, so an
+			// exact match is enough.
+			if t.Name == typeName {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // mentionsVerbAction reports whether an expression names a cli/verb action --

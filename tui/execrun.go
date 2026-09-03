@@ -165,11 +165,14 @@ func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 		// the result pane. The `e` modal passes false.
 		return DoExecRunList(a.client, filter, true)
 	case "kill":
-		// One per invocation here; the CLI's form takes several.
-		if len(v.ExecIDs) == 0 {
-			return nil
+		// EVERY id the operator named. The declaration takes a list on all
+		// three surfaces and this killed ExecIDs[0], so `exec kill 1 2 3` here
+		// stopped one and reported nothing about the other two.
+		var cmds []tea.Cmd
+		for _, id := range v.ExecIDs {
+			cmds = append(cmds, DoExecRunKill(a.client, id))
 		}
-		return DoExecRunKill(a.client, v.ExecIDs[0])
+		return tea.Batch(cmds...)
 	default:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

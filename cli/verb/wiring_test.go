@@ -38,6 +38,25 @@ func TestEveryDeclaredFlagIsReadByItsBuild(t *testing.T) {
 			if _, exempt := flagNotInAction[v.FlagSetName()+"."+f.Name]; exempt {
 				continue
 			}
+			// A Required flag has no baseline to compare against -- omitting
+			// it is refused by construction -- so the static check above is
+			// the whole check for it.
+			if f.Required {
+				continue
+			}
+			// A flag carrying neither a Field nor a place in a Modes group is
+			// one the generator writes nothing for. It must say why -- the
+			// four `forward tap` render modes and `grid --descendants` are the
+			// real cases, and each names the group that carries it instead.
+			if f.Field == "" && f.PresenceField == "" && !inModes(v, f.Name) {
+				if strings.TrimSpace(f.FieldReason) == "" {
+					t.Errorf("%s: --%s has no Field and no FieldReason.\n"+
+						"The generator emits an assignment per Field, so a flag without one "+
+						"parses and reaches nothing. Give it a Field, or a FieldReason saying "+
+						"what carries it.", v.FlagSetName(), f.Name)
+				}
+				continue
+			}
 			// On the surface the FLAG is declared for, not the verb's first.
 			// `ls --filtered` exists only in a browser, and building it with
 			// the CLI's build reads as a flag nobody carries -- which is the
@@ -47,15 +66,18 @@ func TestEveryDeclaredFlagIsReadByItsBuild(t *testing.T) {
 					continue
 				}
 				nv := v.For(sf)
-				base, ok := buildWith(t, nv, nil)
+				base, ok := buildWith(t, nv, &f, false)
 				if !ok {
-					continue // the verb needs positionals; covered by the arity form below
-				}
-				with, ok := buildWith(t, nv, &f)
-				if !ok {
+					t.Errorf("%s (%v): --%s could not be probed -- no line satisfying the "+
+						"declared rules could be synthesised. That used to be a silent skip, "+
+						"and it hid five verbs entirely.", v.FlagSetName(), sf, f.Name)
 					continue
 				}
-				if reflect.DeepEqual(base, with) {
+				with, ok := buildWith(t, nv, &f, true)
+				if !ok {
+					continue // a cross-flag rule refuses the flag in this shape
+				}
+				if !changedSomething(base, with, f, v) {
 					t.Errorf("%s (%v): --%s is declared but its value never reaches the Action.\n"+
 						"Setting it changes nothing the build produces, so an operator can type it "+
 						"and get silence. Either give it a Field, or add %q to flagNotInAction "+
@@ -65,6 +87,47 @@ func TestEveryDeclaredFlagIsReadByItsBuild(t *testing.T) {
 			}
 		}
 	}
+}
+
+// inModes reports whether a flag is one of a Modes group's names.
+func inModes(v VerbSpec, name string) bool {
+	if v.Modes == nil {
+		return false
+	}
+	for _, n := range v.Modes.Names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// changedSomething compares the fields this flag is supposed to move, not the
+// whole struct. A whole-struct compare reported --allow as unread on `session
+// stream approve`, because the baseline that satisfies its ExactlyOne group
+// has to name --deny, and both builds then differ in two places at once.
+func changedSomething(base, with any, f Flag, v VerbSpec) bool {
+	names := []string{}
+	if f.Field != "" {
+		names = append(names, f.Field)
+	}
+	if f.PresenceField != "" {
+		names = append(names, f.PresenceField)
+	}
+	if inModes(v, f.Name) {
+		names = append(names, v.Modes.Field)
+	}
+	bv, wv := reflect.ValueOf(base), reflect.ValueOf(with)
+	for _, n := range names {
+		bf, wf := bv.FieldByName(n), wv.FieldByName(n)
+		if !bf.IsValid() || !wf.IsValid() {
+			continue
+		}
+		if !reflect.DeepEqual(bf.Interface(), wf.Interface()) {
+			return true
+		}
+	}
+	return false
 }
 
 // flagNotInAction names flags whose effect is deliberately not visible in the
@@ -79,10 +142,10 @@ var flagNotInAction = map[string]string{
 // positionals, plus one flag set to a non-zero value when f is non-nil -- and
 // returns the built Action. ok is false when the verb cannot be synthesised
 // (free-form trailing text, custom values), which the other tests cover.
-func buildWith(t *testing.T, v VerbSpec, f *Flag) (any, bool) {
+func buildWith(t *testing.T, v VerbSpec, f *Flag, set bool) (any, bool) {
 	t.Helper()
 	var args []string
-	if f != nil {
+	if f != nil && set {
 		if f.Custom != nil {
 			return nil, false // a custom value's shape is verb-specific
 		}
@@ -93,13 +156,22 @@ func buildWith(t *testing.T, v VerbSpec, f *Flag) (any, bool) {
 			}
 			args = append(args, "--"+f.Name)
 		case FlagString:
-			args = append(args, "--"+f.Name, "probe-value")
+			args = append(args, "--"+f.Name, probeValue(*f))
 		case FlagUint, FlagUint64:
 			args = append(args, "--"+f.Name, "7")
 		case FlagDuration:
 			args = append(args, "--"+f.Name, "3m")
 		}
 	}
+	// A form the DECLARED rules accept. Without this the bare probe is refused
+	// for any verb carrying ExactlyOne / AtLeastOne / MinArgs -- and buildWith
+	// returned ok=false, which the caller silently skipped. Measured before
+	// the fix: 5 verbs with not one flag checked (`forward`, `caps set`, `caps
+	// set-parent`, `session stream approve`, `board retract`) and 99 of 403
+	// (verb, flag) pairs dropped, including -L / -R / -W on the verb that
+	// opens listeners. The comment there named a fallback "below" that does
+	// not exist.
+	args = append(args, satisfyingFlags(v, f, set)...)
 	args = append(args, positionalsFor(v)...)
 	if v.Trailing != nil {
 		args = append(args, "trailing", "words")
@@ -118,25 +190,148 @@ func buildWith(t *testing.T, v VerbSpec, f *Flag) (any, bool) {
 	return act, true
 }
 
+// satisfyingFlags adds the minimum the declared rules demand, skipping
+// anything that would conflict with the flag being probed.
+func satisfyingFlags(v VerbSpec, probe *Flag, probeSet bool) []string {
+	probeName := ""
+	if probe != nil {
+		probeName = probe.Name
+	}
+	conflicts := func(name string) bool {
+		if name == probeName {
+			// Only when the probe is actually on the line. In the BASE form
+			// it is not, so `forward -W`'s baseline may legitimately be -L --
+			// treating them as conflicting left that verb with no baseline at
+			// all, which read as "could not be probed".
+			return probeSet
+		}
+		if !probeSet {
+			return false
+		}
+		for _, r := range v.Exclusive {
+			var hasProbe, hasName bool
+			for _, n := range r.Flags {
+				hasProbe = hasProbe || n == probeName
+				hasName = hasName || n == name
+			}
+			if hasProbe && hasName {
+				return true
+			}
+		}
+		return false
+	}
+	var out []string
+	add := func(names []string) {
+		if probeSet {
+			for _, n := range names {
+				if n == probeName {
+					return // the probe itself satisfies this group
+				}
+			}
+		}
+		for _, n := range names {
+			// Never the probe itself: the base form exists to isolate it.
+			if n == probeName || conflicts(n) {
+				continue
+			}
+			for _, f := range v.Flags {
+				if f.Name != n {
+					continue
+				}
+				switch f.Type {
+				case FlagBool:
+					if d, _ := f.Default.(bool); !d {
+						out = append(out, "--"+n)
+					}
+				case FlagString:
+					out = append(out, "--"+n, probeValue(f))
+				case FlagUint, FlagUint64:
+					out = append(out, "--"+n, "1")
+				case FlagDuration:
+					out = append(out, "--"+n, "1m")
+				}
+			}
+			return
+		}
+	}
+	for _, r := range v.ExactlyOne {
+		add(r.Flags)
+	}
+	for _, r := range v.AtLeastOne {
+		add(r.Flags)
+	}
+	// A probed flag that Requires another needs that other one too -- but only
+	// when the probe is on the line. Adding it to the BASE pulled -W onto
+	// `forward`'s baseline, where it is exclusive with the -L that satisfies
+	// the at-least-one rule, and the baseline stopped parsing.
+	if probeSet {
+		for _, r := range v.Requires {
+			for _, n := range r.Flags {
+				if n == probeName {
+					add([]string{r.Needs})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// probeValue is a value the flag will actually accept. A few flags carry a
+// GRAMMAR rather than a string -- Convert parses them -- so "probe-value"
+// makes the build fail and the probe read as unsatisfiable.
+func probeValue(f Flag) string {
+	if len(f.OneOf) > 0 {
+		// Not OneOf[0] blindly: `notify --level info` IS the default, so
+		// setting it produced the same Action and read as unwired.
+		def, _ := f.Default.(string)
+		for _, v := range f.OneOf {
+			if v != def {
+				return v
+			}
+		}
+		return f.OneOf[0]
+	}
+	if v, ok := probeValues[f.Name]; ok {
+		return v
+	}
+	return "probe-value"
+}
+
+var probeValues = map[string]string{
+	"caps":      "none",
+	"scope":     "subtree",
+	"scope-for": "spawn=none",
+	"resize":    "40x150",
+	"size":      "40x150",
+}
+
 // positionalsFor synthesises one acceptable value per required positional.
 func positionalsFor(v VerbSpec) []string {
 	var out []string
 	for _, a := range v.Args {
 		if a.Variadic {
+			// MinArgs demands at least one; a variadic that came back empty is
+			// refused, and the probe was skipped rather than satisfied.
+			for i := len(out); i < v.MinArgs; i++ {
+				out = append(out, valueFor(a))
+			}
 			continue
 		}
-		switch a.Type {
-		case ArgTaskID:
-			out = append(out, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-		case ArgUint:
-			out = append(out, "1")
-		case ArgTopic:
-			out = append(out, "chat.abcd1234")
-		default:
-			out = append(out, "probe-arg")
-		}
+		out = append(out, valueFor(a))
 	}
 	return out
+}
+
+func valueFor(a Arg) string {
+	switch a.Type {
+	case ArgTaskID:
+		return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	case ArgUint:
+		return "1"
+	case ArgTopic:
+		return "chat.abcd1234"
+	}
+	return "probe-arg"
 }
 
 // TestBuildReadsNoUndeclaredFlagName is the other direction: a Build that

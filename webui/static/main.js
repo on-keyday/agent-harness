@@ -309,9 +309,10 @@ const POLL_INTERVAL_MS = 5000;
   //   resumeCapsOverride is forced false for a NEW task (no resumeTaskId): the
   //   override re-grants caps on RESUME and is a no-op / misleading otherwise.
   // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
-  function sessionReq({ repo = "", task = "", host = "", runner = "", agent = "",
+  function sessionReq({ repo = "", task = "", host = "", runner = "", ip = "", agent = "",
                         claudeArgs = [], resumeTaskId = "", resumeConversation = false,
-                        eventStream = false }) {
+                        eventStream = false,
+                        caps = null, scope = null, scopeFor = null }) {
     const req = {
       repo, task, host, agent,
       claudeArgs,
@@ -320,9 +321,13 @@ const POLL_INTERVAL_MS = 5000;
       // TaskKind_Stream: structured events instead of a PTY. The wasm side
       // declines to mount the xterm for it; the chat panel attaches instead.
       eventStream,
-      caps: spawnCaps,
-      scope: spawnScope,
-      scopeFor: overrideSpecsFrom("spawn"),
+      // A typed --caps / --scope / --scope-for wins over the Compose chips.
+      // That is the declaration's own ladder -- flag beats surface context --
+      // and this surface had no parameter for them at all, so the three
+      // parsed and were dropped while the chips decided the authority.
+      caps: caps !== null ? caps : spawnCaps,
+      scope: scope !== null ? scope : spawnScope,
+      scopeFor: scopeFor !== null ? scopeFor : overrideSpecsFrom("spawn"),
       // One checkbox gates BOTH halves of the resume re-grant: silently
       // applying the Compose scope picker's leftover state to a resumed
       // task would be the exact invisible rewrite scope_present exists to
@@ -331,6 +336,7 @@ const POLL_INTERVAL_MS = 5000;
       scopePresent: resumeTaskId ? applyCapsOnResume : false,
     };
     if (runner) req.runner = runner;
+    if (ip) req.ip = ip;
     return req;
   }
 
@@ -2404,12 +2410,21 @@ const POLL_INTERVAL_MS = 5000;
           if (b.error) throw new Error(b.error);
           const task = b.flags.task || b.trail;
           if (!task) throw new Error("submit: missing task prompt");
+          const scopeFor = (b.custom && b.custom["scope-for"]) || null;
           out = await window.harness.submit(sessionReq({
             repo, task,
             host: hostSelect ? hostSelect.value || "" : "",
+            // The three runner selectors are mutually exclusive in the
+            // declaration, so at most one of these is non-empty.
+            runner: b.flags.runner || "",
+            ip: b.flags.ip || "",
             agent: b.flags.agent || (agentSelect ? agentSelect.value || "" : ""),
             claudeArgs: (b.custom && b.custom["agent-arg"]) || currentClaudeArgs(),
-            resumeTaskId,
+            // b.set, not truthiness: --caps none is a real grant of nothing.
+            caps: b.set && b.set.caps ? b.flags.caps : null,
+            scope: b.set && b.set.scope ? b.flags.scope : null,
+            scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
+            resumeTaskId: b.flags.resume || resumeTaskId,
             resumeConversation: !!b.flags["resume-conversation"],
           }));
           break;
@@ -2554,8 +2569,10 @@ const POLL_INTERVAL_MS = 5000;
               ? es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n")
               : "(no running execs)";
           } else if (sub === "kill") {
-            await window.harness.execRunKill(Number(b.args[0]));
-            out = `killed exec ${b.args[0]}`;
+            // Every id, as on the CLI: this killed args[0] and reported
+            // "killed exec 1" for `exec kill 1 2 3`.
+            for (const id of b.args) await window.harness.execRunKill(Number(id));
+            out = `killed exec ${b.args.join(", ")}`;
           } else {
             out = await execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
           }

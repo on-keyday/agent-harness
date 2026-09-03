@@ -421,6 +421,41 @@ func overridesFromOpts(opts js.Value) ([]protocol.ScopeOverride, error) {
 	return out, nil
 }
 
+// capsFromOpts reads `caps` as either the numeric bitmask the buttons send or
+// the SPELLING the command line carries -- `--caps spawn,file_read` parses to
+// a string, and a string reaching the number-only reader fell through to
+// Capability_None, which is a grant of nothing rather than the chips' value.
+//
+// Default-deny, matching ParseCaps(""): a caller that omits caps spawns a task
+// with no control plane.
+func capsFromOpts(opts js.Value) (protocol.Capability, error) {
+	cv := opts.Get("caps")
+	switch cv.Type() {
+	case js.TypeNumber:
+		return protocol.Capability(uint32(cv.Int())), nil
+	case js.TypeString:
+		c, err := cli.ParseCaps(cv.String())
+		if err != nil {
+			return protocol.Capability_None, fmt.Errorf("caps: %w", err)
+		}
+		return c, nil
+	}
+	return protocol.Capability_None, nil
+}
+
+// selectorFromOpts reads the runner/host/ip trio. ip had no reader at all, so
+// `submit --ip 10.0.0.4` from the command input parsed and selected nothing.
+func selectorFromOpts(opts js.Value) (cli.SelectorOpts, error) {
+	str := func(k string) string {
+		if v := opts.Get(k); v.Type() == js.TypeString {
+			return v.String()
+		}
+		return ""
+	}
+	o := cli.SelectorOpts{Runner: str("runner"), Host: str("host"), IP: str("ip")}
+	return o, o.ValidateSelector()
+}
+
 func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 	sv := opts.Get("scope")
 	if sv.Type() != js.TypeString || sv.String() == "" {
@@ -666,9 +701,10 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			// `caps` spawns a task with no control plane. The WebUI always
 			// sends its Compose state, so this is the floor for scripted
 			// callers, not the button path.
-			caps := protocol.Capability_None
-			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
-				caps = protocol.Capability(uint32(cv.Int()))
+			caps, capsErr := capsFromOpts(opts)
+			if capsErr != nil {
+				rejectErr(reject, capsErr)
+				return
 			}
 			scope, scopeErr := scopeFromOpts(opts)
 			overrides, ovErr := overridesFromOpts(opts)
@@ -1816,18 +1852,13 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			// js.Value.String() on a non-string type stringifies as "<TYPE>"
 			// rather than "" (see syscall/js), so gate on Type() explicitly
 			// instead of comparing the stringified form.
-			runnerVal := opts.Get("runner")
-			runnerCid := ""
-			if runnerVal.Type() == js.TypeString {
-				runnerCid = runnerVal.String()
-			}
-			hostVal := opts.Get("host")
-			host := ""
-			if hostVal.Type() == js.TypeString {
-				host = hostVal.String()
-			}
 			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
-			sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: runnerCid, Host: host})
+			selOpts, selErr := selectorFromOpts(opts)
+			if selErr != nil {
+				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", selErr))
+				return
+			}
+			sel, err := cli.BuildSelector(selOpts)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
@@ -1836,9 +1867,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			// `caps` spawns a task with no control plane. The WebUI always
 			// sends its Compose state, so this is the floor for scripted
 			// callers, not the button path.
-			caps := protocol.Capability_None
-			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
-				caps = protocol.Capability(uint32(cv.Int()))
+			caps, capsErr := capsFromOpts(opts)
+			if capsErr != nil {
+				rejectErr(reject, capsErr)
+				return
 			}
 			scope, scopeErr := scopeFromOpts(opts)
 			overrides, ovErr := overridesFromOpts(opts)
