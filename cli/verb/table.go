@@ -56,173 +56,133 @@ var Verbs = []VerbSpec{
 	// separate verb, because it is one operation reached from three places.
 	{
 		Path:     []string{"file", "push"},
+		Action:   "FilePushAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{
-				Name: "local-src", Type: ArgString,
+				Name: "local-src", Type: ArgString, Field: "LocalSrc",
 				Surfaces:      CLI | TUI,
 				SurfaceReason: "a browser has no local path to name; the WebUI supplies the bytes from a file picker",
 			},
-			{Name: "worktree-rel-dst", Type: ArgString},
+			{Name: "worktree-rel-dst", Type: ArgString, Field: "RemoteDst"},
 		},
 		Flags: []Flag{
-			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false,
+			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
-			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "overwrite existing destination"},
-			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false,
+			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories of the destination (mkdir -p)"},
 		},
 		Examples: []string{
 			"file push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ./local.txt docs/local.txt",
 			"file push -r -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ./dir docs/dir",
 		},
-		Build: func(b Bound) (Action, error) {
-			a := FilePushAction{Recursive: b.Bool("recursive"), Force: b.Bool("force"), Parents: b.Bool("parents")}
-			a.TaskID = b.Args[0]
-			if len(b.Args) == 3 {
-				a.LocalSrc, a.RemoteDst = b.Args[1], b.Args[2]
-			} else {
-				a.RemoteDst = b.Args[1]
-			}
-			return a, nil
-		},
 	},
 	{
-		Path:     []string{"file", "pull"},
-		Surfaces: CLI | TUI | WebUI,
+		Path:   []string{"file", "pull"},
+		Action: "FilePullAction",
+		// A directory pull is a generated tar, whose byte offsets are not a
+		// stable thing to index into.
+		Exclusive: [][]string{{"recursive", "offset"}, {"recursive", "length"}},
+		Surfaces:  CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			{Name: "worktree-rel-src", Type: ArgString},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "worktree-rel-src", Type: ArgString, Field: "RemoteSrc"},
 			{
-				Name: "local-dst", Type: ArgString,
+				Name: "local-dst", Type: ArgString, Field: "LocalDst",
 				Surfaces:      CLI | TUI,
 				SurfaceReason: "a browser downloads the file rather than writing it to a path it names",
 			},
 		},
 		Flags: []Flag{
-			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false,
+			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
-			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "overwrite existing destination"},
 			// -o / -n existed only in the TUI before the migration. Adding them
 			// to the other surfaces widens what parses and never narrows it.
-			{Name: "offset", Aliases: []string{"o"}, Type: FlagUint64, Default: uint64(0),
+			{Name: "offset", Aliases: []string{"o"}, Type: FlagUint64, Default: uint64(0), Field: "Offset",
 				Help: "first byte to pull (single-file pull only)"},
-			{Name: "length", Aliases: []string{"n"}, Type: FlagUint64, Default: uint64(0),
+			{Name: "length", Aliases: []string{"n"}, Type: FlagUint64, Default: uint64(0), Field: "Length",
 				Help: "max bytes to pull; 0 = to end of file"},
 		},
 		Examples: []string{
 			"file pull aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt ./x.txt",
 			"file pull -r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs ./docs",
 		},
-		Build: func(b Bound) (Action, error) {
-			off, _ := b.Flags["offset"].(uint64)
-			ln, _ := b.Flags["length"].(uint64)
-			// Cross-flag validity belongs in Build, which every surface goes
-			// through -- the TUI used to refuse this at parse time and the CLI
-			// after it, which is two places to keep in step. A directory pull
-			// is a generated tar, whose byte offsets are not a stable thing to
-			// index into.
-			if b.Bool("recursive") && (off != 0 || ln != 0) {
-				return nil, fmt.Errorf("file pull: --offset/--length cannot be combined with --recursive")
-			}
-			a := FilePullAction{Recursive: b.Bool("recursive"), Force: b.Bool("force"), Offset: off, Length: ln}
-			a.TaskID, a.RemoteSrc = b.Args[0], b.Args[1]
-			if len(b.Args) == 3 {
-				a.LocalDst = b.Args[2]
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"file", "ls"},
+		Action:   "FileLsAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			// Variadic rather than "optional": the declaration has one way to
-			// say "zero or more", and the Build takes at most the first.
-			{Name: "worktree-rel-dir", Type: ArgString, Variadic: true},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			// Optional, not a list: MaxCount 1 makes it a single value the
+			// generator writes as a string rather than a slice nobody indexes
+			// past [0].
+			{Name: "worktree-rel-dir", Type: ArgString, Variadic: true, MaxCount: 1, Field: "RelPath"},
 		},
 		Examples: []string{
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
 		},
-		Build: func(b Bound) (Action, error) {
-			a := FileLsAction{TaskID: b.Args[0]}
-			if len(b.Args) > 2 {
-				return nil, fmt.Errorf("file ls: takes at most one directory")
-			}
-			if len(b.Args) == 2 {
-				a.RelPath = b.Args[1]
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"file", "mkdir"},
+		Action:   "FileMkdirAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			{Name: "worktree-rel-dir", Type: ArgString},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "worktree-rel-dir", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false,
+			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories (mkdir -p); also makes an existing directory a success"},
 		},
 		Examples: []string{"file mkdir -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/sub"},
-		Build: func(b Bound) (Action, error) {
-			return FileMkdirAction{TaskID: b.Args[0], RelPath: b.Args[1], Parents: b.Bool("parents")}, nil
-		},
 	},
 	{
 		Path:     []string{"file", "delete"},
+		Action:   "FileDeleteAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			{Name: "worktree-rel-path", Type: ArgString},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false,
+			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "target a directory tree instead of a single file (uses dir_delete)"},
 			// Without -r this flag is ignored, so its absence never widens: -r
 			// alone refuses a non-empty directory rather than emptying it.
-			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "with -r: delete non-empty directory contents recursively (RemoveAll). Ignored without -r"},
 		},
 		Examples: []string{
 			"file delete aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt",
 			"file delete -r -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
 		},
-		Build: func(b Bound) (Action, error) {
-			return FileDeleteAction{TaskID: b.Args[0], RelPath: b.Args[1],
-				Recursive: b.Bool("recursive"), Force: b.Bool("force")}, nil
-		},
 	},
 	{
 		Path:     []string{"file", "edit"},
+		Action:   "FileEditAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			{Name: "worktree-rel-path", Type: ArgString},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
-		Build: func(b Bound) (Action, error) {
-			return FileEditAction{TaskID: b.Args[0], RelPath: b.Args[1]}, nil
-		},
 	},
 	{
 		Path:     []string{"file", "new"},
+		Action:   "FileNewAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
-			{Name: "task-id", Type: ArgTaskID},
-			{Name: "worktree-rel-path", Type: ArgString},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Examples: []string{"file new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/new.txt"},
-		Build: func(b Bound) (Action, error) {
-			return FileNewAction{TaskID: b.Args[0], RelPath: b.Args[1]}, nil
-		},
 	},
 	// --- git ---
 	//

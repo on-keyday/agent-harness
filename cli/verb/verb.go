@@ -234,6 +234,11 @@ type VerbSpec struct {
 
 	Examples []string
 
+	// narrowedFor records which surface For() produced this spec for, so
+	// BuildFunc can pick the matching generated build. Unexported: it is
+	// bookkeeping, not part of the declaration.
+	narrowedFor string
+
 	// Build is the hand-written path, kept for the verbs whose repacking is
 	// not mechanical. Read it through BuildFunc, never directly: when it is
 	// nil the generated build applies, and a caller that ranges over Verbs
@@ -252,7 +257,16 @@ func (v VerbSpec) BuildFunc() func(Bound) (Action, error) {
 	if v.Build != nil {
 		return v.Build
 	}
-	return generatedBuilds[v.FlagSetName()]
+	// Keyed by (path, surface): a positional the declaration narrows away
+	// shifts every index after it, so `file push` writes b.Args[2] into
+	// RemoteDst on the CLI and b.Args[1] on the WebUI, which has no local path.
+	// The narrowed spec remembers which surface it came from.
+	if b, ok := generatedBuilds[v.FlagSetName()+"\x00"+v.narrowedFor]; ok {
+		return b
+	}
+	// A spec that was never narrowed (a test, or a caller that skipped For)
+	// gets the CLI build, which is the widest.
+	return generatedBuilds[v.FlagSetName()+"\x00cli"]
 }
 
 // Bound is a parsed command before Build: the neutral form the wasm bridge

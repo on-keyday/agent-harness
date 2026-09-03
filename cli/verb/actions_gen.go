@@ -22,6 +22,77 @@ type BoardAction struct {
 	Seq uint64
 }
 
+// FileDeleteAction is built by: file delete.
+type FileDeleteAction struct {
+	ActionMarker
+	// target a directory tree instead of a single file (uses dir_delete)
+	Recursive bool
+	// with -r: delete non-empty directory contents recursively (RemoveAll). Ignored without -r
+	Force   bool
+	TaskID  string
+	RelPath string
+}
+
+// FileEditAction is built by: file edit.
+type FileEditAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}
+
+// FileLsAction is built by: file ls.
+type FileLsAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}
+
+// FileMkdirAction is built by: file mkdir.
+type FileMkdirAction struct {
+	ActionMarker
+	// create missing parent directories (mkdir -p); also makes an existing directory a success
+	Parents bool
+	TaskID  string
+	RelPath string
+}
+
+// FileNewAction is built by: file new.
+type FileNewAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}
+
+// FilePullAction is built by: file pull.
+type FilePullAction struct {
+	ActionMarker
+	// transfer a directory tree
+	Recursive bool
+	// overwrite existing destination
+	Force bool
+	// first byte to pull (single-file pull only)
+	Offset uint64
+	// max bytes to pull; 0 = to end of file
+	Length    uint64
+	TaskID    string
+	RemoteSrc string
+	LocalDst  string
+}
+
+// FilePushAction is built by: file push.
+type FilePushAction struct {
+	ActionMarker
+	// transfer a directory tree
+	Recursive bool
+	// overwrite existing destination
+	Force bool
+	// create missing parent directories of the destination (mkdir -p)
+	Parents   bool
+	TaskID    string
+	LocalSrc  string
+	RemoteDst string
+}
+
 // PruneAction is built by: prune.
 type PruneAction struct {
 	ActionMarker
@@ -92,7 +163,7 @@ type SessionAction struct {
 // generator imports it.
 func init() {
 	registerGenerated(map[string]func(Bound) (Action, error){
-		"prune": func(b Bound) (Action, error) {
+		"prune\x00cli": func(b Bound) (Action, error) {
 			a := PruneAction{}
 			a.Before = durationOf(b.Flags["before"])
 			a.Force = b.Bool("force")
@@ -101,12 +172,282 @@ func init() {
 			}
 			return a, nil
 		},
-		"board topics": func(b Bound) (Action, error) {
+		"prune\x00tui": func(b Bound) (Action, error) {
+			a := PruneAction{}
+			a.Before = durationOf(b.Flags["before"])
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"prune\x00webui": func(b Bound) (Action, error) {
+			a := PruneAction{}
+			a.Before = durationOf(b.Flags["before"])
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskIDs = b.Args[0:]
+			}
+			return a, nil
+		},
+		"file push\x00cli": func(b Bound) (Action, error) {
+			a := FilePushAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.LocalSrc = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.RemoteDst = b.Args[2]
+			}
+			return a, nil
+		},
+		"file push\x00tui": func(b Bound) (Action, error) {
+			a := FilePushAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.LocalSrc = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.RemoteDst = b.Args[2]
+			}
+			return a, nil
+		},
+		"file push\x00webui": func(b Bound) (Action, error) {
+			a := FilePushAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RemoteDst = b.Args[1]
+			}
+			return a, nil
+		},
+		"file pull\x00cli": func(b Bound) (Action, error) {
+			a := FilePullAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.Length = uint64Of(b.Flags["length"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RemoteSrc = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.LocalDst = b.Args[2]
+			}
+			return a, nil
+		},
+		"file pull\x00tui": func(b Bound) (Action, error) {
+			a := FilePullAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.Length = uint64Of(b.Flags["length"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RemoteSrc = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.LocalDst = b.Args[2]
+			}
+			return a, nil
+		},
+		"file pull\x00webui": func(b Bound) (Action, error) {
+			a := FilePullAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			a.Offset = uint64Of(b.Flags["offset"])
+			a.Length = uint64Of(b.Flags["length"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RemoteSrc = b.Args[1]
+			}
+			return a, nil
+		},
+		"file ls\x00cli": func(b Bound) (Action, error) {
+			a := FileLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file ls\x00tui": func(b Bound) (Action, error) {
+			a := FileLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file ls\x00webui": func(b Bound) (Action, error) {
+			a := FileLsAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file mkdir\x00cli": func(b Bound) (Action, error) {
+			a := FileMkdirAction{}
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file mkdir\x00tui": func(b Bound) (Action, error) {
+			a := FileMkdirAction{}
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file mkdir\x00webui": func(b Bound) (Action, error) {
+			a := FileMkdirAction{}
+			a.Parents = b.Bool("parents")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file delete\x00cli": func(b Bound) (Action, error) {
+			a := FileDeleteAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file delete\x00tui": func(b Bound) (Action, error) {
+			a := FileDeleteAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file delete\x00webui": func(b Bound) (Action, error) {
+			a := FileDeleteAction{}
+			a.Recursive = b.Bool("recursive")
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file edit\x00cli": func(b Bound) (Action, error) {
+			a := FileEditAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file edit\x00tui": func(b Bound) (Action, error) {
+			a := FileEditAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file edit\x00webui": func(b Bound) (Action, error) {
+			a := FileEditAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file new\x00cli": func(b Bound) (Action, error) {
+			a := FileNewAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file new\x00tui": func(b Bound) (Action, error) {
+			a := FileNewAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"file new\x00webui": func(b Bound) (Action, error) {
+			a := FileNewAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RelPath = b.Args[1]
+			}
+			return a, nil
+		},
+		"board topics\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "topics"
 			return a, nil
 		},
-		"board read": func(b Bound) (Action, error) {
+		"board read\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "read"
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
@@ -116,7 +457,7 @@ func init() {
 			}
 			return a, nil
 		},
-		"board subscribers": func(b Bound) (Action, error) {
+		"board subscribers\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "subscribers"
 			if len(b.Args) > 0 {
@@ -124,7 +465,7 @@ func init() {
 			}
 			return a, nil
 		},
-		"board retract": func(b Bound) (Action, error) {
+		"board retract\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "retract"
 			a.Seq = uint64Of(b.Flags["seq"])
@@ -133,7 +474,7 @@ func init() {
 			}
 			return a, nil
 		},
-		"board purge": func(b Bound) (Action, error) {
+		"board purge\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "purge"
 			a.Seq = uint64Of(b.Flags["seq"])
@@ -142,7 +483,7 @@ func init() {
 			}
 			return a, nil
 		},
-		"session attach": func(b Bound) (Action, error) {
+		"session attach\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "attach"
 			a.View = b.Bool("view")
@@ -151,12 +492,26 @@ func init() {
 			}
 			return a, nil
 		},
-		"session ls": func(b Bound) (Action, error) {
+		"session attach\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "attach"
+			a.View = b.Bool("view")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session ls\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "ls"
 			return a, nil
 		},
-		"session kill": func(b Bound) (Action, error) {
+		"session ls\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "ls"
+			return a, nil
+		},
+		"session kill\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "kill"
 			if len(b.Args) > 0 {
@@ -164,7 +519,15 @@ func init() {
 			}
 			return a, nil
 		},
-		"session await-idle": func(b Bound) (Action, error) {
+		"session kill\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "kill"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session await-idle\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "await-idle"
 			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
@@ -175,7 +538,29 @@ func init() {
 			}
 			return a, nil
 		},
-		"session resize": func(b Bound) (Action, error) {
+		"session await-idle\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle"
+			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session await-idle\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle"
+			a.ThresholdMs = uintOf(b.Flags["threshold-ms"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session resize\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "resize"
 			a.Size = b.Str("size")
@@ -186,7 +571,7 @@ func init() {
 			}
 			return a, nil
 		},
-		"session snapshot": func(b Bound) (Action, error) {
+		"session snapshot\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "snapshot"
 			a.Rows = uintOf(b.Flags["rows"])
@@ -205,7 +590,45 @@ func init() {
 			}
 			return a, nil
 		},
-		"session stream attach": func(b Bound) (Action, error) {
+		"session snapshot\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "snapshot"
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			a.SettleMs = uintOf(b.Flags["settle-ms"])
+			a.Style = b.Bool("style")
+			a.Color = b.Bool("color")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Raw = b.Bool("raw")
+			a.JSON = b.Bool("json")
+			a.ANSI = b.Bool("ansi")
+			a.Detect = b.Bool("detect")
+			a.DetectAgent = b.Str("detect-agent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session snapshot\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "snapshot"
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			a.SettleMs = uintOf(b.Flags["settle-ms"])
+			a.Style = b.Bool("style")
+			a.Color = b.Bool("color")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Raw = b.Bool("raw")
+			a.JSON = b.Bool("json")
+			a.ANSI = b.Bool("ansi")
+			a.Detect = b.Bool("detect")
+			a.DetectAgent = b.Str("detect-agent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream attach\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "stream-attach"
 			if len(b.Args) > 0 {
@@ -213,7 +636,23 @@ func init() {
 			}
 			return a, nil
 		},
-		"session stream interrupt": func(b Bound) (Action, error) {
+		"session stream attach\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-attach"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream attach\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-attach"
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream interrupt\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "stream-interrupt"
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
@@ -222,7 +661,25 @@ func init() {
 			}
 			return a, nil
 		},
-		"session stream finish": func(b Bound) (Action, error) {
+		"session stream interrupt\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-interrupt"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream interrupt\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-interrupt"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream finish\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "stream-finish"
 			a.FlushMs = uintOf(b.Flags["flush-ms"])
@@ -231,7 +688,57 @@ func init() {
 			}
 			return a, nil
 		},
-		"session stream approve": func(b Bound) (Action, error) {
+		"session stream finish\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-finish"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream finish\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-finish"
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"session stream approve\x00cli": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-approve"
+			a.Allow = b.Bool("allow")
+			a.Deny = b.Bool("deny")
+			a.Message = b.Str("message")
+			a.Suggestion = b.Str("suggestion")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
+		"session stream approve\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-approve"
+			a.Allow = b.Bool("allow")
+			a.Deny = b.Bool("deny")
+			a.Message = b.Str("message")
+			a.Suggestion = b.Str("suggestion")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
+		"session stream approve\x00webui": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "stream-approve"
 			a.Allow = b.Bool("allow")

@@ -244,6 +244,14 @@ func flagValue(fl *flag.Flag) any {
 // test requires a reason when it does.
 func (v VerbSpec) For(s Surface) VerbSpec {
 	out := v
+	switch s {
+	case CLI:
+		out.narrowedFor = "cli"
+	case TUI:
+		out.narrowedFor = "tui"
+	case WebUI:
+		out.narrowedFor = "webui"
+	}
 	out.Flags = nil
 	for _, f := range v.Flags {
 		if f.Surfaces == 0 || f.Surfaces.Has(s) {

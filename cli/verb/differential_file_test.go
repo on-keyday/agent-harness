@@ -66,7 +66,7 @@ func TestFilePushMatchesLegacy(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		act, _ := cli.Build(b)
+		act, _ := cli.BuildFunc()(b)
 		got := act.(FilePushAction)
 		if got.Recursive != wr || got.Force != wf || got.Parents != wp {
 			t.Errorf("%q: flags r/f/p = %v/%v/%v, legacy %v/%v/%v",
@@ -128,7 +128,7 @@ func TestFilePullMatchesLegacy(t *testing.T) {
 		b, err := cli.Parse(fs, args)
 		if err != nil {
 			t.Errorf("%q: short offset/length spelling should now parse on every surface: %v", args, err)
-		} else if _, berr := cli.Build(b); berr != nil {
+		} else if _, berr := cli.BuildFunc()(b); berr != nil {
 			t.Errorf("%q: Build: %v", args, berr)
 		}
 	}

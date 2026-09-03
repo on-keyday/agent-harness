@@ -129,47 +129,29 @@ import "time"
 		"// generated.go's map at init. Registering rather than declaring is what lets\n" +
 		"// the package compile when this file is absent -- which it must, because the\n" +
 		"// generator imports it.\nfunc init() {\n\tregisterGenerated(map[string]func(Bound) (Action, error){\n")
+	// One build per (verb, surface): a positional the declaration narrows away
+	// shifts every index after it. `file push` names <task-id> <local-src>
+	// <dst> on the CLI and <task-id> <dst> in a browser, so a single build
+	// keyed by path alone would write the destination into LocalSrc there.
 	for _, v := range verb.Verbs {
 		if v.Action == "" {
 			continue
 		}
-		fmt.Fprintf(&buf, "\t\t%q: func(b Bound) (Action, error) {\n\t\t\ta := %s{}\n", v.FlagSetName(), v.Action)
-		for name, val := range sortedConst(v.Const) {
-			_ = name
-			fmt.Fprintf(&buf, "\t\ta.%s = %q\n", val[0], val[1])
-		}
-		for _, f := range v.Flags {
-			if f.Field == "" {
+		for _, sf := range []struct {
+			s    verb.Surface
+			name string
+		}{{verb.CLI, "cli"}, {verb.TUI, "tui"}, {verb.WebUI, "webui"}} {
+			if !v.Surfaces.Has(sf.s) {
 				continue
 			}
-			fmt.Fprintf(&buf, "\t\ta.%s = %s\n", f.Field, readerForFlag(f))
+			nv := v.For(sf.s)
+			emitBuild(&buf, nv, v.FlagSetName()+"\x00"+sf.name, v.Action)
 		}
-		for i, ar := range v.Args {
-			if ar.Field == "" {
-				continue
-			}
-			if ar.Variadic && ar.MaxCount != 1 {
-				fmt.Fprintf(&buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
-			} else {
-				fmt.Fprintf(&buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
-			}
-		}
-		if v.Trailing != nil {
-			if v.Trailing.Field != "" {
-				fmt.Fprintf(&buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
-			}
-			if v.Trailing.FieldArgs != "" {
-				fmt.Fprintf(&buf, "\t\ta.%s = b.TrailArgs\n", v.Trailing.FieldArgs)
-			}
-		}
-		buf.WriteString("\t\treturn a, nil\n\t},\n")
 	}
 	buf.WriteString("\t})\n}\n")
 
 	src, err := format.Source(buf.Bytes())
 	if err != nil {
-		// Write it unformatted so the compiler's message points at the real
-		// line rather than at a formatting failure.
 		os.WriteFile(*out, buf.Bytes(), 0o644)
 		fmt.Fprintln(os.Stderr, "gen: emitted unformatted:", err)
 		os.Exit(1)
@@ -179,6 +161,42 @@ import "time"
 		os.Exit(1)
 	}
 	fmt.Printf("gen: %d action types, %d builds\n", len(names), countGenerated())
+}
+
+// emitBuild writes one build func for a verb already narrowed to a surface.
+func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
+	{
+		fmt.Fprintf(buf, "\t\t%q: func(b Bound) (Action, error) {\n\t\t\ta := %s{}\n", key, action)
+		for name, val := range sortedConst(v.Const) {
+			_ = name
+			fmt.Fprintf(buf, "\t\ta.%s = %q\n", val[0], val[1])
+		}
+		for _, f := range v.Flags {
+			if f.Field == "" {
+				continue
+			}
+			fmt.Fprintf(buf, "\t\ta.%s = %s\n", f.Field, readerForFlag(f))
+		}
+		for i, ar := range v.Args {
+			if ar.Field == "" {
+				continue
+			}
+			if ar.Variadic && ar.MaxCount != 1 {
+				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
+			} else {
+				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
+			}
+		}
+		if v.Trailing != nil {
+			if v.Trailing.Field != "" {
+				fmt.Fprintf(buf, "\t\ta.%s = b.Trail\n", v.Trailing.Field)
+			}
+			if v.Trailing.FieldArgs != "" {
+				fmt.Fprintf(buf, "\t\ta.%s = b.TrailArgs\n", v.Trailing.FieldArgs)
+			}
+		}
+		buf.WriteString("\t\t\treturn a, nil\n\t\t},\n")
+	}
 }
 
 func (a *action) add(f field) {
