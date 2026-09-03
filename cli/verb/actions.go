@@ -14,17 +14,6 @@ import (
 // same way -- tui's screen-state verbs (clear, quit, grid, trsf) stay in tui
 // and satisfy Action by embedding this marker, which is why it is exported.
 
-// PruneAction asks the server to forget tasks. With TaskIDs empty the server
-// runs in time mode (terminal tasks older than Before); with TaskIDs set it
-// considers only those, ignores Before, and skips still-active tasks unless
-// Force.
-type PruneAction struct {
-	ActionMarker
-	Before  time.Duration
-	TaskIDs []string
-	Force   bool
-}
-
 // FilePushAction copies a local file (or a tree, with Recursive) into a task's
 // worktree. LocalSrc is empty on the WebUI, where the bytes come from a file
 // picker rather than a path -- see the Arg's SurfaceReason.

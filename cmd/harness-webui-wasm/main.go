@@ -3562,7 +3562,7 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	// --swap` was accepted here while the CLI and TUI rejected it. Returning
 	// Bound rather than the Action is still right -- an Action boundary needs a
 	// marshaller per type -- but skipping Build was not.
-	if _, berr := sp.Build(b); berr != nil {
+	if _, berr := sp.BuildFunc()(b); berr != nil {
 		return js.ValueOf(map[string]any{"error": berr.Error()})
 	}
 	return js.ValueOf(boundToJS(b))
@@ -3690,7 +3690,7 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
-	act, err := sp.Build(b)
+	act, err := sp.BuildFunc()(b)
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}

@@ -237,7 +237,7 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.Build(b)
+		act, berr := sp.BuildFunc()(b)
 		if berr != nil {
 			fmt.Fprintln(os.Stderr, berr)
 			os.Exit(2)
@@ -262,7 +262,7 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.Build(b)
+		act, berr := sp.BuildFunc()(b)
 		if berr != nil {
 			die(berr)
 		}
@@ -351,7 +351,7 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.Build(b)
+		act, berr := sp.BuildFunc()(b)
 		if berr != nil {
 			die(berr)
 		}
@@ -441,7 +441,7 @@ func main() {
 			if perr != nil {
 				die(perr)
 			}
-			act, berr := sp.Build(b)
+			act, berr := sp.BuildFunc()(b)
 			if berr != nil {
 				die(berr)
 			}
@@ -591,7 +591,7 @@ func main() {
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.Build(b)
+		act, berr := sp.BuildFunc()(b)
 		if berr != nil {
 			die(berr)
 		}
@@ -640,7 +640,7 @@ func main() {
 			if perr != nil {
 				die(perr)
 			}
-			act, berr := sp.Build(b)
+			act, berr := sp.BuildFunc()(b)
 			if berr != nil {
 				die(berr)
 			}
@@ -1314,7 +1314,7 @@ func parseSpawn(kind string, args []string, _ func() objproto.ConnectionID) verb
 	if perr != nil {
 		die(perr)
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		fmt.Fprintln(os.Stderr, berr)
 		os.Exit(2)
@@ -1370,7 +1370,7 @@ func parseOne[T verb.Action](path string, args []string) T {
 	if perr != nil {
 		die(perr)
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		fmt.Fprintln(os.Stderr, berr)
 		os.Exit(2)

@@ -57,6 +57,11 @@ type Arg struct {
 	// one fewer positional in a browser, which has no local path to name.
 	Surfaces      Surface
 	SurfaceReason string
+
+	// Field is the Action field this positional lands in. Empty means the
+	// generator skips it, which is how a verb whose Build interprets its
+	// positionals (git counts revisions its own way) opts out.
+	Field string
 }
 
 // FlagType names a flag's value type.
@@ -109,6 +114,23 @@ type Flag struct {
 
 	Surfaces      Surface
 	SurfaceReason string
+
+	// Field is the Action field this flag lands in. The generator writes both
+	// the struct field and the assignment, so the two cannot disagree -- the
+	// seam where `ls --filtered` had no field to land in and `agent wait
+	// --timeout` lost its default to a type mismatch.
+	//
+	// Empty means the flag is not carried into the Action by the generator.
+	// That is a real case (--hex names the default render mode) and it must be
+	// spelled with FieldReason.
+	Field       string
+	FieldReason string
+
+	// OneOf restricts a string flag to a vocabulary. A value outside it is
+	// refused with the list, rather than passed through to mean whatever the
+	// consumer makes of it -- `forward tap --dir sideways` used to reach the
+	// server.
+	OneOf []string
 }
 
 // CustomValue is a flag whose value type the stdlib does not cover.
@@ -134,6 +156,15 @@ type Tier struct {
 type Trailing struct {
 	Name   string
 	Reason string
+
+	// Field is the Action field the joined text lands in; FieldArgs is the one
+	// the word list lands in. A verb reads whichever it means.
+	Field     string
+	FieldArgs string
+
+	// Required refuses an empty tail. Sending nothing is a mistyped command,
+	// not a no-op send.
+	Required bool
 
 	// List keeps the tail as separate words in Bound.TrailArgs instead of only
 	// joining it into Bound.Trail. `exec <task-id> -- <cmd> [args...]` hands
@@ -165,8 +196,53 @@ type VerbSpec struct {
 	// (git file) can see both and refuse the ambiguous case.
 	Pathspec bool
 
+	// Action names the type this verb builds. The generator emits the struct
+	// and the assignment; a verb whose fields are shared with another (session
+	// snapshot and session await-idle both build SessionAction) names the same
+	// type and the generator unions their fields.
+	Action string
+
+	// Const carries values that are fixed per verb rather than parsed --
+	// SessionAction.Sub is "snapshot" for one path and "await-idle" for
+	// another. Generated as literal assignments.
+	Const map[string]string
+
+	// Validate is the residue: rules no attribute expresses. It runs on Bound
+	// AFTER the declarative checks and BEFORE the Action is built, which is
+	// what keeps this file free of the generated types -- and therefore able
+	// to compile when the generated file is absent, so the generator can run.
+	Validate func(Bound) error
+
+	// Exclusive lists flag groups where naming more than one is refused.
+	Exclusive [][]string
+	// ExactlyOne lists groups where naming exactly one is required.
+	ExactlyOne [][]string
+	// AtLeastOne lists groups where naming none is refused.
+	AtLeastOne [][]string
+	// Requires maps a flag to the one it cannot be used without.
+	Requires map[string]string
+
 	Examples []string
-	Build    func(Bound) (Action, error)
+
+	// Build is the hand-written path, kept for the verbs whose repacking is
+	// not mechanical. Read it through BuildFunc, never directly: when it is
+	// nil the generated build applies, and a caller that ranges over Verbs
+	// rather than going through Lookup would otherwise dereference nil.
+	Build func(Bound) (Action, error)
+}
+
+// BuildFunc returns the build this verb uses: its own when it has one, the
+// generated one otherwise.
+//
+// Every caller goes through this rather than touching Build, because the two
+// sources are not interchangeable at the field level -- Lookup used to patch
+// Build in, which worked until a test ranged over Verbs directly and found
+// nil. One accessor is the fix; a second patching site is not.
+func (v VerbSpec) BuildFunc() func(Bound) (Action, error) {
+	if v.Build != nil {
+		return v.Build
+	}
+	return generatedBuilds[v.FlagSetName()]
 }
 
 // Bound is a parsed command before Build: the neutral form the wasm bridge

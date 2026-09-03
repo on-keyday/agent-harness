@@ -122,8 +122,11 @@ func TestEveryVerbReachesSomeSurface(t *testing.T) {
 		if v.Surfaces == 0 {
 			t.Errorf("%s: declared for no surface", v.FlagSetName())
 		}
-		if v.Build == nil {
-			t.Errorf("%s: has no Build", v.FlagSetName())
+		// BuildFunc, not Build: a verb that declares Action gets its build
+		// generated, and reading the field directly is how a caller finds nil
+		// for a verb that is perfectly well wired.
+		if v.BuildFunc() == nil {
+			t.Errorf("%s: has neither a Build nor a generated one (declare Action, or write Build)", v.FlagSetName())
 		}
 	}
 }

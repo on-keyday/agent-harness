@@ -61,7 +61,7 @@ func TestPruneDeclarationMatchesLegacy(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		act, berr := sp.Build(b)
+		act, berr := sp.BuildFunc()(b)
 		if berr != nil {
 			t.Errorf("%q: Build: %v", args, berr)
 			continue
@@ -105,7 +105,7 @@ func TestExamplesParse(t *testing.T) {
 					v.FlagSetName(), ex, err, v.Usage())
 				continue
 			}
-			if _, err := v.Build(b); err != nil {
+			if _, err := v.BuildFunc()(b); err != nil {
 				t.Errorf("%s: example %q parses but does not build: %v", v.FlagSetName(), ex, err)
 			}
 		}

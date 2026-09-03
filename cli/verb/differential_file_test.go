@@ -160,7 +160,7 @@ func TestFileBrowserArityDropsTheLocalPath(t *testing.T) {
 
 func mustBuild(t *testing.T, v VerbSpec, b Bound) Action {
 	t.Helper()
-	a, err := v.Build(b)
+	a, err := v.BuildFunc()(b)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

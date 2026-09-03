@@ -156,7 +156,7 @@ func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}
@@ -586,7 +586,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}
@@ -711,7 +711,7 @@ func runSessionExec(cid objproto.ConnectionID, args []string) error {
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}
@@ -969,7 +969,7 @@ func parseSession(path string, args []string) verb.SessionAction {
 	if perr != nil {
 		die(perr)
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		fmt.Fprintln(os.Stderr, berr)
 		os.Exit(2)

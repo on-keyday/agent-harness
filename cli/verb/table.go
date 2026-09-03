@@ -22,19 +22,20 @@ var Verbs = []VerbSpec{
 	{
 		Path:     []string{"prune"},
 		Surfaces: CLI | TUI | WebUI,
+		Action:   "PruneAction",
 		Args: []Arg{
 			// Variadic and optional: no ids means time mode, which is the
 			// difference between "forget old terminal tasks" and "forget
 			// exactly these".
-			{Name: "task-id", Type: ArgTaskID, Variadic: true},
+			{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"},
 		},
 		Flags: []Flag{
 			{
-				Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour,
+				Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Field: "Before",
 				Help: "forget terminal tasks older than this (ignored when TASK_IDs are passed)",
 			},
 			{
-				Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false,
+				Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)",
 			},
 		},
@@ -45,14 +46,6 @@ var Verbs = []VerbSpec{
 			// The flag AFTER the ids, which is the form stdlib parsing drops
 			// and the reason this verb permutes.
 			"prune aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --force",
-		},
-		Build: func(b Bound) (Action, error) {
-			d, _ := b.Flags["before"].(time.Duration)
-			return PruneAction{
-				Before:  d,
-				TaskIDs: b.Args,
-				Force:   b.Bool("force"),
-			}, nil
 		},
 	},
 	// --- file ---
@@ -1437,6 +1430,11 @@ var Verbs = []VerbSpec{
 }
 
 // Lookup finds the spec for a verb path.
+//
+// A verb with no hand-written Build gets the generated one, keyed by path.
+// Wiring it here rather than in the table literal is what keeps table.go free
+// of generated names -- so the package still compiles when actions_gen.go is
+// missing, which is the only way the generator can be run to produce it.
 func Lookup(path ...string) (VerbSpec, bool) {
 	for _, v := range Verbs {
 		if len(v.Path) != len(path) {

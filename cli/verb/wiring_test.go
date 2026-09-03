@@ -104,7 +104,7 @@ func buildWith(t *testing.T, v VerbSpec, f *Flag) (any, bool) {
 	if err != nil {
 		return nil, false
 	}
-	act, err := v.Build(b)
+	act, err := v.BuildFunc()(b)
 	if err != nil {
 		return nil, false
 	}
@@ -172,7 +172,7 @@ func TestBuildReadsNoUndeclaredFlagName(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		act, err := v.Build(b)
+		act, err := v.BuildFunc()(b)
 		if err != nil {
 			continue // a cross-flag rule refused the all-flags-set form
 		}

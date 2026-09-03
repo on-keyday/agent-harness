@@ -40,7 +40,7 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}

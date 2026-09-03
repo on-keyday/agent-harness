@@ -27,7 +27,7 @@ func TestSessionSendEnterAndEAreDifferentFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", args, err)
 		}
-		act, err := sp.Build(b)
+		act, err := sp.BuildFunc()(b)
 		if err != nil {
 			t.Fatalf("Build(%q): %v", args, err)
 		}
@@ -115,7 +115,7 @@ func TestScopeForAloneMarksTheScopeHalfPresent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", args, err)
 		}
-		act, err := v.Build(b)
+		act, err := v.BuildFunc()(b)
 		if err != nil {
 			t.Fatalf("Build(%q): %v", args, err)
 		}

@@ -255,7 +255,7 @@ func parseViaSpec(path string, args []string) (Action, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return sp.Build(b)
+	return sp.BuildFunc()(b)
 }
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
@@ -894,7 +894,7 @@ func parseViaSpec2(head, sub string, args []string) (Action, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", head, sub, err)
 	}
-	return sp.Build(b)
+	return sp.BuildFunc()(b)
 }
 
 // parseSpawnTUI parses one of the three spawn verbs from the declaration.
@@ -918,7 +918,7 @@ func parseSpawnTUI(kind string, args []string, defaultRepo string) (Action, erro
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
-	act, err := sp.Build(b)
+	act, err := sp.BuildFunc()(b)
 	if err != nil {
 		return nil, err
 	}

@@ -29,7 +29,7 @@ func parseAgentVerb(sub string, args []string) (verb.AgentAction, error) {
 	if err != nil {
 		return verb.AgentAction{}, fmt.Errorf("agent %s: %w", sub, err)
 	}
-	act, err := sp.Build(b)
+	act, err := sp.BuildFunc()(b)
 	if err != nil {
 		return verb.AgentAction{}, err
 	}

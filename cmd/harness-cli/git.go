@@ -54,7 +54,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}

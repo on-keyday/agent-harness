@@ -41,7 +41,7 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(b)
+	act, berr := sp.BuildFunc()(b)
 	if berr != nil {
 		return berr
 	}

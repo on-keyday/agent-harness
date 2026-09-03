@@ -163,13 +163,30 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 		}
 		b.TrailArgs = tail
 		b.Trail = strings.Join(tail, " ")
+		if err := v.check(b); err != nil {
+			return Bound{}, err
+		}
 		return b, nil
 	}
 	if err := v.checkArity(len(positionals)); err != nil {
 		return Bound{}, err
 	}
 	b.Args = positionals
+	if err := v.check(b); err != nil {
+		return Bound{}, err
+	}
 	return b, nil
+}
+
+// check runs the declared validation, then the hand-written residue.
+func (v VerbSpec) check(b Bound) error {
+	if err := v.checkDeclared(b); err != nil {
+		return err
+	}
+	if v.Validate != nil {
+		return v.Validate(b)
+	}
+	return nil
 }
 
 // fixedArgs counts the non-variadic positionals.

@@ -105,7 +105,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, 
 	if perr != nil {
 		return perr
 	}
-	act, berr := sp.Build(bnd)
+	act, berr := sp.BuildFunc()(bnd)
 	if berr != nil {
 		return berr
 	}
