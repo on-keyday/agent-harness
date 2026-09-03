@@ -555,7 +555,11 @@ var Verbs = []VerbSpec{
 		Action:   "SSHGatewayAction",
 		Const:    map[string]string{"Sub": "start"},
 		Surfaces: TUI,
+		// The default is the CLI flag's, declared once: it lived here as a
+		// fallback inside a hand-written parser and there as Flag.Default,
+		// which is two places for one address.
 		Args: []Arg{{Name: "bind-addr", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Listen",
+			Default:  "127.0.0.1:2222",
 			Surfaces: TUI, SurfaceReason: "the CLI names the same address with --listen, in the foreground form"}},
 		Examples: []string{"ssh-gateway start", "ssh-gateway start 127.0.0.1:2223"},
 	},
@@ -1098,6 +1102,73 @@ var Verbs = []VerbSpec{
 			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"restore aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
+	},
+
+	// --- the screen-state verbs ---
+	//
+	// TUI-only, and declared for the reason the design gives (Derivation
+	// §TUI): "only this surface has it" is what Surfaces says, not a reason to
+	// sit outside the table. What is surface-local about them is the HANDLER
+	// -- D3 -- and that is true of every verb here.
+	//
+	// They were a hand-written switch in tui/cmdline.go plus a hand-written
+	// allowlist in cmdline_help_test.go, which is two more copies of a list
+	// the table can hold.
+	{
+		Path: []string{"clear"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "clear"},
+		Examples: []string{"clear"},
+	},
+	{
+		Path: []string{"quit"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		Examples: []string{"quit"},
+	},
+	{
+		// `exit` is its own path rather than an alias of quit: D16 refused a
+		// path-alias mechanism because it preserves two spellings for one
+		// verb, and two declared paths sharing an Action say the same thing
+		// without the mechanism.
+		Path: []string{"exit"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		Examples: []string{"exit"},
+	},
+	{
+		Path: []string{"help"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "help"},
+		Examples: []string{"help"},
+	},
+	{
+		Path: []string{"refresh"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		Examples: []string{"refresh"},
+	},
+	{
+		Path: []string{"sync"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		Examples: []string{"sync"},
+	},
+	{
+		Path: []string{"trsf"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "trsf"},
+		Examples: []string{"trsf"},
+	},
+	{
+		// `diag` toggles; `diag on` / `diag off` are not the same request. A
+		// script or a second operator saying `diag on` must not turn it OFF
+		// because someone already did, which is why the positional carries the
+		// word rather than the action carrying a bool.
+		Path: []string{"diag"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "diag"},
+		Args: []Arg{{Name: "on-off", Type: ArgString, Variadic: true, MaxCount: 1,
+			Field: "Arg", OneOfArg: []string{"on", "off"}}},
+		Examples: []string{"diag", "diag on", "diag off"},
+	},
+	{
+		Path: []string{"repo"}, Surfaces: TUI,
+		Action: "ScreenAction", Const: map[string]string{"Sub": "repo"},
+		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
+		Examples: []string{"repo /r"},
 	},
 
 	// --- caps set / set-parent ---

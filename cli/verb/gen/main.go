@@ -131,6 +131,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 %s)
 
@@ -234,7 +235,18 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 		// ParseCmd, not Parse: ParseCaps and ParseScope are already the
 		// capability and scope GRAMMAR parsers in this package, and a verb
 		// named caps would silently shadow one of them.
-		fmt.Fprintf(buf, "func ParseCmd%s(sf Surface, args []string) (%s, error) {\n"+
+		// The surface-context tier of any ladder this verb declares (D7):
+		// --repo from the TUI's session, from the WebUI's dropdown. Applied
+		// here so a caller cannot forget it -- three call sites did.
+		var ctxApply string
+		for _, f := range v.Flags {
+			for _, tr := range f.Resolve {
+				if tr.SurfaceContext && f.Field != "" {
+					ctxApply += fmt.Sprintf("\tif r := sp.Resolve(b, %q, nil, nil, ctx); r != \"\" {\n\t\ta.%s = r\n\t}\n", f.Name, f.Field)
+				}
+			}
+		}
+		fmt.Fprintf(buf, "func ParseCmd%s(sf Surface, args []string, ctx map[string]string) (%s, error) {\n"+
 			"\tvar zero %s\n"+
 			"\tsp, ok := Lookup(%s)\n"+
 			"\tif !ok {\n\t\treturn zero, fmt.Errorf(%q)\n\t}\n"+
@@ -245,9 +257,10 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 			"\tif err != nil {\n\t\treturn zero, err\n\t}\n"+
 			"\tact, err := sp.BuildFunc()(b)\n"+
 			"\tif err != nil {\n\t\treturn zero, err\n\t}\n"+
-			"\treturn act.(%s), nil\n}\n\n",
+			"\ta := act.(%s)\n%s"+
+			"\treturn a, nil\n}\n\n",
 			methodName(v), v.Action, v.Action, quotedPath(v),
-			v.FlagSetName()+": not in the verb table", v.Action)
+			v.FlagSetName()+": not in the verb table", v.Action, ctxApply)
 	}
 }
 
@@ -266,6 +279,39 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 // DOM, and forcing one output model on the other two is the thing the
 // declaration was never meant to do. This fixes WHICH verbs each surface
 // answers, not what answering means there.
+// canonical groups verbs that are the SAME operation under two spellings --
+// `quit` / `exit`, `refresh` / `sync`. D16 refused a path-alias mechanism, so
+// they are two declared paths that fix the same Action and the same Const; the
+// dispatch has to see one method, or the second spelling gets an interface
+// method no dispatcher ever calls and a handler body nobody runs.
+//
+// Returns the verbs that own a method, in declaration order, and a lookup from
+// any verb to the method that answers it.
+func canonical(verbs []verb.VerbSpec) ([]verb.VerbSpec, func(verb.VerbSpec) string) {
+	key := func(v verb.VerbSpec) string {
+		keys := make([]string, 0, len(v.Const))
+		for k := range v.Const {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		k := v.Action
+		for _, name := range keys {
+			k += "\x00" + name + "=" + v.Const[name]
+		}
+		return k
+	}
+	owner := map[string]string{}
+	var own []verb.VerbSpec
+	for _, v := range verbs {
+		if _, seen := owner[key(v)]; seen {
+			continue
+		}
+		owner[key(v)] = methodName(v)
+		own = append(own, v)
+	}
+	return own, func(v verb.VerbSpec) string { return owner[key(v)] }
+}
+
 func emitDispatch(buf *bytes.Buffer) {
 	for _, sf := range []struct {
 		s    verb.Surface
@@ -285,8 +331,19 @@ func emitDispatch(buf *bytes.Buffer) {
 			"// both and imports neither (D23), so the shape of an answer is the\n"+
 			"// caller's to name.\ntype %sDispatch[R any] interface {\n",
 			sf.name, sf.name, sf.name)
-		for _, v := range verbs {
-			fmt.Fprintf(buf, "\t// %s\n\t%s(%s) R\n", v.FlagSetName(), methodName(v), v.Action)
+		owners, methodOf := canonical(verbs)
+		for _, v := range owners {
+			var also []string
+			for _, o := range verbs {
+				if methodOf(o) == methodOf(v) && o.FlagSetName() != v.FlagSetName() {
+					also = append(also, o.FlagSetName())
+				}
+			}
+			line := v.FlagSetName()
+			if len(also) > 0 {
+				line += " (also: " + strings.Join(also, ", ") + ")"
+			}
+			fmt.Fprintf(buf, "\t// %s\n\t%s(%s) R\n", line, methodOf(v), v.Action)
 		}
 		buf.WriteString("}\n")
 
@@ -296,17 +353,45 @@ func emitDispatch(buf *bytes.Buffer) {
 			"// Returns handled=false for a name this surface does not declare, and a\n"+
 			"// parse error before the handler runs -- the caller decides how each\n"+
 			"// reads, which is the half D3 keeps per-surface.\n"+
-			"func Dispatch%s[R any](h %sDispatch[R], cmd string, args []string) (r R, handled bool, err error) {\n"+
+			"func Dispatch%s[R any](h %sDispatch[R], cmd string, args []string, ctx map[string]string) (r R, handled bool, err error) {\n"+
 			"\tswitch cmd {\n", sf.name, sf.name, sf.name)
 		for _, v := range verbs {
-			fmt.Fprintf(buf, "\tcase Cmd%s:\n\t\ta, perr := ParseCmd%s(%s, args)\n"+
+			fmt.Fprintf(buf, "\tcase Cmd%s:\n\t\ta, perr := ParseCmd%s(%s, args, ctx)\n"+
 				"\t\tif perr != nil {\n\t\t\treturn r, true, perr\n\t\t}\n\t\treturn h.%s(a), true, nil\n",
-				methodName(v), methodName(v), sf.name, methodName(v))
+				methodName(v), methodName(v), sf.name, methodOf(v))
 		}
 		buf.WriteString("\t}\n\treturn r, false, nil\n}\n")
 
-		emitActionDispatch(buf, sf.name, verbs)
+		emitActionDispatch(buf, sf.name, verbs, methodOf)
+		emitNameToAction(buf, sf.name, verbs)
 	}
+}
+
+// emitNameToAction writes the name -> Action half, for a surface that PARSES
+// separately from executing.
+//
+// The TUI does: ParseCommand turns a line into an Action that runAction later
+// runs, because a keybinding produces the same Actions without a line. Its
+// switch over declared verbs was the declaration's own table written out a
+// second time, plus seventeen helper functions that differ only in which
+// ParseCmdXxx they would now call.
+func emitNameToAction(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec) {
+	fmt.Fprintf(buf, "\n// Parse%sCommand turns one tokenized command line into the Action the\n"+
+		"// declaration says it is. It finds the verb path itself, longest first,\n"+
+		"// so a caller never has to know that `session stream turn` is three words\n"+
+		"// and `prune` is one.\n//\n"+
+		"// handled is false for a name this surface does not declare, which is\n"+
+		"// where a surface-local verb (the TUI's clear / quit / repo) takes over.\n"+
+		"func Parse%sCommand(tokens []string, ctx map[string]string) (act Action, handled bool, err error) {\n"+
+		"\tif len(tokens) == 0 {\n\t\treturn nil, false, nil\n\t}\n"+
+		"\tfor n := MaxPathLen; n >= 1; n-- {\n\t\tif len(tokens) < n {\n\t\t\tcontinue\n\t\t}\n"+
+		"\t\tswitch strings.Join(tokens[:n], \" \") {\n", surface, surface)
+	for _, v := range verbs {
+		fmt.Fprintf(buf, "\t\tcase Cmd%s:\n\t\t\ta, perr := ParseCmd%s(%s, tokens[n:], ctx)\n"+
+			"\t\t\tif perr != nil {\n\t\t\t\treturn nil, true, perr\n\t\t\t}\n\t\t\treturn a, true, nil\n",
+			methodName(v), methodName(v), surface)
+	}
+	buf.WriteString("\t\t}\n\t}\n\treturn nil, false, nil\n}\n")
 }
 
 // emitActionDispatch writes the ACTION-keyed half of a surface's dispatch.
@@ -320,7 +405,7 @@ func emitDispatch(buf *bytes.Buffer) {
 // told apart by the Const value the declaration fixes -- Sub, or Kind for the
 // spawn family. That is the same discriminator the surfaces already switch on
 // by hand; here it comes from the table.
-func emitActionDispatch(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec) {
+func emitActionDispatch(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec, methodOf func(verb.VerbSpec) string) {
 	byAction := map[string][]verb.VerbSpec{}
 	var order []string
 	for _, v := range verbs {
@@ -337,7 +422,7 @@ func emitActionDispatch(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec
 		vs := byAction[name]
 		fmt.Fprintf(buf, "\tcase %s:\n", name)
 		if len(vs) == 1 && len(vs[0].Const) == 0 {
-			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodName(vs[0]))
+			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodOf(vs[0]))
 			continue
 		}
 		key := ""
@@ -347,21 +432,30 @@ func emitActionDispatch(buf *bytes.Buffer, surface string, verbs []verb.VerbSpec
 			}
 		}
 		if key == "" {
-			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodName(vs[0]))
+			fmt.Fprintf(buf, "\t\treturn h.%s(a), true\n", methodOf(vs[0]))
 			continue
 		}
 		fmt.Fprintf(buf, "\t\tswitch a.%s {\n", key)
 		var fallback string
+		// Two paths may fix the SAME value -- `quit` and `exit`, `refresh`
+		// and `sync`. They are one operation with two spellings (D16 refused
+		// a path-alias mechanism, so they are two declared paths instead),
+		// and the action dispatcher sees one case.
+		emitted := map[string]bool{}
 		for _, v := range vs {
 			val, has := v.Const[key]
+			if has && emitted[val] {
+				continue
+			}
+			emitted[val] = true
 			if !has {
 				// The one verb of its type with no discriminator -- the CLI's
 				// foreground `ssh-gateway` against its start/stop/status
 				// siblings. It is the default rather than a case.
-				fallback = methodName(v)
+				fallback = methodOf(v)
 				continue
 			}
-			fmt.Fprintf(buf, "\t\tcase %q:\n\t\t\treturn h.%s(a), true\n", val, methodName(v))
+			fmt.Fprintf(buf, "\t\tcase %q:\n\t\t\treturn h.%s(a), true\n", val, methodOf(v))
 		}
 		if fallback != "" {
 			fmt.Fprintf(buf, "\t\tdefault:\n\t\t\treturn h.%s(a), true\n", fallback)
@@ -439,6 +533,10 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 					"\t\t\tif err != nil {\n\t\t\t\treturn nil, fmt.Errorf(%q, raw)\n\t\t\t}\n"+
 					"\t\t\ta.%s = append(a.%s, n)\n\t\t}\n",
 					i, v.FlagSetName()+": bad "+singular(ar.Name)+" %q", ar.Field, ar.Field)
+			} else if ar.Variadic && ar.MaxCount == 1 && ar.Default != "" {
+				// An optional single positional with a declared default.
+				fmt.Fprintf(buf, "\t\ta.%s = %q\n\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n",
+					ar.Field, ar.Default, i, ar.Field, i)
 			} else if ar.Variadic && ar.MaxCount != 1 {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d:]\n\t\t}\n", i, ar.Field, i)
 			} else if ar.Type == verb.ArgUint {

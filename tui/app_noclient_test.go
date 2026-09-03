@@ -52,12 +52,12 @@ func TestRunAction_NilClientAllowsLocalActions(t *testing.T) {
 		name string
 		act  Action
 	}{
-		{"help", HelpAction{}},
-		{"clear", ClearAction{}},
+		{"help", verb.ScreenAction{Sub: "help"}},
+		{"clear", verb.ScreenAction{Sub: "clear"}},
 		{"caps-show", CapsAction{Show: true}},
 		{"scope-show", ScopeAction{Show: true}},
 		{"scope-set", ScopeAction{Scope: protocol.TaskScope{Base: protocol.ScopeBase_None}}},
-		{"repo", RepoAction{Path: "/tmp"}},
+		{"repo", verb.ScreenAction{Sub: "repo", Arg: "/tmp"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := New(Config{})

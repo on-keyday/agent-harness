@@ -36,6 +36,21 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 		}
 	}
 
+	for i, a := range v.Args {
+		if len(a.OneOfArg) == 0 || i >= len(b.Args) {
+			continue
+		}
+		got, ok := b.Args[i], false
+		for _, want := range a.OneOfArg {
+			if got == want {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Errorf("%s: <%s> %q (want %s)", name, a.Name, got, strings.Join(a.OneOfArg, ", "))
+		}
+	}
 	if v.Modes != nil {
 		if named := v.namedIn(b, v.Modes.Names); len(named) > 1 {
 			return fmt.Errorf("%s: %s are mutually exclusive", name, dashList(named))

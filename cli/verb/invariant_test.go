@@ -303,6 +303,12 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 	gateways := map[string]bool{
 		"parseViaPath": true, "parseViaSpec": true, "parseViaSpec2": true,
 		"parseSpawnTUI": true, "Lookup": true,
+		// The generated entry point. Omitting it meant a function that calls
+		// the declaration DIRECTLY -- the shape this test is asking for --
+		// read as a hand walk, and only reached the declaration in this
+		// test's eyes by going through a helper whose name starts with
+		// "parse".
+		"ParseTUICommand": true,
 	}
 	seen := map[string]bool{}
 	// Every top-level function that PRODUCES an Action, whatever it is
@@ -390,17 +396,12 @@ func TestTuiParseExemptionsAreLive(t *testing.T) {
 var tuiParseNotDeclared = map[string]string{
 	// The dispatcher. It reaches the declaration for every verb that has a
 	// path, and it is where the three TUI-local grammars still live:
-	// `caps <mask>` / `caps --on-resume`, `scope <mask>` and `diag on|off`
-	// set THIS process's state and have no path to reach. Exempt rather than
+	// `caps <mask>` / `caps --on-resume` and `scope <mask>` set THIS
+	// process's state and have no path to reach. Exempt rather than
 	// pretended-about: a hand walk inlined here is the one shape this test
 	// cannot see, because the function legitimately dispatches to the ones
 	// that can.
-	"ParseCommand": "the dispatcher; the three grammars left in it are TUI session state with no declared path",
-	// `repo <path>` sets what a later submit inherits when its line names no
-	// --repo. It is this process's own session state, not a request, and it
-	// is the SurfaceContext tier of --repo's ladder rather than a verb the
-	// other surfaces have.
-	"parseRepo": "sets this TUI session's default repo; the surface-context tier, not a request",
+	"ParseCommand": "the dispatcher; the two grammars left in it are TUI session state with no declared path",
 }
 
 // TestWidestFormIsNeverTheBareOne holds the property `board purge` cost two

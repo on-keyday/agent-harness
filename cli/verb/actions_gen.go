@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -342,6 +343,13 @@ type SSHGatewayAction struct {
 	// OpenSSH authorized_keys file; optional on a loopback bind, required otherwise
 	AuthorizedKeys string
 	Sub            string
+}
+
+// ScreenAction is built by: clear, diag, exit, help, quit, refresh, repo, sync, trsf.
+type ScreenAction struct {
+	ActionMarker
+	Sub string
+	Arg string
 }
 
 // SendAction is built by: session send.
@@ -1345,6 +1353,7 @@ func init() {
 		"ssh-gateway start\x00tui": func(b Bound) (Action, error) {
 			a := SSHGatewayAction{}
 			a.Sub = "start"
+			a.Listen = "127.0.0.1:2222"
 			if len(b.Args) > 0 {
 				a.Listen = b.Args[0]
 			}
@@ -2008,6 +2017,57 @@ func init() {
 			}
 			return a, nil
 		},
+		"clear\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "clear"
+			return a, nil
+		},
+		"quit\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "quit"
+			return a, nil
+		},
+		"exit\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "quit"
+			return a, nil
+		},
+		"help\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "help"
+			return a, nil
+		},
+		"refresh\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "refresh"
+			return a, nil
+		},
+		"sync\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "refresh"
+			return a, nil
+		},
+		"trsf\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "trsf"
+			return a, nil
+		},
+		"diag\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "diag"
+			if len(b.Args) > 0 {
+				a.Arg = b.Args[0]
+			}
+			return a, nil
+		},
+		"repo\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "repo"
+			if len(b.Args) > 0 {
+				a.Arg = b.Args[0]
+			}
+			return a, nil
+		},
 		"caps set\x00cli": func(b Bound) (Action, error) {
 			a := SetCapsAction{}
 			if b.Set["caps"] {
@@ -2491,6 +2551,15 @@ const (
 	CmdLogs                   = "logs"
 	CmdPruneLocal             = "prune-local"
 	CmdRestore                = "restore"
+	CmdClear                  = "clear"
+	CmdQuit                   = "quit"
+	CmdExit                   = "exit"
+	CmdHelp                   = "help"
+	CmdRefresh                = "refresh"
+	CmdSync                   = "sync"
+	CmdTrsf                   = "trsf"
+	CmdDiag                   = "diag"
+	CmdRepo                   = "repo"
 	CmdCapsSet                = "caps set"
 	CmdCapsSetParent          = "caps set-parent"
 	CmdSessionAttach          = "session attach"
@@ -2523,7 +2592,7 @@ const (
 // Named ParseCmdXxx rather than ParseXxx because ParseCaps and
 // ParseScope in this package are the capability and scope GRAMMARS,
 // which a verb of the same name would shadow.
-func ParseCmdPrune(sf Surface, args []string) (PruneAction, error) {
+func ParseCmdPrune(sf Surface, args []string, ctx map[string]string) (PruneAction, error) {
 	var zero PruneAction
 	sp, ok := Lookup("prune")
 	if !ok {
@@ -2540,10 +2609,11 @@ func ParseCmdPrune(sf Surface, args []string) (PruneAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(PruneAction), nil
+	a := act.(PruneAction)
+	return a, nil
 }
 
-func ParseCmdFilePush(sf Surface, args []string) (FilePushAction, error) {
+func ParseCmdFilePush(sf Surface, args []string, ctx map[string]string) (FilePushAction, error) {
 	var zero FilePushAction
 	sp, ok := Lookup("file", "push")
 	if !ok {
@@ -2560,10 +2630,11 @@ func ParseCmdFilePush(sf Surface, args []string) (FilePushAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FilePushAction), nil
+	a := act.(FilePushAction)
+	return a, nil
 }
 
-func ParseCmdFilePull(sf Surface, args []string) (FilePullAction, error) {
+func ParseCmdFilePull(sf Surface, args []string, ctx map[string]string) (FilePullAction, error) {
 	var zero FilePullAction
 	sp, ok := Lookup("file", "pull")
 	if !ok {
@@ -2580,10 +2651,11 @@ func ParseCmdFilePull(sf Surface, args []string) (FilePullAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FilePullAction), nil
+	a := act.(FilePullAction)
+	return a, nil
 }
 
-func ParseCmdFileLs(sf Surface, args []string) (FileLsAction, error) {
+func ParseCmdFileLs(sf Surface, args []string, ctx map[string]string) (FileLsAction, error) {
 	var zero FileLsAction
 	sp, ok := Lookup("file", "ls")
 	if !ok {
@@ -2600,10 +2672,11 @@ func ParseCmdFileLs(sf Surface, args []string) (FileLsAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FileLsAction), nil
+	a := act.(FileLsAction)
+	return a, nil
 }
 
-func ParseCmdFileMkdir(sf Surface, args []string) (FileMkdirAction, error) {
+func ParseCmdFileMkdir(sf Surface, args []string, ctx map[string]string) (FileMkdirAction, error) {
 	var zero FileMkdirAction
 	sp, ok := Lookup("file", "mkdir")
 	if !ok {
@@ -2620,10 +2693,11 @@ func ParseCmdFileMkdir(sf Surface, args []string) (FileMkdirAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FileMkdirAction), nil
+	a := act.(FileMkdirAction)
+	return a, nil
 }
 
-func ParseCmdFileDelete(sf Surface, args []string) (FileDeleteAction, error) {
+func ParseCmdFileDelete(sf Surface, args []string, ctx map[string]string) (FileDeleteAction, error) {
 	var zero FileDeleteAction
 	sp, ok := Lookup("file", "delete")
 	if !ok {
@@ -2640,10 +2714,11 @@ func ParseCmdFileDelete(sf Surface, args []string) (FileDeleteAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FileDeleteAction), nil
+	a := act.(FileDeleteAction)
+	return a, nil
 }
 
-func ParseCmdFileEdit(sf Surface, args []string) (FileEditAction, error) {
+func ParseCmdFileEdit(sf Surface, args []string, ctx map[string]string) (FileEditAction, error) {
 	var zero FileEditAction
 	sp, ok := Lookup("file", "edit")
 	if !ok {
@@ -2660,10 +2735,11 @@ func ParseCmdFileEdit(sf Surface, args []string) (FileEditAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FileEditAction), nil
+	a := act.(FileEditAction)
+	return a, nil
 }
 
-func ParseCmdFileNew(sf Surface, args []string) (FileNewAction, error) {
+func ParseCmdFileNew(sf Surface, args []string, ctx map[string]string) (FileNewAction, error) {
 	var zero FileNewAction
 	sp, ok := Lookup("file", "new")
 	if !ok {
@@ -2680,10 +2756,11 @@ func ParseCmdFileNew(sf Surface, args []string) (FileNewAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(FileNewAction), nil
+	a := act.(FileNewAction)
+	return a, nil
 }
 
-func ParseCmdGitLog(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitLog(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "log")
 	if !ok {
@@ -2700,10 +2777,11 @@ func ParseCmdGitLog(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdGitDiff(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitDiff(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "diff")
 	if !ok {
@@ -2720,10 +2798,11 @@ func ParseCmdGitDiff(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdGitShow(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitShow(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "show")
 	if !ok {
@@ -2740,10 +2819,11 @@ func ParseCmdGitShow(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdGitStatus(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitStatus(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "status")
 	if !ok {
@@ -2760,10 +2840,11 @@ func ParseCmdGitStatus(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdGitSubrepos(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitSubrepos(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "subrepos")
 	if !ok {
@@ -2780,10 +2861,11 @@ func ParseCmdGitSubrepos(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdGitFile(sf Surface, args []string) (GitAction, error) {
+func ParseCmdGitFile(sf Surface, args []string, ctx map[string]string) (GitAction, error) {
 	var zero GitAction
 	sp, ok := Lookup("git", "file")
 	if !ok {
@@ -2800,10 +2882,11 @@ func ParseCmdGitFile(sf Surface, args []string) (GitAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GitAction), nil
+	a := act.(GitAction)
+	return a, nil
 }
 
-func ParseCmdExec(sf Surface, args []string) (ExecRunAction, error) {
+func ParseCmdExec(sf Surface, args []string, ctx map[string]string) (ExecRunAction, error) {
 	var zero ExecRunAction
 	sp, ok := Lookup("exec")
 	if !ok {
@@ -2820,10 +2903,11 @@ func ParseCmdExec(sf Surface, args []string) (ExecRunAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ExecRunAction), nil
+	a := act.(ExecRunAction)
+	return a, nil
 }
 
-func ParseCmdExecLs(sf Surface, args []string) (ExecRunAction, error) {
+func ParseCmdExecLs(sf Surface, args []string, ctx map[string]string) (ExecRunAction, error) {
 	var zero ExecRunAction
 	sp, ok := Lookup("exec", "ls")
 	if !ok {
@@ -2840,10 +2924,11 @@ func ParseCmdExecLs(sf Surface, args []string) (ExecRunAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ExecRunAction), nil
+	a := act.(ExecRunAction)
+	return a, nil
 }
 
-func ParseCmdExecKill(sf Surface, args []string) (ExecRunAction, error) {
+func ParseCmdExecKill(sf Surface, args []string, ctx map[string]string) (ExecRunAction, error) {
 	var zero ExecRunAction
 	sp, ok := Lookup("exec", "kill")
 	if !ok {
@@ -2860,10 +2945,11 @@ func ParseCmdExecKill(sf Surface, args []string) (ExecRunAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ExecRunAction), nil
+	a := act.(ExecRunAction)
+	return a, nil
 }
 
-func ParseCmdForward(sf Surface, args []string) (ForwardOpenAction, error) {
+func ParseCmdForward(sf Surface, args []string, ctx map[string]string) (ForwardOpenAction, error) {
 	var zero ForwardOpenAction
 	sp, ok := Lookup("forward")
 	if !ok {
@@ -2880,10 +2966,11 @@ func ParseCmdForward(sf Surface, args []string) (ForwardOpenAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ForwardOpenAction), nil
+	a := act.(ForwardOpenAction)
+	return a, nil
 }
 
-func ParseCmdForwardLs(sf Surface, args []string) (ForwardLsAction, error) {
+func ParseCmdForwardLs(sf Surface, args []string, ctx map[string]string) (ForwardLsAction, error) {
 	var zero ForwardLsAction
 	sp, ok := Lookup("forward", "ls")
 	if !ok {
@@ -2900,10 +2987,11 @@ func ParseCmdForwardLs(sf Surface, args []string) (ForwardLsAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ForwardLsAction), nil
+	a := act.(ForwardLsAction)
+	return a, nil
 }
 
-func ParseCmdForwardKill(sf Surface, args []string) (ForwardKillAction, error) {
+func ParseCmdForwardKill(sf Surface, args []string, ctx map[string]string) (ForwardKillAction, error) {
 	var zero ForwardKillAction
 	sp, ok := Lookup("forward", "kill")
 	if !ok {
@@ -2920,10 +3008,11 @@ func ParseCmdForwardKill(sf Surface, args []string) (ForwardKillAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ForwardKillAction), nil
+	a := act.(ForwardKillAction)
+	return a, nil
 }
 
-func ParseCmdForwardTap(sf Surface, args []string) (ForwardTapAction, error) {
+func ParseCmdForwardTap(sf Surface, args []string, ctx map[string]string) (ForwardTapAction, error) {
 	var zero ForwardTapAction
 	sp, ok := Lookup("forward", "tap")
 	if !ok {
@@ -2940,10 +3029,11 @@ func ParseCmdForwardTap(sf Surface, args []string) (ForwardTapAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ForwardTapAction), nil
+	a := act.(ForwardTapAction)
+	return a, nil
 }
 
-func ParseCmdServerDialRunner(sf Surface, args []string) (ServerDialRunnerAction, error) {
+func ParseCmdServerDialRunner(sf Surface, args []string, ctx map[string]string) (ServerDialRunnerAction, error) {
 	var zero ServerDialRunnerAction
 	sp, ok := Lookup("server", "dial-runner")
 	if !ok {
@@ -2960,10 +3050,11 @@ func ParseCmdServerDialRunner(sf Surface, args []string) (ServerDialRunnerAction
 	if err != nil {
 		return zero, err
 	}
-	return act.(ServerDialRunnerAction), nil
+	a := act.(ServerDialRunnerAction)
+	return a, nil
 }
 
-func ParseCmdSshGateway(sf Surface, args []string) (SSHGatewayAction, error) {
+func ParseCmdSshGateway(sf Surface, args []string, ctx map[string]string) (SSHGatewayAction, error) {
 	var zero SSHGatewayAction
 	sp, ok := Lookup("ssh-gateway")
 	if !ok {
@@ -2980,10 +3071,11 @@ func ParseCmdSshGateway(sf Surface, args []string) (SSHGatewayAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SSHGatewayAction), nil
+	a := act.(SSHGatewayAction)
+	return a, nil
 }
 
-func ParseCmdSshGatewayStart(sf Surface, args []string) (SSHGatewayAction, error) {
+func ParseCmdSshGatewayStart(sf Surface, args []string, ctx map[string]string) (SSHGatewayAction, error) {
 	var zero SSHGatewayAction
 	sp, ok := Lookup("ssh-gateway", "start")
 	if !ok {
@@ -3000,10 +3092,11 @@ func ParseCmdSshGatewayStart(sf Surface, args []string) (SSHGatewayAction, error
 	if err != nil {
 		return zero, err
 	}
-	return act.(SSHGatewayAction), nil
+	a := act.(SSHGatewayAction)
+	return a, nil
 }
 
-func ParseCmdSshGatewayStatus(sf Surface, args []string) (SSHGatewayAction, error) {
+func ParseCmdSshGatewayStatus(sf Surface, args []string, ctx map[string]string) (SSHGatewayAction, error) {
 	var zero SSHGatewayAction
 	sp, ok := Lookup("ssh-gateway", "status")
 	if !ok {
@@ -3020,10 +3113,11 @@ func ParseCmdSshGatewayStatus(sf Surface, args []string) (SSHGatewayAction, erro
 	if err != nil {
 		return zero, err
 	}
-	return act.(SSHGatewayAction), nil
+	a := act.(SSHGatewayAction)
+	return a, nil
 }
 
-func ParseCmdSshGatewayStop(sf Surface, args []string) (SSHGatewayAction, error) {
+func ParseCmdSshGatewayStop(sf Surface, args []string, ctx map[string]string) (SSHGatewayAction, error) {
 	var zero SSHGatewayAction
 	sp, ok := Lookup("ssh-gateway", "stop")
 	if !ok {
@@ -3040,10 +3134,11 @@ func ParseCmdSshGatewayStop(sf Surface, args []string) (SSHGatewayAction, error)
 	if err != nil {
 		return zero, err
 	}
-	return act.(SSHGatewayAction), nil
+	a := act.(SSHGatewayAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceSave(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceSave(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "save")
 	if !ok {
@@ -3060,10 +3155,11 @@ func ParseCmdWorkspaceSave(sf Surface, args []string) (WorkspaceAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceRm(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceRm(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "rm")
 	if !ok {
@@ -3080,10 +3176,11 @@ func ParseCmdWorkspaceRm(sf Surface, args []string) (WorkspaceAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceLs(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceLs(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "ls")
 	if !ok {
@@ -3100,10 +3197,11 @@ func ParseCmdWorkspaceLs(sf Surface, args []string) (WorkspaceAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceShow(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceShow(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "show")
 	if !ok {
@@ -3120,10 +3218,11 @@ func ParseCmdWorkspaceShow(sf Surface, args []string) (WorkspaceAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceApply(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceApply(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "apply")
 	if !ok {
@@ -3140,10 +3239,11 @@ func ParseCmdWorkspaceApply(sf Surface, args []string) (WorkspaceAction, error) 
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdWorkspaceDetach(sf Surface, args []string) (WorkspaceAction, error) {
+func ParseCmdWorkspaceDetach(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
 	var zero WorkspaceAction
 	sp, ok := Lookup("workspace", "detach")
 	if !ok {
@@ -3160,10 +3260,11 @@ func ParseCmdWorkspaceDetach(sf Surface, args []string) (WorkspaceAction, error)
 	if err != nil {
 		return zero, err
 	}
-	return act.(WorkspaceAction), nil
+	a := act.(WorkspaceAction)
+	return a, nil
 }
 
-func ParseCmdBoardTopics(sf Surface, args []string) (BoardAction, error) {
+func ParseCmdBoardTopics(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
 	var zero BoardAction
 	sp, ok := Lookup("board", "topics")
 	if !ok {
@@ -3180,10 +3281,11 @@ func ParseCmdBoardTopics(sf Surface, args []string) (BoardAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(BoardAction), nil
+	a := act.(BoardAction)
+	return a, nil
 }
 
-func ParseCmdBoardRead(sf Surface, args []string) (BoardAction, error) {
+func ParseCmdBoardRead(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
 	var zero BoardAction
 	sp, ok := Lookup("board", "read")
 	if !ok {
@@ -3200,10 +3302,11 @@ func ParseCmdBoardRead(sf Surface, args []string) (BoardAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(BoardAction), nil
+	a := act.(BoardAction)
+	return a, nil
 }
 
-func ParseCmdBoardSubscribers(sf Surface, args []string) (BoardAction, error) {
+func ParseCmdBoardSubscribers(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
 	var zero BoardAction
 	sp, ok := Lookup("board", "subscribers")
 	if !ok {
@@ -3220,10 +3323,11 @@ func ParseCmdBoardSubscribers(sf Surface, args []string) (BoardAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(BoardAction), nil
+	a := act.(BoardAction)
+	return a, nil
 }
 
-func ParseCmdBoardRetract(sf Surface, args []string) (BoardAction, error) {
+func ParseCmdBoardRetract(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
 	var zero BoardAction
 	sp, ok := Lookup("board", "retract")
 	if !ok {
@@ -3240,10 +3344,11 @@ func ParseCmdBoardRetract(sf Surface, args []string) (BoardAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(BoardAction), nil
+	a := act.(BoardAction)
+	return a, nil
 }
 
-func ParseCmdBoardPurge(sf Surface, args []string) (BoardAction, error) {
+func ParseCmdBoardPurge(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
 	var zero BoardAction
 	sp, ok := Lookup("board", "purge")
 	if !ok {
@@ -3260,10 +3365,11 @@ func ParseCmdBoardPurge(sf Surface, args []string) (BoardAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(BoardAction), nil
+	a := act.(BoardAction)
+	return a, nil
 }
 
-func ParseCmdSubmit(sf Surface, args []string) (SpawnAction, error) {
+func ParseCmdSubmit(sf Surface, args []string, ctx map[string]string) (SpawnAction, error) {
 	var zero SpawnAction
 	sp, ok := Lookup("submit")
 	if !ok {
@@ -3280,10 +3386,14 @@ func ParseCmdSubmit(sf Surface, args []string) (SpawnAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SpawnAction), nil
+	a := act.(SpawnAction)
+	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+		a.Repo = r
+	}
+	return a, nil
 }
 
-func ParseCmdInteractive(sf Surface, args []string) (SpawnAction, error) {
+func ParseCmdInteractive(sf Surface, args []string, ctx map[string]string) (SpawnAction, error) {
 	var zero SpawnAction
 	sp, ok := Lookup("interactive")
 	if !ok {
@@ -3300,10 +3410,14 @@ func ParseCmdInteractive(sf Surface, args []string) (SpawnAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SpawnAction), nil
+	a := act.(SpawnAction)
+	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+		a.Repo = r
+	}
+	return a, nil
 }
 
-func ParseCmdSessionNew(sf Surface, args []string) (SpawnAction, error) {
+func ParseCmdSessionNew(sf Surface, args []string, ctx map[string]string) (SpawnAction, error) {
 	var zero SpawnAction
 	sp, ok := Lookup("session", "new")
 	if !ok {
@@ -3320,10 +3434,14 @@ func ParseCmdSessionNew(sf Surface, args []string) (SpawnAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SpawnAction), nil
+	a := act.(SpawnAction)
+	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+		a.Repo = r
+	}
+	return a, nil
 }
 
-func ParseCmdSessionSend(sf Surface, args []string) (SendAction, error) {
+func ParseCmdSessionSend(sf Surface, args []string, ctx map[string]string) (SendAction, error) {
 	var zero SendAction
 	sp, ok := Lookup("session", "send")
 	if !ok {
@@ -3340,10 +3458,11 @@ func ParseCmdSessionSend(sf Surface, args []string) (SendAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SendAction), nil
+	a := act.(SendAction)
+	return a, nil
 }
 
-func ParseCmdSessionExec(sf Surface, args []string) (SessionExecAction, error) {
+func ParseCmdSessionExec(sf Surface, args []string, ctx map[string]string) (SessionExecAction, error) {
 	var zero SessionExecAction
 	sp, ok := Lookup("session", "exec")
 	if !ok {
@@ -3360,10 +3479,11 @@ func ParseCmdSessionExec(sf Surface, args []string) (SessionExecAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionExecAction), nil
+	a := act.(SessionExecAction)
+	return a, nil
 }
 
-func ParseCmdSessionStreamTurn(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionStreamTurn(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "stream", "turn")
 	if !ok {
@@ -3380,10 +3500,11 @@ func ParseCmdSessionStreamTurn(sf Surface, args []string) (SessionAction, error)
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdNotify(sf Surface, args []string) (NotifyAction, error) {
+func ParseCmdNotify(sf Surface, args []string, ctx map[string]string) (NotifyAction, error) {
 	var zero NotifyAction
 	sp, ok := Lookup("notify")
 	if !ok {
@@ -3400,10 +3521,11 @@ func ParseCmdNotify(sf Surface, args []string) (NotifyAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(NotifyAction), nil
+	a := act.(NotifyAction)
+	return a, nil
 }
 
-func ParseCmdAgentSend(sf Surface, args []string) (AgentSendAction, error) {
+func ParseCmdAgentSend(sf Surface, args []string, ctx map[string]string) (AgentSendAction, error) {
 	var zero AgentSendAction
 	sp, ok := Lookup("agent", "send")
 	if !ok {
@@ -3420,10 +3542,11 @@ func ParseCmdAgentSend(sf Surface, args []string) (AgentSendAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentSendAction), nil
+	a := act.(AgentSendAction)
+	return a, nil
 }
 
-func ParseCmdAgentDispatch(sf Surface, args []string) (AgentSendAction, error) {
+func ParseCmdAgentDispatch(sf Surface, args []string, ctx map[string]string) (AgentSendAction, error) {
 	var zero AgentSendAction
 	sp, ok := Lookup("agent", "dispatch")
 	if !ok {
@@ -3440,10 +3563,11 @@ func ParseCmdAgentDispatch(sf Surface, args []string) (AgentSendAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentSendAction), nil
+	a := act.(AgentSendAction)
+	return a, nil
 }
 
-func ParseCmdGrid(sf Surface, args []string) (GridAction, error) {
+func ParseCmdGrid(sf Surface, args []string, ctx map[string]string) (GridAction, error) {
 	var zero GridAction
 	sp, ok := Lookup("grid")
 	if !ok {
@@ -3460,10 +3584,11 @@ func ParseCmdGrid(sf Surface, args []string) (GridAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(GridAction), nil
+	a := act.(GridAction)
+	return a, nil
 }
 
-func ParseCmdCancel(sf Surface, args []string) (CancelAction, error) {
+func ParseCmdCancel(sf Surface, args []string, ctx map[string]string) (CancelAction, error) {
 	var zero CancelAction
 	sp, ok := Lookup("cancel")
 	if !ok {
@@ -3480,10 +3605,11 @@ func ParseCmdCancel(sf Surface, args []string) (CancelAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CancelAction), nil
+	a := act.(CancelAction)
+	return a, nil
 }
 
-func ParseCmdLs(sf Surface, args []string) (ListAction, error) {
+func ParseCmdLs(sf Surface, args []string, ctx map[string]string) (ListAction, error) {
 	var zero ListAction
 	sp, ok := Lookup("ls")
 	if !ok {
@@ -3500,10 +3626,11 @@ func ParseCmdLs(sf Surface, args []string) (ListAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ListAction), nil
+	a := act.(ListAction)
+	return a, nil
 }
 
-func ParseCmdConns(sf Surface, args []string) (ConnsAction, error) {
+func ParseCmdConns(sf Surface, args []string, ctx map[string]string) (ConnsAction, error) {
 	var zero ConnsAction
 	sp, ok := Lookup("conns")
 	if !ok {
@@ -3520,10 +3647,11 @@ func ParseCmdConns(sf Surface, args []string) (ConnsAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(ConnsAction), nil
+	a := act.(ConnsAction)
+	return a, nil
 }
 
-func ParseCmdCaps(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdCaps(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("caps")
 	if !ok {
@@ -3540,10 +3668,11 @@ func ParseCmdCaps(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdWhoami(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdWhoami(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("whoami")
 	if !ok {
@@ -3560,10 +3689,11 @@ func ParseCmdWhoami(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdSkill(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdSkill(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("skill")
 	if !ok {
@@ -3580,10 +3710,11 @@ func ParseCmdSkill(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdWatch(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdWatch(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("watch")
 	if !ok {
@@ -3600,10 +3731,11 @@ func ParseCmdWatch(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdNotifyWatch(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdNotifyWatch(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("notify-watch")
 	if !ok {
@@ -3620,10 +3752,11 @@ func ParseCmdNotifyWatch(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdVersion(sf Surface, args []string) (CatalogAction, error) {
+func ParseCmdVersion(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("version")
 	if !ok {
@@ -3640,10 +3773,11 @@ func ParseCmdVersion(sf Surface, args []string) (CatalogAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(CatalogAction), nil
+	a := act.(CatalogAction)
+	return a, nil
 }
 
-func ParseCmdLogs(sf Surface, args []string) (LogsAction, error) {
+func ParseCmdLogs(sf Surface, args []string, ctx map[string]string) (LogsAction, error) {
 	var zero LogsAction
 	sp, ok := Lookup("logs")
 	if !ok {
@@ -3660,10 +3794,11 @@ func ParseCmdLogs(sf Surface, args []string) (LogsAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(LogsAction), nil
+	a := act.(LogsAction)
+	return a, nil
 }
 
-func ParseCmdPruneLocal(sf Surface, args []string) (PruneLocalAction, error) {
+func ParseCmdPruneLocal(sf Surface, args []string, ctx map[string]string) (PruneLocalAction, error) {
 	var zero PruneLocalAction
 	sp, ok := Lookup("prune-local")
 	if !ok {
@@ -3680,10 +3815,11 @@ func ParseCmdPruneLocal(sf Surface, args []string) (PruneLocalAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(PruneLocalAction), nil
+	a := act.(PruneLocalAction)
+	return a, nil
 }
 
-func ParseCmdRestore(sf Surface, args []string) (RestoreAction, error) {
+func ParseCmdRestore(sf Surface, args []string, ctx map[string]string) (RestoreAction, error) {
 	var zero RestoreAction
 	sp, ok := Lookup("restore")
 	if !ok {
@@ -3700,10 +3836,200 @@ func ParseCmdRestore(sf Surface, args []string) (RestoreAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(RestoreAction), nil
+	a := act.(RestoreAction)
+	return a, nil
 }
 
-func ParseCmdCapsSet(sf Surface, args []string) (SetCapsAction, error) {
+func ParseCmdClear(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("clear")
+	if !ok {
+		return zero, fmt.Errorf("clear: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdQuit(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("quit")
+	if !ok {
+		return zero, fmt.Errorf("quit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdExit(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("exit")
+	if !ok {
+		return zero, fmt.Errorf("exit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdHelp(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("help")
+	if !ok {
+		return zero, fmt.Errorf("help: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdRefresh(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("refresh")
+	if !ok {
+		return zero, fmt.Errorf("refresh: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdSync(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("sync")
+	if !ok {
+		return zero, fmt.Errorf("sync: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdTrsf(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("trsf")
+	if !ok {
+		return zero, fmt.Errorf("trsf: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdDiag(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("diag")
+	if !ok {
+		return zero, fmt.Errorf("diag: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdRepo(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("repo")
+	if !ok {
+		return zero, fmt.Errorf("repo: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdCapsSet(sf Surface, args []string, ctx map[string]string) (SetCapsAction, error) {
 	var zero SetCapsAction
 	sp, ok := Lookup("caps", "set")
 	if !ok {
@@ -3720,10 +4046,11 @@ func ParseCmdCapsSet(sf Surface, args []string) (SetCapsAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SetCapsAction), nil
+	a := act.(SetCapsAction)
+	return a, nil
 }
 
-func ParseCmdCapsSetParent(sf Surface, args []string) (SetParentAction, error) {
+func ParseCmdCapsSetParent(sf Surface, args []string, ctx map[string]string) (SetParentAction, error) {
 	var zero SetParentAction
 	sp, ok := Lookup("caps", "set-parent")
 	if !ok {
@@ -3740,10 +4067,11 @@ func ParseCmdCapsSetParent(sf Surface, args []string) (SetParentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SetParentAction), nil
+	a := act.(SetParentAction)
+	return a, nil
 }
 
-func ParseCmdSessionAttach(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionAttach(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "attach")
 	if !ok {
@@ -3760,10 +4088,11 @@ func ParseCmdSessionAttach(sf Surface, args []string) (SessionAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionLs(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionLs(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "ls")
 	if !ok {
@@ -3780,10 +4109,11 @@ func ParseCmdSessionLs(sf Surface, args []string) (SessionAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionKill(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionKill(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "kill")
 	if !ok {
@@ -3800,10 +4130,11 @@ func ParseCmdSessionKill(sf Surface, args []string) (SessionAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionAwaitIdle(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionAwaitIdle(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "await-idle")
 	if !ok {
@@ -3820,10 +4151,11 @@ func ParseCmdSessionAwaitIdle(sf Surface, args []string) (SessionAction, error) 
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionResize(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionResize(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "resize")
 	if !ok {
@@ -3840,10 +4172,11 @@ func ParseCmdSessionResize(sf Surface, args []string) (SessionAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionSnapshot(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionSnapshot(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "snapshot")
 	if !ok {
@@ -3860,10 +4193,11 @@ func ParseCmdSessionSnapshot(sf Surface, args []string) (SessionAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionStreamAttach(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionStreamAttach(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "stream", "attach")
 	if !ok {
@@ -3880,10 +4214,11 @@ func ParseCmdSessionStreamAttach(sf Surface, args []string) (SessionAction, erro
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionStreamInterrupt(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionStreamInterrupt(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "stream", "interrupt")
 	if !ok {
@@ -3900,10 +4235,11 @@ func ParseCmdSessionStreamInterrupt(sf Surface, args []string) (SessionAction, e
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionStreamFinish(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionStreamFinish(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "stream", "finish")
 	if !ok {
@@ -3920,10 +4256,11 @@ func ParseCmdSessionStreamFinish(sf Surface, args []string) (SessionAction, erro
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdSessionStreamApprove(sf Surface, args []string) (SessionAction, error) {
+func ParseCmdSessionStreamApprove(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "stream", "approve")
 	if !ok {
@@ -3940,10 +4277,11 @@ func ParseCmdSessionStreamApprove(sf Surface, args []string) (SessionAction, err
 	if err != nil {
 		return zero, err
 	}
-	return act.(SessionAction), nil
+	a := act.(SessionAction)
+	return a, nil
 }
 
-func ParseCmdAgentInbox(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentInbox(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "inbox")
 	if !ok {
@@ -3960,10 +4298,11 @@ func ParseCmdAgentInbox(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentWait(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentWait(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "wait")
 	if !ok {
@@ -3980,10 +4319,11 @@ func ParseCmdAgentWait(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentSubscribe(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentSubscribe(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "subscribe")
 	if !ok {
@@ -4000,10 +4340,11 @@ func ParseCmdAgentSubscribe(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentUnsubscribe(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentUnsubscribe(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "unsubscribe")
 	if !ok {
@@ -4020,10 +4361,11 @@ func ParseCmdAgentUnsubscribe(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentTopics(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentTopics(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "topics")
 	if !ok {
@@ -4040,10 +4382,11 @@ func ParseCmdAgentTopics(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentSubscriptions(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentSubscriptions(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "subscriptions")
 	if !ok {
@@ -4060,10 +4403,11 @@ func ParseCmdAgentSubscriptions(sf Surface, args []string) (AgentAction, error) 
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentRetained(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentRetained(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "retained")
 	if !ok {
@@ -4080,10 +4424,11 @@ func ParseCmdAgentRetained(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentPurge(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentPurge(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "purge")
 	if !ok {
@@ -4100,10 +4445,11 @@ func ParseCmdAgentPurge(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentRead(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentRead(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "read")
 	if !ok {
@@ -4120,10 +4466,11 @@ func ParseCmdAgentRead(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
-func ParseCmdAgentRetract(sf Surface, args []string) (AgentAction, error) {
+func ParseCmdAgentRetract(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "retract")
 	if !ok {
@@ -4140,7 +4487,8 @@ func ParseCmdAgentRetract(sf Surface, args []string) (AgentAction, error) {
 	if err != nil {
 		return zero, err
 	}
-	return act.(AgentAction), nil
+	a := act.(AgentAction)
+	return a, nil
 }
 
 // CLIDispatch is every verb the declaration gives the CLI. A handler type
@@ -4311,454 +4659,454 @@ type CLIDispatch[R any] interface {
 // Returns handled=false for a name this surface does not declare, and a
 // parse error before the handler runs -- the caller decides how each
 // reads, which is the half D3 keeps per-surface.
-func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string) (r R, handled bool, err error) {
+func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[string]string) (r R, handled bool, err error) {
 	switch cmd {
 	case CmdPrune:
-		a, perr := ParseCmdPrune(CLI, args)
+		a, perr := ParseCmdPrune(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Prune(a), true, nil
 	case CmdFilePush:
-		a, perr := ParseCmdFilePush(CLI, args)
+		a, perr := ParseCmdFilePush(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FilePush(a), true, nil
 	case CmdFilePull:
-		a, perr := ParseCmdFilePull(CLI, args)
+		a, perr := ParseCmdFilePull(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FilePull(a), true, nil
 	case CmdFileLs:
-		a, perr := ParseCmdFileLs(CLI, args)
+		a, perr := ParseCmdFileLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileLs(a), true, nil
 	case CmdFileMkdir:
-		a, perr := ParseCmdFileMkdir(CLI, args)
+		a, perr := ParseCmdFileMkdir(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileMkdir(a), true, nil
 	case CmdFileDelete:
-		a, perr := ParseCmdFileDelete(CLI, args)
+		a, perr := ParseCmdFileDelete(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileDelete(a), true, nil
 	case CmdFileEdit:
-		a, perr := ParseCmdFileEdit(CLI, args)
+		a, perr := ParseCmdFileEdit(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileEdit(a), true, nil
 	case CmdFileNew:
-		a, perr := ParseCmdFileNew(CLI, args)
+		a, perr := ParseCmdFileNew(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileNew(a), true, nil
 	case CmdGitLog:
-		a, perr := ParseCmdGitLog(CLI, args)
+		a, perr := ParseCmdGitLog(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitLog(a), true, nil
 	case CmdGitDiff:
-		a, perr := ParseCmdGitDiff(CLI, args)
+		a, perr := ParseCmdGitDiff(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitDiff(a), true, nil
 	case CmdGitShow:
-		a, perr := ParseCmdGitShow(CLI, args)
+		a, perr := ParseCmdGitShow(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitShow(a), true, nil
 	case CmdGitStatus:
-		a, perr := ParseCmdGitStatus(CLI, args)
+		a, perr := ParseCmdGitStatus(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitStatus(a), true, nil
 	case CmdGitSubrepos:
-		a, perr := ParseCmdGitSubrepos(CLI, args)
+		a, perr := ParseCmdGitSubrepos(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitSubrepos(a), true, nil
 	case CmdGitFile:
-		a, perr := ParseCmdGitFile(CLI, args)
+		a, perr := ParseCmdGitFile(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitFile(a), true, nil
 	case CmdExec:
-		a, perr := ParseCmdExec(CLI, args)
+		a, perr := ParseCmdExec(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Exec(a), true, nil
 	case CmdExecLs:
-		a, perr := ParseCmdExecLs(CLI, args)
+		a, perr := ParseCmdExecLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ExecLs(a), true, nil
 	case CmdExecKill:
-		a, perr := ParseCmdExecKill(CLI, args)
+		a, perr := ParseCmdExecKill(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ExecKill(a), true, nil
 	case CmdForward:
-		a, perr := ParseCmdForward(CLI, args)
+		a, perr := ParseCmdForward(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Forward(a), true, nil
 	case CmdForwardLs:
-		a, perr := ParseCmdForwardLs(CLI, args)
+		a, perr := ParseCmdForwardLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardLs(a), true, nil
 	case CmdForwardKill:
-		a, perr := ParseCmdForwardKill(CLI, args)
+		a, perr := ParseCmdForwardKill(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardKill(a), true, nil
 	case CmdForwardTap:
-		a, perr := ParseCmdForwardTap(CLI, args)
+		a, perr := ParseCmdForwardTap(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardTap(a), true, nil
 	case CmdServerDialRunner:
-		a, perr := ParseCmdServerDialRunner(CLI, args)
+		a, perr := ParseCmdServerDialRunner(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
 	case CmdSshGateway:
-		a, perr := ParseCmdSshGateway(CLI, args)
+		a, perr := ParseCmdSshGateway(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SshGateway(a), true, nil
 	case CmdWorkspaceSave:
-		a, perr := ParseCmdWorkspaceSave(CLI, args)
+		a, perr := ParseCmdWorkspaceSave(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceSave(a), true, nil
 	case CmdWorkspaceRm:
-		a, perr := ParseCmdWorkspaceRm(CLI, args)
+		a, perr := ParseCmdWorkspaceRm(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceRm(a), true, nil
 	case CmdWorkspaceLs:
-		a, perr := ParseCmdWorkspaceLs(CLI, args)
+		a, perr := ParseCmdWorkspaceLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceLs(a), true, nil
 	case CmdWorkspaceShow:
-		a, perr := ParseCmdWorkspaceShow(CLI, args)
+		a, perr := ParseCmdWorkspaceShow(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceShow(a), true, nil
 	case CmdBoardTopics:
-		a, perr := ParseCmdBoardTopics(CLI, args)
+		a, perr := ParseCmdBoardTopics(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.BoardTopics(a), true, nil
 	case CmdBoardRead:
-		a, perr := ParseCmdBoardRead(CLI, args)
+		a, perr := ParseCmdBoardRead(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.BoardRead(a), true, nil
 	case CmdBoardSubscribers:
-		a, perr := ParseCmdBoardSubscribers(CLI, args)
+		a, perr := ParseCmdBoardSubscribers(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.BoardSubscribers(a), true, nil
 	case CmdBoardRetract:
-		a, perr := ParseCmdBoardRetract(CLI, args)
+		a, perr := ParseCmdBoardRetract(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.BoardRetract(a), true, nil
 	case CmdBoardPurge:
-		a, perr := ParseCmdBoardPurge(CLI, args)
+		a, perr := ParseCmdBoardPurge(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.BoardPurge(a), true, nil
 	case CmdSubmit:
-		a, perr := ParseCmdSubmit(CLI, args)
+		a, perr := ParseCmdSubmit(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Submit(a), true, nil
 	case CmdInteractive:
-		a, perr := ParseCmdInteractive(CLI, args)
+		a, perr := ParseCmdInteractive(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Interactive(a), true, nil
 	case CmdSessionNew:
-		a, perr := ParseCmdSessionNew(CLI, args)
+		a, perr := ParseCmdSessionNew(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionNew(a), true, nil
 	case CmdSessionSend:
-		a, perr := ParseCmdSessionSend(CLI, args)
+		a, perr := ParseCmdSessionSend(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionSend(a), true, nil
 	case CmdSessionExec:
-		a, perr := ParseCmdSessionExec(CLI, args)
+		a, perr := ParseCmdSessionExec(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionExec(a), true, nil
 	case CmdSessionStreamTurn:
-		a, perr := ParseCmdSessionStreamTurn(CLI, args)
+		a, perr := ParseCmdSessionStreamTurn(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamTurn(a), true, nil
 	case CmdNotify:
-		a, perr := ParseCmdNotify(CLI, args)
+		a, perr := ParseCmdNotify(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Notify(a), true, nil
 	case CmdAgentSend:
-		a, perr := ParseCmdAgentSend(CLI, args)
+		a, perr := ParseCmdAgentSend(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentSend(a), true, nil
 	case CmdAgentDispatch:
-		a, perr := ParseCmdAgentDispatch(CLI, args)
+		a, perr := ParseCmdAgentDispatch(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentDispatch(a), true, nil
 	case CmdCancel:
-		a, perr := ParseCmdCancel(CLI, args)
+		a, perr := ParseCmdCancel(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Cancel(a), true, nil
 	case CmdLs:
-		a, perr := ParseCmdLs(CLI, args)
+		a, perr := ParseCmdLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Ls(a), true, nil
 	case CmdConns:
-		a, perr := ParseCmdConns(CLI, args)
+		a, perr := ParseCmdConns(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Conns(a), true, nil
 	case CmdCaps:
-		a, perr := ParseCmdCaps(CLI, args)
+		a, perr := ParseCmdCaps(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Caps(a), true, nil
 	case CmdWhoami:
-		a, perr := ParseCmdWhoami(CLI, args)
+		a, perr := ParseCmdWhoami(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Whoami(a), true, nil
 	case CmdSkill:
-		a, perr := ParseCmdSkill(CLI, args)
+		a, perr := ParseCmdSkill(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Skill(a), true, nil
 	case CmdWatch:
-		a, perr := ParseCmdWatch(CLI, args)
+		a, perr := ParseCmdWatch(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Watch(a), true, nil
 	case CmdNotifyWatch:
-		a, perr := ParseCmdNotifyWatch(CLI, args)
+		a, perr := ParseCmdNotifyWatch(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.NotifyWatch(a), true, nil
 	case CmdVersion:
-		a, perr := ParseCmdVersion(CLI, args)
+		a, perr := ParseCmdVersion(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Version(a), true, nil
 	case CmdLogs:
-		a, perr := ParseCmdLogs(CLI, args)
+		a, perr := ParseCmdLogs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Logs(a), true, nil
 	case CmdPruneLocal:
-		a, perr := ParseCmdPruneLocal(CLI, args)
+		a, perr := ParseCmdPruneLocal(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.PruneLocal(a), true, nil
 	case CmdRestore:
-		a, perr := ParseCmdRestore(CLI, args)
+		a, perr := ParseCmdRestore(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Restore(a), true, nil
 	case CmdCapsSet:
-		a, perr := ParseCmdCapsSet(CLI, args)
+		a, perr := ParseCmdCapsSet(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.CapsSet(a), true, nil
 	case CmdCapsSetParent:
-		a, perr := ParseCmdCapsSetParent(CLI, args)
+		a, perr := ParseCmdCapsSetParent(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.CapsSetParent(a), true, nil
 	case CmdSessionAttach:
-		a, perr := ParseCmdSessionAttach(CLI, args)
+		a, perr := ParseCmdSessionAttach(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionAttach(a), true, nil
 	case CmdSessionLs:
-		a, perr := ParseCmdSessionLs(CLI, args)
+		a, perr := ParseCmdSessionLs(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionLs(a), true, nil
 	case CmdSessionKill:
-		a, perr := ParseCmdSessionKill(CLI, args)
+		a, perr := ParseCmdSessionKill(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionKill(a), true, nil
 	case CmdSessionAwaitIdle:
-		a, perr := ParseCmdSessionAwaitIdle(CLI, args)
+		a, perr := ParseCmdSessionAwaitIdle(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionAwaitIdle(a), true, nil
 	case CmdSessionResize:
-		a, perr := ParseCmdSessionResize(CLI, args)
+		a, perr := ParseCmdSessionResize(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionResize(a), true, nil
 	case CmdSessionSnapshot:
-		a, perr := ParseCmdSessionSnapshot(CLI, args)
+		a, perr := ParseCmdSessionSnapshot(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionSnapshot(a), true, nil
 	case CmdSessionStreamAttach:
-		a, perr := ParseCmdSessionStreamAttach(CLI, args)
+		a, perr := ParseCmdSessionStreamAttach(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamAttach(a), true, nil
 	case CmdSessionStreamInterrupt:
-		a, perr := ParseCmdSessionStreamInterrupt(CLI, args)
+		a, perr := ParseCmdSessionStreamInterrupt(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamInterrupt(a), true, nil
 	case CmdSessionStreamFinish:
-		a, perr := ParseCmdSessionStreamFinish(CLI, args)
+		a, perr := ParseCmdSessionStreamFinish(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamFinish(a), true, nil
 	case CmdSessionStreamApprove:
-		a, perr := ParseCmdSessionStreamApprove(CLI, args)
+		a, perr := ParseCmdSessionStreamApprove(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamApprove(a), true, nil
 	case CmdAgentInbox:
-		a, perr := ParseCmdAgentInbox(CLI, args)
+		a, perr := ParseCmdAgentInbox(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentInbox(a), true, nil
 	case CmdAgentWait:
-		a, perr := ParseCmdAgentWait(CLI, args)
+		a, perr := ParseCmdAgentWait(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentWait(a), true, nil
 	case CmdAgentSubscribe:
-		a, perr := ParseCmdAgentSubscribe(CLI, args)
+		a, perr := ParseCmdAgentSubscribe(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentSubscribe(a), true, nil
 	case CmdAgentUnsubscribe:
-		a, perr := ParseCmdAgentUnsubscribe(CLI, args)
+		a, perr := ParseCmdAgentUnsubscribe(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentUnsubscribe(a), true, nil
 	case CmdAgentTopics:
-		a, perr := ParseCmdAgentTopics(CLI, args)
+		a, perr := ParseCmdAgentTopics(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentTopics(a), true, nil
 	case CmdAgentSubscriptions:
-		a, perr := ParseCmdAgentSubscriptions(CLI, args)
+		a, perr := ParseCmdAgentSubscriptions(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentSubscriptions(a), true, nil
 	case CmdAgentRetained:
-		a, perr := ParseCmdAgentRetained(CLI, args)
+		a, perr := ParseCmdAgentRetained(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentRetained(a), true, nil
 	case CmdAgentPurge:
-		a, perr := ParseCmdAgentPurge(CLI, args)
+		a, perr := ParseCmdAgentPurge(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentPurge(a), true, nil
 	case CmdAgentRead:
-		a, perr := ParseCmdAgentRead(CLI, args)
+		a, perr := ParseCmdAgentRead(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.AgentRead(a), true, nil
 	case CmdAgentRetract:
-		a, perr := ParseCmdAgentRetract(CLI, args)
+		a, perr := ParseCmdAgentRetract(CLI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
@@ -4955,6 +5303,477 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 	return r, false
 }
 
+// ParseCLICommand turns one tokenized command line into the Action the
+// declaration says it is. It finds the verb path itself, longest first,
+// so a caller never has to know that `session stream turn` is three words
+// and `prune` is one.
+//
+// handled is false for a name this surface does not declare, which is
+// where a surface-local verb (the TUI's clear / quit / repo) takes over.
+func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handled bool, err error) {
+	if len(tokens) == 0 {
+		return nil, false, nil
+	}
+	for n := MaxPathLen; n >= 1; n-- {
+		if len(tokens) < n {
+			continue
+		}
+		switch strings.Join(tokens[:n], " ") {
+		case CmdPrune:
+			a, perr := ParseCmdPrune(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFilePush:
+			a, perr := ParseCmdFilePush(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFilePull:
+			a, perr := ParseCmdFilePull(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileLs:
+			a, perr := ParseCmdFileLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileMkdir:
+			a, perr := ParseCmdFileMkdir(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileDelete:
+			a, perr := ParseCmdFileDelete(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileEdit:
+			a, perr := ParseCmdFileEdit(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileNew:
+			a, perr := ParseCmdFileNew(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitLog:
+			a, perr := ParseCmdGitLog(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitDiff:
+			a, perr := ParseCmdGitDiff(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitShow:
+			a, perr := ParseCmdGitShow(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitStatus:
+			a, perr := ParseCmdGitStatus(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitSubrepos:
+			a, perr := ParseCmdGitSubrepos(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitFile:
+			a, perr := ParseCmdGitFile(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExec:
+			a, perr := ParseCmdExec(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecLs:
+			a, perr := ParseCmdExecLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecKill:
+			a, perr := ParseCmdExecKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForward:
+			a, perr := ParseCmdForward(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardLs:
+			a, perr := ParseCmdForwardLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardKill:
+			a, perr := ParseCmdForwardKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardTap:
+			a, perr := ParseCmdForwardTap(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdServerDialRunner:
+			a, perr := ParseCmdServerDialRunner(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSshGateway:
+			a, perr := ParseCmdSshGateway(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceSave:
+			a, perr := ParseCmdWorkspaceSave(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceRm:
+			a, perr := ParseCmdWorkspaceRm(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceLs:
+			a, perr := ParseCmdWorkspaceLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceShow:
+			a, perr := ParseCmdWorkspaceShow(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardTopics:
+			a, perr := ParseCmdBoardTopics(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardRead:
+			a, perr := ParseCmdBoardRead(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardSubscribers:
+			a, perr := ParseCmdBoardSubscribers(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardRetract:
+			a, perr := ParseCmdBoardRetract(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardPurge:
+			a, perr := ParseCmdBoardPurge(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSubmit:
+			a, perr := ParseCmdSubmit(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdInteractive:
+			a, perr := ParseCmdInteractive(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionNew:
+			a, perr := ParseCmdSessionNew(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionSend:
+			a, perr := ParseCmdSessionSend(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionExec:
+			a, perr := ParseCmdSessionExec(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamTurn:
+			a, perr := ParseCmdSessionStreamTurn(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdNotify:
+			a, perr := ParseCmdNotify(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentSend:
+			a, perr := ParseCmdAgentSend(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentDispatch:
+			a, perr := ParseCmdAgentDispatch(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCancel:
+			a, perr := ParseCmdCancel(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdLs:
+			a, perr := ParseCmdLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdConns:
+			a, perr := ParseCmdConns(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCaps:
+			a, perr := ParseCmdCaps(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWhoami:
+			a, perr := ParseCmdWhoami(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSkill:
+			a, perr := ParseCmdSkill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWatch:
+			a, perr := ParseCmdWatch(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdNotifyWatch:
+			a, perr := ParseCmdNotifyWatch(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdVersion:
+			a, perr := ParseCmdVersion(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdLogs:
+			a, perr := ParseCmdLogs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdPruneLocal:
+			a, perr := ParseCmdPruneLocal(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRestore:
+			a, perr := ParseCmdRestore(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsSet:
+			a, perr := ParseCmdCapsSet(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsSetParent:
+			a, perr := ParseCmdCapsSetParent(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAttach:
+			a, perr := ParseCmdSessionAttach(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionLs:
+			a, perr := ParseCmdSessionLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionKill:
+			a, perr := ParseCmdSessionKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAwaitIdle:
+			a, perr := ParseCmdSessionAwaitIdle(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionResize:
+			a, perr := ParseCmdSessionResize(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionSnapshot:
+			a, perr := ParseCmdSessionSnapshot(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamAttach:
+			a, perr := ParseCmdSessionStreamAttach(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamInterrupt:
+			a, perr := ParseCmdSessionStreamInterrupt(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamFinish:
+			a, perr := ParseCmdSessionStreamFinish(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamApprove:
+			a, perr := ParseCmdSessionStreamApprove(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentInbox:
+			a, perr := ParseCmdAgentInbox(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentWait:
+			a, perr := ParseCmdAgentWait(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentSubscribe:
+			a, perr := ParseCmdAgentSubscribe(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentUnsubscribe:
+			a, perr := ParseCmdAgentUnsubscribe(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentTopics:
+			a, perr := ParseCmdAgentTopics(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentSubscriptions:
+			a, perr := ParseCmdAgentSubscriptions(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentRetained:
+			a, perr := ParseCmdAgentRetained(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentPurge:
+			a, perr := ParseCmdAgentPurge(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentRead:
+			a, perr := ParseCmdAgentRead(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentRetract:
+			a, perr := ParseCmdAgentRetract(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 // TUIDispatch is every verb the declaration gives the TUI. A handler type
 // that misses one does not compile, which is what makes the coverage a
 // build property rather than a test.
@@ -5040,6 +5859,20 @@ type TUIDispatch[R any] interface {
 	Cancel(CancelAction) R
 	// restore
 	Restore(RestoreAction) R
+	// clear
+	Clear(ScreenAction) R
+	// quit (also: exit)
+	Quit(ScreenAction) R
+	// help
+	Help(ScreenAction) R
+	// refresh (also: sync)
+	Refresh(ScreenAction) R
+	// trsf
+	Trsf(ScreenAction) R
+	// diag
+	Diag(ScreenAction) R
+	// repo
+	Repo(ScreenAction) R
 	// caps set
 	CapsSet(SetCapsAction) R
 	// caps set-parent
@@ -5069,292 +5902,346 @@ type TUIDispatch[R any] interface {
 // Returns handled=false for a name this surface does not declare, and a
 // parse error before the handler runs -- the caller decides how each
 // reads, which is the half D3 keeps per-surface.
-func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string) (r R, handled bool, err error) {
+func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[string]string) (r R, handled bool, err error) {
 	switch cmd {
 	case CmdPrune:
-		a, perr := ParseCmdPrune(TUI, args)
+		a, perr := ParseCmdPrune(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Prune(a), true, nil
 	case CmdFilePush:
-		a, perr := ParseCmdFilePush(TUI, args)
+		a, perr := ParseCmdFilePush(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FilePush(a), true, nil
 	case CmdFilePull:
-		a, perr := ParseCmdFilePull(TUI, args)
+		a, perr := ParseCmdFilePull(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FilePull(a), true, nil
 	case CmdFileLs:
-		a, perr := ParseCmdFileLs(TUI, args)
+		a, perr := ParseCmdFileLs(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileLs(a), true, nil
 	case CmdFileMkdir:
-		a, perr := ParseCmdFileMkdir(TUI, args)
+		a, perr := ParseCmdFileMkdir(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileMkdir(a), true, nil
 	case CmdFileDelete:
-		a, perr := ParseCmdFileDelete(TUI, args)
+		a, perr := ParseCmdFileDelete(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileDelete(a), true, nil
 	case CmdFileEdit:
-		a, perr := ParseCmdFileEdit(TUI, args)
+		a, perr := ParseCmdFileEdit(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileEdit(a), true, nil
 	case CmdFileNew:
-		a, perr := ParseCmdFileNew(TUI, args)
+		a, perr := ParseCmdFileNew(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.FileNew(a), true, nil
 	case CmdGitLog:
-		a, perr := ParseCmdGitLog(TUI, args)
+		a, perr := ParseCmdGitLog(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitLog(a), true, nil
 	case CmdGitDiff:
-		a, perr := ParseCmdGitDiff(TUI, args)
+		a, perr := ParseCmdGitDiff(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitDiff(a), true, nil
 	case CmdGitShow:
-		a, perr := ParseCmdGitShow(TUI, args)
+		a, perr := ParseCmdGitShow(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitShow(a), true, nil
 	case CmdGitStatus:
-		a, perr := ParseCmdGitStatus(TUI, args)
+		a, perr := ParseCmdGitStatus(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitStatus(a), true, nil
 	case CmdGitSubrepos:
-		a, perr := ParseCmdGitSubrepos(TUI, args)
+		a, perr := ParseCmdGitSubrepos(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitSubrepos(a), true, nil
 	case CmdGitFile:
-		a, perr := ParseCmdGitFile(TUI, args)
+		a, perr := ParseCmdGitFile(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.GitFile(a), true, nil
 	case CmdExec:
-		a, perr := ParseCmdExec(TUI, args)
+		a, perr := ParseCmdExec(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Exec(a), true, nil
 	case CmdExecLs:
-		a, perr := ParseCmdExecLs(TUI, args)
+		a, perr := ParseCmdExecLs(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ExecLs(a), true, nil
 	case CmdExecKill:
-		a, perr := ParseCmdExecKill(TUI, args)
+		a, perr := ParseCmdExecKill(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ExecKill(a), true, nil
 	case CmdForwardLs:
-		a, perr := ParseCmdForwardLs(TUI, args)
+		a, perr := ParseCmdForwardLs(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardLs(a), true, nil
 	case CmdForwardKill:
-		a, perr := ParseCmdForwardKill(TUI, args)
+		a, perr := ParseCmdForwardKill(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardKill(a), true, nil
 	case CmdForwardTap:
-		a, perr := ParseCmdForwardTap(TUI, args)
+		a, perr := ParseCmdForwardTap(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ForwardTap(a), true, nil
 	case CmdServerDialRunner:
-		a, perr := ParseCmdServerDialRunner(TUI, args)
+		a, perr := ParseCmdServerDialRunner(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
 	case CmdSshGatewayStart:
-		a, perr := ParseCmdSshGatewayStart(TUI, args)
+		a, perr := ParseCmdSshGatewayStart(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SshGatewayStart(a), true, nil
 	case CmdSshGatewayStatus:
-		a, perr := ParseCmdSshGatewayStatus(TUI, args)
+		a, perr := ParseCmdSshGatewayStatus(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SshGatewayStatus(a), true, nil
 	case CmdSshGatewayStop:
-		a, perr := ParseCmdSshGatewayStop(TUI, args)
+		a, perr := ParseCmdSshGatewayStop(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SshGatewayStop(a), true, nil
 	case CmdWorkspaceSave:
-		a, perr := ParseCmdWorkspaceSave(TUI, args)
+		a, perr := ParseCmdWorkspaceSave(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceSave(a), true, nil
 	case CmdWorkspaceRm:
-		a, perr := ParseCmdWorkspaceRm(TUI, args)
+		a, perr := ParseCmdWorkspaceRm(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceRm(a), true, nil
 	case CmdWorkspaceLs:
-		a, perr := ParseCmdWorkspaceLs(TUI, args)
+		a, perr := ParseCmdWorkspaceLs(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceLs(a), true, nil
 	case CmdWorkspaceShow:
-		a, perr := ParseCmdWorkspaceShow(TUI, args)
+		a, perr := ParseCmdWorkspaceShow(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceShow(a), true, nil
 	case CmdWorkspaceApply:
-		a, perr := ParseCmdWorkspaceApply(TUI, args)
+		a, perr := ParseCmdWorkspaceApply(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceApply(a), true, nil
 	case CmdWorkspaceDetach:
-		a, perr := ParseCmdWorkspaceDetach(TUI, args)
+		a, perr := ParseCmdWorkspaceDetach(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.WorkspaceDetach(a), true, nil
 	case CmdSubmit:
-		a, perr := ParseCmdSubmit(TUI, args)
+		a, perr := ParseCmdSubmit(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Submit(a), true, nil
 	case CmdInteractive:
-		a, perr := ParseCmdInteractive(TUI, args)
+		a, perr := ParseCmdInteractive(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Interactive(a), true, nil
 	case CmdSessionNew:
-		a, perr := ParseCmdSessionNew(TUI, args)
+		a, perr := ParseCmdSessionNew(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionNew(a), true, nil
 	case CmdSessionStreamTurn:
-		a, perr := ParseCmdSessionStreamTurn(TUI, args)
+		a, perr := ParseCmdSessionStreamTurn(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamTurn(a), true, nil
 	case CmdNotify:
-		a, perr := ParseCmdNotify(TUI, args)
+		a, perr := ParseCmdNotify(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Notify(a), true, nil
 	case CmdGrid:
-		a, perr := ParseCmdGrid(TUI, args)
+		a, perr := ParseCmdGrid(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Grid(a), true, nil
 	case CmdCancel:
-		a, perr := ParseCmdCancel(TUI, args)
+		a, perr := ParseCmdCancel(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Cancel(a), true, nil
 	case CmdRestore:
-		a, perr := ParseCmdRestore(TUI, args)
+		a, perr := ParseCmdRestore(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.Restore(a), true, nil
+	case CmdClear:
+		a, perr := ParseCmdClear(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Clear(a), true, nil
+	case CmdQuit:
+		a, perr := ParseCmdQuit(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Quit(a), true, nil
+	case CmdExit:
+		a, perr := ParseCmdExit(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Quit(a), true, nil
+	case CmdHelp:
+		a, perr := ParseCmdHelp(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Help(a), true, nil
+	case CmdRefresh:
+		a, perr := ParseCmdRefresh(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Refresh(a), true, nil
+	case CmdSync:
+		a, perr := ParseCmdSync(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Refresh(a), true, nil
+	case CmdTrsf:
+		a, perr := ParseCmdTrsf(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Trsf(a), true, nil
+	case CmdDiag:
+		a, perr := ParseCmdDiag(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Diag(a), true, nil
+	case CmdRepo:
+		a, perr := ParseCmdRepo(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Repo(a), true, nil
 	case CmdCapsSet:
-		a, perr := ParseCmdCapsSet(TUI, args)
+		a, perr := ParseCmdCapsSet(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.CapsSet(a), true, nil
 	case CmdCapsSetParent:
-		a, perr := ParseCmdCapsSetParent(TUI, args)
+		a, perr := ParseCmdCapsSetParent(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.CapsSetParent(a), true, nil
 	case CmdSessionAttach:
-		a, perr := ParseCmdSessionAttach(TUI, args)
+		a, perr := ParseCmdSessionAttach(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionAttach(a), true, nil
 	case CmdSessionLs:
-		a, perr := ParseCmdSessionLs(TUI, args)
+		a, perr := ParseCmdSessionLs(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionLs(a), true, nil
 	case CmdSessionKill:
-		a, perr := ParseCmdSessionKill(TUI, args)
+		a, perr := ParseCmdSessionKill(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionKill(a), true, nil
 	case CmdSessionAwaitIdle:
-		a, perr := ParseCmdSessionAwaitIdle(TUI, args)
+		a, perr := ParseCmdSessionAwaitIdle(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionAwaitIdle(a), true, nil
 	case CmdSessionStreamAttach:
-		a, perr := ParseCmdSessionStreamAttach(TUI, args)
+		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamAttach(a), true, nil
 	case CmdSessionStreamInterrupt:
-		a, perr := ParseCmdSessionStreamInterrupt(TUI, args)
+		a, perr := ParseCmdSessionStreamInterrupt(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamInterrupt(a), true, nil
 	case CmdSessionStreamFinish:
-		a, perr := ParseCmdSessionStreamFinish(TUI, args)
+		a, perr := ParseCmdSessionStreamFinish(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
 		return h.SessionStreamFinish(a), true, nil
 	case CmdSessionStreamApprove:
-		a, perr := ParseCmdSessionStreamApprove(TUI, args)
+		a, perr := ParseCmdSessionStreamApprove(TUI, args, ctx)
 		if perr != nil {
 			return r, true, perr
 		}
@@ -5478,6 +6365,23 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.Cancel(a), true
 	case RestoreAction:
 		return h.Restore(a), true
+	case ScreenAction:
+		switch a.Sub {
+		case "clear":
+			return h.Clear(a), true
+		case "quit":
+			return h.Quit(a), true
+		case "help":
+			return h.Help(a), true
+		case "refresh":
+			return h.Refresh(a), true
+		case "trsf":
+			return h.Trsf(a), true
+		case "diag":
+			return h.Diag(a), true
+		case "repo":
+			return h.Repo(a), true
+		}
 	case SetCapsAction:
 		return h.CapsSet(a), true
 	case SetParentAction:
@@ -5486,4 +6390,367 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 	// A surface-local action (the TUI's clear / quit / grid), which the
 	// declaration does not describe.
 	return r, false
+}
+
+// ParseTUICommand turns one tokenized command line into the Action the
+// declaration says it is. It finds the verb path itself, longest first,
+// so a caller never has to know that `session stream turn` is three words
+// and `prune` is one.
+//
+// handled is false for a name this surface does not declare, which is
+// where a surface-local verb (the TUI's clear / quit / repo) takes over.
+func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handled bool, err error) {
+	if len(tokens) == 0 {
+		return nil, false, nil
+	}
+	for n := MaxPathLen; n >= 1; n-- {
+		if len(tokens) < n {
+			continue
+		}
+		switch strings.Join(tokens[:n], " ") {
+		case CmdPrune:
+			a, perr := ParseCmdPrune(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFilePush:
+			a, perr := ParseCmdFilePush(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFilePull:
+			a, perr := ParseCmdFilePull(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileLs:
+			a, perr := ParseCmdFileLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileMkdir:
+			a, perr := ParseCmdFileMkdir(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileDelete:
+			a, perr := ParseCmdFileDelete(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileEdit:
+			a, perr := ParseCmdFileEdit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdFileNew:
+			a, perr := ParseCmdFileNew(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitLog:
+			a, perr := ParseCmdGitLog(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitDiff:
+			a, perr := ParseCmdGitDiff(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitShow:
+			a, perr := ParseCmdGitShow(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitStatus:
+			a, perr := ParseCmdGitStatus(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitSubrepos:
+			a, perr := ParseCmdGitSubrepos(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGitFile:
+			a, perr := ParseCmdGitFile(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExec:
+			a, perr := ParseCmdExec(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecLs:
+			a, perr := ParseCmdExecLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecKill:
+			a, perr := ParseCmdExecKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardLs:
+			a, perr := ParseCmdForwardLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardKill:
+			a, perr := ParseCmdForwardKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdForwardTap:
+			a, perr := ParseCmdForwardTap(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdServerDialRunner:
+			a, perr := ParseCmdServerDialRunner(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSshGatewayStart:
+			a, perr := ParseCmdSshGatewayStart(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSshGatewayStatus:
+			a, perr := ParseCmdSshGatewayStatus(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSshGatewayStop:
+			a, perr := ParseCmdSshGatewayStop(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceSave:
+			a, perr := ParseCmdWorkspaceSave(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceRm:
+			a, perr := ParseCmdWorkspaceRm(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceLs:
+			a, perr := ParseCmdWorkspaceLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceShow:
+			a, perr := ParseCmdWorkspaceShow(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceApply:
+			a, perr := ParseCmdWorkspaceApply(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceDetach:
+			a, perr := ParseCmdWorkspaceDetach(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSubmit:
+			a, perr := ParseCmdSubmit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdInteractive:
+			a, perr := ParseCmdInteractive(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionNew:
+			a, perr := ParseCmdSessionNew(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamTurn:
+			a, perr := ParseCmdSessionStreamTurn(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdNotify:
+			a, perr := ParseCmdNotify(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdGrid:
+			a, perr := ParseCmdGrid(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCancel:
+			a, perr := ParseCmdCancel(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRestore:
+			a, perr := ParseCmdRestore(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdClear:
+			a, perr := ParseCmdClear(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdQuit:
+			a, perr := ParseCmdQuit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExit:
+			a, perr := ParseCmdExit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdHelp:
+			a, perr := ParseCmdHelp(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRefresh:
+			a, perr := ParseCmdRefresh(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSync:
+			a, perr := ParseCmdSync(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdTrsf:
+			a, perr := ParseCmdTrsf(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdDiag:
+			a, perr := ParseCmdDiag(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRepo:
+			a, perr := ParseCmdRepo(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsSet:
+			a, perr := ParseCmdCapsSet(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsSetParent:
+			a, perr := ParseCmdCapsSetParent(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAttach:
+			a, perr := ParseCmdSessionAttach(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionLs:
+			a, perr := ParseCmdSessionLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionKill:
+			a, perr := ParseCmdSessionKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAwaitIdle:
+			a, perr := ParseCmdSessionAwaitIdle(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamAttach:
+			a, perr := ParseCmdSessionStreamAttach(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamInterrupt:
+			a, perr := ParseCmdSessionStreamInterrupt(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamFinish:
+			a, perr := ParseCmdSessionStreamFinish(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamApprove:
+			a, perr := ParseCmdSessionStreamApprove(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		}
+	}
+	return nil, false, nil
 }

@@ -9,19 +9,20 @@ import (
 )
 
 // helpLocalVerbs are the cmdline verbs that live in this package rather than
-// the declaration. Two kinds: screen-state operations another surface has no
-// equivalent of (clear, refresh, trsf, diag), and this TUI's own session
-// state -- `caps` / `scope` set the default a spawn carries when the command
-// line does not name its own, and `repo` sets the default repo those spawns
-// use. (`ssh-gateway start|stop|status` used to be here too; it is declared
-// now, as three TUI-only paths beside the CLI's foreground form.)
+// the declaration: `caps` / `scope` set the default a spawn carries when the
+// command line does not name its own, and no other surface holds that state
+// as a command (the WebUI holds it as chips), so the shared form is still
+// being designed -- `caps set-defaults`.
+//
+// The list used to also carry clear / refresh / quit / help / trsf / diag /
+// repo on the grounds that only this surface has them. That is what
+// Surfaces: TUI says, and saying it in the table instead deleted this list's
+// other half, a hand-written parse switch, and a hand-written action type per
+// verb. (`ssh-gateway start|stop|status` left the same way.)
 //
 // Listed rather than skipped, because the help must still describe them: an
 // operator reading it cannot tell which half of the cmdline a verb came from.
-var helpLocalVerbs = []string{
-	"clear", "refresh", "quit", "help", "trsf", "diag",
-	"caps", "scope", "repo",
-}
+var helpLocalVerbs = []string{"caps", "scope"}
 
 // TestHelpDescribesEveryDeclaredVerb holds the `help` body to the declaration.
 //

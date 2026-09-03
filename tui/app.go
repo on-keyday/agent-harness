@@ -2949,9 +2949,11 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	// treated as client-requiring, so a future Do*-dispatching action is
 	// guarded by default rather than silently re-opening this panic.
 	switch act.(type) {
-	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, ScopeAction, RefreshAction, TrsfDebugAction, GridDiagAction:
-		// no client needed (Refresh/Trsf carry their own nil-client notice;
-		// GridDiag is a local render setting and touches no RPC at all)
+	case verb.ScreenAction, CapsAction, ScopeAction:
+		// no client needed. ScreenAction is the screen-state family --
+		// clear / quit / help / refresh / trsf / diag / repo -- where refresh
+		// and trsf carry their own nil-client notice and the rest touch no RPC
+		// at all.
 	default:
 		if a.client == nil {
 			a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
@@ -2959,86 +2961,6 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch v := act.(type) {
-	case QuitAction:
-		return a, a.quit()
-	case ClearAction:
-		a.cmdresult.Clear()
-		return a, nil
-	case RefreshAction:
-		if a.client == nil {
-			a.cmdresult.Append(WarnStyle.Render("refresh: not connected"))
-			return a, nil
-		}
-		a.cmdresult.Append("refreshing snapshot…")
-		return a, RefreshSnapshot(a.client)
-	case HelpAction:
-		for _, l := range cmdlineHelpLines() {
-			a.cmdresult.Append(l)
-		}
-		return a, nil
-	case GridDiagAction:
-		want := !GridDiagEnabled()
-		if v.Set != nil {
-			want = *v.Set
-		}
-		// Report the state that was actually SET, not the one requested: the two
-		// can only differ if this ever stops being a plain assignment, and a
-		// result line that echoes the request cannot say so.
-		if SetGridDiag(want) {
-			a.cmdresult.Append(OKStyle.Render("grid diag: on — panes show rx/rate/size on their first row"))
-		} else {
-			a.cmdresult.Append(OKStyle.Render("grid diag: off"))
-		}
-		return a, nil
-	case TrsfDebugAction:
-		if a.client == nil {
-			a.cmdresult.Append(WarnStyle.Render("trsf: not connected"))
-			return a, nil
-		}
-		st := a.client.Transport().GetInternalState()
-		if st == nil {
-			a.cmdresult.Append(WarnStyle.Render("trsf: no internal state"))
-			return a, nil
-		}
-		a.cmdresult.Append(OKStyle.Render("trsf internal state (client↔server):"))
-		a.cmdresult.Append(fmt.Sprintf("  streams: send=%d recv=%d   mtu=%d", st.ActiveSendStreams, st.ActiveReceiveStreams, st.CurrentMTU))
-		a.cmdresult.Append(fmt.Sprintf("  queues: send=%d recv=%d   triggers: sendAction=%d updateWin=%d cancel=%d",
-			st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
-		a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
-			st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
-		// spurious counts packets given up on and then acked: those cuts to
-		// the window were taken on nothing.
-		a.cmdresult.Append(fmt.Sprintf("  loss: events=%d packets=%d spurious=%d",
-			st.Loss.Events, st.Loss.Packets, st.Loss.Spurious))
-		// Only meaningful as a delta between two dumps: frozen = the run loop
-		// is blocked (nothing is demuxed, so no stream ever becomes visible),
-		// exploding = busy-spin, advancing slowly = congestion-blocked.
-		a.cmdresult.Append(fmt.Sprintf("  loop: iterations=%d (run `trsf` twice — the delta is the signal)", st.LoopIterations))
-		return a, nil
-	case RepoAction:
-		// The repo string is treated as an opaque identifier — server
-		// matches it byte-for-byte against runner-registered AllowedRoots.
-		// We cannot filepath.Abs() here because the TUI host and runner
-		// host may have different OSes (e.g. Windows TUI + Linux runner),
-		// where local Abs would mangle a valid runner path into a
-		// meaningless drive-prefixed one.
-		path := v.Path
-		hasRunner := false
-	outer:
-		for _, r := range a.runnersSnapshot {
-			for _, root := range r.AllowedRoots {
-				if string(root.Path) == path {
-					hasRunner = true
-					break outer
-				}
-			}
-		}
-		if !hasRunner {
-			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", path)))
-		}
-		a.defaultRepo = path
-		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
-		return a, nil
 	case CapsAction:
 		if v.Show {
 			// `caps` with no argument opens the session-default picker — it
@@ -3226,7 +3148,7 @@ const cmdlinePlaceholder = "submit / interactive / session / file / forward / ss
 // CLI's usage() had, found the same way: by counting rather than reading.
 func cmdlineHelpLines() []string {
 	return []string{
-		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit",
+		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit (alias: exit)",
 		"restore [--list]               - list what a prune forgot and could still be put back (ids live only in the server's WAL)",
 		"restore <id>...                - put those back, rebuilt from the WAL (needs `prune` and the same scope; the record returns, the task log does not)",
 		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",

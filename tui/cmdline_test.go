@@ -235,8 +235,8 @@ func TestParseClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := got.(ClearAction); !ok {
-		t.Fatalf("got %T", got)
+	if sa, ok := got.(verb.ScreenAction); !ok || sa.Sub != "clear" {
+		t.Fatalf("got %#v", got)
 	}
 }
 
@@ -246,8 +246,11 @@ func TestParseQuit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := got.(QuitAction); !ok {
-			t.Fatalf("input %q got %T", in, got)
+		// `exit` is its own declared path fixing the same Const, so both
+		// spellings arrive as one action -- the alias is in the table, not in
+		// a second type or a second case.
+		if sa, ok := got.(verb.ScreenAction); !ok || sa.Sub != "quit" {
+			t.Fatalf("input %q got %#v", in, got)
 		}
 	}
 }
@@ -257,8 +260,8 @@ func TestParseHelp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := got.(HelpAction); !ok {
-		t.Fatalf("got %T", got)
+	if sa, ok := got.(verb.ScreenAction); !ok || sa.Sub != "help" {
+		t.Fatalf("got %#v", got)
 	}
 }
 
@@ -796,15 +799,15 @@ func TestParseScopeOnResumeStandsAlone(t *testing.T) {
 }
 
 // TestParseRefresh verifies `refresh` and its `sync` alias parse to a
-// RefreshAction (force full snapshot re-sync).
+// ScreenAction{Sub: "refresh"} (force full snapshot re-sync).
 func TestParseRefresh(t *testing.T) {
 	for _, in := range []string{"refresh", "sync"} {
 		act, err := ParseCommand(in, "")
 		if err != nil {
 			t.Fatalf("ParseCommand(%q): %v", in, err)
 		}
-		if _, ok := act.(RefreshAction); !ok {
-			t.Errorf("ParseCommand(%q) = %T, want RefreshAction", in, act)
+		if sa, ok := act.(verb.ScreenAction); !ok || sa.Sub != "refresh" {
+			t.Errorf("ParseCommand(%q) = %#v, want ScreenAction{Sub: refresh}", in, act)
 		}
 	}
 }
@@ -1394,35 +1397,35 @@ func TestParseSessionStreamApproveRejectsBadShapes(t *testing.T) {
 
 // `diag` toggles the grid's per-pane overlay, and an explicit on/off is NOT the
 // same request: a toggle would turn it off for an operator who typed `diag on`
-// because someone else already had it on. The nil/non-nil Set is what keeps
+// because someone else already had it on. The empty/non-empty Arg is what keeps
 // those apart.
 func TestParseDiag(t *testing.T) {
 	act, err := ParseCommand("diag", "")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	d, ok := act.(GridDiagAction)
-	if !ok {
-		t.Fatalf("got %T, want GridDiagAction", act)
+	d, ok := act.(verb.ScreenAction)
+	if !ok || d.Sub != "diag" {
+		t.Fatalf("got %#v, want ScreenAction{Sub: diag}", act)
 	}
-	if d.Set != nil {
-		t.Errorf("bare `diag` carries Set=%v, want nil (toggle)", *d.Set)
+	if d.Arg != "" {
+		t.Errorf("bare `diag` carries Arg=%q, want empty (toggle)", d.Arg)
 	}
 
 	for _, tc := range []struct {
 		in   string
-		want bool
-	}{{"diag on", true}, {"diag off", false}} {
+		want string
+	}{{"diag on", "on"}, {"diag off", "off"}} {
 		act, err := ParseCommand(tc.in, "")
 		if err != nil {
 			t.Fatalf("parse %q: %v", tc.in, err)
 		}
-		d, ok := act.(GridDiagAction)
-		if !ok {
-			t.Fatalf("%q: got %T, want GridDiagAction", tc.in, act)
+		d, ok := act.(verb.ScreenAction)
+		if !ok || d.Sub != "diag" {
+			t.Fatalf("%q: got %#v, want ScreenAction{Sub: diag}", tc.in, act)
 		}
-		if d.Set == nil || *d.Set != tc.want {
-			t.Errorf("%q: Set=%v, want %v", tc.in, d.Set, tc.want)
+		if d.Arg != tc.want {
+			t.Errorf("%q: Arg=%q, want %q", tc.in, d.Arg, tc.want)
 		}
 	}
 }

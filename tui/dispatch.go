@@ -548,3 +548,122 @@ func (h tuiVerbs) WorkspaceLs(v verb.WorkspaceAction) tea.Cmd     { return h.a.r
 func (h tuiVerbs) WorkspaceShow(v verb.WorkspaceAction) tea.Cmd   { return h.a.runWorkspaceAction(v) }
 func (h tuiVerbs) WorkspaceApply(v verb.WorkspaceAction) tea.Cmd  { return h.a.runWorkspaceAction(v) }
 func (h tuiVerbs) WorkspaceDetach(v verb.WorkspaceAction) tea.Cmd { return h.a.runWorkspaceAction(v) }
+
+// --- the screen-state family -------------------------------------------
+//
+// clear / quit / help / refresh / trsf / diag / repo. They were the TUI's
+// hand-written switch, kept out of the table on the grounds that only this
+// surface has them -- but "only this surface" is what Surfaces says, and
+// every verb here already has a surface-local BODY. What they got by staying
+// out was a second parse, a second name list in the help test, and no way for
+// anything else to know the words exist.
+//
+// One ScreenAction carries all of them, keyed by a declared Const, so the
+// generated dispatcher routes on a value the table fixes rather than on a
+// type each file spells for itself.
+
+func (h tuiVerbs) Clear(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	a.cmdresult.Clear()
+	return nil
+}
+
+// Quit also answers `exit`: two declared paths, one Const, one method.
+func (h tuiVerbs) Quit(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	return a.quit()
+}
+
+func (h tuiVerbs) Help(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	for _, l := range cmdlineHelpLines() {
+		a.cmdresult.Append(l)
+	}
+	return nil
+}
+
+// Refresh also answers `sync`.
+func (h tuiVerbs) Refresh(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("refresh: not connected"))
+		return nil
+	}
+	a.cmdresult.Append("refreshing snapshot…")
+	return RefreshSnapshot(a.client)
+}
+
+func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("trsf: not connected"))
+		return nil
+	}
+	st := a.client.Transport().GetInternalState()
+	if st == nil {
+		a.cmdresult.Append(WarnStyle.Render("trsf: no internal state"))
+		return nil
+	}
+	a.cmdresult.Append(OKStyle.Render("trsf internal state (client↔server):"))
+	a.cmdresult.Append(fmt.Sprintf("  streams: send=%d recv=%d   mtu=%d", st.ActiveSendStreams, st.ActiveReceiveStreams, st.CurrentMTU))
+	a.cmdresult.Append(fmt.Sprintf("  queues: send=%d recv=%d   triggers: sendAction=%d updateWin=%d cancel=%d",
+		st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
+	a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
+		st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
+	// spurious counts packets given up on and then acked: those cuts to
+	// the window were taken on nothing.
+	a.cmdresult.Append(fmt.Sprintf("  loss: events=%d packets=%d spurious=%d",
+		st.Loss.Events, st.Loss.Packets, st.Loss.Spurious))
+	// Only meaningful as a delta between two dumps: frozen = the run loop
+	// is blocked (nothing is demuxed, so no stream ever becomes visible),
+	// exploding = busy-spin, advancing slowly = congestion-blocked.
+	a.cmdresult.Append(fmt.Sprintf("  loop: iterations=%d (run `trsf` twice — the delta is the signal)", st.LoopIterations))
+	return nil
+}
+
+func (h tuiVerbs) Diag(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	// Bare `diag` toggles; `diag on` / `diag off` assert. The declaration
+	// restricts the word to on|off (Arg.OneOfArg), so a third one is refused
+	// at the parse instead of silently toggling.
+	want := !GridDiagEnabled()
+	if v.Arg != "" {
+		want = v.Arg == "on"
+	}
+	// Report the state that was actually SET, not the one requested: the two
+	// can only differ if this ever stops being a plain assignment, and a
+	// result line that echoes the request cannot say so.
+	if SetGridDiag(want) {
+		a.cmdresult.Append(OKStyle.Render("grid diag: on — panes show rx/rate/size on their first row"))
+	} else {
+		a.cmdresult.Append(OKStyle.Render("grid diag: off"))
+	}
+	return nil
+}
+
+func (h tuiVerbs) Repo(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	// The repo string is treated as an opaque identifier — server
+	// matches it byte-for-byte against runner-registered AllowedRoots.
+	// We cannot filepath.Abs() here because the TUI host and runner
+	// host may have different OSes (e.g. Windows TUI + Linux runner),
+	// where local Abs would mangle a valid runner path into a
+	// meaningless drive-prefixed one.
+	path := v.Arg
+	hasRunner := false
+outer:
+	for _, r := range a.runnersSnapshot {
+		for _, root := range r.AllowedRoots {
+			if string(root.Path) == path {
+				hasRunner = true
+				break outer
+			}
+		}
+	}
+	if !hasRunner {
+		a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", path)))
+	}
+	a.defaultRepo = path
+	a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
+	return nil
+}

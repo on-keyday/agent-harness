@@ -85,6 +85,19 @@ type Arg struct {
 	// requires it.
 	WidensIfUnset bool
 
+	// OneOfArg restricts a positional to a vocabulary, the way Flag.OneOf
+	// does for a flag. `diag on|off` is the case: the word IS the request,
+	// and a third word has to be refused at the parse rather than fall
+	// through to a toggle nobody asked for.
+	OneOfArg []string
+
+	// Default is the value an OPTIONAL positional takes when it is omitted.
+	// `ssh-gateway start` on the TUI and `ssh-gateway --listen` on the CLI
+	// mean the same address, and it lived twice -- as the flag's Default here
+	// and as a fallback inside a hand-written TUI parser. One of those two
+	// was going to move.
+	Default string
+
 	// MaxCount caps a variadic positional. Zero means unbounded. `board
 	// subscribers` takes at most one topic and `git diff` at most two
 	// revisions -- both were `if len(b.Args) > N` inside a Build, which is a
