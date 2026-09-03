@@ -3527,7 +3527,6 @@ func cmdlineHelpLines() []string {
 		"session ls                  - list detachable sessions",
 		"session kill <id>           - terminate a session",
 		"session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)",
-		"session snapshot <id> [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--detect] - render the session's current screen without taking the seat",
 		"session stream attach <id>  - follow an event-stream session's events (the counterpart of attaching to a PTY)",
 		"session stream turn <id> <text>...  - send one user turn to an event-stream session",
 		"session stream approve <id> <request-id> (--allow | --deny [--message M]) - answer a tool-approval request the agent is blocked on",

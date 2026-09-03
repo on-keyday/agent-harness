@@ -305,10 +305,11 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 		"parseSpawnTUI": true, "Lookup": true,
 	}
 	seen := map[string]bool{}
-	// EVERY top-level func in the file, not just the ones spelled `parse*`.
-	// Scanning by name prefix left two ways through, both confirmed by
-	// negative control: the same hand walk moved inline into ParseCommand (a
-	// capital P), and parseNotify renamed to handleNotify.
+	// Every top-level function that PRODUCES an Action, whatever it is
+	// called. Scanning by the `parse*` name let a rename through, and
+	// scanning by a []string parameter let ParseCommand through -- it takes
+	// the raw line. The return type is what actually says "this decides a
+	// verb's grammar".
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Recv != nil || fn.Body == nil {
@@ -317,9 +318,7 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 		if gateways[fn.Name.Name] {
 			continue
 		}
-		// A function that never looks at argv is not a parser. The tell is
-		// indexing or ranging a []string parameter.
-		if !takesArgs(fn) {
+		if !returnsAction(fn) {
 			continue
 		}
 		seen[fn.Name.Name] = true
@@ -358,18 +357,16 @@ func TestEveryTuiParseFuncGoesThroughTheDeclaration(t *testing.T) {
 	}
 }
 
-// takesArgs reports whether a function has a []string parameter -- the shape
-// every verb parser in this file has, and the thing a hand-written token walk
-// needs.
-func takesArgs(fn *ast.FuncDecl) bool {
-	if fn.Type.Params == nil {
+// returnsAction reports whether a function's results include Action. That is
+// the shape of every verb parser here, and unlike a name prefix or a []string
+// parameter it cannot be dodged by renaming or by taking the raw line.
+func returnsAction(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil {
 		return false
 	}
-	for _, p := range fn.Type.Params.List {
-		if at, ok := p.Type.(*ast.ArrayType); ok {
-			if id, ok := at.Elt.(*ast.Ident); ok && id.Name == "string" {
-				return true
-			}
+	for _, r := range fn.Type.Results.List {
+		if id, ok := r.Type.(*ast.Ident); ok && id.Name == "Action" {
+			return true
 		}
 	}
 	return false
@@ -391,6 +388,14 @@ func TestTuiParseExemptionsAreLive(t *testing.T) {
 // tuiParseNotDeclared names parse functions that deliberately do not reach the
 // declaration, with the reason.
 var tuiParseNotDeclared = map[string]string{
+	// The dispatcher. It reaches the declaration for every verb that has a
+	// path, and it is where the three TUI-local grammars still live:
+	// `caps <mask>` / `caps --on-resume`, `scope <mask>` and `diag on|off`
+	// set THIS process's state and have no path to reach. Exempt rather than
+	// pretended-about: a hand walk inlined here is the one shape this test
+	// cannot see, because the function legitimately dispatches to the ones
+	// that can.
+	"ParseCommand": "the dispatcher; the three grammars left in it are TUI session state with no declared path",
 	// `repo <path>` sets what a later submit inherits when its line names no
 	// --repo. It is this process's own session state, not a request, and it
 	// is the SurfaceContext tier of --repo's ladder rather than a verb the

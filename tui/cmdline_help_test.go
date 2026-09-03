@@ -92,12 +92,32 @@ func describedBy(lines []string, path []string) bool {
 // form had moved to a separate path, which is the shape this catches.
 func TestHelpNamesNothingUnreachable(t *testing.T) {
 	reachable := map[string]bool{}
+	// Head words AND full two-word paths. Matching the head alone is the
+	// p.split(" ")[0] defect this work removed from the WebUI's startup
+	// assertion and from the CLI's usage guard: `session frobnicate <id>`
+	// passed on the strength of the word `session`.
+	families := map[string]bool{}
 	for _, p := range verb.PathsForSurface(verb.TUI) {
-		reachable[strings.Fields(p)[0]] = true
+		fs := strings.Fields(p)
+		reachable[fs[0]] = true
+		if len(fs) >= 2 {
+			families[fs[0]] = true
+			reachable[fs[0]+" "+fs[1]] = true
+		}
 	}
 	for _, l := range helpLocalVerbs {
 		reachable[l] = true
 	}
+	// `caps` / `scope` take a bare mask and `ssh-gateway` a bare sub-verb, all
+	// TUI session state with no declared path; `git`'s id sits between the
+	// family word and the sub-verb.
+	for _, sub := range []string{
+		"caps set", "caps set-parent", "caps --on-resume", "scope subtree",
+		"ssh-gateway start", "ssh-gateway stop", "ssh-gateway status",
+	} {
+		reachable[sub] = true
+	}
+	families["git"] = false
 	// Aliases the cmdline accepts, plus the heads of the help's continuation
 	// and key-hint lines, which describe a verb rather than naming one.
 	for _, extra := range []string{
@@ -122,6 +142,21 @@ func TestHelpNamesNothingUnreachable(t *testing.T) {
 			t.Errorf("the help line %q starts with %q, which the cmdline does not accept.\n"+
 				"A help that names an unreachable verb is worse than one that omits a "+
 				"reachable one: the operator types it and gets an error.", l, w)
+			continue
+		}
+		if len(first) < 2 || !families[w] {
+			continue
+		}
+		for _, sub := range strings.Split(strings.Trim(first[1], "[]{}()"), "|") {
+			sub = strings.Trim(sub, "[]{}()<>")
+			// `<name>` and `[<name>]` are arguments, not sub-verbs.
+			if sub == "" || strings.HasPrefix(sub, "-") || sub == strings.ToUpper(sub) ||
+				strings.HasPrefix(first[1], "<") || strings.HasPrefix(first[1], "[<") {
+				continue
+			}
+			if !reachable[w+" "+sub] && !reachable[sub] {
+				t.Errorf("the help line %q names %q, and the cmdline has no such sub-verb", l, w+" "+sub)
+			}
 		}
 	}
 }

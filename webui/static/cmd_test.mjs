@@ -55,6 +55,20 @@ test("every declared webui path is dispatched, none falls through", async () => 
   }
 });
 
+// The page asserts all of this at startup -- and under node the page's IIFE
+// parks on a stubbed fetch long before reaching it, so none of it runs there.
+// Both directions are checked HERE too, or `make js-test` is green with a
+// declared path that has no entry and an entry for a path nobody declares.
+test("RUNCMD_DISPATCH covers exactly the declared paths", () => {
+  const declared = page.harness.pathsForSurface("webui");
+  const entries = Object.keys(page.RUNCMD_DISPATCH);
+  const missing = declared.filter((p) => !page.RUNCMD_DISPATCH[p]);
+  assert.deepEqual(plain(missing), [], "declared here and not dispatchable");
+  const declaredSet = new Set(declared);
+  const orphans = entries.filter((p) => !declaredSet.has(p));
+  assert.deepEqual(plain(orphans), [], "dispatch names verbs the declaration does not give this surface");
+});
+
 // The map the startup assertion checks must name real bridge functions.
 test("RUNCMD_DISPATCH names bridge functions that exist", () => {
   const local = new Set(["openChatFor"]);
