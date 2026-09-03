@@ -22,6 +22,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -338,15 +339,26 @@ func main() {
 		}
 
 	case "prune":
-		fs := flag.NewFlagSet("prune", flag.ExitOnError)
-		before := fs.Duration("before", 7*24*time.Hour, "forget terminal tasks older than this (ignored when TASK_IDs are passed)")
-		force := fs.Bool("force", false, "with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)")
-		fs.BoolVar(force, "f", false, "shorthand for --force")
-		taskIDs, perr := cli.ParsePermuted(fs, args)
+		// Parsed from the declaration (cli/verb), not from a FlagSet built
+		// here: this verb's grammar is written down once and the TUI and the
+		// WebUI read the same entry. What remains in this case is the execute
+		// half, which is per-surface on purpose — stdout and an exit code here,
+		// a tea.Cmd in the TUI, a DOM update in the browser.
+		sp, ok := verb.Lookup("prune")
+		if !ok {
+			die(fmt.Errorf("prune: not in the verb table"))
+		}
+		fs := sp.NewFlagSet(flag.ExitOnError)
+		b, perr := sp.Parse(fs, args)
 		if perr != nil {
 			die(perr)
 		}
-		if err := cli.Prune(ctx, parseCID(), *before, taskIDs, *force, os.Stdout); err != nil {
+		act, berr := sp.Build(b)
+		if berr != nil {
+			die(berr)
+		}
+		p := act.(verb.PruneAction)
+		if err := cli.Prune(ctx, parseCID(), p.Before, p.TaskIDs, p.Force, os.Stdout); err != nil {
 			die(err)
 		}
 
