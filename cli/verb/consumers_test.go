@@ -83,32 +83,51 @@ var verbConsumers = []verbConsumer{
 
 	{"workspace save", verb.CLI, []string{"../../cmd/harness-cli/workspace.go"}},
 	{"workspace save", verb.TUI, []string{"../../tui/app.go", "../../tui/workspace.go"}},
+
+	// The paths whose drops an audit found, each now watched where it broke.
+	// `exec ls` in particular was invisible: the `exec` row above restricts to
+	// the RUN sub-verb's fields, so TaskFilter -- which the TUI read under the
+	// wrong name and silently listed everything -- was in no row at all.
+	{"exec ls", verb.CLI, []string{"../../cmd/harness-cli/exec.go"}},
+	{"exec ls", verb.TUI, []string{"../../tui/app.go", "../../tui/execrun.go"}},
+	{"exec kill", verb.CLI, []string{"../../cmd/harness-cli/exec.go"}},
+	{"exec kill", verb.TUI, []string{"../../tui/app.go", "../../tui/execrun.go"}},
+	{"forward kill", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
+	{"forward kill", verb.TUI, []string{"../../tui/app.go"}},
+	{"caps set", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
+	{"caps set", verb.TUI, []string{"../../tui/app.go"}},
+	{"caps set-parent", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
+	{"caps set-parent", verb.TUI, []string{"../../tui/app.go"}},
+	{"notify", verb.CLI, []string{"../../cmd/harness-cli/main.go"}},
+	{"notify", verb.TUI, []string{"../../tui/app.go"}},
+	{"session attach", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
+	{"session attach", verb.TUI, []string{"../../tui/app.go"}},
+	{"session stream approve", verb.CLI, []string{"../../cmd/harness-cli/session.go"}},
+	{"session stream approve", verb.TUI, []string{"../../tui/app.go", "../../tui/client.go"}},
 }
 
 // actionFor names the action type a verb path builds, so the walk knows which
 // fields to look for. Only the paths in verbConsumers need an entry.
 var actionFor = map[string]any{
-	"submit":             verb.SpawnAction{},
-	"interactive":        verb.SpawnAction{},
-	"session new":        verb.SpawnAction{},
-	"prune":              verb.PruneAction{},
-	"file push":          verb.FilePushAction{},
-	"file pull":          verb.FilePullAction{},
-	"git diff":           verb.GitAction{},
-	"exec":               verb.ExecRunAction{},
-	"forward tap":        verb.ForwardTapAction{},
-	"session await-idle": verb.SessionAction{},
-	"workspace save":     verb.WorkspaceAction{},
-}
-
-// fieldsOfPath restricts an action's fields to the ones the given verb path
-// can actually populate: a shared action carries every sub-verb's fields, and
-// a surface is only answerable for the ones its verb sets.
-var fieldsOfPath = map[string][]string{
-	"session await-idle": {"TaskID", "ThresholdMs", "Notify", "Topic"},
-	"exec":               {"TaskID", "Argv", "Shell", "SshdParent"},
-	"git diff":           {"TaskID", "Sub", "BaseRev", "TargetRev", "Path", "Subrepo", "Staged", "Submodule", "MaxBytes"},
-	"workspace save":     {"Name", "TaskID", "Resume", "Runner", "Repo", "All"},
+	"submit":                 verb.SpawnAction{},
+	"interactive":            verb.SpawnAction{},
+	"session new":            verb.SpawnAction{},
+	"prune":                  verb.PruneAction{},
+	"file push":              verb.FilePushAction{},
+	"file pull":              verb.FilePullAction{},
+	"git diff":               verb.GitAction{},
+	"exec":                   verb.ExecRunAction{},
+	"forward tap":            verb.ForwardTapAction{},
+	"session await-idle":     verb.SessionAction{},
+	"workspace save":         verb.WorkspaceAction{},
+	"exec ls":                verb.ExecRunAction{},
+	"exec kill":              verb.ExecRunAction{},
+	"forward kill":           verb.ForwardKillAction{},
+	"caps set":               verb.SetCapsAction{},
+	"caps set-parent":        verb.SetParentAction{},
+	"notify":                 verb.NotifyAction{},
+	"session attach":         verb.SessionAction{},
+	"session stream approve": verb.SessionAction{},
 }
 
 // surfaceLocal names fields one surface legitimately ignores for one verb,
@@ -180,6 +199,12 @@ var surfaceLocal = map[string]string{
 
 	"file pull.LocalDst/TUI": "the TUI writes through its own file picker",
 	"file push.LocalSrc/TUI": "the TUI reads through its own file picker",
+
+	// --allow and --deny are complements under ExactlyOne, so a consumer
+	// branches on ONE of them and the other is that branch's else. Both are
+	// declared because both are typed.
+	"session stream approve.Deny/CLI":  "the allow branch's else; ExactlyOne makes them complements",
+	"session stream approve.Allow/TUI": "the deny branch's else; ExactlyOne makes them complements",
 }
 
 func surfaceName(s verb.Surface) string {
@@ -203,16 +228,15 @@ func TestEverySurfaceReadsEveryActionField(t *testing.T) {
 		}
 		rt := reflect.TypeOf(proto)
 
-		var want []string
-		if only, restricted := fieldsOfPath[c.path]; restricted {
-			want = only
-		} else {
-			for i := 0; i < rt.NumField(); i++ {
-				if n := rt.Field(i).Name; n != "ActionMarker" {
-					want = append(want, n)
-				}
-			}
-		}
+		// The fields THIS path fills on THIS surface, taken from the narrowed
+		// spec rather than from the action type. Several verbs share an action
+		// (SessionAction covers attach, ls, kill, await-idle and the stream
+		// sub-verbs), so a per-type walk demands that a surface reaching only
+		// await-idle read snapshot's rendering knobs -- and a hand-written
+		// restriction list, which is what this used to be, goes stale the
+		// other way: it named exec's run fields and so `exec ls --task` sat in
+		// no list at all while the TUI dropped it.
+		want := declaredFields(t, c.path, c.surface)
 
 		read := map[string]bool{}
 		for _, f := range c.files {
@@ -238,6 +262,53 @@ func TestEverySurfaceReadsEveryActionField(t *testing.T) {
 				c.path+"."+name+"/"+sn)
 		}
 	}
+}
+
+// declaredFields is every Action field the declaration fills for one verb path
+// on one surface: its flags, its positionals, its Const values, its trailing
+// text and anything Derived. Surface-narrowed flags and args drop out, which
+// is the point -- `exec ls --json` is not declared for the TUI, so the TUI
+// owes nothing for it.
+func declaredFields(t *testing.T, path string, sf verb.Surface) []string {
+	t.Helper()
+	sp, ok := verb.Lookup(strings.Fields(path)...)
+	if !ok {
+		t.Fatalf("%s: not in the verb table", path)
+	}
+	sp = sp.For(sf)
+	var out []string
+	add := func(n string) {
+		if n == "" {
+			return
+		}
+		for _, e := range out {
+			if e == n {
+				return
+			}
+		}
+		out = append(out, n)
+	}
+	for _, f := range sp.Flags {
+		add(f.Field)
+		add(f.PresenceField)
+	}
+	for _, a := range sp.Args {
+		add(a.Field)
+	}
+	for _, d := range sp.Derived {
+		add(d.Field)
+	}
+	if sp.Modes != nil {
+		add(sp.Modes.Field)
+	}
+	if sp.Trailing != nil {
+		add(sp.Trailing.Field)
+		add(sp.Trailing.FieldArgs)
+	}
+	add(sp.PathspecField)
+	// Const values are fixed by the path, not typed by the operator, so a
+	// surface that switches on Sub reads it and one that does not need not.
+	return out
 }
 
 // fieldsMentionedFor returns the field names this file selects off a variable
@@ -352,6 +423,37 @@ func fieldsMentionedFor(t *testing.T, path, typeName string) map[string]bool {
 		}
 		return true
 	})
+
+	// Aliases: `run := act.(verb.T)` then `a := run`. A plain identifier copy
+	// is neither an assertion nor a call, so the second name was not a
+	// receiver and every field read through it went uncounted --
+	// cmd/harness-cli/exec.go does exactly this, and `exec ls --task` read as
+	// unconsumed there while the line above it uses it.
+	named := map[string]bool{}
+	for _, sc := range scopes {
+		named[sc.recv] = true
+	}
+	for again := true; again; {
+		again = false
+		ast.Inspect(f, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Rhs) != 1 {
+				return true
+			}
+			src, ok := as.Rhs[0].(*ast.Ident)
+			if !ok || !named[src.Name] {
+				return true
+			}
+			for _, lhs := range as.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" && !named[id.Name] {
+					named[id.Name] = true
+					scopes = append(scopes, scope{f, id.Name})
+					again = true
+				}
+			}
+			return true
+		})
+	}
 
 	for _, sc := range scopes {
 		ast.Inspect(sc.node, func(n ast.Node) bool {

@@ -366,7 +366,10 @@ var Verbs = []VerbSpec{
 			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only execs against this task id"},
 			// --json was CLI-only before the migration; declaring it once gives
 			// it to the surfaces that silently lacked it.
-			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON object per exec"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				Surfaces:      CLI | WebUI,
+				SurfaceReason: "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:          "one JSON object per exec"},
 		},
 		Examples: []string{"exec ls", "exec ls --json"},
 	},
@@ -432,7 +435,10 @@ var Verbs = []VerbSpec{
 		Surfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only forwards for this task id"},
-			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "one JSON object per forward"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				Surfaces:      CLI | WebUI,
+				SurfaceReason: "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:          "one JSON object per forward"},
 		},
 		Examples: []string{"forward ls", "forward ls --json"},
 	},
@@ -1067,10 +1073,14 @@ var Verbs = []VerbSpec{
 			Reason: "a narrowing has no base to narrow unless this call names one"}},
 		Flags: []Flag{
 			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
-				FieldType: "*protocol.Capability", Convert: "parseCapsFlag", PresenceField: "CapsPresent",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
+				// No PresenceField here, unlike the spawn verbs: Caps is a
+				// POINTER, so nil already says the operator named nothing.
+				// SetCapsOpts has no presence bit for it to feed, and a second
+				// way to say one thing is a second thing to keep in step.
 				Help: "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps"},
 			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
-				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag", PresenceField: "ScopePresent",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
 				Help: "new scope; omitted = keep the task's current scope"},
 			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
 				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",

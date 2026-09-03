@@ -3073,8 +3073,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
+		// None, not "ParentID is empty": the declaration makes the three
+		// mutually exclusive on PRESENCE, so `--parent ""` is a picked
+		// --parent with a bad value, and reading it as a detach would move
+		// the task to the root on a typo.
 		parentFull := ""
-		if v.ParentID != "" {
+		if !v.None && !v.Swap {
 			parentFull, errStr = a.resolveTaskIDPrefix(v.ParentID)
 			if errStr != "" {
 				a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3300,7 +3304,18 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 
 	case verb.ForwardLsAction:
 		// true: this IS `forward ls` — the text dump is the whole point.
-		return a, DoListForwards(a.client, true)
+		// TaskFilter was declared for this surface and dropped here, so
+		// `forward ls --task <id>` listed every forward.
+		filter := ""
+		if v.TaskFilter != "" {
+			full, errStr := a.resolveTaskIDPrefix(v.TaskFilter)
+			if errStr != "" {
+				a.cmdresult.Append(ErrorStyle.Render("forward ls: " + errStr))
+				return a, nil
+			}
+			filter = full
+		}
+		return a, DoListForwardsFiltered(a.client, true, filter)
 	case verb.ForwardKillAction:
 		// EVERY id, as on the CLI. No task/spec context: the operator supplied
 		// bare ids. This killed ForwardIDs[0] and said nothing about the rest,

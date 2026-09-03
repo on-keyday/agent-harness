@@ -459,12 +459,8 @@ type SessionExecAction struct {
 // SetCapsAction is built by: caps set.
 type SetCapsAction struct {
 	ActionMarker
-	// whether --caps was typed, which its zero value cannot say
-	CapsPresent bool
 	// new capability set (same syntax as --caps on submit); omitted = keep the task's current caps
 	Caps *protocol.Capability
-	// whether --scope was typed, which its zero value cannot say
-	ScopePresent bool
 	// new scope; omitted = keep the task's current scope
 	Scope *protocol.TaskScope
 	// narrow ONE capability below --scope (written with --scope; they are one half of the authority)
@@ -1127,7 +1123,6 @@ func init() {
 			a := ExecRunAction{}
 			a.Sub = "ls"
 			a.TaskFilter = b.Str("task")
-			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"exec ls\x00webui": func(b Bound) (Action, error) {
@@ -1196,7 +1191,6 @@ func init() {
 		"forward ls\x00tui": func(b Bound) (Action, error) {
 			a := ForwardLsAction{}
 			a.TaskFilter = b.Str("task")
-			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"forward ls\x00webui": func(b Bound) (Action, error) {
@@ -1982,7 +1976,6 @@ func init() {
 		},
 		"caps set\x00cli": func(b Bound) (Action, error) {
 			a := SetCapsAction{}
-			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
 				if err != nil {
@@ -1990,7 +1983,6 @@ func init() {
 				}
 				a.Caps = v
 			}
-			a.ScopePresent = b.Set["scope"]
 			if b.Set["scope"] {
 				v, err := parseScopeFlag(b.Str("scope"))
 				if err != nil {
@@ -2014,7 +2006,6 @@ func init() {
 		},
 		"caps set\x00tui": func(b Bound) (Action, error) {
 			a := SetCapsAction{}
-			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
 				if err != nil {
@@ -2022,7 +2013,6 @@ func init() {
 				}
 				a.Caps = v
 			}
-			a.ScopePresent = b.Set["scope"]
 			if b.Set["scope"] {
 				v, err := parseScopeFlag(b.Str("scope"))
 				if err != nil {

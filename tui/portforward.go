@@ -329,10 +329,17 @@ type ForwardsSnapshotMsg struct {
 // long-lived client (a.client), like every other Do* in this file.
 // toCmdresult is threaded straight onto the result (see ForwardsSnapshotMsg).
 func DoListForwards(c *cli.Client, toCmdresult bool) tea.Cmd {
+	return DoListForwardsFiltered(c, toCmdresult, "")
+}
+
+// DoListForwardsFiltered is the same listing narrowed to one task.
+// `forward ls --task <id>` is declared for this surface and the filter was
+// dropped here, so it listed every forward.
+func DoListForwardsFiltered(c *cli.Client, toCmdresult bool, taskFilter string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		fs, err := c.PortForwardListWith(ctx, "")
+		fs, err := c.PortForwardListWith(ctx, taskFilter)
 		return ForwardsSnapshotMsg{Forwards: fs, Err: err, ToCmdresult: toCmdresult}
 	}
 }
