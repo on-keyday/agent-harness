@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -734,39 +733,50 @@ var Verbs = []VerbSpec{
 	{
 		Path:     []string{"session", "send"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Trailing: &Trailing{Name: "text", Reason: "the literal text to type into the PTY"},
+		Action:   "SendAction",
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
+			Reason: "the literal text to type into the PTY"},
+		// The snapshot knobs only mean something with --snapshot. Naming one
+		// without it is refused rather than ignored: a caller who asked for 80
+		// columns and silently got the default is debugging the wrong thing.
+		Requires: map[string]string{
+			"rows": "snapshot", "cols": "snapshot", "settle-ms": "snapshot",
+			"style": "snapshot", "color": "snapshot", "json": "snapshot",
+			"ansi": "snapshot", "without-synth": "snapshot",
+			"detect": "snapshot", "detect-agent": "snapshot",
+		},
 		Flags: []Flag{
 			// THE pair this design's alias rule exists for. --enter appends a
 			// carriage return; -e interprets backslash escapes. They are two
 			// flags, not a long form and its short form, and merging them
 			// would turn `session send -e '...'` into a spurious Enter typed
 			// into a live PTY -- while compiling and reviewing cleanly.
-			{Name: "enter", Type: FlagBool, Default: false,
+			{Name: "enter", Type: FlagBool, Default: false, Field: "Enter",
 				Help: "append a carriage return (Enter) after the text"},
-			{Name: "e", Type: FlagBool, Default: false,
+			{Name: "e", Type: FlagBool, Default: false, Field: "Interp",
 				Help: `interpret backslash escapes (\n \r \t \e \xHH \\)`},
-			{Name: "quiet", Type: FlagBool, Default: false,
+			{Name: "quiet", Type: FlagBool, Default: false, Field: "Quiet",
 				Help: "suppress the one-line summary of what was sent (stderr)"},
-			{Name: "flush-ms", Type: FlagUint, Default: uint(400),
+			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs",
 				Help: "ms to let the input drain to the runner before detaching"},
-			{Name: "resize", Type: FlagString, Default: "",
+			{Name: "resize", Type: FlagString, Default: "", Field: "Resize",
 				Help: "before sending, set the PTY size to ROWSxCOLS (e.g. 40x150)"},
-			{Name: "snapshot", Type: FlagBool, Default: false,
+			{Name: "snapshot", Type: FlagBool, Default: false, Field: "Snapshot",
 				Help: "after sending, render the session's screen to stdout"},
-			{Name: "rows", Type: FlagUint, Default: uint(40), Help: "with --snapshot: fallback rows"},
-			{Name: "cols", Type: FlagUint, Default: uint(120), Help: "with --snapshot: fallback cols"},
-			{Name: "settle-ms", Type: FlagUint, Default: uint(1500),
+			{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "with --snapshot: fallback rows"},
+			{Name: "cols", Type: FlagUint, Default: uint(120), Field: "Cols", Help: "with --snapshot: fallback cols"},
+			{Name: "settle-ms", Type: FlagUint, Default: uint(1500), Field: "SettleMs",
 				Help: "with --snapshot: ms to collect output before rendering"},
-			{Name: "style", Type: FlagBool, Default: false, Help: "with --snapshot: also print attribute spans"},
-			{Name: "color", Type: FlagBool, Default: false, Help: "with --snapshot: also print colour spans"},
-			{Name: "json", Type: FlagBool, Default: false, Help: "with --snapshot: emit the screen as one JSON object"},
-			{Name: "ansi", Type: FlagBool, Default: false, Help: "with --snapshot: re-emit the screen WITH its colours"},
-			{Name: "without-synth", Type: FlagBool, Default: false,
+			{Name: "style", Type: FlagBool, Default: false, Field: "Style", Help: "with --snapshot: also print attribute spans"},
+			{Name: "color", Type: FlagBool, Default: false, Field: "Color", Help: "with --snapshot: also print colour spans"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "with --snapshot: emit the screen as one JSON object"},
+			{Name: "ansi", Type: FlagBool, Default: false, Field: "ANSI", Help: "with --snapshot: re-emit the screen WITH its colours"},
+			{Name: "without-synth", Type: FlagBool, Default: false, Field: "WithoutSynth",
 				Help: "with --snapshot: render only what the PTY produced, dropping the server's replay additions"},
-			{Name: "detect", Type: FlagBool, Default: false,
+			{Name: "detect", Type: FlagBool, Default: false, Field: "Detect",
 				Help: "with --snapshot: judge the resulting state (working / blocked / idle / unknown)"},
-			{Name: "detect-agent", Type: FlagString, Default: "claude",
+			{Name: "detect-agent", Type: FlagString, Default: "claude", Field: "DetectAgent",
 				Help: "with --detect: which agent's rule set to judge by"},
 		},
 		Examples: []string{
@@ -775,87 +785,37 @@ var Verbs = []VerbSpec{
 			`session send -e aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa line\none`,
 			`session send -e --enter aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa done\t`,
 		},
-		Build: func(b Bound) (Action, error) {
-			if b.Trail == "" {
-				// Sending nothing is a mistyped command, not a no-op send.
-				// The usage line is rebuilt from the bound path rather than
-				// looked up, because Lookup reads Verbs and Verbs is what this
-				// literal initialises.
-				return nil, fmt.Errorf("usage: session send [flags] <task-id> <text>...")
-			}
-			a := SendAction{
-				TaskID: b.Args[0], Text: b.Trail,
-				Enter: b.Bool("enter"), Interp: b.Bool("e"), Quiet: b.Bool("quiet"),
-				Resize: b.Str("resize"), Snapshot: b.Bool("snapshot"),
-				Style: b.Bool("style"), Color: b.Bool("color"),
-				JSON: b.Bool("json"), ANSI: b.Bool("ansi"),
-				WithoutSynth: b.Bool("without-synth"), Detect: b.Bool("detect"),
-				DetectAgent: b.Str("detect-agent"),
-			}
-			a.FlushMs = uintFlag(b, "flush-ms")
-			a.Rows, a.Cols, a.SettleMs = uintFlag(b, "rows"), uintFlag(b, "cols"), uintFlag(b, "settle-ms")
-			// The snapshot knobs only mean something with --snapshot. Naming
-			// one without it is refused rather than ignored: a caller who
-			// asked for 80 columns and silently got the default is debugging
-			// the wrong thing.
-			if !a.Snapshot {
-				var orphans []string
-				for _, n := range []string{"rows", "cols", "settle-ms", "style", "color", "json", "ansi", "without-synth", "detect", "detect-agent"} {
-					if b.Set[n] {
-						orphans = append(orphans, "--"+n)
-					}
-				}
-				if len(orphans) > 0 {
-					return nil, fmt.Errorf("session send: %s need --snapshot", strings.Join(orphans, ", "))
-				}
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"session", "exec"},
 		Surfaces: CLI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Trailing: &Trailing{Name: "command", Reason: "the command line to run in the session's foreground shell"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Action:   "SessionExecAction",
+		Trailing: &Trailing{Name: "command", Field: "Cmd", Required: true,
+			Reason: "the command line to run in the session's foreground shell"},
 		Flags: []Flag{
-			{Name: "timeout", Type: FlagDuration, Default: 30 * time.Second,
+			{Name: "timeout", Type: FlagDuration, Default: 30 * time.Second, Field: "Timeout",
 				Help: "max wait for the command to finish before giving up (exit 124)"},
-			{Name: "json", Type: FlagBool, Default: false,
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
 				Help: `emit {"exit":N,"output":"…","timed_out":bool,"duration_ms":N} as one JSON object`},
-			{Name: "exit-only", Type: FlagBool, Default: false,
+			{Name: "exit-only", Type: FlagBool, Default: false, Field: "ExitOnly",
 				Help: "print no output; only propagate the exit code"},
-			{Name: "raw", Type: FlagBool, Default: false,
+			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
 				Help: "return the verbatim output bytes (escape sequences intact)"},
 		},
 		Examples: []string{"session exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ls -la"},
-		Build: func(b Bound) (Action, error) {
-			a := SessionExecAction{TaskID: b.Args[0], Cmd: b.Trail,
-				JSON: b.Bool("json"), ExitOnly: b.Bool("exit-only"), Raw: b.Bool("raw")}
-			if d, ok := b.Flags["timeout"].(time.Duration); ok {
-				a.Timeout = d
-			}
-			if a.Cmd == "" {
-				return nil, fmt.Errorf("session exec: a command is required")
-			}
-			return a, nil
-		},
 	},
 	{
 		Path:     []string{"session", "stream", "turn"},
 		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID}},
-		Trailing: &Trailing{Name: "text", Reason: "the user turn's text"},
+		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Action:   "StreamTurnAction",
+		Trailing: &Trailing{Name: "text", Field: "Text", Required: true, Reason: "the user turn's text"},
 		Flags: []Flag{
-			{Name: "flush-ms", Type: FlagUint, Default: uint(400),
+			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs",
 				Help: "ms to let the line drain to the runner before detaching"},
 		},
 		Examples: []string{"session stream turn aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa please continue"},
-		Build: func(b Bound) (Action, error) {
-			if b.Trail == "" {
-				return nil, fmt.Errorf("session stream turn: text is required")
-			}
-			return StreamTurnAction{TaskID: b.Args[0], Text: b.Trail, FlushMs: uintFlag(b, "flush-ms")}, nil
-		},
 	},
 	{
 		Path:     []string{"notify"},
@@ -873,18 +833,22 @@ var Verbs = []VerbSpec{
 	{
 		Path:     []string{"agent", "send"},
 		Surfaces: CLI,
-		Trailing: &Trailing{Name: "text", Reason: "the message body is free-form; --data or stdin are the alternatives"},
+		Action:   "AgentSendAction",
+		Const:    map[string]string{"Kind": "send"},
+		Trailing: &Trailing{Name: "text", Field: "Positional",
+			Reason: "the message body is free-form; --data or stdin are the alternatives"},
 		Flags:    agentSendFlags(false),
 		Examples: []string{"agent send --topic chat.abcd1234 hello there"},
-		Build:    buildAgentSend("send"),
 	},
 	{
 		Path:     []string{"agent", "dispatch"},
 		Surfaces: CLI,
-		Trailing: &Trailing{Name: "text", Reason: "the message body is free-form; --data or stdin are the alternatives"},
+		Action:   "AgentSendAction",
+		Const:    map[string]string{"Kind": "dispatch"},
+		Trailing: &Trailing{Name: "text", Field: "Positional",
+			Reason: "the message body is free-form; --data or stdin are the alternatives"},
 		Flags:    agentSendFlags(true),
 		Examples: []string{"agent dispatch --topic chat.abcd1234 do the thing"},
-		Build:    buildAgentSend("dispatch"),
 	},
 	// --- listings and catalogs ---
 	{
@@ -1370,45 +1334,28 @@ func uintFlag(b Bound, name string) uint {
 // dispatch adds a timeout because it blocks for the reply.
 func agentSendFlags(withTimeout bool) []Flag {
 	out := []Flag{
-		{Name: "server-cid", Type: FlagString, Default: "",
+		{Name: "server-cid", Type: FlagString, Default: "", Field: "ServerCID",
 			Help: "server ConnectionID (env: HARNESS_SERVER_CID)"},
-		{Name: "topic", Type: FlagString, Default: "", Help: "agentboard topic"},
-		{Name: "data", Type: FlagString, Default: "-",
+		{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "agentboard topic"},
+		// The payload's SOURCE, not its bytes: "-" is a VALUE of --data, never
+		// a positional, and reading stdin belongs to the caller that owns it.
+		// DataSet rather than Data != "" because the default IS "-", so the
+		// value alone cannot say whether the operator chose it.
+		{Name: "data", Type: FlagString, Default: "-", Field: "Data", PresenceField: "DataSet",
 			Help: `payload string, or "-" to read stdin`},
-		{Name: "reply-to", Type: FlagString, Default: "",
+		{Name: "reply-to", Type: FlagString, Default: "", Field: "ReplyTo",
 			Help: "route replies to THIS message to this topic instead of your own chat.<short-id>"},
 	}
 	if withTimeout {
-		return append(out, Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute,
+		return append(out, Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute, Field: "Timeout",
 			Help: "max wait for the whole call (publish ack + reply)"})
 	}
 	return append(out,
-		Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0),
+		Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
 			Help: "seq of the message being replied to; with it, --topic may be omitted"},
-		Flag{Name: "no-retire-on-reply", Type: FlagBool, Default: false,
+		Flag{Name: "no-retire-on-reply", Type: FlagBool, Default: false, Field: "NoRetireOnReply",
 			Help: "keep this message on the board even after its recipient replies"},
 	)
-}
-
-// buildAgentSend resolves the payload's SOURCE but not its bytes: "-" is a
-// VALUE of --data, never a positional, and reading stdin belongs to the caller
-// that owns it.
-func buildAgentSend(kind string) func(Bound) (Action, error) {
-	return func(b Bound) (Action, error) {
-		a := AgentSendAction{
-			Kind: kind, Topic: b.Str("topic"), Data: b.Str("data"),
-			DataSet: b.Set["data"], Positional: b.Trail,
-			ReplyTo: b.Str("reply-to"), ServerCID: b.Str("server-cid"),
-			NoRetireOnReply: b.Bool("no-retire-on-reply"),
-		}
-		if irt, ok := b.Flags["in-reply-to"].(uint64); ok {
-			a.InReplyTo = irt
-		}
-		if d, ok := b.Flags["timeout"].(time.Duration); ok {
-			a.Timeout = d
-		}
-		return a, nil
-	}
 }
 
 // agentCommonFlags is the one flag every agent verb carries. --server-cid is

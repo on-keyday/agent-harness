@@ -37,6 +37,30 @@ type AgentAction struct {
 	Seq uint64
 }
 
+// AgentSendAction is built by: agent dispatch, agent send.
+type AgentSendAction struct {
+	ActionMarker
+	// server ConnectionID (env: HARNESS_SERVER_CID)
+	ServerCID string
+	// agentboard topic
+	Topic string
+	// whether --data was typed, which its zero value cannot say
+	DataSet bool
+	// payload string, or "-" to read stdin
+	Data string
+	// route replies to THIS message to this topic instead of your own chat.<short-id>
+	ReplyTo string
+	// seq of the message being replied to; with it, --topic may be omitted
+	InReplyTo uint64
+	// keep this message on the board even after its recipient replies
+	NoRetireOnReply bool
+	// the message body is free-form; --data or stdin are the alternatives
+	Positional string
+	Kind       string
+	// max wait for the whole call (publish ack + reply)
+	Timeout time.Duration
+}
+
 // BoardAction is built by: board purge, board read, board retract, board subscribers, board topics.
 type BoardAction struct {
 	ActionMarker
@@ -262,6 +286,46 @@ type SSHGatewayAction struct {
 	AuthorizedKeys string
 }
 
+// SendAction is built by: session send.
+type SendAction struct {
+	ActionMarker
+	// append a carriage return (Enter) after the text
+	Enter bool
+	// interpret backslash escapes (\n \r \t \e \xHH \\)
+	Interp bool
+	// suppress the one-line summary of what was sent (stderr)
+	Quiet bool
+	// ms to let the input drain to the runner before detaching
+	FlushMs uint
+	// before sending, set the PTY size to ROWSxCOLS (e.g. 40x150)
+	Resize string
+	// after sending, render the session's screen to stdout
+	Snapshot bool
+	// with --snapshot: fallback rows
+	Rows uint
+	// with --snapshot: fallback cols
+	Cols uint
+	// with --snapshot: ms to collect output before rendering
+	SettleMs uint
+	// with --snapshot: also print attribute spans
+	Style bool
+	// with --snapshot: also print colour spans
+	Color bool
+	// with --snapshot: emit the screen as one JSON object
+	JSON bool
+	// with --snapshot: re-emit the screen WITH its colours
+	ANSI bool
+	// with --snapshot: render only what the PTY produced, dropping the server's replay additions
+	WithoutSynth bool
+	// with --snapshot: judge the resulting state (working / blocked / idle / unknown)
+	Detect bool
+	// with --detect: which agent's rule set to judge by
+	DetectAgent string
+	TaskID      string
+	// the literal text to type into the PTY
+	Text string
+}
+
 // ServerDialRunnerAction is built by: server dial-runner.
 type ServerDialRunnerAction struct {
 	ActionMarker
@@ -322,6 +386,32 @@ type SessionAction struct {
 	// with --allow, an updated input
 	Suggestion string
 	RequestID  string
+}
+
+// SessionExecAction is built by: session exec.
+type SessionExecAction struct {
+	ActionMarker
+	// max wait for the command to finish before giving up (exit 124)
+	Timeout time.Duration
+	// emit {"exit":N,"output":"…","timed_out":bool,"duration_ms":N} as one JSON object
+	JSON bool
+	// print no output; only propagate the exit code
+	ExitOnly bool
+	// return the verbatim output bytes (escape sequences intact)
+	Raw    bool
+	TaskID string
+	// the command line to run in the session's foreground shell
+	Cmd string
+}
+
+// StreamTurnAction is built by: session stream turn.
+type StreamTurnAction struct {
+	ActionMarker
+	// ms to let the line drain to the runner before detaching
+	FlushMs uint
+	TaskID  string
+	// the user turn's text
+	Text string
 }
 
 // WorkspaceAction is built by: workspace apply, workspace detach, workspace ls, workspace rm, workspace save, workspace show.
@@ -1164,6 +1254,69 @@ func init() {
 			}
 			return a, nil
 		},
+		"session send\x00cli": func(b Bound) (Action, error) {
+			a := SendAction{}
+			a.Enter = b.Bool("enter")
+			a.Interp = b.Bool("e")
+			a.Quiet = b.Bool("quiet")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			a.Resize = b.Str("resize")
+			a.Snapshot = b.Bool("snapshot")
+			a.Rows = uintOf(b.Flags["rows"])
+			a.Cols = uintOf(b.Flags["cols"])
+			a.SettleMs = uintOf(b.Flags["settle-ms"])
+			a.Style = b.Bool("style")
+			a.Color = b.Bool("color")
+			a.JSON = b.Bool("json")
+			a.ANSI = b.Bool("ansi")
+			a.WithoutSynth = b.Bool("without-synth")
+			a.Detect = b.Bool("detect")
+			a.DetectAgent = b.Str("detect-agent")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			a.Text = b.Trail
+			return a, nil
+		},
+		"session exec\x00cli": func(b Bound) (Action, error) {
+			a := SessionExecAction{}
+			a.Timeout = durationOf(b.Flags["timeout"])
+			a.JSON = b.Bool("json")
+			a.ExitOnly = b.Bool("exit-only")
+			a.Raw = b.Bool("raw")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			a.Cmd = b.Trail
+			return a, nil
+		},
+		"session stream turn\x00cli": func(b Bound) (Action, error) {
+			a := StreamTurnAction{}
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			a.Text = b.Trail
+			return a, nil
+		},
+		"session stream turn\x00tui": func(b Bound) (Action, error) {
+			a := StreamTurnAction{}
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			a.Text = b.Trail
+			return a, nil
+		},
+		"session stream turn\x00webui": func(b Bound) (Action, error) {
+			a := StreamTurnAction{}
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			a.Text = b.Trail
+			return a, nil
+		},
 		"notify\x00cli": func(b Bound) (Action, error) {
 			a := NotifyAction{}
 			a.Title = b.Str("title")
@@ -1176,6 +1329,31 @@ func init() {
 			a.Title = b.Str("title")
 			a.Level = b.Str("level")
 			a.Text = b.Trail
+			return a, nil
+		},
+		"agent send\x00cli": func(b Bound) (Action, error) {
+			a := AgentSendAction{}
+			a.Kind = "send"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.DataSet = b.Set["data"]
+			a.Data = b.Str("data")
+			a.ReplyTo = b.Str("reply-to")
+			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
+			a.NoRetireOnReply = b.Bool("no-retire-on-reply")
+			a.Positional = b.Trail
+			return a, nil
+		},
+		"agent dispatch\x00cli": func(b Bound) (Action, error) {
+			a := AgentSendAction{}
+			a.Kind = "dispatch"
+			a.ServerCID = b.Str("server-cid")
+			a.Topic = b.Str("topic")
+			a.DataSet = b.Set["data"]
+			a.Data = b.Str("data")
+			a.ReplyTo = b.Str("reply-to")
+			a.Timeout = durationOf(b.Flags["timeout"])
+			a.Positional = b.Trail
 			return a, nil
 		},
 		"cancel\x00cli": func(b Bound) (Action, error) {

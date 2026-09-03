@@ -70,6 +70,10 @@ func main() {
 		a.verbs = append(a.verbs, v.FlagSetName())
 
 		for _, f := range v.Flags {
+			if f.PresenceField != "" {
+				a.add(field{name: f.PresenceField, goType: "bool",
+					comment: "whether --" + f.Name + " was typed, which its zero value cannot say"})
+			}
 			if f.Field == "" {
 				continue
 			}
@@ -184,6 +188,13 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 			fmt.Fprintf(buf, "\t\ta.%s = %q\n", val[0], val[1])
 		}
 		for _, f := range v.Flags {
+			if f.PresenceField != "" {
+				if f.PresenceAlso != "" {
+					fmt.Fprintf(buf, "\t\ta.%s = b.Set[%q] || b.Set[%q]\n", f.PresenceField, f.Name, f.PresenceAlso)
+				} else {
+					fmt.Fprintf(buf, "\t\ta.%s = b.Set[%q]\n", f.PresenceField, f.Name)
+				}
+			}
 			if f.Field == "" {
 				continue
 			}

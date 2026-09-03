@@ -139,6 +139,20 @@ type Flag struct {
 	Field       string
 	FieldReason string
 
+	// PresenceField carries whether the operator TYPED the flag, not its
+	// value. `agent send --data ""` is an explicit empty body and a missing
+	// --data is not, and the spawn flags whose zero value is meaningful
+	// ("none" caps, "subtree" scope) need the same distinction so a resume
+	// does not re-grant on a flag nobody passed.
+	PresenceField string
+
+	// PresenceAlso names a SECOND flag whose presence ORs into
+	// PresenceField. --scope and --scope-for are one half of the authority:
+	// naming either makes the scope explicit, and letting a lone --scope-for
+	// ride the session default would write an authority half typed and half
+	// inherited.
+	PresenceAlso string
+
 	// Required refuses the verb when the flag is absent. `board retract --seq`
 	// is required because there is no whole-topic retract, unlike purge.
 	Required bool

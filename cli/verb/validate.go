@@ -52,9 +52,20 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 			return fmt.Errorf("%s: pass at least one of %s", name, dashList(group))
 		}
 	}
-	for dependent, needed := range v.Requires {
-		if b.Set[dependent] && !b.Set[needed] {
-			return fmt.Errorf("%s: --%s needs --%s", name, dependent, needed)
+	// Grouped by what they need, and reported together: `session send --rows
+	// 10 --style` names two orphans, and one-at-a-time would make the operator
+	// re-run once per flag to discover the next. Walked in DECLARATION order
+	// rather than map order, which is random -- with two orphans the ungrouped
+	// form named an arbitrary one of them.
+	for _, needed := range v.requiredTargets() {
+		var orphans []string
+		for _, f := range v.Flags {
+			if v.Requires[f.Name] == needed && b.Set[f.Name] && !b.Set[needed] {
+				orphans = append(orphans, f.Name)
+			}
+		}
+		if len(orphans) > 0 {
+			return fmt.Errorf("%s: %s need --%s", name, dashList(orphans), needed)
 		}
 	}
 
@@ -62,6 +73,19 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 		return fmt.Errorf("%s: %s is required\n%s", name, v.Trailing.Name, v.Usage())
 	}
 	return nil
+}
+
+// requiredTargets lists the flags something Requires, in declaration order.
+func (v VerbSpec) requiredTargets() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range v.Flags {
+		if t, ok := v.Requires[f.Name]; ok && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // namedIn returns which of these flags the caller actually supplied.
