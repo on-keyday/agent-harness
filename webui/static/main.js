@@ -184,7 +184,7 @@ const POLL_INTERVAL_MS = 5000;
   // this file from a Go test would be a regex over JavaScript, while this is
   // exact. A verb declared for the WebUI with no case fails at load rather
   // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
+  const WEBUI_DISPATCH = new Set(["prune", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
   for (const p of window.harness.pathsForSurface("webui")) {
     if (!WEBUI_DISPATCH.has(p)) {
       setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
@@ -2520,7 +2520,14 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "git": {
-          out = await runGitCmd(tokens.slice(1));
+          // `git <task-id> <sub> ...`: the id sits between the family word and
+          // the sub-verb, so it is peeled before the shared parse, exactly as
+          // the CLI and the TUI do.
+          if (tokens.length < 2) throw new Error("git: usage: git <task-id> {log | diff | show | status | subrepos | file} [...]");
+          const taskID = tokens[1];
+          const g = window.harness.parseGit("git " + tokens.slice(2).join(" "));
+          if (g.error) throw new Error(g.error);
+          out = await runGitAction(taskID, g);
           break;
         }
         case "server": {
@@ -6262,77 +6269,24 @@ function parseFlags(tokens) {
 
 // --- file ops dispatch -------------------------------------------------
 
-// runGitCmd parses `git <task> {log|diff|show|status} ...` with the same
-// grammar harness-cli and the TUI cmdline use, and hands the result to the Git
-// tab. The pathspec is split off at "--" BEFORE flags are read, matching the
-// other two surfaces, and the revisions are counted the way git counts them.
-async function runGitCmd(rest) {
-  if (rest.length < 2) {
-    throw new Error("git: usage: git <task-id> {log | diff | show | status} [...]");
-  }
-  const taskID = rest[0];
-  const sub = rest[1];
-  let args = rest.slice(2);
-  let path = "";
-  const sepIdx = args.indexOf("--");
-  if (sepIdx >= 0) {
-    path = args.slice(sepIdx + 1).join(" ");
-    args = args.slice(0, sepIdx);
-  }
-
-  let staged = false, submodule = false, subrepo = "", rev = "";
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--staged" || a === "--cached") { staged = true; continue; }
-    if (a === "--submodule") { submodule = true; continue; }
-    if (a === "--rev") { i++; rev = args[i] || ""; continue; }
-    if (a.startsWith("--rev=")) { rev = a.slice("--rev=".length); continue; }
-    if (a === "--subrepo") { i++; subrepo = args[i] || ""; continue; }
-    if (a.startsWith("--subrepo=")) { subrepo = a.slice("--subrepo=".length); continue; }
-    if (a === "--max" || a === "--max-bytes") { i++; continue; }   // caps are the runner's job
-    if (a.startsWith("--")) throw new Error(`git ${sub}: unknown flag ${a}`);
-    pos.push(a);
-  }
-
-  let baseRev = "", targetRev = "";
-  switch (sub) {
-    case "log":
-    case "show":
-      if (pos.length > 1) throw new Error(`git ${sub}: at most one revision (got ${pos.length})`);
-      baseRev = pos[0] || "";
-      break;
-    case "diff":
-      if (pos.length > 2) throw new Error(`git diff: at most two revisions (got ${pos.length})`);
-      if (pos.length === 2) {
-        if (staged) throw new Error("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go");
-        baseRev = pos[0];
-        targetRev = pos[1];
-      } else {
-        baseRev = pos[0] || "";
-      }
-      break;
-    case "status":
-    case "subrepos":
-      if (pos.length) throw new Error(`git ${sub}: takes no revision (got ${pos[0]})`);
-      break;
-    case "file":
-      // The path may arrive as a positional or after --, so one lifted out of
-      // a diff header works either way.
-      if (pos.length > 1) throw new Error(`git file: one path (got ${pos.length})`);
-      if (pos.length === 1) {
-        if (path) throw new Error(`git file: path given twice (${pos[0]} and ${path})`);
-        path = pos[0];
-      }
-      if (!path) throw new Error("git file: usage: git <task> file [--staged | --rev REV] <path>");
-      break;
-    default:
-      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status | subrepos | file)`);
-  }
-
+// runGitAction hands a `git` sub-verb, already parsed by the shared
+// declaration (cli/verb), to the Git tab.
+//
+// The argument loop that used to live here accepted EVERY git flag on EVERY
+// sub-verb, because one loop served all of them -- so `git <id> status --rev X`
+// parsed here and was refused by the CLI. It also read --max-bytes and threw
+// it away ("caps are the runner's job"), which is worse than refusing it.
+// Both are gone: the declaration knows which flags each sub-verb has.
+async function runGitAction(taskID, g) {
   if (!window.__openGitTabFor) throw new Error("git: panel not ready");
-  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged, submodule, subrepo, rev });
-  return `git ${sub}: shown in the Git tab`;
+  await window.__openGitTabFor(taskID, g.sub, {
+    baseRev: g.baseRev, targetRev: g.targetRev, path: g.path,
+    staged: g.staged, submodule: g.submodule, subrepo: g.subrepo,
+    // `git file --rev X` resolves into targetRev; the panel reads `rev`.
+    rev: g.sub === "file" ? g.targetRev : "",
+    maxBytes: g.maxBytes,
+  });
+  return `git ${g.sub}: shown in the Git tab`;
 }
 
 // runFileAction executes a `file` sub-verb already parsed by the shared

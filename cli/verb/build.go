@@ -78,6 +78,10 @@ func (v VerbSpec) NewFlagSet(eh ErrorHandling) *flag.FlagSet {
 // messages on a live board. A verb WITH Trailing cannot permute, because a
 // '-'-leading word in free-form text is indistinguishable from a flag.
 func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
+	pathspec := ""
+	if v.Pathspec {
+		args, pathspec = SplitPathspec(args)
+	}
 	var (
 		positionals []string
 		err         error
@@ -93,9 +97,10 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 	}
 
 	b := Bound{
-		Path:  v.Path,
-		Flags: map[string]any{},
-		Set:   map[string]bool{},
+		Path:     v.Path,
+		Pathspec: pathspec,
+		Flags:    map[string]any{},
+		Set:      map[string]bool{},
 	}
 	// Canonical names only: an alias is a spelling, not a key. Reading the
 	// value off the canonical registration is enough because NewFlagSet binds

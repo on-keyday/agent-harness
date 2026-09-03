@@ -144,6 +144,7 @@ func main() {
 		"forwardKill":        js.FuncOf(harnessForwardKill),
 		"parseCommand":       js.FuncOf(harnessParseCommand),
 		"pathsForSurface":    js.FuncOf(harnessPathsForSurface),
+		"parseGit":           js.FuncOf(harnessParseGit),
 		"forwardTap":         js.FuncOf(harnessForwardTap),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
@@ -3624,4 +3625,54 @@ func lookupPath(fields []string) (verb.VerbSpec, []string, bool) {
 		return sp, fields[1:], true
 	}
 	return verb.VerbSpec{}, nil, false
+}
+
+// harnessParseGit parses one `git <sub> ...` line and returns the RESOLVED
+// query, not the raw Bound.
+//
+// parseCommand returns Bound everywhere else because Build is a repackaging
+// there, so a generic object carries everything. git is the exception: its
+// Build interprets the positionals -- none = unstaged, one = that revision
+// against the working tree, two = commit against commit -- and refuses `git
+// file` with the path given both as an argument and after `--`. Handing JS
+// the Bound would mean re-implementing that counting in JavaScript, which is
+// the duplication this whole layer removes.
+//
+//	harness.parseGit("git diff HEAD~1 HEAD") -> {sub, baseRev, targetRev, path,
+//	                                             subrepo, staged, submodule,
+//	                                             max, maxBytes}
+//	                                          | {error: "..."}
+func harnessParseGit(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return js.ValueOf(map[string]any{"error": "parseGit: missing line"})
+	}
+	fields := strings.Fields(args[0].String())
+	if len(fields) < 2 || fields[0] != "git" {
+		return js.ValueOf(map[string]any{"error": "parseGit: want `git <sub> ...`"})
+	}
+	sp, ok := verb.Lookup("git", fields[1])
+	if !ok {
+		return js.ValueOf(map[string]any{"error": "git: unknown sub-verb " + fields[1]})
+	}
+	sp = sp.For(verb.WebUI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, fields[2:])
+	if err != nil {
+		return js.ValueOf(map[string]any{"error": err.Error()})
+	}
+	act, err := sp.Build(b)
+	if err != nil {
+		return js.ValueOf(map[string]any{"error": err.Error()})
+	}
+	g, isGit := act.(verb.GitAction)
+	if !isGit {
+		return js.ValueOf(map[string]any{"error": "git: unexpected action"})
+	}
+	return js.ValueOf(map[string]any{
+		"sub": g.Sub, "baseRev": g.BaseRev, "targetRev": g.TargetRev,
+		"path": g.Path, "subrepo": g.Subrepo,
+		"staged": g.Staged, "submodule": g.Submodule,
+		"max": float64(g.Max), "maxBytes": float64(g.MaxBytes),
+	})
 }

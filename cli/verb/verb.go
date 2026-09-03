@@ -113,6 +113,14 @@ type VerbSpec struct {
 	Args     []Arg
 	Flags    []Flag
 	Trailing *Trailing
+
+	// Pathspec means the verb accepts a trailing `-- <path>...`, peeled BEFORE
+	// flags are read because Go's flag package consumes a bare "--" as its
+	// end-of-flags marker and the path would silently vanish. The result
+	// arrives in Bound.Pathspec, so a Build that accepts the path either way
+	// (git file) can see both and refuse the ambiguous case.
+	Pathspec bool
+
 	Examples []string
 	Build    func(Bound) (Action, error)
 }
@@ -125,6 +133,10 @@ type Bound struct {
 	Flags map[string]any
 	Set   map[string]bool // flags the caller actually supplied
 	Trail string
+
+	// Pathspec is whatever followed `--`, joined with spaces. Empty when the
+	// verb does not take one or none was given.
+	Pathspec string
 }
 
 // Str returns a string flag's value.

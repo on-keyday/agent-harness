@@ -161,23 +161,6 @@ type RepoAction struct {
 	Path string
 }
 
-// GitAction opens the git modal on a task and runs one query in it. Sub is
-// one of log / diff / show / status; the revision fields follow git's own
-// positional counting (see parseGit).
-type GitAction struct {
-	verb.ActionMarker
-	TaskID    string
-	Sub       string
-	BaseRev   string
-	TargetRev string
-	// Path filters within a repository; Subrepo chooses which repository.
-	Path      string
-	Subrepo   string
-	Staged    bool
-	Submodule bool
-	Max       uint32
-}
-
 // GridAction opens the live session viewer grid over a chosen set of tasks —
 // the cmdline form of the g / z / Z keys, and the only way to name an arbitrary
 // set. Mode and the two selectors are handed straight to cli.GridSet, so the
@@ -1194,166 +1177,28 @@ func parseWorkspace(args []string) (Action, error) {
 	return WorkspaceAction{Sub: sub, Name: name, All: all, Stop: stop}, nil
 }
 
-// splitPathspecTokens peels "-- <path...>" off the tail. It runs BEFORE the
-// flag parse for the same reason the CLI's splitPathspec does: Go's flag
-// package consumes a bare "--" as its end-of-flags marker, so a pathspec left
-// in the argv would silently vanish. Tokens after the separator are rejoined
-// with a space so a path containing one survives.
-func splitPathspecTokens(args []string) ([]string, string) {
-	for i, a := range args {
-		if a == "--" {
-			return args[:i], strings.Join(args[i+1:], " ")
-		}
-	}
-	return args, ""
-}
-
 // parsePermutedFlags parses fs while tolerating flags that appear after
 // positional arguments, by peeling positionals one at a time and re-parsing
 // the remainder. Go's flag package stops at the first non-flag token, so
 // without this `git <id> diff HEAD --staged` would silently drop --staged.
 //
-// This is the same loop as parsePermuted in cmd/harness-cli/session.go; it is
-// duplicated rather than imported because tui must not depend on cmd/. Safe
-// only because every positional here is a revision, and a revision beginning
-// with '-' is refused by the runner anyway.
-func parsePermutedFlags(fs *flag.FlagSet, args []string) ([]string, error) {
-	var positionals []string
-	for len(args) > 0 {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		rest := fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-		positionals = append(positionals, rest[0])
-		args = rest[1:]
-	}
-	return positionals, nil
-}
-
 // parseGit parses `git <task-id> {log|diff|show|status} ...` with the same
 // grammar harness-cli uses, so a hand that learned one surface knows the other.
 func parseGit(args []string) (Action, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status | subrepos | file} ...")
 	}
-	act := GitAction{TaskID: args[0], Sub: args[1]}
-	rest, path := splitPathspecTokens(args[2:])
-	act.Path = path
-
-	switch act.Sub {
-	case "log":
-		fs := flag.NewFlagSet("git log", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		max := fs.Uint("max", 0, "")
-		subrepo := fs.String("subrepo", "", "")
-		pos, err := parsePermutedFlags(fs, rest)
-		if err != nil {
-			return nil, fmt.Errorf("git log: %w", err)
-		}
-		if len(pos) > 1 {
-			return nil, fmt.Errorf("git log: at most one revision (got %d)", len(pos))
-		}
-		if len(pos) == 1 {
-			act.BaseRev = pos[0]
-		}
-		act.Max = uint32(*max)
-		act.Subrepo = *subrepo
-
-	case "diff":
-		fs := flag.NewFlagSet("git diff", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		staged := fs.Bool("staged", false, "")
-		fs.BoolVar(staged, "cached", false, "")
-		submodule := fs.Bool("submodule", false, "")
-		subrepo := fs.String("subrepo", "", "")
-		pos, err := parsePermutedFlags(fs, rest)
-		if err != nil {
-			return nil, fmt.Errorf("git diff: %w", err)
-		}
-		act.Staged = *staged
-		act.Submodule = *submodule
-		act.Subrepo = *subrepo
-		// Positionals are counted the way git counts them: none = unstaged,
-		// one = <base> against the working tree, two = commit against commit.
-		switch len(pos) {
-		case 0:
-		case 1:
-			act.BaseRev = pos[0]
-		case 2:
-			if *staged {
-				return nil, fmt.Errorf("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go")
-			}
-			act.BaseRev, act.TargetRev = pos[0], pos[1]
-		default:
-			return nil, fmt.Errorf("git diff: at most two revisions (got %d)", len(pos))
-		}
-
-	case "show":
-		fs := flag.NewFlagSet("git show", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		submodule := fs.Bool("submodule", false, "")
-		subrepo := fs.String("subrepo", "", "")
-		pos, err := parsePermutedFlags(fs, rest)
-		if err != nil {
-			return nil, fmt.Errorf("git show: %w", err)
-		}
-		if len(pos) > 1 {
-			return nil, fmt.Errorf("git show: at most one revision (got %d)", len(pos))
-		}
-		if len(pos) == 1 {
-			act.BaseRev = pos[0]
-		}
-		act.Submodule = *submodule
-		act.Subrepo = *subrepo
-
-	case "file":
-		fs := flag.NewFlagSet("git file", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		staged := fs.Bool("staged", false, "")
-		rev := fs.String("rev", "", "")
-		subrepo := fs.String("subrepo", "", "")
-		pos, err := parsePermutedFlags(fs, rest)
-		if err != nil {
-			return nil, fmt.Errorf("git file: %w", err)
-		}
-		// The path may arrive as a positional or after --, so one lifted
-		// straight out of a diff header works either way.
-		if len(pos) > 1 {
-			return nil, fmt.Errorf("git file: one path (got %d)", len(pos))
-		}
-		if len(pos) == 1 {
-			if act.Path != "" {
-				return nil, fmt.Errorf("git file: path given twice (%q and %q)", pos[0], act.Path)
-			}
-			act.Path = pos[0]
-		}
-		if act.Path == "" {
-			return nil, fmt.Errorf("git file: usage: git <task-id> file [--staged | --rev REV] <path>")
-		}
-		act.Staged = *staged
-		act.TargetRev = *rev
-		act.Subrepo = *subrepo
-
-	case "status", "subrepos":
-		fs := flag.NewFlagSet("git "+act.Sub, flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		subrepo := fs.String("subrepo", "", "")
-		pos, err := parsePermutedFlags(fs, rest)
-		if err != nil {
-			return nil, fmt.Errorf("git %s: %w", act.Sub, err)
-		}
-		if len(pos) > 0 {
-			return nil, fmt.Errorf("git %s: takes no revision (got %q)", act.Sub, pos[0])
-		}
-		act.Subrepo = *subrepo
-
-	default:
-		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", act.Sub)
+	// The task id sits between the family word and the sub-verb, and the
+	// pathspec is peeled before flags are read -- both are grammar, and both
+	// now live in cli/verb rather than being spelled out again here.
+	taskID, sub := args[0], args[1]
+	act, err := parseViaSpec2("git", sub, args[2:])
+	if err != nil {
+		return nil, err
 	}
-	return act, nil
+	g := act.(verb.GitAction)
+	g.TaskID = taskID
+	return g, nil
 }
 
 // parseSetCaps backs `caps set <task-id> [--caps NAMES] [--scope SPEC]

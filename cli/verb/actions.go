@@ -84,3 +84,22 @@ type FileNewAction struct {
 	TaskID  string
 	RelPath string
 }
+
+// GitAction is a read-only git query against a task's worktree. Sub names the
+// query; which of BaseRev/TargetRev are set follows git's own counting --
+// none = unstaged, one = that revision against the working tree, two = commit
+// against commit.
+type GitAction struct {
+	ActionMarker
+	TaskID    string
+	Sub       string
+	BaseRev   string
+	TargetRev string
+	// Path filters within a repository; Subrepo chooses which repository.
+	Path      string
+	Subrepo   string
+	Staged    bool
+	Submodule bool
+	Max       uint32
+	MaxBytes  uint32
+}

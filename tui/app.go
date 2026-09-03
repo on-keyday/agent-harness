@@ -3240,7 +3240,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			ids = append(ids, full)
 		}
 		return a, a.openGrid(v.Mode, anchor, ids)
-	case GitAction:
+	case verb.GitAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))

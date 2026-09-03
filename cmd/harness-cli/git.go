@@ -9,41 +9,10 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
-
-// splitPathspec peels "-- <path...>" off the tail. It must run BEFORE the
-// permuted flag parse: Go's flag package consumes a bare "--" as its
-// end-of-flags marker, so a pathspec left in the argv would silently vanish.
-// Everything after the separator is joined with a space so an unquoted path
-// containing spaces still arrives whole.
-func splitPathspec(args []string) ([]string, string) {
-	for i, a := range args {
-		if a == "--" {
-			return args[:i], strings.Join(args[i+1:], " ")
-		}
-	}
-	return args, ""
-}
-
-// gitCommonFlags registers the knobs every sub-verb accepts and returns a
-// closure that folds them into a GitQuery. Registering them per sub-verb (not
-// once globally) keeps each FlagSet's own -h honest about what it takes.
-func gitCommonFlags(fs *flag.FlagSet, submodule bool) func(cli.GitQuery) cli.GitQuery {
-	subrepo := fs.String("subrepo", "", "run the query inside this worktree-relative directory, which must itself be a git repo root")
-	var sub *bool
-	if submodule {
-		sub = fs.Bool("submodule", false, "inline a submodule's own file-level changes (the output is then not an applyable patch)")
-	}
-	return func(q cli.GitQuery) cli.GitQuery {
-		q.Subrepo = *subrepo
-		if sub != nil {
-			q.SubmoduleDiff = *sub
-		}
-		return q
-	}
-}
 
 func runGit(cid objproto.ConnectionID, args []string) error {
 	if len(args) < 2 {
@@ -51,7 +20,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 	}
 	taskID := args[0]
 	sub := args[1]
-	rest, path := splitPathspec(args[2:])
+	rest := args[2:]
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -72,142 +41,57 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	switch sub {
-	case "log":
-		fs := flag.NewFlagSet("git log", flag.ExitOnError)
-		max := fs.Uint("max", 0, "maximum commits (0 = 100, capped at 1000)")
-		common := gitCommonFlags(fs, false)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pos) > 1 {
-			return fmt.Errorf("git log: at most one revision (got %d)", len(pos))
-		}
-		base := ""
-		if len(pos) == 1 {
-			base = pos[0]
-		}
-		return emit(c.GitLog(ctx, taskID, common(cli.GitQuery{
-			BaseRev: base, Path: path, MaxCommits: uint32(*max),
-		})))
-
-	case "diff":
-		fs := flag.NewFlagSet("git diff", flag.ExitOnError)
-		staged := fs.Bool("staged", false, "diff the index instead of the working tree")
-		fs.BoolVar(staged, "cached", false, "alias for --staged")
-		maxBytes := fs.Uint("max-bytes", 0, "maximum diff bytes (0 = 2MiB, capped at 8MiB)")
-		common := gitCommonFlags(fs, true)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		// Positionals are counted the way git counts them: none = unstaged,
-		// one = <base> against the working tree, two = commit against commit.
-		base, targetRev := "", ""
-		target := protocol.GitDiffTarget_Worktree
-		if *staged {
-			target = protocol.GitDiffTarget_Index
-		}
-		switch len(pos) {
-		case 0:
-		case 1:
-			base = pos[0]
-		case 2:
-			if *staged {
-				return fmt.Errorf("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go")
-			}
-			base, targetRev = pos[0], pos[1]
-			target = protocol.GitDiffTarget_Rev
-		default:
-			return fmt.Errorf("git diff: at most two revisions (got %d)", len(pos))
-		}
-		return emit(c.GitDiff(ctx, taskID, common(cli.GitQuery{
-			Target: target, BaseRev: base, TargetRev: targetRev,
-			Path: path, MaxBytes: uint32(*maxBytes),
-		})))
-
-	case "show":
-		fs := flag.NewFlagSet("git show", flag.ExitOnError)
-		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
-		common := gitCommonFlags(fs, true)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pos) > 1 {
-			return fmt.Errorf("git show: at most one revision (got %d)", len(pos))
-		}
-		rev := ""
-		if len(pos) == 1 {
-			rev = pos[0]
-		}
-		return emit(c.GitShow(ctx, taskID, common(cli.GitQuery{
-			BaseRev: rev, Path: path, MaxBytes: uint32(*maxBytes),
-		})))
-
-	case "status":
-		fs := flag.NewFlagSet("git status", flag.ExitOnError)
-		common := gitCommonFlags(fs, false)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pos) > 0 {
-			return fmt.Errorf("git status: takes no revision (got %q)", pos[0])
-		}
-		return emit(c.GitStatus(ctx, taskID, common(cli.GitQuery{Path: path})))
-
-	case "file":
-		fs := flag.NewFlagSet("git file", flag.ExitOnError)
-		staged := fs.Bool("staged", false, "the staged blob instead of the file on disk")
-		rev := fs.String("rev", "", "the blob at this revision instead of the file on disk")
-		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
-		common := gitCommonFlags(fs, false)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		// The path may come as a positional or after --, so a path lifted
-		// straight out of a diff header works either way.
-		target := protocol.GitDiffTarget_Worktree
-		switch {
-		case *rev != "":
-			target = protocol.GitDiffTarget_Rev
-		case *staged:
-			target = protocol.GitDiffTarget_Index
-		}
-		if len(pos) > 1 {
-			return fmt.Errorf("git file: one path (got %d)", len(pos))
-		}
-		if len(pos) == 1 {
-			if path != "" {
-				return fmt.Errorf("git file: path given twice (%q and %q)", pos[0], path)
-			}
-			path = pos[0]
-		}
-		if path == "" {
-			return fmt.Errorf("usage: harness-cli git <task-id> file [--staged | --rev REV] <path>")
-		}
-		return emit(c.GitFile(ctx, taskID, common(cli.GitQuery{
-			Target: target, TargetRev: *rev, Path: path, MaxBytes: uint32(*maxBytes),
-		})))
-
-	case "subrepos":
-		fs := flag.NewFlagSet("git subrepos", flag.ExitOnError)
-		common := gitCommonFlags(fs, false)
-		pos, err := cli.ParsePermuted(fs, rest)
-		if err != nil {
-			return err
-		}
-		if len(pos) > 0 {
-			return fmt.Errorf("git subrepos: takes no revision (got %q)", pos[0])
-		}
-		return emit(c.GitSubrepos(ctx, taskID, common(cli.GitQuery{})))
-
-	default:
+	// Parsed from the declaration (cli/verb): flags, aliases, revision counts
+	// and cross-flag validity are written down once, and the TUI and the WebUI
+	// read the same entries.
+	sp, ok := verb.Lookup("git", sub)
+	if !ok {
 		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", sub)
 	}
+	sp = sp.For(verb.CLI)
+	fs := flagSetFor(sp)
+	b, perr := sp.Parse(fs, rest)
+	if perr != nil {
+		return perr
+	}
+	act, berr := sp.Build(b)
+	if berr != nil {
+		return berr
+	}
+	g := act.(verb.GitAction)
+	q := cli.GitQuery{
+		BaseRev: g.BaseRev, TargetRev: g.TargetRev, Path: g.Path, Subrepo: g.Subrepo,
+		MaxCommits: g.Max, MaxBytes: g.MaxBytes, SubmoduleDiff: g.Submodule,
+	}
+	switch g.Sub {
+	case "log":
+		return emit(c.GitLog(ctx, taskID, q))
+	case "diff":
+		if g.Staged {
+			q.Target = protocol.GitDiffTarget_Index
+		} else if g.TargetRev != "" {
+			q.Target = protocol.GitDiffTarget_Rev
+		}
+		return emit(c.GitDiff(ctx, taskID, q))
+	case "show":
+		return emit(c.GitShow(ctx, taskID, q))
+	case "status":
+		return emit(c.GitStatus(ctx, taskID, q))
+	case "subrepos":
+		return emit(c.GitSubrepos(ctx, taskID, q))
+	case "file":
+		if g.Staged {
+			q.Target = protocol.GitDiffTarget_Index
+		} else if g.TargetRev != "" {
+			// `git file --rev X` reads the copy AT X, so the revision is the
+			// query's base and the target names which side to read.
+			q.Target = protocol.GitDiffTarget_Rev
+			q.BaseRev = g.TargetRev
+			q.TargetRev = ""
+		}
+		return emit(c.GitFile(ctx, taskID, q))
+	}
+	return fmt.Errorf("git: unhandled sub-verb %q", g.Sub)
 }
 
 const (
@@ -300,3 +184,8 @@ func isTTY(f *os.File) bool {
 	}
 	return st.Mode()&os.ModeCharDevice != 0
 }
+
+// flagSetFor builds a verb's FlagSet with the CLI's error mode: a bad command
+// line should end the process with usage, unlike the TUI where it is a line in
+// a pane.
+func flagSetFor(sp verb.VerbSpec) *flag.FlagSet { return sp.NewFlagSet(flag.ExitOnError) }

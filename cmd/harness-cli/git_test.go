@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestSplitPathspec(t *testing.T) {
-	head, path := splitPathspec([]string{"abc", "--", "tui/app.go"})
+	head, path := verb.SplitPathspec([]string{"abc", "--", "tui/app.go"})
 	if len(head) != 1 || head[0] != "abc" {
 		t.Fatalf("head = %v", head)
 	}
@@ -21,7 +22,7 @@ func TestSplitPathspec(t *testing.T) {
 }
 
 func TestSplitPathspecNoSeparator(t *testing.T) {
-	head, path := splitPathspec([]string{"abc", "def"})
+	head, path := verb.SplitPathspec([]string{"abc", "def"})
 	if len(head) != 2 || path != "" {
 		t.Fatalf("head = %v path = %q", head, path)
 	}
@@ -30,7 +31,7 @@ func TestSplitPathspecNoSeparator(t *testing.T) {
 // The pathspec must be split off before the permuted flag parse: flag.Parse
 // consumes a bare "--" itself, so a path left in the argv would vanish.
 func TestSplitPathspecJoinsMultiWordPath(t *testing.T) {
-	head, path := splitPathspec([]string{"--", "a b/c.go"})
+	head, path := verb.SplitPathspec([]string{"--", "a b/c.go"})
 	if len(head) != 0 {
 		t.Fatalf("head = %v", head)
 	}

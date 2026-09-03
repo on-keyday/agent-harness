@@ -228,6 +228,164 @@ var Verbs = []VerbSpec{
 			return FileNewAction{TaskID: b.Args[0], RelPath: b.Args[1]}, nil
 		},
 	},
+	// --- git ---
+	//
+	// The path is `git <sub>`, but the task id sits BETWEEN them on the command
+	// line (`git <task-id> diff`), so callers peel the id and the pathspec
+	// before handing the rest here. Sub-verbs differ in how many revisions they
+	// take, which is why each is its own entry rather than one `git` verb with
+	// a mode flag.
+	//
+	// --max-bytes was missing from the TUI before the migration, so a large
+	// diff could not be capped there; declaring it once gives it to every
+	// surface. The WebUI accepted it and threw it away, which was worse than
+	// refusing it.
+	{
+		Path:     []string{"git", "log"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		Args:     []Arg{{Name: "revision", Type: ArgString, Variadic: true}},
+		Flags: []Flag{
+			{Name: "max", Type: FlagUint, Default: uint(0), Help: "maximum commits (0 = 100, capped at 1000)"},
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "run the query inside this worktree-relative nested repo"},
+		},
+		Examples: []string{"git log", "git log --max 20"},
+		Build: func(b Bound) (Action, error) {
+			if len(b.Args) > 1 {
+				return nil, fmt.Errorf("git log: at most one revision (got %d)", len(b.Args))
+			}
+			a := GitAction{Sub: "log", Subrepo: b.Str("subrepo"), Path: b.Pathspec}
+			if m, ok := b.Flags["max"].(uint); ok {
+				a.Max = uint32(m)
+			}
+			if len(b.Args) == 1 {
+				a.BaseRev = b.Args[0]
+			}
+			return a, nil
+		},
+	},
+	{
+		Path:     []string{"git", "diff"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		Args:     []Arg{{Name: "revision", Type: ArgString, Variadic: true}},
+		Flags: []Flag{
+			// A long-to-long alias: --cached is git's own spelling of --staged,
+			// bound to one variable, unlike session send's --enter and -e.
+			{Name: "staged", Aliases: []string{"cached"}, Type: FlagBool, Default: false,
+				Help: "diff the index instead of the working tree"},
+			{Name: "submodule", Type: FlagBool, Default: false,
+				Help: "inline a submodule's own file-level changes (the output is then not an applyable patch)"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Help: "maximum diff bytes (0 = 2MiB, capped at 8MiB)"},
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "run the query inside this worktree-relative nested repo"},
+		},
+		Examples: []string{"git diff", "git diff --staged", "git diff HEAD~1 HEAD"},
+		Build: func(b Bound) (Action, error) {
+			a := GitAction{Sub: "diff", Staged: b.Bool("staged"), Submodule: b.Bool("submodule"), Subrepo: b.Str("subrepo"), Path: b.Pathspec}
+			if m, ok := b.Flags["max-bytes"].(uint); ok {
+				a.MaxBytes = uint32(m)
+			}
+			// Counted the way git counts: none = unstaged, one = that revision
+			// against the working tree, two = commit against commit.
+			switch len(b.Args) {
+			case 0:
+			case 1:
+				a.BaseRev = b.Args[0]
+			case 2:
+				if a.Staged {
+					return nil, fmt.Errorf("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go")
+				}
+				a.BaseRev, a.TargetRev = b.Args[0], b.Args[1]
+			default:
+				return nil, fmt.Errorf("git diff: at most two revisions (got %d)", len(b.Args))
+			}
+			return a, nil
+		},
+	},
+	{
+		Path:     []string{"git", "show"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		Args:     []Arg{{Name: "revision", Type: ArgString, Variadic: true}},
+		Flags: []Flag{
+			{Name: "submodule", Type: FlagBool, Default: false, Help: "inline a submodule's own file-level changes"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Help: "maximum bytes (0 = 2MiB, capped at 8MiB)"},
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "run the query inside this worktree-relative nested repo"},
+		},
+		Examples: []string{"git show", "git show HEAD"},
+		Build: func(b Bound) (Action, error) {
+			if len(b.Args) > 1 {
+				return nil, fmt.Errorf("git show: at most one revision (got %d)", len(b.Args))
+			}
+			a := GitAction{Sub: "show", Submodule: b.Bool("submodule"), Subrepo: b.Str("subrepo"), Path: b.Pathspec}
+			if m, ok := b.Flags["max-bytes"].(uint); ok {
+				a.MaxBytes = uint32(m)
+			}
+			if len(b.Args) == 1 {
+				a.BaseRev = b.Args[0]
+			}
+			return a, nil
+		},
+	},
+	{
+		Path:     []string{"git", "status"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		Flags: []Flag{
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "run the query inside this worktree-relative nested repo"},
+		},
+		Examples: []string{"git status"},
+		Build: func(b Bound) (Action, error) {
+			return GitAction{Sub: "status", Subrepo: b.Str("subrepo"), Path: b.Pathspec}, nil
+		},
+	},
+	{
+		Path:     []string{"git", "subrepos"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		Flags: []Flag{
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "list nested repos under this worktree-relative directory"},
+		},
+		Examples: []string{"git subrepos"},
+		Build: func(b Bound) (Action, error) {
+			return GitAction{Sub: "subrepos", Subrepo: b.Str("subrepo"), Path: b.Pathspec}, nil
+		},
+	},
+	{
+		Path:     []string{"git", "file"},
+		Surfaces: CLI | TUI | WebUI,
+		Pathspec: true,
+		// Variadic because the path may arrive as a positional OR after `--`;
+		// Build refuses both and refuses neither, which is the rule the TUI
+		// enforced by hand and the CLI did not enforce at all.
+		Args: []Arg{{Name: "path", Type: ArgString, Variadic: true}},
+		Flags: []Flag{
+			{Name: "staged", Type: FlagBool, Default: false, Help: "read the indexed copy"},
+			{Name: "rev", Type: FlagString, Default: "", Help: "read the copy at this revision"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Help: "maximum bytes (0 = 2MiB, capped at 8MiB)"},
+			{Name: "subrepo", Type: FlagString, Default: "", Help: "run the query inside this worktree-relative nested repo"},
+		},
+		Examples: []string{"git file README.md", "git file --rev HEAD~1 README.md"},
+		Build: func(b Bound) (Action, error) {
+			p := b.Pathspec
+			switch {
+			case len(b.Args) > 1:
+				return nil, fmt.Errorf("git file: one path (got %d)", len(b.Args))
+			case len(b.Args) == 1 && p != "":
+				return nil, fmt.Errorf("git file: path given twice — once as an argument and once after `--`")
+			case len(b.Args) == 1:
+				p = b.Args[0]
+			case p == "":
+				return nil, fmt.Errorf("git file: a path is required, as an argument or after `--`")
+			}
+			a := GitAction{Sub: "file", Staged: b.Bool("staged"), TargetRev: b.Str("rev"),
+				Subrepo: b.Str("subrepo"), Path: p}
+			if m, ok := b.Flags["max-bytes"].(uint); ok {
+				a.MaxBytes = uint32(m)
+			}
+			return a, nil
+		},
+	},
 }
 
 // Lookup finds the spec for a verb path.

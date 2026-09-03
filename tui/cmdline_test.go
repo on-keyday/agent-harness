@@ -942,13 +942,13 @@ func TestParseFileNew(t *testing.T) {
 	}
 }
 
-func parseGitCmd(t *testing.T, line string) GitAction {
+func parseGitCmd(t *testing.T, line string) verb.GitAction {
 	t.Helper()
 	got, err := ParseCommand(line, "/cwd")
 	if err != nil {
 		t.Fatalf("ParseCommand(%q): %v", line, err)
 	}
-	a, ok := got.(GitAction)
+	a, ok := got.(verb.GitAction)
 	if !ok {
 		t.Fatalf("ParseCommand(%q) returned %T", line, got)
 	}
