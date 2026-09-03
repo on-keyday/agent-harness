@@ -1,0 +1,170 @@
+package verb
+
+import (
+	"flag"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// NewFlagSet registers this verb's flags, aliases included, on a fresh FlagSet
+// named after the verb path.
+//
+// Every spelling of a flag binds to ONE variable, which is what makes an alias
+// an alias rather than a second flag that happens to look related. It is also
+// what the migration-lifetime alias guard reads back: two names sharing a
+// flag.Flag.Value pointer are one flag, two independent registrations are not.
+//
+// eh differs per surface and always has: the CLI takes ExitOnError because a
+// bad command line should end the process with usage, while the TUI takes
+// ContinueOnError with a discarded writer because a typo there is a line in a
+// results pane, not an exit.
+func (v VerbSpec) NewFlagSet(eh ErrorHandling) *flag.FlagSet {
+	fs := flag.NewFlagSet(v.FlagSetName(), eh)
+	for _, f := range v.Flags {
+		names := append([]string{f.Name}, f.Aliases...)
+		switch f.Type {
+		case FlagBool:
+			p := new(bool)
+			if d, ok := f.Default.(bool); ok {
+				*p = d
+			}
+			for _, n := range names {
+				fs.BoolVar(p, n, *p, f.Help)
+			}
+		case FlagString:
+			p := new(string)
+			if d, ok := f.Default.(string); ok {
+				*p = d
+			}
+			for _, n := range names {
+				fs.StringVar(p, n, *p, f.Help)
+			}
+		case FlagUint:
+			p := new(uint)
+			if d, ok := f.Default.(uint); ok {
+				*p = d
+			}
+			for _, n := range names {
+				fs.UintVar(p, n, *p, f.Help)
+			}
+		case FlagUint64:
+			p := new(uint64)
+			if d, ok := f.Default.(uint64); ok {
+				*p = d
+			}
+			for _, n := range names {
+				fs.Uint64Var(p, n, *p, f.Help)
+			}
+		case FlagDuration:
+			p := new(time.Duration)
+			if d, ok := f.Default.(time.Duration); ok {
+				*p = d
+			}
+			for _, n := range names {
+				fs.DurationVar(p, n, *p, f.Help)
+			}
+		}
+	}
+	return fs
+}
+
+// Parse runs fs over args and returns the neutral Bound.
+//
+// Permuted unless Trailing is set: with stdlib flag alone, parsing stops at
+// the first non-flag token and a flag written after a positional is silently
+// dropped -- which is how `board purge <topic> --seq N`, the exact line the
+// help text printed, fell through to the whole-topic form and destroyed two
+// messages on a live board. A verb WITH Trailing cannot permute, because a
+// '-'-leading word in free-form text is indistinguishable from a flag.
+func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
+	var (
+		positionals []string
+		err         error
+	)
+	if v.Trailing == nil {
+		positionals, err = ParsePermuted(fs, args)
+	} else {
+		err = fs.Parse(args)
+		positionals = fs.Args()
+	}
+	if err != nil {
+		return Bound{}, err
+	}
+
+	b := Bound{
+		Path:  v.Path,
+		Flags: map[string]any{},
+		Set:   map[string]bool{},
+	}
+	// Canonical names only: an alias is a spelling, not a key. Reading the
+	// value off the canonical registration is enough because NewFlagSet binds
+	// every spelling to one variable.
+	canonical := map[string]string{}
+	for _, f := range v.Flags {
+		if fl := fs.Lookup(f.Name); fl != nil {
+			b.Flags[f.Name] = flagValue(fl)
+		}
+		canonical[f.Name] = f.Name
+		for _, a := range f.Aliases {
+			canonical[a] = f.Name
+		}
+	}
+	fs.Visit(func(fl *flag.Flag) {
+		if name, ok := canonical[fl.Name]; ok {
+			b.Set[name] = true
+		}
+	})
+
+	if v.Trailing != nil {
+		fixed := v.fixedArgs()
+		if len(positionals) < fixed {
+			return Bound{}, fmt.Errorf("%s", v.Usage())
+		}
+		b.Args = positionals[:fixed]
+		b.Trail = strings.Join(positionals[fixed:], " ")
+		return b, nil
+	}
+	if err := v.checkArity(len(positionals)); err != nil {
+		return Bound{}, err
+	}
+	b.Args = positionals
+	return b, nil
+}
+
+// fixedArgs counts the non-variadic positionals.
+func (v VerbSpec) fixedArgs() int {
+	n := 0
+	for _, a := range v.Args {
+		if !a.Variadic {
+			n++
+		}
+	}
+	return n
+}
+
+// checkArity replaces the per-verb `len(pargs) != 3` checks the three surfaces
+// each wrote by hand -- and supplies one where a surface had none: tui's
+// parsePrune had no check at all, so a dropped flag arrived as a task id.
+func (v VerbSpec) checkArity(n int) error {
+	fixed := v.fixedArgs()
+	variadic := false
+	for _, a := range v.Args {
+		if a.Variadic {
+			variadic = true
+		}
+	}
+	if n < fixed || (!variadic && n > fixed) {
+		return fmt.Errorf("%s", v.Usage())
+	}
+	return nil
+}
+
+// flagValue reads a parsed flag's typed value. Every stdlib flag Value
+// implements Getter; the fallback is for a custom flag.Value that does not.
+func flagValue(fl *flag.Flag) any {
+	if g, ok := fl.Value.(flag.Getter); ok {
+		return g.Get()
+	}
+	return fl.Value.String()
+}
