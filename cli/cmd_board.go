@@ -109,8 +109,14 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, 
 	if berr != nil {
 		return berr
 	}
-	ba := act.(verb.BoardAction)
-	switch sub {
+	return RunBoardAction(ctx, cid, act.(verb.BoardAction), out)
+}
+
+// RunBoardAction is RunBoardSubcmd for a caller that already has the parsed
+// action -- the generated CLI dispatch, which parses from the declaration
+// itself rather than handing this function a sub-verb string to look up.
+func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out io.Writer) error {
+	switch ba.Sub {
 	case "topics":
 		rows, err := BoardTopics(ctx, cid)
 		if err != nil {
@@ -328,7 +334,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, 
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"purged\":%d}\n", status, topic, purged)
 
 	default:
-		return fmt.Errorf("unknown board subcommand: %q", sub)
+		return fmt.Errorf("unknown board subcommand: %q", ba.Sub)
 	}
 	return nil
 }

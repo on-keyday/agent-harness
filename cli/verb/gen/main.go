@@ -235,16 +235,22 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 		// ParseCmd, not Parse: ParseCaps and ParseScope are already the
 		// capability and scope GRAMMAR parsers in this package, and a verb
 		// named caps would silently shadow one of them.
-		// The surface-context tier of any ladder this verb declares (D7):
-		// --repo from the TUI's session, from the WebUI's dropdown. Applied
-		// here so a caller cannot forget it -- three call sites did.
+		// The WHOLE ladder any flag here declares (D7), not just its
+		// surface-context tier: env (HARNESS_REPO_PATH), workspace config,
+		// then the value the surface knows. Emitting only the last tier meant
+		// a caller reaching a verb through this parser lost the first two,
+		// silently -- `submit` without --repo stopped seeing
+		// HARNESS_REPO_PATH, on the parser the whole CLI is moving onto.
+		//
+		// The two the SURFACE owns come from EnvLookup / WorkspaceLookup,
+		// installed once per process rather than passed at each of the call
+		// sites that used to forget them.
 		var ctxApply string
 		for _, f := range v.Flags {
-			for _, tr := range f.Resolve {
-				if tr.SurfaceContext && f.Field != "" {
-					ctxApply += fmt.Sprintf("\tif r := sp.Resolve(b, %q, nil, nil, ctx); r != \"\" {\n\t\ta.%s = r\n\t}\n", f.Name, f.Field)
-				}
+			if len(f.Resolve) == 0 || f.Field == "" {
+				continue
 			}
+			ctxApply += fmt.Sprintf("\tif r := sp.Resolve(b, %q, EnvLookup, WorkspaceLookup, ctx); r != \"\" {\n\t\ta.%s = r\n\t}\n", f.Name, f.Field)
 		}
 		fmt.Fprintf(buf, "func ParseCmd%s(sf Surface, args []string, ctx map[string]string) (%s, error) {\n"+
 			"\tvar zero %s\n"+
@@ -361,6 +367,24 @@ func emitDispatch(buf *bytes.Buffer) {
 				methodName(v), methodName(v), sf.name, methodOf(v))
 		}
 		buf.WriteString("\t}\n\treturn r, false, nil\n}\n")
+
+		// The tokens-in form. Every caller has a command LINE, not a
+		// (path, args) pair, and splitting one into the other means knowing
+		// that `session stream turn` is three words -- the knowledge the
+		// hand-written surfaces each held their own copy of, and each got
+		// wrong at a different arity.
+		fmt.Fprintf(buf, "\n// Dispatch%sLine is Dispatch%s for a caller holding a whole command\n"+
+			"// line. It finds the verb path itself, longest first, so nothing\n"+
+			"// outside this file needs to know how many words a verb is.\n"+
+			"//\n"+
+			"// handled is false for a line this surface does not declare; the\n"+
+			"// error is the PARSE error, returned with handled=true, because a\n"+
+			"// misspelled flag on a known verb is not an unknown verb.\n"+
+			"func Dispatch%sLine[R any](h %sDispatch[R], tokens []string, ctx map[string]string) (r R, handled bool, err error) {\n"+
+			"\tfor n := MaxPathLen; n >= 1; n-- {\n\t\tif len(tokens) < n {\n\t\t\tcontinue\n\t\t}\n"+
+			"\t\tif r, handled, err = Dispatch%s(h, strings.Join(tokens[:n], \" \"), tokens[n:], ctx); handled {\n"+
+			"\t\t\treturn r, true, err\n\t\t}\n\t}\n\treturn r, false, nil\n}\n",
+			sf.name, sf.name, sf.name, sf.name, sf.name)
 
 		emitActionDispatch(buf, sf.name, verbs, methodOf)
 		emitNameToAction(buf, sf.name, verbs)

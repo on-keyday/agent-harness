@@ -72,95 +72,9 @@ func exitOnAmbiguous(err error) error {
 	return err
 }
 
-// runSession dispatches session sub-verbs: new / attach / snapshot / send /
-// exec / ls / kill / await-idle / resize, plus the `stream` NAMESPACE (a third
-// level, one verb per inbound kind of the adapter protocol). cid is the
-// already-resolved server ConnectionID from main()'s parseCID().
-func runSession(cid objproto.ConnectionID, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle|resize|stream> [args]")
-		os.Exit(2)
-	}
-	verb := args[0]
-	rest := args[1:]
-	switch verb {
-	case "new":
-		return runSessionNew(cid, rest)
-	case "attach":
-		return runSessionAttach(cid, rest)
-	case "snapshot":
-		return runSessionSnapshot(cid, rest)
-	case "send":
-		return runSessionSend(cid, rest)
-	case "exec":
-		return runSessionExec(cid, rest)
-	case "ls":
-		return runSessionLs(cid, rest)
-	case "kill":
-		return runSessionKill(cid, rest)
-	case "await-idle":
-		return runSessionAwaitIdle(cid, rest)
-	case "resize":
-		return runSessionResize(cid, rest)
-	case "stream":
-		return runSessionStream(cid, rest)
-	default:
-		return fmt.Errorf("unknown session verb %q", verb)
-	}
-}
-
-// runSessionStream dispatches the `session stream <verb>` namespace — the
-// event-stream kind's data-plane verbs, one per inbound kind of the adapter
-// protocol (design §3). Lifecycle verbs (new/ls/kill) stay on `session`
-// because their meaning is kind-independent; these exist because their PTY
-// namesakes mean something else (attach splices a terminal) or nothing at all.
-//
-// `requests` and `snapshot` are the two still unbuilt; naming one reports
-// exactly that instead of "unknown", so the design stays discoverable.
-func runSessionStream(cid objproto.ConnectionID, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session stream <attach|turn|approve|interrupt|finish> <id> [args]  (requests/snapshot: specified, not built yet)")
-		os.Exit(2)
-	}
-	verb := args[0]
-	rest := args[1:]
-	switch verb {
-	case "attach":
-		return runSessionStreamAttach(cid, rest)
-	case "turn":
-		return runSessionStreamTurn(cid, rest)
-	case "approve":
-		return runSessionStreamApprove(cid, rest)
-	case "interrupt", "finish":
-		return runSessionStreamSimple(cid, rest, verb)
-	case "requests", "snapshot":
-		return fmt.Errorf("session stream %s: specified (design §3) but not built yet; "+
-			"`session snapshot --raw` reads this kind's stream verbatim in the meantime", verb)
-	default:
-		return fmt.Errorf("unknown session stream verb %q", verb)
-	}
-}
-
-// runSessionStreamTurn appends one user turn.
-//
-// Flags strictly BEFORE <id>, and everything after it joined ssh-style — the
-// same shape `session send` and `session exec` use, for the reason
-// parsePermuted's own doc gives: a free-form text positional can begin with
-// '-', which is indistinguishable from a flag, so the permuted parse must not
-// be used here.
-func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
-	sp, _ := verb.Lookup("session", "stream", "turn")
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		return perr
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		return berr
-	}
-	a := act.(verb.SessionAction)
+// runSessionStreamTurnWith is runSessionStreamTurn for a caller that
+// already has the parsed action -- the generated CLI dispatch.
+func runSessionStreamTurnWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex, text := a.TaskID, a.Text
 	flushMs := &a.FlushMs
 
@@ -173,16 +87,9 @@ func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
 	return c.StreamTurn(ctx, taskIDHex, text, time.Duration(*flushMs)*time.Millisecond)
 }
 
-// runSessionStreamApprove answers one pending request.
-//
-// The deny reason is a FLAG rather than a trailing positional, which keeps both
-// positionals hex-shaped and so lets parsePermuted give this verb order-free
-// flags — `approve <id> <req> --deny --message "…"` and `approve --deny <id>
-// <req>` both work. A trailing free-form positional would have forced
-// flags-first, and this is the verb where a misplaced --allow/--deny would be
-// worst: it decides the answer.
-func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session stream approve", args)
+// runSessionStreamApproveWith is runSessionStreamApprove for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionStreamApproveWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	resp := streamagent.Response{ID: a.RequestID}
 	if a.Allow {
 		resp.Behavior = streamagent.BehaviorAllow
@@ -207,13 +114,10 @@ func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
 	return c.StreamApprove(ctx, a.TaskID, resp, time.Duration(a.FlushMs)*time.Millisecond)
 }
 
-// runSessionStreamSimple serves the two verbs that carry no payload.
-//
-// interrupt abandons the running TURN and the agent survives to take the next
-// one; finish closes the agent's stdin so it completes the turn in flight and
-// exits 0. Neither is `session kill`, which is a signal and discards the work.
-func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verbName string) error {
-	a := parseSession("session stream "+verbName, args)
+// runSessionStreamSimpleWith is runSessionStreamSimple for a caller that
+// already has the parsed action. interrupt and finish differ only in the
+// Sub the declaration fixed, which the body reads off the action.
+func runSessionStreamSimpleWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	flush := time.Duration(a.FlushMs) * time.Millisecond
 	pos := []string{a.TaskID}
 
@@ -223,17 +127,17 @@ func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verbName s
 		return err
 	}
 	defer c.Close()
-	if verbName == "interrupt" {
+	// The declaration fixes Sub per path, so the two spellings are told apart
+	// by the table rather than by a string this function was handed.
+	if a.Sub == "stream-interrupt" {
 		return c.StreamInterrupt(ctx, pos[0], flush)
 	}
 	return c.StreamFinish(ctx, pos[0], flush)
 }
 
-// runSessionStreamAttach follows an event-stream task's events, rendered as
-// text — the live counterpart of reading its task log, plus the ring replay.
-// Read-only; Ctrl+C detaches and the task keeps running.
-func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session stream attach", args)
+// runSessionStreamAttachWith is runSessionStreamAttach for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionStreamAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -245,12 +149,9 @@ func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
 	return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
 }
 
-// runSessionSnapshot view-attaches to a detachable session and prints its
-// current screen as plain text (headless VT render). Non-intrusive: it does not
-// take over the controlling client. Works from a non-TTY context (no raw mode),
-// unlike `session attach`.
-func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session snapshot", args)
+// runSessionSnapshotWith is runSessionSnapshot for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	rows, cols, settleMs := &a.Rows, &a.Cols, &a.SettleMs
 	style, colorOut, withoutSynth := &a.Style, &a.Color, &a.WithoutSynth
@@ -476,15 +377,9 @@ func formatSpanReport(s *cli.ScreenSnapshot) string {
 	return cli.FormatScreenSpans(s.Spans)
 }
 
-// runSessionNew opens a new detachable interactive PTY session on a runner
-// and blocks until the session ends (Ctrl+D / exit / detach).
-// With -d / --detach the stream is closed immediately after open and the task
-// id is printed — mirroring `docker run -d`.
-func runSessionNew(cid objproto.ConnectionID, args []string) error {
-	// Parsed from the declaration, which carries this family's flags, its
-	// three cross-flag rules (x11 with detach, x11 with stream, the display
-	// range) and the repo ladder that used to be spelled out here.
-	a := parseSpawn("session-new", args, nil)
+// runSessionNewWith is runSessionNew for a caller that already has the
+// parsed action -- the generated CLI dispatch.
+func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 	repoVal := a.Repo
 	sopts := spawnOpts(a)
 	sopts.EventStream = a.Stream
@@ -550,11 +445,9 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	return nil
 }
 
-// runSessionAttach re-attaches to a detachable interactive session by id.
-// With --view the attach is read-only: the server discards keystrokes from
-// this client but continues streaming PTY output.
-func runSessionAttach(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session attach", args)
+// runSessionAttachWith is runSessionAttach for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	// --view attaches without taking the seat: output only, input discarded.
 	mode := protocol.AttachMode_Control
@@ -594,6 +487,12 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		return berr
 	}
 	a := act.(verb.SendAction)
+	return runSessionSendWith(cid, a)
+}
+
+// runSessionSendWith is runSessionSend for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
 	taskIDHex := a.TaskID
 	enter, interp, quiet := &a.Enter, &a.Interp, &a.Quiet
 	flushMs := &a.FlushMs
@@ -700,25 +599,9 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	return nil
 }
 
-// runSessionExec runs a single shell command line synchronously in a session's
-// foreground shell (via a cowrite attach + sentinel-bounded output) and returns
-// its combined output plus exit code. Unlike send+snapshot it blocks until the
-// command finishes, so no sleep-guessing is needed. The process exits with the
-// command's own exit code (124 on timeout, 125 on transport/attach error).
-// Flags must precede <id>; everything after <id> is one shell command line.
-func runSessionExec(cid objproto.ConnectionID, args []string) error {
-	sp, _ := verb.Lookup("session", "exec")
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		return perr
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		return berr
-	}
-	a := act.(verb.SessionExecAction)
+// runSessionExecWith is runSessionExec for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionExecWith(cid objproto.ConnectionID, a verb.SessionExecAction) error {
 	taskIDHex, cmd := a.TaskID, a.Cmd
 	timeout, jsonOut, exitOnly, raw := &a.Timeout, &a.JSON, &a.ExitOnly, &a.Raw
 
@@ -805,36 +688,9 @@ func unescapeInput(s string) ([]byte, error) {
 	return out, nil
 }
 
-// runSessionLs lists interactive sessions as JSON Lines. Each row shares the
-// `ls --json` task vocabulary (via cli.SessionListJSON) plus the session-only
-// is_attached / ring_buffer_bytes fields, so `session ls` differs from
-// `ls --json` only by the interactive filter and those two extra fields.
-func runSessionLs(cid objproto.ConnectionID, _ []string) error {
-	return cli.SessionListJSON(context.Background(), cid, os.Stdout)
-}
-
-// runSessionKill cancels a session (alias of 'harness-cli cancel <id>').
-func runSessionKill(cid objproto.ConnectionID, args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: session kill <id>")
-	}
-	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	return c.Cancel(ctx, args[0])
-}
-
-// runSessionAwaitIdle arms a one-shot idle watcher on a live interactive
-// session. Default sink long-polls (the process blocks until the session's
-// PTY output goes quiescent, then prints the result); --notify / --topic arm
-// a server-side sink and return immediately — an agent uses
-// `--topic chat.<its-short-id>` and ends its turn, the fire arrives via its
-// inbox hook.
-func runSessionAwaitIdle(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session await-idle", args)
+// runSessionAwaitIdleWith is runSessionAwaitIdle for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	thresholdMs, topic := &a.ThresholdMs, &a.Topic
 	// The sink is where the fire lands: an operator notification, an
@@ -922,14 +778,9 @@ func parseResizeSpec(spec string) (rows, cols uint16, err error) {
 	return uint16(r), uint16(c), nil
 }
 
-// runSessionResize sets a live session's PTY size from a non-control attach.
-//
-// It reports whether the size TOOK, because the server discards a disallowed
-// resize silently — correct for the implicit per-SIGWINCH stream a real
-// terminal emits, wrong for someone who typed this command. Exit 3 on "not
-// applied" so a script can branch without parsing text.
-func runSessionResize(cid objproto.ConnectionID, args []string) error {
-	a := parseSession("session resize", args)
+// runSessionResizeWith is runSessionResize for a caller that already has the parsed action --
+// the generated CLI dispatch.
+func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error {
 	taskIDHex := a.TaskID
 	waitMs, quiet := &a.WaitMs, &a.Quiet
 	rows, cols, perr := parseResizeSpec(a.Size)

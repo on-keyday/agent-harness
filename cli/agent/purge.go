@@ -10,6 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Purge is the entry for `harness-cli agent purge`. It destroys a topic's
@@ -22,6 +23,12 @@ func Purge(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return PurgeWith(ctx, a, stdout)
+}
+
+// PurgeWith is Purge for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func PurgeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	topic := &a.Topic
 	self := &a.Self

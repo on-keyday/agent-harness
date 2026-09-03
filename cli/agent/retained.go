@@ -13,6 +13,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Retained is the entry for `harness-cli agent retained`. It lists a topic's
@@ -27,6 +28,12 @@ func Retained(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return RetainedWith(ctx, a, stdout)
+}
+
+// RetainedWith is Retained for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	topic := &a.Topic
 	self := &a.Self

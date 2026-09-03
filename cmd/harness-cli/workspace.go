@@ -39,12 +39,12 @@ func workspaceUsageTo(w io.Writer) {
 // also carries forwards other clients established, so a CLI save can capture
 // more than a TUI save would — see the spec's "Writing a workspace". Filtering
 // by origin_cid is not the fix: this process owns none of them.
-func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID, cfgPath, serverCIDStr string) error {
-	if len(args) == 0 {
-		workspaceUsage()
-		os.Exit(2)
-	}
-	f, path, err := workspace.Load(cfgPath)
+// runWorkspaceAction backs the four workspace verbs the CLI declares. It
+// reads the config path and the resolved server-cid from the process-level
+// values main() installed, because a verb method carries the ACTION and
+// nothing about how this process was invoked.
+func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() objproto.ConnectionID) error {
+	f, path, err := workspace.Load(workspaceCfgPath)
 	if err != nil {
 		return err
 	}
@@ -52,11 +52,11 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		path = workspace.DefaultPath
 	}
 
-	switch args[0] {
+	switch a.Sub {
 	case "ls":
-		if len(args) != 1 {
-			return fmt.Errorf("workspace ls: takes no arguments")
-		}
+		// Arity is the declaration's now: `workspace ls` takes no positional,
+		// so a stray word is refused at the parse rather than by a len(args)
+		// test written per sub-verb.
 		names := f.Names()
 		if len(names) == 0 {
 			fmt.Printf("no workspaces in %s\n", path)
@@ -68,50 +68,43 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		return nil
 
 	case "rm":
-		if len(args) != 2 {
-			return fmt.Errorf("workspace rm: exactly one name")
-		}
-		if f == nil || !f.Remove(args[1]) {
-			return fmt.Errorf("no workspace named %q in %s", args[1], path)
+		if f == nil || !f.Remove(a.Name) {
+			return fmt.Errorf("no workspace named %q in %s", a.Name, path)
 		}
 		if err := f.Save(path); err != nil {
 			return err
 		}
-		fmt.Printf("workspace %s removed from %s\n", args[1], path)
+		fmt.Printf("workspace %s removed from %s\n", a.Name, path)
 		return nil
 
 	case "show":
-		if len(args) > 2 {
-			return fmt.Errorf("workspace show: at most one name")
-		}
 		if f == nil {
 			return fmt.Errorf("no config at %s", path)
 		}
-		if len(args) == 1 {
+		if a.Name == "" {
 			for _, n := range f.Names() {
 				ws, _ := f.Workspace(n)
 				os.Stdout.Write(workspace.Block(ws))
 			}
 			return nil
 		}
-		ws, ok := f.Workspace(args[1])
+		ws, ok := f.Workspace(a.Name)
 		if !ok {
-			return fmt.Errorf("no workspace named %q in %s", args[1], path)
+			return fmt.Errorf("no workspace named %q in %s", a.Name, path)
 		}
 		os.Stdout.Write(workspace.Block(ws))
 		return nil
 
 	case "save":
 		// `ws` is taken below by the workspace.Workspace being built.
-		act := parseOne[verb.WorkspaceAction]("workspace save", args[1:])
-		name := act.Name
-		taskID, resume, runner, repo := &act.TaskID, &act.Resume, &act.Runner, &act.Repo
+		name := a.Name
+		taskID, resume, runner, repo := &a.TaskID, &a.Resume, &a.Runner, &a.Repo
 
 		// An empty filter lists every forward the caller may see, so a bare
 		// `workspace save <name>` records the same set the TUI would rather than
 		// one task. --task narrows it, and is also what lets a save CLEAR one
 		// task's forwards: the registry reports presence, never absence.
-		forwards, err := cli.PortForwardList(ctx, cid, *taskID)
+		forwards, err := cli.PortForwardList(ctx, cid(), *taskID)
 		if err != nil {
 			return err
 		}
@@ -141,7 +134,7 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 			observed[*taskID] = true // named but forward-less: clear its forwards
 		}
 
-		ws := &workspace.Workspace{Name: name, ServerCID: serverCIDStr, Repo: *repo}
+		ws := &workspace.Workspace{Name: name, ServerCID: workspaceServerCIDStr, Repo: *repo}
 		for _, id := range order {
 			ws.Tasks = append(ws.Tasks, *byTask[id])
 		}
@@ -169,10 +162,19 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 			name, path, len(ws.Tasks), countTaskForwards(ws), skipped)
 		return nil
 	}
-	workspaceUsage()
-	os.Exit(2)
-	return nil
+	return fmt.Errorf("workspace: unhandled sub-verb %q", a.Sub)
 }
+
+// workspaceCfgPath and workspaceServerCIDStr are what `workspace save` needs
+// from the invocation rather than from the verb: which config file to write
+// and the server-cid string to record in it. Installed by main() once, for
+// the reason verb.EnvLookup is -- a dispatch method takes the action and
+// nothing else, and threading two process-level strings through 74 signatures
+// to reach one of them is worse than naming them here.
+var (
+	workspaceCfgPath      string
+	workspaceServerCIDStr string
+)
 
 func countTaskForwards(ws *workspace.Workspace) int {
 	n := 0

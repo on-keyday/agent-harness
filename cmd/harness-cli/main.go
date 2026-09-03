@@ -17,12 +17,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
-	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -91,6 +88,19 @@ func main() {
 	args := flag.Args()[1:]
 	ctx := context.Background()
 
+	// The two ladder tiers this SURFACE owns (D7), installed once instead of
+	// passed at each call site -- three of which used to pass nil and lose
+	// HARNESS_REPO_PATH on verbs that declare it.
+	verb.EnvLookup = os.Getenv
+	verb.WorkspaceLookup = func(k string) string {
+		if k == "repo" {
+			return workspaceRepo
+		}
+		return ""
+	}
+	workspaceCfgPath = *configPath
+	workspaceServerCIDStr = cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)
+
 	parseCID := func() objproto.ConnectionID {
 		val := cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)
 		if val == "" {
@@ -103,678 +113,92 @@ func main() {
 		return cid
 	}
 
-	switch sub {
-	case "submit":
-		act := parseSpawn("submit", args, parseCID)
-		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
-		if err != nil {
-			die(err)
+	// Everything the declaration gives this surface, routed by the GENERATED
+	// dispatcher. It was a 29-case switch over the FIRST WORD plus, inside
+	// eight of those cases, a hand-written walk over the second and third --
+	// the shape that let `harness-cli` carry three verbs the table did not
+	// know, and let the table carry verbs this binary never reached.
+	//
+	// `git <task-id> <sub>` is the one line the path match cannot find on its
+	// own: the id sits in the MIDDLE of the verb, so no prefix of the tokens
+	// is the path. It is peeled here exactly as the TUI and the WebUI peel it,
+	// and goes through the same generated entry.
+	tokens := append([]string{sub}, args...)
+	h := cliVerbs{ctx: ctx, cid: parseCID}
+	if sub == "git" {
+		if len(args) < 2 {
+			die(fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos|file} ..."))
 		}
-		defer c.Close()
-		id, err := c.Submit(ctx, act.Repo, act.Task, spawnOpts(act))
-		if err != nil {
-			die(err)
-		}
-		fmt.Println(id)
-
-	case "ls":
-		l := parseOne[verb.ListAction]("ls", args)
-		switch {
-		case l.Tree:
-			if err := cli.ListTree(ctx, parseCID(), os.Stdout); err != nil {
-				die(err)
-			}
-		case l.JSON:
-			if err := cli.ListJSON(ctx, parseCID(), os.Stdout); err != nil {
-				die(err)
-			}
-		default:
-			if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
-				die(err)
-			}
-		}
-
-	case "conns":
-		cn := parseOne[verb.ConnsAction]("conns", args)
-		if cn.Follow {
-			var err error
-			if cn.JSON {
-				err = cli.WatchConnsJSON(ctx, parseCID(), os.Stdout)
-			} else {
-				err = cli.WatchConns(ctx, parseCID(), os.Stdout)
-			}
-			if err != nil && err != context.Canceled {
-				die(err)
-			}
-		} else {
-			conns, err := cli.ConnList(ctx, parseCID())
-			if err != nil {
-				die(err)
-			}
-			if cn.JSON {
-				for i := range conns {
-					fmt.Fprintln(os.Stdout, cli.ConnInfoJSONLine(&conns[i]))
-				}
-			} else {
-				for _, line := range cli.ConnInfoLines(conns) {
-					fmt.Fprintln(os.Stdout, line)
-				}
-			}
-		}
-
-	case "caps":
-		if len(args) > 0 && args[0] == "set" {
-			runCapsSet(ctx, parseCID(), args[1:])
-			return
-		}
-		if len(args) > 0 && args[0] == "set-parent" {
-			runCapsSetParent(ctx, parseCID(), args[1:])
-			return
-		}
-		cp := parseOne[verb.CatalogAction]("caps", args)
-		if err := cli.WriteCaps(os.Stdout, cp.JSON); err != nil {
-			die(err)
-		}
-
-	case "whoami":
-		w := parseOne[verb.CatalogAction]("whoami", args)
-		resp, err := cli.WhoAmI(ctx, parseCID())
-		if err != nil {
-			die(err)
-		}
-		if err := cli.WriteWhoAmI(os.Stdout, resp, w.JSON); err != nil {
-			die(err)
-		}
-
-	case "version":
-		vr := parseOne[verb.CatalogAction]("version", args)
-		if err := writeVersion(os.Stdout, vr.JSON); err != nil {
-			die(err)
-		}
-
-	case "skill":
-		// `ls` as a bare word is this verb's own spelling of --list; it is not
-		// a positional the declaration can express, so it is rewritten before
-		// the parse rather than becoming a skill NAMED "ls".
-		if len(args) > 0 && args[0] == "ls" {
-			args[0] = "--list"
-		}
-		sk := parseOne[verb.CatalogAction]("skill", args)
-		if sk.List {
-			names, err := agentskills.List()
-			if err != nil {
-				die(fmt.Errorf("skill list: %w", err))
-			}
-			for _, n := range names {
-				fmt.Println(n)
-				if d, derr := agentskills.Description(n); derr == nil && d != "" {
-					fmt.Printf("    %s\n", d)
-				}
-			}
-			break
-		}
-		name := sk.Name
-		if name == "" {
-			name = "harness-cli"
-		}
-		md, err := agentskills.Skill(name)
-		if err != nil {
-			avail, lerr := agentskills.List()
-			if lerr == nil {
-				die(fmt.Errorf("skill %q: %w (available: %s)", name, err, strings.Join(avail, ", ")))
-			}
-			die(fmt.Errorf("skill %q: %w", name, err))
-		}
-		os.Stdout.Write(md)
-
-	case "restore":
-		// The undo half of prune. Operator-only, gated server-side on the
-		// caller having no principal task.
-		rs := parseOne[verb.RestoreAction]("restore", args)
-		// --list and the bare form are the same request: listing is what the
-		// verb does when it is not given ids to act on.
-		ids := rs.TaskIDs
-		if rs.List {
-			ids = nil
-		}
-		if err := cli.Restore(ctx, parseCID(), ids, os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "cancel":
-		// Through the declaration like every other verb. Hand-read args[0]
-		// meant `cancel <a> <b>` cancelled the first and exited 0 while the
-		// TUI refused the same line -- one declared verb, two arities.
-		cn := parseOne[verb.CancelAction]("cancel", args)
-		if err := cli.Cancel(ctx, parseCID(), cn.TaskID); err != nil {
-			die(err)
-		}
-
-	case "notify":
-		sp, _ := verb.Lookup("notify")
-		sp = sp.For(verb.CLI)
-		fs := sp.NewFlagSet(flag.ExitOnError)
-		b, perr := sp.Parse(fs, args)
+		act, handled, perr := verb.ParseCLICommand(append([]string{"git", args[1]}, args[2:]...), nil)
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.BuildFunc()(b)
-		if berr != nil {
-			fmt.Fprintln(os.Stderr, berr)
-			os.Exit(2)
+		if !handled {
+			die(fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", args[1]))
 		}
-		n := act.(verb.NotifyAction)
-		if err := cli.Notify(ctx, parseCID(), n.Level, n.Title, n.Text); err != nil {
-			die(err)
-		}
-
-	case "prune":
-		// Parsed from the declaration (cli/verb), not from a FlagSet built
-		// here: this verb's grammar is written down once and the TUI and the
-		// WebUI read the same entry. What remains in this case is the execute
-		// half, which is per-surface on purpose — stdout and an exit code here,
-		// a tea.Cmd in the TUI, a DOM update in the browser.
-		sp, ok := verb.Lookup("prune")
-		if !ok {
-			die(fmt.Errorf("prune: not in the verb table"))
-		}
-		sp = sp.For(verb.CLI) // every other call site narrows; BuildFunc keys on it
-		fs := sp.NewFlagSet(flag.ExitOnError)
-		b, perr := sp.Parse(fs, args)
-		if perr != nil {
-			die(perr)
-		}
-		act, berr := sp.BuildFunc()(b)
-		if berr != nil {
-			die(berr)
-		}
-		p := act.(verb.PruneAction)
-		if err := cli.Prune(ctx, parseCID(), p.Before, p.TaskIDs, p.Force, os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "prune-local":
-		plSpec, _ := verb.Lookup("prune-local")
-		plSpec = plSpec.For(verb.CLI)
-		plFS := plSpec.NewFlagSet(flag.ExitOnError)
-		plB, plErr := plSpec.Parse(plFS, args)
-		if plErr != nil {
-			die(plErr)
-		}
-		plAct, plBErr := plSpec.BuildFunc()(plB)
-		if plBErr != nil {
-			die(plBErr)
-		}
-		pl := plAct.(verb.PruneLocalAction)
-		// The ladder the declaration carries, keyed on PRESENCE. It was
-		// re-implemented here keyed on the VALUE (`if repoVal == "."`), so an
-		// operator who typed `--repo .` got HARNESS_REPO_PATH instead --
-		// silently, on the verb that removes worktrees.
-		// Written back into the action, the way parseSpawnTUI does it for
-		// submit: one resolved value, read from one place.
-		pl.Repo = plSpec.Resolve(plB, "repo", os.Getenv, func(k string) string {
-			if k == "repo" {
-				return workspaceRepo
-			}
-			return ""
-		}, nil)
-		repoVal := pl.Repo
-		abs, err := filepath.Abs(repoVal)
-		if err != nil {
-			die(err)
-		}
-		if len(pl.TaskIDs) == 0 {
-			if err := cli.PruneLocal(ctx, abs, pl.Before, nil, os.Stdout); err != nil {
-				die(err)
-			}
-			break
-		}
-		safe, err := classifyForLocalPrune(ctx, parseCID(), pl.TaskIDs, pl.Force, os.Stdout)
-		if err != nil {
-			die(err)
-		}
-		if len(safe) == 0 {
-			fmt.Fprintln(os.Stdout, "prune-local: no removable task ids (use --force to override server-active state)")
-			break
-		}
-		if err := cli.PruneLocal(ctx, abs, 0, safe, os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "logs":
-		lg := parseOne[verb.LogsAction]("logs", args)
-		if err := cli.Logs(ctx, parseCID(), lg.TaskID, os.Stdout, lg.Follow); err != nil {
-			die(err)
-		}
-
-	case "watch":
-		_ = parseOne[verb.CatalogAction]("watch", args) // arity only; the verb takes nothing
-		if err := cli.Watch(ctx, parseCID(), os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "notify-watch":
-		_ = parseOne[verb.CatalogAction]("notify-watch", args)
-		if err := cli.WatchNotificationsText(ctx, parseCID(), os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "interactive":
-		act := parseSpawn("interactive", args, parseCID)
-		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
-		if err != nil {
-			die(err)
-		}
-		defer c.Close()
-		// The session survives a client disconnect (tmux-like) and any
-		// operator client can take it over via reattach.
-		if _, err := c.Interactive(ctx, act.Repo, spawnOpts(act)); err != nil {
-			die(err)
-		}
-
-	case "file":
-		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls|mkdir|delete|edit|new} ...")
-			os.Exit(2)
-		}
-		// Parsed from the declaration (cli/verb): flags, aliases and arity for
-		// all seven sub-verbs are written down once and the TUI and WebUI read
-		// the same entries. What stays here is the execute half.
-		sp, ok := verb.Lookup("file", args[0])
-		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", args[0])
-			os.Exit(2)
-		}
-		sp = sp.For(verb.CLI)
-		fs := sp.NewFlagSet(flag.ExitOnError)
-		b, perr := sp.Parse(fs, args[1:])
-		if perr != nil {
-			die(perr)
-		}
-		act, berr := sp.BuildFunc()(b)
-		if berr != nil {
-			die(berr)
-		}
-		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
-		if err != nil {
-			die(err)
-		}
-		defer c.Close()
-		switch a := act.(type) {
-		case verb.FilePushAction:
-			opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents}
-			if a.Recursive {
-				err = c.FilePushDir(ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
-			} else {
-				err = c.FilePush(ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
-			}
-		case verb.FilePullAction:
-			if a.Recursive {
-				// The --offset/--length combination is refused in Build, which
-				// every surface goes through.
-				err = c.FilePullDir(ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force)
-			} else {
-				err = c.FilePull(ctx, a.TaskID, a.RemoteSrc, a.LocalDst,
-					cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force)
-			}
-		case verb.FileLsAction:
-			err = c.FileLs(ctx, a.TaskID, a.RelPath, os.Stdout)
-		case verb.FileMkdirAction:
-			err = c.FileMkdir(ctx, a.TaskID, a.RelPath, a.Parents)
-		case verb.FileDeleteAction:
-			if a.Recursive {
-				err = c.FileDeleteDir(ctx, a.TaskID, a.RelPath, a.Force)
-			} else {
-				err = c.FileDelete(ctx, a.TaskID, a.RelPath)
-			}
-		case verb.FileEditAction:
-			err = runFileEdit(ctx, c, a.TaskID, a.RelPath)
-		case verb.FileNewAction:
-			err = runFileNew(ctx, c, a.TaskID, a.RelPath)
-		default:
-			die(fmt.Errorf("file: unhandled action %T", act))
-		}
-		if err != nil {
-			die(err)
-		}
-
-	case "git":
-		if err := runGit(parseCID(), args); err != nil {
-			die(err)
-		}
-
-	case "exec":
-		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli exec [--shell] [--sshd-parent] <task-id> -- <command> [args...]")
-			fmt.Fprintln(os.Stderr, "       harness-cli exec ls [--task <task-id>] [--json]")
-			fmt.Fprintln(os.Stderr, "       harness-cli exec kill <exec-id> [<exec-id> ...]")
-			os.Exit(2)
-		}
-		if err := runExec(ctx, parseCID(), args); err != nil {
-			die(err)
-		}
-
-	case "workspace":
-		if err := runWorkspace(ctx, args, parseCID(), *configPath,
-			cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)); err != nil {
-			die(err)
-		}
-
-	case "forward":
-		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
-			fmt.Fprintln(os.Stderr, "       harness-cli forward <task-id> -W host:port")
-			fmt.Fprintln(os.Stderr, "       harness-cli forward ls [--task <task-id>] [--json]")
-			fmt.Fprintln(os.Stderr, "       harness-cli forward kill <forward-id> [<forward-id> ...]")
-			fmt.Fprintln(os.Stderr, "       harness-cli forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] [--hex|--text|--raw|--json]")
-			os.Exit(2)
-		}
-		switch args[0] {
-		case "ls", "kill", "tap":
-			sp, ok := verb.Lookup("forward", args[0])
-			if !ok {
-				die(fmt.Errorf("forward: unknown sub-verb %q", args[0]))
-			}
-			sp = sp.For(verb.CLI)
-			fs := sp.NewFlagSet(flag.ExitOnError)
-			b, perr := sp.Parse(fs, args[1:])
-			if perr != nil {
-				die(perr)
-			}
-			act, berr := sp.BuildFunc()(b)
-			if berr != nil {
-				die(berr)
-			}
-			switch a := act.(type) {
-			case verb.ForwardLsAction:
-				forwards, err := cli.PortForwardList(ctx, parseCID(), a.TaskFilter)
-				if err != nil {
-					die(err)
-				}
-				if a.JSON {
-					for i := range forwards {
-						fmt.Println(cli.PortForwardInfoJSONLine(&forwards[i]))
-					}
-				} else {
-					for _, line := range cli.PortForwardInfoLines(forwards) {
-						fmt.Println(line)
-					}
-				}
-			case verb.ForwardKillAction:
-				// Every id, even after one fails -- see exec kill. die() on
-				// the first left the rest untouched while the TUI killed them.
-				var failed error
-				for _, id := range a.ForwardIDs {
-					if err := cli.KillPortForward(ctx, parseCID(), id); err != nil {
-						fmt.Fprintf(os.Stderr, "forward kill %d: %v\n", id, err)
-						failed = err
-						continue
-					}
-					fmt.Printf("killed forward %d\n", id)
-				}
-				if failed != nil {
-					die(failed)
-				}
-			case verb.ForwardTapAction:
-				filter, ferr := cli.ParseTapFilter(a.Dir)
-				if ferr != nil {
-					die(ferr)
-				}
-				tctx, cancel := interruptContext("forward tap", ctx)
-				defer cancel()
-				if err := cli.RunForwardTapDial(tctx, parseCID(), a.ForwardID, cli.ForwardTapOpts{
-					Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: tapModeByName(a.Mode),
-				}, os.Stdout); err != nil {
-					die(err)
-				}
-			}
-			return
-		}
-		fo := parseOne[verb.ForwardOpenAction]("forward", args)
-		taskID := fo.TaskID
-		specs, rspecs := fo.L, fo.R
-		wspec, httpMethod := &fo.W, &fo.HTTPMethod
-		httpPath, httpBody := &fo.HTTPPath, &fo.HTTPBody
-		httpHeaders := fo.HTTPHeaders
-		var wHost string
-		var wPort int
-		if *wspec != "" {
-			h, p, werr := cli.ParseStdioForwardSpec(*wspec)
-			if werr != nil {
-				die(werr)
-			}
-			wHost, wPort = h, p
-		}
-		parsed := make([]cli.ForwardSpec, 0, len(specs))
-		for _, s := range specs {
-			sp, err := cli.ParseForwardSpec(s)
+		g := act.(verb.GitAction)
+		g.TaskID = args[0]
+		if err, ok := verb.DispatchCLIAction[error](h, g); ok {
 			if err != nil {
-				die(err)
-			}
-			parsed = append(parsed, sp)
-		}
-		parsedR := make([]cli.RemoteForwardSpec, 0, len(rspecs))
-		for _, s := range rspecs {
-			sp, err := cli.ParseRemoteForwardSpec(s)
-			if err != nil {
-				die(err)
-			}
-			parsedR = append(parsedR, sp)
-		}
-		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
-		if err != nil {
-			die(err)
-		}
-		defer c.Close()
-		fctx, cancel := interruptContext("forward", ctx)
-		defer cancel()
-		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
-		if *wspec != "" {
-			// stdout is the forward's payload channel, so status lines must go
-			// to stderr (logf already does) and nothing may print to stdout.
-			if *httpPath != "" {
-				body, berr := readFlagBody(*httpBody)
-				if berr != nil {
-					die(berr)
-				}
-				spec := cli.HTTPRequestSpec{
-					Method:  *httpMethod,
-					Path:    *httpPath,
-					Headers: httpHeaders,
-					Body:    body,
-				}
-				if err := cli.RunHTTPRequestForward(fctx, c, taskID, wHost, wPort, spec, os.Stdout, logf); err != nil {
-					die(err)
-				}
-				return
-			}
-			if err := cli.RunStdioForward(fctx, c, taskID, wHost, wPort, logf); err != nil {
 				die(err)
 			}
 			return
 		}
-		// Both RunForward and RunRemoteForward now return as soon as every
-		// forward they started has stopped — killed remotely, not just on
-		// Ctrl-C — so the process must wait on that completion signal, not
-		// fctx.Done() alone: a -R forward that outlives the -L side (or is
-		// the only side) must still let the terminal return to its prompt
-		// once IT is killed, without requiring Ctrl-C. rDone is closed once
-		// the -R goroutine (if any) has returned.
-		var rDone chan struct{}
-		if len(parsedR) > 0 {
-			rDone = make(chan struct{})
-			go func() {
-				defer close(rDone)
-				if err := cli.RunRemoteForward(fctx, c, taskID, parsedR, logf); err != nil {
-					logf("remote-forward: " + err.Error())
-					cancel()
-				}
-			}()
-		}
-		var forwardErr error
-		if len(parsed) > 0 {
-			if err := cli.RunForward(fctx, c, taskID, parsed, logf, nil); err != nil {
-				// Don't die(err) here: os.Exit would skip waiting for a live
-				// -R forward below, tearing it down mid-flight with no
-				// graceful signal. Same shape as the -R error path above —
-				// log, cancel, and let the wait for rDone run its course
-				// before the process actually exits.
-				logf(err.Error())
-				cancel()
-				forwardErr = err
-			}
-		}
-		if rDone != nil {
-			<-rDone
-		}
-		if forwardErr != nil {
-			os.Exit(1)
-		}
-
-	case "ssh-gateway":
-		sp, _ := verb.Lookup("ssh-gateway")
-		sp = sp.For(verb.CLI)
-		fs := sp.NewFlagSet(flag.ExitOnError)
-		b, perr := sp.Parse(fs, args)
+	}
+	if err, handled, perr := verb.DispatchCLILine[error](h, tokens, nil); handled {
 		if perr != nil {
 			die(perr)
 		}
-		act, berr := sp.BuildFunc()(b)
-		if berr != nil {
-			die(berr)
-		}
-		g := act.(verb.SSHGatewayAction)
-		listen, hostKey, authKeys := &g.Listen, &g.HostKeyPath, &g.AuthorizedKeys
-		keyPath := *hostKey
-		if keyPath == "" {
-			keyPath = sshgw.DefaultHostKeyPath(*configPath)
-		}
-		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
-		defer c.Close()
-		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>[.control|.view|.sshd-parent]@%s` attaches; Ctrl-C stops it and every session it serves, and so does the server connection dropping\n",
-			*listen, sshgw.PortOf(*listen), sshgw.HostOf(*listen))
-		fmt.Fprintln(os.Stderr, "harness-cli: bare user name = cowrite (evicts nobody), .control takes the seat, .view watches; Ctrl+] detaches")
-		gctx, cancel := interruptContext("ssh-gateway", ctx)
-		defer cancel()
-		if err := sshgw.Run(gctx, c, sshgw.Options{
-			Listen:             *listen,
-			HostKeyPath:        keyPath,
-			AuthorizedKeysPath: *authKeys,
-		}); err != nil {
-			die(err)
-		}
-
-	case "session":
-		if err := runSession(parseCID(), args); err != nil {
-			die(err)
-		}
-
-	case "server":
-		if len(args) == 0 {
-			serverUsage()
-			os.Exit(2)
-		}
-		ssub := args[0]
-		rest := args[1:]
-		switch ssub {
-		case "dial-runner":
-			sp, _ := verb.Lookup("server", "dial-runner")
-			sp = sp.For(verb.CLI)
-			fs := sp.NewFlagSet(flag.ExitOnError)
-			b, perr := sp.Parse(fs, rest)
-			if perr != nil {
-				die(perr)
-			}
-			act, berr := sp.BuildFunc()(b)
-			if berr != nil {
-				die(berr)
-			}
-			d := act.(verb.ServerDialRunnerAction)
-			targetCID, err := objproto.ParseConnectionID(d.RunnerCID,
-				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-			if err != nil {
-				die(fmt.Errorf("parse runner-cid: %w", err))
-			}
-			var viaCID objproto.ConnectionID
-			if v := strings.TrimSpace(d.Via); v != "" {
-				viaCID, err = objproto.ParseConnectionID(v,
-					objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-				if err != nil {
-					die(fmt.Errorf("parse --via: %w", err))
-				}
-			}
-			resp, err := cli.ServerDialRunner(ctx, parseCID(), targetCID, viaCID)
-			if err != nil {
-				die(err)
-			}
-			fmt.Println(resp.Status.String())
-			if resp.Status != protocol.DialRunnerStatus_Ok {
-				os.Exit(1)
-			}
-		default:
-			serverUsage()
-			os.Exit(2)
-		}
-
-	case "board":
-		if len(args) == 0 {
-			boardUsage()
-			os.Exit(2)
-		}
-		bsub := args[0]
-		rest := args[1:]
-		if err := cli.RunBoardSubcmd(ctx, parseCID(), bsub, rest, os.Stdout); err != nil {
-			die(err)
-		}
-
-	case "agent":
-		if len(args) == 0 {
-			agentUsage()
-			os.Exit(2)
-		}
-		asub := args[0]
-		rest := args[1:]
-		var err error
-		switch asub {
-		case "send":
-			err = agent.Send(ctx, rest, os.Stdin, os.Stdout)
-		case "wait":
-			err = agent.Wait(ctx, rest, os.Stdout)
-		case "inbox":
-			err = agent.Inbox(ctx, rest, os.Stdout)
-		case "subscribe":
-			err = agent.Subscribe(ctx, rest, os.Stdout)
-		case "unsubscribe":
-			err = agent.Unsubscribe(ctx, rest, os.Stdout)
-		case "dispatch":
-			err = agent.Dispatch(ctx, rest, os.Stdin, os.Stdout)
-		case "topics":
-			err = agent.Topics(ctx, rest, os.Stdout)
-		case "subscriptions":
-			err = agent.Subscriptions(ctx, rest, os.Stdout)
-		case "purge":
-			err = agent.Purge(ctx, rest, os.Stdout)
-		case "retained":
-			err = agent.Retained(ctx, rest, os.Stdout)
-		case "read":
-			err = agent.Read(ctx, rest, os.Stdout)
-		case "retract":
-			err = agent.Retract(ctx, rest, os.Stdout)
-		default:
-			agentUsage()
-			os.Exit(2)
-		}
-		if err != nil {
-			die(err)
-		}
-
+		return
+	}
+	// A family word with no sub-verb -- `file`, `session`, `board` -- reaches
+	// here, and so does an outright unknown one. The four with a dedicated
+	// usage keep it; every other family gets its sub-verb list FROM THE
+	// TABLE, which is where the four hand-written ones (`file
+	// {push|pull|ls|mkdir|delete|edit|new}` and its three siblings) each
+	// drifted from: `file edit` and `file new` existed for a release without
+	// appearing in that line.
+	switch {
+	case sub == "server":
+		serverUsage()
+	case sub == "board":
+		boardUsage()
+	case sub == "agent":
+		agentUsage()
+	case sub == "workspace":
+		workspaceUsage()
+	case len(familySubverbs(sub)) > 0:
+		fmt.Fprintf(os.Stderr, "usage: harness-cli %s {%s} ...\n",
+			sub, strings.Join(familySubverbs(sub), "|"))
 	default:
 		usage()
-		os.Exit(2)
 	}
+	os.Exit(2)
+}
+
+// familySubverbs lists the declared second words under one first word, in
+// table order and without repeats. Empty when the word heads no multi-word
+// path -- which is what tells an unknown verb apart from a family named
+// without a sub-verb.
+//
+// Deduplicated because a three-word path contributes its middle word once per
+// leaf: `session stream {attach,turn,approve,interrupt,finish}` would
+// otherwise print "stream" five times.
+func familySubverbs(head string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range verb.PathsForSurface(verb.CLI) {
+		f := strings.Fields(p)
+		if len(f) < 2 || f[0] != head || seen[f[1]] {
+			continue
+		}
+		seen[f[1]] = true
+		out = append(out, f[1])
+	}
+	return out
 }
 
 // isTaskIDLike reports whether s could be a task id (hex digits only). Used to
@@ -903,7 +327,7 @@ func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "  caps set-parent TASK_ID (--parent TASK_ID | --none | --swap)")
 	fmt.Fprintln(w, "                                      OPERATOR ONLY: re-point a LIVE task's parent link — the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched")
 	fmt.Fprintln(w, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps and scope (no cap required)")
-	fmt.Fprintln(w, "  skill [NAME | --list]               print the embedded agent skill (default: harness-cli); --list/ls names them all")
+	fmt.Fprintln(w, "  skill [NAME | --list] | skill ls    print the embedded agent skill (default: harness-cli); --list, or the `ls` spelling, names them all")
 	fmt.Fprintln(w, "  version [--json]                    the commit this binary — and the skills embedded in it — was built from")
 	fmt.Fprintln(w, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(w, "  notify [--title T] [--level info|warn|error] <text>")
@@ -1203,55 +627,6 @@ func flagExplicitlySet(fs *flag.FlagSet, name string) bool {
 	return found
 }
 
-// runCapsSet backs `harness-cli caps set <task-id>`: an operator-only live
-// re-grant of a task's capabilities and/or scope. It takes effect on the
-// target's next request — nothing restarts.
-func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
-	// Parsed from the declaration: the permuted parse, the --caps/--scope
-	// grammar and the "pass at least one" rule all live there.
-	a := parseOne[verb.SetCapsAction]("caps set", args)
-	opts := cli.SetCapsOpts{TaskID: a.TaskID, Cascade: a.Cascade, KeepConns: a.KeepConns}
-	if a.Caps != nil {
-		opts.Caps = cli.CapsPtr(*a.Caps)
-	}
-	if a.Scope != nil {
-		opts.Scope = a.Scope
-		opts.Overrides = a.Overrides
-	}
-
-	res, err := cli.SetCaps(ctx, serverCID, opts)
-	if err != nil {
-		die(err)
-	}
-	for _, id := range res.Affected {
-		fmt.Println(id)
-	}
-	fmt.Fprintf(os.Stderr, "changed %d task(s); closed %d connection(s)\n",
-		len(res.Affected), res.ConnsClosed)
-}
-
-// runCapsSetParent backs `harness-cli caps set-parent <task-id>`: an
-// operator-only re-point of a live task's parent link (the edge subtree
-// scopes walk), or --swap to invert the task with its current parent. Caps
-// and scope are untouched — `caps set` is the verb that changes authority.
-func runCapsSetParent(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
-	// The "exactly one of --parent / --none / --swap" rule is in the verb's
-	// Build, so every surface gets it rather than the CLI alone.
-	a := parseOne[verb.SetParentAction]("caps set-parent", args)
-
-	// An empty ParentID IS the detach request on the wire, which is why
-	// `--parent ""` had to be refused at the flag rather than sorted out
-	// here: the presence rule has already decided which of the three was
-	// picked, so no condition on None or Swap can tell them apart.
-	opts := cli.SetParentOpts{TaskID: a.TaskID, Swap: a.Swap, ParentID: a.ParentID}
-	_ = a.None
-	res, err := cli.SetParent(ctx, serverCID, opts)
-	if err != nil {
-		die(err)
-	}
-	fmt.Println(cli.SetParentMessage(opts, res))
-}
-
 // runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.
 // A CLI has no terminal UI of its own to host an editor widget, so unlike the
 // TUI this path always goes through an external editor.
@@ -1434,30 +809,4 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
 		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
 	}
-}
-
-// parseOne parses a verb from the declaration and returns its action, already
-// type-asserted. Every simple CLI case is this shape, so it is written once.
-func parseOne[T verb.Action](path string, args []string) T {
-	parts := strings.Fields(path)
-	sp, ok := verb.Lookup(parts...)
-	if !ok {
-		die(fmt.Errorf("%s: not in the verb table", path))
-	}
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		die(perr)
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		fmt.Fprintln(os.Stderr, berr)
-		os.Exit(2)
-	}
-	out, isT := act.(T)
-	if !isT {
-		die(fmt.Errorf("%s: built %T", path, act))
-	}
-	return out
 }

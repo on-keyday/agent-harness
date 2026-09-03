@@ -85,7 +85,7 @@ type CancelAction struct {
 	TaskID string
 }
 
-// CatalogAction is built by: caps, notify-watch, skill, version, watch, whoami.
+// CatalogAction is built by: caps, notify-watch, skill, skill ls, version, watch, whoami.
 type CatalogAction struct {
 	ActionMarker
 	// output the capability catalog as JSON
@@ -1967,6 +1967,11 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"skill ls\x00cli": func(b Bound) (Action, error) {
+			a := CatalogAction{}
+			a.Sub = "skill-ls"
+			return a, nil
+		},
 		"whoami\x00cli": func(b Bound) (Action, error) {
 			a := CatalogAction{}
 			a.Sub = "whoami"
@@ -2666,6 +2671,7 @@ const (
 	CmdLs                     = "ls"
 	CmdConns                  = "conns"
 	CmdCaps                   = "caps"
+	CmdSkillLs                = "skill ls"
 	CmdWhoami                 = "whoami"
 	CmdSkill                  = "skill"
 	CmdWatch                  = "watch"
@@ -3512,7 +3518,7 @@ func ParseCmdSubmit(sf Surface, args []string, ctx map[string]string) (SpawnActi
 		return zero, err
 	}
 	a := act.(SpawnAction)
-	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
 		a.Repo = r
 	}
 	return a, nil
@@ -3536,7 +3542,7 @@ func ParseCmdInteractive(sf Surface, args []string, ctx map[string]string) (Spaw
 		return zero, err
 	}
 	a := act.(SpawnAction)
-	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
 		a.Repo = r
 	}
 	return a, nil
@@ -3560,7 +3566,7 @@ func ParseCmdSessionNew(sf Surface, args []string, ctx map[string]string) (Spawn
 		return zero, err
 	}
 	a := act.(SpawnAction)
-	if r := sp.Resolve(b, "repo", nil, nil, ctx); r != "" {
+	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
 		a.Repo = r
 	}
 	return a, nil
@@ -3797,6 +3803,27 @@ func ParseCmdCaps(sf Surface, args []string, ctx map[string]string) (CatalogActi
 	return a, nil
 }
 
+func ParseCmdSkillLs(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
+	var zero CatalogAction
+	sp, ok := Lookup("skill", "ls")
+	if !ok {
+		return zero, fmt.Errorf("skill ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CatalogAction)
+	return a, nil
+}
+
 func ParseCmdWhoami(sf Surface, args []string, ctx map[string]string) (CatalogAction, error) {
 	var zero CatalogAction
 	sp, ok := Lookup("whoami")
@@ -3941,6 +3968,9 @@ func ParseCmdPruneLocal(sf Surface, args []string, ctx map[string]string) (Prune
 		return zero, err
 	}
 	a := act.(PruneLocalAction)
+	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.Repo = r
+	}
 	return a, nil
 }
 
@@ -4466,6 +4496,9 @@ func ParseCmdAgentInbox(sf Surface, args []string, ctx map[string]string) (Agent
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4487,6 +4520,9 @@ func ParseCmdAgentWait(sf Surface, args []string, ctx map[string]string) (AgentA
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4508,6 +4544,9 @@ func ParseCmdAgentSubscribe(sf Surface, args []string, ctx map[string]string) (A
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4529,6 +4568,9 @@ func ParseCmdAgentUnsubscribe(sf Surface, args []string, ctx map[string]string) 
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4550,6 +4592,9 @@ func ParseCmdAgentTopics(sf Surface, args []string, ctx map[string]string) (Agen
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4571,6 +4616,9 @@ func ParseCmdAgentSubscriptions(sf Surface, args []string, ctx map[string]string
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4592,6 +4640,9 @@ func ParseCmdAgentRetained(sf Surface, args []string, ctx map[string]string) (Ag
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4613,6 +4664,9 @@ func ParseCmdAgentPurge(sf Surface, args []string, ctx map[string]string) (Agent
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4634,6 +4688,9 @@ func ParseCmdAgentRead(sf Surface, args []string, ctx map[string]string) (AgentA
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4655,6 +4712,9 @@ func ParseCmdAgentRetract(sf Surface, args []string, ctx map[string]string) (Age
 		return zero, err
 	}
 	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
 	return a, nil
 }
 
@@ -4757,6 +4817,8 @@ type CLIDispatch[R any] interface {
 	Conns(ConnsAction) R
 	// caps
 	Caps(CatalogAction) R
+	// skill ls
+	SkillLs(CatalogAction) R
 	// whoami
 	Whoami(CatalogAction) R
 	// skill
@@ -5098,6 +5160,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Caps(a), true, nil
+	case CmdSkillLs:
+		a, perr := ParseCmdSkillLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SkillLs(a), true, nil
 	case CmdWhoami:
 		a, perr := ParseCmdWhoami(CLI, args, ctx)
 		if perr != nil {
@@ -5282,6 +5350,25 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 	return r, false, nil
 }
 
+// DispatchCLILine is DispatchCLI for a caller holding a whole command
+// line. It finds the verb path itself, longest first, so nothing
+// outside this file needs to know how many words a verb is.
+//
+// handled is false for a line this surface does not declare; the
+// error is the PARSE error, returned with handled=true, because a
+// misspelled flag on a known verb is not an unknown verb.
+func DispatchCLILine[R any](h CLIDispatch[R], tokens []string, ctx map[string]string) (r R, handled bool, err error) {
+	for n := MaxPathLen; n >= 1; n-- {
+		if len(tokens) < n {
+			continue
+		}
+		if r, handled, err = DispatchCLI(h, strings.Join(tokens[:n], " "), tokens[n:], ctx); handled {
+			return r, true, err
+		}
+	}
+	return r, false, nil
+}
+
 // DispatchCLIAction routes an ALREADY-PARSED action. The CLI reaches its
 // verbs from two places -- a command line and a keybinding -- and only
 // this half covers both.
@@ -5420,6 +5507,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		switch a.Sub {
 		case "caps":
 			return h.Caps(a), true
+		case "skill-ls":
+			return h.SkillLs(a), true
 		case "whoami":
 			return h.Whoami(a), true
 		case "skill":
@@ -5752,6 +5841,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCaps:
 			a, perr := ParseCmdCaps(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSkillLs:
+			a, perr := ParseCmdSkillLs(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -6435,6 +6530,25 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionStreamApprove(a), true, nil
+	}
+	return r, false, nil
+}
+
+// DispatchTUILine is DispatchTUI for a caller holding a whole command
+// line. It finds the verb path itself, longest first, so nothing
+// outside this file needs to know how many words a verb is.
+//
+// handled is false for a line this surface does not declare; the
+// error is the PARSE error, returned with handled=true, because a
+// misspelled flag on a known verb is not an unknown verb.
+func DispatchTUILine[R any](h TUIDispatch[R], tokens []string, ctx map[string]string) (r R, handled bool, err error) {
+	for n := MaxPathLen; n >= 1; n-- {
+		if len(tokens) < n {
+			continue
+		}
+		if r, handled, err = DispatchTUI(h, strings.Join(tokens[:n], " "), tokens[n:], ctx); handled {
+			return r, true, err
+		}
 	}
 	return r, false, nil
 }

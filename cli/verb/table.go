@@ -1013,6 +1013,21 @@ var Verbs = []VerbSpec{
 		Examples: []string{"caps", "caps --json"},
 	},
 	{
+		// `skill ls` is this verb's own spelling of --list. It was a TOKEN
+		// REWRITE in main (`if args[0] == "ls" { args[0] = "--list" }`),
+		// which is the one shape a declaration cannot see: moving the CLI
+		// onto the generated parser dropped it and `skill ls` started
+		// looking for a skill NAMED "ls".
+		//
+		// Its own Const rather than a shared one, because Const values are
+		// strings and --list is a bool: the two spellings reach the same
+		// body through two methods, not one.
+		Path: []string{"skill", "ls"}, Surfaces: CLI,
+		Action:   "CatalogAction",
+		Const:    map[string]string{"Sub": "skill-ls"},
+		Examples: []string{"skill ls"},
+	},
+	{
 		Path: []string{"whoami"}, Surfaces: CLI,
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "whoami"},

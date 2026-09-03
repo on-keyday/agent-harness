@@ -45,6 +45,12 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		return berr
 	}
 	a := act.(verb.AgentSendAction)
+	return SendWith(ctx, a, stdin, stdout)
+}
+
+// SendWith is Send for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdout io.Writer) error {
 	serverCID, topic, data := &a.ServerCID, &a.Topic, &a.Data
 	inReplyTo, replyTo := &a.InReplyTo, &a.ReplyTo
 	noRetireOnReply := &a.NoRetireOnReply

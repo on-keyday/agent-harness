@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -20,70 +19,11 @@ import (
 // 127 is a shell's convention where there is no shell.
 const execExitError = 125
 
-// splitExecArgv peels the command off the tail.
-func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) error {
-	// Parsed from the declaration (cli/verb). `exec ls` / `exec kill` are
-	// their own paths; anything else is the run form, whose argv follows a
-	// literal `--` and stays a list.
-	path := []string{"exec"}
-	rest := args
-	if args[0] == "ls" || args[0] == "kill" {
-		path = append(path, args[0])
-		rest = args[1:]
-	}
-	sp, ok := verb.Lookup(path...)
-	if !ok {
-		return fmt.Errorf("exec: unknown sub-verb %q", args[0])
-	}
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, rest)
-	if perr != nil {
-		return perr
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		return berr
-	}
-	run := act.(verb.ExecRunAction)
-	switch run.Sub {
-	case "ls":
-		a := run
-		execs, err := cli.ExecRunList(ctx, cid, a.TaskFilter)
-		if err != nil {
-			return err
-		}
-		if a.JSON {
-			for i := range execs {
-				fmt.Println(cli.ExecRunInfoJSONLine(&execs[i]))
-			}
-			return nil
-		}
-		for _, line := range cli.ExecRunInfoLines(execs) {
-			fmt.Println(line)
-		}
-		return nil
-	case "kill":
-		a := run
-		if len(a.ExecIDs) == 0 {
-			return fmt.Errorf("usage: harness-cli exec kill <exec-id> [<exec-id> ...]")
-		}
-		// Every id, even after one fails. Returning on the first error made
-		// `exec kill 1 2 3` with a stale first id stop before touching 2 and
-		// 3 -- while the TUI, whose comment says "as on the CLI", killed
-		// them. One declared verb, two meanings, decided by which id went
-		// away first.
-		var failed error
-		for _, id := range a.ExecIDs {
-			if err := cli.ExecRunKill(ctx, cid, id); err != nil {
-				fmt.Fprintf(os.Stderr, "exec kill %d: %v\n", id, err)
-				failed = err
-				continue
-			}
-			fmt.Printf("killed exec %d\n", id)
-		}
-		return failed
-	}
+// runExecAction runs the `exec <task-id> -- <cmd>` form. The ls / kill forms
+// are their own declared verbs and their own dispatch methods; this is the one
+// that ends in os.Exit with the child's code, which is what makes `exec`
+// usable from a script.
+func runExecAction(ctx context.Context, cid objproto.ConnectionID, run verb.ExecRunAction) error {
 	taskID, argv, shellLine, sshdParent := run.TaskID, run.Argv, run.Shell, run.SshdParent
 
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)

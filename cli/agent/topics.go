@@ -11,6 +11,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Topics fetches the board-wide topic list and emits one JSON Lines record per topic.
@@ -19,6 +20,12 @@ func Topics(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return TopicsWith(ctx, a, stdout)
+}
+
+// TopicsWith is Topics for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func TopicsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 
 	conn, err := ConnectAgent(ctx, Flags{

@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Wait blocks until a matching message arrives on the given topic, or until
@@ -43,6 +44,12 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return WaitWith(ctx, a, stdout)
+}
+
+// WaitWith is Wait for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	topic := &a.Topic
 	since := &a.Since

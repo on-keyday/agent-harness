@@ -85,6 +85,12 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return berr
 	}
 	a := act.(verb.AgentSendAction)
+	return DispatchWith(ctx, a, stdin, stdout)
+}
+
+// DispatchWith is Dispatch for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdout io.Writer) error {
 	serverCID, topic, replyTo := &a.ServerCID, &a.Topic, &a.ReplyTo
 	data, timeout := &a.Data, &a.Timeout
 	if *topic == "" {

@@ -10,6 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind agentboard.AgentMessageKind) error {
@@ -23,6 +24,12 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 	if perr != nil {
 		return perr
 	}
+	return subscribeOrUnsubWith(ctx, a, stdout, kind)
+}
+
+// subscribeOrUnsubWith is subscribeOrUnsub for a caller that already has the
+// parsed action -- the generated CLI dispatch.
+func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Writer, kind agentboard.AgentMessageKind) error {
 	serverCID, pattern, self := &a.ServerCID, &a.Topic, &a.Self
 	if *self {
 		tid, err := cliopts.ResolveTaskID("")
@@ -99,4 +106,14 @@ func Subscribe(ctx context.Context, args []string, stdout io.Writer) error {
 // Unsubscribe is the entry for `harness-cli agent unsubscribe`.
 func Unsubscribe(ctx context.Context, args []string, stdout io.Writer) error {
 	return subscribeOrUnsub(ctx, args, stdout, agentboard.AgentMessageKind_Unsubscribe)
+}
+
+// SubscribeWith and UnsubscribeWith are Subscribe / Unsubscribe for a caller
+// that already has the parsed action -- the generated CLI dispatch.
+func SubscribeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
+	return subscribeOrUnsubWith(ctx, a, stdout, agentboard.AgentMessageKind_Subscribe)
+}
+
+func UnsubscribeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
+	return subscribeOrUnsubWith(ctx, a, stdout, agentboard.AgentMessageKind_Unsubscribe)
 }

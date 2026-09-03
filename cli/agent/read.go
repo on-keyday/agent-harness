@@ -10,6 +10,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Read is the entry for `harness-cli agent read <seq>`: one retained message,
@@ -25,6 +26,12 @@ func Read(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return ReadWith(ctx, a, stdout)
+}
+
+// ReadWith is Read for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	seq, perr := strconv.ParseUint(fmt.Sprint(a.Seq), 10, 64)
 	if perr != nil || seq == 0 {

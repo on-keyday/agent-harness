@@ -346,3 +346,22 @@ func (v VerbSpec) Resolve(b Bound, name string, env func(string) string, ws func
 	}
 	return b.Str(name)
 }
+
+// EnvLookup and WorkspaceLookup are the two ladder tiers a SURFACE owns
+// (D7). Resolve takes them per call, and the generated ParseCmdXxx functions
+// read them from here, because the alternative is passing them at every call
+// site -- which is how three sites came to pass nil and lose
+// HARNESS_REPO_PATH on verbs that declare it.
+//
+// nil means "this surface has no such tier", which is the default and is what
+// the TUI and the WebUI want: a browser has no environment, and the TUI's
+// --repo default is its session, not the process it was started from.
+// harness-cli installs both in main().
+//
+// Set them once, before parsing anything. They are not synchronised: a
+// surface that changed them concurrently with a parse would be racing its own
+// grammar.
+var (
+	EnvLookup       func(string) string
+	WorkspaceLookup func(string) string
+)

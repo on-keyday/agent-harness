@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Retract is the entry for `harness-cli agent retract <seq>`: withdraw ONE
@@ -37,6 +38,12 @@ func Retract(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return RetractWith(ctx, a, stdout)
+}
+
+// RetractWith is Retract for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func RetractWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	seq, perr := strconv.ParseUint(fmt.Sprint(a.Seq), 10, 64)
 	if perr != nil || seq == 0 {

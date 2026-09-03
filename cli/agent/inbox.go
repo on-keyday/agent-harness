@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Inbox returns the JSON-Lines dump of messages on subscribed topics.
@@ -38,6 +39,12 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return InboxWith(ctx, a, stdout)
+}
+
+// InboxWith is Inbox for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func InboxWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 	since := &a.Since
 	asJSON := &a.JSON

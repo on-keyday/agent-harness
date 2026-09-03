@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
 // Subscriptions fetches the calling task's subscription pattern list and emits
@@ -18,6 +19,12 @@ func Subscriptions(ctx context.Context, args []string, stdout io.Writer) error {
 	if perr != nil {
 		return perr
 	}
+	return SubscriptionsWith(ctx, a, stdout)
+}
+
+// SubscriptionsWith is Subscriptions for a caller that already has the parsed action --
+// the generated CLI dispatch, which parses from the declaration itself.
+func SubscriptionsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 
 	conn, err := ConnectAgent(ctx, Flags{
