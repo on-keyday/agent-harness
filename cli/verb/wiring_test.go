@@ -38,20 +38,30 @@ func TestEveryDeclaredFlagIsReadByItsBuild(t *testing.T) {
 			if _, exempt := flagNotInAction[v.FlagSetName()+"."+f.Name]; exempt {
 				continue
 			}
-			base, ok := buildWith(t, v, nil)
-			if !ok {
-				continue // the verb needs positionals; covered by the arity form below
-			}
-			with, ok := buildWith(t, v, &f)
-			if !ok {
-				continue
-			}
-			if reflect.DeepEqual(base, with) {
-				t.Errorf("%s: --%s is declared but its value never reaches the Action.\n"+
-					"Setting it changes nothing the Build produces, so an operator can type it "+
-					"and get silence. Either read it in Build, or add %q to flagNotInAction "+
-					"with the reason.",
-					v.FlagSetName(), f.Name, v.FlagSetName()+"."+f.Name)
+			// On the surface the FLAG is declared for, not the verb's first.
+			// `ls --filtered` exists only in a browser, and building it with
+			// the CLI's build reads as a flag nobody carries -- which is the
+			// correct answer for the CLI and the wrong question to ask there.
+			for _, sf := range []Surface{CLI, TUI, WebUI} {
+				if !v.Surfaces.Has(sf) || (f.Surfaces != 0 && !f.Surfaces.Has(sf)) {
+					continue
+				}
+				nv := v.For(sf)
+				base, ok := buildWith(t, nv, nil)
+				if !ok {
+					continue // the verb needs positionals; covered by the arity form below
+				}
+				with, ok := buildWith(t, nv, &f)
+				if !ok {
+					continue
+				}
+				if reflect.DeepEqual(base, with) {
+					t.Errorf("%s (%v): --%s is declared but its value never reaches the Action.\n"+
+						"Setting it changes nothing the build produces, so an operator can type it "+
+						"and get silence. Either give it a Field, or add %q to flagNotInAction "+
+						"with the reason.",
+						v.FlagSetName(), sf, f.Name, v.FlagSetName()+"."+f.Name)
+				}
 			}
 		}
 	}
@@ -71,9 +81,6 @@ var flagNotInAction = map[string]string{
 // (free-form trailing text, custom values), which the other tests cover.
 func buildWith(t *testing.T, v VerbSpec, f *Flag) (any, bool) {
 	t.Helper()
-	if v.Build == nil {
-		return nil, false
-	}
 	var args []string
 	if f != nil {
 		if f.Custom != nil {
@@ -143,7 +150,7 @@ func positionalsFor(v VerbSpec) []string {
 // TestBuildLookupNamesAreDeclared, which reads the source.
 func TestBuildReadsNoUndeclaredFlagName(t *testing.T) {
 	for _, v := range Verbs {
-		if v.Build == nil || v.Trailing != nil {
+		if v.Trailing != nil {
 			continue
 		}
 		var args []string

@@ -257,6 +257,16 @@ type GitAction struct {
 	TaskID string
 }
 
+// GridAction is built by: grid.
+type GridAction struct {
+	ActionMarker
+	// the anchor whose working set to show: itself, its descendants, and the tasks its own scope names
+	Anchor string
+	IDs    []string
+	// computed by gridMode from the whole line
+	Mode GridScopeMode
+}
+
 // ListAction is built by: ls.
 type ListAction struct {
 	ActionMarker
@@ -1829,6 +1839,32 @@ func init() {
 			a.ReplyTo = b.Str("reply-to")
 			a.Timeout = durationOf(b.Flags["timeout"])
 			a.Positional = b.Trail
+			return a, nil
+		},
+		"grid\x00tui": func(b Bound) (Action, error) {
+			a := GridAction{}
+			a.Anchor = b.Str("under")
+			if len(b.Args) > 0 {
+				a.IDs = b.Args[0:]
+			}
+			if v, err := gridMode(b); err != nil {
+				return nil, err
+			} else {
+				a.Mode = v
+			}
+			return a, nil
+		},
+		"grid\x00webui": func(b Bound) (Action, error) {
+			a := GridAction{}
+			a.Anchor = b.Str("under")
+			if len(b.Args) > 0 {
+				a.IDs = b.Args[0:]
+			}
+			if v, err := gridMode(b); err != nil {
+				return nil, err
+			} else {
+				a.Mode = v
+			}
 			return a, nil
 		},
 		"cancel\x00cli": func(b Bound) (Action, error) {

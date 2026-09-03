@@ -100,6 +100,10 @@ func main() {
 		for name := range v.Const {
 			a.add(field{name: name, goType: "string"})
 		}
+		for _, d := range v.Derived {
+			a.add(field{name: d.Field, goType: d.Type,
+				comment: "computed by " + d.From + " from the whole line"})
+		}
 		if v.Modes != nil {
 			a.add(field{name: v.Modes.Field, goType: "string",
 				comment: strings.Join(v.Modes.Names, " | ")})
@@ -237,6 +241,10 @@ func emitBuild(buf *bytes.Buffer, v verb.VerbSpec, key, action string) {
 			} else {
 				fmt.Fprintf(buf, "\t\tif len(b.Args) > %d {\n\t\t\ta.%s = b.Args[%d]\n\t\t}\n", i, ar.Field, i)
 			}
+		}
+		for _, d := range v.Derived {
+			fmt.Fprintf(buf, "\t\tif v, err := %s(b); err != nil {\n\t\t\treturn nil, err\n"+
+				"\t\t} else {\n\t\t\ta.%s = v\n\t\t}\n", d.From, d.Field)
 		}
 		if v.Modes != nil {
 			fmt.Fprintf(buf, "\t\ta.%s = %q\n", v.Modes.Field, v.Modes.Default)

@@ -869,32 +869,17 @@ var Verbs = []VerbSpec{
 		// entry routes the command inputs through the same table as the rest;
 		// the parse itself still delegates to that function.
 		Path: []string{"grid"}, Surfaces: TUI | WebUI,
-		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true}},
+		Action:  "GridAction",
+		Args:    []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "IDs"}},
+		Derived: []Derived{{Field: "Mode", Type: "GridScopeMode", From: "gridMode"}},
 		Flags: []Flag{
-			{Name: "under", Type: FlagString, Default: "",
+			{Name: "under", Type: FlagString, Default: "", Field: "Anchor",
 				Help: "the anchor whose working set to show: itself, its descendants, and the tasks its own scope names"},
 			{Name: "descendants", Type: FlagBool, Default: false,
-				Help: "with --under: the descendants only, leaving the anchor out"},
+				FieldReason: "it selects a Mode rather than travelling as its own flag",
+				Help:        "with --under: the descendants only, leaving the anchor out"},
 		},
 		Examples: []string{"grid", "grid --under aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		Build: func(b Bound) (Action, error) {
-			// Rebuilt into ParseGridArgs's own argument form rather than
-			// duplicated: --descendants without --under is refused there, and
-			// one grammar means one place that decides.
-			args := make([]string, 0, len(b.Args)+3)
-			if u := b.Str("under"); u != "" {
-				args = append(args, "--under", u)
-			}
-			if b.Bool("descendants") {
-				args = append(args, "--descendants")
-			}
-			args = append(args, b.Args...)
-			mode, anchor, ids, err := ParseGridArgs(args)
-			if err != nil {
-				return nil, err
-			}
-			return GridAction{Mode: mode, Anchor: anchor, IDs: ids}, nil
-		},
 	},
 	{
 		Path: []string{"cancel"}, Surfaces: CLI | TUI | WebUI,

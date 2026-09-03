@@ -26,9 +26,15 @@ const (
 // Has reports whether s includes every bit of want.
 func (s Surface) Has(want Surface) bool { return s&want == want }
 
-// Action is what a parsed command becomes. The marker is EXPORTED because
-// surface-local actions live in their own packages -- tui's ClearAction and
-// QuitAction cannot implement an unexported method declared here.
+// Action is what a parsed command becomes. Actions live above the surfaces,
+// because the CLI, the TUI and the WebUI all reach the same operation and
+// only differ in what they do with it -- and every one of them is generated
+// from the declaration now, in actions_gen.go, so a field and the code that
+// fills it cannot disagree.
+//
+// The marker is EXPORTED because surface-local actions live in their own
+// packages -- tui's ClearAction and QuitAction cannot implement an unexported
+// method declared here.
 type Action interface{ IsAction() }
 
 // ActionMarker is embedded by every action type to satisfy Action.
@@ -209,6 +215,18 @@ type Requirement struct {
 	Reason string
 }
 
+// Derived is one Action field computed from the whole Bound.
+//
+// From takes a Bound and returns the field's value, so the named function
+// never mentions a generated type -- which is what keeps this package
+// compiling when the generated file is absent, and therefore what lets the
+// generator run at all.
+type Derived struct {
+	Field string
+	Type  string
+	From  string // package-level func(Bound) (Type, error)
+}
+
 // Modes turns a set of mutually exclusive bool flags into one string field.
 type Modes struct {
 	// Field is the Action field carrying the chosen name.
@@ -324,6 +342,12 @@ type VerbSpec struct {
 	// spelled the exclusivity check again.
 	Modes *Modes
 
+	// Derived are Action fields computed from the WHOLE Bound rather than
+	// from one flag. `grid`'s scope mode is the case: it falls out of --under,
+	// --descendants and the positionals together, and no per-flag hook sees
+	// all three.
+	Derived []Derived
+
 	// Validate is the residue: rules no attribute expresses. It runs on Bound
 	// AFTER the declarative checks and BEFORE the Action is built, which is
 	// what keeps this file free of the generated types -- and therefore able
@@ -350,25 +374,20 @@ type VerbSpec struct {
 	// BuildFunc can pick the matching generated build. Unexported: it is
 	// bookkeeping, not part of the declaration.
 	narrowedFor string
-
-	// Build is the hand-written path, kept for the verbs whose repacking is
-	// not mechanical. Read it through BuildFunc, never directly: when it is
-	// nil the generated build applies, and a caller that ranges over Verbs
-	// rather than going through Lookup would otherwise dereference nil.
-	Build func(Bound) (Action, error)
 }
 
-// BuildFunc returns the build this verb uses: its own when it has one, the
-// generated one otherwise.
+// BuildFunc returns the generated build for this verb.
 //
-// Every caller goes through this rather than touching Build, because the two
-// sources are not interchangeable at the field level -- Lookup used to patch
-// Build in, which worked until a test ranged over Verbs directly and found
-// nil. One accessor is the fix; a second patching site is not.
+// There is no hand-written alternative any more. A Build field existed while
+// the migration ran, and it was the last place where the Action's shape and
+// the code filling it could disagree -- so it is gone rather than kept as an
+// escape hatch: a hatch is where the next divergence would live. What does
+// not generate is DECLARED instead -- Convert for a flag whose value carries
+// a grammar, Derived for a field computed from the whole line, Validate for a
+// rule about values -- and none of those name a generated type, which is what
+// lets this package compile when the generated file is absent and therefore
+// lets the generator run.
 func (v VerbSpec) BuildFunc() func(Bound) (Action, error) {
-	if v.Build != nil {
-		return v.Build
-	}
 	// Keyed by (path, surface): a positional the declaration narrows away
 	// shifts every index after it, so `file push` writes b.Args[2] into
 	// RemoteDst on the CLI and b.Args[1] on the WebUI, which has no local path.
