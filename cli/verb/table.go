@@ -1051,6 +1051,11 @@ var Verbs = []VerbSpec{
 				Help: `emit a single JSON object {"runners":[...],"tasks":[...]} instead of the table`},
 			{Name: "tree", Type: FlagBool, Default: false,
 				Help: "order tasks by their creator link and draw the hierarchy"},
+			{
+				Name: "filtered", Type: FlagBool, Default: false, Surfaces: WebUI,
+				SurfaceReason: "only the WebUI has a task-list filter pane; the CLI has no filter to honour and the TUI's only filter is on the logs panel",
+				Help:          "list only the rows the task-list filter currently admits",
+			},
 		},
 		Examples: []string{"ls", "ls --json", "ls --tree"},
 		Build: func(b Bound) (Action, error) {

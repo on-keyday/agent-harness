@@ -179,19 +179,6 @@ const POLL_INTERVAL_MS = 5000;
     await new Promise(r => setTimeout(r, 50));
   }
 
-  // 2b. Every verb the declaration marks as reachable here must have a case in
-  // runCmd. Asserted from inside the runtime that owns the dispatch: scanning
-  // this file from a Go test would be a regex over JavaScript, while this is
-  // exact. A verb declared for the WebUI with no case fails at load rather
-  // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune", "submit", "cancel", "ls", "grid", "session await-idle", "caps set-parent", "session snapshot", "session stream attach", "session stream turn", "session stream interrupt", "session stream finish", "session stream approve", "exec", "exec ls", "exec kill", "forward ls", "forward kill", "forward tap", "server dial-runner", "git log", "git diff", "git show", "git status", "git subrepos", "git file", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
-  for (const p of window.harness.pathsForSurface("webui")) {
-    if (!WEBUI_DISPATCH.has(p)) {
-      setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
-      throw new Error("webui dispatch is missing a declared verb: " + p);
-    }
-  }
-
   // 3. Connect (options-bag form; persist=true enables auto-reconnect loop).
   const connectedHandlers = [];
   let connectionIsUp = false;
@@ -2320,6 +2307,27 @@ const POLL_INTERVAL_MS = 5000;
     }
   };
 
+  // RUNCMD_HEADS lists the head words the switch below actually
+  // dispatches on, so the startup check tests the REAL dispatch. The
+  // first version of that check compared the declaration against a
+  // hand-written set instead, which is how `ls` shipped declared for
+  // this surface with no case to reach it: the set said "ls", the
+  // declaration said "ls", and nobody had written the case.
+  const RUNCMD_HEADS = new Set(["cancel", "caps", "exec", "file", "forward", "git", "grid", "help", "ls", "preview", "prune", "refresh", "server", "session", "submit", "sync"]);
+
+  // Every verb the declaration marks as reachable here must be dispatchable.
+  // Asserted from inside the runtime that owns the dispatch: scanning this
+  // file from a Go test would be a regex over JavaScript.
+  {
+    const declared = window.harness.pathsForSurface("webui");
+    const missing = declared.filter((p) => !RUNCMD_HEADS.has(p.split(" ")[0]));
+    if (missing.length) {
+      setStatus("webui: declared but not dispatchable: " + missing.join(", "), "error");
+      throw new Error("webui dispatch is missing declared verbs: " + missing.join(", "));
+    }
+  }
+
+
   const runCmd = async () => {
     const line = cmdInput.value.trim();
     if (!line) return;
@@ -2357,50 +2365,54 @@ const POLL_INTERVAL_MS = 5000;
           }));
           break;
         }
-        case "list":
-          // Force a snapshot refresh, then echo the rendered task rows
-          // (newline-joined) into cmd-output.
-          await refreshSnapshot();
-          out = Array.from(taskList.querySelectorAll(".task-row"))
-                  .map(r => r.textContent).join("\n") || "(none)";
-          break;
-        case "refresh":
-        case "sync":
-          // Force a snapshot re-sync without echoing the rows (TUI parity).
-          await refreshSnapshot();
-          out = "snapshot refreshed";
-          break;
-        case "await-idle": {
-          // Parsed by the shared declaration, which also refuses --notify with
-          // --topic: two sinks for one fire.
-          const b = window.harness.parseCommand("session await-idle " + tokens.slice(1).join(" "), {});
-          if (b.error) throw new Error(b.error);
-          const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
-          if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
-          const r = await window.harness.awaitIdle({
-            taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
-            sink, topic: b.flags.topic || undefined,
-          });
-          out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
-          break;
-        }
-        case "cancel": {
-          const b = window.harness.parseCommand(line, {});
-          if (b.error) throw new Error(b.error);
-          await window.harness.cancel(b.args[0]);
-          out = "cancelled";
-          break;
-        }
-        case "set-parent": {
+        case "caps": {
+          // `caps set-parent` is the canonical path; the WebUI's old
+          // top-level `set-parent` spelling is gone (D16).
+          if (tokens[1] !== "set-parent") {
+            throw new Error("caps: only `caps set-parent` is available here");
+          }
+
           // `caps set-parent` on the other surfaces; the shared declaration
           // enforces "exactly one of --parent / --none / --swap".
-          const b = window.harness.parseCommand("caps set-parent " + tokens.slice(1).join(" "), {});
+          const b = window.harness.parseCommand("caps set-parent " + tokens.slice(2).join(" "), {});
           if (b.error) throw new Error(b.error);
           const req = { taskId: b.args[0] };
           if (b.flags.swap) req.swap = true;
           else if (b.flags.none) req.parentId = "";
           else req.parentId = b.flags.parent;
           out = await window.harness.setParent(req);
+          break;
+          break;
+        }
+        case "ls": {
+          // The shared listing, not the filtered pane. This case used to be
+          // spelled `list` and scraped .task-row out of the DOM -- the
+          // FILTERED render -- while `harness-cli ls` returned the whole
+          // snapshot: one idea, two answers, which is what D17 forbids.
+          // cli.Client.List was already exposed here as harness.list and
+          // simply went unused.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          if (b.flags.filtered) {
+            await refreshSnapshot();
+            out = Array.from(taskList.querySelectorAll(".task-row"))
+                    .map(r => r.textContent).join("\n") || "(none)";
+          } else {
+            out = await window.harness.list();
+          }
+          break;
+        }
+        case "refresh":
+        case "sync":
+          // Force a snapshot re-sync without echoing the rows (TUI parity).
+          await refreshSnapshot();
+          out = "snapshot refreshed";
+          break;
+        case "cancel": {
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          await window.harness.cancel(b.args[0]);
+          out = "cancelled";
           break;
         }
         case "preview":
@@ -2525,6 +2537,24 @@ const POLL_INTERVAL_MS = 5000;
         // have buttons, while these four had no route at all. Recorded as a
         // partial family rather than pretending the rest exists.
         case "session": {
+          // `session await-idle` is the canonical path on every surface; the
+          // WebUI's old top-level `await-idle` spelling is gone (D16).
+          if (tokens[1] === "await-idle") {
+
+          // Parsed by the shared declaration, which also refuses --notify with
+          // --topic: two sinks for one fire.
+          const b = window.harness.parseCommand("session await-idle " + tokens.slice(2).join(" "), {});
+          if (b.error) throw new Error(b.error);
+          const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
+          if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
+          const r = await window.harness.awaitIdle({
+            taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
+            sink, topic: b.flags.topic || undefined,
+          });
+          out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
+          break;
+            break;
+          }
           if (args[0] !== "stream") {
             appendCmdOutput("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
             break;
