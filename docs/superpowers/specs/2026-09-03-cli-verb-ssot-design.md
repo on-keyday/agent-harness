@@ -13,7 +13,7 @@ author chose it while writing — those are the rows worth a second look.
 | # | Decision | Decided by |
 | --- | --- | --- |
 | D1 | Full migration to a declaration-driven verb layer, staged by verb family — not a conformance test over three hand-written parsers | operator |
-| D2 | The declaration lives in a new Go package `cli/verb`, as a table of `VerbSpec` values. No external DSL, no codegen | operator (chose approach A over reflection / `.bgn`) |
+| D2 | The declaration lives in a new Go package `cli/verb`, as a table of `VerbSpec` values. No external DSL, no codegen | operator (chose approach A over reflection / `.bgn`) — **superseded by D25**, see *Generation* |
 | D3 | The shared boundary is **parse only**. Each surface keeps its own execute/dispatch and its own rendering | this spec |
 | D4 | Aliases are declared explicitly (`Flag.Aliases []string`) and never inferred from spelling. `-e` is not the short form of `--enter` | operator (caught the `session send` case) |
 | D5 | A migration-lifetime test derives the ground-truth alias grouping from the legacy `FlagSet` by `flag.Flag.Value` pointer identity, and fails on any mismatch with the declaration | this spec |
@@ -36,6 +36,12 @@ author chose it while writing — those are the rows worth a second look.
 | D22 | `forward tap` and `workspace save` read their positional before building a FlagSet, so today the positional must precede the flags — the inverse of `ParsePermuted`. That constraint is removed, not declared: it is an artifact of the construction order, and losing it only widens what parses | this spec |
 | D23 | The grammar primitives (`ParseCaps`, `ParseScope`, `ParseGridArgs`, `ParsePermuted` and their catalogs) MOVE into `cli/verb`, and `cli` imports `cli/verb` — never the reverse. Leaving them in `cli` deadlocks: `cli/cmd_board.go` parses the `board` family inside package `cli` itself | this spec |
 | D24 | The client binaries' global flags (`--server-cid`, `--ws-path`, `--config`, `--workspace`, and the TUI's four reconnect options) stay OUT of v1 — they are process-startup options, not verb grammar. `--repo`, global in the TUI and per-verb in the CLI, is already handled by `Flag.Resolve`'s `SurfaceContext` tier | this spec |
+| D25 | The `Action` structs and the code filling them are **generated** from the declaration by `cli/verb/gen`, run through `go generate`. Supersedes D2's "no codegen": D2 was about the declaration's own format, and the Action remained a second hand-written half that could disagree with it | operator |
+| D26 | The generator **imports** the package and reflects over the evaluated `Verbs`; it does not AST-parse `table.go`. Fifteen verbs build their flag lists by calling a function and three use `append`, so an AST reader sees none of those flags | this spec |
+| D27 | Generated builds register themselves into a map declared in hand-written code, so `table.go` never names a generated type. That is what lets the package compile when the generated file is absent — which it must, because the generator imports it | this spec |
+| D28 | One build per **(verb, surface)** pair, not per verb. A positional the declaration narrows away shifts every index after it: `file push` names three positionals on the CLI and two in a browser | this spec |
+| D29 | `VerbSpec.Build` is **deleted**, not kept as an escape hatch. What does not generate is declared instead — `Flag.Convert` for a value carrying a grammar, `VerbSpec.Derived` for a field computed from the whole line, `VerbSpec.Validate` for a rule about values. All three take or return only `Bound`, never a generated type (D27) | operator ("do it now… whenever an LLM does this, drift that is left somewhere is not noticed by default, so it definitely drifts") |
+| D30 | Cross-flag rules carry their REASON in the declaration (`Rule.Reason`, `Requirement.Reason`). Moving a hand-written check to an attribute was silently dropping the sentence that said what was actually wrong | this spec |
 
 ## Problem
 
@@ -269,7 +275,7 @@ type VerbSpec struct {
     Flags    []Flag
     Trailing *Trailing  // non-nil only for verbs taking free-form trailing text
     Examples []string   // every one must parse and Build; see Testing
-    Build    func(Bound) (Action, error)
+    Build    func(Bound) (Action, error)  // DELETED by D29; see Generation
 }
 
 type Arg struct {
@@ -389,6 +395,68 @@ not less — `board purge --seq` being the case that cost two messages. In this
 spec it has one consumer: the invariant test asserting such a flag's verb is
 permuted. It exists so the property is stated where the flag is declared
 rather than in a comment in `cli/permute.go`.
+
+## Generation
+
+D2 said no codegen, and it was right about what it was answering: the
+declaration itself is a Go table, not a DSL. But the `Action` a verb builds
+stayed a second hand-written half, joined to the first by a hand-written
+`Build`, and nothing made the two agree. Three defects came out of that seam
+in one afternoon:
+
+- `agent wait --timeout` had `Default: 0` — an `int`, not a `time.Duration`.
+  `NewFlagSet`'s type switch falls through on a mismatch, so the five-minute
+  default silently became zero.
+- `ls --filtered` was declared and had no `ListAction` field, so the Build
+  never carried it. The flag parsed; nothing happened.
+- `Bound.Str` is a map lookup whose comma-ok is discarded, so a Build reading
+  a name the declaration does not have gets `""` with no error. A rename in
+  the table leaves the Build reading nothing, in silence.
+
+None of those is a compile error, and the differential tests cannot see them
+either: they compare one Build against the legacy parser it replaced, so a
+flag both sides ignore agrees perfectly. Generating both halves from one
+source removes the seam rather than testing across it (D25).
+
+### What the generator emits
+
+`cli/verb/gen` writes `cli/verb/actions_gen.go`: one struct per `Action` name
+(fields unioned across every verb naming that type) and one build per
+(verb, surface) pair (D28). `TestGeneratedFileIsCurrent` regenerates into a
+temp dir and diffs, so a table edit without a regenerate is a failing test
+rather than a stale file.
+
+### The bootstrap, and why validation is not on the Action
+
+The generator imports the package it generates into (D26), so the package
+must compile when its output is missing. That single constraint shapes the
+whole escape-hatch design: **no hand-written code may name a generated type.**
+
+- Generated builds *register* themselves into a map declared in
+  `generated.go`, rather than being named from `table.go` (D27).
+- `Validate` runs on `Bound`, not on the Action.
+- `Flag.Convert` and `Derived.From` name package-level functions taking a
+  flag value or a `Bound` — never the action they end up inside.
+
+### What is declared instead of generated
+
+| Shape | Vocabulary | Case that produced it |
+| --- | --- | --- |
+| The flag's value carries a grammar | `Flag.Convert` — `func(string) (T, error)` | `--caps`, `--scope`, `--scope-for`: `ParseCaps` and friends stay in this package and the generator emits a call |
+| The field is computed from the whole line | `VerbSpec.Derived` — `func(Bound) (T, error)` | `grid`'s scope mode falls out of `--under`, `--descendants` and the positionals together |
+| A rule about a VALUE, not a presence | `VerbSpec.Validate` | `--x11-display` must be 0..99; `forward tap --raw` needs an explicit `--dir`; `submit`'s prompt may be `--task` OR the trailing words |
+| The zero value is meaningful | `Flag.PresenceField` (+ `PresenceAlso`) | `agent send --data ""` is an explicit empty body; a resume must not re-grant on a flag nobody passed |
+| Several bool flags name one choice | `VerbSpec.Modes` | `forward tap --hex\|--text\|--raw\|--json` |
+| Cross-flag constraints | `Exclusive` / `ExactlyOne` / `AtLeastOne` / `Requires`, each a `Rule` or `Requirement` carrying a `Reason` (D30) | every check the deleted Builds contained |
+
+`VerbSpec.Build` is gone (D29). A hatch is where the next divergence lives,
+and this migration produced the evidence: rewriting ten Builds into
+declarations dropped two of `session batch`'s three rules and one of `agent
+batch`'s, and nothing about deleting a Build says a rule went with it. Both
+were found by reading deleted code against new declarations — by hand, once,
+which is not a thing that keeps working. `cli/verb/rules_test.go` pins every
+one of them as a line the parse must refuse, and the ordinary lines it must
+still accept.
 
 ## Package layout, and the cycle it avoids
 
@@ -718,3 +786,6 @@ last in the order for that reason, and its `Examples` must cover `-e`,
 2. `runCmd` in `webui/static/main.js` holds no argument branches — `parseCommand` plus dispatch.
 3. `cli/flagorder_test.go`'s offender scan reports zero and is deleted, along with the alias-grouping test.
 4. `.claude/skills/surface-parity-checklist/SKILL.md` items 1, 2, 3, 7, 8 and 10 collapse into one instruction: add a row to `cli/verb`. **The checklist getting shorter is the deliverable this work is measured by.**
+5. Every one of the 74 verb paths carries an `Action` name and builds from
+   `actions_gen.go`; `VerbSpec.Build` no longer exists, so there is no place
+   for a hand-written build to come back to (D29).
