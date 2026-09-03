@@ -168,11 +168,24 @@ count that hides its own limits is the failure this document exists to fix.
    uncounted consumer.
 4. **Prose consumers are not enumerated per flag.** `SKILL.md` mentions this
    grammar 67 times and README is 1222 lines; both drift like `usage()` does.
-5. **The scanned directory set was chosen, not derived.** Falsifier 1 tests
-   that choice for FlagSets, but a hand-rolled parser in some other client
-   file contains no `NewFlagSet` and would not be caught by it. The
+5. **The scanned directory set was chosen, not derived.** The AST walk ran
+   over `cmd/harness-cli/**`, `cli/**` (so `cli/agent`, `cli/cliopts`,
+   `cli/sshgw`, `cli/workspace` came along) and `tui/**`. Falsifier 1 tests
+   that choice for FlagSets, but a hand-rolled parser elsewhere contains no
+   `NewFlagSet` and would not be caught by it. The
    `tokenize`/`shlex`/`ParseCommand` sweep mitigates this with keywords that
    were also chosen.
+
+   The two client binaries left out of the walk were checked afterwards and
+   are clean: `cmd/harness-tui/main.go` is 168 lines of flags and startup with
+   no `case "` and no argument splitting, and the only string switches in
+   `cmd/harness-webui-wasm/main.go` — `gitKindFromJS`, `gitTargetFromJS`
+   (:2923-2950) and the approve verdict (:3383) — map an already-parsed JS
+   value onto a protocol enum, erroring on anything unknown. What remains
+   genuinely unscanned is server- and runner-side (`server/`, `runner/`,
+   `cmd/agent-runner`, `cmd/harness-server`, `cmd/harness-stream-adapter`,
+   `cmd/sandbox-connect-proxy`) plus the transport packages, none of which
+   carry operator verb grammar.
 
 Items 1 and 3 are the ones most likely to bite, and both are cheap to close
 once the declaration exists: a shared path's flags become comparable by
