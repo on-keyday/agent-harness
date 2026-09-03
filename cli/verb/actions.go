@@ -334,6 +334,11 @@ type ListAction struct {
 	ActionMarker
 	JSON bool
 	Tree bool
+	// Filtered is the WebUI's task-list filter pane: the rows it currently
+	// admits, rather than the whole snapshot. Declared for that surface alone,
+	// and carried here so the Action says what was asked rather than the page
+	// reading the flag behind the Action's back.
+	Filtered bool
 }
 
 // ConnsAction snapshots live connections, or streams their events.

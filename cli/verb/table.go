@@ -1065,7 +1065,7 @@ var Verbs = []VerbSpec{
 				// JSON to match would give the same data two shapes.
 				return nil, fmt.Errorf("ls: --tree and --json are mutually exclusive (--json rows carry created_by; build the tree from those)")
 			}
-			return ListAction{JSON: b.Bool("json"), Tree: b.Bool("tree")}, nil
+			return ListAction{JSON: b.Bool("json"), Tree: b.Bool("tree"), Filtered: b.Bool("filtered")}, nil
 		},
 	},
 	{
@@ -1375,7 +1375,8 @@ var Verbs = []VerbSpec{
 			Flag{Name: "topic", Type: FlagString, Default: "", Help: "topic to wait on"},
 			Flag{Name: "since", Type: FlagUint64, Default: uint64(0), Help: "take everything after this seq"},
 			Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Help: "only messages replying to this seq"},
-			Flag{Name: "timeout", Type: FlagDuration, Default: 0, Help: "max wait"},
+			Flag{Name: "timeout", Type: FlagDuration, Default: 5 * time.Minute,
+				Help: "max block duration"},
 		),
 		Examples: []string{"agent wait --topic chat.abcd1234"},
 		Build:    buildAgent("wait"),
