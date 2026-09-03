@@ -192,78 +192,6 @@ type GridAction struct {
 	IDs    []string
 }
 
-// FileLsAction lists a directory under a task's worktree. RelPath empty
-// means the worktree root.
-type FileLsAction struct {
-	verb.ActionMarker
-	TaskID  string
-	RelPath string
-}
-
-// FilePushAction copies a local source into a task's worktree.
-// Recursive=true uses dir_push (tar over the wire). Force overwrites an
-// existing destination (push) or replaces an existing directory tree
-// (dir_push). Parents creates missing parent directories of RemoteDst
-// (mkdir -p semantics) before the push.
-type FilePushAction struct {
-	verb.ActionMarker
-	TaskID    string
-	LocalSrc  string
-	RemoteDst string
-	Recursive bool
-	Force     bool
-	Parents   bool // create missing parent dirs of RemoteDst (mkdir -p)
-}
-
-// FileMkdirAction creates a directory under a task's worktree.
-// Parents=false is strict mkdir (missing parent → error, existing dir
-// → error); Parents=true is mkdir -p (parents created, idempotent).
-type FileMkdirAction struct {
-	verb.ActionMarker
-	TaskID  string
-	RelPath string
-	Parents bool
-}
-
-// FileEditAction opens a worktree file in the editor popup.
-type FileEditAction struct {
-	verb.ActionMarker
-	TaskID  string
-	RelPath string
-}
-
-// FileNewAction opens the editor popup on a path that does not exist yet.
-type FileNewAction struct {
-	verb.ActionMarker
-	TaskID  string
-	RelPath string
-}
-
-// FilePullAction copies from a task's worktree to a local destination.
-// Recursive uses dir_pull. Force permits overwriting the local path.
-type FilePullAction struct {
-	verb.ActionMarker
-	TaskID    string
-	RemoteSrc string
-	LocalDst  string
-	Recursive bool
-	Force     bool
-	Offset    uint64
-	Length    uint64 // 0 = to end of file
-}
-
-// FileDeleteAction removes a path from a task's worktree. Recursive uses
-// dir_delete; Force on Recursive removes a non-empty directory tree via
-// os.RemoveAll on the runner side. Force without Recursive is a no-op
-// (single-file delete has no force semantics).
-type FileDeleteAction struct {
-	verb.ActionMarker
-	TaskID    string
-	RelPath   string
-	Recursive bool
-	Force     bool
-}
-
 // WorkspaceAction is the `workspace <sub> [name]` family: save the current
 // client state into .harness/config, re-apply a workspace, or inspect what the
 // file holds. There is no `workspace open`-shaped verb for starting one piece
@@ -1007,111 +935,7 @@ func parseFile(args []string) (Action, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | mkdir | delete | edit | new)")
 	}
-	verb := args[0]
-	rest := args[1:]
-	switch verb {
-	case "ls":
-		if len(rest) < 1 || len(rest) > 2 {
-			return nil, fmt.Errorf("file ls: usage: file ls <task-id> [<worktree-rel-dir>]")
-		}
-		rel := ""
-		if len(rest) == 2 {
-			rel = rest[1]
-		}
-		return FileLsAction{TaskID: rest[0], RelPath: rel}, nil
-	case "push":
-		fs := flag.NewFlagSet("file push", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		recursive := fs.Bool("recursive", false, "")
-		fs.BoolVar(recursive, "r", false, "")
-		force := fs.Bool("force", false, "")
-		fs.BoolVar(force, "f", false, "")
-		parents := fs.Bool("parents", false, "")
-		fs.BoolVar(parents, "p", false, "")
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("file push: %w", err)
-		}
-		pargs := fs.Args()
-		if len(pargs) != 3 {
-			return nil, fmt.Errorf("file push: usage: file push [-r] [-f] [-p] <task-id> <local-src> <worktree-rel-dst>")
-		}
-		return FilePushAction{
-			TaskID: pargs[0], LocalSrc: pargs[1], RemoteDst: pargs[2],
-			Recursive: *recursive, Force: *force, Parents: *parents,
-		}, nil
-	case "pull":
-		fs := flag.NewFlagSet("file pull", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		recursive := fs.Bool("recursive", false, "")
-		fs.BoolVar(recursive, "r", false, "")
-		force := fs.Bool("force", false, "")
-		fs.BoolVar(force, "f", false, "")
-		offset := fs.Uint64("offset", 0, "")
-		fs.Uint64Var(offset, "o", 0, "")
-		length := fs.Uint64("length", 0, "")
-		fs.Uint64Var(length, "n", 0, "")
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("file pull: %w", err)
-		}
-		pargs := fs.Args()
-		if len(pargs) != 3 {
-			return nil, fmt.Errorf("file pull: usage: file pull [-r] [-f] [-o off] [-n len] <task-id> <worktree-rel-src> <local-dst>")
-		}
-		// A directory pull is a generated tar; its byte offsets are not a
-		// stable thing to index into, so the combination is refused here
-		// rather than sent for the runner to reject.
-		if *recursive && (*offset != 0 || *length != 0) {
-			return nil, fmt.Errorf("file pull: -o/-n cannot be combined with -r")
-		}
-		return FilePullAction{
-			TaskID: pargs[0], RemoteSrc: pargs[1], LocalDst: pargs[2],
-			Recursive: *recursive, Force: *force,
-			Offset: *offset, Length: *length,
-		}, nil
-	case "delete":
-		fs := flag.NewFlagSet("file delete", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		recursive := fs.Bool("recursive", false, "")
-		fs.BoolVar(recursive, "r", false, "")
-		force := fs.Bool("force", false, "")
-		fs.BoolVar(force, "f", false, "")
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("file delete: %w", err)
-		}
-		pargs := fs.Args()
-		if len(pargs) != 2 {
-			return nil, fmt.Errorf("file delete: usage: file delete [-r [-f]] <task-id> <worktree-rel-path>")
-		}
-		return FileDeleteAction{
-			TaskID: pargs[0], RelPath: pargs[1],
-			Recursive: *recursive, Force: *force,
-		}, nil
-	case "mkdir":
-		fs := flag.NewFlagSet("file mkdir", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		parents := fs.Bool("parents", false, "")
-		fs.BoolVar(parents, "p", false, "")
-		if err := fs.Parse(rest); err != nil {
-			return nil, fmt.Errorf("file mkdir: %w", err)
-		}
-		pargs := fs.Args()
-		if len(pargs) != 2 {
-			return nil, fmt.Errorf("file mkdir: usage: file mkdir [-p] <task-id> <worktree-rel-dir>")
-		}
-		return FileMkdirAction{TaskID: pargs[0], RelPath: pargs[1], Parents: *parents}, nil
-	case "edit":
-		if len(rest) != 2 {
-			return nil, fmt.Errorf("file edit: usage: file edit <task-id> <worktree-rel-path>")
-		}
-		return FileEditAction{TaskID: rest[0], RelPath: rest[1]}, nil
-	case "new":
-		if len(rest) != 2 {
-			return nil, fmt.Errorf("file new: usage: file new <task-id> <worktree-rel-path>")
-		}
-		return FileNewAction{TaskID: rest[0], RelPath: rest[1]}, nil
-	default:
-		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | mkdir | delete | edit | new)", verb)
-	}
+	return parseViaSpec2("file", args[0], args[1:])
 }
 
 // parseForward handles `forward ls` and `forward kill <id>`. Starting a
@@ -1660,4 +1484,22 @@ func parseSetParent(args []string) (Action, error) {
 		return nil, fmt.Errorf("caps set-parent: pass exactly one of --parent <task-id>, --none, --swap\n%s", usage)
 	}
 	return act, nil
+}
+
+// parseViaSpec2 is parseViaSpec for a two-word verb path (`file push`,
+// `git diff`, `session new`). Split from the one-word form only because a
+// variadic path would make every call site pass a slice literal.
+func parseViaSpec2(head, sub string, args []string) (Action, error) {
+	sp, ok := verb.Lookup(head, sub)
+	if !ok {
+		return nil, fmt.Errorf("%s: unknown sub-verb %q", head, sub)
+	}
+	sp = sp.For(verb.TUI)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: %w", head, sub, err)
+	}
+	return sp.Build(b)
 }

@@ -3300,28 +3300,28 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, DoGitDiff(a.client, full, q))
 		}
 		return a, tea.Batch(cmds...)
-	case FileLsAction:
+	case verb.FileLsAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
 		return a, DoFileLs(a.client, full, v.RelPath)
-	case FilePushAction:
+	case verb.FilePushAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
 		return a, DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents)
-	case FileMkdirAction:
+	case verb.FileMkdirAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
 		return a, DoFileMkdir(a.client, full, v.RelPath, v.Parents)
-	case FileEditAction:
+	case verb.FileEditAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3329,7 +3329,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		rel := v.RelPath
 		return a, func() tea.Msg { return FileEditRequestMsg{TaskID: full, Rel: rel} }
-	case FileNewAction:
+	case verb.FileNewAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3340,7 +3340,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.fileEditor.OpenNew(full, "")
 		a.fileEditor.SetName(v.RelPath)
 		return a, nil
-	case FilePullAction:
+	case verb.FilePullAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
@@ -3348,7 +3348,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force,
 			cli.FileTransferRange{Offset: v.Offset, Length: v.Length})
-	case FileDeleteAction:
+	case verb.FileDeleteAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))

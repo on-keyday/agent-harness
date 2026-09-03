@@ -20,3 +20,67 @@ type PruneAction struct {
 	TaskIDs []string
 	Force   bool
 }
+
+// FilePushAction copies a local file (or a tree, with Recursive) into a task's
+// worktree. LocalSrc is empty on the WebUI, where the bytes come from a file
+// picker rather than a path -- see the Arg's SurfaceReason.
+type FilePushAction struct {
+	ActionMarker
+	TaskID    string
+	LocalSrc  string
+	RemoteDst string
+	Recursive bool
+	Force     bool
+	Parents   bool
+}
+
+// FilePullAction copies a worktree file (or a tree) out. LocalDst is empty on
+// the WebUI, which downloads rather than writing a path.
+type FilePullAction struct {
+	ActionMarker
+	TaskID    string
+	RemoteSrc string
+	LocalDst  string
+	Recursive bool
+	Force     bool
+	Offset    uint64
+	Length    uint64
+}
+
+// FileLsAction lists one directory under a task's worktree.
+type FileLsAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}
+
+// FileMkdirAction creates a directory in a task's worktree.
+type FileMkdirAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+	Parents bool
+}
+
+// FileDeleteAction removes a file, or a directory with Recursive.
+type FileDeleteAction struct {
+	ActionMarker
+	TaskID    string
+	RelPath   string
+	Recursive bool
+	Force     bool
+}
+
+// FileEditAction opens an existing worktree file for editing.
+type FileEditAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}
+
+// FileNewAction creates a worktree file from an empty buffer.
+type FileNewAction struct {
+	ActionMarker
+	TaskID  string
+	RelPath string
+}

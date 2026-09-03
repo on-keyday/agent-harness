@@ -480,142 +480,65 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls|mkdir|delete|edit|new} ...")
 			os.Exit(2)
 		}
-		fsub := args[0]
-		rest := args[1:]
+		// Parsed from the declaration (cli/verb): flags, aliases and arity for
+		// all seven sub-verbs are written down once and the TUI and WebUI read
+		// the same entries. What stays here is the execute half.
+		sp, ok := verb.Lookup("file", args[0])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", args[0])
+			os.Exit(2)
+		}
+		sp = sp.For(verb.CLI)
+		fs := sp.NewFlagSet(flag.ExitOnError)
+		b, perr := sp.Parse(fs, args[1:])
+		if perr != nil {
+			die(perr)
+		}
+		act, berr := sp.Build(b)
+		if berr != nil {
+			die(berr)
+		}
 		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		switch fsub {
-		case "push":
-			fs := flag.NewFlagSet("file push", flag.ExitOnError)
-			recursive := fs.Bool("recursive", false, "transfer a directory tree")
-			fs.BoolVar(recursive, "r", false, "alias for --recursive")
-			force := fs.Bool("force", false, "overwrite existing destination")
-			fs.BoolVar(force, "f", false, "alias for --force")
-			parents := fs.Bool("parents", false, "create missing parent directories of the destination (mkdir -p)")
-			fs.BoolVar(parents, "p", false, "alias for --parents")
-			pargs, perr := cli.ParsePermuted(fs, rest)
-			if perr != nil {
-				die(perr)
-			}
-			if len(pargs) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file push [-r] [-f] [-p] <task-id> <local-src> <worktree-rel-dst>")
-				os.Exit(2)
-			}
-			opts := cli.FilePushOpts{Force: *force, MkdirParents: *parents}
-			if *recursive {
-				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], opts); err != nil {
-					die(err)
-				}
+		switch a := act.(type) {
+		case verb.FilePushAction:
+			opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents}
+			if a.Recursive {
+				err = c.FilePushDir(ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
 			} else {
-				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], opts); err != nil {
-					die(err)
-				}
+				err = c.FilePush(ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
 			}
-		case "pull":
-			fs := flag.NewFlagSet("file pull", flag.ExitOnError)
-			recursive := fs.Bool("recursive", false, "transfer a directory tree")
-			fs.BoolVar(recursive, "r", false, "alias for --recursive")
-			force := fs.Bool("force", false, "overwrite existing destination")
-			fs.BoolVar(force, "f", false, "alias for --force")
-			offset := fs.Uint64("offset", 0, "first byte to pull (single-file pull only)")
-			length := fs.Uint64("length", 0, "max bytes to pull; 0 = to end of file")
-			pargs, perr := cli.ParsePermuted(fs, rest)
-			if perr != nil {
-				die(perr)
-			}
-			if len(pargs) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull [-r] [-f] [--offset N] [--length N] <task-id> <worktree-rel-src> <local-dst>")
-				os.Exit(2)
-			}
-			if *recursive {
-				// A directory pull is a generated tar, whose byte offsets are
-				// not a stable thing to index into. Refused here rather than
-				// sent, so the message names the combination.
-				if *offset != 0 || *length != 0 {
-					fmt.Fprintln(os.Stderr, "file pull: --offset/--length cannot be combined with --recursive")
-					os.Exit(2)
-				}
-				if err := c.FilePullDir(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
-					die(err)
-				}
+		case verb.FilePullAction:
+			if a.Recursive {
+				// The --offset/--length combination is refused in Build, which
+				// every surface goes through.
+				err = c.FilePullDir(ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force)
 			} else {
-				rng := cli.FileTransferRange{Offset: *offset, Length: *length}
-				if err := c.FilePull(ctx, pargs[0], pargs[1], pargs[2], rng, *force); err != nil {
-					die(err)
-				}
+				err = c.FilePull(ctx, a.TaskID, a.RemoteSrc, a.LocalDst,
+					cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force)
 			}
-		case "ls":
-			if len(rest) < 1 || len(rest) > 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file ls <task-id> [<worktree-rel-dir>]")
-				os.Exit(2)
-			}
-			rel := ""
-			if len(rest) == 2 {
-				rel = rest[1]
-			}
-			if err := c.FileLs(ctx, rest[0], rel, os.Stdout); err != nil {
-				die(err)
-			}
-		case "mkdir":
-			fs := flag.NewFlagSet("file mkdir", flag.ExitOnError)
-			parents := fs.Bool("parents", false, "create missing parent directories (mkdir -p); also makes an existing directory a success")
-			fs.BoolVar(parents, "p", false, "alias for --parents")
-			pargs, perr := cli.ParsePermuted(fs, rest)
-			if perr != nil {
-				die(perr)
-			}
-			if len(pargs) != 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file mkdir [-p] <task-id> <worktree-rel-dir>")
-				os.Exit(2)
-			}
-			if err := c.FileMkdir(ctx, pargs[0], pargs[1], *parents); err != nil {
-				die(err)
-			}
-		case "edit":
-			if len(rest) != 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file edit <task-id> <worktree-rel-path>")
-				os.Exit(2)
-			}
-			if err := runFileEdit(ctx, c, rest[0], rest[1]); err != nil {
-				die(err)
-			}
-		case "new":
-			if len(rest) != 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file new <task-id> <worktree-rel-path>")
-				os.Exit(2)
-			}
-			if err := runFileNew(ctx, c, rest[0], rest[1]); err != nil {
-				die(err)
-			}
-		case "delete":
-			fs := flag.NewFlagSet("file delete", flag.ExitOnError)
-			recursive := fs.Bool("recursive", false, "target a directory tree instead of a single file (uses dir_delete)")
-			fs.BoolVar(recursive, "r", false, "alias for --recursive")
-			force := fs.Bool("force", false, "with -r: delete non-empty directory contents recursively (os.RemoveAll). Ignored without -r.")
-			fs.BoolVar(force, "f", false, "alias for --force")
-			pargs, perr := cli.ParsePermuted(fs, rest)
-			if perr != nil {
-				die(perr)
-			}
-			if len(pargs) != 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file delete [-r [-f]] <task-id> <worktree-rel-path>")
-				os.Exit(2)
-			}
-			if *recursive {
-				if err := c.FileDeleteDir(ctx, pargs[0], pargs[1], *force); err != nil {
-					die(err)
-				}
+		case verb.FileLsAction:
+			err = c.FileLs(ctx, a.TaskID, a.RelPath, os.Stdout)
+		case verb.FileMkdirAction:
+			err = c.FileMkdir(ctx, a.TaskID, a.RelPath, a.Parents)
+		case verb.FileDeleteAction:
+			if a.Recursive {
+				err = c.FileDeleteDir(ctx, a.TaskID, a.RelPath, a.Force)
 			} else {
-				if err := c.FileDelete(ctx, pargs[0], pargs[1]); err != nil {
-					die(err)
-				}
+				err = c.FileDelete(ctx, a.TaskID, a.RelPath)
 			}
+		case verb.FileEditAction:
+			err = runFileEdit(ctx, c, a.TaskID, a.RelPath)
+		case verb.FileNewAction:
+			err = runFileNew(ctx, c, a.TaskID, a.RelPath)
 		default:
-			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", fsub)
-			os.Exit(2)
+			die(fmt.Errorf("file: unhandled action %T", act))
+		}
+		if err != nil {
+			die(err)
 		}
 
 	case "git":

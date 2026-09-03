@@ -184,7 +184,7 @@ const POLL_INTERVAL_MS = 5000;
   // this file from a Go test would be a regex over JavaScript, while this is
   // exact. A verb declared for the WebUI with no case fails at load rather
   // than telling whoever types it first that it is an unknown command.
-  const WEBUI_DISPATCH = new Set(["prune"]);
+  const WEBUI_DISPATCH = new Set(["prune", "file push", "file pull", "file ls", "file mkdir", "file delete", "file edit", "file new"]);
   for (const p of window.harness.pathsForSurface("webui")) {
     if (!WEBUI_DISPATCH.has(p)) {
       setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
@@ -2510,7 +2510,13 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "file": {
-          out = await runFileCmd(tokens.slice(1));
+          // Parsed by the shared declaration through the wasm bridge. The
+          // per-sub-verb argument loops this case used to reach were a third
+          // copy of this grammar -- and the copy where `file push` quietly
+          // accepted no flags at all while the CLI and TUI took -r/-f/-p.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          out = await runFileAction(b);
           break;
         }
         case "git": {
@@ -6256,9 +6262,6 @@ function parseFlags(tokens) {
 
 // --- file ops dispatch -------------------------------------------------
 
-// runFileCmd handles the `file <verb> ...` family from the cmd-input.
-// Returns a string to be appended to cmd-output. Throws on usage error;
-// non-fatal "Cancelled by user" outcomes return a short string instead.
 // runGitCmd parses `git <task> {log|diff|show|status} ...` with the same
 // grammar harness-cli and the TUI cmdline use, and hands the result to the Git
 // tab. The pathspec is split off at "--" BEFORE flags are read, matching the
@@ -6332,38 +6335,35 @@ async function runGitCmd(rest) {
   return `git ${sub}: shown in the Git tab`;
 }
 
-async function runFileCmd(rest) {
-  if (rest.length === 0) {
-    throw new Error("file: sub-verb required (ls | delete | push | pull | mkdir | new)");
-  }
-  const verb = rest[0];
-  const args = rest.slice(1);
-  switch (verb) {
+// runFileAction executes a `file` sub-verb already parsed by the shared
+// declaration (cli/verb) through the wasm bridge. Every argument loop that
+// used to live in the fileXxxCmd helpers is gone; what remains here is the
+// browser-side execution -- file pickers, progress bars, confirm dialogs --
+// which is exactly the half that differs per surface.
+async function runFileAction(b) {
+  const sub = b.path[1];
+  const a = b.args;
+  switch (sub) {
     case "ls":
-      return fileLsCmd(args);
+      return fileLsCmd(a[0], a[1] || "");
     case "delete":
-      return fileDeleteCmd(args);
+      return fileDeleteCmd(a[0], a[1], !!b.flags.recursive, !!b.flags.force);
     case "push":
-      return filePushCmd(args);
+      return filePushCmd(a[0], a[1]);
     case "pull":
-      return filePullCmd(args);
+      return filePullCmd(a[0], a[1], !!b.flags.recursive);
     case "mkdir":
-      return fileMkdirCmd(args);
+      return fileMkdirCmd(a[0], a[1], !!b.flags.parents);
     case "new":
-      return fileNewCmd(args);
+      return fileNewCmd(a[0], a[1]);
     case "edit":
-      return fileEditCmd(args);
+      return fileEditCmd(a[0], a[1]);
     default:
-      throw new Error(`file: unknown sub-verb ${verb}`);
+      throw new Error(`file: unknown sub-verb ${sub}`);
   }
 }
 
-async function fileLsCmd(args) {
-  if (args.length < 1 || args.length > 2) {
-    throw new Error("usage: file ls <task-id> [<worktree-rel-dir>]");
-  }
-  const taskID = args[0];
-  const rel = args[1] || "";
+async function fileLsCmd(taskID, rel) {
   const entries = await window.harness.fileLs(taskID, rel);
   if (entries.length === 0) return "(empty)";
   return entries.map(e => {
@@ -6373,19 +6373,7 @@ async function fileLsCmd(args) {
   }).join("\n");
 }
 
-async function fileDeleteCmd(args) {
-  // Parse flags before positional args.
-  let recursive = false, force = false;
-  const pos = [];
-  for (const a of args) {
-    if (a === "-r" || a === "--recursive") { recursive = true; continue; }
-    if (a === "-f" || a === "--force")     { force = true; continue; }
-    pos.push(a);
-  }
-  if (pos.length !== 2) {
-    throw new Error("usage: file delete [-r [-f]] <task-id> <rel>");
-  }
-  const [taskID, rel] = pos;
+async function fileDeleteCmd(taskID, rel, recursive, force) {
   // Confirm before destructive action. Browser native dialog.
   const verb = recursive ? (force ? "rm -rf" : "rmdir") : "rm";
   if (!window.confirm(`${verb} ${rel} on task ${taskID.slice(0, 12)} — proceed?`)) {
@@ -6395,26 +6383,12 @@ async function fileDeleteCmd(args) {
   return `${verb} ok: ${rel}`;
 }
 
-async function fileMkdirCmd(args) {
-  let parents = false;
-  const pos = [];
-  for (const a of args) {
-    if (a === "-p" || a === "--parents") { parents = true; continue; }
-    pos.push(a);
-  }
-  if (pos.length !== 2) {
-    throw new Error("usage: file mkdir [-p] <task-id> <worktree-rel-dir>");
-  }
-  const [taskID, rel] = pos;
+async function fileMkdirCmd(taskID, rel, parents) {
   await window.harness.fileMkdir(taskID, rel, parents);
   return `mkdir ok: ${rel}`;
 }
 
-async function filePushCmd(args) {
-  if (args.length !== 2) {
-    throw new Error("usage: file push <task-id> <worktree-rel-dst>");
-  }
-  const [taskID, remoteRel] = args;
+async function filePushCmd(taskID, remoteRel) {
   // Open the hidden file picker; abort if the user closes it without
   // selecting anything.
   const file = await pickLocalFile();
@@ -6429,11 +6403,7 @@ async function filePushCmd(args) {
   }
 }
 
-async function fileNewCmd(args) {
-  if (args.length !== 2) {
-    throw new Error("usage: file new <task-id> <worktree-rel-dst>");
-  }
-  const [taskID, remoteRel] = args;
+async function fileNewCmd(taskID, remoteRel) {
   // The editor's name field is seeded with the requested destination and
   // stays editable; whatever it holds on Save is the final worktree-rel dst.
   const edited = await openFileEditor({ name: remoteRel });
@@ -6448,11 +6418,8 @@ async function fileNewCmd(args) {
   }
 }
 
-async function fileEditCmd(args) {
-  if (args.length !== 2) {
-    throw new Error("usage: file edit <task-id> <worktree-rel-path>");
-  }
-  return editRemoteFile(args[0], args[1]);
+async function fileEditCmd(taskID, rel) {
+  return editRemoteFile(taskID, rel);
 }
 
 // editRemoteFile loads rel from the task's worktree, opens it in the editor
@@ -6597,18 +6564,7 @@ function openFileEditor(opts) {
   });
 }
 
-async function filePullCmd(args) {
-  // Parse flags before positional args (-r / --recursive => tar a directory).
-  let recursive = false;
-  const pos = [];
-  for (const a of args) {
-    if (a === "-r" || a === "--recursive") recursive = true;
-    else pos.push(a);
-  }
-  if (pos.length !== 2) {
-    throw new Error("usage: file pull [-r] <task-id> <worktree-rel-src>");
-  }
-  const [taskID, remoteRel] = pos;
+async function filePullCmd(taskID, remoteRel, recursive) {
   const fp = beginFileProgress(basename(remoteRel) + (recursive ? ".tar" : ""));
   try {
     if (recursive) {

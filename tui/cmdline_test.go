@@ -436,7 +436,7 @@ func TestParseFileLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FileLsAction)
+	a := got.(verb.FileLsAction)
 	if a.TaskID != "deadbeef0011" || a.RelPath != "src/" {
 		t.Errorf("got %+v", a)
 	}
@@ -447,7 +447,7 @@ func TestParseFileLsRootDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FileLsAction)
+	a := got.(verb.FileLsAction)
 	if a.TaskID != "deadbeef" || a.RelPath != "" {
 		t.Errorf("got %+v", a)
 	}
@@ -458,7 +458,7 @@ func TestParseFilePush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FilePushAction)
+	a := got.(verb.FilePushAction)
 	if a.TaskID != "deadbeef" || a.LocalSrc != "./local-dir" || a.RemoteDst != "rel/dir" {
 		t.Errorf("paths: %+v", a)
 	}
@@ -472,7 +472,7 @@ func TestParseFilePullSingle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FilePullAction)
+	a := got.(verb.FilePullAction)
 	if a.Recursive || a.Force {
 		t.Errorf("expected non-recursive non-force, got %+v", a)
 	}
@@ -486,7 +486,7 @@ func TestParseFileDeleteRecursive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FileDeleteAction)
+	a := got.(verb.FileDeleteAction)
 	if !a.Recursive || !a.Force {
 		t.Errorf("flags: %+v", a)
 	}
@@ -500,7 +500,7 @@ func TestParseFileDeleteSingle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FileDeleteAction)
+	a := got.(verb.FileDeleteAction)
 	if a.Recursive || a.Force {
 		t.Errorf("expected non-recursive, got %+v", a)
 	}
@@ -862,7 +862,7 @@ func TestParseFilePushParents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FilePushAction)
+	a := got.(verb.FilePushAction)
 	if !a.Parents || a.Force || a.Recursive {
 		t.Errorf("flags = %+v want Parents only", a)
 	}
@@ -873,7 +873,7 @@ func TestParseFileMkdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got.(FileMkdirAction)
+	a := got.(verb.FileMkdirAction)
 	if a.TaskID != "deadbeef" || a.RelPath != "rel/new/dir" || !a.Parents {
 		t.Errorf("parsed = %+v", a)
 	}
@@ -913,9 +913,9 @@ func TestParseFileEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFile: %v", err)
 	}
-	e, ok := act.(FileEditAction)
+	e, ok := act.(verb.FileEditAction)
 	if !ok {
-		t.Fatalf("got %T, want FileEditAction", act)
+		t.Fatalf("got %T, want verb.FileEditAction", act)
 	}
 	if e.TaskID != "abc123" || e.RelPath != "notes.txt" {
 		t.Errorf("act=%+v, want abc123 / notes.txt", e)
@@ -933,9 +933,9 @@ func TestParseFileNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFile: %v", err)
 	}
-	n, ok := act.(FileNewAction)
+	n, ok := act.(verb.FileNewAction)
 	if !ok {
-		t.Fatalf("got %T, want FileNewAction", act)
+		t.Fatalf("got %T, want verb.FileNewAction", act)
 	}
 	if n.RelPath != "sub/notes.txt" {
 		t.Errorf("act=%+v, want sub/notes.txt", n)
@@ -1165,7 +1165,7 @@ func TestParseFilePullRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	act, ok := got.(FilePullAction)
+	act, ok := got.(verb.FilePullAction)
 	if !ok {
 		t.Fatalf("got %T", got)
 	}

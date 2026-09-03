@@ -168,3 +168,32 @@ func flagValue(fl *flag.Flag) any {
 	}
 	return fl.Value.String()
 }
+
+// For returns this spec narrowed to one surface: flags and positionals whose
+// own Surfaces exclude s are dropped.
+//
+// Needed because narrowing is real, not cosmetic. `file push` takes
+// <task-id> <local-src> <dst> on the CLI and <task-id> <dst> in a browser,
+// which has no local path to name -- so the same verb has a different arity
+// per surface, and a parser that did not know which surface it was serving
+// would reject one of them.
+//
+// A zero Surfaces on a Flag or Arg means "wherever the verb goes", which is
+// the common case; only a deliberate narrowing sets it, and the invariant
+// test requires a reason when it does.
+func (v VerbSpec) For(s Surface) VerbSpec {
+	out := v
+	out.Flags = nil
+	for _, f := range v.Flags {
+		if f.Surfaces == 0 || f.Surfaces.Has(s) {
+			out.Flags = append(out.Flags, f)
+		}
+	}
+	out.Args = nil
+	for _, a := range v.Args {
+		if a.Surfaces == 0 || a.Surfaces.Has(s) {
+			out.Args = append(out.Args, a)
+		}
+	}
+	return out
+}

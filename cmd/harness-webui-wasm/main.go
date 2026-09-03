@@ -3535,16 +3535,20 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	if len(fields) == 0 {
 		return js.ValueOf(map[string]any{"error": "parseCommand: empty line"})
 	}
-	sp, ok := verb.Lookup(fields[0])
+	// Two-word paths first (`file push`), then one (`prune`): the longer match
+	// wins, so a family verb is never mistaken for a bare one with a stray
+	// positional.
+	sp, rest, ok := lookupPath(fields)
 	if !ok {
-		return js.ValueOf(map[string]any{"error": "unknown command: " + fields[0]})
+		return js.ValueOf(map[string]any{"error": "unknown command: " + strings.Join(fields, " ")})
 	}
 	if !sp.Surfaces.Has(verb.WebUI) {
-		return js.ValueOf(map[string]any{"error": fields[0] + ": not available on this surface"})
+		return js.ValueOf(map[string]any{"error": sp.FlagSetName() + ": not available on this surface"})
 	}
+	sp = sp.For(verb.WebUI)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, fields[1:])
+	b, err := sp.Parse(fs, rest)
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
@@ -3606,4 +3610,18 @@ func harnessPathsForSurface(this js.Value, args []js.Value) any {
 		out = append(out, p)
 	}
 	return js.ValueOf(out)
+}
+
+// lookupPath resolves the longest declared verb path that prefixes fields,
+// and returns the arguments after it.
+func lookupPath(fields []string) (verb.VerbSpec, []string, bool) {
+	if len(fields) >= 2 {
+		if sp, ok := verb.Lookup(fields[0], fields[1]); ok {
+			return sp, fields[2:], true
+		}
+	}
+	if sp, ok := verb.Lookup(fields[0]); ok {
+		return sp, fields[1:], true
+	}
+	return verb.VerbSpec{}, nil, false
 }
