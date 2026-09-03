@@ -179,6 +179,19 @@ const POLL_INTERVAL_MS = 5000;
     await new Promise(r => setTimeout(r, 50));
   }
 
+  // 2b. Every verb the declaration marks as reachable here must have a case in
+  // runCmd. Asserted from inside the runtime that owns the dispatch: scanning
+  // this file from a Go test would be a regex over JavaScript, while this is
+  // exact. A verb declared for the WebUI with no case fails at load rather
+  // than telling whoever types it first that it is an unknown command.
+  const WEBUI_DISPATCH = new Set(["prune"]);
+  for (const p of window.harness.pathsForSurface("webui")) {
+    if (!WEBUI_DISPATCH.has(p)) {
+      setStatus("webui: verb \"" + p + "\" is declared for this surface but runCmd has no case for it", "error");
+      throw new Error("webui dispatch is missing a declared verb: " + p);
+    }
+  }
+
   // 3. Connect (options-bag form; persist=true enables auto-reconnect loop).
   const connectedHandlers = [];
   let connectionIsUp = false;
@@ -2482,33 +2495,17 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "prune": {
-          // Two modes, mirroring harness-cli: positional task-ids switch to
-          // id mode (--before ignored; active tasks skipped unless --force);
-          // no ids = time mode. Ids are full 32-hex, no prefix resolution —
-          // a mistype misses (safe no-op) rather than hitting another task.
-          let before = null, force = false;
-          const taskIds = [];
-          const rest = tokens.slice(1);
-          for (let i = 0; i < rest.length; i++) {
-            const t = rest[i];
-            if (t === "--force" || t === "-f") {
-              force = true;
-            } else if (t === "--before") {
-              i++;
-              if (i >= rest.length) throw new Error("prune: --before: missing DUR");
-              before = rest[i];
-            } else if (t.startsWith("--before=")) {
-              before = t.slice("--before=".length);
-            } else if (t.startsWith("-")) {
-              throw new Error(`prune: unknown flag ${t}`);
-            } else {
-              taskIds.push(t);
-            }
-          }
-          if (taskIds.length > 0) {
-            out = await window.harness.prune({ taskIds, force });
+          // Parsed by the shared declaration (cli/verb) through the wasm
+          // bridge, so this surface cannot drift from the grammar the CLI and
+          // the TUI parse. The hand-written --before / -f loop that used to
+          // live here was a third independent copy of it, and the one that
+          // spelled the task listing `list` while the others said `ls`.
+          const b = window.harness.parseCommand(line, {});
+          if (b.error) throw new Error(b.error);
+          if (b.args.length > 0) {
+            out = await window.harness.prune({ taskIds: b.args, force: !!b.flags.force });
           } else {
-            out = await window.harness.prune({ before: before || "168h" });
+            out = await window.harness.prune({ before: b.flags.before });
           }
           break;
         }

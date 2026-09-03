@@ -25,7 +25,11 @@ import (
 	"syscall/js"
 	"time"
 
+	"flag"
+	"io"
+
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -138,6 +142,8 @@ func main() {
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
+		"parseCommand":       js.FuncOf(harnessParseCommand),
+		"pathsForSurface":    js.FuncOf(harnessPathsForSurface),
 		"forwardTap":         js.FuncOf(harnessForwardTap),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
@@ -3507,4 +3513,97 @@ func harnessForwardTap(this js.Value, args []js.Value) any {
 		}),
 	}
 	return js.ValueOf(handle)
+}
+
+// harnessParseCommand parses one command line through the shared declaration
+// (cli/verb), so this surface cannot drift from the grammar the CLI and the
+// TUI parse -- the hand-written argument loops in main.js were a third
+// independent copy of it.
+//
+// Unlike fileLs and its siblings this needs no client, so it is synchronous:
+// no Promise, no goroutine. It returns the neutral Bound rather than a built
+// Action, because an Action boundary would need one marshaller per action
+// type, which is the duplication this design removes.
+//
+//	harness.parseCommand(line, {repo, host, agent}) -> {path, args, flags, set, trail}
+//	                                                 | {error: "..."}
+func harnessParseCommand(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return js.ValueOf(map[string]any{"error": "parseCommand: missing line"})
+	}
+	fields := strings.Fields(args[0].String())
+	if len(fields) == 0 {
+		return js.ValueOf(map[string]any{"error": "parseCommand: empty line"})
+	}
+	sp, ok := verb.Lookup(fields[0])
+	if !ok {
+		return js.ValueOf(map[string]any{"error": "unknown command: " + fields[0]})
+	}
+	if !sp.Surfaces.Has(verb.WebUI) {
+		return js.ValueOf(map[string]any{"error": fields[0] + ": not available on this surface"})
+	}
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, fields[1:])
+	if err != nil {
+		return js.ValueOf(map[string]any{"error": err.Error()})
+	}
+	return js.ValueOf(boundToJS(b))
+}
+
+// boundToJS renders a Bound as a plain JS object. Durations cross as strings
+// so the page never has to know Go's nanosecond representation, and numbers as
+// float64 because that is what a JS Number is.
+func boundToJS(b verb.Bound) map[string]any {
+	path := make([]any, 0, len(b.Path))
+	for _, p := range b.Path {
+		path = append(path, p)
+	}
+	as := make([]any, 0, len(b.Args))
+	for _, a := range b.Args {
+		as = append(as, a)
+	}
+	flags := map[string]any{}
+	for k, v := range b.Flags {
+		switch t := v.(type) {
+		case time.Duration:
+			flags[k] = t.String()
+		case uint:
+			flags[k] = float64(t)
+		case uint64:
+			flags[k] = float64(t)
+		default:
+			flags[k] = t
+		}
+	}
+	set := map[string]any{}
+	for k := range b.Set {
+		set[k] = true
+	}
+	return map[string]any{
+		"path": path, "args": as, "flags": flags, "set": set, "trail": b.Trail,
+	}
+}
+
+// harnessPathsForSurface lists the verb paths declared for a surface, so the
+// page can assert at startup that its dispatch covers every one of them. A
+// verb declared for the WebUI with no dispatch entry then fails at load rather
+// than reporting "unknown command" to whoever types it first.
+//
+//	harness.pathsForSurface("webui") -> ["prune", ...]
+func harnessPathsForSurface(this js.Value, args []js.Value) any {
+	want := verb.WebUI
+	if len(args) > 0 {
+		switch args[0].String() {
+		case "cli":
+			want = verb.CLI
+		case "tui":
+			want = verb.TUI
+		}
+	}
+	out := []any{}
+	for _, p := range verb.PathsForSurface(want) {
+		out = append(out, p)
+	}
+	return js.ValueOf(out)
 }
