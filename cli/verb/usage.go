@@ -90,3 +90,20 @@ func (v VerbSpec) UsageLines() []string {
 	out = append(out, v.Notes...)
 	return out
 }
+
+// ConstName is the name of the generated constant for one declared
+// discriminator value: ConstName("Sub", "stream-turn") is "SubStreamTurn".
+//
+// Exported and living here rather than in the generator because two things
+// need it and they must not disagree: the generator, which emits the
+// constant, and the guard that tells a caller which one to write instead of a
+// literal. A guard naming a constant that does not exist is worse than no
+// guard.
+func ConstName(field, value string) string {
+	var b strings.Builder
+	b.WriteString(field)
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == '-' || r == '_' }) {
+		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+	}
+	return b.String()
+}

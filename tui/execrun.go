@@ -147,7 +147,7 @@ func execResultLine(taskID string, argv []string, res cli.ExecRunResult) string 
 // prefix the way every other id-taking action here does.
 func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 	switch v.Sub {
-	case "ls":
+	case verb.SubLs:
 		// TaskFilter, not TaskID: `exec ls --task <id>` NARROWS a listing,
 		// where every other exec verb's id names the task to act on. They
 		// were one field until the declaration split them, and reading the
@@ -164,7 +164,7 @@ func (a *App) runExecRunAction(v verb.ExecRunAction) tea.Cmd {
 		// true: this is the `exec ls` cmdline verb, so its text belongs in
 		// the result pane. The `e` modal passes false.
 		return DoExecRunList(a.client, filter, true)
-	case "kill":
+	case verb.SubKill:
 		// EVERY id the operator named. The declaration takes a list on all
 		// three surfaces and this killed ExecIDs[0], so `exec kill 1 2 3` here
 		// stopped one and reported nothing about the other two.

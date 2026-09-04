@@ -89,7 +89,7 @@ func sshGatewayStartedLines(addr string) []string {
 // when there is nothing to dispatch — the report has already been appended.
 func (a *App) runSSHGatewayAction(v verb.SSHGatewayAction) tea.Cmd {
 	switch v.Sub {
-	case "status":
+	case verb.SubStatus:
 		if a.sshGateway == nil {
 			a.cmdresult.Append("ssh-gateway: not running (`ssh-gateway start` to listen)")
 			return nil
@@ -99,7 +99,7 @@ func (a *App) runSSHGatewayAction(v verb.SSHGatewayAction) tea.Cmd {
 		}
 		return nil
 
-	case "start":
+	case verb.SubStart:
 		if a.sshGateway != nil {
 			a.cmdresult.Append(ErrorStyle.Render("ssh-gateway: already listening on ") + a.sshGateway.Listen +
 				" — stop it first (`ssh-gateway stop`)")
@@ -114,7 +114,7 @@ func (a *App) runSSHGatewayAction(v verb.SSHGatewayAction) tea.Cmd {
 		// by sshgw.Listen with a message that says so.
 		return DoStartSSHGateway(a.client, v.Listen, sshgw.DefaultHostKeyPath(a.configPath), "", a.program)
 
-	case "stop":
+	case verb.SubStop:
 		if a.sshGateway == nil {
 			a.cmdresult.Append(ErrorStyle.Render("ssh-gateway: not running"))
 			return nil

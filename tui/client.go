@@ -289,9 +289,9 @@ func DoStreamWrite(c *cli.Client, v verb.SessionAction, resolved string) tea.Cmd
 		defer cancel()
 		flush := time.Duration(v.FlushMs) * time.Millisecond
 		switch v.Sub {
-		case "stream-turn":
+		case verb.SubStreamTurn:
 			out.Err = c.StreamTurn(ctx, resolved, v.Text, flush)
-		case "stream-approve":
+		case verb.SubStreamApprove:
 			resp := streamagent.Response{ID: v.RequestID, Behavior: streamagent.BehaviorAllow}
 			if v.Deny {
 				resp.Behavior, resp.Message = streamagent.BehaviorDeny, v.Message
@@ -302,9 +302,9 @@ func DoStreamWrite(c *cli.Client, v verb.SessionAction, resolved string) tea.Cmd
 				resp.AcceptSuggestion = &n
 			}
 			out.Err = c.StreamApprove(ctx, resolved, resp, flush)
-		case "stream-interrupt":
+		case verb.SubStreamInterrupt:
 			out.Err = c.StreamInterrupt(ctx, resolved, flush)
-		case "stream-finish":
+		case verb.SubStreamFinish:
 			out.Err = c.StreamFinish(ctx, resolved, flush)
 		default:
 			out.Err = fmt.Errorf("unknown stream verb %q", v.Sub)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,88 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/objproto"
 )
-
-func runGit(cid objproto.ConnectionID, args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos|file} ...")
-	}
-	taskID := args[0]
-	sub := args[1]
-	rest := args[2:]
-
-	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
-	color := isTTY(os.Stdout)
-	emit := func(res *cli.GitResult, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := res.Err(); err != nil {
-			return err
-		}
-		renderGitResult(os.Stdout, res, color)
-		return nil
-	}
-
-	// Parsed from the declaration (cli/verb): flags, aliases, revision counts
-	// and cross-flag validity are written down once, and the TUI and the WebUI
-	// read the same entries.
-	sp, ok := verb.Lookup("git", sub)
-	if !ok {
-		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", sub)
-	}
-	sp = sp.For(verb.CLI)
-	fs := flagSetFor(sp)
-	b, perr := sp.Parse(fs, rest)
-	if perr != nil {
-		return perr
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		return berr
-	}
-	g := act.(verb.GitAction)
-	q := cli.GitQuery{
-		BaseRev: g.BaseRev, TargetRev: g.TargetRev, Path: g.Path, Subrepo: g.Subrepo,
-		MaxCommits: g.Max, MaxBytes: g.MaxBytes, SubmoduleDiff: g.Submodule,
-	}
-	switch g.Sub {
-	case "log":
-		return emit(c.GitLog(ctx, taskID, q))
-	case "diff":
-		if g.Staged {
-			q.Target = protocol.GitDiffTarget_Index
-		} else if g.TargetRev != "" {
-			q.Target = protocol.GitDiffTarget_Rev
-		}
-		return emit(c.GitDiff(ctx, taskID, q))
-	case "show":
-		return emit(c.GitShow(ctx, taskID, q))
-	case "status":
-		return emit(c.GitStatus(ctx, taskID, q))
-	case "subrepos":
-		return emit(c.GitSubrepos(ctx, taskID, q))
-	case "file":
-		if g.Staged {
-			q.Target = protocol.GitDiffTarget_Index
-		} else if g.TargetRev != "" {
-			// `git file --rev X` reads the copy AT X, so the revision is the
-			// query's base and the target names which side to read.
-			q.Target = protocol.GitDiffTarget_Rev
-			q.BaseRev = g.TargetRev
-			q.TargetRev = ""
-		}
-		return emit(c.GitFile(ctx, taskID, q))
-	}
-	return fmt.Errorf("git: unhandled sub-verb %q", g.Sub)
-}
 
 const (
 	ansiReset = "\x1b[0m"

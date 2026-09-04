@@ -53,7 +53,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 	}
 
 	switch a.Sub {
-	case "ls":
+	case verb.SubLs:
 		// Arity is the declaration's now: `workspace ls` takes no positional,
 		// so a stray word is refused at the parse rather than by a len(args)
 		// test written per sub-verb.
@@ -67,7 +67,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		}
 		return nil
 
-	case "rm":
+	case verb.SubRm:
 		if f == nil || !f.Remove(a.Name) {
 			return fmt.Errorf("no workspace named %q in %s", a.Name, path)
 		}
@@ -77,7 +77,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		fmt.Printf("workspace %s removed from %s\n", a.Name, path)
 		return nil
 
-	case "show":
+	case verb.SubShow:
 		if f == nil {
 			return fmt.Errorf("no config at %s", path)
 		}
@@ -95,7 +95,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		os.Stdout.Write(workspace.Block(ws))
 		return nil
 
-	case "save":
+	case verb.SubSave:
 		// `ws` is taken below by the workspace.Workspace being built.
 		name := a.Name
 		taskID, resume, runner, repo := &a.TaskID, &a.Resume, &a.Runner, &a.Repo

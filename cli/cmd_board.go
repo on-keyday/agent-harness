@@ -117,7 +117,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, sub string, 
 // itself rather than handing this function a sub-verb string to look up.
 func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.BoardAction, out io.Writer) error {
 	switch ba.Sub {
-	case "topics":
+	case verb.SubTopics:
 		rows, err := BoardTopics(ctx, cid)
 		if err != nil {
 			return err
@@ -187,7 +187,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				r.name, r.msgs, retractedCol, subCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
 		}
 
-	case "read":
+	case verb.SubRead:
 		inReplyTo, asJSON := &ba.InReplyTo, &ba.JSON
 		topic := ba.Topic
 		msgs, found, err := BoardRead(ctx, cid, topic)
@@ -272,7 +272,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				topic, len(msgs), *inReplyTo)
 		}
 
-	case "subscribers":
+	case verb.SubSubscribers:
 		// Optional <topic>: with it, only the tasks a publish to that topic
 		// would reach; without it, every task known to the board.
 		topic := ba.Topic
@@ -297,7 +297,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)
 		}
 
-	case "retract":
+	case verb.SubRetract:
 		// --seq required and non-zero is enforced in the verb's Build:
 		// deliberately NOT purge's "0 means the whole topic", because
 		// withdrawing a topic-full of other agents' messages on a mistyped flag
@@ -315,7 +315,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		}
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"seq\":%d}\n", status, topic, *seq)
 
-	case "purge":
+	case verb.SubPurge:
 		// Permuted, and load-bearing rather than convenient: with stdlib
 		// parsing `board purge <topic> --seq N` -- the form the usage line
 		// prints -- left --seq unread and fell through to seq 0, which is the

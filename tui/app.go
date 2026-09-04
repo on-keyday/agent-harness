@@ -3087,9 +3087,9 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
 	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
 	switch v.Kind {
-	case "submit":
+	case verb.KindSubmit:
 		return a, DoSubmitWithOpts(a.client, repo, v.Task, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
-	case "interactive":
+	case verb.KindInteractive:
 		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
 	}
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}

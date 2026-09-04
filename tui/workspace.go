@@ -212,7 +212,7 @@ func (a *App) gridArgsString() string {
 // live client; ls and show read the file.
 func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 	switch v.Sub {
-	case "apply":
+	case verb.SubApply:
 		if v.Name != "" {
 			ws, ok := a.workspaceFile.Workspace(v.Name)
 			if !ok {
@@ -231,7 +231,7 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		}
 		return a.applyWorkspace()
 
-	case "detach":
+	case verb.SubDetach:
 		if a.workspace == nil {
 			a.cmdresult.Append(WarnStyle.Render("workspace detach: no workspace installed"))
 			return nil
@@ -274,7 +274,7 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 			"workspace %s: detached — %d forward(s) stopped; resumed sessions left running", name, stopped))
 		return nil
 
-	case "ls":
+	case verb.SubLs:
 		names := a.workspaceFile.Names()
 		if len(names) == 0 {
 			a.cmdresult.Append("workspace ls: no workspaces in " + a.workspaceConfigPath())
@@ -289,7 +289,7 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		}
 		return nil
 
-	case "show":
+	case verb.SubShow:
 		name := v.Name
 		if name == "" && a.workspace != nil {
 			name = a.workspace.Name
@@ -304,7 +304,7 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		}
 		return nil
 
-	case "rm":
+	case verb.SubRm:
 		if a.workspaceFile == nil || !a.workspaceFile.Remove(v.Name) {
 			a.cmdresult.Append(ErrorStyle.Render("workspace rm: no workspace named " + v.Name))
 			return nil
@@ -326,7 +326,7 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		a.cmdresult.Append(OKStyle.Render("workspace " + v.Name + " removed from " + path))
 		return nil
 
-	case "save":
+	case verb.SubSave:
 		return a.saveWorkspace(v.Name, v.All)
 	}
 	return nil

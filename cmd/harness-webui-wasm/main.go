@@ -3110,19 +3110,24 @@ func harnessFileEditEncode(this js.Value, args []js.Value) any {
 // gitKindFromJS maps the page's kind string onto the protocol enum. An
 // unknown string is an explicit error rather than a silent zero value, which
 // would quietly turn a typo into a log query.
+//
+// The strings are the declaration's own Sub values -- the page gets them from
+// the parsed action and hands them back across the JS boundary -- so they are
+// named, not spelled: renaming one in the table breaks this build instead of
+// silently reaching the error below.
 func gitKindFromJS(s string) (protocol.GitQueryKind, error) {
 	switch s {
-	case "log":
+	case verb.SubLog:
 		return protocol.GitQueryKind_Log, nil
-	case "diff":
+	case verb.SubDiff:
 		return protocol.GitQueryKind_Diff, nil
-	case "show":
+	case verb.SubShow:
 		return protocol.GitQueryKind_Show, nil
-	case "status":
+	case verb.SubStatus:
 		return protocol.GitQueryKind_Status, nil
-	case "subrepos":
+	case verb.SubSubrepos:
 		return protocol.GitQueryKind_Subrepos, nil
-	case "file":
+	case verb.SubFile:
 		return protocol.GitQueryKind_File, nil
 	}
 	return 0, fmt.Errorf("gitQuery: unknown kind %q", s)

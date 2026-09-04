@@ -221,6 +221,41 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 	}
 	buf.WriteString(")\n")
 
+	// The values the declaration FIXES on an action's discriminator field --
+	// Sub, Kind. Every surface switches on one, and every one of them spelled
+	// the values by hand: `case "stream-turn"`, `case "ls"`. A rename in the
+	// table left those matching nothing, silently, because a string case
+	// label that no value reaches is not an error in Go.
+	//
+	// One constant per (field, value), not per verb: several verbs share a
+	// value (five different `ls`), and what a switch compares is the value.
+	type constPair struct{ field, value string }
+	seenConst := map[constPair]bool{}
+	var constOrder []constPair
+	for _, v := range verb.Verbs {
+		for _, field := range sortedKeys(v.Const) {
+			cp := constPair{field, v.Const[field]}
+			if seenConst[cp] {
+				continue
+			}
+			seenConst[cp] = true
+			constOrder = append(constOrder, cp)
+		}
+	}
+	sort.Slice(constOrder, func(i, j int) bool {
+		if constOrder[i].field != constOrder[j].field {
+			return constOrder[i].field < constOrder[j].field
+		}
+		return constOrder[i].value < constOrder[j].value
+	})
+	fmt.Fprintf(buf, "\n// Discriminator values, as the table fixes them. A switch over an\n"+
+		"// action's Sub or Kind takes these, so a value renamed in the table is a\n"+
+		"// build error at every surface instead of a case nothing reaches.\nconst (\n")
+	for _, cp := range constOrder {
+		fmt.Fprintf(buf, "\t%s = %q\n", verb.ConstName(cp.field, cp.value), cp.value)
+	}
+	buf.WriteString(")\n")
+
 	buf.WriteString("\n// Typed parsers. One per verb, and the only entry a caller needs: the\n" +
 		"// name lives here, the surface narrowing is not forgettable, and the\n" +
 		"// result is already the right type -- so a call site has no string, no\n" +
@@ -285,6 +320,7 @@ func emitNamesAndParsers(buf *bytes.Buffer) {
 // DOM, and forcing one output model on the other two is the thing the
 // declaration was never meant to do. This fixes WHICH verbs each surface
 // answers, not what answering means there.
+
 // canonical groups verbs that are the SAME operation under two spellings --
 // `quit` / `exit`, `refresh` / `sync`. D16 refused a path-alias mechanism, so
 // they are two declared paths that fix the same Action and the same Const; the
