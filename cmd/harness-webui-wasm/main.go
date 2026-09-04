@@ -3917,18 +3917,26 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return js.ValueOf(map[string]any{"error": "parseGit: missing line"})
 	}
+	// The WHOLE line, id and all. It used to take the already-peeled `git
+	// <sub> ...`, which left the page holding the family word, the id's
+	// position and a hand-written list of the sub-verbs in its error string
+	// -- the fourth copy of that list across three surfaces.
 	fields := commandFields(args[0])
-	if len(fields) < 2 || fields[0] != "git" {
-		return js.ValueOf(map[string]any{"error": "parseGit: want `git <sub> ...`"})
+	rest, taskID, isMidPath, perr := verb.PeelMidPathID(verb.WebUI, fields)
+	if !isMidPath {
+		return js.ValueOf(map[string]any{"error": "parseGit: want `git <task-id> <sub> ...`"})
 	}
-	sp, ok := verb.Lookup("git", fields[1])
+	if perr != nil {
+		return js.ValueOf(map[string]any{"error": perr.Error()})
+	}
+	sp, ok := verb.Lookup(rest[0], rest[1])
 	if !ok {
-		return js.ValueOf(map[string]any{"error": "git: unknown sub-verb " + fields[1]})
+		return js.ValueOf(map[string]any{"error": "git: unknown sub-verb " + rest[1]})
 	}
 	sp = sp.For(verb.WebUI)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, fields[2:])
+	b, err := sp.Parse(fs, rest[2:])
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
@@ -3941,7 +3949,8 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 		return js.ValueOf(map[string]any{"error": "git: unexpected action"})
 	}
 	return js.ValueOf(map[string]any{
-		"sub": g.Sub, "baseRev": g.BaseRev, "targetRev": g.TargetRev,
+		"taskId": taskID,
+		"sub":    g.Sub, "baseRev": g.BaseRev, "targetRev": g.TargetRev,
 		"path": g.Path, "subrepo": g.Subrepo,
 		"staged": g.Staged, "submodule": g.Submodule,
 		"max": float64(g.Max), "maxBytes": float64(g.MaxBytes),

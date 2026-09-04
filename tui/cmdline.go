@@ -44,25 +44,28 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return act, perr
 	}
 
-	// The two shapes the generated prefix match cannot reach on its own.
-	switch tokens[0] {
-	case "git":
-		// `git <task-id> <sub>` puts the id in the MIDDLE of the path, so no
-		// prefix of the line is the verb. Peeled here exactly as the CLI and
-		// the WebUI peel it, then parsed through the same generated entry.
-		if len(tokens) < 3 {
-			return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status | subrepos | file} ...")
-		}
-		act, handled, perr := verb.ParseTUICommand(append([]string{"git", tokens[2]}, tokens[3:]...), nil)
+	// `git <task-id> log` puts the id in the MIDDLE of the verb, so no prefix
+	// of the line is the path. Which families are shaped that way is declared
+	// (IDBeforeSub) and the peel is shared with the CLI and the WebUI, so
+	// this surface holds neither the literal nor the sub-verb list.
+	if rest, id, isMidPath, perr := verb.PeelMidPathID(verb.TUI, tokens); isMidPath {
 		if perr != nil {
 			return nil, perr
 		}
+		act, handled, aerr := verb.ParseTUICommand(rest, nil)
+		if aerr != nil {
+			return nil, aerr
+		}
 		if !handled {
-			return nil, fmt.Errorf("git: unknown sub-verb %q", tokens[2])
+			return nil, fmt.Errorf("%s: not declared for this surface", strings.Join(rest, " "))
 		}
 		g := act.(verb.GitAction)
-		g.TaskID = tokens[1]
+		g.TaskID = id
 		return g, nil
+	}
+
+	// The one other shape the generated prefix match cannot reach.
+	switch tokens[0] {
 	case "session":
 		// requests / snapshot are specified and not built (design §3). Naming
 		// one has to say THAT rather than "unknown".

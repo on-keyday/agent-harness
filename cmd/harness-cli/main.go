@@ -125,19 +125,27 @@ func main() {
 	// and goes through the same generated entry.
 	tokens := append([]string{sub}, args...)
 	h := cliVerbs{ctx: ctx, cid: parseCID}
-	if sub == "git" {
-		if len(args) < 2 {
-			die(fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos|file} ..."))
-		}
-		act, handled, perr := verb.ParseCLICommand(append([]string{"git", args[1]}, args[2:]...), nil)
+
+	// `git <task-id> log` puts the id in the MIDDLE of the verb, so no prefix
+	// of the line is the path and the generic longest-prefix match cannot
+	// find it. Which families are shaped that way is declared (IDBeforeSub),
+	// and the peel itself is shared, so this surface holds neither the
+	// literal "git" nor a list of its sub-verbs -- both of which it held
+	// twice, in the two error strings, two lines above the function that
+	// derives that list from the table.
+	if rest, id, isMidPath, perr := verb.PeelMidPathID(verb.CLI, tokens); isMidPath {
 		if perr != nil {
 			die(perr)
 		}
+		act, handled, aerr := verb.ParseCLICommand(rest, nil)
+		if aerr != nil {
+			die(aerr)
+		}
 		if !handled {
-			die(fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", args[1]))
+			die(fmt.Errorf("%s: not declared for this surface", strings.Join(rest, " ")))
 		}
 		g := act.(verb.GitAction)
-		g.TaskID = args[0]
+		g.TaskID = id
 		if err, ok := verb.DispatchCLIAction[error](h, g); ok {
 			if err != nil {
 				die(err)
@@ -155,28 +163,50 @@ func main() {
 		return
 	}
 	// A family word with no sub-verb -- `file`, `session`, `board` -- reaches
-	// here, and so does an outright unknown one. The four with a dedicated
-	// usage keep it; every other family gets its sub-verb list FROM THE
-	// TABLE, which is where the four hand-written ones (`file
-	// {push|pull|ls|mkdir|delete|edit|new}` and its three siblings) each
-	// drifted from: `file edit` and `file new` existed for a release without
-	// appearing in that line.
-	switch {
-	case sub == "server":
-		serverUsage()
-	case sub == "board":
-		boardUsage()
-	case sub == "agent":
-		agentUsage()
-	case sub == "workspace":
-		workspaceUsage()
-	case len(familySubverbs(sub)) > 0:
-		fmt.Fprintf(os.Stderr, "usage: harness-cli %s {%s} ...\n",
-			sub, strings.Join(familySubverbs(sub), "|"))
-	default:
+	// here, and so does an outright unknown one.
+	if !familyUsageTo(os.Stderr, sub) {
 		usage()
 	}
 	os.Exit(2)
+}
+
+// familyUsageTo writes one family's help: its synopses and notes, straight
+// from the table. Reports whether `head` names a family at all.
+//
+// It replaces serverUsage / boardUsage / agentUsage / workspaceUsage -- about
+// sixty lines that restated the grammar a third time, after usage() and after
+// the parser. Their prose is not lost: it moved into VerbSpec.Notes and
+// FamilyNotes, beside the verbs it describes, where usage() prints it too.
+func familyUsageTo(w io.Writer, head string) bool {
+	paths := verb.PathsForSurface(verb.CLI)
+	found := false
+	for _, p := range paths {
+		f := strings.Fields(p)
+		if len(f) < 2 || f[0] != head {
+			continue
+		}
+		if !found {
+			fmt.Fprintf(w, "usage: harness-cli %s {%s} ...\n\n",
+				head, strings.Join(familySubverbs(head), "|"))
+			found = true
+		}
+		sp, ok := verb.Lookup(f...)
+		if !ok {
+			continue
+		}
+		lines := sp.For(verb.CLI).UsageLines()
+		fmt.Fprintf(w, "  %s\n", lines[0])
+		for _, n := range lines[1:] {
+			fmt.Fprintf(w, "      %s\n", n)
+		}
+	}
+	if !found {
+		return false
+	}
+	for _, n := range verb.FamilyNotes[head] {
+		fmt.Fprintf(w, "\n%s\n", n)
+	}
+	return true
 }
 
 // familySubverbs lists the declared second words under one first word, in
@@ -365,76 +395,6 @@ func printFamilyNotes(w io.Writer, family string) {
 	for _, n := range verb.FamilyNotes[family] {
 		fmt.Fprintf(w, "      %s\n", n)
 	}
-}
-
-func serverUsage() { serverUsageTo(os.Stderr) }
-
-func serverUsageTo(w io.Writer) {
-	fmt.Fprintln(w, "usage: harness-cli server <subcommand> [flags]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Subcommands:")
-	fmt.Fprintln(w, "  dial-runner [--via RUNNER_CID] RUNNER_CID")
-	fmt.Fprintln(w, "                                      ask the server to reverse-dial RUNNER_CID (Phase A/B)")
-	fmt.Fprintln(w, "                                      --via relays through an already-connected runner (Phase B)")
-	fmt.Fprintln(w, "                                      (runner must be running in --listen / --udp-listen mode)")
-	fmt.Fprintln(w, "                                      prints the DialRunnerStatus and exits non-zero on non-Ok")
-}
-
-func boardUsage() { boardUsageTo(os.Stderr) }
-
-func boardUsageTo(w io.Writer) {
-	fmt.Fprintln(w, "usage: harness-cli board <subcommand> [flags]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Subcommands:")
-	fmt.Fprintln(w, "  topics                              list every topic on the board with metadata (cap: info_global)")
-	fmt.Fprintln(w, "  read <topic> [--in-reply-to N] [--json]  print retained messages for <topic> (text: header + pretty payload; --json: JSON Lines, same record shape as agent inbox --json; not found = exit 0)")
-	fmt.Fprintln(w, "  subscribers [topic]                 list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: info_global)")
-	fmt.Fprintln(w, "  retract <topic> --seq N             withdraw one message: gone from every agent path, still readable here")
-	fmt.Fprintln(w, "                                      until the topic ages out. --seq is required — there is no whole-topic")
-	fmt.Fprintln(w, "                                      retract (cap: purge)")
-	fmt.Fprintln(w, "  purge <topic> [--seq N]             drop the whole topic ring (seq=0) or one message by seq. Unlike retract")
-	fmt.Fprintln(w, "                                      this destroys the bytes, operator view included (cap: purge)")
-}
-
-func agentUsage() { agentUsageTo(os.Stderr) }
-
-func agentUsageTo(w io.Writer) {
-	fmt.Fprintln(w, "usage: harness-cli agent <subcommand> [flags]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Env-primary (HARNESS_*): SERVER_CID, TASK_ID, RUNNER_ID, HOSTNAME, WS_PATH, REPO_PATH")
-	fmt.Fprintln(w, "HARNESS_AUTH_TICKET is env-only (no flag accepted).")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Subcommands:")
-	fmt.Fprintln(w, "  send --topic T TEXT...              publish a message. The body is the trailing words, or")
-	fmt.Fprintln(w, "                                       --data STRING, or --data - to read it from stdin. \"-\" is a")
-	fmt.Fprintln(w, "                                       VALUE OF --data, never a positional: `send --topic T -`")
-	fmt.Fprintln(w, "                                       publishes the one-byte body \"-\". The ok line reports bytes")
-	fmt.Fprintln(w, "                                       and source, so a body that went out wrong says so at once")
-	fmt.Fprintln(w, "  send --in-reply-to SEQ TEXT...      reply to SEQ; --topic optional (server routes it where that message asked)")
-	fmt.Fprintln(w, "  send --reply-to R ...               route replies to THIS message to R instead of your own")
-	fmt.Fprintln(w, "                                       chat.<short-id>; the peer answers with --in-reply-to alone")
-	fmt.Fprintln(w, "  wait --topic T [--since N] [--in-reply-to SEQ] [--timeout DUR]")
-	fmt.Fprintln(w, "                                       take everything after --since, blocking only if there is nothing;")
-	fmt.Fprintln(w, "                                       omitting --since means cursor 0, so a non-empty ring returns AT ONCE")
-	fmt.Fprintln(w, "                                       with old messages (scripting; NOT from an agent turn)")
-	fmt.Fprintln(w, "  inbox [--since N] [--in-reply-to SEQ]  idempotent dump of subscribed topics; --since 0 (default) = whole ring")
-	fmt.Fprintln(w, "  read SEQ                            fetch one retained message, whole; the hooks name it when they")
-	fmt.Fprintln(w, "                                       decline to inline a large body. Limited to subscribed topics")
-	fmt.Fprintln(w, "  subscribe --topic T                  register a subscription")
-	fmt.Fprintln(w, "  unsubscribe --topic T                remove a subscription")
-	fmt.Fprintln(w, "  dispatch --topic T TEXT... [--reply-to R] [--timeout DUR]")
-	fmt.Fprintln(w, "                                       send, then block for the reply to THAT message. --reply-to R")
-	fmt.Fprintln(w, "                                       declares R as the destination AND waits there; default is your")
-	fmt.Fprintln(w, "                                       own chat.<short-id>. --timeout bounds the WHOLE call, publish")
-	fmt.Fprintln(w, "                                       ack included (scripting; NOT from an agent turn)")
-	fmt.Fprintln(w, "  topics                              list every topic on the board (JSON Lines) (cap: info_global)")
-	fmt.Fprintln(w, "  subscriptions                       list this agent's registered patterns (JSON Lines)")
-	fmt.Fprintln(w, "  retained --topic T | --self          list a topic's retained ring as metadata only, no payload (no cap)")
-	fmt.Fprintln(w, "  purge --topic T | --self [--seq N]   drop a topic's retained buffer, or one message by seq (cap: purge)")
-	fmt.Fprintln(w, "  retract SEQ                         withdraw a message YOU sent: gone from every agent path, still")
-	fmt.Fprintln(w, "                                       visible to the operator as retracted (no cap; authorship-checked)")
-	fmt.Fprintln(w, "                                       a reply to a message addressed to you retracts it automatically;")
-	fmt.Fprintln(w, "                                       send --no-retire-on-reply to keep one alive past its answer")
 }
 
 func die(err error) {

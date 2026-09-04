@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"sort"
 	"strings"
 	"testing"
@@ -11,32 +10,17 @@ import (
 )
 
 // usageText is everything `harness-cli` prints when it is asked what it can
-// do: the top-level list plus the four sub-usages it defers to.
+// do.
+//
+// It used to stitch in four sub-usages -- serverUsageTo, boardUsageTo,
+// agentUsageTo, workspaceUsageTo -- and prefix each line with its namespace,
+// because usage() described those families by name only and left their
+// sub-verbs to a second function. usage() now loops over
+// PathsForSurface(CLI), so every declared verb is in the one text and the
+// stitching described a structure that no longer exists.
 func usageText() string {
 	var b bytes.Buffer
 	usageTo(&b)
-	// The sub-usages describe `harness-cli <ns> <sub>` and print only the sub
-	// half, so the namespace is prefixed back on. Without it every `agent *`
-	// path read as undescribed while agentUsage names all twelve.
-	for ns, fn := range map[string]func(io.Writer){
-		"server": serverUsageTo, "board": boardUsageTo,
-		"agent": agentUsageTo, "workspace": workspaceUsageTo,
-	} {
-		var sub bytes.Buffer
-		fn(&sub)
-		for _, l := range strings.Split(sub.String(), "\n") {
-			// A sub-usage's SUBCOMMAND entries are indented exactly two;
-			// everything else is a header, a `usage:` synopsis or explanatory
-			// prose. Both halves need the namespace prefixed for the forward
-			// check, and only the first may be read as naming a verb -- so
-			// the rest is pushed to a deeper indent the reverse check skips.
-			indent := "      "
-			if strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   ") {
-				indent = "  "
-			}
-			b.WriteString(indent + ns + " " + strings.TrimSpace(l) + "\n")
-		}
-	}
 	return b.String()
 }
 

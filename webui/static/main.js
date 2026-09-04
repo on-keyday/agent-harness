@@ -6230,13 +6230,12 @@ async function runVerbCommand(tokens, ctx) {
     }
     case "git": {
       // `git <task-id> <sub> ...`: the id sits between the family word and
-      // the sub-verb, so it is peeled before the shared parse, exactly as
-      // the CLI and the TUI do.
-      if (tokens.length < 2) throw new Error("git: usage: git <task-id> {log | diff | show | status | subrepos | file} [...]");
-      const taskID = tokens[1];
-      const g = ctx.harness.parseGit(["git", ...tokens.slice(2)]);
+      // the sub-verb. The bridge peels it -- from the declaration, which says
+      // WHICH families are shaped this way -- so this page holds neither the
+      // id's position nor a list of the sub-verbs, both of which it did.
+      const g = ctx.harness.parseGit(tokens);
       if (g.error) throw new Error(g.error);
-      out = await runGitAction(taskID, g);
+      out = await runGitAction(g.taskId, g);
       break;
     }
     case "server": {

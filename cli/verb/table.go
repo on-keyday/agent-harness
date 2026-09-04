@@ -238,6 +238,7 @@ var Verbs = []VerbSpec{
 	// refusing it.
 	{
 		Path:          []string{"git", "log"},
+		IDBeforeSub:   true,
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -251,7 +252,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git log", "git log --max 20"},
 	},
 	{
-		Path: []string{"git", "diff"},
+		Path:        []string{"git", "diff"},
+		IDBeforeSub: true,
 		Notes: []string{
 			"counts revisions the way git does: none = unstaged, one = that revision",
 			"against the working tree, two = commit against commit",
@@ -295,7 +297,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"git", "show"},
+		Path:        []string{"git", "show"},
+		IDBeforeSub: true,
 		Notes: []string{
 			"--submodule inlines a submodule's own changes",
 		},
@@ -314,6 +317,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"git", "status"},
+		IDBeforeSub:   true,
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -325,7 +329,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git status"},
 	},
 	{
-		Path: []string{"git", "subrepos"},
+		Path:        []string{"git", "subrepos"},
+		IDBeforeSub: true,
 		Notes: []string{
 			"list the nested repositories under the worktree",
 		},
@@ -341,6 +346,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:          []string{"git", "file"},
+		IDBeforeSub:   true,
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -589,7 +595,10 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"server", "dial-runner"},
 		Notes: []string{
-			"ask the server to reverse-dial a Listen-mode runner",
+			"ask the server to reverse-dial RUNNER_CID (Phase A/B)",
+			"--via relays through an already-connected runner (Phase B)",
+			"(the runner must be running in --listen / --udp-listen mode)",
+			"prints the DialRunnerStatus and exits non-zero on non-Ok",
 		},
 		Action:   "ServerDialRunnerAction",
 		Surfaces: CLI | TUI | WebUI,
@@ -675,10 +684,11 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "save"},
 		Notes: []string{
-			"record the registered forwards into .harness/config as a named workspace;",
-			"every task with one unless --task narrows it. MERGES: blocks it did not",
-			"observe are kept and an existing block's resume/runner are never reset",
-			"(in-process forwards \u2014 a raw TUI pane, a WebUI preview pin \u2014 have no local",
+			"records every task the registry reports a forward for; --task narrows it to one,",
+			"and is also how a task's forwards get CLEARED after you stop them.",
+			"It MERGES: task blocks it did not observe are kept, and an existing block's",
+			"resume / runner are never overwritten -- those are yours to hand-edit.",
+			"(in-process forwards -- a raw TUI pane, a WebUI preview pin -- have no local",
 			"address to write down and are skipped, with a count)",
 		},
 		Action: "WorkspaceAction",
@@ -785,7 +795,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "topics"},
 		Notes: []string{
-			"list the board's topics with message and subscriber counts",
+			"list every topic on the board with metadata (cap: board_observe)",
 		},
 		Surfaces: CLI,
 		Examples: []string{"board topics"},
@@ -795,7 +805,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "read"},
 		Notes: []string{
-			"read one topic's retained messages",
+			"print retained messages for <topic> (text: header + pretty payload;",
+			"--json: JSON Lines, the same record shape as `agent inbox --json`; not found = exit 0)",
 		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
@@ -811,7 +822,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "subscribers"},
 		Notes: []string{
-			"list who subscribes to a topic, or to all of them",
+			"list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: board_observe)",
 		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
@@ -824,7 +835,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "retract"},
 		Notes: []string{
-			"withdraw ONE message from every agent path, leaving it readable to the operator",
+			"withdraw one message: gone from every agent path, still readable here until the topic ages out.",
+			"--seq is required -- there is no whole-topic retract (cap: purge)",
 		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
@@ -849,7 +861,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "purge"},
 		Notes: []string{
-			"destroy a topic's retained-message buffer",
+			"drop the whole topic ring (seq=0) or one message by seq.",
+			"Unlike retract this destroys the bytes, operator view included (cap: purge)",
 		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
@@ -1076,7 +1089,14 @@ var Verbs = []VerbSpec{
 		Examples: []string{"notify --level warn --title build the tree is red"},
 	},
 	{
-		Path:     []string{"agent", "send"},
+		Path: []string{"agent", "send"},
+		Notes: []string{
+			"publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
+			"A bare \"-\" is a VALUE OF --data, never a positional: `send --topic T -` publishes the one-byte body \"-\".",
+			"The ok line reports bytes and source, so a body that went out wrong says so at once.",
+			"--in-reply-to SEQ replies to that message; --topic is then optional (the server routes it where that message asked).",
+			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
+		},
 		Surfaces: CLI,
 		Action:   "AgentSendAction",
 		Const:    map[string]string{"Kind": "send"},
@@ -1086,7 +1106,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent send --topic chat.abcd1234 hello there"},
 	},
 	{
-		Path:     []string{"agent", "dispatch"},
+		Path: []string{"agent", "dispatch"},
+		Notes: []string{
+			"send, then block for the reply to THAT message. --reply-to R declares R as the destination AND waits there;",
+			"default is your own chat.<short-id>. --timeout bounds the WHOLE call, publish ack included",
+			"(scripting; NOT from an agent turn)",
+		},
 		Surfaces: CLI,
 		Action:   "AgentSendAction",
 		Const:    map[string]string{"Kind": "dispatch"},
@@ -1702,6 +1727,9 @@ var Verbs = []VerbSpec{
 	// and read HARNESS_* env, which no operator surface has.
 	{
 		Path: []string{"agent", "inbox"}, Surfaces: CLI,
+		Notes: []string{
+			"idempotent dump of subscribed topics; --since 0 (default) = the whole ring",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "inbox"},
 		Flags: append(agentCommonFlags(),
@@ -1715,6 +1743,11 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "wait"}, Surfaces: CLI,
+		Notes: []string{
+			"take everything after --since, blocking only if there is nothing;",
+			"omitting --since means cursor 0, so a non-empty ring returns AT ONCE with old messages",
+			"(scripting; NOT from an agent turn)",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "wait"},
 		Flags: append(agentCommonFlags(),
@@ -1728,6 +1761,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscribe"}, Surfaces: CLI,
+		Notes: []string{
+			"register a subscription",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "subscribe"},
 		// --self names the agent's own id-directed topic, so pairing it with
@@ -1738,6 +1774,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "unsubscribe"}, Surfaces: CLI,
+		Notes: []string{
+			"remove a subscription",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "unsubscribe"},
 		// --self names the agent's own id-directed topic, so pairing it with
@@ -1748,6 +1787,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "topics"}, Surfaces: CLI,
+		Notes: []string{
+			"list every topic on the board (JSON Lines) (cap: board_observe)",
+		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "topics"},
 		Flags:    agentCommonFlags(),
@@ -1755,6 +1797,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscriptions"}, Surfaces: CLI,
+		Notes: []string{
+			"list this agent's registered patterns (JSON Lines)",
+		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "subscriptions"},
 		Flags:    agentCommonFlags(),
@@ -1762,6 +1807,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retained"}, Surfaces: CLI,
+		Notes: []string{
+			"list a topic's retained ring as metadata only, no payload (no cap)",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "retained"},
 		// --self names the agent's own id-directed topic, so pairing it with
@@ -1772,6 +1820,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "purge"}, Surfaces: CLI,
+		Notes: []string{
+			"drop a topic's retained buffer, or one message by seq (cap: purge)",
+		},
 		Action: "AgentAction",
 		Const:  map[string]string{"Sub": "purge"},
 		// --self names the agent's own id-directed topic, so pairing it with
@@ -1785,6 +1836,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "read"}, Surfaces: CLI,
+		Notes: []string{
+			"fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
+			"Limited to topics this task subscribes to.",
+		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "read"},
 		Args:     []Arg{{Name: "seq", Type: ArgUint, Field: "Seq"}},
@@ -1793,6 +1848,11 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retract"}, Surfaces: CLI,
+		Notes: []string{
+			"withdraw a message YOU sent: gone from every agent path, still visible to the operator as retracted",
+			"(no cap; authorship-checked). A reply to a message addressed to you retracts it automatically;",
+			"send --no-retire-on-reply to keep one alive past its answer.",
+		},
 		Action:   "AgentAction",
 		Const:    map[string]string{"Sub": "retract"},
 		Args:     []Arg{{Name: "seq", Type: ArgUint, Field: "Seq"}},
@@ -1937,7 +1997,12 @@ func init() {
 		"neither exists here — a forward dies with the process that holds it",
 	}
 	FamilyNotes["agent"] = []string{
-		"agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)",
+		"agent-to-agent message ops, run from inside a task's own shell.",
+		"Env-primary (HARNESS_*): SERVER_CID, TASK_ID, RUNNER_ID, HOSTNAME, WS_PATH, REPO_PATH.",
+		"HARNESS_AUTH_TICKET is env-only -- no flag accepts it, so an agent cannot be told to present someone else's.",
+	}
+	FamilyNotes["server"] = []string{
+		"server-side operations, addressed to the server rather than to a task",
 	}
 	FamilyNotes["board"] = []string{
 		"inspect/withdraw/purge the agentboard (cap: board_observe; retract and purge: purge)",

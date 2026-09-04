@@ -416,6 +416,17 @@ type VerbSpec struct {
 	// The synopsis itself is never written here. Usage() derives it from
 	// Flags and Args, so a flag added to the table appears in the help
 	// without anyone editing prose.
+	// IDBeforeSub marks a verb whose task id is typed BETWEEN the family word
+	// and the sub-verb: `git <task-id> log`. No prefix of such a line is the
+	// path, so the generic longest-prefix match cannot find it, and each
+	// surface peeled the id by hand against a literal "git" -- three copies
+	// of one fact, and a fourth in the two error strings that spelled the
+	// sub-verb list beside the function that derives it.
+	//
+	// Declaring it means MidPathIDVerbs() answers "which families do this",
+	// so a second such family is a table edit rather than three.
+	IDBeforeSub bool
+
 	Notes []string
 
 	Examples []string
