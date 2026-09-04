@@ -189,3 +189,34 @@ func TestPlaceholderNamesNothingUnreachable(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryTuiVerbHasADescription is the control the help's own comment
+// claims. Without it a path added to the table gets a synopsis line and NO
+// description, and TestHelpDescribesEveryDeclaredVerb passes anyway --
+// because a generated synopsis always mentions the verb. The completeness
+// that used to be interesting (is it listed?) became free the moment the list
+// was generated; what is left to check is whether the line SAYS anything.
+func TestEveryTuiVerbHasADescription(t *testing.T) {
+	for _, path := range verb.PathsForSurface(verb.TUI) {
+		if strings.TrimSpace(tuiVerbHelp[path]) == "" {
+			t.Errorf("`%s` is declared for the TUI and tuiVerbHelp says nothing about it.\n"+
+				"The synopsis is generated, so the line appears either way -- and an "+
+				"operator reading a bare synopsis learns the flags and not the point.", path)
+		}
+	}
+}
+
+// The other direction: an entry for a path this surface does not declare is a
+// description of something nobody can type. It survived in the hand-written
+// list as `ssh-gateway [start|stop|status]` long after the paths were split.
+func TestTuiVerbHelpNamesNothingUndeclared(t *testing.T) {
+	declared := map[string]bool{}
+	for _, p := range verb.PathsForSurface(verb.TUI) {
+		declared[p] = true
+	}
+	for path := range tuiVerbHelp {
+		if !declared[path] {
+			t.Errorf("tuiVerbHelp describes %q, which the TUI does not declare", path)
+		}
+	}
+}

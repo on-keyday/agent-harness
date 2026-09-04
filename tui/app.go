@@ -3110,74 +3110,116 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 // first thing an operator reads, and a verb listed there is a promise.
 const cmdlinePlaceholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 
-// cmdlineHelpLines is the `help` command's body, one line per entry.
+// tuiVerbHelp is what each declared verb DOES, on this surface. The synopsis
+// -- which flags, which positionals, in what order -- is not written here:
+// cmdlineHelpLines generates it from the same declaration the parser reads,
+// so a flag this surface accepts cannot be missing from the line describing
+// it, and one it does not accept cannot appear.
 //
-// A function rather than a run of Append calls so a test can read it back:
-// the verbs are declared in cli/verb, and TestHelpDescribesEveryDeclaredVerb
-// fails when one is reachable from this cmdline and undescribed. Seven were
-// when that test was written -- caps set-parent, forward tap, session
-// snapshot and the four session stream verbs -- which is the same drift the
-// CLI's usage() had, found the same way: by counting rather than reading.
+// That split is the point. The hand-written half was 50 lines carrying BOTH,
+// and the synopsis half is the one that drifts silently: the CLI's copy
+// documented `--caps ... default all` for as long as the declaration has said
+// none.
+//
+// A path with no entry is a build-time gap, not a silent omission: the
+// completeness test names it.
+var tuiVerbHelp = map[string]string{
+	"cancel":                   "cancel a queued/running task",
+	"caps set":                 "OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants",
+	"caps set-defaults":        "the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`",
+	"caps set-parent":          "OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent",
+	"caps":                     "the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar",
+	"clear":                    "empty this result panel",
+	"diag":                     "grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)",
+	"exec kill":                "stop one running exec",
+	"exec ls":                  "list the running execs (Obs column shows Nx while any run)",
+	"exec":                     "run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)",
+	"exit":                     "leave the TUI",
+	"file delete":              "remove a file (no -r) or directory (-r empty / -r -f recursive)",
+	"file edit":                "open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)",
+	"file ls":                  "list a directory in the task's worktree (root if rel omitted)",
+	"file mkdir":               "create a directory in the worktree (-p: mkdir -p)",
+	"file new":                 "write a new text file in the editor popup and push it",
+	"file pull":                "copy from the worktree to a local path",
+	"file push":                "copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)",
+	"forward kill":             "close one registered forward by id (also: tasks-pane P/B on the owning task)",
+	"forward ls":               "list every port forward visible to this operator (also: f key, kill: x then y/n)",
+	"forward tap":              "stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens",
+	"git diff":                 "revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
+	"git file":                 "one file's whole content (also: o in the modal, from the diff you are reading)",
+	"git log":                  "the task's commits (also: tasks-pane G)",
+	"git show":                 "one commit and its diff",
+	"git status":               "uncommitted and untracked paths (untracked appear in no diff)",
+	"git subrepos":             "git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)",
+	"grid":                     "live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree); --under <id> takes that task's working set \u2014 its subtree PLUS the tasks its own scope names (ids:) \u2014 and --descendants leaves the task itself out",
+	"help":                     "this list",
+	"interactive":              "open/resume interactive session (detachable)",
+	"notify":                   "send a notification (shows in this feed + --notify-hook egress; keep it one line)",
+	"prune":                    "ask the server to forget tasks (ids, or --before; active tasks need --force)",
+	"quit":                     "leave the TUI (alias: exit); the sessions it opened keep running",
+	"refresh":                  "force a full runners+tasks snapshot re-sync now (alias: sync)",
+	"repo":                     "the default repo a spawn uses when its own line names none",
+	"restore":                  "with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the task log does not)",
+	"scope":                    "the shorter spelling of `caps set-defaults`",
+	"server dial-runner":       "ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)",
+	"session attach":           "reattach to a session",
+	"session await-idle":       "fire when the session's output goes idle (default: result line here; --notify: operator notification)",
+	"session kill":             "terminate a session",
+	"session ls":               "list detachable sessions",
+	"session new":              "open/resume detachable interactive; --detach backgrounds it and prints the id",
+	"session stream approve":   "answer a tool-approval request the agent is blocked on",
+	"session stream attach":    "follow an event-stream session's events (the counterpart of attaching to a PTY)",
+	"session stream finish":    "close the agent's stdin so it ends the turn in flight and exits cleanly",
+	"session stream interrupt": "abandon the running turn; the agent survives to take the next one",
+	"session stream turn":      "send one user turn to an event-stream session",
+	"ssh-gateway start":        "serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
+	"ssh-gateway status":       "whether it is running, and on what address",
+	"ssh-gateway stop":         "stop the gateway and every session it serves",
+	"submit":                   "submit/resume a task",
+	"sync":                     "the shorter spelling of refresh",
+	"trsf":                     "dump the client\u2194server transport's internal state (debug)",
+	"workspace apply":          "re-apply a workspace now (also runs on start and on every reconnect)",
+	"workspace detach":         "stop re-applying on reconnect; --stop also stops its forwards and gateway",
+	"workspace ls":             "list the workspaces in .harness/config",
+	"workspace rm":             "delete one workspace from .harness/config",
+	"workspace save":           "pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)",
+	"workspace show":           "print one workspace",
+}
+
+// tuiKeyHelp is the part no table holds: what a KEY does, and how a verb
+// pairs with one. It stays hand-written because a keybinding is not a verb --
+// nothing parses it -- and pretending otherwise would put screen state in the
+// grammar.
+var tuiKeyHelp = []string{
+	"F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.",
+	"  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.",
+	"  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.",
+}
+
+// cmdlineHelpLines renders the `help` body: one line per declared verb, its
+// synopsis generated and its description declared, then the key bindings.
 func cmdlineHelpLines() []string {
-	return []string{
-		"commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune --before=DUR | prune [--force] <task-id>... / restore <id>... / repo <path> / caps / caps set-defaults / caps set <id> / refresh / clear / help / quit (alias: exit)",
-		"restore [--list]               - list what a prune forgot and could still be put back (ids live only in the server's WAL)",
-		"restore <id>...                - put those back, rebuilt from the WAL (needs `prune` and the same scope; the record returns, the task log does not)",
-		"refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now",
-		"submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task",
-		"interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)",
-		"session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive",
-		"caps [--json]               - the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar",
-		"caps set-defaults (alias: scope) [--caps <names>] [--scope <spec>] [--scope-for C=S]",
-		"                            - the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker.",
-		"                              --caps: spawn,file_read / all / all,-spawn / none.  --scope: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]",
-		"caps set <id> [--caps N] [--scope S] [--cascade] [--keep-conns]",
-		"                            - OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants",
-		"caps set-parent <id> (--parent <id> | --none | --swap) - OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent",
-		"submit|interactive|session new --caps <names>  - capability mask for THIS spawn only, overriding the default; with --resume it re-grants that mask to the task",
-		"notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)",
-		"session new [--detach] [--host NAME | --runner HEX | --ip ADDR] - open detachable interactive session (--detach: background, print id)",
-		"session attach <id>         - reattach to a session",
-		"session ls                  - list detachable sessions",
-		"session kill <id>           - terminate a session",
-		"session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)",
-		"session stream attach <id>  - follow an event-stream session's events (the counterpart of attaching to a PTY)",
-		"session stream turn <id> <text>...  - send one user turn to an event-stream session",
-		"session stream approve <id> <request-id> (--allow | --deny [--message M]) - answer a tool-approval request the agent is blocked on",
-		"session stream interrupt|finish <id> - interrupt the current turn, or end the session cleanly",
-		"grid [<task-id>...]         - live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree)",
-		"grid --under <id> [--descendants] - that task's working set: its subtree PLUS the tasks its own scope names (ids:); --descendants leaves the task itself out",
-		"git <task-id> log [--max N] [-- <path>]            - the task's commits (also: tasks-pane G)",
-		"git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
-		"git <task-id> show [<rev>] [-- <path>]             - one commit and its diff",
-		"git <task-id> status [-- <path>]                   - uncommitted and untracked paths (untracked appear in no diff)",
-		"git <task-id> subrepos                             - git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)",
-		"git <task-id> file [--staged|--rev R] <path>       - one file's whole content (also: o in the modal, from the diff you are reading)",
-		"file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)",
-		"file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)",
-		"file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)",
-		"file pull [-r] [-f] [-o off] [-n len] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path",
-		"file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)",
-		"file edit <task-id> <rel>                          - open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)",
-		"file new <task-id> <rel>                           - write a new text file in the editor popup and push it",
-		"forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)",
-		"forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)",
-		"forward tap <forward-id> [--dir to-target|from-target|both] [--max-bytes N] - stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens",
-		"exec <task-id> [--] <cmd>...                       - run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
-		"exec ls [-task <id>] | exec kill <exec-id>         - list the running execs / stop one (Obs column shows Nx while any run)",
-		"  --shell        one line for the runner's own shell, so pipes and redirects mean something",
-		"  --sshd-parent  give the line a parent process named sshd, for a client that checks its ancestry (Windows only; needs --shell)",
-		"ssh-gateway [start [bind:port] | stop | status]    - serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
-		"workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)",
-		"workspace rm <name>                                - delete one workspace from .harness/config",
-		"workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)",
-		"workspace detach [--stop]                          - stop re-applying on reconnect; --stop also stops its forwards and gateway",
-		"workspace ls | show [name]                         - list the workspaces in .harness/config, or print one",
-		"server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)",
-		"F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.",
-		"  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.",
-		"  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.",
-		"trsf                        - dump the client↔server transport's internal state (debug)",
-		"diag [on|off]               - grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)",
+	out := []string{
+		"commands: submit / interactive / session / file / git / forward / exec / grid / workspace / " +
+			"cancel / notify / prune / restore / repo / caps / caps set-defaults / refresh / clear / help / quit",
 	}
+	for _, path := range verb.PathsForSurface(verb.TUI) {
+		sp, ok := verb.Lookup(strings.Fields(path)...)
+		if !ok {
+			continue
+		}
+		// Synopsis and description on separate lines. `submit`'s declared
+		// flags run past 300 characters, and this panel is narrower than a
+		// terminal -- one line carrying both put the description where a
+		// reader never reaches it.
+		out = append(out, strings.TrimPrefix(sp.For(verb.TUI).Usage(), "usage: "))
+		if d := tuiVerbHelp[path]; d != "" {
+			out = append(out, "    - "+d)
+		}
+	}
+	// `git <task-id> <sub>` is the one shape the generated synopsis cannot
+	// show: the id sits between the family and the sub-verb, so no synopsis
+	// built from Args can put it there.
+	out = append(out, "(git takes the task id BETWEEN the family and the sub-verb: `git <task-id> log`)")
+	return append(out, tuiKeyHelp...)
 }
