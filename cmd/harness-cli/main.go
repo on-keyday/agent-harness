@@ -305,6 +305,9 @@ func usage() { usageTo(os.Stderr) }
 func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "usage: harness-cli [--server-cid CID] [--ws-path PATH] [--config PATH] [--workspace NAME] <subcommand> [args]")
 	fmt.Fprintln(w, "")
+	// The global flags are not verbs -- they are parsed by the top-level
+	// FlagSet before a subcommand is chosen -- so they are the one part of
+	// this text the table does not hold.
 	fmt.Fprintln(w, "Global flags fall back to env, then to a --workspace (flag > env > workspace > default):")
 	fmt.Fprintln(w, "  --server-cid  HARNESS_SERVER_CID  (workspace: server-cid; default ws:127.0.0.1:8539-*)")
 	fmt.Fprintln(w, "  --ws-path     HARNESS_WS_PATH     (workspace: ws-path; default /ws)")
@@ -312,161 +315,56 @@ func usageTo(w io.Writer) {
 	fmt.Fprintln(w, "  --workspace   NAME                which workspace in that file supplies server-cid / ws-path / repo")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Subcommands:")
-	fmt.Fprintln(w, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
-	fmt.Fprintln(w, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(w, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
-	fmt.Fprintln(w, "                                      --agent: agent profile name to run this task under (empty = runner default; not to be confused with --agent-arg)")
-	fmt.Fprintln(w, "                                      --resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)")
-	fmt.Fprintln(w, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
-	fmt.Fprintln(w, "                                      --scope: which tasks those caps may target: "+cli.ScopeGrammar+"; default subtree")
-	fmt.Fprintln(w, "  ls [--json]                         list runners and recent tasks; --json emits one {runners,tasks} object")
-	fmt.Fprintln(w, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
-	fmt.Fprintln(w, "  caps [--json]                       list the grantable --caps capability names and --scope forms")
-	fmt.Fprintln(w, "  caps set TASK_ID [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]")
-	fmt.Fprintln(w, "                                      OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart")
-	fmt.Fprintln(w, "  caps set-parent TASK_ID (--parent TASK_ID | --none | --swap)")
-	fmt.Fprintln(w, "                                      OPERATOR ONLY: re-point a LIVE task's parent link — the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched")
-	fmt.Fprintln(w, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps and scope (no cap required)")
-	fmt.Fprintln(w, "  skill [NAME | --list] | skill ls    print the embedded agent skill (default: harness-cli); --list, or the `ls` spelling, names them all")
-	fmt.Fprintln(w, "  version [--json]                    the commit this binary — and the skills embedded in it — was built from")
-	fmt.Fprintln(w, "  cancel TASK_ID                      cancel a queued/running task")
-	fmt.Fprintln(w, "  notify [--title T] [--level info|warn|error] <text>")
-	fmt.Fprintln(w, "                                      send a notification (one short line; detail goes in the task log)")
-	fmt.Fprintln(w, "  prune [--before DUR] [-f|--force] [TASK_ID ...]")
-	fmt.Fprintln(w, "                                      ask the server to forget tasks")
-	fmt.Fprintln(w, "                                      no TASK_IDs: terminal tasks older than --before")
-	fmt.Fprintln(w, "                                      with TASK_IDs: only those (refuses active tasks unless --force)")
-	fmt.Fprintln(w, "  restore [--list]                    list what a prune forgot and could still be put back — ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them")
-	fmt.Fprintln(w, "  restore TASK_ID [TASK_ID ...]")
-	fmt.Fprintln(w, "                                      put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget. The RECORD returns; the task log does not (prune removed the file) and the worktree was never touched. An id with no task_created cannot be rebuilt")
-	fmt.Fprintln(w, "  prune-local [--repo PATH] [--before DUR] [-f|--force] [TASK_ID ...]")
-	fmt.Fprintln(w, "                                      remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(w, "                                      with no TASK_IDs: time-based, removes entries older than --before")
-	fmt.Fprintln(w, "                                      with TASK_IDs: removes only those (refuses active tasks unless --force)")
-	fmt.Fprintln(w, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
-	fmt.Fprintln(w, "  watch                               stream task and runner status events")
-	fmt.Fprintln(w, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
-	fmt.Fprintln(w, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
-	fmt.Fprintln(w, "                                      attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(w, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
-	fmt.Fprintln(w, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
-	fmt.Fprintln(w, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
-	fmt.Fprintln(w, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
-	fmt.Fprintln(w, "                                      open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(w, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
-	fmt.Fprintln(w, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
-	fmt.Fprintln(w, "                                      -d / --detach: start the session and exit immediately (don't attach the terminal)")
-	fmt.Fprintln(w, "  session attach TASK_ID              reattach to a detached/running session")
-	fmt.Fprintln(w, "  session snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--detect] [--json] [--raw] TASK_ID")
-	fmt.Fprintln(w, "                                      print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)")
-	fmt.Fprintln(w, "                                      --style/--color append attribute/color spans; --json emits {rows,cols,title,lines[],spans[]} instead of text")
-	fmt.Fprintln(w, "                                      --detect judges the state: working / blocked (waiting on a HUMAN) / idle / unknown, naming the rule and the text it read")
-	fmt.Fprintln(w, "                                      --raw writes the verbatim PTY bytes instead of the VT render (not combinable with --style/--color/--json/--detect)")
-	fmt.Fprintln(w, "  session resize TASK_ID --size ROWSxCOLS [--wait-ms MS] [--quiet]")
-	fmt.Fprintln(w, "                                      set a live session's PTY size; the server echoing the new size back IS the acknowledgement")
-	fmt.Fprintln(w, "  session send [-enter] [-e] [-quiet] [--flush-ms MS] TASK_ID TEXT...")
-	fmt.Fprintln(w, "                                      inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly")
-	fmt.Fprintln(w, "                                      -enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH")
-	fmt.Fprintln(w, "                                      flags must precede TASK_ID; everything after it is joined with spaces and sent literally")
-	fmt.Fprintln(w, "  session exec [--timeout D] [--json] [--exit-only] [--raw] TASK_ID CMD...")
-	fmt.Fprintln(w, "                                      run one shell command line in the session's foreground shell and block until it finishes")
-	fmt.Fprintln(w, "                                      exits with the command's own code (124 timeout, 125 error, 126 foreground shell exited); needs a POSIX shell")
-	fmt.Fprintln(w, "                                      NOT `exec`, which runs its own process in the worktree with separate stdout/stderr")
-	fmt.Fprintln(w, "                                      flags must precede TASK_ID; everything after it is joined with spaces as the command line")
-	fmt.Fprintln(w, "  session ls                          JSON Lines: interactive sessions only")
-	fmt.Fprintln(w, "  session kill TASK_ID                cancel a session (alias of cancel)")
-	fmt.Fprintln(w, "  session stream turn TASK_ID TEXT...  send one user turn to an event-stream session")
-	fmt.Fprintln(w, "  session stream approve TASK_ID REQUEST_ID (--allow | --deny [--message REASON]) [--suggestion N]")
-	fmt.Fprintln(w, "                                      answer one pending tool request. The request id is the staleness guard: an answer aimed at a request that has gone is REFUSED, not applied to whatever is pending now")
-	fmt.Fprintln(w, "                                      --message is the DENY reason and reaches the AGENT verbatim as a failed tool result; --suggestion accepts the request's Nth suggestion (a STANDING change, so it rides either verdict)")
-	fmt.Fprintln(w, "  session stream attach TASK_ID       follow an event-stream session's events")
-	fmt.Fprintln(w, "  session stream interrupt TASK_ID    abandon the running TURN; the agent survives to take the next one")
-	fmt.Fprintln(w, "  session stream finish TASK_ID       close the agent's stdin so it completes the turn in flight and exits 0")
-	fmt.Fprintln(w, "  session await-idle [--threshold-ms N] [--notify | --topic T] TASK_ID")
-	fmt.Fprintln(w, "                                      one-shot: fire when the session's PTY output goes quiescent.")
-	fmt.Fprintln(w, "                                      default long-polls; --notify/--topic arm a server-side sink and return")
-	fmt.Fprintln(w, "  server dial-runner [--via CID] RUNNER_CID  ask the server to reverse-dial a Listen-mode runner")
-	fmt.Fprintln(w, "  board topics|read <topic>|subscribers [topic]|retract <topic> --seq N|purge <topic> [--seq N]")
-	fmt.Fprintln(w, "                                      inspect/withdraw/purge the agentboard (cap: info_global; retract and purge: purge)")
-	fmt.Fprintln(w, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
-	fmt.Fprintln(w, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
-	fmt.Fprintln(w, "  file push [-r|--recursive] [-f|--force] [-p|--parents] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
-	fmt.Fprintln(w, "                                      copy a local file (or directory tree with -r) into the worktree")
-	fmt.Fprintln(w, "                                      default: O_EXCL refuses to overwrite; -f permits replacement")
-	fmt.Fprintln(w, "  file mkdir [-p|--parents] TASK_ID WORKTREE_REL_DIR")
-	fmt.Fprintln(w, "                                      create a directory in the worktree")
-	fmt.Fprintln(w, "  file pull [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_SRC LOCAL_DST")
-	fmt.Fprintln(w, "                                      copy a worktree file (or directory tree with -r) to a local path")
-	fmt.Fprintln(w, "                                      default: O_EXCL refuses to overwrite local; -f permits replacement")
-	fmt.Fprintln(w, "  file ls   TASK_ID [WORKTREE_REL_DIR]")
-	fmt.Fprintln(w, "                                      list a single directory under the worktree (default: worktree root)")
-	fmt.Fprintln(w, "  file edit TASK_ID WORKTREE_REL_PATH  open the file in $EDITOR and write it back")
-	fmt.Fprintln(w, "  file new  TASK_ID WORKTREE_REL_PATH  create an empty file (refused when it exists)")
-	fmt.Fprintln(w, "  file delete [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_PATH")
-	fmt.Fprintln(w, "                                      remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused")
-	fmt.Fprintln(w, "  git TASK_ID log    [--max N] [-- PATH]")
-	fmt.Fprintln(w, "  git TASK_ID diff   [--staged] [BASE] [TARGET] [--max-bytes N] [-- PATH]")
-	fmt.Fprintln(w, "  git TASK_ID show   [REV] [-- PATH]")
-	fmt.Fprintln(w, "  git TASK_ID status [-- PATH]")
-	fmt.Fprintln(w, "  git TASK_ID subrepos")
-	fmt.Fprintln(w, "  git TASK_ID file   [--staged | --rev REV] PATH")
-	fmt.Fprintln(w, "                                      read-only git view of a task's worktree (requires file_read)")
-	fmt.Fprintln(w, "                                      runs in the worktree while the task lives, and against the retained")
-	fmt.Fprintln(w, "                                      harness/<task-id> branch after it ends (committed work only)")
-	fmt.Fprintln(w, "                                      diff counts revisions the way git does: none = unstaged, one = that")
-	fmt.Fprintln(w, "                                      revision against the working tree, two = commit against commit")
-	fmt.Fprintln(w, "                                      --subrepo DIR runs any of them inside a nested repository (a plain")
-	fmt.Fprintln(w, "                                      nested repo is invisible from outside it); subrepos lists them")
-	fmt.Fprintln(w, "                                      --submodule on diff/show inlines a submodule's own changes")
-	fmt.Fprintln(w, "  workspace save <name> [--task <32-hex>] [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
-	fmt.Fprintln(w, "                                      record the registered forwards into .harness/config as a named workspace;")
-	fmt.Fprintln(w, "                                      every task with one unless --task narrows it. MERGES: blocks it did not")
-	fmt.Fprintln(w, "                                      observe are kept and an existing block's resume/runner are never reset")
-	fmt.Fprintln(w, "                                      (in-process forwards — a raw TUI pane, a WebUI preview pin — have no local")
-	fmt.Fprintln(w, "                                      address to write down and are skipped, with a count)")
-	fmt.Fprintln(w, "  workspace rm <name>                 delete one workspace from .harness/config (other workspaces and comments kept)")
-	fmt.Fprintln(w, "  workspace ls | show [<name>]        list the workspaces in .harness/config, or print one")
-	fmt.Fprintln(w, "                                      the TUI applies a workspace on start, on reconnect, and on `workspace apply`,")
-	fmt.Fprintln(w, "                                      and `workspace detach [--stop]` there stops it re-applying;")
-	fmt.Fprintln(w, "                                      neither exists here — a forward dies with the process that holds it")
-	fmt.Fprintln(w, "  forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
-	fmt.Fprintln(w, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
-	fmt.Fprintln(w, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")
-	fmt.Fprintln(w, "                                      both repeatable; Ctrl-C to stop")
-	fmt.Fprintln(w, "  forward <task-id> -W host:port")
-	fmt.Fprintln(w, "                                      raw stdio forward (ssh -W): no local listener, this process's stdin/stdout is the client endpoint")
-	fmt.Fprintln(w, "                                    [--http-path /p [--http-method M] [--http-header 'N: v'] [--http-body B|@file|-]]")
-	fmt.Fprintln(w, "                                      with -W: send one built HTTP request and stream the response (stdin is not spliced)")
-	fmt.Fprintln(w, "                                      mutually exclusive with -L / -R; not repeatable; exits with its peer")
-	fmt.Fprintln(w, "  forward ls [--task TASK_ID] [--json]")
-	fmt.Fprintln(w, "                                      list registered port forwards; --task filters, --json emits JSON lines")
-	fmt.Fprintln(w, "  forward tap FORWARD_ID [--dir to-target|from-target|both] [--max-bytes N] [--hex | --text | --raw | --json]")
-	fmt.Fprintln(w, "                                      stream the bytes crossing one forward. A tap sees only what crosses AFTER it opens; nothing is recorded server-side")
-	fmt.Fprintln(w, "                                      --raw writes payload bytes with no headers, so it needs an explicit --dir: two directions on one stdout is not a stream any decoder can read")
-	fmt.Fprintln(w, "  forward kill FORWARD_ID [FORWARD_ID ...]")
-	fmt.Fprintln(w, "                                      kill one or more registered forwards by id (from `forward ls`)")
-	fmt.Fprintln(w, "  exec [--shell] [--sshd-parent] <task-id> -- <command> [args...]")
-	fmt.Fprintln(w, "                                      run a command in the task's WORKTREE as its own process:")
-	fmt.Fprintln(w, "                                      stdout and stderr stay separate, and the command's own exit code becomes ours")
-	fmt.Fprintln(w, "                                      works on a FINISHED task too, as long as its worktree is still there —")
-	fmt.Fprintln(w, "                                      a task that ended with uncommitted work keeps one")
-	fmt.Fprintln(w, "                                      dies with this process; for something to leave running, submit a task instead")
-	fmt.Fprintln(w, "                                      NOT `session exec`, which types into the session's foreground shell")
-	fmt.Fprintln(w, "                                      --shell: hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)")
-	fmt.Fprintln(w, "  exec ls [--task TASK_ID] [--json]   list running execs; --task filters, --json emits JSON lines")
-	fmt.Fprintln(w, "  exec kill EXEC_ID [EXEC_ID ...]     stop one or more running execs by id (from `exec ls`)")
-	fmt.Fprintln(w, "  ssh-gateway [--listen 127.0.0.1:2222] [--host-key PATH] [--authorized-keys PATH]")
-	fmt.Fprintln(w, "                                      serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,")
-	fmt.Fprintln(w, "                                      so ssh config aliases, tmux and mosh reach a task with no harness binary there")
-	fmt.Fprintln(w, "                                      the user name picks the mode: bare = cowrite (evicts nobody), .control takes")
-	fmt.Fprintln(w, "                                      the seat and owns the PTY size, .view watches")
-	fmt.Fprintln(w, "                                      Ctrl+] detaches. ssh's own ~. DISCONNECTS instead: the session survives either")
-	fmt.Fprintln(w, "                                      way, but a disconnect leaves your terminal's modes unreset (`reset` fixes it)")
-	fmt.Fprintln(w, "                                      no ssh auth on a loopback bind; --authorized-keys is REQUIRED off loopback")
-	fmt.Fprintln(w, "                                      ssh -L / -W tunnel through it: the RUNNER dials the target, and each")
-	fmt.Fprintln(w, "                                      forwarded connection is an ordinary `forward ls` row while it lasts")
-	fmt.Fprintln(w, "                                      no scp/sftp and no ssh -R: use `file push`/`file pull` and `forward -R`")
-	fmt.Fprintln(w, "                                      foreground; Ctrl-C stops it and every session it serves")
+
+	// Every declared CLI verb, in table order, with the SYNOPSIS generated
+	// from its flags and positionals. It was 166 hand-written lines, and the
+	// completeness test that kept every verb mentioned could not check what
+	// the mention SAID: `--caps ... default all` outlived the declaration's
+	// flip to default-none, which is the most dangerous direction for a help
+	// text to be stale in.
+	//
+	// Prose that a synopsis cannot carry lives in the table too, as
+	// VerbSpec.Notes, so it sits beside the grammar it explains.
+	var family string
+	for _, path := range verb.PathsForSurface(verb.CLI) {
+		sp, ok := verb.Lookup(strings.Fields(path)...)
+		if !ok {
+			continue
+		}
+		// Family prose is printed when the family CHANGES, after its last
+		// verb, so `git`'s five shared lines appear once instead of six times.
+		if head := strings.Fields(path)[0]; head != family {
+			printFamilyNotes(w, family)
+			family = head
+		}
+		lines := sp.For(verb.CLI).UsageLines()
+		fmt.Fprintf(w, "  %s\n", lines[0])
+		for _, n := range lines[1:] {
+			fmt.Fprintf(w, "      %s\n", n)
+		}
+	}
+	printFamilyNotes(w, family)
+
+	// The two flags every spawn verb carries, described ONCE and from the
+	// declaration: CapsFlagUsage is the same string the --caps flag's own
+	// help is built from, and ScopeGrammar is what ParseScope accepts. The
+	// old text restated both per verb, which is how "default all" survived
+	// the flip to default-none in three places at once.
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Authority (submit / interactive / session new, and `caps set` on a live task):")
+	fmt.Fprintf(w, "  --caps   %s\n", verb.CapsFlagUsage)
+	fmt.Fprintf(w, "  --scope  which tasks those caps may target: %s (default subtree)\n", cli.ScopeGrammar)
+	// Four spaces, not two: at two the reverse guard reads the first word as
+	// a verb this binary should accept, which is exactly what that guard is
+	// for -- a continuation describes, it does not name.
+	fmt.Fprintln(w, "    `caps` prints every capability with the sentence saying what it gates.")
+}
+
+// printFamilyNotes writes one family's shared prose, if it declares any.
+func printFamilyNotes(w io.Writer, family string) {
+	for _, n := range verb.FamilyNotes[family] {
+		fmt.Fprintf(w, "      %s\n", n)
+	}
 }
 
 func serverUsage() { serverUsageTo(os.Stderr) }

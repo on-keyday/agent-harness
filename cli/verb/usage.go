@@ -31,7 +31,13 @@ func (v VerbSpec) Usage() string {
 			open, close = "", ""
 		}
 		b.WriteString(" " + open)
-		b.WriteString(dashList([]string{f.Name}))
+		// Aliases included: `-r` is how `file push -r` is typed, and a
+		// synopsis naming only --recursive describes a longer spelling of a
+		// flag whose short form is the one in every example. Joined with |
+		// rather than dashList's comma, because inside brackets a comma reads
+		// as "and also".
+		names := append([]string{f.Name}, f.Aliases...)
+		b.WriteString(strings.ReplaceAll(dashList(names), ", ", "|"))
 		if f.Type != FlagBool {
 			b.WriteString(" ")
 			b.WriteString(strings.ToUpper(f.Name))
@@ -66,3 +72,21 @@ func (v VerbSpec) Usage() string {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// FamilyNotes is the prose that belongs to a whole first word rather than to
+// one of its paths: what `git` reads and when, what `file` paths are relative
+// to. Keyed by the first word, printed once after that family's last verb.
+//
+// Separate from VerbSpec.Notes because the alternative is repeating five lines
+// on each of `git`'s six paths, and a reader who meets the same paragraph six
+// times stops reading it -- which is how the one line that DID differ per verb
+// (diff's revision counting) got skipped.
+var FamilyNotes = map[string][]string{}
+
+// UsageLines renders one verb's help block: the generated synopsis, then its
+// declared notes, indented under it.
+func (v VerbSpec) UsageLines() []string {
+	out := []string{strings.TrimPrefix(v.Usage(), "usage: ")}
+	out = append(out, v.Notes...)
+	return out
+}

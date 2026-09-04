@@ -403,6 +403,21 @@ type VerbSpec struct {
 	// requests to kill nothing.
 	MinArgs int
 
+	// Notes is the prose a synopsis cannot carry: what the verb is FOR, what
+	// it is not to be confused with, what its flags mean together. One line
+	// per entry, printed under the generated usage line.
+	//
+	// It lives here rather than in a surface's help text because that is
+	// where it drifted: harness-cli's usage() described `--caps ... default
+	// all` for a year after the declaration flipped the default to none, and
+	// the completeness test could not see it -- a test that checks every verb
+	// is MENTIONED cannot check what the mention says.
+	//
+	// The synopsis itself is never written here. Usage() derives it from
+	// Flags and Args, so a flag added to the table appears in the help
+	// without anyone editing prose.
+	Notes []string
+
 	Examples []string
 
 	// narrowedFor records which surface For() produced this spec for, so

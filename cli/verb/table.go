@@ -20,7 +20,12 @@ import (
 // one family whose TUI parser had no arity check at all.
 var Verbs = []VerbSpec{
 	{
-		Path:     []string{"prune"},
+		Path: []string{"prune"},
+		Notes: []string{
+			"ask the server to forget tasks",
+			"no ids: terminal tasks older than --before",
+			"with ids: only those (refuses active tasks unless --force)",
+		},
 		Surfaces: CLI | TUI | WebUI,
 		Action:   "PruneAction",
 		// The widest form has to be ASKED for. A bare `prune` forgot every
@@ -65,7 +70,11 @@ var Verbs = []VerbSpec{
 	// and three everywhere else. Declared with Arg.Surfaces rather than as a
 	// separate verb, because it is one operation reached from three places.
 	{
-		Path:     []string{"file", "push"},
+		Path: []string{"file", "push"},
+		Notes: []string{
+			"copy a local file (or directory tree with -r) into the worktree",
+			"default: O_EXCL refuses to overwrite; -f permits replacement",
+		},
 		Action:   "FilePushAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -91,7 +100,11 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:   []string{"file", "pull"},
+		Path: []string{"file", "pull"},
+		Notes: []string{
+			"copy a worktree file (or directory tree with -r) to a local path",
+			"default: O_EXCL refuses to overwrite local; -f permits replacement",
+		},
 		Action: "FilePullAction",
 		// A directory pull is a generated tar, whose byte offsets are not a
 		// stable thing to index into.
@@ -126,7 +139,10 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:     []string{"file", "ls"},
+		Path: []string{"file", "ls"},
+		Notes: []string{
+			"list a single directory under the worktree (default: worktree root)",
+		},
 		Action:   "FileLsAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -142,7 +158,10 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:     []string{"file", "mkdir"},
+		Path: []string{"file", "mkdir"},
+		Notes: []string{
+			"create a directory in the worktree",
+		},
 		Action:   "FileMkdirAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -156,7 +175,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file mkdir -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/sub"},
 	},
 	{
-		Path:     []string{"file", "delete"},
+		Path: []string{"file", "delete"},
+		Notes: []string{
+			"remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused",
+		},
 		Action:   "FileDeleteAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -177,7 +199,10 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:     []string{"file", "edit"},
+		Path: []string{"file", "edit"},
+		Notes: []string{
+			"open the file in $EDITOR and write it back",
+		},
 		Action:   "FileEditAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -187,7 +212,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
 	},
 	{
-		Path:     []string{"file", "new"},
+		Path: []string{"file", "new"},
+		Notes: []string{
+			"create an empty file (refused when it exists)",
+		},
 		Action:   "FileNewAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args: []Arg{
@@ -223,7 +251,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git log", "git log --max 20"},
 	},
 	{
-		Path:          []string{"git", "diff"},
+		Path: []string{"git", "diff"},
+		Notes: []string{
+			"counts revisions the way git does: none = unstaged, one = that revision",
+			"against the working tree, two = commit against commit",
+			"--submodule inlines a submodule's own changes",
+		},
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -262,7 +295,10 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:          []string{"git", "show"},
+		Path: []string{"git", "show"},
+		Notes: []string{
+			"--submodule inlines a submodule's own changes",
+		},
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -289,7 +325,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git status"},
 	},
 	{
-		Path:          []string{"git", "subrepos"},
+		Path: []string{"git", "subrepos"},
+		Notes: []string{
+			"list the nested repositories under the worktree",
+		},
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -335,7 +374,16 @@ var Verbs = []VerbSpec{
 	},
 	// --- exec (exec_run) ---
 	{
-		Path:     []string{"exec"},
+		Path: []string{"exec"},
+		Notes: []string{
+			"run a command in the task's WORKTREE as its own process:",
+			"stdout and stderr stay separate, and the command's own exit code becomes ours",
+			"works on a FINISHED task too, as long as its worktree is still there \u2014",
+			"a task that ended with uncommitted work keeps one",
+			"dies with this process; for something to leave running, submit a task instead",
+			"NOT `session exec`, which types into the session's foreground shell",
+			"--shell: hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)",
+		},
 		Surfaces: CLI | TUI | WebUI,
 		Action:   "ExecRunAction",
 		Const:    map[string]string{"Sub": "run"},
@@ -368,7 +416,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
 	},
 	{
-		Path:     []string{"exec", "ls"},
+		Path: []string{"exec", "ls"},
+		Notes: []string{
+			"list running execs; --task filters, --json emits JSON lines",
+		},
 		Action:   "ExecRunAction",
 		Const:    map[string]string{"Sub": "ls"},
 		Surfaces: CLI | TUI | WebUI,
@@ -385,6 +436,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"exec", "kill"},
+		Notes: []string{
+			"stop one or more running execs by id (from `exec ls`)",
+		},
 		// At least one id: `forward kill` with none is a mistyped line, not a
 		// request to kill nothing.
 		MinArgs:  1,
@@ -406,7 +460,15 @@ var Verbs = []VerbSpec{
 		// read before the FlagSet was built, which meant the positional had to
 		// come FIRST -- the inverse of what ParsePermuted guarantees
 		// everywhere else. Declaring it removes that constraint.
-		Path:     []string{"forward"},
+		Path: []string{"forward"},
+		Notes: []string{
+			"-L: forward a local port through the runner to remote host:port (ssh -L)",
+			"-R: runner listens, connections dial back to a client-side host:port (ssh -R)",
+			"both repeatable; Ctrl-C to stop",
+			"-W: raw stdio forward (ssh -W): no local listener, this process's stdin/stdout is the client endpoint",
+			"with -W and --http-path: send one built HTTP request and stream the response (stdin is not spliced)",
+			"-W is mutually exclusive with -L / -R; not repeatable; exits with its peer",
+		},
 		Surfaces: CLI,
 		Action:   "ForwardOpenAction",
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -440,7 +502,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
 	},
 	{
-		Path:     []string{"forward", "ls"},
+		Path: []string{"forward", "ls"},
+		Notes: []string{
+			"list registered port forwards; --task filters, --json emits JSON lines",
+		},
 		Action:   "ForwardLsAction",
 		Surfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
@@ -454,6 +519,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"forward", "kill"},
+		Notes: []string{
+			"kill one or more registered forwards by id (from `forward ls`)",
+		},
 		// At least one id: `forward kill` with none is a mistyped line, not a
 		// request to kill nothing.
 		MinArgs:  1,
@@ -463,7 +531,11 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward kill 7"},
 	},
 	{
-		Path:     []string{"forward", "tap"},
+		Path: []string{"forward", "tap"},
+		Notes: []string{
+			"stream the bytes crossing one forward. A tap sees only what crosses AFTER it opens; nothing is recorded server-side",
+			"--raw writes payload bytes with no headers, so it needs an explicit --dir: two directions on one stdout is not a stream any decoder can read",
+		},
 		Surfaces: CLI | TUI | WebUI,
 		Action:   "ForwardTapAction",
 		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Field: "ForwardID"}},
@@ -515,7 +587,10 @@ var Verbs = []VerbSpec{
 
 	// --- server ---
 	{
-		Path:     []string{"server", "dial-runner"},
+		Path: []string{"server", "dial-runner"},
+		Notes: []string{
+			"ask the server to reverse-dial a Listen-mode runner",
+		},
 		Action:   "ServerDialRunnerAction",
 		Surfaces: CLI | TUI | WebUI,
 		Args:     []Arg{{Name: "runner-cid", Type: ArgString, Field: "RunnerCID"}},
@@ -532,7 +607,20 @@ var Verbs = []VerbSpec{
 	// flags, while the TUI starts and stops a background one. Declared as
 	// separate paths because they are separate operations wearing one name.
 	{
-		Path:     []string{"ssh-gateway"},
+		Path: []string{"ssh-gateway"},
+		Notes: []string{
+			"serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,",
+			"so ssh config aliases, tmux and mosh reach a task with no harness binary there",
+			"the user name picks the mode: bare = cowrite (evicts nobody), .control takes",
+			"the seat and owns the PTY size, .view watches",
+			"Ctrl+] detaches. ssh's own ~. DISCONNECTS instead: the session survives either",
+			"way, but a disconnect leaves your terminal's modes unreset (`reset` fixes it)",
+			"no ssh auth on a loopback bind; --authorized-keys is REQUIRED off loopback",
+			"ssh -L / -W tunnel through it: the RUNNER dials the target, and each",
+			"forwarded connection is an ordinary `forward ls` row while it lasts",
+			"no scp/sftp and no ssh -R: use `file push`/`file pull` and `forward -R`",
+			"foreground; Ctrl-C stops it and every session it serves",
+		},
 		Action:   "SSHGatewayAction",
 		Surfaces: CLI,
 		Flags: []Flag{
@@ -585,7 +673,14 @@ var Verbs = []VerbSpec{
 
 	// --- workspace ---
 	{
-		Path:   []string{"workspace", "save"},
+		Path: []string{"workspace", "save"},
+		Notes: []string{
+			"record the registered forwards into .harness/config as a named workspace;",
+			"every task with one unless --task narrows it. MERGES: blocks it did not",
+			"observe are kept and an existing block's resume/runner are never reset",
+			"(in-process forwards \u2014 a raw TUI pane, a WebUI preview pin \u2014 have no local",
+			"address to write down and are skipped, with a count)",
+		},
 		Action: "WorkspaceAction",
 		Const:  map[string]string{"Sub": "save"},
 		// A half-typed id would filter to nothing and record an empty
@@ -622,7 +717,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace save dev"},
 	},
 	{
-		Path:     []string{"workspace", "rm"},
+		Path: []string{"workspace", "rm"},
+		Notes: []string{
+			"delete one workspace from .harness/config (other workspaces and comments kept)",
+		},
 		Action:   "WorkspaceAction",
 		Const:    map[string]string{"Sub": "rm"},
 		Surfaces: CLI | TUI,
@@ -632,14 +730,20 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace rm dev"},
 	},
 	{
-		Path:     []string{"workspace", "ls"},
+		Path: []string{"workspace", "ls"},
+		Notes: []string{
+			"list the workspaces in .harness/config",
+		},
 		Action:   "WorkspaceAction",
 		Const:    map[string]string{"Sub": "ls"},
 		Surfaces: CLI | TUI,
 		Examples: []string{"workspace ls"},
 	},
 	{
-		Path:     []string{"workspace", "show"},
+		Path: []string{"workspace", "show"},
+		Notes: []string{
+			"print one workspace, or all of them when no name is given",
+		},
 		Action:   "WorkspaceAction",
 		Const:    map[string]string{"Sub": "show"},
 		Surfaces: CLI | TUI,
@@ -679,14 +783,20 @@ var Verbs = []VerbSpec{
 	// --seq N` destroyed two live messages, which is why --seq is marked as
 	// widening when unset.
 	{
-		Path:     []string{"board", "topics"},
+		Path: []string{"board", "topics"},
+		Notes: []string{
+			"list the board's topics with message and subscriber counts",
+		},
 		Surfaces: CLI,
 		Examples: []string{"board topics"},
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "topics"},
 	},
 	{
-		Path:     []string{"board", "read"},
+		Path: []string{"board", "read"},
+		Notes: []string{
+			"read one topic's retained messages",
+		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "read"},
@@ -699,7 +809,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json"},
 	},
 	{
-		Path:     []string{"board", "subscribers"},
+		Path: []string{"board", "subscribers"},
+		Notes: []string{
+			"list who subscribes to a topic, or to all of them",
+		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "subscribers"},
@@ -709,7 +822,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"board subscribers", "board subscribers chat.abcd1234"},
 	},
 	{
-		Path:     []string{"board", "retract"},
+		Path: []string{"board", "retract"},
+		Notes: []string{
+			"withdraw ONE message from every agent path, leaving it readable to the operator",
+		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "retract"},
@@ -731,7 +847,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"board retract chat.abcd1234 --seq 42"},
 	},
 	{
-		Path:     []string{"board", "purge"},
+		Path: []string{"board", "purge"},
+		Notes: []string{
+			"destroy a topic's retained-message buffer",
+		},
 		Surfaces: CLI,
 		Action:   "BoardAction",
 		Const:    map[string]string{"Sub": "purge"},
@@ -755,7 +874,12 @@ var Verbs = []VerbSpec{
 	// before the rename and its comment still says so. Declaring the family
 	// once gives every surface the same set.
 	{
-		Path:     []string{"submit"},
+		Path: []string{"submit"},
+		Notes: []string{
+			"enqueue a new task (--repo: HARNESS_REPO_PATH)",
+			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
+			"--resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)",
+		},
 		Surfaces: CLI | TUI | WebUI,
 		// The prompt is a positional on the TUI and the WebUI and --task on the
 		// CLI. Both work everywhere now: the flag wins when given, the trailing
@@ -783,7 +907,12 @@ var Verbs = []VerbSpec{
 		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
 	},
 	{
-		Path:      []string{"interactive"},
+		Path: []string{"interactive"},
+		Notes: []string{
+			"attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)",
+			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
+			"--resume reuses an existing terminal interactive task id + worktree branch",
+		},
 		Surfaces:  CLI | TUI,
 		Action:    "SpawnAction",
 		Const:     map[string]string{"Kind": "interactive"},
@@ -799,7 +928,11 @@ var Verbs = []VerbSpec{
 		Examples: []string{"interactive --repo /r"},
 	},
 	{
-		Path:      []string{"session", "new"},
+		Path: []string{"session", "new"},
+		Notes: []string{
+			"open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
+			"-d / --detach: start the session and exit immediately (don't attach the terminal)",
+		},
 		Surfaces:  CLI | TUI,
 		Action:    "SpawnAction",
 		Const:     map[string]string{"Kind": "session-new"},
@@ -823,7 +956,12 @@ var Verbs = []VerbSpec{
 	// because they read their positionals inside resolvePayload rather than
 	// off the FlagSet.
 	{
-		Path:     []string{"session", "send"},
+		Path: []string{"session", "send"},
+		Notes: []string{
+			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
+			"--enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH",
+			"flags must precede <task-id>; everything after it is joined with spaces and sent literally",
+		},
 		Surfaces: CLI,
 		Action:   "SendAction",
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -878,7 +1016,13 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path:     []string{"session", "exec"},
+		Path: []string{"session", "exec"},
+		Notes: []string{
+			"run one shell command line in the session's foreground shell and block until it finishes",
+			"exits with the command's own code (124 timeout, 125 error, 126 foreground shell exited); needs a POSIX shell",
+			"NOT `exec`, which runs its own process in the worktree with separate stdout/stderr",
+			"flags must precede <task-id>; everything after it is joined with spaces as the command line",
+		},
 		Surfaces: CLI,
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Action:   "SessionExecAction",
@@ -897,7 +1041,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ls -la"},
 	},
 	{
-		Path:     []string{"session", "stream", "turn"},
+		Path: []string{"session", "stream", "turn"},
+		Notes: []string{
+			"send one user turn to an event-stream session",
+		},
 		Surfaces: CLI | TUI | WebUI,
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// SessionAction like the rest of the family, not a type of its own:
@@ -913,7 +1060,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream turn aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa please continue"},
 	},
 	{
-		Path:     []string{"notify"},
+		Path: []string{"notify"},
+		Notes: []string{
+			"send a notification (one short line; detail goes in the task log)",
+		},
 		Action:   "NotifyAction",
 		Surfaces: CLI | TUI,
 		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
@@ -967,12 +1117,18 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"cancel"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"cancel a queued/running task",
+		},
 		Action:   "CancelAction",
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Examples: []string{"cancel aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path: []string{"ls"}, Surfaces: CLI | WebUI,
+		Notes: []string{
+			"list runners and recent tasks; --json emits one {runners,tasks} object",
+		},
 		Action: "ListAction",
 		// --json already carries created_by on every row, so a consumer
 		// builds the tree itself; nesting the JSON to match would give the
@@ -993,6 +1149,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"conns"}, Surfaces: CLI,
+		Notes: []string{
+			"snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines",
+		},
 		Action: "ConnsAction",
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output JSON lines instead of a table"},
@@ -1007,6 +1166,9 @@ var Verbs = []VerbSpec{
 		// used to be reachable from the CLI alone -- so a TUI or WebUI
 		// operator picking chips had the names and not the sentences.
 		Path: []string{"caps"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"list the grantable --caps capability names and --scope forms",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "caps"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the capability catalog as JSON"}},
@@ -1023,12 +1185,18 @@ var Verbs = []VerbSpec{
 		// strings and --list is a bool: the two spellings reach the same
 		// body through two methods, not one.
 		Path: []string{"skill", "ls"}, Surfaces: CLI,
+		Notes: []string{
+			"name every embedded skill; the same as `skill --list`",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "skill-ls"},
 		Examples: []string{"skill ls"},
 	},
 	{
 		Path: []string{"whoami"}, Surfaces: CLI,
+		Notes: []string{
+			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "whoami"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the identity as a JSON object"}},
@@ -1039,6 +1207,9 @@ var Verbs = []VerbSpec{
 	// not know them, so every completeness check passed over them.
 	{
 		Path: []string{"skill"}, Surfaces: CLI,
+		Notes: []string{
+			"print the embedded agent skill (default: harness-cli)",
+		},
 		Action: "CatalogAction",
 		Const:  map[string]string{"Sub": "skill"},
 		Args: []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name",
@@ -1049,18 +1220,27 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"watch"}, Surfaces: CLI,
+		Notes: []string{
+			"stream task and runner status events",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "watch"},
 		Examples: []string{"watch"},
 	},
 	{
 		Path: []string{"notify-watch"}, Surfaces: CLI,
+		Notes: []string{
+			"stream notifications (backlog + live); one human-readable line each",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "notify-watch"},
 		Examples: []string{"notify-watch"},
 	},
 	{
 		Path: []string{"version"}, Surfaces: CLI,
+		Notes: []string{
+			"the commit this binary \u2014 and the skills embedded in it \u2014 was built from",
+		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "version"},
 		Flags:    []Flag{{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output the build stamp as a JSON object"}},
@@ -1068,6 +1248,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"logs"}, Surfaces: CLI,
+		Notes: []string{
+			"dump task log history; -f also streams live chunks until task terminal",
+		},
 		Action: "LogsAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Flags: []Flag{
@@ -1078,6 +1261,11 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"prune-local"}, Surfaces: CLI,
+		Notes: []string{
+			"remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)",
+			"with no ids: time-based, removes entries older than --before",
+			"with ids: removes only those (refuses active tasks unless --force)",
+		},
 		Action: "PruneLocalAction",
 		// Same shape as `prune`, and it removes WORKTREES -- the half a
 		// server-side prune leaves behind, and the only remaining copy of an
@@ -1106,6 +1294,11 @@ var Verbs = []VerbSpec{
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
+			"with ids: put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget",
+			"the RECORD returns; the task log does not (prune removed the file) and the worktree was never touched. An id with no task_created cannot be rebuilt",
+		},
 		Action: "RestoreAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs"}},
 		// No AtLeastOne here, unlike prune. The bare form LISTS -- it changes
@@ -1193,6 +1386,9 @@ var Verbs = []VerbSpec{
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, Surfaces: CLI | TUI,
+		Notes: []string{
+			"OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart",
+		},
 		Action: "SetCapsAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// Naming neither leaves nothing to change. And --scope-for narrows
@@ -1285,6 +1481,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"caps", "set-parent"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"OPERATOR ONLY: re-point a LIVE task's parent link \u2014 the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched",
+		},
 		Action: "SetParentAction",
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// The three name one destination. Two of them name two, which is not
@@ -1319,6 +1518,9 @@ var Verbs = []VerbSpec{
 	// --- single-task session verbs ---
 	{
 		Path: []string{"session", "attach"}, Surfaces: CLI | TUI,
+		Notes: []string{
+			"reattach to a detached/running session",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "attach"},
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1327,12 +1529,18 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "ls"}, Surfaces: CLI | TUI,
+		Notes: []string{
+			"JSON Lines: interactive sessions only",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "ls"},
 		Examples: []string{"session ls"},
 	},
 	{
 		Path: []string{"session", "kill"}, Surfaces: CLI | TUI,
+		Notes: []string{
+			"cancel a session (alias of cancel)",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "kill"},
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1340,6 +1548,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "await-idle"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"one-shot: fire when the session's PTY output goes quiescent.",
+			"default long-polls; --notify/--topic arm a server-side sink and return",
+		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "await-idle"},
 		// Two sinks for one fire: the reply long-poll, the notification
@@ -1355,6 +1567,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "resize"}, Surfaces: CLI,
+		Notes: []string{
+			"set a live session's PTY size; the server echoing the new size back IS the acknowledgement",
+		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "resize"},
 		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1374,6 +1589,12 @@ var Verbs = []VerbSpec{
 		// three, it was reachable on one, and the TUI's help was made to
 		// advertise a line its cmdline refuses.
 		Path: []string{"session", "snapshot"}, Surfaces: CLI,
+		Notes: []string{
+			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
+			"--style/--color append attribute/color spans; --json emits {rows,cols,title,lines[],spans[]} instead of text",
+			"--detect judges the state: working / blocked (waiting on a HUMAN) / idle / unknown, naming the rule and the text it read",
+			"--raw writes the verbatim PTY bytes instead of the VT render (not combinable with --style/--color/--json/--detect)",
+		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "snapshot"},
 		// --raw is the verbatim byte stream, so the renderers have nothing to
@@ -1409,6 +1630,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "attach"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"follow an event-stream session's events",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "stream-attach"},
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1416,6 +1640,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "interrupt"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"abandon the running TURN; the agent survives to take the next one",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "stream-interrupt"},
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1424,6 +1651,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "finish"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"close the agent's stdin so it completes the turn in flight and exits 0",
+		},
 		Action:   "SessionAction",
 		Const:    map[string]string{"Sub": "stream-finish"},
 		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
@@ -1432,6 +1662,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "approve"}, Surfaces: CLI | TUI | WebUI,
+		Notes: []string{
+			"answer one pending tool request. The request id is the staleness guard: an answer aimed at a request that has gone is REFUSED, not applied to whatever is pending now",
+			"--message is the DENY reason and reaches the AGENT verbatim as a failed tool result; --suggestion accepts the request's Nth suggestion (a STANDING change, so it rides either verdict)",
+		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "stream-approve"},
 		// The verdict is the whole point of the verb, so neither omitting it
@@ -1683,5 +1917,29 @@ func agentTopicSelfFlags() []Flag {
 	return []Flag{
 		{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "agentboard topic"},
 		{Name: "self", Type: FlagBool, Default: false, Field: "Self", Help: "this agent's own chat.<short-id> topic"},
+	}
+}
+
+// Family-wide prose: what the whole first word is for, said once. See
+// FamilyNotes for why this is not repeated onto each path.
+func init() {
+	FamilyNotes["git"] = []string{
+		"read-only git view of a task's worktree (requires file_read)",
+		"runs in the worktree while the task lives, and against the retained",
+		"harness/<task-id> branch after it ends (committed work only)",
+		"--subrepo DIR runs any of them inside a nested repository (a plain",
+		"nested repo is invisible from outside it); subrepos lists them",
+		"the task id sits BETWEEN the family and the sub-verb: `git <task-id> log`",
+	}
+	FamilyNotes["workspace"] = []string{
+		"the TUI applies a workspace on start, on reconnect, and on `workspace apply`,",
+		"and `workspace detach [--stop]` there stops it re-applying;",
+		"neither exists here — a forward dies with the process that holds it",
+	}
+	FamilyNotes["agent"] = []string{
+		"agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)",
+	}
+	FamilyNotes["board"] = []string{
+		"inspect/withdraw/purge the agentboard (cap: board_observe; retract and purge: purge)",
 	}
 }
