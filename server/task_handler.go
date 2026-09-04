@@ -84,7 +84,14 @@ type TaskHandler struct {
 
 	// RestorableFn lists what a restore could put back. Separate from
 	// RestoreFn because listing must change nothing.
-	RestorableFn func() []Restorable
+	// The second return says WHY a listing is empty. Zero candidates is a
+	// measurement -- no prune is standing -- and it used to look identical to
+	// three failures that measure nothing: no --data-dir, an absent
+	// events.log (ReadWAL reports ErrNotExist as an empty list, not an
+	// error), and a WAL that would not parse. All four printed "nothing to
+	// put back", and the only record of the last two was a line in the
+	// server's own log, which the operator asking the question cannot see.
+	RestorableFn func() ([]Restorable, protocol.RestoreWALStatus)
 
 	// RestoreEventsFn returns the WAL, for the scope walk: a pruned task's
 	// creator edge survives only in its task_created record, and without it

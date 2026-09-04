@@ -44,12 +44,14 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 		// the ids of forgotten tasks are in a file on the server host.
 		if h.RestorableFn == nil {
 			slog.Error("TaskHandler: RestorableFn is not wired")
-			respond(protocol.RestoreTasksResponse{})
+			respond(protocol.RestoreTasksResponse{WalStatus: protocol.RestoreWALStatus_Unreadable})
 			return
 		}
 		var body protocol.RestoreTasksResponse
 		var rows []protocol.RestorableTask
-		for _, c := range h.RestorableFn() {
+		cands, walStatus := h.RestorableFn()
+		body.WalStatus = walStatus
+		for _, c := range cands {
 			if allowed != nil && !allowed[c.TaskID] {
 				continue // out of the caller's scope: not listed, not an oracle
 			}

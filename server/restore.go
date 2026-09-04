@@ -2,8 +2,11 @@ package server
 
 import (
 	"log/slog"
+	"os"
 	"sort"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // RestoreFromWAL puts back task records a prune forgot.
@@ -182,4 +185,31 @@ func (s *TaskStore) RestoreFromWAL(events []WALEvent, ids []string) (restored, a
 	}
 	s.mu.Unlock()
 	return restored, alreadyPresent, notInWAL
+}
+
+// restorableFromPath answers `restore --list` from the WAL on disk, and says
+// WHY the answer is empty when it is.
+//
+// A free function rather than the closure it was, because the four states are
+// the whole point of the return and a closure inside New() can only be reached
+// by standing up a server: the case that mattered most -- an events.log that
+// is not there -- is a filesystem state, not a protocol one.
+func restorableFromPath(walPath string, live func(string) bool, log *slog.Logger) ([]Restorable, protocol.RestoreWALStatus) {
+	if walPath == "" {
+		return nil, protocol.RestoreWALStatus_NoDataDir
+	}
+	// Asked BEFORE the read, because ReadWAL reports a missing file as an
+	// empty list rather than an error -- which is how "the server never wrote
+	// one" and "no prune is standing" became the same answer.
+	if _, err := os.Stat(walPath); err != nil {
+		return nil, protocol.RestoreWALStatus_Missing
+	}
+	events, err := ReadWAL(walPath)
+	if err != nil {
+		if log != nil {
+			log.Error("restorable: WAL read failed", "path", walPath, "err", err)
+		}
+		return nil, protocol.RestoreWALStatus_Unreadable
+	}
+	return RestorableFromWAL(events, live), protocol.RestoreWALStatus_Ok
 }

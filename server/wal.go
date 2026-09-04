@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -284,23 +285,33 @@ func ReadWAL(path string) ([]WALEvent, error) {
 	}
 	defer f.Close()
 
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 1<<16), 1<<20)
+	sc := bufio.NewScanner(f)
+	// One line per event, and a task_created carries the whole PROMPT. At the
+	// old 1 MiB cap a single long-prompt submit made the scanner fail, and
+	// the failure is not local: it takes the WHOLE file with it, so replay
+	// loses every task and `restore` reports nothing to put back forever.
+	// 64 MiB is past anything a prompt reaches and still bounded.
+	sc.Buffer(make([]byte, 1<<16), 64<<20)
 
 	var events []WALEvent
-	for s.Scan() {
-		line := s.Bytes()
-		if len(line) == 0 {
+	line := 0
+	for sc.Scan() {
+		line++
+		b := sc.Bytes()
+		if len(b) == 0 {
 			continue
 		}
 		var ev WALEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, err
+		if err := json.Unmarshal(b, &ev); err != nil {
+			// The line number, because the caller's next move is to look at
+			// that line: an error naming only "invalid character" points at a
+			// file with a hundred thousand of them.
+			return nil, fmt.Errorf("%s:%d: %w", path, line, err)
 		}
 		events = append(events, ev)
 	}
-	if err := s.Err(); err != nil {
-		return nil, err
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("%s: after line %d: %w", path, line, err)
 	}
 	return events, nil
 }

@@ -799,12 +799,28 @@ format RestorableTask:
     prompt_len :u32
     prompt :[prompt_len]u8
 
+# Why a listing came back empty. Zero candidates is a MEASUREMENT -- no prune
+# is standing -- and it looked identical to three failures that measure
+# nothing: no --data-dir, an events.log that is not there, and a WAL that
+# would not parse. The operator saw "nothing to put back" for all four and had
+# no way to tell which, since the only record of the last two is a line in the
+# server's own log.
+enum RestoreWALStatus:
+    :u8
+    ok          = "ok"
+    no_data_dir = "no_data_dir"   # the server persists nothing; a prune here is final
+    missing     = "missing"       # data dir set, events.log absent (never written, or removed)
+    unreadable  = "unreadable"    # present and failed to parse; the reason is in the server log
+
 format RestoreTasksResponse:
     restored :u32
     already_present :u32   # the id is in the store; a restore is a no-op
     not_in_wal :u32        # no task_created for that id, so nothing to rebuild
     candidates_len :u16    # list_only: what a restore could put back, newest first
     candidates :[candidates_len]RestorableTask
+    # Appended, so the field order above is untouched. Only meaningful on a
+    # list; a restore that names ids reports through the three counters.
+    wal_status :RestoreWALStatus
 
 format PruneTasksResponse:
     removed :u32

@@ -35,17 +35,17 @@ type RestorableTask struct {
 // the ids of forgotten tasks are in a file on the server host that no listing
 // reads. An operator who did not write the id down before pruning -- which is
 // everyone who pruned by accident -- had no way to learn it.
-func (c *Client) Restorable(ctx context.Context) ([]RestorableTask, error) {
+func (c *Client) Restorable(ctx context.Context) ([]RestorableTask, protocol.RestoreWALStatus, error) {
 	rr := protocol.RestoreTasksRequest{ListOnly: 1}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RestoreTasks}
 	req.SetRestoreTasks(rr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	body := resp.RestoreTasks()
 	if body == nil {
-		return nil, fmt.Errorf("empty restore response")
+		return nil, 0, fmt.Errorf("empty restore response")
 	}
 	out := make([]RestorableTask, 0, len(body.Candidates))
 	for i := range body.Candidates {
@@ -58,13 +58,32 @@ func (c *Client) Restorable(ctx context.Context) ([]RestorableTask, error) {
 			Prompt:    string(cd.Prompt),
 		})
 	}
-	return out, nil
+	return out, body.WalStatus, nil
 }
 
 // WriteRestorable renders the listing.
-func WriteRestorable(rows []RestorableTask, out io.Writer) {
+//
+// An empty listing says WHICH of the four it is. They looked identical --
+// "nothing to put back" -- and three of them are failures that measured
+// nothing: the only record of two was a line in the server's log, which the
+// operator asking the question cannot see. Zero is a measurement; absence is
+// not.
+func WriteRestorable(rows []RestorableTask, status protocol.RestoreWALStatus, out io.Writer) {
 	if len(rows) == 0 {
-		fmt.Fprintln(out, "restore: nothing to put back — no prune in the WAL is still standing")
+		switch status {
+		case protocol.RestoreWALStatus_NoDataDir:
+			fmt.Fprintln(out, "restore: this server runs without --data-dir, so it writes no WAL — "+
+				"nothing it ever pruned can be put back, and nothing here is a measurement of what was pruned")
+		case protocol.RestoreWALStatus_Missing:
+			fmt.Fprintln(out, "restore: the server's events.log is not there (never written, or removed) — "+
+				"this is not \"no prunes\": it is no history to read")
+		case protocol.RestoreWALStatus_Unreadable:
+			fmt.Fprintln(out, "restore: the server could not parse its WAL; the reason is in the server's log "+
+				"(`restorable: WAL read failed`). One bad line makes the whole file unreadable, so this "+
+				"says nothing about what was pruned")
+		default:
+			fmt.Fprintln(out, "restore: nothing to put back — the WAL was read, and no prune in it is still standing")
+		}
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -129,11 +148,11 @@ func (c *Client) RestoreTasks(ctx context.Context, taskIDs []string) (RestoreRes
 // LISTS what could be put back, which is the only way to learn them.
 func RestoreWith(ctx context.Context, c *Client, taskIDs []string, out io.Writer) error {
 	if len(taskIDs) == 0 {
-		rows, err := c.Restorable(ctx)
+		rows, status, err := c.Restorable(ctx)
 		if err != nil {
 			return err
 		}
-		WriteRestorable(rows, out)
+		WriteRestorable(rows, status, out)
 		return nil
 	}
 	res, err := c.RestoreTasks(ctx, taskIDs)
