@@ -72,7 +72,7 @@ the rows worth a second look.
 | D4 | The credential is a NEW short-lived per-operation grant, not the existing per-task `auth_ticket` | operator |
 | D5 | The grant rides the existing PSK handshake as a new `ClientKind` arm, not a new first-message kind | this spec |
 | D6 | Revocation is a runner-side message AND `DeleteProxy` at the server AND a TTL on the grant — all three | this spec |
-| D7 | caps and scope are evaluated only on the server. The runner stores an opaque grant with an operation bitfield and never evaluates a scope expression | operator |
+| D7 | caps and scope are evaluated only on the server. The runner stores a grant naming a request kind, and never evaluates a scope expression or sees a `Capability` value | operator |
 | D8 | `ws:` runners keep the splice path; both routes coexist and the server chooses per request | this spec |
 | D9 | The client presents the grant as bytes, and the binder stays keyed by the PSK | operator |
 
@@ -144,8 +144,8 @@ the only ones the runner will accept.
 ```
 1. client → server   OpenFileTransfer(task, direction, path, …)   [unchanged]
 2. server            evaluates caps + scope                        [unchanged]
-3. server            mints grant G, ops = {file_read|file_write}, ttl
-4. server → runner   AuthorizeDataPlane(task, G, ops, expires)     [new]
+3. server            mints grant G = (task, kind, direction, expiry)
+4. server → runner   AuthorizeDataPlane(slot, G)                    [new]
 5. server → client   OpenFileTransferResponse{ …, runner_slot, G } [extended]
 6. server            SetProxy(owned = client's data-plane CID,
                               allocate = runner's CID at the slot) [new]
@@ -171,19 +171,32 @@ mode (F6).
 The whole schema change is here, in one place.
 
 ```
-# A grant is one operation on one task, for a bounded time. It is NOT the
-# task's auth_ticket: that names the task's agent, this names an operation.
+# A grant is one request on one task, for a bounded time. It is NOT the task's
+# auth_ticket: that names the task's agent, this names a request.
+#
+# kind is TaskControlKind — the enum that already names every client request,
+# and the one PermissionDeniedResponse already pairs with a Capability. Nothing
+# new is introduced to say "which request": a grant for git_query is
+# kind = git_query and needs no arm, so that family costs zero schema.
+#
+# The variant tail is LAST so grant_id, task_id and expires_unix_ms sit at
+# fixed offsets whatever the kind, and a future arm moves none of them.
 format DataPlaneGrant:
     grant_id :[16]u8
     task_id :TaskID
-    ops :u8                 # bit 0 file_read, bit 1 file_write
     expires_unix_ms :u64
+    kind :TaskControlKind
+    if kind == TaskControlKind.open_file_transfer:
+        direction :FileTransferDirection
 
 # server → runner, on the existing registered conn. The runner stores the
 # grant and expects one connection to present grant_id.
+#
+# slot_id precedes grant for the same reason: DataPlaneGrant now ends in a
+# variant, so anything embedding it must place it last.
 format AuthorizeDataPlaneRequest:
-    grant :DataPlaneGrant
     slot_id :u16            # the connection id the forwarded packets will carry
+    grant :DataPlaneGrant
 
 enum AuthorizeDataPlaneStatus:
     :u8
@@ -219,11 +232,19 @@ which of the three it was.
 `slot_id` and `runner_cid :RunnerID`. `RunnerRequestType` gains
 `authorize_data_plane` and `revoke_data_plane`.
 
-`ops` is a bitfield rather than a capability name because of D7: the runner
-must not hold anything it could interpret as policy. Two bits that mean "may
-read files" and "may write files" are the whole of what it needs to refuse a
-pull on a write-only grant, and they carry no scope, no task tree and no
-capability vocabulary.
+The grant names a request, not a permission, because of D7: the runner must
+not hold anything it could interpret as policy. `kind` and `direction` are both
+enums the schema already has and the runner already parses, so its check is an
+equality against the request it just received — no mask arithmetic, no
+`Capability` value, no scope. A read/write bit pair was the first draft and was
+dropped: two bits meaning "may read files" and "may write files" are
+`Capability.file_read` and `file_write` under another name, which is the
+restatement D7 exists to prevent.
+
+Reusing `TaskControlKind` means the field's type admits kinds no grant will
+ever carry — `submit`, `set_caps`. That is the enum's existing usage rather
+than a new wart: `PermissionDeniedResponse.requested_kind` is the same type and
+only a subset of it can ever be denied.
 
 ## Server behaviour
 
@@ -231,9 +252,8 @@ capability vocabulary.
 exists, task is `Running` or `Detached`, runner is registered — and gains, on
 the path where it currently calls `CreateBidirectionalStream` twice:
 
-1. Mint `grant_id` from `crypto/rand`, `ops` from the request direction
-   (`push` → `file_write`, `pull`/`ls` → `file_read`), `expires_unix_ms` = now
-   + the grant TTL.
+1. Mint `grant_id` from `crypto/rand`, `kind` and `direction` copied from the
+   request the caps check just passed, `expires_unix_ms` = now + the grant TTL.
 2. Send `AuthorizeDataPlane` to the runner and wait for the response, with the
    same correlation pattern `sendEstablishRelayRequest` already uses. A non-`ok`
    status becomes `OpenFileTransferStatus_InternalError`, except
@@ -256,15 +276,16 @@ When `handleSetCaps` narrows a task, the same path that calls
 
 ## Runner behaviour
 
-A grant store keyed by `grant_id`, holding the task, the ops and the expiry —
+A grant store keyed by `grant_id`, holding the task, the request it names and
+the expiry —
 the mirror of `agentboard/registry.go`, with `Validate` comparing in constant
 time the same way. `AuthorizeDataPlane` inserts, `RevokeDataPlane` deletes and
 closes, expiry sweeps on a ticker.
 
 On an accepted data-plane connection the runner refuses unless: the binder is
 valid (the existing PSK gate, unchanged), the grant exists, it has not expired,
-its `task_id` names a task this runner is running, and its `ops` permits the
-requested direction. The refusals map onto `ClientHelloStatus` so the client is
+its `task_id` names a task this runner is running, and its `kind` and
+`direction` equal the request that arrived. The refusals map onto `ClientHelloStatus` so the client is
 told which check failed.
 
 The file I/O afterwards is `runner/file_transfer.go` unchanged: it already
@@ -296,7 +317,8 @@ remains the only one for them.
 
 ## Testing
 
-- The runner's grant store: expiry, constant-time mismatch, ops refusal,
+- The runner's grant store: expiry, constant-time mismatch, wrong-direction
+  refusal,
   idempotent revoke. Unit.
 - `handleOpenFileTransfer` mints, authorizes and proxies in the right order,
   and answers `InternalError` when the runner refuses. Unit against the fakes
