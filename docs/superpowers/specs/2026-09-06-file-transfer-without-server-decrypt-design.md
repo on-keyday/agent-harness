@@ -432,3 +432,48 @@ operation than the one the server authorized is refused, not served.
 form for this: the stream carrying the bytes lives on the data-plane connection,
 not on the one the request arrived over. Same split as the `X` / `XWith` pairs
 in `cli`.
+
+## Amendment — what the implementation changed (2026-09-06)
+
+Four corrections, all found by building the thing.
+
+**D8's rule is transport equality, not "`ws:` keeps the splice".** The route is
+taken when the client and the runner reach the server over the SAME transport,
+and the splice is taken otherwise. `ws↔ws` therefore goes end to end — the
+dummy harness is all WebSocket and carries 1.2 MB byte-identical over it. What
+falls back is a MIXED pair, because forwarding rewrites a packet's connection
+id and re-emits it, and doing that from a WebSocket arrival out over UDP has
+never been exercised. Applied to the current fleet: a `ws:` client with the
+Linux runners goes end to end; with the Windows runners, which are `udp:`, it
+splices.
+
+**There is an escape hatch, and it is a request bit.** `--no-data-plane` on all
+seven `file` verbs sets `no_data_plane` on the request, and the server splices
+that one call. The route stays on by default and is not opt-in — it changes
+which socket the bytes cross and nothing an operator can see, and a path that
+is off by default is a path that rots. The bit is the other half: this is now
+the only file-transfer path, so a fault in it takes push, pull and ls with it,
+and one invocation has to be able to get them back with no restart and no
+rebuild. It also makes the two routes comparable on one file.
+
+It is threaded as a parameter through every `cli` file entry point rather than
+carried on the `Client`, because it is a property of the request and not of the
+connection: on the `Client` it would be state a caller can forget to set. The
+TUI's and WebUI's own widgets pass the default; only their command lines, which
+run the verb, carry the flag.
+
+**The runner may not close as soon as the handler returns.** The file handlers
+return when the last bytes are WRITTEN, not when they have left. Closing there
+drops whatever the send path still holds — `file ls` hung forever while the
+runner logged a clean, complete serve. It waits for the client to hang up now,
+which is the only party that knows the transfer is over.
+
+**One end of the data plane has to take the server half of the stream-id
+space.** `peer.Conn` defaults to the client half and only `server/server.go`
+builds a server-half end, so client-to-runner had two client halves and neither
+could create a stream the other would accept. The client takes it: the runner's
+side is an accepted connection whose kind is unknown until its first payload is
+read, by which time its trsf exists.
+
+None of these four could have been found by a unit test — they live between two
+processes, which is what `scripts/dummy-harness.sh` is for.

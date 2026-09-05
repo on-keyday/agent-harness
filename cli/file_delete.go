@@ -12,8 +12,8 @@ import (
 // FileDeleteDir for those. Reuses the OpenFileTransfer stream: the
 // runner writes a FileTransferAck immediately after performing the
 // unlink, then closes; no payload bytes flow either direction.
-func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string) error {
-	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_Delete, remoteRel, false, "delete")
+func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string, noDataPlane bool) error {
+	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_Delete, remoteRel, false, noDataPlane, "delete")
 }
 
 // FileDeleteDir removes the directory at remoteRel from the worktree of
@@ -21,12 +21,12 @@ func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string) er
 // returns not_empty); when force is true the directory is removed
 // recursively via os.RemoveAll on the runner. Regular files at the leaf
 // are rejected (returns not_a_directory) — use FileDelete for those.
-func (c *Client) FileDeleteDir(ctx context.Context, taskIDHex, remoteRel string, force bool) error {
-	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_DirDelete, remoteRel, force, "dir-delete")
+func (c *Client) FileDeleteDir(ctx context.Context, taskIDHex, remoteRel string, force, noDataPlane bool) error {
+	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_DirDelete, remoteRel, force, noDataPlane, "dir-delete")
 }
 
-func (c *Client) fileDeleteCommon(ctx context.Context, taskIDHex string, dir protocol.FileTransferDirection, remoteRel string, force bool, label string) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, dir, remoteRel, 0, FileTransferRange{}, force, false)
+func (c *Client) fileDeleteCommon(ctx context.Context, taskIDHex string, dir protocol.FileTransferDirection, remoteRel string, force, noDataPlane bool, label string) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, dir, remoteRel, 0, FileTransferRange{}, force, false, noDataPlane)
 	if err != nil {
 		return err
 	}

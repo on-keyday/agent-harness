@@ -187,7 +187,7 @@ func (h tuiVerbs) FileLs(v verb.FileLsAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileLs(a.client, full, v.RelPath)
+	return DoFileLs(a.client, full, v.RelPath, v.NoDataPlane)
 }
 
 func (h tuiVerbs) FilePush(v verb.FilePushAction) tea.Cmd {
@@ -197,7 +197,7 @@ func (h tuiVerbs) FilePush(v verb.FilePushAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents)
+	return DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents, v.NoDataPlane)
 }
 
 func (h tuiVerbs) FilePull(v verb.FilePullAction) tea.Cmd {
@@ -207,7 +207,7 @@ func (h tuiVerbs) FilePull(v verb.FilePullAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force,
+	return DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force, v.NoDataPlane,
 		cli.FileTransferRange{Offset: v.Offset, Length: v.Length})
 }
 
@@ -218,7 +218,7 @@ func (h tuiVerbs) FileMkdir(v verb.FileMkdirAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileMkdir(a.client, full, v.RelPath, v.Parents)
+	return DoFileMkdir(a.client, full, v.RelPath, v.Parents, v.NoDataPlane)
 }
 
 func (h tuiVerbs) FileDelete(v verb.FileDeleteAction) tea.Cmd {
@@ -228,7 +228,7 @@ func (h tuiVerbs) FileDelete(v verb.FileDeleteAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
+	return DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force, v.NoDataPlane)
 }
 
 func (h tuiVerbs) FileEdit(v verb.FileEditAction) tea.Cmd {

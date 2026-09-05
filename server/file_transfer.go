@@ -44,7 +44,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	// splice below when the hook is absent, the transports differ, or the
 	// runner refuses -- the client can tell the routes apart by grant_id.
 	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId); ok {
+		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.NoDataPlane()); ok {
 		return protocol.OpenFileTransferResponse{
 			Status:    protocol.OpenFileTransferStatus_Ok,
 			GrantId:   grantID,
@@ -118,7 +118,7 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
 	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_ListFiles, 0, req.TaskId); ok {
+		protocol.TaskControlKind_ListFiles, 0, req.TaskId, req.NoDataPlane()); ok {
 		return protocol.ListFilesResponse{
 			Status:    protocol.ListFilesStatus_Ok,
 			GrantId:   grantID,
@@ -168,7 +168,15 @@ func (h *TaskHandler) tryDataPlane(
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	taskID protocol.TaskID,
+	refused bool,
 ) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, ok bool) {
+	// The caller asked for the splice. The end-to-end route is the default and
+	// needs no opting in; this bit exists so a single invocation can get file
+	// transfer back when that route is at fault, with no restart and no
+	// rebuild, and so the two can be compared on one file.
+	if refused {
+		return grantID, 0, runnerCID, false
+	}
 	if h.SetupDataPlane == nil || runner == nil || runner.Conn == nil {
 		return grantID, 0, runnerCID, false
 	}

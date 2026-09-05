@@ -23,8 +23,8 @@ import (
 // return type does not change: the caller wanted a file written, and it gets
 // one. FilePullBytesRange is a separate function only because it has to hand
 // back the file's total size alongside the bytes.
-func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, rng FileTransferRange, force bool) error {
-	return c.filePullDo(ctx, taskIDHex, remoteRel, rng, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
+func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, rng FileTransferRange, force, noDataPlane bool) error {
+	return c.filePullDo(ctx, taskIDHex, remoteRel, rng, noDataPlane, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 		if force {
 			flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -53,9 +53,9 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 // is no local fs to write into on that side. Returns the file contents
 // in a freshly allocated slice; the caller is responsible for whatever
 // download / save flow it needs to drive next.
-func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
+func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string, noDataPlane bool, onProgress ProgressFunc) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := c.filePullDo(ctx, taskIDHex, remoteRel, FileTransferRange{}, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
+	if err := c.filePullDo(ctx, taskIDHex, remoteRel, FileTransferRange{}, noDataPlane, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
 		buf.Grow(int(expectedSize))
 		n, err := copyWithProgress(&buf, stream, expectedSize, onProgress)
 		if err != nil {
@@ -80,8 +80,8 @@ func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string,
 // Runner ignores the protocol-level force flag for pull (it's a
 // read-only op on the runner side); body decides what client-side
 // "force" means (overwrite vs. always-new-buffer).
-func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, body func(stream trsf.BidirectionalStream, n, total uint64) error) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, rng, false, false)
+func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, noDataPlane bool, body func(stream trsf.BidirectionalStream, n, total uint64) error) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, rng, false, false, noDataPlane)
 	if err != nil {
 		return err
 	}
@@ -109,10 +109,10 @@ func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, rn
 // A short read is still an error, measured against the size the runner acked
 // for THIS transfer rather than the file size — those differ here, which is
 // the whole reason total_size exists.
-func (c *Client) FilePullBytesRange(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, onProgress ProgressFunc) ([]byte, uint64, error) {
+func (c *Client) FilePullBytesRange(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, noDataPlane bool, onProgress ProgressFunc) ([]byte, uint64, error) {
 	var buf bytes.Buffer
 	var total uint64
-	if err := c.filePullDo(ctx, taskIDHex, remoteRel, rng, func(stream trsf.BidirectionalStream, n, tot uint64) error {
+	if err := c.filePullDo(ctx, taskIDHex, remoteRel, rng, noDataPlane, func(stream trsf.BidirectionalStream, n, tot uint64) error {
 		total = tot
 		buf.Grow(int(n))
 		got, err := copyWithProgress(&buf, stream, n, onProgress)
@@ -132,7 +132,7 @@ func (c *Client) FilePullBytesRange(ctx context.Context, taskIDHex, remoteRel st
 // FilePullDir pulls the worktree directory at remoteRel into localDir. Stages
 // the extracted tree at <localDir>.staging-<random>/ and renames atomically
 // on success. Refuses to overwrite an existing local dest unless force is set.
-func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir string, force bool) error {
+func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir string, force, noDataPlane bool) error {
 	if fi, err := os.Lstat(localDir); err == nil {
 		if !fi.IsDir() {
 			return fmt.Errorf("file pull --recursive: %s exists and is not a directory", localDir)
@@ -144,7 +144,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 		return fmt.Errorf("file pull --recursive: stat local: %w", err)
 	}
 
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false, noDataPlane)
 	if err != nil {
 		return err
 	}
@@ -231,8 +231,8 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 // WebUI wasm bridge, which has no local filesystem to stage into — the
 // browser saves the bytes as a .tar for the user to extract. The returned
 // bytes are a complete tar archive (the same stream FilePullDir untars).
-func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false)
+func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string, noDataPlane bool, onProgress ProgressFunc) ([]byte, error) {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false, noDataPlane)
 	if err != nil {
 		return nil, err
 	}

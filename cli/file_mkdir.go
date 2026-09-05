@@ -14,8 +14,8 @@ import (
 // mkdir / mkdir -p. Reuses the OpenFileTransfer stream the way delete
 // does: no payload bytes flow either direction, the runner acks and
 // closes.
-func (c *Client) FileMkdir(ctx context.Context, taskIDHex, remoteRel string, parents bool) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Mkdir, remoteRel, 0, FileTransferRange{}, false, parents)
+func (c *Client) FileMkdir(ctx context.Context, taskIDHex, remoteRel string, parents, noDataPlane bool) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Mkdir, remoteRel, 0, FileTransferRange{}, false, parents, noDataPlane)
 	if err != nil {
 		return err
 	}

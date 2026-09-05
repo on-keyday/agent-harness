@@ -171,6 +171,13 @@ type TaskHandler struct {
 	// the old grant do not outlive it. nil in tests that do not need it.
 	DropConnsForPrincipal func(taskIDHex string) int
 
+	// RevokeDataPlaneForTask, when non-nil, withdraws every data-plane grant
+	// issued for a task and stops forwarding its packets. Closing the task's
+	// outward connections does not reach those: their bytes cross a connection
+	// whose far end is the RUNNER, so this process is not on it as an
+	// application and has nothing to close. Returns how many it withdrew.
+	RevokeDataPlaneForTask func(taskIDHex string) int
+
 	// OnConnIdentified, when non-nil, is called after a client connection's
 	// identity is successfully recorded (ClientHello accepted). It fires with
 	// the connection ID string so the server can emit a conn_identified event.

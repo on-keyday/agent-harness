@@ -45,6 +45,7 @@ func (c *Client) OpenFileTransfer(
 	rng FileTransferRange,
 	force bool,
 	mkdirParents bool,
+	noDataPlane bool,
 ) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
@@ -61,6 +62,7 @@ func (c *Client) OpenFileTransfer(
 	body.SetRelPath([]byte(relPath))
 	body.SetForce(force)
 	body.SetMkdirParents(mkdirParents)
+	body.SetNoDataPlane(noDataPlane)
 	req.SetOpenFileTransfer(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -129,7 +131,7 @@ func (s *dataPlaneStream) CloseBoth() error {
 
 // ListFiles round-trips a list_files request and decodes the FileListing
 // payload. Returns the entries in name order.
-func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]FileEntryView, error) {
+func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, noDataPlane bool) ([]FileEntryView, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("file ls: parse task id: %w", err)
@@ -137,6 +139,7 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]Fi
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListFiles}
 	body := protocol.ListFilesRequest{TaskId: tid}
 	body.SetRelPath([]byte(relPath))
+	body.SetNoDataPlane(noDataPlane)
 	req.SetListFiles(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

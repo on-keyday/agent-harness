@@ -20,6 +20,13 @@ import (
 type FilePushOpts struct {
 	Force        bool
 	MkdirParents bool
+	// NoDataPlane asks the server to splice this transfer instead of routing
+	// it end to end. Off by default: the end-to-end route is not opt-in, since
+	// it changes which socket the bytes cross and nothing an operator sees.
+	// This is the other half -- it is the only file-transfer path, so one
+	// invocation must be able to get push, pull and ls back with no restart
+	// and no rebuild, and the two routes must be comparable on one file.
+	NoDataPlane bool
 }
 
 // FilePush copies localPath into the worktree of taskIDHex at remoteRel.
@@ -52,7 +59,7 @@ func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byt
 // file-backed FilePush and the bytes-backed FilePushBytes go through
 // here so the wire side has one well-tested code path.
 func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, opts FilePushOpts, onProgress ProgressFunc) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, FileTransferRange{}, opts.Force, opts.MkdirParents)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, FileTransferRange{}, opts.Force, opts.MkdirParents, opts.NoDataPlane)
 	if err != nil {
 		return err
 	}
@@ -81,7 +88,7 @@ func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel
 	if !info.IsDir() {
 		return fmt.Errorf("file push --recursive: %s is not a directory", localDir)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, FileTransferRange{}, opts.Force, opts.MkdirParents)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, FileTransferRange{}, opts.Force, opts.MkdirParents, opts.NoDataPlane)
 	if err != nil {
 		return err
 	}

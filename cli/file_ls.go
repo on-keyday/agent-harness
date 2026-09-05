@@ -8,8 +8,8 @@ import (
 
 // FileLs prints one line per entry under taskIDHex/<relPath> to out.
 // Format: "<mode-octal> <size> <name>[/]" (trailing slash for directories).
-func (c *Client) FileLs(ctx context.Context, taskIDHex, relPath string, out io.Writer) error {
-	entries, err := c.ListFiles(ctx, taskIDHex, relPath)
+func (c *Client) FileLs(ctx context.Context, taskIDHex, relPath string, noDataPlane bool, out io.Writer) error {
+	entries, err := c.ListFiles(ctx, taskIDHex, relPath, noDataPlane)
 	if err != nil {
 		return err
 	}

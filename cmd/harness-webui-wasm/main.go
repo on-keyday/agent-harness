@@ -2617,7 +2617,7 @@ func harnessFileLs(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			rel := args[1].String()
-			entries, err := c.ListFiles(rootCtx, taskID, rel)
+			entries, err := c.ListFiles(rootCtx, taskID, rel, false)
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -2664,9 +2664,9 @@ func harnessFileDelete(this js.Value, args []js.Value) any {
 			recursive := len(args) >= 3 && args[2].Truthy()
 			force := len(args) >= 4 && args[3].Truthy()
 			if recursive {
-				err = c.FileDeleteDir(rootCtx, taskID, rel, force)
+				err = c.FileDeleteDir(rootCtx, taskID, rel, force, false)
 			} else {
-				err = c.FileDelete(rootCtx, taskID, rel)
+				err = c.FileDelete(rootCtx, taskID, rel, false)
 			}
 			if err != nil {
 				rejectFileErr(reject, err)
@@ -2703,7 +2703,7 @@ func harnessFileMkdir(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if err := c.FileMkdir(rootCtx, taskID, rel, parents); err != nil {
+			if err := c.FileMkdir(rootCtx, taskID, rel, parents, false); err != nil {
 				rejectFileErr(reject, err)
 				return
 			}
@@ -2800,7 +2800,7 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel, jsProgress(args, 2))
+			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel, false, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -2946,7 +2946,7 @@ func harnessFilePullBytesRange(this js.Value, args []js.Value) any {
 				Offset: uint64(args[2].Int()),
 				Length: uint64(args[3].Int()),
 			}
-			data, total, err := c.FilePullBytesRange(rootCtx, args[0].String(), args[1].String(), rng, jsProgress(args, 4))
+			data, total, err := c.FilePullBytesRange(rootCtx, args[0].String(), args[1].String(), rng, false, jsProgress(args, 4))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -2985,7 +2985,7 @@ func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel, jsProgress(args, 2))
+			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel, false, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -3027,7 +3027,7 @@ func harnessFileEditLoad(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			doc, err := c.FileEditLoad(rootCtx, taskID, remoteRel, onProgress)
+			doc, err := c.FileEditLoad(rootCtx, taskID, remoteRel, false, onProgress)
 			if err != nil {
 				rejectFileEditErr(reject, err)
 				return
@@ -3077,7 +3077,7 @@ func harnessFileEditCommit(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			st, err := c.FileEditCommit(rootCtx, taskID, doc, text, force)
+			st, err := c.FileEditCommit(rootCtx, taskID, doc, text, force, false)
 			if err != nil {
 				rejectFileEditErr(reject, err)
 				return

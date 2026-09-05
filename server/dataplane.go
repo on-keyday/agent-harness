@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -133,7 +134,54 @@ func (s *Server) setupDataPlane(
 		s.sendRevokeDataPlaneRequest(entry, grant.GrantId)
 		return 0, fmt.Errorf("data plane: SetProxy(%v, %v): %w", owned, allocate, err)
 	}
+	s.rememberGrant(hex.EncodeToString(grant.TaskId.Id[:]), issuedGrant{
+		grantID:   grant.GrantId,
+		entry:     entry,
+		clientCID: clientCID,
+		slot:      slot,
+	})
 	return slot, nil
+}
+
+// issuedGrant is what the server must remember to withdraw a grant later: who
+// to tell, and which forwarding entry to remove.
+type issuedGrant struct {
+	grantID   [16]byte
+	entry     *RunnerEntry
+	clientCID objproto.ConnectionID
+	slot      uint16
+}
+
+// rememberGrant records an issued grant against its task.
+func (s *Server) rememberGrant(taskIDHex string, g issuedGrant) {
+	s.grantsMu.Lock()
+	defer s.grantsMu.Unlock()
+	if s.issuedGrants == nil {
+		s.issuedGrants = make(map[string][]issuedGrant)
+	}
+	s.issuedGrants[taskIDHex] = append(s.issuedGrants[taskIDHex], g)
+}
+
+// revokeDataPlaneForTask withdraws every grant issued for a task. All three
+// parts of the revocation happen here: the forwarding entry goes, so no further
+// packet crosses this process; the runner is told, because a client that can
+// reach it without this process would otherwise keep going; and the grant's own
+// TTL stays the backstop for a message that never lands.
+func (s *Server) revokeDataPlaneForTask(taskIDHex string) int {
+	s.grantsMu.Lock()
+	grants := s.issuedGrants[taskIDHex]
+	delete(s.issuedGrants, taskIDHex)
+	s.grantsMu.Unlock()
+
+	ep := s.dataPlaneEndpoint.Load()
+	for _, g := range grants {
+		if ep != nil {
+			owned := objproto.NewConnectionID(g.clientCID.Transport, g.clientCID.Addr, g.slot)
+			(*ep).DeleteProxy(owned) //nolint:errcheck
+		}
+		s.sendRevokeDataPlaneRequest(g.entry, g.grantID)
+	}
+	return len(grants)
 }
 
 // sendAuthorizeDataPlaneRequest pushes a grant to a runner and waits for its

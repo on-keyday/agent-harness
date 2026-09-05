@@ -126,6 +126,8 @@ type ExecRunAction struct {
 // FileDeleteAction is built by: file delete.
 type FileDeleteAction struct {
 	ActionMarker
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
 	// target a directory tree instead of a single file (uses dir_delete)
 	Recursive bool
 	// with -r: delete non-empty directory contents recursively (RemoveAll). Ignored without -r
@@ -137,20 +139,26 @@ type FileDeleteAction struct {
 // FileEditAction is built by: file edit.
 type FileEditAction struct {
 	ActionMarker
-	TaskID  string
-	RelPath string
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
+	TaskID      string
+	RelPath     string
 }
 
 // FileLsAction is built by: file ls.
 type FileLsAction struct {
 	ActionMarker
-	TaskID  string
-	RelPath string
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
+	TaskID      string
+	RelPath     string
 }
 
 // FileMkdirAction is built by: file mkdir.
 type FileMkdirAction struct {
 	ActionMarker
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
 	// create missing parent directories (mkdir -p); also makes an existing directory a success
 	Parents bool
 	TaskID  string
@@ -160,13 +168,17 @@ type FileMkdirAction struct {
 // FileNewAction is built by: file new.
 type FileNewAction struct {
 	ActionMarker
-	TaskID  string
-	RelPath string
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
+	TaskID      string
+	RelPath     string
 }
 
 // FilePullAction is built by: file pull.
 type FilePullAction struct {
 	ActionMarker
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
 	// transfer a directory tree
 	Recursive bool
 	// overwrite existing destination
@@ -183,6 +195,8 @@ type FilePullAction struct {
 // FilePushAction is built by: file push.
 type FilePushAction struct {
 	ActionMarker
+	// splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-e…
+	NoDataPlane bool
 	// transfer a directory tree
 	Recursive bool
 	// overwrite existing destination
@@ -612,6 +626,7 @@ func init() {
 		},
 		"file push\x00cli": func(b Bound) (Action, error) {
 			a := FilePushAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			a.Parents = b.Bool("parents")
@@ -628,6 +643,7 @@ func init() {
 		},
 		"file push\x00tui": func(b Bound) (Action, error) {
 			a := FilePushAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			a.Parents = b.Bool("parents")
@@ -644,6 +660,7 @@ func init() {
 		},
 		"file push\x00webui": func(b Bound) (Action, error) {
 			a := FilePushAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			a.Parents = b.Bool("parents")
@@ -657,6 +674,7 @@ func init() {
 		},
 		"file pull\x00cli": func(b Bound) (Action, error) {
 			a := FilePullAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			a.Offset = uint64Of(b.Flags["offset"])
@@ -674,6 +692,7 @@ func init() {
 		},
 		"file pull\x00tui": func(b Bound) (Action, error) {
 			a := FilePullAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			a.Offset = uint64Of(b.Flags["offset"])
@@ -691,6 +710,7 @@ func init() {
 		},
 		"file pull\x00webui": func(b Bound) (Action, error) {
 			a := FilePullAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Offset = uint64Of(b.Flags["offset"])
 			a.Length = uint64Of(b.Flags["length"])
@@ -704,6 +724,7 @@ func init() {
 		},
 		"file ls\x00cli": func(b Bound) (Action, error) {
 			a := FileLsAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -714,6 +735,7 @@ func init() {
 		},
 		"file ls\x00tui": func(b Bound) (Action, error) {
 			a := FileLsAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -724,6 +746,7 @@ func init() {
 		},
 		"file ls\x00webui": func(b Bound) (Action, error) {
 			a := FileLsAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -734,6 +757,7 @@ func init() {
 		},
 		"file mkdir\x00cli": func(b Bound) (Action, error) {
 			a := FileMkdirAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Parents = b.Bool("parents")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -745,6 +769,7 @@ func init() {
 		},
 		"file mkdir\x00tui": func(b Bound) (Action, error) {
 			a := FileMkdirAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Parents = b.Bool("parents")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -756,6 +781,7 @@ func init() {
 		},
 		"file mkdir\x00webui": func(b Bound) (Action, error) {
 			a := FileMkdirAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Parents = b.Bool("parents")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
@@ -767,6 +793,7 @@ func init() {
 		},
 		"file delete\x00cli": func(b Bound) (Action, error) {
 			a := FileDeleteAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
@@ -779,6 +806,7 @@ func init() {
 		},
 		"file delete\x00tui": func(b Bound) (Action, error) {
 			a := FileDeleteAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
@@ -791,6 +819,7 @@ func init() {
 		},
 		"file delete\x00webui": func(b Bound) (Action, error) {
 			a := FileDeleteAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			a.Recursive = b.Bool("recursive")
 			a.Force = b.Bool("force")
 			if len(b.Args) > 0 {
@@ -803,6 +832,7 @@ func init() {
 		},
 		"file edit\x00cli": func(b Bound) (Action, error) {
 			a := FileEditAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -813,6 +843,7 @@ func init() {
 		},
 		"file edit\x00tui": func(b Bound) (Action, error) {
 			a := FileEditAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -823,6 +854,7 @@ func init() {
 		},
 		"file edit\x00webui": func(b Bound) (Action, error) {
 			a := FileEditAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -833,6 +865,7 @@ func init() {
 		},
 		"file new\x00cli": func(b Bound) (Action, error) {
 			a := FileNewAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -843,6 +876,7 @@ func init() {
 		},
 		"file new\x00tui": func(b Bound) (Action, error) {
 			a := FileNewAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}
@@ -853,6 +887,7 @@ func init() {
 		},
 		"file new\x00webui": func(b Bound) (Action, error) {
 			a := FileNewAction{}
+			a.NoDataPlane = b.Bool("no-data-plane")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}

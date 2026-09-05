@@ -1022,7 +1022,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case FileEditRequestMsg:
 		a.cmdresult.Append("loading " + msg.Rel + " for edit…")
-		return a, DoFileEditLoad(a.client, msg.TaskID, msg.Rel)
+		return a, DoFileEditLoad(a.client, msg.TaskID, msg.Rel,
+			// --no-data-plane is a command-line escape hatch; the interactive
+			// widgets take the default route.
+			false)
 
 	case FileEditNewRequestMsg:
 		a.fileEditor.SetSize(a.width, a.height)
@@ -1058,9 +1061,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A retargeted path is a new file wherever it points, so there is no
 		// baseline to compare it against — push it as a create.
 		if msg.Create || msg.Name != msg.Doc.Rel {
-			return a, DoFileEditCreate(a.client, msg.TaskID, msg.Name, msg.Text, msg.Doc)
+			return a, DoFileEditCreate(a.client, msg.TaskID, msg.Name, msg.Text, msg.Doc, false)
 		}
-		return a, DoFileEditCommit(a.client, msg.TaskID, msg.Doc, msg.Text, force)
+		return a, DoFileEditCommit(a.client, msg.TaskID, msg.Doc, msg.Text, force, false)
 
 	case FileEditCommittedMsg:
 		switch {

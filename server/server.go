@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -135,6 +136,14 @@ type Server struct {
 	// flight to the same runner at once and their answers are different types.
 	dpRespChMu sync.Mutex
 	dpRespCh   map[objproto.ConnectionID]chan protocol.AuthorizeDataPlaneResponse
+
+	// issuedGrants remembers the data-plane grants handed out per task so a
+	// narrowing caps change can withdraw them. dataPlaneEndpoint holds their
+	// forwarding entries and only exists once the listener is up, hence an
+	// atomic rather than a constructor field.
+	grantsMu          sync.Mutex
+	issuedGrants      map[string][]issuedGrant
+	dataPlaneEndpoint atomic.Pointer[objproto.Endpoint]
 
 	// pendingViaInfoMu / pendingViaInfo carry Phase C registration metadata from
 	// DialRunnerHandler.HandleWithVia (where the via entry + target addr are in
@@ -261,6 +270,7 @@ func New(cfg Config) *Server {
 	}
 	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
 	s.taskHandler.DropConnsForPrincipal = s.dropConnsForPrincipal
+	s.taskHandler.RevokeDataPlaneForTask = s.revokeDataPlaneForTask
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
 	// Wire notify ring + egress hook into the TaskHandler.
@@ -525,6 +535,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error) {
 		return s.setupDataPlane(ctx, ep, clientCID, entry, grant)
 	}
+	s.dataPlaneEndpoint.Store(&ep)
 	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo) {
 		// connCtx is the server root context (long-lived). The ECDH-timeout
 		// context lives only inside DialRunnerHandler.Handle and is already

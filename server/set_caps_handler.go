@@ -114,9 +114,18 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 	// the revoked task opened OUTWARD; its own PTY rides the runner connection
 	// and survives. A pure widening drops nothing.
 	var connsClosed uint32
-	if narrowed && !req.KeepConns() && h.DropConnsForPrincipal != nil {
+	if narrowed && !req.KeepConns() {
 		for _, id := range affected {
-			connsClosed += uint32(h.DropConnsForPrincipal(id))
+			if h.DropConnsForPrincipal != nil {
+				connsClosed += uint32(h.DropConnsForPrincipal(id))
+			}
+			// A data-plane transfer is not among those connections: it runs
+			// between the client and the RUNNER, with this process forwarding
+			// packets it cannot read. Dropping the task's outward connections
+			// leaves it running, so it is withdrawn explicitly.
+			if h.RevokeDataPlaneForTask != nil {
+				connsClosed += uint32(h.RevokeDataPlaneForTask(id))
+			}
 		}
 	}
 

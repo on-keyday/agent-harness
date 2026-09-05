@@ -87,6 +87,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dst", Type: ArgString, Field: "RemoteDst"},
 		},
 		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -120,6 +122,8 @@ var Verbs = []VerbSpec{
 			},
 		},
 		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -156,6 +160,10 @@ var Verbs = []VerbSpec{
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
 		},
+		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+		},
 	},
 	{
 		Path: []string{"file", "mkdir"},
@@ -169,6 +177,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dir", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
 			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories (mkdir -p); also makes an existing directory a success"},
 		},
@@ -186,6 +196,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "target a directory tree instead of a single file (uses dir_delete)"},
 			// Without -r this flag is ignored, so its absence never widens: -r
@@ -210,6 +222,10 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
+		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+		},
 	},
 	{
 		Path: []string{"file", "new"},
@@ -223,6 +239,10 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Examples: []string{"file new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/new.txt"},
+		Flags: []Flag{
+			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
+				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+		},
 	},
 	// --- git ---
 	//
