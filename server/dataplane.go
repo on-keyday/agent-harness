@@ -79,11 +79,23 @@ func randomSlotID(avoid ...uint16) uint16 {
 // dataPlaneRoute reports whether a client and a runner can be joined by packet
 // forwarding rather than by splicing.
 //
-// The rule is transport equality. Forwarding rewrites the connection id of a
-// packet and sends it back out; sending one that arrived over WebSocket out
-// over UDP (or the reverse) has never been exercised on this transport, and a
-// file transfer is not the place to find out. Same-transport pairs are what the
-// throughput ladder priced and what the relay paths already in this repo use.
+// The rule is transport equality, and it is a hard requirement rather than
+// caution. Each end sizes its packets from its OWN connection's transport
+// (peer.MTUForTransport, called at peer/conn.go with conn.ConnectionID()):
+// ws/wss get StreamMTU = 16384, udp gets the path-MTU-safe trsf defaults. That
+// function's own comment states the assumption it rests on -- "both ends of a
+// connection derive it from the same scheme, so the choice is always
+// symmetric" -- and a mixed pair is exactly where that stops being true.
+//
+// Forwarding re-emits a packet byte for byte and never re-fragments, so a
+// 16 KB packet from a WebSocket end would go out whole on the UDP leg, past
+// the datagram MTU: dropped, or EMSGSIZE / WSAEMSGSIZE on send. It breaks in
+// BOTH directions, because whichever end is on ws is the one producing packets
+// the other's transport cannot carry.
+//
+// It is fixable -- the two ends would have to agree on the smaller MTU, which
+// AuthorizeDataPlane is the natural place to carry -- and until they do, a
+// mixed pair takes the splice.
 func dataPlaneRoute(clientCID, runnerCID objproto.ConnectionID) bool {
 	return clientCID.Transport == runnerCID.Transport && clientCID.Transport != ""
 }

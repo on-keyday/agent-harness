@@ -477,3 +477,28 @@ read, by which time its trsf exists.
 
 None of these four could have been found by a unit test — they live between two
 processes, which is what `scripts/dummy-harness.sh` is for.
+
+## Amendment — why the transports must match (2026-09-06)
+
+The amendment above says a mixed transport pair falls back "because forwarding
+rewrites a packet's connection id and re-emits it, and doing that from a
+WebSocket arrival out over UDP has never been exercised". That was caution, and
+it understated the case: there is a hard reason, and stating it weakly invites
+someone to lift the restriction by simply trying it.
+
+Each end sizes its packets from its OWN connection's transport —
+`peer.MTUForTransport`, called with `conn.ConnectionID().Transport` — and
+`ws`/`wss` get `StreamMTU` (16384) where `udp` gets the path-MTU-safe trsf
+defaults. `MTUForTransport`'s own comment names the assumption underneath:
+*"Both ends of a connection derive it from the same scheme, so the choice is
+always symmetric."* A mixed pair is precisely where that stops holding.
+
+Forwarding re-emits a packet byte for byte and never re-fragments. So the end
+that is on WebSocket produces 16 KB packets, and on the UDP leg those are past
+the datagram MTU: dropped, or `EMSGSIZE` / `WSAEMSGSIZE` on send. It fails in
+**both** directions, since either end can be the WebSocket one.
+
+This is fixable rather than fundamental: the two ends would have to agree on
+the smaller MTU, and `AuthorizeDataPlaneRequest` is the natural place to carry
+it. Until they do, a mixed pair takes the splice — which is what today's fleet
+does for a `ws:` client against the `udp:` Windows runners.
