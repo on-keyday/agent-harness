@@ -4,13 +4,11 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -19,7 +17,6 @@ import (
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
-	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -237,20 +234,6 @@ func forceExitWithStacks(label, reason string) {
 	os.Exit(130)
 }
 
-// readFlagBody resolves a --http-body value: a literal, @file, or - for stdin.
-func readFlagBody(v string) ([]byte, error) {
-	switch {
-	case v == "":
-		return nil, nil
-	case v == "-":
-		return io.ReadAll(os.Stdin)
-	case strings.HasPrefix(v, "@"):
-		return os.ReadFile(v[1:])
-	default:
-		return []byte(v), nil
-	}
-}
-
 func usage() { usageTo(os.Stderr) }
 
 func usageTo(w io.Writer) {
@@ -321,175 +304,4 @@ func printFamilyNotes(w io.Writer, family string) {
 func die(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
-}
-
-// classifyForLocalPrune dials the server, snapshots the task list, and
-// returns the subset of taskIDs that are safe to remove locally. A task is
-// safe when its server status is terminal (Succeeded/Failed/Cancelled) or
-// when it is no longer in the snapshot at all (pruned/typo). Tasks the
-// server still considers active (Queued/Running/Detached) are skipped with
-// a warning unless force is set.
-func classifyForLocalPrune(ctx context.Context, peerCID objproto.ConnectionID, taskIDs []string, force bool, out io.Writer) ([]string, error) {
-	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
-	if err != nil {
-		return nil, err
-	}
-	defer c.Close()
-	snap, err := c.Snapshot(ctx)
-	if err != nil {
-		return nil, err
-	}
-	statusByID := make(map[string]protocol.TaskStatus, len(snap.Tasks))
-	for i := range snap.Tasks {
-		statusByID[hex.EncodeToString(snap.Tasks[i].Id.Id[:])] = snap.Tasks[i].Status
-	}
-	safe := make([]string, 0, len(taskIDs))
-	for _, id := range taskIDs {
-		st, known := statusByID[id]
-		if !known {
-			safe = append(safe, id)
-			continue
-		}
-		switch st {
-		case protocol.TaskStatus_Succeeded,
-			protocol.TaskStatus_Failed,
-			protocol.TaskStatus_Cancelled:
-			safe = append(safe, id)
-		default:
-			if force {
-				fmt.Fprintf(out, "force-removing %s (status=%s on server)\n", id, st.String())
-				safe = append(safe, id)
-			} else {
-				fmt.Fprintf(out, "skip %s: still active on server (status=%s); pass --force to override\n", id, st.String())
-			}
-		}
-	}
-	return safe, nil
-}
-
-// runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.
-// A CLI has no terminal UI of its own to host an editor widget, so unlike the
-// TUI this path always goes through an external editor.
-func runFileEdit(ctx context.Context, c *cli.Client, taskID, rel string) error {
-	doc, err := c.FileEditLoad(ctx, taskID, rel, nil)
-	if err != nil {
-		return err
-	}
-	edited, tmp, err := editViaExternalEditor(rel, doc.Text)
-	if err != nil {
-		return err
-	}
-	for force := false; ; force = true {
-		st, cerr := c.FileEditCommit(ctx, taskID, doc, edited, force)
-		if cerr != nil {
-			return fmt.Errorf("%w (your edit is kept at %s)", cerr, tmp)
-		}
-		switch st {
-		case cli.FileEditUnchanged:
-			os.Remove(tmp)
-			fmt.Printf("no change: %s\n", rel)
-			return nil
-		case cli.FileEditPushed:
-			os.Remove(tmp)
-			fmt.Printf("saved: %s\n", rel)
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "%s changed on the runner since it was read. Overwrite? [y/N] ", rel)
-		var answer string
-		fmt.Fscanln(os.Stdin, &answer)
-		if answer != "y" && answer != "Y" {
-			fmt.Fprintf(os.Stderr, "not overwritten; your edit is kept at %s\n", tmp)
-			return nil
-		}
-	}
-}
-
-// runFileNew opens an empty buffer in $EDITOR and pushes it to rel.
-func runFileNew(ctx context.Context, c *cli.Client, taskID, rel string) error {
-	text, tmp, err := editViaExternalEditor(rel, "")
-	if err != nil {
-		return err
-	}
-	if err := c.FilePushBytes(ctx, taskID, []byte(text), rel, cli.FilePushOpts{MkdirParents: true}, nil); err != nil {
-		return fmt.Errorf("%w (your text is kept at %s)", err, tmp)
-	}
-	os.Remove(tmp)
-	fmt.Printf("created: %s\n", rel)
-	return nil
-}
-
-// editViaExternalEditor spools text to a temp file, runs $EDITOR on it with
-// this process's stdio, and returns the result. The temp path comes back too
-// so callers can name it when a later step fails and the edit would otherwise
-// be lost.
-func editViaExternalEditor(name, text string) (string, string, error) {
-	f, err := os.CreateTemp("", "harness-edit-*"+filepath.Ext(name))
-	if err != nil {
-		return "", "", err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return "", "", err
-	}
-	f.Close()
-	cmd, err := cli.ExternalEditorCommand(tmp)
-	if err != nil {
-		os.Remove(tmp)
-		return "", "", err
-	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", tmp, fmt.Errorf("editor exited with an error: %w (your text is kept at %s)", err, tmp)
-	}
-	b, err := os.ReadFile(tmp)
-	if err != nil {
-		return "", tmp, err
-	}
-	return string(b), tmp, nil
-}
-
-// tapModeByName maps the declaration's mode word onto the renderer. The
-// mutual exclusion between the four is enforced in the verb's Build, so by the
-// time this runs exactly one was chosen.
-func tapModeByName(name string) cli.TapRenderMode {
-	switch name {
-	case "text":
-		return cli.TapText
-	case "raw":
-		return cli.TapRaw
-	case "json":
-		return cli.TapJSON
-	default:
-		return cli.TapHex
-	}
-}
-
-// spawnOpts turns the shared action into the client's option bag.
-//
-// --caps / --scope / --scope-for are already parsed and merged by the verb's
-// Build, which is where that grammar lives; the pointers carry "the operator
-// said nothing" separately from "the operator said none", because both zero
-// values are meaningful.
-func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
-	var caps protocol.Capability
-	if a.Caps != nil {
-		caps = *a.Caps
-	}
-	var scope protocol.TaskScope
-	if a.Scope != nil {
-		scope = *a.Scope
-	}
-	sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
-	if err != nil {
-		die(err)
-	}
-	return cli.SessionOpts{
-		Selector: sel, ExtraArgs: a.ExtraArgs, ResumeTaskID: a.ResumeTaskID,
-		Caps: caps, Scope: scope, Overrides: a.Overrides,
-		ResumeCapsOverride: a.ResumeTaskID != "" && a.CapsPresent,
-		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
-		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
-	}
 }

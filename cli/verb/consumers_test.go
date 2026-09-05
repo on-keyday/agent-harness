@@ -57,14 +57,14 @@ type verbConsumer struct {
 // "executes this verb" is not something the import graph distinguishes from
 // "mentions this type".
 var verbConsumers = []verbConsumer{
-	{"submit", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
+	{"submit", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/spawn.go"}},
 	{"submit", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
-	{"interactive", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
+	{"interactive", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/spawn.go"}},
 	{"interactive", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
-	// session.go parses and holds the PTY knobs; spawnOpts in main.go turns the
-	// shared half into the client's option bag. Both are the CLI's execution of
-	// this verb, so both count as consumers.
-	{"session new", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/session.go", "../../cmd/harness-cli/main.go"}},
+	// session.go holds the PTY knobs; spawnOpts in spawn.go turns the shared
+	// half into the client's option bag. Both are the CLI's execution of this
+	// verb, so both count as consumers.
+	{"session new", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/session.go", "../../cmd/harness-cli/spawn.go"}},
 	{"session new", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 
 	{"prune", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
