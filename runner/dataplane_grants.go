@@ -26,6 +26,7 @@ type grantStore struct {
 type grantEntry struct {
 	grant  protocol.DataPlaneGrant
 	slotID uint16
+	mtu    uint16
 	closer func()
 }
 
@@ -39,14 +40,32 @@ func newGrantStore() *grantStore {
 // comment records why in the mirror case: a second Register would invalidate
 // the credential a live connection is already holding, so the caller that
 // needs the existing one must look it up instead of minting over it.
-func (s *grantStore) Insert(g protocol.DataPlaneGrant, slotID uint16) protocol.AuthorizeDataPlaneStatus {
+func (s *grantStore) Insert(g protocol.DataPlaneGrant, slotID, mtu uint16) protocol.AuthorizeDataPlaneStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.entries[g.GrantId]; exists {
 		return protocol.AuthorizeDataPlaneStatus_DuplicateGrant
 	}
-	s.entries[g.GrantId] = &grantEntry{grant: g, slotID: slotID}
+	s.entries[g.GrantId] = &grantEntry{grant: g, slotID: slotID, mtu: mtu}
 	return protocol.AuthorizeDataPlaneStatus_Ok
+}
+
+// MTUForSlot answers the packet size the server negotiated for the connection
+// that will arrive at this slot, or 0 when it negotiated none.
+//
+// Keyed by slot rather than by grant because the accept path has to size the
+// connection BEFORE reading the hello that names the grant: the trsf layer is
+// built when the conn is wrapped. The slot is on the connection id, which is
+// available then.
+func (s *grantStore) MTUForSlot(slot uint16) uint16 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.entries {
+		if e.slotID == slot {
+			return e.mtu
+		}
+	}
+	return 0
 }
 
 // Validate answers with the ClientHelloStatus the runner should send back.

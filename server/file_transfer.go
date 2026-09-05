@@ -43,12 +43,13 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	// these bytes cross this process without being decrypted. Falls back to the
 	// splice below when the hook is absent, the transports differ, or the
 	// runner refuses -- the client can tell the routes apart by grant_id.
-	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
+	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
 		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.NoDataPlane()); ok {
 		return protocol.OpenFileTransferResponse{
 			Status:    protocol.OpenFileTransferStatus_Ok,
 			GrantId:   grantID,
 			SlotId:    slot,
+			Mtu:       mtu,
 			RunnerCid: rcid,
 		}
 	}
@@ -117,12 +118,13 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		slog.Error("list_files: nil client conn (programmer error)")
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
-	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
+	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
 		protocol.TaskControlKind_ListFiles, 0, req.TaskId, req.NoDataPlane()); ok {
 		return protocol.ListFilesResponse{
 			Status:    protocol.ListFilesStatus_Ok,
 			GrantId:   grantID,
 			SlotId:    slot,
+			Mtu:       mtu,
 			RunnerCid: rcid,
 		}
 	}
@@ -169,21 +171,21 @@ func (h *TaskHandler) tryDataPlane(
 	dir protocol.FileTransferDirection,
 	taskID protocol.TaskID,
 	refused bool,
-) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, ok bool) {
+) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, mtu uint16, ok bool) {
 	// The caller asked for the splice. The end-to-end route is the default and
 	// needs no opting in; this bit exists so a single invocation can get file
 	// transfer back when that route is at fault, with no restart and no
 	// rebuild, and so the two can be compared on one file.
 	if refused {
-		return grantID, 0, runnerCID, false
+		return grantID, 0, runnerCID, 0, false
 	}
 	if h.SetupDataPlane == nil || runner == nil || runner.Conn == nil {
-		return grantID, 0, runnerCID, false
+		return grantID, 0, runnerCID, 0, false
 	}
 	clientCID := conn.ConnectionID()
 	rc := runner.Conn.ConnectionID()
 	if !dataPlaneRoute(clientCID, rc) {
-		return grantID, 0, runnerCID, false
+		return grantID, 0, runnerCID, 0, false
 	}
 	grant := mintGrant(kind, dir, taskID, dataPlaneGrantTTL)
 	ctx, cancel := context.WithTimeout(context.Background(), dataPlaneSetupTimeout)
@@ -191,9 +193,9 @@ func (h *TaskHandler) tryDataPlane(
 	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant)
 	if err != nil {
 		slog.Warn("file_transfer: data plane setup failed, splicing instead", "err", err)
-		return grantID, 0, runnerCID, false
+		return grantID, 0, runnerCID, 0, false
 	}
-	return grant.GrantId, slot, protocol.ConnIDToRunnerID(rc), true
+	return grant.GrantId, slot, protocol.ConnIDToRunnerID(rc), negotiatedMTU(clientCID.Transport, rc.Transport), true
 }
 
 // dataPlaneSetupTimeout bounds the runner round trip in tryDataPlane. It is

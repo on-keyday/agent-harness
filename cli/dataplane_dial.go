@@ -21,6 +21,11 @@ type dataPlaneTarget struct {
 	GrantID [16]uint8
 	TaskID  protocol.TaskID
 	SlotID  uint16
+	// MTU is the packet size the server picked for this connection, or 0 to
+	// keep the one this end's transport implies. The server computes it
+	// because it is the only party that sees both transports; neither end
+	// restates the rule.
+	MTU uint16
 }
 
 // use reports whether the server routed this request end to end.
@@ -64,6 +69,7 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	pc, err := peer.Dial(ctx, ep, slotCID, peer.DialConfig{
 		Logger:                        slog.Default(),
 		CreatesServerInitiatedStreams: true,
+		MTU:                           int(t.MTU),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("file: dial data plane: %w", err)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -76,28 +77,37 @@ func randomSlotID(avoid ...uint16) uint16 {
 	return 0
 }
 
+// negotiatedMTU is the packet size a client and a runner on the given
+// transports must both use, or 0 when they can each keep their own.
+//
+// Only the server can compute this: it is the one party that sees both ends.
+// The smaller of the two is the answer, and it is applied as the maximum as
+// well, so neither end's PLPMTUD probes back above what the other can carry.
+func negotiatedMTU(clientTransport, runnerTransport string) uint16 {
+	if clientTransport == runnerTransport {
+		return 0
+	}
+	ci, _ := peer.MTUForTransport(clientTransport)
+	ri, _ := peer.MTUForTransport(runnerTransport)
+	if ri < ci {
+		ci = ri
+	}
+	if ci <= 0 || ci > 0xFFFF {
+		return 0
+	}
+	return uint16(ci)
+}
+
 // dataPlaneRoute reports whether a client and a runner can be joined by packet
 // forwarding rather than by splicing.
 //
-// The rule is transport equality, and it is a hard requirement rather than
-// caution. Each end sizes its packets from its OWN connection's transport
-// (peer.MTUForTransport, called at peer/conn.go with conn.ConnectionID()):
-// ws/wss get StreamMTU = 16384, udp gets the path-MTU-safe trsf defaults. That
-// function's own comment states the assumption it rests on -- "both ends of a
-// connection derive it from the same scheme, so the choice is always
-// symmetric" -- and a mixed pair is exactly where that stops being true.
-//
-// Forwarding re-emits a packet byte for byte and never re-fragments, so a
-// 16 KB packet from a WebSocket end would go out whole on the UDP leg, past
-// the datagram MTU: dropped, or EMSGSIZE / WSAEMSGSIZE on send. It breaks in
-// BOTH directions, because whichever end is on ws is the one producing packets
-// the other's transport cannot carry.
-//
-// It is fixable -- the two ends would have to agree on the smaller MTU, which
-// AuthorizeDataPlane is the natural place to carry -- and until they do, a
-// mixed pair takes the splice.
+// Both transports are allowed. A mixed pair used to be refused because each end
+// sizes packets from its OWN transport (peer.MTUForTransport) and forwarding
+// re-emits them byte for byte, so a WebSocket end's 16 KB packets were past the
+// datagram MTU on the UDP leg. negotiatedMTU removes that: the server picks the
+// smaller size and both ends take it.
 func dataPlaneRoute(clientCID, runnerCID objproto.ConnectionID) bool {
-	return clientCID.Transport == runnerCID.Transport && clientCID.Transport != ""
+	return clientCID.Transport != "" && runnerCID.Transport != ""
 }
 
 // setupDataPlane mints a grant, pushes it to the runner, and installs the
@@ -127,7 +137,11 @@ func (s *Server) setupDataPlane(
 		return 0, fmt.Errorf("data plane: could not draw a slot id")
 	}
 
-	req := protocol.AuthorizeDataPlaneRequest{SlotId: slot, Grant: grant}
+	req := protocol.AuthorizeDataPlaneRequest{
+		SlotId: slot,
+		Mtu:    negotiatedMTU(clientCID.Transport, runnerCID.Transport),
+		Grant:  grant,
+	}
 	// punch_target stays absent: this route forwards, and the runner's punch
 	// handler is here for the direct route that does not exist yet.
 	resp, err := s.sendAuthorizeDataPlaneRequest(ctx, entry, req)

@@ -502,3 +502,33 @@ This is fixable rather than fundamental: the two ends would have to agree on
 the smaller MTU, and `AuthorizeDataPlaneRequest` is the natural place to carry
 it. Until they do, a mixed pair takes the splice — which is what today's fleet
 does for a `ws:` client against the `udp:` Windows runners.
+
+## Amendment — the transports no longer have to match (2026-09-06)
+
+**This reverses the amendment immediately above it.** That one is right about
+the mechanism and wrong about the conclusion: the MTU asymmetry is real, and it
+is negotiable, so it bounds nothing.
+
+The server is the only party that sees both transports. It now computes the
+smaller of the two packet sizes at setup and sends it to both ends — to the
+runner on `AuthorizeDataPlaneRequest.mtu`, to the client on the response's
+`mtu` — and each end builds its connection with it (`peer.DialConfig.MTU`,
+applied as the maximum too so PLPMTUD cannot probe back above what the other
+end can carry). Neither end restates the rule; a value of 0 means "keep your
+own default", which is what a same-transport pair gets.
+
+`dataPlaneRoute` therefore asks only that both ends have a transport at all.
+
+Measured on one `scripts/dummy-harness.sh --udp` instance, which is what that
+flag was added for:
+
+| pair | evidence |
+| --- | --- |
+| `ws` client × `udp` runner | `set proxy setting owned=ws:… allocate=udp:…`; 1.5 MB pushed and pulled back byte-identical |
+| `udp` client × `udp` runner | `set proxy setting owned=udp:… allocate=udp:…`; push and `ls` both exit 0 |
+
+This matters more than it looks. `harness-cli conns` on the live fleet shows
+the operator's TUI on `udp:` and twelve of the fifteen runners on `ws:`, so
+under the equality rule the TUI took the splice for almost every runner it
+touches. The WebUI, being a browser, is `ws:` and had the mirror problem
+against the Windows runners. Both halves are now the fast path.

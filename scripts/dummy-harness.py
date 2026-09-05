@@ -20,7 +20,7 @@ The live fleet is never touched: loopback only, an ephemeral port, a fresh
 PSK, and a temp data dir that goes away on teardown.
 
 Usage:
-  scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N]
+  scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--udp]
                               [-- <extra agent-runner flags>]
   scripts/dummy-harness.py env  [--name N]   # print `export` lines for an instance
   scripts/dummy-harness.py down [--name N]
@@ -373,7 +373,7 @@ def cmd_down(name: str) -> int:
     return 0
 
 
-def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) -> int:
+def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: list[str]) -> int:
     if agent not in ("claude", "fake"):
         die(f"unknown --agent: {agent} (want claude or fake)")
 
@@ -386,8 +386,14 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
 
     tmp = Path(tempfile.mkdtemp(prefix="harness-dummy.", dir=str(tmp_root())))
     port = pick_port()
+    udp_port = pick_port()
     psk = "dummy-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
     cid = f"ws:127.0.0.1:{port}-*"
+    # --udp points the RUNNER at the UDP leg while the client keeps the ws one,
+    # which is the mixed-transport pair the live fleet actually has: a udp TUI
+    # against ws runners, or a ws WebUI against udp runners. The data plane has
+    # to negotiate a packet size for those, and nothing else here exercises it.
+    runner_cid = f"udp:127.0.0.1:{udp_port}-*" if udp else cid
 
     repo = tmp / "repo"
     data = tmp / "data"
@@ -402,6 +408,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
 
     server = spawn(
         [daemon.bin_path("harness-server"), "--listen", f"127.0.0.1:{port}",
+         "--udp-listen", f"127.0.0.1:{udp_port}",
          "--psk", psk, "--operator-psk", psk, "--data-dir", str(data)],
         tmp / "server.log",
     )
@@ -421,7 +428,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
     # and the symptom is silence, not an error.
     runner_args: list[str] = [
         str(daemon.bin_path("agent-runner")),
-        "--server-cid", cid, "--psk", psk, "--roots", str(repo), "--no-worktree",
+        "--server-cid", runner_cid, "--psk", psk, "--roots", str(repo), "--no-worktree",
         "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task: an
@@ -497,6 +504,8 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
         "SERVER_PID": server.pid,
         "RUNNER_PID": runner.pid,
         "SERVER_PORT": port,
+        "UDP_CID": f"udp:127.0.0.1:{udp_port}-*",
+        "RUNNER_CID": runner_cid,
     }, indent=2), encoding="utf-8")
 
     me = Path(__file__).name
@@ -524,6 +533,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--agent", default="claude")
     p.add_argument("--model", default="claude-haiku-4-5-20251001")
     p.add_argument("--detach", "-d", action="store_true")
+    p.add_argument("--udp", action="store_true",
+                   help="run the runner over the UDP leg while the client keeps ws, "
+                        "so the pair is mixed-transport (the server is dualstack either way)")
     # Everything after a literal `--` goes to agent-runner verbatim, appended
     # last so it overrides the defaults built above. Needed for runner flags this
     # script has no opinion about — e.g. --agentskills-dir, or
@@ -539,7 +551,7 @@ def main(argv: list[str]) -> int:
         die(f"unknown flag: {unknown[0]}")
 
     if args.sub == "up":
-        return cmd_up(args.name, args.agent, args.model, args.detach, extra)
+        return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, extra)
     if args.sub == "env":
         return cmd_env(args.name)
     if args.sub == "down":

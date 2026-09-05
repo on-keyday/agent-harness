@@ -21,7 +21,7 @@ func testGrant(id byte, exp time.Time) protocol.DataPlaneGrant {
 func TestGrantStoreValidateHappyPath(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	if st := s.Insert(testGrant(1, now.Add(time.Minute)), 0x10); st != protocol.AuthorizeDataPlaneStatus_Ok {
+	if st := s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0); st != protocol.AuthorizeDataPlaneStatus_Ok {
 		t.Fatalf("insert: %v", st)
 	}
 	got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
@@ -34,7 +34,7 @@ func TestGrantStoreValidateHappyPath(t *testing.T) {
 func TestGrantStoreRefusesWrongDirection(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
 	got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push, now)
 	if got != protocol.ClientHelloStatus_NotPermitted {
@@ -45,7 +45,7 @@ func TestGrantStoreRefusesWrongDirection(t *testing.T) {
 func TestGrantStoreRefusesWrongKind(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
 	got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
 		protocol.TaskControlKind_ListFiles, 0, now)
 	if got != protocol.ClientHelloStatus_NotPermitted {
@@ -56,7 +56,7 @@ func TestGrantStoreRefusesWrongKind(t *testing.T) {
 func TestGrantStoreRefusesExpired(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(-time.Second)), 0x10)
+	s.Insert(testGrant(1, now.Add(-time.Second)), 0x10, 0)
 	got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Pull, now)
 	if got != protocol.ClientHelloStatus_Expired {
@@ -67,7 +67,7 @@ func TestGrantStoreRefusesExpired(t *testing.T) {
 func TestGrantStoreRefusesUnknownAndWrongTask(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
 	if got := s.Validate([16]byte{2}, protocol.TaskID{Id: [16]uint8{7}},
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Pull, now); got != protocol.ClientHelloStatus_BadTicket {
 		t.Fatalf("unknown grant: want bad_ticket, got %v", got)
@@ -83,8 +83,8 @@ func TestGrantStoreRefusesUnknownAndWrongTask(t *testing.T) {
 func TestGrantStoreDuplicateInsertRefused(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
-	if st := s.Insert(testGrant(1, now.Add(time.Minute)), 0x11); st != protocol.AuthorizeDataPlaneStatus_DuplicateGrant {
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
+	if st := s.Insert(testGrant(1, now.Add(time.Minute)), 0x11, 0); st != protocol.AuthorizeDataPlaneStatus_DuplicateGrant {
 		t.Fatalf("want duplicate_grant, got %v", st)
 	}
 }
@@ -92,7 +92,7 @@ func TestGrantStoreDuplicateInsertRefused(t *testing.T) {
 func TestGrantStoreRevokeIsIdempotentAndCloses(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
 	closed := 0
 	s.OnClose([16]byte{1}, func() { closed++ })
 	if n := s.Revoke([16]byte{1}); n != 1 {
@@ -114,7 +114,7 @@ func TestGrantStoreRevokeIsIdempotentAndCloses(t *testing.T) {
 func TestGrantStoreRevokeUnredeemedStillRemoves(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10)
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
 	s.Revoke([16]byte{1})
 	if got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Pull, now); got != protocol.ClientHelloStatus_BadTicket {
@@ -125,8 +125,8 @@ func TestGrantStoreRevokeUnredeemedStillRemoves(t *testing.T) {
 func TestGrantStoreSweepDropsExpired(t *testing.T) {
 	now := time.Now()
 	s := newGrantStore()
-	s.Insert(testGrant(1, now.Add(-time.Second)), 0x10)
-	s.Insert(testGrant(2, now.Add(time.Minute)), 0x11)
+	s.Insert(testGrant(1, now.Add(-time.Second)), 0x10, 0)
+	s.Insert(testGrant(2, now.Add(time.Minute)), 0x11, 0)
 	if n := s.Sweep(now); n != 1 {
 		t.Fatalf("want 1 swept, got %d", n)
 	}

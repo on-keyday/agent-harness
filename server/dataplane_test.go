@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -65,20 +66,45 @@ func cid(transport string, port uint16, id uint16) objproto.ConnectionID {
 		netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port), id)
 }
 
-// Forwarding rewrites a packet's connection id and sends it back out; doing
-// that across transports has never been exercised, so a mixed pair takes the
-// splice path instead.
-func TestDataPlaneRouteRequiresOneTransport(t *testing.T) {
+// Both transports route now: a mixed pair is joined by negotiating the smaller
+// packet size, not refused. What still cannot route is a connection with no
+// transport at all, which is a zero ConnectionID rather than a real peer.
+func TestDataPlaneRouteAcceptsMixedTransports(t *testing.T) {
 	if !dataPlaneRoute(cid("udp", 1, 10), cid("udp", 2, 11)) {
-		t.Fatalf("udp/udp should route end to end")
+		t.Fatalf("udp/udp should route")
 	}
 	if !dataPlaneRoute(cid("ws", 1, 10), cid("ws", 2, 11)) {
-		t.Fatalf("ws/ws should route end to end")
+		t.Fatalf("ws/ws should route")
 	}
-	if dataPlaneRoute(cid("ws", 1, 10), cid("udp", 2, 11)) {
-		t.Fatalf("ws client with a udp runner must fall back to the splice")
+	if !dataPlaneRoute(cid("ws", 1, 10), cid("udp", 2, 11)) {
+		t.Fatalf("a ws client with a udp runner should route once the MTU is negotiated")
 	}
-	if dataPlaneRoute(cid("", 1, 10), cid("", 2, 11)) {
+	if dataPlaneRoute(cid("", 1, 10), cid("udp", 2, 11)) {
 		t.Fatalf("an empty transport must never route")
+	}
+	if dataPlaneRoute(cid("udp", 1, 10), cid("", 2, 11)) {
+		t.Fatalf("an empty transport must never route")
+	}
+}
+
+// The smaller of the two sizes, and only when they differ: a same-transport
+// pair keeps whatever each end would have derived on its own.
+func TestNegotiatedMTU(t *testing.T) {
+	if got := negotiatedMTU("udp", "udp"); got != 0 {
+		t.Fatalf("same transport should negotiate nothing, got %d", got)
+	}
+	if got := negotiatedMTU("ws", "ws"); got != 0 {
+		t.Fatalf("same transport should negotiate nothing, got %d", got)
+	}
+	wsInitial, _ := peer.MTUForTransport("ws")
+	udpInitial, _ := peer.MTUForTransport("udp")
+	if wsInitial <= udpInitial {
+		t.Fatalf("this test assumes ws is the larger of the two: ws=%d udp=%d", wsInitial, udpInitial)
+	}
+	if got := negotiatedMTU("ws", "udp"); int(got) != udpInitial {
+		t.Fatalf("ws/udp should take the udp size %d, got %d", udpInitial, got)
+	}
+	if got := negotiatedMTU("udp", "ws"); int(got) != udpInitial {
+		t.Fatalf("udp/ws should take the udp size %d, got %d", udpInitial, got)
 	}
 }

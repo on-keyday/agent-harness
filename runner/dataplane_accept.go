@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // checkDataPlaneHello is the runner's admission gate for a data-plane
@@ -77,6 +78,20 @@ func validateDataPlaneHello(
 		return protocol.ClientHelloStatus_UnknownTask
 	}
 	return sess.Grants.Validate(info.GrantId, info.TaskId, kind, dir, now)
+}
+
+// dataPlaneMTUFor answers the packet size to build an accepted connection with.
+//
+// A forwarded connection can join two different transports, and each end would
+// otherwise size its packets from its own; the server picks the smaller and
+// sends it with the grant. Zero means it negotiated none, which is what a
+// same-transport pair needs.
+func dataPlaneMTUFor(sessionRef *atomic.Pointer[Session], cid objproto.ConnectionID) int {
+	sess := sessionRef.Load()
+	if sess == nil || sess.Grants == nil {
+		return 0
+	}
+	return int(sess.Grants.MTUForSlot(cid.ID))
 }
 
 // pskStatusFor maps the store's answer onto the status that fits in a

@@ -1728,6 +1728,11 @@ format OpenFileTransferResponse:
     stream_id :u64
     grant_id   :[16]u8
     slot_id    :u16
+    # mtu is the packet size to build the data-plane connection with, the
+    # same value the runner was given. The server computes it because it is
+    # the only party that sees both transports; neither end restates the
+    # rule. 0 = use your own default.
+    mtu :u16
     runner_cid :RunnerID
 
 format ListFilesRequest:
@@ -1756,6 +1761,11 @@ format ListFilesResponse:
     stream_id :u64
     grant_id   :[16]u8
     slot_id    :u16
+    # mtu is the packet size to build the data-plane connection with, the
+    # same value the runner was given. The server computes it because it is
+    # the only party that sees both transports; neither end restates the
+    # rule. 0 = use your own default.
+    mtu :u16
     runner_cid :RunnerID
 
 # A grant is one request on one task, for a bounded time. It is NOT the task's
@@ -1790,6 +1800,15 @@ format DataPlaneGrant:
 # embedding it must place it last.
 format AuthorizeDataPlaneRequest:
     slot_id :u16
+    # mtu is the packet size BOTH ends of this data plane must use, so that a
+    # client and a runner on different transports can be joined at all. Each
+    # end otherwise sizes packets from its own transport -- ws/wss take 16384,
+    # udp the path-MTU-safe default -- and forwarding re-emits a packet byte
+    # for byte without re-fragmenting, so the WebSocket end's packets would be
+    # past the datagram MTU on the UDP leg. The server sends the smaller of the
+    # two. 0 means "use your own default", which is what a same-transport pair
+    # needs and what an older server sends.
+    mtu :u16
     punch_target :RunnerID
     grant :DataPlaneGrant
 

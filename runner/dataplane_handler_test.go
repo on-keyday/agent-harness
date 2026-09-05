@@ -77,7 +77,7 @@ func TestHandleAuthorizeDataPlaneRejectsDuplicate(t *testing.T) {
 
 func TestHandleRevokeDataPlaneClosesAndReportsCount(t *testing.T) {
 	sess := &Session{Grants: newGrantStore(), ServerCID: testServerCID(0x01)}
-	sess.Grants.Insert(liveGrant(9), 0x40)
+	sess.Grants.Insert(liveGrant(9), 0x40, 0)
 	closed := false
 	sess.Grants.OnClose([16]byte{9}, func() { closed = true })
 

@@ -80,6 +80,18 @@ type DialConfig struct {
 	// the harness server -- server/server.go:1002 builds those with isServer
 	// true already.
 	CreatesServerInitiatedStreams bool
+
+	// MTU overrides the packet size this end would otherwise derive from its
+	// own transport. Zero keeps that derivation, which is right whenever both
+	// ends are on the same transport.
+	//
+	// It exists because a forwarded connection can join two DIFFERENT
+	// transports, and MTUForTransport's symmetry assumption does not hold
+	// there: the WebSocket end would emit 16 KB packets that the UDP leg
+	// cannot carry, and forwarding re-emits a packet byte for byte rather than
+	// re-fragmenting it. The party that can see both ends -- the server -- picks
+	// the smaller and tells each of them.
+	MTU int
 }
 
 // Dial wires up an objproto Connection (via ECDH on the supplied Endpoint),
@@ -166,6 +178,11 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 		streamCancel()
 	}()
 	initialMTU, maxMTU := MTUForTransport(conn.ConnectionID().Transport)
+	if cfg.MTU > 0 {
+		// Also the max, so PLPMTUD cannot probe back above what the other end
+		// can carry.
+		initialMTU, maxMTU = cfg.MTU, cfg.MTU
+	}
 	p := trsf.NewStreams(streamCtx, cfg.CreatesServerInitiatedStreams, initialMTU, maxMTU, conn, cfg.Logger)
 
 	c := &Conn{

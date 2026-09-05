@@ -52,7 +52,7 @@ func handleAuthorizeDataPlane(
 		respond(protocol.AuthorizeDataPlaneStatus_SlotCollision)
 		return
 	}
-	if st := sess.ensureGrants().Insert(req.Grant, req.SlotId); st != protocol.AuthorizeDataPlaneStatus_Ok {
+	if st := sess.ensureGrants().Insert(req.Grant, req.SlotId, req.Mtu); st != protocol.AuthorizeDataPlaneStatus_Ok {
 		respond(st)
 		return
 	}

@@ -123,6 +123,9 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 			pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
 				Logger:       cfg.Logger,
 				PingInterval: cfg.PingInterval,
+				// See the same call in runner/connect.go: sized before the
+				// hello, because the trsf layer is built right here.
+				MTU: dataPlaneMTUFor(sessionRef, conn.ConnectionID()),
 			})
 			go handleAcceptedConn(ctx, cfg.Config, sessionRef, ep, pc)
 		}

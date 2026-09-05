@@ -224,6 +224,11 @@ func startAcceptLoop(ctx context.Context, cfg Config, ep objproto.Endpoint, sess
 				pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
 					Logger:       cfg.Logger,
 					PingInterval: cfg.PingInterval,
+					// Sized before the hello is read, because the trsf layer is
+					// built here: a forwarded connection may join two different
+					// transports, and the server put the size it picked next to
+					// the grant, findable by this connection's slot.
+					MTU: dataPlaneMTUFor(sessionRef, conn.ConnectionID()),
 				})
 				go handleAcceptedConn(ctx, cfg, sessionRef, ep, pc)
 			}

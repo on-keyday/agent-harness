@@ -16,7 +16,7 @@ func storedListGrant(t *testing.T, sess *Session, id byte) {
 		TaskId:        protocol.TaskID{Id: [16]uint8{7}},
 		ExpiresUnixMs: uint64(time.Now().Add(time.Minute).UnixMilli()),
 		Kind:          protocol.TaskControlKind_ListFiles,
-	}, 0x50)
+	}, 0x50, 0)
 }
 
 func TestValidateDataPlaneHelloUnknownGrant(t *testing.T) {

@@ -83,7 +83,7 @@ func (c *Client) OpenFileTransfer(
 	// The server routed this end to end: dial the slot it allocated, redeem the
 	// grant, and carry the bytes on a connection it cannot read. A zero grant
 	// means it spliced instead, and the stream below is the one it allocated.
-	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId}
+	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId, MTU: r.Mtu}
 	if target.use() {
 		st, closer, err := c.openDataPlaneStream(ctx, target, func(streamID uint64) protocol.RunnerRequest {
 			rr := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenFileTransfer}
@@ -158,7 +158,7 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, noDat
 	}
 
 	var st trsf.BidirectionalStream
-	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId}
+	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId, MTU: r.Mtu}
 	if target.use() {
 		s2, closer, err := c.openDataPlaneStream(ctx, target, func(streamID uint64) protocol.RunnerRequest {
 			rr := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ListFiles}
