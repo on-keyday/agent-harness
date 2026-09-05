@@ -75,6 +75,7 @@ the rows worth a second look.
 | D7 | caps and scope are evaluated only on the server. The runner stores a grant naming a request kind, and never evaluates a scope expression or sees a `Capability` value | operator |
 | D8 | `ws:` runners keep the splice path; both routes coexist and the server chooses per request | this spec |
 | D9 | The client presents the grant as bytes, and the binder stays keyed by the PSK | operator |
+| D10 | The punch field AND its runner-side handler ship in v1, unset and unreached, so that a later direct path is a server-and-client change with no runner in it | operator |
 
 ## Why the runner has to authenticate (D3)
 
@@ -192,10 +193,19 @@ format DataPlaneGrant:
 # server → runner, on the existing registered conn. The runner stores the
 # grant and expects one connection to present grant_id.
 #
+# punch_target is where the runner should send probes so the client can reach
+# it directly. transport_len == 0 means "do not punch, the server is
+# forwarding" — the same encoding DialRunnerRequest.via uses for "not
+# specified", and the only value v1's server ever writes. It is defined and
+# handled now, unset and unreached, so that a direct path later is a change to
+# the server and the client with no runner in it (D10). A zero RunnerID
+# encodes: measured at 6 bytes, round-trips.
+#
 # slot_id precedes grant for the same reason: DataPlaneGrant now ends in a
 # variant, so anything embedding it must place it last.
 format AuthorizeDataPlaneRequest:
     slot_id :u16            # the connection id the forwarded packets will carry
+    punch_target :RunnerID  # transport_len == 0 = do not punch
     grant :DataPlaneGrant
 
 enum AuthorizeDataPlaneStatus:
@@ -290,6 +300,16 @@ its `task_id` names a task this runner is running, and its `kind` and
 The file I/O afterwards is `runner/file_transfer.go` unchanged: it already
 takes a task id and a stream and confines paths to the worktree root.
 
+**The punch handler (D10).** When `punch_target.transport_len != 0` the runner
+calls `objproto.Endpoint.SendProbe` toward that address every 500 ms until the
+grant is redeemed or expires. v1's server never sets the field, so this never
+runs in v1; it is here so that the direct path does not have to be deployed to
+every runner host later. The mechanism is not a guess — probe 3 in the
+companion doc ran exactly this loop against a live Windows runner host, 240
+probes with none failing, and the peer's ECDH completed in 33 ms where the
+un-punched control timed out. It gets a unit test so it cannot rot unnoticed
+while unreached.
+
 ## Capability and scope
 
 Nothing changes. `file_read` and `file_write` are evaluated on the server
@@ -318,6 +338,10 @@ remains the only one for them.
 
 - The runner's grant store: expiry, constant-time mismatch, wrong-direction
   refusal, idempotent revoke. Unit.
+- The punch handler: a `punch_target` with `transport_len == 0` sends nothing,
+  a set one sends probes at the interval and stops when the grant is redeemed
+  or expires. Unit, against a fake endpoint. This is the only cover the handler
+  gets until the direct path exists, which is why D10 requires it.
 - `handleOpenFileTransfer` mints, authorizes and proxies in the right order,
   and answers `InternalError` when the runner refuses. Unit against the fakes
   in `server/fakes_test.go`.
@@ -334,14 +358,21 @@ remains the only one for them.
 ## Non-goals
 
 - **A direct client→runner path.** The probe doc lists seven items such a path
-  would need. This design builds three of them, because a forwarded connection
-  arrives at the runner's socket as an inbound connection like any other and
-  something has to accept and authorize it: the runner-side authorization, the
-  dial-mode accept loop with its third first-payload arm, and the coexistence
-  of two routes. What is not built here is the punch request and the ordering
-  window it needs. A later direct path changes how packets are routed and
-  reuses the grant, the `ClientKind` arm, the runner's store and the accept
-  path unchanged.
+  would need. This design builds four of them: the runner-side authorization,
+  the dial-mode accept loop with its third first-payload arm, the coexistence
+  of two routes, and — by D10 — the punch field and its handler. The first
+  three are not foresight but necessity: a forwarded connection arrives at the
+  runner's socket as an inbound connection like any other, and something has to
+  accept and authorize it.
+
+  What is NOT built is the server ever setting `punch_target`, the client
+  dialing the runner's address instead of the server's, and the ordering window
+  between a punch and that dial. Those are the direct path; they live in the
+  server and the client, which is the point of D10 — **a later direct path
+  needs no runner change and so no coordinated restart of every runner host.**
+  A `.bgn` change costs one of those (Pitfall 10), and `feedback_no_split_schemas`
+  is the rule that says the whole schema belongs in one change rather than a
+  follow-up.
 
   Two of the probe's seven look avoidable in both routes, and writing this
   design is what made that visible: **the client needs no second socket.**

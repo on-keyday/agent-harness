@@ -168,8 +168,12 @@ the server has without being told, and the client learns nothing it did not
 already have. The explicit ports in probe 3 were for the convenience of running
 the experiment from two directions at once, not a property of the mechanism.
 
-That leaves five items, and item 5's ordering window is the only one of them
-this design work has not already reduced.
+That leaves five items, and the design doc then took four of them: items 2, 3
+and 6 because a forwarded connection needs accepting and authorizing anyway,
+and item 1 — the punch field and its handler — deliberately, so that the direct
+path never has to be deployed to every runner host (that doc's D10). **Item 5,
+the ordering window between a punch and the dial it enables, is the only one of
+the seven left standing**, and it lives in the server and the client.
 
 This is a reversal of the list, not a correction of the measurements: probes
 1–3 stand, and F5's constraint — the punch and the dial must name the same
