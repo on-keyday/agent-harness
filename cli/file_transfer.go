@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -75,11 +76,54 @@ func (c *Client) OpenFileTransfer(
 	if err := openFileTransferStatusError(r.Status); err != nil {
 		return nil, err
 	}
+
+	// The server routed this end to end: dial the slot it allocated, redeem the
+	// grant, and carry the bytes on a connection it cannot read. A zero grant
+	// means it spliced instead, and the stream below is the one it allocated.
+	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId}
+	if target.use() {
+		st, closer, err := c.openDataPlaneStream(ctx, target, func(streamID uint64) protocol.RunnerRequest {
+			rr := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenFileTransfer}
+			b := protocol.RunnerOpenFileTransferRequest{
+				TaskId:       tid,
+				StreamId:     streamID,
+				Direction:    direction,
+				ExpectedSize: expectedSize,
+				Offset:       rng.Offset,
+				Length:       rng.Length,
+			}
+			b.SetRelPath([]byte(relPath))
+			b.SetForce(force)
+			b.SetMkdirParents(mkdirParents)
+			rr.SetOpenFileTransfer(b)
+			return rr
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &dataPlaneStream{BidirectionalStream: st, closeConn: closer}, nil
+	}
+
 	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 	if st == nil {
 		return nil, fmt.Errorf("file: stream %d not visible", r.StreamId)
 	}
 	return st, nil
+}
+
+// dataPlaneStream ties the connection's lifetime to the stream's, so the seven
+// call sites that already `defer stream.CloseBoth()` need no change: the
+// connection exists only to carry this one request.
+type dataPlaneStream struct {
+	trsf.BidirectionalStream
+	closeConn func()
+	once      sync.Once
+}
+
+func (s *dataPlaneStream) CloseBoth() error {
+	err := s.BidirectionalStream.CloseBoth()
+	s.once.Do(s.closeConn)
+	return err
 }
 
 // ListFiles round-trips a list_files request and decodes the FileListing
@@ -108,7 +152,25 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]Fi
 	if err := listFilesStatusError(r.Status); err != nil {
 		return nil, err
 	}
-	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
+
+	var st trsf.BidirectionalStream
+	target := dataPlaneTarget{GrantID: r.GrantId, TaskID: tid, SlotID: r.SlotId}
+	if target.use() {
+		s2, closer, err := c.openDataPlaneStream(ctx, target, func(streamID uint64) protocol.RunnerRequest {
+			rr := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ListFiles}
+			b := protocol.RunnerListFilesRequest{TaskId: tid, StreamId: streamID}
+			b.SetRelPath([]byte(relPath))
+			rr.SetListFiles(b)
+			return rr
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer closer()
+		st = s2
+	} else {
+		st = peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
+	}
 	if st == nil {
 		return nil, fmt.Errorf("file ls: stream %d not visible", r.StreamId)
 	}

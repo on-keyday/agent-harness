@@ -42,8 +42,13 @@ type ControlHandler func(kind appwire.AppKind, payload []byte)
 type Conn struct {
 	conn  objproto.Connection
 	trans trsf.Transport
-	pub   *pubsub.Client
-	log   *slog.Logger
+	// ep is the endpoint this conn was DIALED on, remembered so a caller can
+	// open a second connection from the same socket. Nil for an accepted conn:
+	// WrapAcceptedConn is handed a Connection the endpoint already produced and
+	// has no reason to know which one. Callers that need it dialed.
+	ep  objproto.Endpoint
+	pub *pubsub.Client
+	log *slog.Logger
 
 	onControl atomic.Pointer[ControlHandler]
 	started   atomic.Bool
@@ -87,7 +92,9 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 	if err != nil {
 		return nil, fmt.Errorf("ecdh: %w", err)
 	}
-	return WrapAcceptedConn(ctx, conn, cfg), nil
+	c := WrapAcceptedConn(ctx, conn, cfg)
+	c.ep = ep
+	return c, nil
 }
 
 // WrapAcceptedConn wraps an objproto.Connection produced by an Endpoint's
@@ -227,6 +234,12 @@ func (c *Conn) Close() {
 // raw SendMessage when they want bypass the pubsub.Client / Publish helpers
 // (e.g. issuing a TaskControl request, sending the runner Hello).
 func (c *Conn) Connection() objproto.Connection { return c.conn }
+
+// Endpoint returns the endpoint this conn was dialed on, or nil if it was
+// accepted rather than dialed. A second connection opened on it leaves the
+// same socket, which is what lets a peer that has already seen this one
+// recognise where the packets come from.
+func (c *Conn) Endpoint() objproto.Endpoint { return c.ep }
 
 // Transport returns the trsf.Transport. Callers use it to look up streams
 // by id (GetBidirectionalStream / GetReceiveStream) when an RPC response
