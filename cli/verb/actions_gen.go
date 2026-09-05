@@ -248,6 +248,7 @@ type GitAction struct {
 	Max uint32
 	// run the query inside this worktree-relative nested repo
 	Subrepo string
+	TaskID  string
 	BaseRev string
 	// the pathspec after `--`, which filters within a repository
 	Path string
@@ -259,8 +260,6 @@ type GitAction struct {
 	// maximum diff bytes (0 = 2MiB, capped at 8MiB)
 	MaxBytes  uint32
 	TargetRev string
-	// set by the surface after Build, not by the parse
-	TaskID string
 }
 
 // GridAction is built by: grid.
@@ -868,7 +867,10 @@ func init() {
 			a.Max = uint32(uintOf(b.Flags["max"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -881,7 +883,10 @@ func init() {
 			a.Max = uint32(uintOf(b.Flags["max"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -894,7 +899,10 @@ func init() {
 			a.Max = uint32(uintOf(b.Flags["max"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -909,10 +917,13 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
 			}
 			if len(b.Args) > 1 {
-				a.TargetRev = b.Args[1]
+				a.BaseRev = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.TargetRev = b.Args[2]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -927,10 +938,13 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
 			}
 			if len(b.Args) > 1 {
-				a.TargetRev = b.Args[1]
+				a.BaseRev = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.TargetRev = b.Args[2]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -945,10 +959,13 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
 			}
 			if len(b.Args) > 1 {
-				a.TargetRev = b.Args[1]
+				a.BaseRev = b.Args[1]
+			}
+			if len(b.Args) > 2 {
+				a.TargetRev = b.Args[2]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -962,7 +979,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -976,7 +996,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -990,7 +1013,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.BaseRev = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.BaseRev = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -1001,6 +1027,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "status"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1010,6 +1039,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "status"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1019,6 +1051,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "status"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1028,6 +1063,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "subrepos"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1037,6 +1075,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "subrepos"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1046,6 +1087,9 @@ func init() {
 			a := GitAction{}
 			a.Sub = "subrepos"
 			a.Subrepo = b.Str("subrepo")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
 			}
@@ -1059,7 +1103,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.Path = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Path = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -1074,7 +1121,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.Path = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Path = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec
@@ -1089,7 +1139,10 @@ func init() {
 			a.MaxBytes = uint32(uintOf(b.Flags["max-bytes"]))
 			a.Subrepo = b.Str("subrepo")
 			if len(b.Args) > 0 {
-				a.Path = b.Args[0]
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.Path = b.Args[1]
 			}
 			if b.Pathspec != "" {
 				a.Path = b.Pathspec

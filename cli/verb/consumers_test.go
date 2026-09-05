@@ -110,7 +110,7 @@ var verbConsumers = []verbConsumer{
 	{"session attach", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// git's limits were declared for three surfaces and honoured by one: the
 	// TUI built its query from the modal's state and the WebUI forwarded
-	// neither, so `git <id> log --max 5` showed a default count on both.
+	// neither, so `git log <id> --max 5` showed a default count on both.
 	{"git log", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/git.go"}},
 	{"git log", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	{"git show", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/git.go"}},

@@ -5930,7 +5930,7 @@ function tokenize(line) {
 // declaration (cli/verb), to the Git tab.
 //
 // The argument loop that used to live here accepted EVERY git flag on EVERY
-// sub-verb, because one loop served all of them -- so `git <id> status --rev X`
+// sub-verb, because one loop served all of them -- so `git status <id> --rev X`
 // parsed here and was refused by the CLI. It also read --max-bytes and threw
 // it away ("caps are the runner's job"), which is worse than refusing it.
 // Both are gone: the declaration knows which flags each sub-verb has.
@@ -6229,10 +6229,9 @@ async function runVerbCommand(tokens, ctx) {
       break;
     }
     case "git": {
-      // `git <task-id> <sub> ...`: the id sits between the family word and
-      // the sub-verb. The bridge peels it -- from the declaration, which says
-      // WHICH families are shaped this way -- so this page holds neither the
-      // id's position nor a list of the sub-verbs, both of which it did.
+      // `git <sub> <task-id> ...`, the same shape as `file ls <task-id>`.
+      // The id is an ordinary positional now, so the bridge parses the line
+      // like any other and this page holds no knowledge of its position.
       const g = ctx.harness.parseGit(tokens);
       if (g.error) throw new Error(g.error);
       out = await runGitAction(g.taskId, g);
@@ -6446,16 +6445,16 @@ async function runVerbCommand(tokens, ctx) {
         "  prune [--before=DUR]      forget terminal tasks older than DUR",
         "  prune [--force] <task-id>...",
         "                            forget specific tasks by id (--force: also active tasks)",
-        "  git <task> log [--max N] [-- <path>]",
+        "  git log <task> [--max N] [-- <path>]",
         "                            the task's commits (also: the Git tab)",
-        "  git <task> diff [--staged] [<base>] [<target>] [-- <path>]",
+        "  git diff <task> [--staged] [<base>] [<target>] [-- <path>]",
         "                            revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
-        "  git <task> show [<rev>] [-- <path>]",
+        "  git show <task> [<rev>] [-- <path>]",
         "                            one commit and its diff",
-        "  git <task> status [-- <path>]",
+        "  git status <task> [-- <path>]",
         "                            uncommitted and untracked paths (untracked appear in no diff)",
-        "  git <task> subrepos       list git repos nested inside the worktree",
-        "  git <task> file [--staged | --rev REV] <path>",
+        "  git subrepos <task>       list git repos nested inside the worktree",
+        "  git file <task> [--staged | --rev REV] <path>",
         "                            one file's whole content (also: click a file header in a diff)",
         "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
         "  file ls <task> [rel]      list a worktree directory",

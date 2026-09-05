@@ -126,33 +126,6 @@ func main() {
 	tokens := append([]string{sub}, args...)
 	h := cliVerbs{ctx: ctx, cid: parseCID}
 
-	// `git <task-id> log` puts the id in the MIDDLE of the verb, so no prefix
-	// of the line is the path and the generic longest-prefix match cannot
-	// find it. Which families are shaped that way is declared (IDBeforeSub),
-	// and the peel itself is shared, so this surface holds neither the
-	// literal "git" nor a list of its sub-verbs -- both of which it held
-	// twice, in the two error strings, two lines above the function that
-	// derives that list from the table.
-	if rest, id, isMidPath, perr := verb.PeelMidPathID(verb.CLI, tokens); isMidPath {
-		if perr != nil {
-			die(perr)
-		}
-		act, handled, aerr := verb.ParseCLICommand(rest, nil)
-		if aerr != nil {
-			die(aerr)
-		}
-		if !handled {
-			die(fmt.Errorf("%s: not declared for this surface", strings.Join(rest, " ")))
-		}
-		g := act.(verb.GitAction)
-		g.TaskID = id
-		if err, ok := verb.DispatchCLIAction[error](h, g); ok {
-			if err != nil {
-				die(err)
-			}
-			return
-		}
-	}
 	if err, handled, perr := verb.DispatchCLILine[error](h, tokens, nil); handled {
 		if perr != nil {
 			die(perr)

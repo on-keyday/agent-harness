@@ -957,7 +957,7 @@ func parseGitCmd(t *testing.T, line string) verb.GitAction {
 }
 
 func TestParseGitDiffNoRevs(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff")
+	a := parseGitCmd(t, "git diff cafe1234")
 	if a.TaskID != "cafe1234" || a.Sub != "diff" {
 		t.Fatalf("action = %+v", a)
 	}
@@ -967,21 +967,21 @@ func TestParseGitDiffNoRevs(t *testing.T) {
 }
 
 func TestParseGitDiffOneRev(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff HEAD~3")
+	a := parseGitCmd(t, "git diff cafe1234 HEAD~3")
 	if a.BaseRev != "HEAD~3" || a.TargetRev != "" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitDiffTwoRevs(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff aaa bbb")
+	a := parseGitCmd(t, "git diff cafe1234 aaa bbb")
 	if a.BaseRev != "aaa" || a.TargetRev != "bbb" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitDiffStaged(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff --staged HEAD")
+	a := parseGitCmd(t, "git diff cafe1234 --staged HEAD")
 	if !a.Staged || a.BaseRev != "HEAD" {
 		t.Fatalf("action = %+v", a)
 	}
@@ -991,55 +991,55 @@ func TestParseGitDiffStaged(t *testing.T) {
 // Go's flag package stops at the first non-flag token without the permuted
 // parse, and would drop it silently.
 func TestParseGitDiffStagedAfterPositional(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff HEAD --staged")
+	a := parseGitCmd(t, "git diff cafe1234 HEAD --staged")
 	if !a.Staged || a.BaseRev != "HEAD" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitDiffStagedWithTwoRevsRejected(t *testing.T) {
-	if _, err := ParseCommand("git cafe1234 diff --staged aaa bbb", "/cwd"); err == nil {
+	if _, err := ParseCommand("git diff cafe1234 --staged aaa bbb", "/cwd"); err == nil {
 		t.Fatal("--staged already names the right-hand side; a second revision must be refused")
 	}
 }
 
 func TestParseGitPathspec(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff HEAD -- tui/app.go")
+	a := parseGitCmd(t, "git diff cafe1234 HEAD -- tui/app.go")
 	if a.Path != "tui/app.go" || a.BaseRev != "HEAD" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitPathspecWithFlagAfterIt(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff --staged -- tui/app.go")
+	a := parseGitCmd(t, "git diff cafe1234 --staged -- tui/app.go")
 	if a.Path != "tui/app.go" || !a.Staged {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitLogMax(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 log --max 20")
+	a := parseGitCmd(t, "git log cafe1234 --max 20")
 	if a.Sub != "log" || a.Max != 20 {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitShowRev(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 show abc123")
+	a := parseGitCmd(t, "git show cafe1234 abc123")
 	if a.Sub != "show" || a.BaseRev != "abc123" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitStatus(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 status")
+	a := parseGitCmd(t, "git status cafe1234")
 	if a.Sub != "status" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitStatusRejectsRev(t *testing.T) {
-	if _, err := ParseCommand("git cafe1234 status HEAD", "/cwd"); err == nil {
+	if _, err := ParseCommand("git status cafe1234 HEAD", "/cwd"); err == nil {
 		t.Fatal("git status takes no revision")
 	}
 }
@@ -1063,7 +1063,7 @@ func TestParseGitMissingSubVerb(t *testing.T) {
 }
 
 func TestParseGitSubrepoFlag(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff --subrepo pkg/inner HEAD")
+	a := parseGitCmd(t, "git diff cafe1234 --subrepo pkg/inner HEAD")
 	if a.Subrepo != "pkg/inner" || a.BaseRev != "HEAD" {
 		t.Fatalf("action = %+v", a)
 	}
@@ -1072,52 +1072,52 @@ func TestParseGitSubrepoFlag(t *testing.T) {
 // --subrepo chooses the repository and -- chooses the paths within it; both at
 // once must survive.
 func TestParseGitSubrepoAndPathspecTogether(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff --subrepo pkg/inner -- src/x.go")
+	a := parseGitCmd(t, "git diff cafe1234 --subrepo pkg/inner -- src/x.go")
 	if a.Subrepo != "pkg/inner" || a.Path != "src/x.go" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitSubmoduleFlag(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 diff --submodule")
+	a := parseGitCmd(t, "git diff cafe1234 --submodule")
 	if !a.Submodule {
 		t.Fatalf("action = %+v", a)
 	}
-	b := parseGitCmd(t, "git cafe1234 diff")
+	b := parseGitCmd(t, "git diff cafe1234")
 	if b.Submodule {
 		t.Fatal("--submodule must be off by default")
 	}
 }
 
 func TestParseGitSubreposVerb(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 subrepos")
+	a := parseGitCmd(t, "git subrepos cafe1234")
 	if a.Sub != "subrepos" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitSubreposWithSubrepo(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 subrepos --subrepo pkg/inner")
+	a := parseGitCmd(t, "git subrepos cafe1234 --subrepo pkg/inner")
 	if a.Sub != "subrepos" || a.Subrepo != "pkg/inner" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitSubreposRejectsRev(t *testing.T) {
-	if _, err := ParseCommand("git cafe1234 subrepos HEAD", "/cwd"); err == nil {
+	if _, err := ParseCommand("git subrepos cafe1234 HEAD", "/cwd"); err == nil {
 		t.Fatal("git subrepos takes no revision")
 	}
 }
 
 func TestParseGitLogSubrepo(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 log --subrepo pkg/inner --max 5")
+	a := parseGitCmd(t, "git log cafe1234 --subrepo pkg/inner --max 5")
 	if a.Subrepo != "pkg/inner" || a.Max != 5 {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitFile(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 file tui/app.go")
+	a := parseGitCmd(t, "git file cafe1234 tui/app.go")
 	if a.Sub != "file" || a.Path != "tui/app.go" {
 		t.Fatalf("action = %+v", a)
 	}
@@ -1126,36 +1126,36 @@ func TestParseGitFile(t *testing.T) {
 // A path lifted straight out of a diff header arrives after --; both spellings
 // have to work or the copy-paste route breaks.
 func TestParseGitFileAfterSeparator(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 file -- tui/app.go")
+	a := parseGitCmd(t, "git file cafe1234 -- tui/app.go")
 	if a.Path != "tui/app.go" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitFileSides(t *testing.T) {
-	if a := parseGitCmd(t, "git cafe1234 file --staged x.go"); !a.Staged {
+	if a := parseGitCmd(t, "git file cafe1234 --staged x.go"); !a.Staged {
 		t.Fatalf("action = %+v", a)
 	}
-	a := parseGitCmd(t, "git cafe1234 file --rev abc123 x.go")
+	a := parseGitCmd(t, "git file cafe1234 --rev abc123 x.go")
 	if a.TargetRev != "abc123" {
 		t.Fatalf("action = %+v", a)
 	}
 }
 
 func TestParseGitFileNeedsAPath(t *testing.T) {
-	if _, err := ParseCommand("git cafe1234 file", "/cwd"); err == nil {
+	if _, err := ParseCommand("git file cafe1234", "/cwd"); err == nil {
 		t.Fatal("a path is required")
 	}
 }
 
 func TestParseGitFileRejectsTwoPaths(t *testing.T) {
-	if _, err := ParseCommand("git cafe1234 file a.go -- b.go", "/cwd"); err == nil {
+	if _, err := ParseCommand("git file cafe1234 a.go -- b.go", "/cwd"); err == nil {
 		t.Fatal("a path given twice must be refused, not silently one of them")
 	}
 }
 
 func TestParseGitFileWithSubrepo(t *testing.T) {
-	a := parseGitCmd(t, "git cafe1234 file --subrepo pkg/inner i.txt")
+	a := parseGitCmd(t, "git file cafe1234 --subrepo pkg/inner i.txt")
 	if a.Subrepo != "pkg/inner" || a.Path != "i.txt" {
 		t.Fatalf("action = %+v", a)
 	}

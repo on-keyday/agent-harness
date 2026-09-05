@@ -1,7 +1,6 @@
 package verb
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -107,48 +106,4 @@ func ConstName(field, value string) string {
 		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
 	}
 	return b.String()
-}
-
-// MidPathIDVerbs maps each family whose task id is typed before the sub-verb
-// to that family's declared sub-verbs, in table order.
-//
-// Callers need both halves: the family word to recognise the line, and the
-// sub-verb list to say what was expected when the word after the id is not
-// one of them.
-func MidPathIDVerbs(sf Surface) map[string][]string {
-	out := map[string][]string{}
-	for _, v := range Verbs {
-		if !v.IDBeforeSub || !v.Surfaces.Has(sf) || len(v.Path) < 2 {
-			continue
-		}
-		out[v.Path[0]] = append(out[v.Path[0]], v.Path[1])
-	}
-	return out
-}
-
-// PeelMidPathID turns `git <task-id> log --max 5` into the path-first tokens
-// the generic parsers accept, plus the id that was in the middle.
-//
-// ok is false for a line this does not apply to. A line whose family DOES
-// match but whose shape is wrong comes back with an error naming the declared
-// sub-verbs -- from the table, so the list cannot drift from what parses.
-func PeelMidPathID(sf Surface, tokens []string) (rest []string, id string, ok bool, err error) {
-	if len(tokens) == 0 {
-		return nil, "", false, nil
-	}
-	subs, isFamily := MidPathIDVerbs(sf)[tokens[0]]
-	if !isFamily {
-		return nil, "", false, nil
-	}
-	if len(tokens) < 3 {
-		return nil, "", true, fmt.Errorf("usage: %s <task-id> {%s} ...",
-			tokens[0], strings.Join(subs, " | "))
-	}
-	for _, sub := range subs {
-		if tokens[2] == sub {
-			return append([]string{tokens[0], tokens[2]}, tokens[3:]...), tokens[1], true, nil
-		}
-	}
-	return nil, "", true, fmt.Errorf("%s: unknown sub-verb %q (%s)",
-		tokens[0], tokens[2], strings.Join(subs, " | "))
 }

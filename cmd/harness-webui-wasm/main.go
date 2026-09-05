@@ -3917,26 +3917,22 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return js.ValueOf(map[string]any{"error": "parseGit: missing line"})
 	}
-	// The WHOLE line, id and all. It used to take the already-peeled `git
-	// <sub> ...`, which left the page holding the family word, the id's
-	// position and a hand-written list of the sub-verbs in its error string
-	// -- the fourth copy of that list across three surfaces.
+	// `git <sub> <task-id> ...`, the same shape as every other family here.
+	// It used to be `git <task-id> <sub>`, which no prefix of the line
+	// matched, so all three surfaces peeled the id by hand against a literal
+	// "git" and carried their own list of the sub-verbs to say so.
 	fields := commandFields(args[0])
-	rest, taskID, isMidPath, perr := verb.PeelMidPathID(verb.WebUI, fields)
-	if !isMidPath {
-		return js.ValueOf(map[string]any{"error": "parseGit: want `git <task-id> <sub> ...`"})
+	if len(fields) < 2 || fields[0] != "git" {
+		return js.ValueOf(map[string]any{"error": "parseGit: want `git <sub> <task-id> ...`"})
 	}
-	if perr != nil {
-		return js.ValueOf(map[string]any{"error": perr.Error()})
-	}
-	sp, ok := verb.Lookup(rest[0], rest[1])
+	sp, ok := verb.Lookup(fields[0], fields[1])
 	if !ok {
-		return js.ValueOf(map[string]any{"error": "git: unknown sub-verb " + rest[1]})
+		return js.ValueOf(map[string]any{"error": "git: unknown sub-verb " + fields[1]})
 	}
 	sp = sp.For(verb.WebUI)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, rest[2:])
+	b, err := sp.Parse(fs, fields[2:])
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
@@ -3949,7 +3945,7 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 		return js.ValueOf(map[string]any{"error": "git: unexpected action"})
 	}
 	return js.ValueOf(map[string]any{
-		"taskId": taskID,
+		"taskId": g.TaskID,
 		"sub":    g.Sub, "baseRev": g.BaseRev, "targetRev": g.TargetRev,
 		"path": g.Path, "subrepo": g.Subrepo,
 		"staged": g.Staged, "submodule": g.Submodule,

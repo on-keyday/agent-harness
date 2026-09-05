@@ -269,14 +269,14 @@ bin/harness-cli file pull -r -f <task-id> rel/dir ./local-dir/
 # checkout); requires the file_read capability. Revisions are counted the way
 # git counts them: none = the unstaged change, one = that revision against the
 # working tree, two = commit against commit.
-bin/harness-cli git <task-id> log    [--max N] [-- <path>]
-bin/harness-cli git <task-id> diff   [--staged] [<base>] [<target>] [-- <path>]
-bin/harness-cli git <task-id> show   [<rev>] [-- <path>]
-bin/harness-cli git <task-id> status [-- <path>]
-bin/harness-cli git <task-id> subrepos
-bin/harness-cli git <task-id> file [--staged | --rev REV] <path>
+bin/harness-cli git log    <task-id> [--max N] [-- <path>]
+bin/harness-cli git diff   <task-id> [--staged] [<base>] [<target>] [-- <path>]
+bin/harness-cli git show   <task-id> [<rev>] [-- <path>]
+bin/harness-cli git status <task-id> [-- <path>]
+bin/harness-cli git subrepos <task-id>
+bin/harness-cli git file   <task-id> [--staged | --rev REV] <path>
 # An agent that has committed shows nothing under a plain `diff` — that is git,
-# not a gap. Read `log`, then name a baseline: `git <task-id> diff <sha>` shows
+# not a gap. Read `log`, then name a baseline: `git diff <task-id> <sha>` shows
 # everything since it, committed or not. Untracked files appear in no diff;
 # `status` is where a brand-new file shows up, as a `??` entry.
 #

@@ -44,26 +44,6 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return act, perr
 	}
 
-	// `git <task-id> log` puts the id in the MIDDLE of the verb, so no prefix
-	// of the line is the path. Which families are shaped that way is declared
-	// (IDBeforeSub) and the peel is shared with the CLI and the WebUI, so
-	// this surface holds neither the literal nor the sub-verb list.
-	if rest, id, isMidPath, perr := verb.PeelMidPathID(verb.TUI, tokens); isMidPath {
-		if perr != nil {
-			return nil, perr
-		}
-		act, handled, aerr := verb.ParseTUICommand(rest, nil)
-		if aerr != nil {
-			return nil, aerr
-		}
-		if !handled {
-			return nil, fmt.Errorf("%s: not declared for this surface", strings.Join(rest, " "))
-		}
-		g := act.(verb.GitAction)
-		g.TaskID = id
-		return g, nil
-	}
-
 	// The one other shape the generated prefix match cannot reach.
 	switch tokens[0] {
 	case "session":

@@ -3217,9 +3217,5 @@ func cmdlineHelpLines() []string {
 			out = append(out, "    - "+d)
 		}
 	}
-	// `git <task-id> <sub>` is the one shape the generated synopsis cannot
-	// show: the id sits between the family and the sub-verb, so no synopsis
-	// built from Args can put it there.
-	out = append(out, "(git takes the task id BETWEEN the family and the sub-verb: `git <task-id> log`)")
 	return append(out, tuiKeyHelp...)
 }

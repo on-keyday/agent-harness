@@ -55,7 +55,7 @@ func TestUsageDescribesEveryDeclaredCliVerb(t *testing.T) {
 }
 
 // usageDescribes reports whether one line's head contains every word of the
-// path, in order. The words need not be adjacent: `git <task-id> log`
+// path, in order. The words need not be adjacent: `git log <task-id>`
 // describes `git log`, and one line can cover several sub-verbs.
 func usageDescribes(lines []string, path []string) bool {
 	for _, l := range lines {
@@ -140,9 +140,9 @@ func TestUsageNamesNothingUnreachable(t *testing.T) {
 		}
 		// Each alternative in `{a|b|c}` or `a|b`, and nothing that is a
 		// placeholder: an ALL-CAPS word or one in angle brackets is an
-		// argument, not a sub-verb -- `git TASK_ID log` puts the id in the
+		// argument, not a sub-verb -- `git log TASK_ID` puts the id in the
 		// MIDDLE of its path.
-		// `<task-id>` is an argument in the MIDDLE of a path (`git <id> log`),
+		// `<task-id>` is an argument in the MIDDLE of a path (`git log <id>`),
 		// not a sub-verb.
 		if strings.HasPrefix(f[1], "<") || strings.HasPrefix(f[1], "[<") {
 			continue

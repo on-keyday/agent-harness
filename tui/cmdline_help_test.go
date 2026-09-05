@@ -34,7 +34,7 @@ var helpLocalVerbs = []string{"caps", "scope"}
 // reading it concludes they do not exist.
 //
 // The match is on the line's leading words, and a verb path may be
-// interrupted: `git <task-id> log` describes `git log`. So a path counts as
+// interrupted: `git log <task-id>` describes `git log`. So a path counts as
 // described when every word of it appears, in order, in one line's head.
 func TestHelpDescribesEveryDeclaredVerb(t *testing.T) {
 	lines := cmdlineHelpLines()
@@ -63,7 +63,7 @@ func TestHelpDescribesEveryDeclaredVerb(t *testing.T) {
 
 // describedBy reports whether one help line's head contains every word of the
 // verb path, in order. The words need not be adjacent: the task id sits in the
-// middle of `git <task-id> diff`, and `exec ls [-task <id>] | exec kill <id>`
+// middle of `git diff <task-id>`, and `exec ls [-task <id>] | exec kill <id>`
 // describes two paths on one line.
 func describedBy(lines []string, path []string) bool {
 	for _, l := range lines {

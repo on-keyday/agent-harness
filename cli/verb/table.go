@@ -226,11 +226,17 @@ var Verbs = []VerbSpec{
 	},
 	// --- git ---
 	//
-	// The path is `git <sub>`, but the task id sits BETWEEN them on the command
-	// line (`git <task-id> diff`), so callers peel the id and the pathspec
-	// before handing the rest here. Sub-verbs differ in how many revisions they
-	// take, which is why each is its own entry rather than one `git` verb with
-	// a mode flag.
+	// `git <sub> <task-id>`, the same shape as `file ls <task-id>`. It used to
+	// be `git <task-id> <sub>` -- the only family in the table whose id came
+	// before its sub-verb -- which meant no prefix of the line was the path,
+	// so all three surfaces peeled the id by hand against a literal "git" and
+	// each carried its own copy of the sub-verb list to report a bad one. The
+	// design doc that fixed the order gave no reason for it, while the same
+	// doc's stated principle is that a hand which knows git should not have to
+	// learn a new noun -- and real git puts the sub-verb first.
+	//
+	// Sub-verbs differ in how many revisions they take, which is why each is
+	// its own entry rather than one `git` verb with a mode flag.
 	//
 	// --max-bytes was missing from the TUI before the migration, so a large
 	// diff could not be capped there; declaring it once gives it to every
@@ -238,22 +244,20 @@ var Verbs = []VerbSpec{
 	// refusing it.
 	{
 		Path:          []string{"git", "log"},
-		IDBeforeSub:   true,
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
 		Action:        "GitAction",
 		Const:         map[string]string{"Sub": "log"},
-		Args:          []Arg{{Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
+		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
 		Flags: []Flag{
 			{Name: "max", Type: FlagUint, Default: uint(0), Field: "Max", FieldType: "uint32", Help: "maximum commits (0 = 100, capped at 1000)"},
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
-		Examples: []string{"git log", "git log --max 20"},
+		Examples: []string{"git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --max 20"},
 	},
 	{
-		Path:        []string{"git", "diff"},
-		IDBeforeSub: true,
+		Path: []string{"git", "diff"},
 		Notes: []string{
 			"counts revisions the way git does: none = unstaged, one = that revision",
 			"against the working tree, two = commit against commit",
@@ -269,7 +273,7 @@ var Verbs = []VerbSpec{
 		// against the working tree, two = commit against commit. Two Optional
 		// positionals rather than a slice a Build interprets, so the mapping
 		// is generated like every other verb's.
-		Args: []Arg{
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "base", Type: ArgString, Optional: true, Field: "BaseRev"},
 			{Name: "target", Type: ArgString, Optional: true, Field: "TargetRev"},
 		},
@@ -283,22 +287,25 @@ var Verbs = []VerbSpec{
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32", Help: "maximum diff bytes (0 = 2MiB, capped at 8MiB)"},
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
-		Examples: []string{"git diff", "git diff --staged", "git diff HEAD~1 HEAD"},
+		Examples: []string{"git diff aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git diff aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --staged", "git diff aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD~1 HEAD"},
 		// The revisions are counted the way git counts them -- none = unstaged,
 		// one = that revision against the working tree, two = commit against
 		// commit -- which is an interpretation of the positionals, not a
 		// mapping, so this one keeps a Build. The arity cap and the --staged
 		// conflict are declared.
 		Validate: func(b Bound) error {
-			if len(b.Args) == 2 && b.Bool("staged") {
+			// Args[0] is the task id, so the revisions are what follows it.
+			// Named rather than counted from the whole slice: the count was
+			// written against a grammar where the id was not a positional at
+			// all, and every such check went off by one when it became one.
+			if len(b.Args) > 0 && len(b.Args[1:]) == 2 && b.Bool("staged") {
 				return fmt.Errorf("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go")
 			}
 			return nil
 		},
 	},
 	{
-		Path:        []string{"git", "show"},
-		IDBeforeSub: true,
+		Path: []string{"git", "show"},
 		Notes: []string{
 			"--submodule inlines a submodule's own changes",
 		},
@@ -307,17 +314,17 @@ var Verbs = []VerbSpec{
 		PathspecField: "Path",
 		Action:        "GitAction",
 		Const:         map[string]string{"Sub": "show"},
-		Args:          []Arg{{Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
+		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
 		Flags: []Flag{
 			{Name: "submodule", Type: FlagBool, Default: false, Field: "Submodule", Help: "inline a submodule's own file-level changes"},
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32", Help: "maximum bytes (0 = 2MiB, capped at 8MiB)"},
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
-		Examples: []string{"git show", "git show HEAD"},
+		Examples: []string{"git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD"},
 	},
 	{
 		Path:          []string{"git", "status"},
-		IDBeforeSub:   true,
+		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -326,11 +333,11 @@ var Verbs = []VerbSpec{
 		Flags: []Flag{
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
-		Examples: []string{"git status"},
+		Examples: []string{"git status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:        []string{"git", "subrepos"},
-		IDBeforeSub: true,
+		Path: []string{"git", "subrepos"},
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Notes: []string{
 			"list the nested repositories under the worktree",
 		},
@@ -342,11 +349,10 @@ var Verbs = []VerbSpec{
 		Flags: []Flag{
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "list nested repos under this worktree-relative directory"},
 		},
-		Examples: []string{"git subrepos"},
+		Examples: []string{"git subrepos aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path:          []string{"git", "file"},
-		IDBeforeSub:   true,
 		Surfaces:      CLI | TUI | WebUI,
 		Pathspec:      true,
 		PathspecField: "Path",
@@ -357,10 +363,15 @@ var Verbs = []VerbSpec{
 		// way. Neither an arity nor an exclusion: it is a choice between two
 		// DIFFERENT carriers, which no attribute expresses.
 		Validate: func(b Bound) error {
+			// Args[0] is the task id; the path is what may follow it.
+			paths := b.Args
+			if len(paths) > 0 {
+				paths = paths[1:]
+			}
 			switch {
-			case len(b.Args) == 1 && b.Pathspec != "":
+			case len(paths) == 1 && b.Pathspec != "":
 				return fmt.Errorf("git file: path given twice — once as an argument and once after `--`")
-			case len(b.Args) == 0 && b.Pathspec == "":
+			case len(paths) == 0 && b.Pathspec == "":
 				return fmt.Errorf("git file: a path is required, as an argument or after `--`")
 			}
 			return nil
@@ -369,14 +380,14 @@ var Verbs = []VerbSpec{
 		// two cases where that would be ambiguous. The pathspec assignment
 		// runs after the positional one, so `-- <path>` wins when it is the
 		// only one given -- and it cannot be given alongside the other.
-		Args: []Arg{{Name: "path", Type: ArgString, Optional: true, Field: "Path"}},
+		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "path", Type: ArgString, Optional: true, Field: "Path"}},
 		Flags: []Flag{
 			{Name: "staged", Type: FlagBool, Default: false, Field: "Staged", Help: "read the indexed copy"},
 			{Name: "rev", Type: FlagString, Default: "", Field: "TargetRev", Help: "read the copy at this revision"},
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32", Help: "maximum bytes (0 = 2MiB, capped at 8MiB)"},
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
-		Examples: []string{"git file README.md", "git file --rev HEAD~1 README.md"},
+		Examples: []string{"git file aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa README.md", "git file aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --rev HEAD~1 README.md"},
 	},
 	// --- exec (exec_run) ---
 	{
@@ -1989,7 +2000,6 @@ func init() {
 		"harness/<task-id> branch after it ends (committed work only)",
 		"--subrepo DIR runs any of them inside a nested repository (a plain",
 		"nested repo is invisible from outside it); subrepos lists them",
-		"the task id sits BETWEEN the family and the sub-verb: `git <task-id> log`",
 	}
 	FamilyNotes["workspace"] = []string{
 		"the TUI applies a workspace on start, on reconnect, and on `workspace apply`,",

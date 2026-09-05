@@ -532,20 +532,20 @@ read-only: there is no commit, add, checkout or stash. It needs `file_read`.
 
 ```bash
 # The task's commits.
-harness-cli git <TASK_ID> log    [--max N] [-- <PATH>]
+harness-cli git log    <TASK_ID> [--max N] [-- <PATH>]
 
 # The diff. Revisions are counted the way git counts them:
 #   no revision  -> the unstaged change
 #   one          -> that revision against the working tree
 #   two          -> commit against commit
 # --staged puts the index on the right-hand side instead.
-harness-cli git <TASK_ID> diff   [--staged] [<BASE>] [<TARGET>] [-- <PATH>]
+harness-cli git diff   <TASK_ID> [--staged] [<BASE>] [<TARGET>] [-- <PATH>]
 
 # One commit and its diff.
-harness-cli git <TASK_ID> show   [<REV>] [-- <PATH>]
+harness-cli git show   <TASK_ID> [<REV>] [-- <PATH>]
 
 # Uncommitted and untracked paths, as `git status --porcelain`.
-harness-cli git <TASK_ID> status [-- <PATH>]
+harness-cli git status <TASK_ID> [-- <PATH>]
 ```
 
 Two things worth knowing before you read the output:
@@ -554,8 +554,8 @@ Two things worth knowing before you read the output:
 git, not a gap. Read `log` first, then name a baseline:
 
 ```bash
-harness-cli git "$TASK_ID" log                    # find where it started
-harness-cli git "$TASK_ID" diff <that-sha>        # everything since, committed or not
+harness-cli git log  "$TASK_ID"                   # find where it started
+harness-cli git diff "$TASK_ID" <that-sha>        # everything since, committed or not
 ```
 
 **Untracked files appear in no diff.** `status` is where a brand-new file
@@ -570,14 +570,14 @@ checkout. The runner that ran the task must still be online.
 
 
 
-### One file, whole — `git <TASK_ID> file`
+### One file, whole — `git file <TASK_ID>`
 
 A diff shows the lines that changed; this shows the file they changed.
 
 ```bash
-harness-cli git <TASK_ID> file <PATH>                # the file on disk
-harness-cli git <TASK_ID> file --staged <PATH>       # the staged blob
-harness-cli git <TASK_ID> file --rev <REV> <PATH>    # the blob at a revision
+harness-cli git file <TASK_ID> <PATH>                # the file on disk
+harness-cli git file <TASK_ID> --staged <PATH>       # the staged blob
+harness-cli git file <TASK_ID> --rev <REV> <PATH>    # the blob at a revision
 ```
 
 The path is relative to whichever repository the query is rooted in, so
@@ -599,9 +599,9 @@ only ever sees as one `?? nested/` entry — is invisible to every query above.
 because it is untracked. Run the query inside it instead:
 
 ```bash
-harness-cli git <TASK_ID> subrepos                    # what is nested in there
-harness-cli git <TASK_ID> log  --subrepo pkg/inner    # its own history
-harness-cli git <TASK_ID> diff --subrepo pkg/inner    # its own changes
+harness-cli git subrepos <TASK_ID>                    # what is nested in there
+harness-cli git log  <TASK_ID> --subrepo pkg/inner    # its own history
+harness-cli git diff <TASK_ID> --subrepo pkg/inner    # its own changes
 ```
 
 `--subrepo` works on `log`, `diff`, `show` and `status`, and composes with

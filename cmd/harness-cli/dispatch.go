@@ -297,7 +297,7 @@ func (h cliVerbs) Skill(a verb.CatalogAction) error {
 // --- git ----------------------------------------------------------------
 //
 // One dial and one renderer for all six, which is what runGit's tail was.
-// The task id is not in the action: `git <task-id> log` puts it in the MIDDLE
+// The task id is not in the action: `git log <task-id>` puts it in the MIDDLE
 // of the path, so main peels it off and writes it in before dispatching.
 
 func (h cliVerbs) gitQuery(a verb.GitAction, q func(*cli.Client, cli.GitQuery) (*cli.GitResult, error)) error {
