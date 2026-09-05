@@ -124,7 +124,7 @@ func TestFileTransferE2E(t *testing.T) {
 
 	// 2. LS: confirm uploaded.bin is in the listing.
 	var lsBuf bytes.Buffer
-	if err := c.FileLs(ctx, taskID, "", &lsBuf); err != nil {
+	if err := c.FileLs(ctx, taskID, "", false, &lsBuf); err != nil {
 		t.Fatalf("ls: %v", err)
 	}
 	if !strings.Contains(lsBuf.String(), "uploaded.bin") {
@@ -133,7 +133,7 @@ func TestFileTransferE2E(t *testing.T) {
 
 	// 3. PULL: copy the file back; verify content matches.
 	dstPath := filepath.Join(t.TempDir(), "dst.bin")
-	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath, cli.FileTransferRange{}, false); err != nil {
+	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath, cli.FileTransferRange{}, false, false); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 	pulled, err := os.ReadFile(dstPath)
@@ -148,7 +148,7 @@ func TestFileTransferE2E(t *testing.T) {
 	//     server relay — which rebuilds the runner request field by field, so
 	//     this is the test that catches an offset that never left the server.
 	slice, total, err := c.FilePullBytesRange(ctx, taskID, "uploaded.bin",
-		cli.FileTransferRange{Offset: 6, Length: 3}, nil)
+		cli.FileTransferRange{Offset: 6, Length: 3}, false, nil)
 	if err != nil {
 		t.Fatalf("ranged pull: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestFileTransferE2E(t *testing.T) {
 
 	// 3c. RANGE PAST EOF: ok with nothing, and the total still reported.
 	empty, total, err := c.FilePullBytesRange(ctx, taskID, "uploaded.bin",
-		cli.FileTransferRange{Offset: 9999}, nil)
+		cli.FileTransferRange{Offset: 9999}, false, nil)
 	if err != nil {
 		t.Fatalf("past-EOF pull: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestFileTransferE2E(t *testing.T) {
 	}
 
 	// 5. PULL MISSING: not_found.
-	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath, cli.FileTransferRange{}, false); err == nil {
+	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath, cli.FileTransferRange{}, false, false); err == nil {
 		t.Errorf("pull of missing file should fail")
 	}
 
@@ -195,21 +195,21 @@ func TestFileTransferE2E(t *testing.T) {
 		t.Fatalf("push -p: %v", err)
 	}
 	// Strict mkdir: parent now exists → ok; repeat → already_exists.
-	if err := c.FileMkdir(ctx, taskID, "newdir/made", false); err != nil {
+	if err := c.FileMkdir(ctx, taskID, "newdir/made", false, false); err != nil {
 		t.Fatalf("strict mkdir: %v", err)
 	}
-	if err := c.FileMkdir(ctx, taskID, "newdir/made", false); err == nil || !cli.IsAlreadyExists(err) {
+	if err := c.FileMkdir(ctx, taskID, "newdir/made", false, false); err == nil || !cli.IsAlreadyExists(err) {
 		t.Fatalf("strict mkdir repeat: got %v, want already_exists", err)
 	}
 	// -p mkdir: deep chain + idempotent.
-	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true); err != nil {
+	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true, false); err != nil {
 		t.Fatalf("mkdir -p: %v", err)
 	}
-	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true); err != nil {
+	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true, false); err != nil {
 		t.Fatalf("mkdir -p repeat: %v", err)
 	}
 	// Strict mkdir with missing parent → not_found.
-	if err := c.FileMkdir(ctx, taskID, "q1/q2/q3", false); err == nil || !cli.IsNotFound(err) {
+	if err := c.FileMkdir(ctx, taskID, "q1/q2/q3", false, false); err == nil || !cli.IsNotFound(err) {
 		t.Fatalf("strict mkdir missing parent: got %v, want not_found", err)
 	}
 
@@ -337,7 +337,7 @@ func TestFileDirTransferE2E(t *testing.T) {
 
 	// 6. Pull the directory back.
 	localDst := filepath.Join(t.TempDir(), "pulled-tree")
-	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false); err != nil {
+	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false, false); err != nil {
 		t.Fatalf("dir pull: %v", err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(localDst, "fresh.txt")); string(got) != "NEW" {
@@ -345,7 +345,7 @@ func TestFileDirTransferE2E(t *testing.T) {
 	}
 
 	// 7. Pull again without --force: must fail (dest exists).
-	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false); err == nil {
+	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false, false); err == nil {
 		t.Errorf("second pull without --force should fail")
 	}
 
