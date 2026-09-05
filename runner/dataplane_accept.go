@@ -116,9 +116,17 @@ func sendPskAuthStatus(pc *peer.Conn, st protocol.PskAuthStatus) {
 // party that validates it — and because that generalizes to git_query and exec
 // without the grant having to learn anything about them.
 //
-// Closes with pc.Connection().Close(), never pc.Close(): a trsf Close would
-// travel through the server's proxy entry and reach a peer this was not meant
-// to notify.
+// Teardown uses pc.Close(), not pc.Connection().Close(). The file handler
+// returns as soon as it has WRITTEN the last bytes, not when they have left,
+// so tearing the objproto connection down underneath it drops whatever the
+// send path still holds -- measured as a `file ls` that hangs forever with the
+// runner logging a clean, complete serve. peer.Conn.Close sends the trsf close
+// the client needs to see EOF and drains before it goes.
+//
+// Pitfall 5 warns against pc.Close() on a relay-setup conn because the wire
+// close travels through a SetProxy entry to a peer that was not the intended
+// one. Here the peer on the other side of that entry IS the client this
+// connection belongs to, and it is exactly who should be told.
 func handleDataPlaneConn(
 	ctx context.Context,
 	cfg Config,
@@ -126,7 +134,7 @@ func handleDataPlaneConn(
 	pc *peer.Conn,
 	first firstMsgT,
 ) {
-	defer pc.Connection().Close() //nolint:errcheck
+	defer closeWhenDrained(ctx, pc)
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
@@ -146,21 +154,35 @@ func handleDataPlaneConn(
 
 	sess := sessionRef.Load()
 	if sess == nil || sess.Grants == nil {
+		// No server connection has been established here, so no grant can have
+		// been pushed. Silence would read as a bare close on the client.
+		log.Warn("data plane: refused, no server session on this runner",
+			"session_nil", sess == nil)
 		sendPskAuthStatus(pc, protocol.PskAuthStatus_BadTicket)
 		return
 	}
 	kind, ok := sess.Grants.Kind(info.GrantId)
 	if !ok {
+		log.Warn("data plane: refused, no such grant")
 		sendPskAuthStatus(pc, protocol.PskAuthStatus_BadTicket)
 		return
 	}
+	log.Debug("data plane: grant redeemed", "kind", kind)
+
+	// Arm the request handler BEFORE answering the hello. The client sends its
+	// request the moment it sees the Ok, and the handler installed by the
+	// accept path would otherwise swallow it into a channel nobody reads any
+	// more -- a race that reads as a transfer that hangs with no error on
+	// either side.
+	reqCh := armDataPlaneRequest(ctx, pc)
+
 	sendPskAuthStatus(pc, protocol.PskAuthStatus_Ok)
 
 	// The grant can be revoked while this connection is open; that has to reach
 	// the transfer, or a narrowing `caps set` would be advisory here.
 	sess.Grants.OnClose(info.GrantId, func() { pc.Connection().Close() }) //nolint:errcheck
 
-	req, err := readDataPlaneRequest(ctx, pc)
+	req, err := awaitDataPlaneRequest(ctx, reqCh)
 	if err != nil {
 		log.Warn("data plane: no request arrived", "err", err)
 		return
@@ -168,11 +190,13 @@ func handleDataPlaneConn(
 	serveDataPlaneRequest(ctx, log, sess, pc, *info, kind, req)
 }
 
-// readDataPlaneRequest waits for the one RunnerRequest the client sends after
-// the handshake. It reuses the existing server->runner request envelope rather
-// than inventing a client->runner one: the runner reads the same bytes either
-// way, and the stream id in it names a stream on THIS connection.
-func readDataPlaneRequest(ctx context.Context, pc *peer.Conn) (*protocol.RunnerRequest, error) {
+// armDataPlaneRequest installs the handler for the one RunnerRequest the client
+// sends after the handshake, and must be called BEFORE the hello is answered.
+//
+// It reuses the existing server->runner request envelope rather than inventing
+// a client->runner one: the runner reads the same bytes either way, and the
+// stream id in it names a stream on THIS connection.
+func armDataPlaneRequest(ctx context.Context, pc *peer.Conn) <-chan *protocol.RunnerRequest {
 	ch := make(chan *protocol.RunnerRequest, 1)
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind != appwire.AppKind_RunnerControl {
@@ -187,7 +211,12 @@ func readDataPlaneRequest(ctx context.Context, pc *peer.Conn) (*protocol.RunnerR
 		default:
 		}
 	})
-	pc.Start(ctx)
+	pc.Start(ctx) // idempotent; the accept path started it already
+	return ch
+}
+
+// awaitDataPlaneRequest blocks for the armed request.
+func awaitDataPlaneRequest(ctx context.Context, ch <-chan *protocol.RunnerRequest) (*protocol.RunnerRequest, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, dataPlaneRequestTimeout)
 	defer cancel()
 	select {
@@ -202,6 +231,29 @@ func readDataPlaneRequest(ctx context.Context, pc *peer.Conn) (*protocol.RunnerR
 // without saying what it wants. The grant's TTL bounds redeemability; this
 // bounds a redeemed connection that then does nothing.
 const dataPlaneRequestTimeout = 30 * time.Second
+
+// dataPlaneDrainTimeout backstops a client that stops reading without hanging
+// up. It is not the transfer budget: by the time it starts, the handler has
+// already written everything.
+const dataPlaneDrainTimeout = 30 * time.Second
+
+// closeWhenDrained tears the connection down only once the client has hung up.
+//
+// The file handlers return when the last bytes have been WRITTEN, not when they
+// have left, so closing straight away drops whatever the send path still holds.
+// That was measured, not guessed: `file ls` hung forever while the runner
+// logged a clean, complete serve, and a three-second delay before the close
+// made the listing appear. Waiting for the peer is the version of that with no
+// magic number in it -- the client closes when it has read to EOF, which is the
+// only party that knows when the transfer is over.
+func closeWhenDrained(ctx context.Context, pc *peer.Conn) {
+	select {
+	case <-pc.Done():
+	case <-ctx.Done():
+	case <-time.After(dataPlaneDrainTimeout):
+	}
+	pc.Close()
+}
 
 // serveDataPlaneRequest runs the request the grant authorized, after checking
 // that the request that arrived is the one the grant names.

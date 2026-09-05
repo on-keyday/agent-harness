@@ -64,6 +64,22 @@ type DialConfig struct {
 	Logger *slog.Logger
 	// PingInterval; defaults to 15s when zero.
 	PingInterval time.Duration
+
+	// CreatesServerInitiatedStreams picks which half of the trsf stream-id
+	// space this end may create, and therefore which half it will ACCEPT from
+	// its peer. Streams are QUIC-shaped (trsf/conn.go:258): an end that creates
+	// client-initiated ids accepts server-initiated ones, and two ends on the
+	// SAME half can create nothing the other will take.
+	//
+	// It is named for what it does rather than for who holds it, because the
+	// end that sets it is not necessarily a server: on a client-to-runner data
+	// plane both ends are peer.Conn, and the CLIENT sets this so the runner's
+	// side stays exactly as it is for every other connection it holds.
+	//
+	// False by default, which is right for every connection whose far end is
+	// the harness server -- server/server.go:1002 builds those with isServer
+	// true already.
+	CreatesServerInitiatedStreams bool
 }
 
 // Dial wires up an objproto Connection (via ECDH on the supplied Endpoint),
@@ -150,7 +166,7 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 		streamCancel()
 	}()
 	initialMTU, maxMTU := MTUForTransport(conn.ConnectionID().Transport)
-	p := trsf.NewStreams(streamCtx, false, initialMTU, maxMTU, conn, cfg.Logger)
+	p := trsf.NewStreams(streamCtx, cfg.CreatesServerInitiatedStreams, initialMTU, maxMTU, conn, cfg.Logger)
 
 	c := &Conn{
 		conn:      conn,

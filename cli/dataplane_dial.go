@@ -55,7 +55,16 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	serverCID := c.conn.Connection().ConnectionID()
 	slotCID := objproto.NewConnectionID(serverCID.Transport, serverCID.Addr, t.SlotID)
 
-	pc, err := peer.Dial(ctx, ep, slotCID, peer.DialConfig{Logger: slog.Default()})
+	// Both ends here are peer.Conn, which defaults to the client half of the
+	// stream-id space, so neither could create a stream the other would accept.
+	// The client takes the server half: the runner's side is an ACCEPTED conn
+	// whose kind is not known until its first payload is read, by which time
+	// its trsf already exists, and flipping every accepted conn would put the
+	// server-dialed ones on the same half as the real server.
+	pc, err := peer.Dial(ctx, ep, slotCID, peer.DialConfig{
+		Logger:                        slog.Default(),
+		CreatesServerInitiatedStreams: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("file: dial data plane: %w", err)
 	}
