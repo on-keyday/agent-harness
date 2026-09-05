@@ -32,6 +32,8 @@ enum RunnerRequestType:
                        # request because closing the exec's stream does NOT
                        # stop the child: the frame pump reads EOF and ends
                        # its input goroutine while the process runs on.
+    authorize_data_plane  # expect a connection redeeming this grant
+    revoke_data_plane     # drop a grant and close whatever redeems it
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -260,6 +262,8 @@ format RunnerRequest:
         RunnerRequestType.git_query => git_query :RunnerGitQueryRequest
         RunnerRequestType.open_exec_run => open_exec_run :RunnerExecRunRequest
         RunnerRequestType.close_exec_run => close_exec_run :CloseExecRunRequest
+        RunnerRequestType.authorize_data_plane => authorize_data_plane :AuthorizeDataPlaneRequest
+        RunnerRequestType.revoke_data_plane => revoke_data_plane :RevokeDataPlaneRequest
 
 enum TaskControlKind:
     :u8
@@ -363,6 +367,10 @@ enum ClientKind:
     tui
     webui
     agent
+    data_plane  # a connection opened only to carry one authorized request's
+                # bytes, redeeming a DataPlaneGrant the server pushed to the
+                # runner. Not a principal: it speaks for one request, not for
+                # a task.
 
 # AgentInfo is the per-task agent credential, mirroring the (now-removed)
 # agentboard AgentBridgeHello triple. Validated server-side via the agentboard
@@ -374,10 +382,19 @@ format AgentInfo:
     hostname_len :u8
     hostname :[hostname_len]u8
 
+# DataPlaneInfo is what a data-plane connection presents instead of an
+# identity: the grant the server minted, and the task it names. The runner
+# matches both against what the server pushed it.
+format DataPlaneInfo:
+    grant_id :[16]u8
+    task_id :TaskID
+
 format ClientHello:
     kind :ClientKind
     if kind == ClientKind.agent:
         agent_info :AgentInfo
+    if kind == ClientKind.data_plane:
+        data_plane_info :DataPlaneInfo
 
 enum ClientHelloStatus:
     :u8
@@ -385,6 +402,9 @@ enum ClientHelloStatus:
     bad_ticket
     unknown_task
     runner_mismatch
+    expired        # the grant existed but its TTL has passed
+    not_permitted  # the grant exists and is live, but names a different
+                   # request than the one that arrived
 
 format ClientHelloResponse:
     status :ClientHelloStatus
@@ -1691,6 +1711,9 @@ enum OpenFileTransferStatus:
 format OpenFileTransferResponse:
     status    :OpenFileTransferStatus
     stream_id :u64
+    grant_id   :[16]u8
+    slot_id    :u16
+    runner_cid :RunnerID
 
 format ListFilesRequest:
     task_id      :TaskID
@@ -1711,6 +1734,63 @@ enum ListFilesStatus:
 format ListFilesResponse:
     status    :ListFilesStatus
     stream_id :u64
+    grant_id   :[16]u8
+    slot_id    :u16
+    runner_cid :RunnerID
+
+# A grant is one request on one task, for a bounded time. It is NOT the task's
+# auth_ticket: that names the task's agent, this names a request.
+#
+# kind is TaskControlKind because that enum already names every client request,
+# and PermissionDeniedResponse already pairs it with a Capability. Nothing new
+# is introduced to say "which request": a grant for git_query is
+# kind = git_query and needs no arm, so that family costs no schema.
+#
+# The variant tail is LAST so grant_id, task_id and expires_unix_ms sit at
+# fixed offsets whatever the kind, and a future arm moves none of them.
+format DataPlaneGrant:
+    grant_id :[16]u8
+    task_id :TaskID
+    expires_unix_ms :u64
+    kind :TaskControlKind
+    if kind == TaskControlKind.open_file_transfer:
+        direction :FileTransferDirection
+
+# server -> runner, on the existing registered conn. The runner stores the
+# grant and expects one connection to present grant_id.
+#
+# punch_target is where the runner should send probes so a client can reach it
+# directly. transport_len == 0 means "do not punch, the server is forwarding" —
+# the encoding DialRunnerRequest.via uses for "not specified", and the only
+# value this version's server writes. It is defined and handled now, unset and
+# unreached, so a direct path later is a change to the server and the client
+# with no runner in it.
+#
+# slot_id precedes grant because DataPlaneGrant ends in a variant, so anything
+# embedding it must place it last.
+format AuthorizeDataPlaneRequest:
+    slot_id :u16
+    punch_target :RunnerID
+    grant :DataPlaneGrant
+
+enum AuthorizeDataPlaneStatus:
+    :u8
+    ok = "ok"
+    unknown_task
+    slot_collision   # slot_id equals the runner's server-conn id, so an
+                     # inbound dial there would resolve to that conn instead
+    duplicate_grant  # refused rather than overwritten: overwriting would
+                     # invalidate a credential a live connection may hold
+
+format AuthorizeDataPlaneResponse:
+    status :AuthorizeDataPlaneStatus
+
+# server -> runner. Idempotent: revoking an unknown grant is ok.
+format RevokeDataPlaneRequest:
+    grant_id :[16]u8
+
+format RevokeDataPlaneResponse:
+    closed :u32
 
 format RunnerOpenFileTransferRequest:
     task_id       :TaskID
