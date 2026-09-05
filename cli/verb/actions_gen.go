@@ -69,12 +69,12 @@ type AgentSendAction struct {
 // BoardAction is built by: board purge, board read, board retract, board subscribers, board topics.
 type BoardAction struct {
 	ActionMarker
-	Sub string
+	// JSON Lines instead of text
+	JSON bool
+	Sub  string
 	// only messages replying to this seq
 	InReplyTo uint64
-	// JSON Lines instead of text
-	JSON  bool
-	Topic string
+	Topic     string
 	// the message to withdraw; required — there is no whole-topic retract
 	Seq uint64
 }
@@ -410,6 +410,8 @@ type SessionAction struct {
 	Sub  string
 	// attach in view-only mode
 	View bool
+	// accepted for symmetry with the other listings; this one is JSON Lines either way
+	JSON bool
 	// quiescence threshold in ms (0 = server default)
 	ThresholdMs uint
 	// fire via the operator-notification egress
@@ -436,8 +438,6 @@ type SessionAction struct {
 	WithoutSynth bool
 	// write the verbatim replay bytes instead of the VT-rendered screen
 	Raw bool
-	// emit the screen as one JSON object
-	JSON bool
 	// re-emit the screen WITH its colours and attributes
 	ANSI bool
 	// also judge what STATE the screen shows (working / blocked / idle / unknown)
@@ -1513,6 +1513,7 @@ func init() {
 		"board topics\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "topics"
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"board read\x00cli": func(b Bound) (Action, error) {
@@ -1528,6 +1529,7 @@ func init() {
 		"board subscribers\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "subscribers"
+			a.JSON = b.Bool("json")
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}
@@ -2360,11 +2362,13 @@ func init() {
 		"session ls\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "ls"
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"session ls\x00tui": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "ls"
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"session kill\x00cli": func(b Bound) (Action, error) {

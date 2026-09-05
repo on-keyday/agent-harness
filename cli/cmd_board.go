@@ -164,6 +164,28 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			names = append(names, n)
 		}
 		sort.Strings(names)
+		if ba.JSON {
+			// One object per topic, same fields the text form shows. subs is
+			// omitted rather than zeroed when the count is unavailable: a
+			// caller without board_observe would otherwise read "0
+			// subscribers" as a measurement.
+			enc := json.NewEncoder(out)
+			for _, n := range names {
+				r := byName[n]
+				rec := map[string]any{
+					"topic": r.name, "msgs": r.msgs, "published": r.published,
+					"retracted": r.retracted, "last_seq": r.lastSeq,
+					"last": boardMsToRFC3339(r.lastMs),
+				}
+				if subsOK {
+					rec["subs"] = subs[n]
+				}
+				if err := enc.Encode(rec); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		for _, n := range names {
 			r := byName[n]
 			subCol := ""
@@ -279,6 +301,27 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		rows, err := BoardSubscribers(ctx, cid, topic)
 		if err != nil {
 			return err
+		}
+		if ba.JSON {
+			// The patterns stay STRUCTURED here rather than collapsing into
+			// the text form's `name(shown=N pending=M)`, which a consumer
+			// would have to parse back out.
+			enc := json.NewEncoder(out)
+			for _, r := range rows {
+				pats := make([]map[string]any, 0, len(r.Patterns))
+				for _, p := range r.Patterns {
+					pats = append(pats, map[string]any{
+						"topic": p.Name, "shown": p.Shown, "pending": p.Pending,
+					})
+				}
+				if err := enc.Encode(map[string]any{
+					"task_id": r.TaskHex, "host": r.Hostname,
+					"agent": r.AgentProfile, "topics": pats,
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		for _, r := range rows {
 			// shown / pending per topic: how far the automatic injection path

@@ -805,6 +805,9 @@ var Verbs = []VerbSpec{
 	// widening when unset.
 	{
 		Path: []string{"board", "topics"},
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
 		Notes: []string{
 			"list every topic on the board with metadata (cap: board_observe)",
 		},
@@ -832,6 +835,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "subscribers"},
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
 		Notes: []string{
 			"list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: board_observe)",
 		},
@@ -1566,11 +1572,25 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "ls"}, Surfaces: CLI | TUI,
 		Notes: []string{
-			"JSON Lines: interactive sessions only",
+			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
+			"vocabulary plus the session-only is_attached / ring_buffer_bytes fields.",
 		},
-		Action:   "SessionAction",
-		Const:    map[string]string{"Sub": "ls"},
-		Examples: []string{"session ls"},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "ls"},
+		// This listing has no text form -- it has emitted JSON Lines since it
+		// was added, and scripts read it. --json is accepted so that a hand
+		// which types it on `ls`, `conns`, `exec ls` and `forward ls` is not
+		// refused by the one listing that needs it least.
+		//
+		// Declared with a Help that SAYS the output does not change, rather
+		// than a flag that quietly does nothing: an option accepted and
+		// dropped in silence is the defect this table exists to remove, and
+		// the cure is to describe it, not to hide it.
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				Help: "accepted for symmetry with the other listings; this one is JSON Lines either way"},
+		},
+		Examples: []string{"session ls", "session ls --json"},
 	},
 	{
 		Path: []string{"session", "kill"}, Surfaces: CLI | TUI,
