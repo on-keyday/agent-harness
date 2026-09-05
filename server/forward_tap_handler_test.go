@@ -85,7 +85,15 @@ func TestOpenForwardTapAttachesAndIsCountedOnTheListing(t *testing.T) {
 	pf := registerTapTestForward(t, h, p)
 	// An operator connection: no principal, so Capability_All and full scope.
 	conn := tapConn("ws:127.0.0.1:9973-1")
-	conn.nextStreamID = 77 // the handler needs a real stream to hand back
+	// A recordingBidiStream, not the nextStreamID-driven noopBidiStream, for
+	// the same reason the two port-forward siblings use one: noopBidiStream's
+	// ReadDirect returns EOF immediately, and the handler now watches the tap
+	// stream for exactly that so a tap whose reader left stops being counted.
+	// With the noop stream the watcher fires the instant it starts, cancels the
+	// tap and removes it, and this test races its own tapCount check against
+	// that -- about one run in two. A real tapper's stream stays open, which is
+	// what this one models.
+	conn.nextBidi = newRecordingBidiStream(77)
 
 	got := h.handleOpenForwardTap(conn, &protocol.OpenForwardTapRequest{
 		ForwardId:       pf.forwardID,
