@@ -175,6 +175,11 @@ type Session struct {
 	// mutex is needed; dispatchRunnerRequest cannot observe a nil Endpoint.
 	Endpoint objproto.Endpoint
 
+	// Grants holds the data-plane grants the server has pushed to this runner.
+	// Built lazily via ensureGrants so a Session that never carries one does
+	// not have to know about it. See runner/dataplane_grants.go.
+	Grants *grantStore
+
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse
 	// (server → runner) before any AssignTask. Reads/writes are guarded by

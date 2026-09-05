@@ -584,6 +584,32 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if !session.DeliverChainedRelayResponse(*rcr) {
 			log.Warn("dispatch: ChainedRelayResponse without waiter", "status", rcr.Status)
 		}
+	case protocol.RunnerRequestType_AuthorizeDataPlane:
+		ad := req.AuthorizeDataPlane()
+		if ad == nil {
+			return
+		}
+		// Synchronous, like EstablishRelay above: a map insert plus one reply,
+		// and the server is blocked on that reply.
+		handleAuthorizeDataPlane(ctx, log, session, session.Endpoint, *ad, func(resp protocol.AuthorizeDataPlaneResponse) error {
+			var rm protocol.RunnerMessage
+			rm.Kind = protocol.RunnerMessageType_AuthorizeDataPlaneResponse
+			rm.SetAuthorizeDataPlaneResponse(resp)
+			payload := rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
+			return session.Sender.Send(payload)
+		})
+	case protocol.RunnerRequestType_RevokeDataPlane:
+		rd := req.RevokeDataPlane()
+		if rd == nil {
+			return
+		}
+		handleRevokeDataPlane(session, *rd, func(resp protocol.RevokeDataPlaneResponse) error {
+			var rm protocol.RunnerMessage
+			rm.Kind = protocol.RunnerMessageType_RevokeDataPlaneResponse
+			rm.SetRevokeDataPlaneResponse(resp)
+			payload := rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
+			return session.Sender.Send(payload)
+		})
 	}
 }
 
