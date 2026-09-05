@@ -197,6 +197,7 @@ func New(cfg Config) *Server {
 		OnChange:                     s.scheduler.Tick,
 		OnEstablishRelayResponse:     s.deliverEstablishRelayResponse,
 		OnAuthorizeDataPlaneResponse: s.deliverAuthorizeDataPlaneResponse,
+		OnDataPlaneFinished:          s.finishDataPlane,
 	}
 	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay

@@ -14,6 +14,7 @@ enum RunnerMessageType:
     exec_run_finished  # an out-of-band exec ended; carries its exit code
     authorize_data_plane_response  # answer to AuthorizeDataPlaneRequest
     revoke_data_plane_response     # answer to RevokeDataPlaneRequest
+    data_plane_finished            # a data-plane transfer ended; drop its state
 
 enum RunnerRequestType:
     :u8
@@ -250,6 +251,7 @@ format RunnerMessage:
         RunnerMessageType.exec_run_finished => exec_run_finished :ExecRunFinished
         RunnerMessageType.authorize_data_plane_response => authorize_data_plane_response :AuthorizeDataPlaneResponse
         RunnerMessageType.revoke_data_plane_response => revoke_data_plane_response :RevokeDataPlaneResponse
+        RunnerMessageType.data_plane_finished => data_plane_finished :DataPlaneFinished
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -1830,6 +1832,19 @@ format RevokeDataPlaneRequest:
 
 format RevokeDataPlaneResponse:
     closed :u32
+
+# runner -> server: the connection redeeming this grant has ended, however it
+# ended -- served, refused, or the client hung up. The server drops the
+# forwarding entry and its own record of the grant right then.
+#
+# Without it both sides can only reclaim on a timer, which makes the entry's
+# lifetime the TTL rather than the transfer's, and leaves a transfer that
+# outlives the TTL unreachable by a narrowing `caps set`. The timers stay as the
+# backstop for a runner that dies without saying anything. Same shape as
+# exec_run_finished, which reports an out-of-band exec ending for the same
+# reason.
+format DataPlaneFinished:
+    grant_id :[16]u8
 
 format RunnerOpenFileTransferRequest:
     task_id       :TaskID

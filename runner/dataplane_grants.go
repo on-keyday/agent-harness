@@ -137,6 +137,15 @@ func (s *grantStore) OnClose(grantID [16]byte, closer func()) {
 	}
 }
 
+// Forget drops a grant without closing anything, for the connection that
+// redeemed it reporting its own end. Revoke is the other direction -- someone
+// else withdrawing authority from a connection still running.
+func (s *grantStore) Forget(grantID [16]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.entries, grantID)
+}
+
 // Revoke removes a grant and tears down whatever is redeeming it, returning how
 // many connections it closed. Revoking an unknown grant is a no-op: a revoke is
 // a message, and a message can arrive twice or after the grant has expired.
@@ -154,16 +163,22 @@ func (s *grantStore) Revoke(grantID [16]byte) uint32 {
 	return 1
 }
 
-// Sweep drops expired grants and returns how many went. The TTL bounds how long
-// a grant stays REDEEMABLE; it does not cut a transfer already running, because
-// a push larger than the TTL is ordinary and the connection carrying it holds
-// its own authorization from the moment it was accepted.
+// Sweep drops expired grants that nobody redeemed, and returns how many went.
+//
+// A REDEEMED entry is left alone however old it is: its connection reports its
+// own end (Forget), and dropping it early would take the OnClose hook with it,
+// so a transfer running longer than the TTL would stop being reachable by a
+// narrowing caps change -- the one thing revocation promises. The TTL bounds
+// how long an UNREDEEMED grant stays usable, which is all it was ever for.
 func (s *grantStore) Sweep(now time.Time) int {
 	cutoff := uint64(now.UnixMilli())
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
 	for id, e := range s.entries {
+		if e.closer != nil {
+			continue // redeemed and still running; its own end removes it
+		}
 		if cutoff > e.grant.ExpiresUnixMs {
 			delete(s.entries, id)
 			n++

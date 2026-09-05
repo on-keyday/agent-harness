@@ -161,11 +161,11 @@ func (s *Server) setupDataPlane(
 		return 0, fmt.Errorf("data plane: SetProxy(%v, %v): %w", owned, allocate, err)
 	}
 	s.rememberGrant(hex.EncodeToString(grant.TaskId.Id[:]), issuedGrant{
-		grantID:       grant.GrantId,
-		entry:         entry,
-		clientCID:     clientCID,
-		slot:          slot,
-		expiresUnixMs: grant.ExpiresUnixMs,
+		grantID:      grant.GrantId,
+		entry:        entry,
+		clientCID:    clientCID,
+		slot:         slot,
+		issuedUnixMs: uint64(time.Now().UnixMilli()),
 	})
 	return slot, nil
 }
@@ -177,22 +177,30 @@ type issuedGrant struct {
 	entry     *RunnerEntry
 	clientCID objproto.ConnectionID
 	slot      uint16
-	// expiresUnixMs is the grant's own deadline, kept here so the bookkeeping
-	// can be pruned without reaching back into the grant.
-	expiresUnixMs uint64
+	// issuedUnixMs is when this record was made, for the age floor. NOT the
+	// grant's expiry: a transfer may legitimately outlive that, and pruning on
+	// it would drop the record of one still running.
+	issuedUnixMs uint64
 }
 
-// rememberGrant records an issued grant against its task, and drops the ones
-// that can no longer be redeemed while it is holding the lock.
+// dataPlaneRecordMaxAge bounds the bookkeeping if a runner vanishes mid
+// transfer and its finish message never arrives. It is deliberately far longer
+// than any transfer: pruning at the GRANT's expiry instead would take the
+// record of a transfer still running, and with it the server's ability to
+// revoke that transfer -- which is the one thing a narrowing caps change
+// promises. finishDataPlane is what normally removes an entry; this is only
+// the floor under a runner that died without saying so.
+const dataPlaneRecordMaxAge = time.Hour
+
+// rememberGrant records an issued grant against its task, and drops records too
+// old to belong to anything still running while it already holds the lock.
 //
-// The pruning is the whole reason this is not a plain append: nothing else
-// removes an entry except a narrowing caps change, so without it the map grows
-// by one per file operation for the life of the process and pins a RunnerEntry
-// with each. A grant past its expiry is refused by the runner anyway
-// (grantStore.Validate checks it), so keeping the bookkeeping buys nothing --
-// which is what bounds this to "the grants issued in the last TTL".
+// Some pruning has to happen here: finishDataPlane covers the normal case, but
+// a runner that dies mid transfer sends nothing, and without a floor the map
+// grows by one per file operation for the life of the process, pinning a
+// RunnerEntry with each.
 func (s *Server) rememberGrant(taskIDHex string, g issuedGrant) {
-	now := uint64(time.Now().UnixMilli())
+	cutoff := uint64(time.Now().Add(-dataPlaneRecordMaxAge).UnixMilli())
 	s.grantsMu.Lock()
 	defer s.grantsMu.Unlock()
 	if s.issuedGrants == nil {
@@ -201,7 +209,7 @@ func (s *Server) rememberGrant(taskIDHex string, g issuedGrant) {
 	for task, gs := range s.issuedGrants {
 		live := gs[:0]
 		for _, e := range gs {
-			if e.expiresUnixMs > now {
+			if e.issuedUnixMs > cutoff {
 				live = append(live, e)
 			}
 		}
@@ -234,6 +242,42 @@ func (s *Server) revokeDataPlaneForTask(taskIDHex string) int {
 		s.sendRevokeDataPlaneRequest(g.entry, g.grantID)
 	}
 	return len(grants)
+}
+
+// finishDataPlane drops everything this process holds for one grant, on the
+// runner's word that the connection carrying it has ended.
+//
+// This is the primary reclaim path. The expiry pruning in rememberGrant and the
+// objproto proxy TTL are the backstop for a runner that dies without saying
+// anything, not the mechanism: without this the entry's lifetime is the TTL
+// rather than the transfer's.
+func (s *Server) finishDataPlane(grantID [16]byte) {
+	var found *issuedGrant
+	s.grantsMu.Lock()
+	for task, gs := range s.issuedGrants {
+		for i := range gs {
+			if gs[i].grantID == grantID {
+				g := gs[i]
+				found = &g
+				s.issuedGrants[task] = append(gs[:i], gs[i+1:]...)
+				if len(s.issuedGrants[task]) == 0 {
+					delete(s.issuedGrants, task)
+				}
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	s.grantsMu.Unlock()
+	if found == nil {
+		return
+	}
+	if ep := s.dataPlaneEndpoint.Load(); ep != nil {
+		owned := objproto.NewConnectionID(found.clientCID.Transport, found.clientCID.Addr, found.slot)
+		(*ep).DeleteProxy(owned) //nolint:errcheck
+	}
 }
 
 // sendAuthorizeDataPlaneRequest pushes a grant to a runner and waits for its

@@ -1027,6 +1027,13 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9210-1"), nextStreamID: 5}
+	// A runner stream that BLOCKS on read, for the reason spelled out at
+	// TestHandleOpenInteractive_RegistersSessionMux: the default noop stream
+	// returns EOF the instant it is read, so the mux's pump exits, Stop fires,
+	// and the session is torn down while this test is still asserting on it.
+	// Seen failing about once in a package run; passes alone every time, which
+	// is the shape of that race rather than of anything this test describes.
+	runnerConn.nextBidi = newFakeStream(t)
 	h.Registry.Add(&RunnerEntry{
 		ID: "A", Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,

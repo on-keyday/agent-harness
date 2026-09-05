@@ -149,7 +149,19 @@ func handleDataPlaneConn(
 	pc *peer.Conn,
 	first firstMsgT,
 ) {
-	defer closeWhenDrained(ctx, pc)
+	// finishReport is set once the grant is known, and runs AFTER the drain:
+	// the file handlers return when the last bytes are WRITTEN, and the server
+	// deletes the forwarding entry the moment it hears "finished", so reporting
+	// before the client has read them cuts the path out from under it. Measured
+	// exactly that way -- `file ls` timed out while push, whose payload flows
+	// the other way, still passed.
+	var finishReport func()
+	defer func() {
+		closeWhenDrained(ctx, pc)
+		if finishReport != nil {
+			finishReport()
+		}
+	}()
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
@@ -196,6 +208,23 @@ func handleDataPlaneConn(
 	// The grant can be revoked while this connection is open; that has to reach
 	// the transfer, or a narrowing `caps set` would be advisory here.
 	sess.Grants.OnClose(info.GrantId, func() { pc.Connection().Close() }) //nolint:errcheck
+
+	// However this connection ends -- served, refused, or the client gone --
+	// the state it holds on both sides goes with it. The timers are only the
+	// backstop for a runner that dies without saying so.
+	grantID := info.GrantId
+	finishReport = func() {
+		sess.ensureGrants().Forget(grantID)
+		if sess.Sender == nil {
+			return
+		}
+		var rm protocol.RunnerMessage
+		rm.Kind = protocol.RunnerMessageType_DataPlaneFinished
+		rm.SetDataPlaneFinished(protocol.DataPlaneFinished{GrantId: grantID})
+		if err := sess.Sender.Send(rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})); err != nil {
+			log.Warn("data plane: could not report the transfer's end", "err", err)
+		}
+	}
 
 	req, err := awaitDataPlaneRequest(ctx, reqCh)
 	if err != nil {

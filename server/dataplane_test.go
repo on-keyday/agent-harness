@@ -109,37 +109,59 @@ func TestNegotiatedMTU(t *testing.T) {
 	}
 }
 
-// Nothing removes an issued grant except a narrowing caps change, so without
-// pruning the bookkeeping grows by one per file operation and pins a
-// RunnerEntry with each. A grant past its expiry is refused by the runner
-// anyway, so it may go.
-func TestRememberGrantPrunesWhatCanNoLongerBeRedeemed(t *testing.T) {
+// The record goes when the runner says the transfer ended -- that is the
+// primary path, and it is what keeps an entry's life equal to the transfer's
+// rather than to a timer.
+func TestFinishDataPlaneDropsTheRecord(t *testing.T) {
 	s := &Server{}
-	past := uint64(time.Now().Add(-time.Minute).UnixMilli())
-	future := uint64(time.Now().Add(time.Minute).UnixMilli())
+	now := uint64(time.Now().UnixMilli())
+	s.rememberGrant("t1", issuedGrant{grantID: [16]byte{1}, issuedUnixMs: now})
+	s.rememberGrant("t1", issuedGrant{grantID: [16]byte{2}, issuedUnixMs: now})
 
-	s.rememberGrant("dead", issuedGrant{grantID: [16]byte{1}, expiresUnixMs: past})
-	s.rememberGrant("live", issuedGrant{grantID: [16]byte{2}, expiresUnixMs: future})
-
+	s.finishDataPlane([16]byte{1})
 	s.grantsMu.Lock()
-	_, deadKept := s.issuedGrants["dead"]
-	live := s.issuedGrants["live"]
+	left := s.issuedGrants["t1"]
 	s.grantsMu.Unlock()
-
-	if deadKept {
-		t.Fatalf("an expired grant's bookkeeping survived")
-	}
-	if len(live) != 1 {
-		t.Fatalf("the live grant should be kept, got %d", len(live))
+	if len(left) != 1 || left[0].grantID != [16]byte{2} {
+		t.Fatalf("finish removed the wrong record: %+v", left)
 	}
 
-	// And a task whose only grant expires stops having an entry at all, rather
-	// than keeping an empty slice per task forever.
-	s.rememberGrant("other", issuedGrant{grantID: [16]byte{3}, expiresUnixMs: future})
+	s.finishDataPlane([16]byte{2})
 	s.grantsMu.Lock()
-	n := len(s.issuedGrants)
+	_, taskKept := s.issuedGrants["t1"]
 	s.grantsMu.Unlock()
-	if n != 2 {
-		t.Fatalf("want two tasks with live grants, got %d", n)
+	if taskKept {
+		t.Fatalf("the task should hold no entry once its last grant finished")
+	}
+
+	// A finish for something already gone is a no-op, not a panic: the message
+	// can arrive twice, or after a narrowing caps change already withdrew it.
+	s.finishDataPlane([16]byte{9})
+}
+
+// The age floor is for a runner that died mid transfer and sent nothing. It
+// must NOT be the grant's expiry: a transfer may legitimately outlive that, and
+// dropping its record would take the server's ability to revoke it -- the one
+// thing a narrowing caps change promises.
+func TestRememberGrantFloorIsAgeNotGrantExpiry(t *testing.T) {
+	s := &Server{}
+	now := time.Now()
+	old := uint64(now.Add(-2 * dataPlaneRecordMaxAge).UnixMilli())
+	recent := uint64(now.Add(-dataPlaneGrantTTL * 2).UnixMilli()) // past the grant TTL, well inside the floor
+
+	s.rememberGrant("ancient", issuedGrant{grantID: [16]byte{1}, issuedUnixMs: old})
+	s.rememberGrant("long-transfer", issuedGrant{grantID: [16]byte{2}, issuedUnixMs: recent})
+	s.rememberGrant("fresh", issuedGrant{grantID: [16]byte{3}, issuedUnixMs: uint64(now.UnixMilli())})
+
+	s.grantsMu.Lock()
+	_, ancientKept := s.issuedGrants["ancient"]
+	_, longKept := s.issuedGrants["long-transfer"]
+	s.grantsMu.Unlock()
+
+	if ancientKept {
+		t.Fatalf("a record older than the floor should be gone")
+	}
+	if !longKept {
+		t.Fatalf("a transfer outliving the grant TTL must keep its record, or it stops being revocable")
 	}
 }

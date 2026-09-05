@@ -38,6 +38,11 @@ type RunnerHandler struct {
 	// grant push. Server.New points it at Server.deliverAuthorizeDataPlaneResponse.
 	OnAuthorizeDataPlaneResponse func(conn ConnHandle, resp protocol.AuthorizeDataPlaneResponse)
 
+	// OnDataPlaneFinished is the runner reporting that one data-plane
+	// connection has ended, so the forwarding entry and the record of the
+	// grant go now rather than on a timer.
+	OnDataPlaneFinished func(grantID [16]byte)
+
 	// OnExecRunFinished, when non-nil, hands an out-of-band exec's outcome to
 	// the TaskHandler that registered it — a func field rather than a handler
 	// reference, like the callbacks above, because the two handlers are wired
@@ -247,6 +252,17 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				"runnerID", runnerID, "status", ad.Status)
 		}
 		// Mutates nothing schedulable, same as the relay response above.
+		return
+
+	case protocol.RunnerMessageType_DataPlaneFinished:
+		df := msg.DataPlaneFinished()
+		if df == nil {
+			slog.Error("RunnerHandler: DataPlaneFinished variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnDataPlaneFinished != nil {
+			h.OnDataPlaneFinished(df.GrantId)
+		}
 		return
 
 	case protocol.RunnerMessageType_RevokeDataPlaneResponse:

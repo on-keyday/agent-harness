@@ -174,7 +174,14 @@ func (c *Client) openDataPlaneStream(
 	if err != nil {
 		return nil, nil, err
 	}
-	closer := func() { pc.Connection().Close() } //nolint:errcheck
+	// pc.Close, not pc.Connection().Close: it sends the trsf close, which is
+	// how the runner learns at once that the transfer is over. Without it the
+	// runner waits out its drain timeout before reporting the end, and the
+	// server holds the forwarding entry that whole time. The peer on the far
+	// side of this connection IS the runner, so telling it is the point --
+	// Pitfall 5's warning is about a close reaching a peer that was not meant
+	// to hear it.
+	closer := func() { pc.Close() }
 
 	st := pc.Transport().CreateBidirectionalStream()
 	if st == nil {

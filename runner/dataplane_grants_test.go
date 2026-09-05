@@ -135,3 +135,42 @@ func TestGrantStoreSweepDropsExpired(t *testing.T) {
 		t.Fatalf("live grant was swept")
 	}
 }
+
+// A redeemed entry is the connection's, and its own end removes it (Forget).
+// Sweeping it on the TTL would take the OnClose hook with it, so a transfer
+// running longer than the TTL would stop being reachable by a narrowing caps
+// change -- which is the one thing revocation promises.
+func TestGrantStoreSweepLeavesARedeemedEntryAlone(t *testing.T) {
+	now := time.Now()
+	s := newGrantStore()
+	s.Insert(testGrant(1, now.Add(-time.Minute)), 0x10, 0) // expired
+	s.OnClose([16]byte{1}, func() {})                      // ...but redeemed
+
+	if n := s.Sweep(now); n != 0 {
+		t.Fatalf("sweep took a redeemed entry: %d", n)
+	}
+	closed := 0
+	s.OnClose([16]byte{1}, func() { closed++ })
+	if got := s.Revoke([16]byte{1}); got != 1 || closed != 1 {
+		t.Fatalf("a redeemed entry must still be revocable after its TTL: revoked=%d closed=%d", got, closed)
+	}
+}
+
+// Forget is the connection reporting its own end: it drops the entry without
+// closing anything, because the thing it would close is already going.
+func TestGrantStoreForgetDropsWithoutClosing(t *testing.T) {
+	now := time.Now()
+	s := newGrantStore()
+	s.Insert(testGrant(1, now.Add(time.Minute)), 0x10, 0)
+	closed := 0
+	s.OnClose([16]byte{1}, func() { closed++ })
+
+	s.Forget([16]byte{1})
+	if closed != 0 {
+		t.Fatalf("Forget closed the connection it was told had already ended")
+	}
+	if got := s.Validate([16]byte{1}, protocol.TaskID{Id: [16]uint8{7}},
+		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Pull, now); got != protocol.ClientHelloStatus_BadTicket {
+		t.Fatalf("a forgotten grant is still redeemable: %v", got)
+	}
+}
