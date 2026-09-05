@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -467,29 +466,6 @@ func runSessionAttachWith(cid objproto.ConnectionID, a verb.SessionAction) error
 	return nil
 }
 
-// runSessionSend injects input into a session via a co-writer attach
-// (non-takeover, no size authority). --snapshot renders the resulting screen in
-// the same call, which is the whole drive loop — send keystrokes, read what the
-// program made of them — without a second dial or a guessed sleep.
-func runSessionSend(cid objproto.ConnectionID, args []string) error {
-	// Parsed from the declaration. --enter and -e stay two flags there, and a
-	// test refuses to let them become one: merging them would type a spurious
-	// Enter into a live PTY.
-	sp, _ := verb.Lookup("session", "send")
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		return perr
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		return berr
-	}
-	a := act.(verb.SendAction)
-	return runSessionSendWith(cid, a)
-}
-
 // runSessionSendWith is runSessionSend for a caller that already has the parsed action --
 // the generated CLI dispatch.
 func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
@@ -806,27 +782,4 @@ func runSessionResizeWith(cid objproto.ConnectionID, a verb.SessionAction) error
 		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
 	}
 	return nil
-}
-
-// parseSession parses one of the single-task session verbs from the
-// declaration. The CLI's error mode ends the process with usage, which is what
-// a bad command line should do here.
-func parseSession(path string, args []string) verb.SessionAction {
-	parts := strings.Fields(path)
-	sp, ok := verb.Lookup(parts...)
-	if !ok {
-		die(fmt.Errorf("%s: not in the verb table", path))
-	}
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		die(perr)
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		fmt.Fprintln(os.Stderr, berr)
-		os.Exit(2)
-	}
-	return act.(verb.SessionAction)
 }

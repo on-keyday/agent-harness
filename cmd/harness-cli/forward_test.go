@@ -3,94 +3,92 @@
 package main
 
 import (
-	"flag"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/verb"
 )
 
-// TestForwardSubcommandRouting: "ls" and "kill" are not hex, so they can
-// never collide with a task id.
-func TestForwardSubcommandRouting(t *testing.T) {
-	for _, sub := range []string{"ls", "kill", "tap"} {
-		if isTaskIDLike(sub) {
-			t.Errorf("%q must not parse as a task id", sub)
+// These properties used to be checked against helpers in main.go --
+// isTaskIDLike, forwardWConflictsWithLR, tapMode -- that the binary stopped
+// calling when the forward family moved onto the declaration. The tests
+// passed and the code was unreachable, which is the worst of both: nothing
+// reported the dead helper, and nothing covered the live rule.
+//
+// Same properties, asserted through the parse an operator actually reaches.
+
+// `forward ls` / `kill` / `tap` are their own declared paths, so a sub-verb
+// can never be read as the task id of a bare `forward`.
+func TestForwardSubVerbsAreNotTaskIDs(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	// Each sub-verb with the arguments IT declares -- `ls` takes none (it
+	// filters with --task), the other two take an id of their own kind.
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"forward", "ls"}, "verb.ForwardLsAction"},
+		{[]string{"forward", "kill", "7"}, "verb.ForwardKillAction"},
+		{[]string{"forward", "tap", "7"}, "verb.ForwardTapAction"},
+	} {
+		act, handled, err := verb.ParseCLICommand(tc.args, nil)
+		if !handled || err != nil {
+			t.Errorf("%v: handled=%t err=%v", tc.args, handled, err)
+			continue
+		}
+		if _, isOpen := act.(verb.ForwardOpenAction); isOpen {
+			t.Errorf("%v parsed as the OPEN form, so the sub-verb was read as a task id", tc.args)
+		}
+		if got := fmt.Sprintf("%T", act); got != tc.want {
+			t.Errorf("%v = %s, want %s", tc.args, got, tc.want)
 		}
 	}
-	for _, id := range []string{"deadbeef", "0123456789abcdef0123456789abcdef"} {
-		if !isTaskIDLike(id) {
-			t.Errorf("%q should parse as a task id", id)
+	// And the open form still takes one.
+	act, _, err := verb.ParseCLICommand([]string{"forward", id, "-L", "1:h:2"}, nil)
+	if err != nil {
+		t.Fatalf("forward <id> -L: %v", err)
+	}
+	if fo, ok := act.(verb.ForwardOpenAction); !ok || fo.TaskID != id {
+		t.Fatalf("open form = %#v, want TaskID %s", act, id)
+	}
+}
+
+// -W is the stdio forward: no local listener, this process's stdin/stdout IS
+// the endpoint. Combining it with -L or -R asks for two different things on
+// one connection, and the declaration refuses it.
+func TestForwardWConflictsWithLR(t *testing.T) {
+	id := strings.Repeat("cd", 16)
+	if _, _, err := verb.ParseCLICommand([]string{"forward", id, "-W", "h:1"}, nil); err != nil {
+		t.Fatalf("-W alone must parse: %v", err)
+	}
+	for _, other := range [][]string{{"-L", "1:h:2"}, {"-R", "1:h:2"}} {
+		args := append([]string{"forward", id, "-W", "h:1"}, other...)
+		if _, _, err := verb.ParseCLICommand(args, nil); err == nil {
+			t.Errorf("-W with %s parsed; it must be refused", other[0])
 		}
 	}
 }
 
-// TestForwardWFlagRouting drives the same flag.FlagSet shape the "forward"
-// case builds (see main.go's `case "forward":`), without spawning a process:
-// -W alone must parse into a usable host:port, and -W combined with -L must
-// be flagged as a conflict by forwardWConflictsWithLR — the exact check
-// main.go runs right after fs.Parse to reject a `-W` + `-L`/`-R` invocation
-// with exit code 2.
-func TestForwardWFlagRouting(t *testing.T) {
-	newForwardFlagSet := func() (*flag.FlagSet, *repeatableStrings, *repeatableStrings, *string) {
-		fs := flag.NewFlagSet("forward", flag.ContinueOnError)
-		var specs repeatableStrings
-		var rspecs repeatableStrings
-		fs.Var(&specs, "L", "")
-		fs.Var(&rspecs, "R", "")
-		wspec := fs.String("W", "", "")
-		return fs, &specs, &rspecs, wspec
+// The four render flags name one mode. Two at once is a contradiction, not a
+// ranking, and the default is hex.
+func TestForwardTapRenderModes(t *testing.T) {
+	parse := func(t *testing.T, flags ...string) verb.ForwardTapAction {
+		t.Helper()
+		act, _, err := verb.ParseCLICommand(append([]string{"forward", "tap", "7"}, flags...), nil)
+		if err != nil {
+			t.Fatalf("forward tap %v: %v", flags, err)
+		}
+		return act.(verb.ForwardTapAction)
 	}
-
-	// -W alone: parses, and does not conflict with -L/-R.
-	fs, specs, rspecs, wspec := newForwardFlagSet()
-	if err := fs.Parse([]string{"-W", "127.0.0.1:3000"}); err != nil {
-		t.Fatalf("parse -W alone: %v", err)
+	if m := tapModeByName(parse(t).Mode); m != cli.TapHex {
+		t.Errorf("no flag = %v, want hex", m)
 	}
-	if forwardWConflictsWithLR(*wspec, len(*specs), len(*rspecs)) {
-		t.Fatalf("-W alone must not be reported as conflicting")
+	if m := tapModeByName(parse(t, "--json").Mode); m != cli.TapJSON {
+		t.Errorf("--json = %v, want json", m)
 	}
-	host, port, err := cli.ParseStdioForwardSpec(*wspec)
-	if err != nil || host != "127.0.0.1" || port != 3000 {
-		t.Fatalf("ParseStdioForwardSpec(%q) = %q, %d, err=%v", *wspec, host, port, err)
-	}
-
-	// -W combined with -L must be rejected.
-	fs2, specs2, rspecs2, wspec2 := newForwardFlagSet()
-	if err := fs2.Parse([]string{"-L", "3000:127.0.0.1:3000", "-W", "127.0.0.1:3000"}); err != nil {
-		t.Fatalf("parse -L + -W: %v", err)
-	}
-	if !forwardWConflictsWithLR(*wspec2, len(*specs2), len(*rspecs2)) {
-		t.Fatalf("-W combined with -L must be reported as conflicting")
-	}
-
-	// -W combined with -R must also be rejected.
-	fs3, specs3, rspecs3, wspec3 := newForwardFlagSet()
-	if err := fs3.Parse([]string{"-R", "3000:127.0.0.1:3000", "-W", "127.0.0.1:3000"}); err != nil {
-		t.Fatalf("parse -R + -W: %v", err)
-	}
-	if !forwardWConflictsWithLR(*wspec3, len(*specs3), len(*rspecs3)) {
-		t.Fatalf("-W combined with -R must be reported as conflicting")
-	}
-}
-
-// "tap" joins "ls" and "kill" as a sub-verb, so it must not parse as a task id
-// either — the routing above dispatches on exactly that test.
-func TestForwardTapSubcommandRouting(t *testing.T) {
-	if isTaskIDLike("tap") {
-		t.Error(`"tap" must not parse as a task id`)
-	}
-}
-
-func TestTapModeRejectsTwoAtOnce(t *testing.T) {
-	if _, err := tapMode(true, false, true, false); err == nil {
+	if _, _, err := verb.ParseCLICommand([]string{"forward", "tap", "7", "--hex", "--raw"}, nil); err == nil {
 		t.Fatal("--hex with --raw must be refused, not silently ranked")
-	}
-	m, err := tapMode(false, false, false, false)
-	if err != nil || m != cli.TapHex {
-		t.Fatalf("no flag = hex, got %v %v", m, err)
-	}
-	m, err = tapMode(false, false, false, true)
-	if err != nil || m != cli.TapJSON {
-		t.Fatalf("--json, got %v %v", m, err)
 	}
 }

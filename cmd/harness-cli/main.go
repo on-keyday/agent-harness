@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,27 +22,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
-
-// scopeForFlag collects repeatable --scope-for values. It parses and merges on
-// every Set, so an overlapping capability list is rejected at the flag rather
-// than one round trip later — the server refuses it too, but a typo should not
-// cost a spawn.
-type scopeForFlag struct{ out []protocol.ScopeOverride }
-
-func (f *scopeForFlag) String() string { return cli.OverridesLabel(f.out) }
-
-func (f *scopeForFlag) Set(v string) error {
-	_, ov, err := cli.ParseScopeFor(v)
-	if err != nil {
-		return err
-	}
-	merged, err := cli.MergeScopeOverride(f.out, ov)
-	if err != nil {
-		return err
-	}
-	f.out = merged
-	return nil
-}
 
 // workspaceRepo is the `repo` a --workspace supplied, consulted by the two
 // places that fall back to HARNESS_REPO_PATH (the file subcommand here and
@@ -204,29 +182,6 @@ func familySubverbs(head string) []string {
 	return out
 }
 
-// isTaskIDLike reports whether s could be a task id (hex digits only). Used to
-// keep `forward ls` / `forward kill` from being mistaken for a task id — neither
-// word is hex.
-func isTaskIDLike(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			return false
-		}
-	}
-	return true
-}
-
-// forwardWConflictsWithLR reports whether -W was combined with -L or -R.
-// They are mutually exclusive: -W owns the foreground and exits with its
-// peer (like ssh -W, which implies ClearAllForwardings), while -L/-R are
-// long-lived listeners started alongside each other.
-func forwardWConflictsWithLR(wspec string, nLSpecs, nRSpecs int) bool {
-	return wspec != "" && (nLSpecs > 0 || nRSpecs > 0)
-}
-
 // interruptStopGrace is how long a first interrupt gets to unwind cleanly
 // before the process stops waiting for it.
 const interruptStopGrace = 5 * time.Second
@@ -281,13 +236,6 @@ func forceExitWithStacks(label, reason string) {
 	fmt.Fprintf(os.Stderr, "%s: %s — forcing exit. Goroutine dump follows.\n%s\n", label, reason, buf[:n])
 	os.Exit(130)
 }
-
-// stringList collects a repeatable string flag, in the order given — header
-// order is preserved all the way to the wire.
-type stringList []string
-
-func (l *stringList) String() string     { return strings.Join(*l, ", ") }
-func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 // readFlagBody resolves a --http-body value: a literal, @file, or - for stdin.
 func readFlagBody(v string) ([]byte, error) {
@@ -419,45 +367,6 @@ func classifyForLocalPrune(ctx context.Context, peerCID objproto.ConnectionID, t
 	return safe, nil
 }
 
-// repeatableStrings is a flag.Value that accumulates one entry per occurrence.
-// Used for --agent-arg so callers can write
-//
-//	harness-cli submit --agent-arg --resume --agent-arg <uuid> ...
-//
-// without shell-quoting concerns. The value is appended in the order the
-// flags appear, which is the order forwarded to the agent.
-type repeatableStrings []string
-
-func (r *repeatableStrings) String() string {
-	if r == nil {
-		return ""
-	}
-	return fmt.Sprint([]string(*r))
-}
-
-func (r *repeatableStrings) Set(v string) error {
-	*r = append(*r, v)
-	return nil
-}
-
-// capsExplicitlySet reports whether the "caps" flag was explicitly provided on
-// the command line (as opposed to taking its zero-value default). It uses
-// flag.FlagSet.Visit which iterates only over flags that were actually set.
-func capsExplicitlySet(fs *flag.FlagSet) bool { return flagExplicitlySet(fs, "caps") }
-
-// flagExplicitlySet reports whether the named flag was actually typed. Both
-// --caps and --scope need this: their zero values are meaningful ("none" and
-// "subtree"), so "was it given?" cannot be read off the value.
-func flagExplicitlySet(fs *flag.FlagSet, name string) bool {
-	found := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
-}
-
 // runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.
 // A CLI has no terminal UI of its own to host an editor widget, so unlike the
 // TUI this path always goes through an external editor.
@@ -541,28 +450,6 @@ func editViaExternalEditor(name, text string) (string, string, error) {
 	return string(b), tmp, nil
 }
 
-// tapMode turns the four mutually exclusive output flags into one mode. Two at
-// once is refused rather than silently ranked: a caller that asked for both
-// --raw and --json meant something, and guessing which would be wrong half the
-// time.
-func tapMode(asHex, asText, asRaw, asJSON bool) (cli.TapRenderMode, error) {
-	n := 0
-	mode := cli.TapHex
-	for _, c := range []struct {
-		on bool
-		m  cli.TapRenderMode
-	}{{asHex, cli.TapHex}, {asText, cli.TapText}, {asRaw, cli.TapRaw}, {asJSON, cli.TapJSON}} {
-		if c.on {
-			n++
-			mode = c.m
-		}
-	}
-	if n > 1 {
-		return 0, errors.New("forward tap: --hex, --text, --raw and --json are mutually exclusive")
-	}
-	return mode, nil
-}
-
 // tapModeByName maps the declaration's mode word onto the renderer. The
 // mutual exclusion between the four is enforced in the verb's Build, so by the
 // time this runs exactly one was chosen.
@@ -577,41 +464,6 @@ func tapModeByName(name string) cli.TapRenderMode {
 	default:
 		return cli.TapHex
 	}
-}
-
-// parseSpawn parses one of the three spawn verbs from the declaration and
-// resolves the flags that have a fallback ladder.
-//
-// The ladder is flag > env > workspace, and it is applied HERE rather than in
-// cli/verb because that package parses and does not read the environment or
-// the config file.
-func parseSpawn(kind string, args []string, _ func() objproto.ConnectionID) verb.SpawnAction {
-	path := []string{kind}
-	if kind == "session-new" {
-		path = []string{"session", "new"}
-	}
-	sp, ok := verb.Lookup(path...)
-	if !ok {
-		die(fmt.Errorf("%s: not in the verb table", kind))
-	}
-	sp = sp.For(verb.CLI)
-	fs := sp.NewFlagSet(flag.ExitOnError)
-	b, perr := sp.Parse(fs, args)
-	if perr != nil {
-		die(perr)
-	}
-	act, berr := sp.BuildFunc()(b)
-	if berr != nil {
-		fmt.Fprintln(os.Stderr, berr)
-		os.Exit(2)
-	}
-	a := act.(verb.SpawnAction)
-	a.Repo = sp.Resolve(b, "repo", os.Getenv, func(string) string { return workspaceRepo }, nil)
-	if a.Repo == "" && a.ResumeTaskID == "" {
-		fmt.Fprintf(os.Stderr, "%s: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo\n", kind)
-		os.Exit(2)
-	}
-	return a
 }
 
 // spawnOpts turns the shared action into the client's option bag.

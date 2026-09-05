@@ -1,14 +1,12 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -102,8 +100,3 @@ func isTTY(f *os.File) bool {
 	}
 	return st.Mode()&os.ModeCharDevice != 0
 }
-
-// flagSetFor builds a verb's FlagSet with the CLI's error mode: a bad command
-// line should end the process with usage, unlike the TUI where it is a line in
-// a pane.
-func flagSetFor(sp verb.VerbSpec) *flag.FlagSet { return sp.NewFlagSet(flag.ExitOnError) }
