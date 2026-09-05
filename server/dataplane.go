@@ -161,10 +161,11 @@ func (s *Server) setupDataPlane(
 		return 0, fmt.Errorf("data plane: SetProxy(%v, %v): %w", owned, allocate, err)
 	}
 	s.rememberGrant(hex.EncodeToString(grant.TaskId.Id[:]), issuedGrant{
-		grantID:   grant.GrantId,
-		entry:     entry,
-		clientCID: clientCID,
-		slot:      slot,
+		grantID:       grant.GrantId,
+		entry:         entry,
+		clientCID:     clientCID,
+		slot:          slot,
+		expiresUnixMs: grant.ExpiresUnixMs,
 	})
 	return slot, nil
 }
@@ -176,14 +177,39 @@ type issuedGrant struct {
 	entry     *RunnerEntry
 	clientCID objproto.ConnectionID
 	slot      uint16
+	// expiresUnixMs is the grant's own deadline, kept here so the bookkeeping
+	// can be pruned without reaching back into the grant.
+	expiresUnixMs uint64
 }
 
-// rememberGrant records an issued grant against its task.
+// rememberGrant records an issued grant against its task, and drops the ones
+// that can no longer be redeemed while it is holding the lock.
+//
+// The pruning is the whole reason this is not a plain append: nothing else
+// removes an entry except a narrowing caps change, so without it the map grows
+// by one per file operation for the life of the process and pins a RunnerEntry
+// with each. A grant past its expiry is refused by the runner anyway
+// (grantStore.Validate checks it), so keeping the bookkeeping buys nothing --
+// which is what bounds this to "the grants issued in the last TTL".
 func (s *Server) rememberGrant(taskIDHex string, g issuedGrant) {
+	now := uint64(time.Now().UnixMilli())
 	s.grantsMu.Lock()
 	defer s.grantsMu.Unlock()
 	if s.issuedGrants == nil {
 		s.issuedGrants = make(map[string][]issuedGrant)
+	}
+	for task, gs := range s.issuedGrants {
+		live := gs[:0]
+		for _, e := range gs {
+			if e.expiresUnixMs > now {
+				live = append(live, e)
+			}
+		}
+		if len(live) == 0 {
+			delete(s.issuedGrants, task)
+			continue
+		}
+		s.issuedGrants[task] = live
 	}
 	s.issuedGrants[taskIDHex] = append(s.issuedGrants[taskIDHex], g)
 }

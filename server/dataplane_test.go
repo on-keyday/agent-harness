@@ -108,3 +108,38 @@ func TestNegotiatedMTU(t *testing.T) {
 		t.Fatalf("udp/ws should take the udp size %d, got %d", udpInitial, got)
 	}
 }
+
+// Nothing removes an issued grant except a narrowing caps change, so without
+// pruning the bookkeeping grows by one per file operation and pins a
+// RunnerEntry with each. A grant past its expiry is refused by the runner
+// anyway, so it may go.
+func TestRememberGrantPrunesWhatCanNoLongerBeRedeemed(t *testing.T) {
+	s := &Server{}
+	past := uint64(time.Now().Add(-time.Minute).UnixMilli())
+	future := uint64(time.Now().Add(time.Minute).UnixMilli())
+
+	s.rememberGrant("dead", issuedGrant{grantID: [16]byte{1}, expiresUnixMs: past})
+	s.rememberGrant("live", issuedGrant{grantID: [16]byte{2}, expiresUnixMs: future})
+
+	s.grantsMu.Lock()
+	_, deadKept := s.issuedGrants["dead"]
+	live := s.issuedGrants["live"]
+	s.grantsMu.Unlock()
+
+	if deadKept {
+		t.Fatalf("an expired grant's bookkeeping survived")
+	}
+	if len(live) != 1 {
+		t.Fatalf("the live grant should be kept, got %d", len(live))
+	}
+
+	// And a task whose only grant expires stops having an entry at all, rather
+	// than keeping an empty slice per task forever.
+	s.rememberGrant("other", issuedGrant{grantID: [16]byte{3}, expiresUnixMs: future})
+	s.grantsMu.Lock()
+	n := len(s.issuedGrants)
+	s.grantsMu.Unlock()
+	if n != 2 {
+		t.Fatalf("want two tasks with live grants, got %d", n)
+	}
+}

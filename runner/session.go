@@ -179,6 +179,9 @@ type Session struct {
 	// Built lazily via ensureGrants so a Session that never carries one does
 	// not have to know about it. See runner/dataplane_grants.go.
 	Grants *grantStore
+	// grantSweeper guards startGrantSweeper so the ticker is started once per
+	// session however many grants arrive.
+	grantSweeper atomic.Bool
 
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse

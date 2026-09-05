@@ -104,3 +104,31 @@ func TestHandleRevokeDataPlaneUnknownGrantIsOk(t *testing.T) {
 		t.Fatalf("want a closed=0 answer, got %+v", sent)
 	}
 }
+
+// The sweeper was written and never started once, which is a leak no unit test
+// covered: expiry is enforced at validate time, so the only symptom is a map
+// that grows by one per file operation. Authorizing a grant must arm it.
+func TestHandleAuthorizeDataPlaneStartsTheSweeper(t *testing.T) {
+	sess := &Session{Grants: newGrantStore(), ServerCID: testServerCID(0x01)}
+	if sess.grantSweeper.Load() {
+		t.Fatalf("the sweeper claims to be running before anything authorized")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := protocol.AuthorizeDataPlaneRequest{SlotId: 0x21, Grant: liveGrant(11)}
+	handleAuthorizeDataPlane(ctx, slog.Default(), sess, nil, req,
+		func(protocol.AuthorizeDataPlaneResponse) error { return nil })
+
+	if !sess.grantSweeper.Load() {
+		t.Fatalf("authorizing a grant did not start the sweeper")
+	}
+
+	// Idempotent: a second grant must not start a second ticker.
+	req2 := protocol.AuthorizeDataPlaneRequest{SlotId: 0x22, Grant: liveGrant(12)}
+	handleAuthorizeDataPlane(ctx, slog.Default(), sess, nil, req2,
+		func(protocol.AuthorizeDataPlaneResponse) error { return nil })
+	if !sess.grantSweeper.Load() {
+		t.Fatalf("the guard was cleared by a second authorize")
+	}
+}

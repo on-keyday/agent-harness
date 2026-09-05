@@ -14,6 +14,12 @@ import (
 // probes over two minutes all landed.
 const punchInterval = 500 * time.Millisecond
 
+// grantSweepInterval is how often expired grants are dropped from the store.
+// Expiry is already ENFORCED at validate time, so this reclaims memory rather
+// than authority -- without it the map grows by one entry per file operation
+// for the life of the process.
+const grantSweepInterval = time.Minute
+
 // ensureGrants lazily builds the store, so a Session assembled by an older test
 // or by a code path that never authorizes a data plane does not have to know
 // about it.
@@ -22,6 +28,29 @@ func (s *Session) ensureGrants() *grantStore {
 		s.Grants = newGrantStore()
 	}
 	return s.Grants
+}
+
+// startGrantSweeper drops expired grants until ctx ends. Started once per
+// session, from the same place the store first gets an entry.
+func (s *Session) startGrantSweeper(ctx context.Context, logger *slog.Logger) {
+	if !s.grantSweeper.CompareAndSwap(false, true) {
+		return
+	}
+	store := s.ensureGrants()
+	go func() {
+		t := time.NewTicker(grantSweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n := store.Sweep(time.Now()); n > 0 && logger != nil {
+					logger.Debug("data plane: swept expired grants", "count", n)
+				}
+			}
+		}
+	}()
 }
 
 // handleAuthorizeDataPlane records a grant the server has authorized and, when
@@ -52,6 +81,7 @@ func handleAuthorizeDataPlane(
 		respond(protocol.AuthorizeDataPlaneStatus_SlotCollision)
 		return
 	}
+	sess.startGrantSweeper(ctx, logger)
 	if st := sess.ensureGrants().Insert(req.Grant, req.SlotId, req.Mtu); st != protocol.AuthorizeDataPlaneStatus_Ok {
 		respond(st)
 		return
