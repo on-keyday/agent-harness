@@ -130,6 +130,12 @@ type Server struct {
 	relayRespChMu sync.Mutex
 	relayRespCh   map[objproto.ConnectionID]chan protocol.EstablishRelayResponse
 
+	// dpRespChMu / dpRespCh do the same for AuthorizeDataPlaneResponse. A
+	// separate map rather than a shared one because the two requests can be in
+	// flight to the same runner at once and their answers are different types.
+	dpRespChMu sync.Mutex
+	dpRespCh   map[objproto.ConnectionID]chan protocol.AuthorizeDataPlaneResponse
+
 	// pendingViaInfoMu / pendingViaInfo carry Phase C registration metadata from
 	// DialRunnerHandler.HandleWithVia (where the via entry + target addr are in
 	// scope) to RunnerHandler.Handle's Hello case (where RunnerEntry is built).
@@ -176,11 +182,12 @@ func New(cfg Config) *Server {
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
 	s.runnerHandler = &RunnerHandler{
-		Registry:                 s.registry,
-		Tasks:                    s.tasks,
-		Now:                      time.Now,
-		OnChange:                 s.scheduler.Tick,
-		OnEstablishRelayResponse: s.deliverEstablishRelayResponse,
+		Registry:                     s.registry,
+		Tasks:                        s.tasks,
+		Now:                          time.Now,
+		OnChange:                     s.scheduler.Tick,
+		OnEstablishRelayResponse:     s.deliverEstablishRelayResponse,
+		OnAuthorizeDataPlaneResponse: s.deliverAuthorizeDataPlaneResponse,
 	}
 	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay
@@ -512,6 +519,12 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	s.taskHandler.Endpoint = ep
+	// Wired here rather than in New because the endpoint only exists once the
+	// listener is up, and SetProxy needs it. A nil hook is the splice path, so
+	// a server built without a listener keeps working.
+	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error) {
+		return s.setupDataPlane(ctx, ep, clientCID, entry, grant)
+	}
 	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo) {
 		// connCtx is the server root context (long-lived). The ECDH-timeout
 		// context lives only inside DialRunnerHandler.Handle and is already

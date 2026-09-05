@@ -34,6 +34,10 @@ type RunnerHandler struct {
 	// Nil-safe: tests that do not exercise the via-relay path leave it unwired.
 	OnEstablishRelayResponse func(conn ConnHandle, resp protocol.EstablishRelayResponse)
 
+	// OnAuthorizeDataPlaneResponse is the same wiring for the data-plane
+	// grant push. Server.New points it at Server.deliverAuthorizeDataPlaneResponse.
+	OnAuthorizeDataPlaneResponse func(conn ConnHandle, resp protocol.AuthorizeDataPlaneResponse)
+
 	// OnExecRunFinished, when non-nil, hands an out-of-band exec's outcome to
 	// the TaskHandler that registered it — a func field rather than a handler
 	// reference, like the callbacks above, because the two handlers are wired
@@ -228,6 +232,29 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// EstablishRelayResponse does not mutate Registry/Tasks; suppress the
 		// trailing OnChange so we don't run a spurious Scheduler.Tick.
+		return
+
+	case protocol.RunnerMessageType_AuthorizeDataPlaneResponse:
+		ad := msg.AuthorizeDataPlaneResponse()
+		if ad == nil {
+			slog.Error("RunnerHandler: AuthorizeDataPlaneResponse variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnAuthorizeDataPlaneResponse != nil {
+			h.OnAuthorizeDataPlaneResponse(conn, *ad)
+		} else {
+			slog.Warn("RunnerHandler: AuthorizeDataPlaneResponse arrived but no handler wired",
+				"runnerID", runnerID, "status", ad.Status)
+		}
+		// Mutates nothing schedulable, same as the relay response above.
+		return
+
+	case protocol.RunnerMessageType_RevokeDataPlaneResponse:
+		// Revoke is fire-and-forget; the count is only interesting in a log.
+		if rd := msg.RevokeDataPlaneResponse(); rd != nil {
+			slog.Debug("RunnerHandler: revoke data plane acknowledged",
+				"runnerID", runnerID, "closed", rd.Closed)
+		}
 		return
 
 	case protocol.RunnerMessageType_RequestChainedRelay:

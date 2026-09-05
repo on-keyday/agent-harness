@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -37,6 +39,20 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 		slog.Error("file_transfer: nil client conn (programmer error)")
 		return errResp(protocol.OpenFileTransferStatus_InternalError)
 	}
+	// Preferred route: hand the client a grant and forward its packets, so
+	// these bytes cross this process without being decrypted. Falls back to the
+	// splice below when the hook is absent, the transports differ, or the
+	// runner refuses -- the client can tell the routes apart by grant_id.
+	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
+		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId); ok {
+		return protocol.OpenFileTransferResponse{
+			Status:    protocol.OpenFileTransferStatus_Ok,
+			GrantId:   grantID,
+			SlotId:    slot,
+			RunnerCid: rcid,
+		}
+	}
+
 	clientStream := conn.CreateBidirectionalStream()
 	if clientStream == nil {
 		return errResp(protocol.OpenFileTransferStatus_InternalError)
@@ -101,6 +117,16 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		slog.Error("list_files: nil client conn (programmer error)")
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
+	if grantID, slot, rcid, ok := h.tryDataPlane(conn, &runner,
+		protocol.TaskControlKind_ListFiles, 0, req.TaskId); ok {
+		return protocol.ListFilesResponse{
+			Status:    protocol.ListFilesStatus_Ok,
+			GrantId:   grantID,
+			SlotId:    slot,
+			RunnerCid: rcid,
+		}
+	}
+
 	clientStream := conn.CreateBidirectionalStream()
 	if clientStream == nil {
 		return errResp(protocol.ListFilesStatus_InternalError)
@@ -131,3 +157,37 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		StreamId: uint64(clientStream.ID()),
 	}
 }
+
+// tryDataPlane mints a grant and installs the forwarding route for one request.
+// It reports ok=false for every reason the splice path should be used instead,
+// so a caller reads it as "was this routed end to end?" and never has to know
+// which of the reasons applied.
+func (h *TaskHandler) tryDataPlane(
+	conn ConnHandle,
+	runner *RunnerEntry,
+	kind protocol.TaskControlKind,
+	dir protocol.FileTransferDirection,
+	taskID protocol.TaskID,
+) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, ok bool) {
+	if h.SetupDataPlane == nil || runner == nil || runner.Conn == nil {
+		return grantID, 0, runnerCID, false
+	}
+	clientCID := conn.ConnectionID()
+	rc := runner.Conn.ConnectionID()
+	if !dataPlaneRoute(clientCID, rc) {
+		return grantID, 0, runnerCID, false
+	}
+	grant := mintGrant(kind, dir, taskID, dataPlaneGrantTTL)
+	ctx, cancel := context.WithTimeout(context.Background(), dataPlaneSetupTimeout)
+	defer cancel()
+	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant)
+	if err != nil {
+		slog.Warn("file_transfer: data plane setup failed, splicing instead", "err", err)
+		return grantID, 0, runnerCID, false
+	}
+	return grant.GrantId, slot, protocol.ConnIDToRunnerID(rc), true
+}
+
+// dataPlaneSetupTimeout bounds the runner round trip in tryDataPlane. It is
+// short because the fallback is a working path, not an error.
+const dataPlaneSetupTimeout = 5 * time.Second

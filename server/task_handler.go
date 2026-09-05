@@ -42,6 +42,13 @@ type TaskHandler struct {
 	// counts changed.
 	OnSessionObservers func(taskID string)
 
+	// SetupDataPlane, when non-nil, mints and installs the packet-forwarding
+	// route for one request and answers with the slot id the client should
+	// dial. A nil hook, an incompatible transport pair, or an error all fall
+	// back to the splice path -- both routes coexist and this is where the
+	// choice is made. Server.New wires it to Server.setupDataPlane.
+	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error)
+
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
 	NotifyHook string
