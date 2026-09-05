@@ -276,17 +276,16 @@ When `handleSetCaps` narrows a task, the same path that calls
 
 ## Runner behaviour
 
-A grant store keyed by `grant_id`, holding the task, the request it names and
-the expiry —
-the mirror of `agentboard/registry.go`, with `Validate` comparing in constant
-time the same way. `AuthorizeDataPlane` inserts, `RevokeDataPlane` deletes and
-closes, expiry sweeps on a ticker.
+A grant store keyed by `grant_id`, holding the task, the request the grant
+names and the expiry — the mirror of `agentboard/registry.go`, with `Validate`
+comparing in constant time the same way. `AuthorizeDataPlane` inserts,
+`RevokeDataPlane` deletes and closes, expiry sweeps on a ticker.
 
 On an accepted data-plane connection the runner refuses unless: the binder is
 valid (the existing PSK gate, unchanged), the grant exists, it has not expired,
 its `task_id` names a task this runner is running, and its `kind` and
-`direction` equal the request that arrived. The refusals map onto `ClientHelloStatus` so the client is
-told which check failed.
+`direction` equal the request that arrived. The refusals map onto
+`ClientHelloStatus` so the client is told which check failed.
 
 The file I/O afterwards is `runner/file_transfer.go` unchanged: it already
 takes a task id and a stream and confines paths to the worktree root.
@@ -318,8 +317,7 @@ remains the only one for them.
 ## Testing
 
 - The runner's grant store: expiry, constant-time mismatch, wrong-direction
-  refusal,
-  idempotent revoke. Unit.
+  refusal, idempotent revoke. Unit.
 - `handleOpenFileTransfer` mints, authorizes and proxies in the right order,
   and answers `InternalError` when the runner refuses. Unit against the fakes
   in `server/fakes_test.go`.
@@ -335,12 +333,32 @@ remains the only one for them.
 
 ## Non-goals
 
-- **A direct client→runner path**, and everything it needs: the punch request,
-  the dial-mode accept loop, the client's data-plane port discovery, the
-  ordering window, and the objtrsf accessor for a bound port. All measured and
-  costed in the probe doc; none of it is built here. This design needs one of
-  those seven items — runner-side authorization — and building it does not
-  foreclose the rest.
+- **A direct client→runner path.** The probe doc lists seven items such a path
+  would need. This design builds three of them, because a forwarded connection
+  arrives at the runner's socket as an inbound connection like any other and
+  something has to accept and authorize it: the runner-side authorization, the
+  dial-mode accept loop with its third first-payload arm, and the coexistence
+  of two routes. What is not built here is the punch request and the ordering
+  window it needs. A later direct path changes how packets are routed and
+  reuses the grant, the `ClientKind` arm, the runner's store and the accept
+  path unchanged.
+
+  Two of the probe's seven look avoidable in both routes, and writing this
+  design is what made that visible: **the client needs no second socket.**
+  `SetProxy`'s `owned` is keyed by the address the client's data-plane packets
+  arrive FROM, and that is the socket the client already holds open to the
+  server — an address the server therefore already observes, differing from its
+  control connection only in the 16-bit id. A punch would name that same
+  address, which is exactly what F5 demands, so neither the client's port
+  discovery (item 4) nor an objtrsf accessor for a bound port (item 7) is on
+  the path. The probe bound explicit ports on both ends for the convenience of
+  the experiment, not because the mechanism requires them.
+
+  What makes that legal is that the two ends of a connection do not have to
+  name it identically. In the probe's first run the client held
+  `udp:127.0.0.1:37037-16962` while the runner held
+  `udp:127.0.0.1:37149-16962` for the same connection and the ECDH completed;
+  only the 16-bit id is shared.
 - **Converting port forwards or PTY sessions.** `forward tap` and the session
   ring buffer read those bytes; end-to-end encryption would delete features
   that exist on purpose.

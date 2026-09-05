@@ -152,6 +152,29 @@ Ordered as they would have to be built, from F1–F8:
 
 The design doc takes the route that needs only item 3, and records why.
 
+## Amendment — items 4 and 7 are probably not on the path (2026-09-06)
+
+Written while designing the other route, and it reverses part of the list
+above. Items 4 and 7 exist because F5 says the punch must name the exact port
+the client will dial from, and `transport.UDPEndpoint` does not report the port
+it bound. Both were reasoned from probe 3, where each side bound an explicit
+port.
+
+**The client does not need a new socket.** It already holds one open to the
+server, and the server already observes its address — that is where the
+control connection's packets come from. A second connection from that same
+socket differs only in the 16-bit id. So the address a punch must name is one
+the server has without being told, and the client learns nothing it did not
+already have. The explicit ports in probe 3 were for the convenience of running
+the experiment from two directions at once, not a property of the mechanism.
+
+That leaves five items, and item 5's ordering window is the only one of them
+this design work has not already reduced.
+
+This is a reversal of the list, not a correction of the measurements: probes
+1–3 stand, and F5's constraint — the punch and the dial must name the same
+address and port — is exactly what reusing one socket satisfies.
+
 ## What was not measured
 
 - Any deployment with a NAT between client and runner (F8's two failure modes).
