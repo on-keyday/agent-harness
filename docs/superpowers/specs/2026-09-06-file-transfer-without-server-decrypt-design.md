@@ -398,3 +398,37 @@ remains the only one for them.
   a per-runner operational change with no code in it.
 - **Hiding file contents from the runner.** The runner reads and writes the
   files; it is the endpoint, not a relay.
+
+## Amendment — how the request itself reaches the runner (2026-09-06, during Task 5)
+
+The Shape section above says the runner "matches G, binds the connection to the
+task, opens the file stream in that worktree" and never says how the runner
+learns the path, the direction's operand, `force`, or `mkdir_parents`. The grant
+carries the request KIND, deliberately, and nothing more.
+
+**The client sends the request on the data-plane connection, right after the
+handshake**, in the existing `RunnerRequest` envelope. The server therefore
+stops sending `OpenFileTransfer` / `ListFiles` to the runner on that path
+entirely; it mints, authorizes and proxies, and that is all.
+
+Three reasons this is the right half to put it in, rather than extending
+`AuthorizeDataPlaneRequest`:
+
+- The client is the party that knows the path and the runner is the party that
+  validates it (`ValidateRelPath`, plus the symlink check after it). Routing
+  those bytes through the server would add a hop for a value the server does not
+  inspect.
+- It keeps the grant generic. Folding a file-transfer request into the authorize
+  message would couple the grant to one family, which is what carrying only
+  `TaskControlKind` was for.
+- It generalizes: `git_query` and `exec` send their own request on their own
+  connection, and the grant still says only which of them was authorized.
+
+The runner checks the request against the grant before serving it — kind,
+direction and task id all have to agree — so the client naming a different file
+operation than the one the server authorized is refused, not served.
+
+`handleOpenFileTransfer` and `handleListFiles` each gained an `...On(lookup)`
+form for this: the stream carrying the bytes lives on the data-plane connection,
+not on the one the request arrived over. Same split as the `X` / `XWith` pairs
+in `cli`.

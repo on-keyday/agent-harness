@@ -148,8 +148,17 @@ func writeAckRange(st trsf.BidirectionalStream, status protocol.FileTransferStat
 // owns the stream after this call: it writes the FileTransferAck and
 // closes the stream regardless of outcome.
 func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.RunnerOpenFileTransferRequest) {
+	s.handleOpenFileTransferOn(ctx, s.Streams, req)
+}
+
+// handleOpenFileTransferOn is handleOpenFileTransfer against a named stream
+// lookup. The server-routed path passes s.Streams (the server connection); a
+// data-plane connection passes its own transport, because the stream carrying
+// the bytes lives on THAT connection and not on the one the request arrived
+// over. Same split as the cli helpers' X / XWith pair.
+func (s *Session) handleOpenFileTransferOn(ctx context.Context, lookup peer.BidirectionalStreamLookup, req *protocol.RunnerOpenFileTransferRequest) {
 	log := s.logger()
-	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
+	stream := peer.WaitForBidirectionalStream(ctx, lookup, trsf.StreamID(req.StreamId))
 	if stream == nil {
 		log.Error("file_transfer: stream not visible", "stream_id", req.StreamId)
 		return
@@ -424,8 +433,14 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force, m
 // handleListFiles is the runner-side dispatcher for ls. It writes a single
 // FileListing payload and closes the stream.
 func (s *Session) handleListFiles(ctx context.Context, req *protocol.RunnerListFilesRequest) {
+	s.handleListFilesOn(ctx, s.Streams, req)
+}
+
+// handleListFilesOn is handleListFiles against a named stream lookup; see
+// handleOpenFileTransferOn for why the data-plane path needs its own.
+func (s *Session) handleListFilesOn(ctx context.Context, lookup peer.BidirectionalStreamLookup, req *protocol.RunnerListFilesRequest) {
 	log := s.logger()
-	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
+	stream := peer.WaitForBidirectionalStream(ctx, lookup, trsf.StreamID(req.StreamId))
 	if stream == nil {
 		log.Error("list_files: stream not visible", "stream_id", req.StreamId)
 		return

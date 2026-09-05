@@ -116,6 +116,9 @@ enum PskAuthStatus:
     bad_psk     = 1
     bad_ticket  = 2  # binder ok but kind=agent presented an invalid auth ticket
     no_identity = 3  # binder ok but no identity union present (fail-closed)
+    expired       = 4  # binder ok, grant exists, but its TTL has passed
+    not_permitted = 5  # binder ok, grant is live, but names a different request
+                       # than the one that arrived
 
 # PskAuthRequest is the merged PSK + identity first message.
 # binder_len == 0 means no PSK is configured (dev mode); otherwise 64 bytes

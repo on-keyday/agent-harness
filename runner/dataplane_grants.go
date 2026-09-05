@@ -93,6 +93,19 @@ func (s *grantStore) Validate(
 	return protocol.ClientHelloStatus_Ok
 }
 
+// Kind reports which request a grant names, so the accept path knows what to
+// read off the connection before it can check the rest. It answers only the
+// discriminator, never the grant, so nothing can route around Validate.
+func (s *grantStore) Kind(grantID [16]byte) (protocol.TaskControlKind, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[grantID]
+	if !ok {
+		return 0, false
+	}
+	return e.grant.Kind, true
+}
+
 // OnClose registers the teardown for the connection redeeming this grant, so a
 // revoke can reach work already in flight. Without it a narrowing `caps set`
 // would be advisory for anything already transferring, which is the promise

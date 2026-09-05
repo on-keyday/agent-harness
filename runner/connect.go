@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -193,7 +194,41 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	// Store ep in session so dispatchRunnerRequest can call SetProxy for
 	// EstablishRelay without needing the endpoint threaded through every call.
 	h.session.Endpoint = ep
+
+	// A dial-mode runner's endpoint is EndpointModeMutual on a bound socket
+	// (buildRunnerEndpoint), so objproto will complete a handshake that arrives
+	// on it — but until now nothing read the accept channel, so a connection
+	// the server forwards here would exist at the objproto layer and be
+	// serviced by nobody. Listen mode has had this loop all along; this is the
+	// same one.
+	startAcceptLoop(ctx, cfg, ep, &lastListenSession, h.session)
 	return h, nil
+}
+
+// startAcceptLoop services connections that arrive at a dial-mode runner's own
+// socket. sessionRef is published so the data-plane handler can find the live
+// server session the grants were pushed to.
+func startAcceptLoop(ctx context.Context, cfg Config, ep objproto.Endpoint, sessionRef *atomic.Pointer[Session], sess *Session) {
+	sessionRef.Store(sess)
+	connCh := ep.GetNewActiveConnectionChannel()
+	go func() {
+		defer sessionRef.CompareAndSwap(sess, nil)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case conn, ok := <-connCh:
+				if !ok {
+					return
+				}
+				pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
+					Logger:       cfg.Logger,
+					PingInterval: cfg.PingInterval,
+				})
+				go handleAcceptedConn(ctx, cfg, sessionRef, ep, pc)
+			}
+		}
+	}()
 }
 
 // driveAfterConn is the half of Connect that runs after the peer.Conn is

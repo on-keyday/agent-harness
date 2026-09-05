@@ -186,6 +186,12 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 			handleServerConn(ctx, cfg, sessionRef, ep, pc)
 		case appwire.AppKind_AgentProxyControl:
 			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
+		case appwire.AppKind_PskAuth:
+			// A client redeeming a data-plane grant. Its packets reached this
+			// socket because the server forwards them, but arrival is not
+			// authorization: this socket accepts inbound handshakes from
+			// anywhere reachable, so the grant is checked.
+			handleDataPlaneConn(ctx, cfg, sessionRef, pc, msg)
 		default:
 			cfg.Logger.Warn("accepted conn sent unexpected first payload",
 				"kind", msg.kind,
