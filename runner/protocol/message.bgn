@@ -12,6 +12,8 @@ enum RunnerMessageType:
     remote_forward_conn
     remote_forward_bind_result
     exec_run_finished  # an out-of-band exec ended; carries its exit code
+    authorize_data_plane_response  # answer to AuthorizeDataPlaneRequest
+    revoke_data_plane_response     # answer to RevokeDataPlaneRequest
 
 enum RunnerRequestType:
     :u8
@@ -243,6 +245,8 @@ format RunnerMessage:
         RunnerMessageType.remote_forward_conn => remote_forward_conn :RemoteForwardConn
         RunnerMessageType.remote_forward_bind_result => remote_forward_bind_result :RemoteForwardBindResult
         RunnerMessageType.exec_run_finished => exec_run_finished :ExecRunFinished
+        RunnerMessageType.authorize_data_plane_response => authorize_data_plane_response :AuthorizeDataPlaneResponse
+        RunnerMessageType.revoke_data_plane_response => revoke_data_plane_response :RevokeDataPlaneResponse
         .. => error("Unexpected message")
 
 format RunnerRequest:
