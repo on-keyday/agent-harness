@@ -1267,6 +1267,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"ls"}, CmdlineSurfaces: CLI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/tasks.go:TasksModel"},
+			{Surface: TUI, At: "tui/runners.go:RunnersModel"},
+		},
 		Notes: []string{
 			"list runners and recent tasks; --json emits one {runners,tasks} object",
 		},
@@ -1292,6 +1296,9 @@ var Verbs = []VerbSpec{
 		Path: []string{"conns"}, CmdlineSurfaces: CLI,
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/conns.go:ConnsModal"},
+			// The one that started this: the verb was declared CLI and the
+			// capability was on two other surfaces.
+			{Surface: WebUI, At: "webui/index.html#conn-topology"},
 		},
 		Notes: []string{
 			"snapshot live connections; -f streams live events; --json emits JSON lines",
@@ -1542,6 +1549,9 @@ var Verbs = []VerbSpec{
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
+		},
 		Notes: []string{
 			"OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart",
 		},
@@ -1619,6 +1629,9 @@ var Verbs = []VerbSpec{
 		// them onto ONE handler method rather than minting a second one
 		// nothing calls.
 		Path: []string{"scope"}, CmdlineSurfaces: TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
+		},
 		Action: "SetDefaultsAction",
 		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
 			Reason: "a narrowing has no base to narrow unless this call names one"}},
@@ -1800,6 +1813,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "attach"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/chat.go:ChatModel"},
+			{Surface: WebUI, At: "webui/index.html#chat-log"},
+		},
 		Notes: []string{
 			"follow an event-stream session's events",
 		},
@@ -1810,6 +1827,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "interrupt"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#chat-interrupt"},
+		},
 		Notes: []string{
 			"abandon the running TURN; the agent survives to take the next one",
 		},
@@ -1821,6 +1841,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "finish"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#chat-finish"},
+		},
 		Notes: []string{
 			"close the agent's stdin so it completes the turn in flight and exits 0",
 		},
@@ -1832,6 +1855,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "approve"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#chat-approval"},
+		},
 		Notes: []string{
 			"answer one pending tool request. The request id is the staleness guard: an answer aimed at a request that has gone is REFUSED, not applied to whatever is pending now",
 			"--message is the DENY reason and reaches the AGENT verbatim as a failed tool result; --suggestion accepts the request's Nth suggestion (a STANDING change, so it rides either verdict)",
