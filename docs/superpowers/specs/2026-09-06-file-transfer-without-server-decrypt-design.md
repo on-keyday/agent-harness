@@ -532,3 +532,72 @@ the operator's TUI on `udp:` and twelve of the fifteen runners on `ws:`, so
 under the equality rule the TUI took the splice for almost every runner it
 touches. The WebUI, being a browser, is `ws:` and had the mirror problem
 against the Windows runners. Both halves are now the fast path.
+
+## Amendment — could is not should (2026-09-06)
+
+Everything above decides whether a data plane **can** move end to end: the rule
+in "What this covers" is that no server feature reads the bytes, and
+`dataPlaneRoute` asks only that both ends have a transport. Nothing anywhere
+asks whether it **should**. That is a hole in the design, not a slip in the
+implementation, and it was reported from the TUI: `file ls` came out slower
+than the splice it replaced.
+
+The arithmetic is in P1's own numbers. The route buys 65.6 MB/s against 36.4,
+about 1.8x. It pays a fixed setup the splice does not: a server-to-runner
+authorize round trip that blocks the client's request, a fresh P521 ECDH and a
+PSK hello between client and runner, then a teardown. A listing is a few
+hundred bytes; 1.8x of that is nothing and the setup is everything. The route
+loses on every request carrying almost no payload — which is most of the file
+family by call count, because `ls` is what a file browser does between all the
+other operations.
+
+So the server asks the second question too, in `dataPlaneWorthIt`, and asks it
+**before** minting a grant or sending the authorize. A spliced request pays
+nothing at all, not a cheaper setup: it takes exactly the path it took before
+this design existed.
+
+| request | route | why |
+| --- | --- | --- |
+| `list_files` | splice | a few hundred bytes |
+| `delete`, `dir_delete`, `mkdir` | splice | an ack and no body |
+| `push` | ≥ 1 MiB | the one direction whose size is known before the transfer |
+| `pull`, `dir_pull`, `dir_push` | always | size unknown at decision time — see below |
+
+`OpenFileTransferRequest.expected_size` already existed and every push path
+fills it from a real `Stat`: the file-backed `FilePush` and the WebUI's
+`FilePushBytes` both funnel through `filePushFromReader`. No schema change.
+
+**The threshold is reasoned, not measured.** 1 MiB is where 1.8x is about 12 ms
+at those two rates, comfortably more than a setup even with a WAN round trip in
+it. The honest way to tune it is `scripts/netem-lab` across a size ladder at two
+RTTs, finding where the curves cross. Until that is run the constant is an
+estimate, and its comment says so rather than implying a measurement.
+
+**Pull is not gated, and that is a known remaining inversion.** Nobody knows a
+pull's size at decision time: the client has not seen the file and the server
+never stats it — only the runner does, and that happens after the authorize the
+gate exists to avoid. Asking the runner first would cost exactly the round trip
+being saved. So `file pull` of a small file still pays the setup. Closing it
+means a client-supplied size hint — the TUI does know the size, from the
+listing it just rendered — which is a schema change, deliberately not taken
+here.
+
+A kind the switch has not considered returns false. D2 names `git_query` and
+`exec` as the next two applications; each must answer this question explicitly
+rather than inherit a yes from a default arm, which is the mistake this
+amendment corrects.
+
+Verified on one `scripts/dummy-harness.sh` instance by counting the connections
+each invocation opens — the data plane is a second connection, so the count is
+the route:
+
+| invocation | connections | route |
+| --- | --- | --- |
+| `file ls` | 1 | splice |
+| `file push` 1 KiB | 1 | splice |
+| `file push` 2 MiB | 2 | data plane |
+| `file pull` | 2 | data plane |
+| `file mkdir`, `file delete` | 1 | splice |
+| `file push` 2 MiB `--no-data-plane` | 1 | escape hatch intact |
+
+md5 identical across the spliced and the routed pull of the same file.

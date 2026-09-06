@@ -98,6 +98,63 @@ func negotiatedMTU(clientTransport, runnerTransport string) uint16 {
 	return uint16(ci)
 }
 
+// dataPlaneMinPushBytes is the size above which a push is worth routing end to
+// end rather than splicing.
+//
+// The route buys throughput -- 65.6 MB/s against 36.4 on the ladder, about
+// 1.8x -- and pays a fixed setup: a server-to-runner authorize round trip that
+// blocks the client's request, then a fresh P521 ECDH and a PSK hello between
+// client and runner, then a teardown. A few milliseconds on a LAN, more on a
+// slow link. Below the size where 1.8x repays that, the route is a pure loss.
+//
+// 1 MiB is where the saving is unambiguous: at those two rates it is about
+// 12 ms, comfortably more than the setup even with a WAN round trip in it.
+// REASONED, NOT MEASURED -- the honest way to tune it is netem-lab across a
+// size ladder at two RTTs and to find where the two curves cross.
+const dataPlaneMinPushBytes = 1 << 20
+
+// dataPlaneWorthIt reports whether a request moves enough bytes to repay the
+// route's setup cost.
+//
+// This is the half the first version was missing: it asked only whether a data
+// plane COULD move end to end (nothing on the server reads those bytes) and
+// never whether it SHOULD. A `file ls` moves a few hundred bytes and pays two
+// extra round trips and a key exchange for them, which is slower than the
+// splice it replaced -- reported from the TUI, where it is the common case.
+func dataPlaneWorthIt(kind protocol.TaskControlKind, dir protocol.FileTransferDirection, expectedSize uint64) bool {
+	switch kind {
+	case protocol.TaskControlKind_ListFiles:
+		// A listing is a few hundred bytes and the setup dwarfs it.
+		return false
+	case protocol.TaskControlKind_OpenFileTransfer:
+		switch dir {
+		case protocol.FileTransferDirection_Delete,
+			protocol.FileTransferDirection_DirDelete,
+			protocol.FileTransferDirection_Mkdir:
+			// No body at all: these are an ack, and there is nothing to carry.
+			return false
+		case protocol.FileTransferDirection_Push:
+			// The only direction whose size is known before the transfer.
+			return expectedSize >= dataPlaneMinPushBytes
+		case protocol.FileTransferDirection_Pull,
+			protocol.FileTransferDirection_DirPull,
+			protocol.FileTransferDirection_DirPush:
+			// A pull's size is not known until the runner opens the file, and a
+			// directory is a tar stream whose size is never sent. Both are
+			// bulk by intent -- fetching a file IS the payload -- so they take
+			// the route and a small one occasionally pays setup it did not
+			// need.
+			return true
+		default:
+			return false
+		}
+	default:
+		// A kind added later opts in deliberately rather than inheriting a
+		// yes from a switch that never considered it.
+		return false
+	}
+}
+
 // dataPlaneRoute reports whether a client and a runner can be joined by packet
 // forwarding rather than by splicing.
 //

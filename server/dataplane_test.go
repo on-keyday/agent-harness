@@ -165,3 +165,65 @@ func TestRememberGrantFloorIsAgeNotGrantExpiry(t *testing.T) {
 		t.Fatalf("a transfer outliving the grant TTL must keep its record, or it stops being revocable")
 	}
 }
+
+// The route buys throughput and pays a fixed setup -- an authorize round trip
+// that blocks the client, a P521 ECDH, a PSK hello, a teardown. Asking only
+// whether a data plane COULD move end to end made `file ls` slower than the
+// splice it replaced, which is what the TUI does most.
+func TestDataPlaneWorthItRefusesWhatCarriesNoBytes(t *testing.T) {
+	// A listing is a few hundred bytes; the setup dwarfs it.
+	if dataPlaneWorthIt(protocol.TaskControlKind_ListFiles, 0, 0) {
+		t.Fatalf("list_files should splice")
+	}
+	// These three are an ack and no body at all.
+	for _, d := range []protocol.FileTransferDirection{
+		protocol.FileTransferDirection_Delete,
+		protocol.FileTransferDirection_DirDelete,
+		protocol.FileTransferDirection_Mkdir,
+	} {
+		if dataPlaneWorthIt(protocol.TaskControlKind_OpenFileTransfer, d, 0) {
+			t.Fatalf("%v carries no body and should splice", d)
+		}
+	}
+}
+
+func TestDataPlaneWorthItTakesTheBulkDirections(t *testing.T) {
+	// Size is not known before the transfer for either of these, and both are
+	// bulk by intent.
+	for _, d := range []protocol.FileTransferDirection{
+		protocol.FileTransferDirection_Pull,
+		protocol.FileTransferDirection_DirPull,
+		protocol.FileTransferDirection_DirPush,
+	} {
+		if !dataPlaneWorthIt(protocol.TaskControlKind_OpenFileTransfer, d, 0) {
+			t.Fatalf("%v should take the route", d)
+		}
+	}
+}
+
+// Push is the one direction whose size is known up front, so it is the one that
+// can be decided on rather than assumed.
+func TestDataPlaneWorthItSizesAPush(t *testing.T) {
+	var small uint64 = dataPlaneMinPushBytes - 1
+	if dataPlaneWorthIt(protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push, small) {
+		t.Fatalf("a %d-byte push cannot repay the setup", small)
+	}
+	if !dataPlaneWorthIt(protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push, dataPlaneMinPushBytes) {
+		t.Fatalf("a push at the threshold should take the route")
+	}
+	if dataPlaneWorthIt(protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push, 0) {
+		t.Fatalf("a zero-byte push should splice")
+	}
+}
+
+// A kind added later must opt in deliberately rather than inherit a yes from a
+// switch that never considered it -- the first version's mistake was exactly
+// that kind of default.
+func TestDataPlaneWorthItRefusesAnUnconsideredKind(t *testing.T) {
+	if dataPlaneWorthIt(protocol.TaskControlKind_GitQuery, 0, 1<<30) {
+		t.Fatalf("git_query has not been considered here and must not inherit a yes")
+	}
+	if dataPlaneWorthIt(protocol.TaskControlKind_Submit, 0, 1<<30) {
+		t.Fatalf("an unrelated kind must not route")
+	}
+}
