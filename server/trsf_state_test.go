@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -71,6 +72,7 @@ func TestServerTrsfStateReadsNoCapabilityAndPassesTheVisibility(t *testing.T) {
 		return []protocol.TrsfConnState{{Cwnd: 4242}}
 	}
 	conn := trsfCaller(t, h, "9802")
+	conn.nextSendStreamID = 7 // the rows travel on a stream, so one must exist
 
 	h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Server, protocol.RunnerID{}))
 
@@ -85,11 +87,17 @@ func TestServerTrsfStateReadsNoCapabilityAndPassesTheVisibility(t *testing.T) {
 	if r == nil || r.Status != protocol.TrsfStateStatus_Ok {
 		t.Fatalf("status = %+v", r)
 	}
-	if len(r.Conns) != 1 || r.Conns[0].Cwnd != 4242 {
-		t.Fatalf("rows did not survive: %+v", r.Conns)
+	// The rows are on a stream; the response carries only its id.
+	if r.StreamId != 7 {
+		t.Errorf("StreamId = %d, want the stream the conn handed out", r.StreamId)
 	}
-	if r.Count != 1 {
-		t.Errorf("Count = %d, want 1 -- a count that disagrees with the rows is undecodable", r.Count)
+	// And the row really is on it, rather than lost between the two.
+	var body protocol.TrsfStateResultBody
+	if err := body.DecodeExact(conn.sendStreamBytes(t, 7)); err != nil {
+		t.Fatalf("decode body off the stream: %v", err)
+	}
+	if len(body.Conns) != 1 || body.Conns[0].Cwnd != 4242 {
+		t.Fatalf("rows did not survive the stream: %+v", body.Conns)
 	}
 }
 
@@ -118,5 +126,38 @@ func TestRunnerTrsfStateSeparatesOfflineFromSilent(t *testing.T) {
 				t.Fatalf("status = %+v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The response must fit a path MTU whatever the server is carrying, because
+// objproto does not split an application message and a failed send is a
+// dropped error the caller experiences as a hang.
+//
+// This is the guard for a bug that shipped: the rows were inline, ten of them
+// came to 1229 bytes against udp's 1200, and every local test passed because
+// loopback's MTU is 65536. The response is now constant-size by construction,
+// and this pins that.
+func TestTrsfResponseFitsAnyPathMTU(t *testing.T) {
+	udp, _ := peer.MTUForTransport("udp")
+	var big int
+	for _, streamID := range []uint64{0, 1, ^uint64(0)} {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_TrsfState, RequestId: ^uint32(0)}
+		resp.SetTrsfState(protocol.TrsfStateResponse{
+			Status: protocol.TrsfStateStatus_Ok, StreamId: streamID,
+		})
+		n := len(resp.MustAppend([]byte{0}))
+		if n > big {
+			big = n
+		}
+	}
+	if big >= udp {
+		t.Fatalf("a trsf_state response is %d bytes against a udp path MTU of %d: "+
+			"it cannot cross a real path, and the send error is dropped", big, udp)
+	}
+	// And the size must not depend on how much the server is carrying. A row
+	// count that changes it is a row list creeping back into the response.
+	if big > 64 {
+		t.Errorf("the response is %d bytes; it should be a status and a stream id, "+
+			"so anything this large means payload is riding along", big)
 	}
 }

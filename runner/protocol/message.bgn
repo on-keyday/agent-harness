@@ -1658,8 +1658,22 @@ format TrsfStateRequest:
     target :TrsfTarget
     runner_cid :RunnerID        # target == runner only; ignored otherwise
 
+# The rows travel on a STREAM, not in this response, and that is not a style
+# choice. A TaskControlResponse is one application message and objproto does not
+# split those, so the whole thing has to fit a path MTU. Measured: ten rows is
+# 1229 bytes against udp's 1200, and a live server carries dozens. Sent inline
+# it simply never arrives -- the send fails, the error is dropped, and the
+# caller waits forever. list_conns carries a stream id for exactly this reason
+# and says so; this format was written inline anyway and only loopback, whose
+# MTU is 65536, ever tested it.
+#
+# stream_id 0 means the server could not open the stream; status says why.
 format TrsfStateResponse:
     status :TrsfStateStatus
+    stream_id :u64
+
+# TrsfStateResultBody is what travels on that stream.
+format TrsfStateResultBody:
     count :u16
     conns :[count]TrsfConnState
 
@@ -1969,6 +1983,10 @@ format RevokeDataPlaneRequest:
 format RunnerTrsfStateRequest:
     request_id :u32
 
+# The runner->server half stays inline: it crosses ONE hop the server already
+# holds, and the server re-encodes onto the client's stream. A runner reports
+# only its own connections -- an uplink plus whatever data planes are open --
+# so this is small where the server's answer is not.
 format RunnerTrsfStateResponse:
     request_id :u32
     count :u16

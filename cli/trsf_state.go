@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // Errors a trsf_state refusal turns into, so a caller can tell a stale runner
@@ -48,7 +49,35 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 	}
 	switch r.Status {
 	case protocol.TrsfStateStatus_Ok:
-		return r.Conns, nil
+		// The rows come on a stream, as ConnListWith's do: a TaskControl
+		// response is one application message that has to fit a path MTU, and
+		// ten of these rows already exceed udp's 1200.
+		if r.StreamId == 0 {
+			return nil, fmt.Errorf("trsf: server returned no stream id")
+		}
+		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
+		if st == nil {
+			return nil, fmt.Errorf("trsf: stream %d not visible after the response", r.StreamId)
+		}
+		var raw []byte
+		for {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			data, eof, rerr := st.ReadDirect(64 * 1024)
+			if rerr != nil {
+				return nil, fmt.Errorf("trsf: stream read: %w", rerr)
+			}
+			raw = append(raw, data...)
+			if eof {
+				break
+			}
+		}
+		body := &protocol.TrsfStateResultBody{}
+		if derr := body.DecodeExact(raw); derr != nil {
+			return nil, fmt.Errorf("trsf: decode body (%d bytes): %w", len(raw), derr)
+		}
+		return body.Conns, nil
 	case protocol.TrsfStateStatus_RunnerOffline:
 		return nil, ErrTrsfRunnerOffline
 	case protocol.TrsfStateStatus_NotPermitted:

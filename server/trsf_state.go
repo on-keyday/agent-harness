@@ -146,43 +146,70 @@ func (s *Server) deliverRunnerTrsfStateResponse(resp protocol.RunnerTrsfStateRes
 // no principal task to project from, and whose counters are the sum over every
 // task on that runner -- or a data-plane one.
 func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid string, req *protocol.TrsfStateRequest) {
-	respond := func(body protocol.TrsfStateResponse) {
-		body.Count = uint16(len(body.Conns))
+	// The rows go on a stream and the response carries only its id, exactly as
+	// handleListConns does. Inline they do not fit: ten rows is 1229 bytes
+	// against udp's 1200 path MTU, objproto does not split an application
+	// message, and the failed send is a dropped error the caller sees as a
+	// hang. Loopback's 65536 hides all of that, which is why the first cut of
+	// this shipped inline and passed every local test.
+	respond := func(st protocol.TrsfStateStatus, streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_TrsfState, RequestId: requestID}
-		resp.SetTrsfState(body)
+		resp.SetTrsfState(protocol.TrsfStateResponse{Status: st, StreamId: streamID})
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}
+	send := func(rows []protocol.TrsfConnState) {
+		var body protocol.TrsfStateResultBody
+		body.Count = uint16(len(rows))
+		body.SetConns(rows)
+		bodyBytes, err := body.EncodeCopy(nil)
+		if err != nil {
+			slog.Error("trsf_state: encode body", "err", err)
+			respond(protocol.TrsfStateStatus_Unavailable, 0)
+			return
+		}
+		stream := conn.CreateSendStream()
+		if stream == nil {
+			respond(protocol.TrsfStateStatus_Unavailable, 0)
+			return
+		}
+		// The id goes back BEFORE the bytes: the caller waits for the stream to
+		// become visible by that id, so writing first would race it.
+		respond(protocol.TrsfStateStatus_Ok, uint64(stream.ID()))
+		if werr := stream.AppendData(false, bodyBytes); werr != nil {
+			slog.Warn("trsf_state: write body", "err", werr)
+			return
+		}
+		_ = stream.AppendData(true)
+	}
+
 	globalView, allowed := h.visibleToCaller(cid)
 
 	if req.Target == protocol.TrsfTarget_Server {
 		if h.TrsfStateFn == nil {
-			respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_Unavailable})
+			respond(protocol.TrsfStateStatus_Unavailable, 0)
 			return
 		}
-		respond(protocol.TrsfStateResponse{
-			Status: protocol.TrsfStateStatus_Ok,
-			Conns:  h.TrsfStateFn(allowed, globalView),
-		})
+		send(h.TrsfStateFn(allowed, globalView))
 		return
 	}
 
 	if !globalView {
-		respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_NotPermitted})
+		respond(protocol.TrsfStateStatus_NotPermitted, 0)
 		return
 	}
 	if h.RunnerTrsfStateFn == nil {
-		respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_Unavailable})
+		respond(protocol.TrsfStateStatus_Unavailable, 0)
 		return
 	}
 	rows, err := h.RunnerTrsfStateFn(context.Background(), req.RunnerCid)
 	switch {
 	case errors.Is(err, errRunnerOffline):
-		respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_RunnerOffline})
+		respond(protocol.TrsfStateStatus_RunnerOffline, 0)
 	case err != nil:
 		slog.Warn("trsf_state: runner did not answer", "err", err)
-		respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_Unavailable})
+		respond(protocol.TrsfStateStatus_Unavailable, 0)
 	default:
-		respond(protocol.TrsfStateResponse{Status: protocol.TrsfStateStatus_Ok, Conns: rows})
+		send(rows)
 	}
 }
 
