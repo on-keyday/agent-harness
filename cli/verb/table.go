@@ -1772,11 +1772,18 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/interactive.go:DoAttachSession"},
 			// The grid is a session surface, not a separate feature: it tiles
-			// live interactive sessions and attaches to them. It uses all three
-			// modes rather than one — tui/grid.go:205 says "Control = takeover,
-			// View = read-only" and its input mode is cowrite (grid.go:75) —
-			// and the WebUI's tiles are cowrite too: cli/preview_wasm.go:82
-			// calls attachSessionRPC with AttachMode_Cowrite.
+			// live interactive sessions by ATTACHING to each one.
+			//
+			// Every tile is cowrite, on both surfaces, which is what lets the
+			// grid type into a pane in place:
+			//     tui/pane_streamer.go  AttachSessionWithReplayLimit(…Cowrite…)
+			//     cli/preview_wasm.go   attachSessionRPC(…AttachMode_Cowrite…)
+			//
+			// grid.go's attachFocused is a different act -- leaving the grid to
+			// open the focused session, bound to Control (takeover) and View
+			// (read-only). Its doc comment describes THOSE modes, and reading
+			// it as the tiles' is how this comment was wrong twice: the tile
+			// mode is in the streamer's call, not beside it.
 			{Surface: TUI, At: "tui/grid.go:GridModel"},
 			{Surface: WebUI, At: "webui/index.html#session-grid-body"},
 		},
