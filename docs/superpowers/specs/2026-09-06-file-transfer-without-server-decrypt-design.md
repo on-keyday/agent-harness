@@ -1020,7 +1020,19 @@ statistics. Reading `show` after a `shape` as if it were a fresh count turned
 one 32 MB push into an apparent 11x wire amplification that is not there — the
 real figure, taken as a delta across the push, is 1.10x.
 
-## Amendment — the loop is starved, not throttled (2026-09-06)
+## ~~Amendment — the loop is starved, not throttled~~ (2026-09-06) — RETRACTED
+
+**The heading is wrong and so is the conclusion below it.** `wake_send` names
+the CHANNEL that ended a park, not what pushed it, and the section reads the
+channel as an answer. The amendment after this one carries the measurement that
+kills it: on both a lossy fleet path and a clean lab one, the pushes that
+actually fired that channel were the loop's own continuation and inbound ACKs,
+with the application at 1–3%.
+
+What survives is the timer half — thousands of parks, single-digit timer wakes —
+and it survives on both paths. Everything below about "starved" does not. The
+section is kept rather than rewritten so the correction has something to point
+at.
 
 The amendment above ends by naming what it could not answer: the loop sleeps
 540 µs per packet on an idle host, and no counter said on what. It now does.
@@ -1082,3 +1094,76 @@ The instrumentation costs one clock read per park, not per packet. Interleaved
 A/B against the throughput ladder, 6 alternations: `udp` +4.7% (resolution
 ±17%), `mock` control −3.8% (±10%) — neither outside the noise, and the control
 did not move.
+
+## Amendment — the fleet, and what the counter above could not say (2026-09-06)
+
+The server and the runners were restarted, so the counters could finally be read
+where the problem was reported. Windows runner sending over Wi-Fi, three 32 MiB
+pulls, 4.16 MB/s, sampled from the runner:
+
+| BLOCK% | parks | timer | send | peer | armed_pacer | cwnd | in flight | srtt |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 97% | 5,444 | **2** | 3,499 | 1,943 | 3,795 | 588,528 | **589,589** | 41 ms |
+| 99% | 4,063 | **6** | 2,533 | 1,524 | 2,736 | 437,947 | **438,900** | 66 ms |
+| 92% | 5,584 | **12** | 3,473 | 2,099 | 3,436 | 446,436 | **447,678** | 80 ms |
+
+**The timer result holds.** Single-digit timer wakes out of thousands of parks,
+on the real path as in the lab: the pacer's 1 ms floor and loss detection are
+both ruled out. `armed_pacer` is now 60–80% of parks rather than ~0, which
+sharpens it — the pacer supplies the deadline almost every time and almost never
+gets to fire, because a notification arrives first.
+
+**Two things the previous amendment got wrong, and one it could not have known.**
+
+**1. The fleet IS window-limited.** `bytes_in_flight` sits on `cwnd` in nearly
+every sample (588,528/589,589; 437,947/438,900; 446,436/447,678), and cwnd/srtt
+— 450 KB over 40–140 ms — lands on the 4.16 MB/s measured. The amendment
+"the radios measured" was right about this and the retracted section was wrong to
+call it unreproducible: it does not reproduce in the LAB, which is lossless and
+where the window stays open. Two paths, two regimes, and the earlier reading
+generalised one of them.
+
+**2. `wake_send` cannot mean "the application is not feeding it".** `sendTrigger`
+has ten push sites meaning at least five different things, so the channel is
+many-to-one; the retracted section read it as one of the five. objtrsf `5368094`
+counts the reasons where each push is MADE, and `WAIT` now says which:
+
+| netem-lab, 2 ms, 128 MB pull, per 2 s | app | ack | self | cwnd | loss | other |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8,655 parks | **196** | 571 | **4,505** | 2 | 4,491 | 10 |
+| 21,262 parks | **542** | 10,861 | **12,407** | 10 | 154 | 2 |
+| 25,783 parks | **673** | 14,511 | **15,432** | 9 | 3,806 | 14 |
+
+`app` is 1–3%. `self` — `triggerPacket` re-pushing because data was STILL
+buffered after the packet it had just built — dominates. Both say the same
+thing from opposite directions: **the send buffer was rarely empty, so the
+application was ahead of the transport, not behind it.** "Starved" is dead on
+the clean path too, not only on the fleet.
+
+**3. `armed_pacer` was right on both paths and `wake_send` was right on
+neither, and the difference is where each is counted.** `armed_pacer` is
+incremented inside `nextWakeDeadline`, where the choice between the pacer's
+deadline and loss detection's is made. `wake_send` is incremented at the select,
+where every cause has already collapsed into one channel. The rule, stated so it
+outlives this document: **attribute a counter where the decision is made, never
+at the channel the event passes through.**
+
+Two observations recorded rather than explained, both from the same runs:
+
+- **`pushOther` was 4,966 against 4,953 lost packets in one interval** — the
+  catch-all was retransmission pressure wearing a name that hid it, which is the
+  uninterpretable bucket the reasons exist to remove. `loss` has its own count
+  now, one per lost PACKET rather than per congestion event.
+- **Thousands of packets are declared lost per 2 s on a netem path configured
+  with zero loss** (4,491 and 3,806 above, against `loss_events` of 1). The tc
+  counters say the link dropped nothing, and the wire carries only 1.10x the
+  file, so these cannot all be retransmitted. What the loss detector is giving up
+  on, and what happens to it afterwards, is the next thing to measure — and note
+  that `loss_spurious` cannot answer it, for the reason two amendments up:
+  `GenerateACK` clears its ranges, so a packet number is reported in exactly one
+  ACK and a vindicating ACK for a lost one never comes.
+
+An earlier reading also said in-flight sits at one packet on the lab path. One
+interval here shows 3,143,987 against a cwnd of 3,143,354, so that was an
+artifact of instantaneous sampling: the window does close there, just not
+always.

@@ -1450,6 +1450,39 @@ numerator". Both defects were invisible to `make test` and to the walk, and both
 were obvious within one screen of a running harness — the same shape as the
 `forwards.status` entry's note about staleness.
 
+### 2026-09-06 (2, pre-landing) `9700aeeb` — the send trigger's push reasons
+
+Six more counters, on the row the walk above added. Same surfaces, same
+verdicts, and worth an entry only for what it says about the FIRST walk.
+
+done:    1 (the `conns` Notes now spell the send/<reason> labels), 24, 27 + 28a
+         + 32 (`protocol.TrsfRowFrom` absorbed all six with no second
+         projection — the guard added last walk did its job, and
+         `TestTrsfRowFromCarriesEveryCounter` failed until every one was
+         carried), 29, 30, 31, 34 (WAIT's pad already fits `send/other`, checked
+         rather than assumed), 37 (the previous amendment is struck through, not
+         quietly edited), 39
+omitted: 6, 35, 36 — unchanged from the walk above, same reasons.
+missed:  —
+
+**The first walk shipped a counter whose MEANING was wrong, and nothing on this
+list asks about meaning.** `wake_send` reached every surface correctly, was
+projected once, printed its zero, and had a doc comment saying what it meant —
+and what it meant was false, because it is attributed at a channel that ten
+different events pass through. Items 24 and 32 are the nearest neighbours: 24
+asks whether an option means the same thing on each PATH, 32 whether a grammar
+has one spelling. Neither asks whether a MEASUREMENT measures what its name
+says.
+
+The general form, and the rule that came out of it: **attribute a counter where
+the decision is made, never at the channel the event passes through.** In the
+same change `armed_pacer` was counted inside `nextWakeDeadline`, where the
+choice happens, and it was the one counter that meant the same thing on a clean
+path and a lossy one. Not proposing a number for one instance — but this is the
+third entry in this log recording a defect that is invisible to a surface walk
+and obvious within one screen of a running system (the others: `forwards.status`
+staleness, and the rate that animated while its subject was still).
+
 ## Standing tallies
 
 Update when adding an entry.
