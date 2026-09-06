@@ -1019,3 +1019,66 @@ counter". It does not, at least when the new shaping has the same qdisc kind:
 statistics. Reading `show` after a `shape` as if it were a fresh count turned
 one 32 MB push into an apparent 11x wire amplification that is not there — the
 real figure, taken as a delta across the push, is 1.10x.
+
+## Amendment — the loop is starved, not throttled (2026-09-06)
+
+The amendment above ends by naming what it could not answer: the loop sleeps
+540 µs per packet on an idle host, and no counter said on what. It now does.
+objtrsf `6389fc9` + `a69393f` add five counters to the run loop and
+`conns --trsf` reports them, as `BLOCK%` (the share of the interval the loop
+spent parked) and `WAIT` (what ended those parks), with the raw five in
+`--json`.
+
+Sampled from the SENDING runner during a 256 MB pull over the 2 ms lab path,
+which ran at 3.84 MB/s:
+
+| BLOCK% | parks | timer | send | peer | armed_pacer | mean park |
+| --- | --- | --- | --- | --- | --- | --- |
+| 95% | 9,078 | **4** | 5,014 | 4,060 | 0 | 209 µs |
+| 97% | 4,769 | **11** | 2,406 | 2,352 | 0 | 407 µs |
+| 93% | 14,678 | **2** | 8,664 | 6,012 | 1,776 | 127 µs |
+| 94% | 18,439 | **2** | 11,618 | 6,819 | 0 | 102 µs |
+| 91% | 21,571 | **1** | 13,317 | 8,253 | 0 | 85 µs |
+| 99% | 972 | **0** | 278 | 694 | 0 | 2047 µs |
+
+**The loop is parked 91–100% of the time, and essentially never on a timer** —
+single digits out of thousands of parks. That rules out, directly rather than by
+argument, the two candidates the previous amendment named: the pacer's
+`max(1*time.Millisecond, …)` floor and the loss-detection timer. `armed_pacer`
+is 0 in most intervals, so the pacer rarely even supplies the deadline.
+
+What the loop waits for is the **send trigger** (55–60% of parks) and the
+**peer** (40–45%). Neither is the transport throttling itself:
+
+- `send` means the run loop had nothing queued and was waiting for the
+  application to hand it more. On a pull the runner's send stream is fed by a
+  file read into a 1 MB buffer, and it drains no faster than the peer's window
+  and the splice's own copy allow.
+- `peer` means it was waiting for inbound — an ACK, or the next packet.
+
+**So the transport is not slow; it is starved.** Every layer measured so far
+has been exonerated in turn — the medium, the Pi, the path, the CPU, the
+congestion window, and now the transport's own timers. What has never been
+measured is the thing between them: the file-transfer read/write path and
+`spliceBidiHalfClose`'s 64 KB copy between two trsf streams, whose alternation
+P1 already named as one of the four costs of splicing. That is where the next
+measurement goes.
+
+Two defects in the instrument itself, both found by pointing it at a live
+transfer and neither reachable by a unit test:
+
+- **`BLOCK%` printed 135%.** The interval was timed at the client while the
+  counters advanced on the answerer, and the two differ by the change in
+  round-trip time between readings. `TrsfStateResultBody` and
+  `RunnerTrsfStateResponse` now carry `sampled_unix_ns`, stamped by whoever
+  walked its connections; the runner's value passes through the server rather
+  than being restamped a round trip away.
+- **A loop parked for a whole interval printed 0%**, i.e. "busy" — the opposite
+  of the truth, and the first thing it printed on a finished transfer.
+  `blocked_ns` accrued only when a park ENDED; the reader now adds the park in
+  progress.
+
+The instrumentation costs one clock read per park, not per packet. Interleaved
+A/B against the throughput ladder, 6 alternations: `udp` +4.7% (resolution
+±17%), `mock` control −3.8% (±10%) — neither outside the noise, and the control
+did not move.
