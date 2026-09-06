@@ -818,6 +818,30 @@ answer wherever the client↔runner path is genuinely better than
 client↔server↔runner: two wired ends, or a distant server. `splice` stays the
 default because this fleet is not that.
 
+**Correction, once the server's link was checked: it is wireless too, and that
+makes the airtime argument point the other way.** In infrastructure mode every
+station-to-station frame goes to the AP and is relayed, so a byte crosses the
+air twice per leg:
+
+| route | air crossings | app throughput at 32 MiB | airtime consumed |
+| --- | --- | --- | --- |
+| direct | 2 (client → AP → runner) | 2.08 MB/s | ~33 Mbit/s |
+| splice | **4** (client → AP → server, server → AP → runner) | **3.33 MB/s** | ~107 Mbit/s |
+
+The splice spends about three times the airtime and still delivers more. If the
+channel were the limit that could not happen, so **the channel has headroom and
+the direct route is failing to use it.** What bounds `direct` here is therefore
+not the medium's capacity but the congestion controller's response to the loss
+and jitter of a path it spans end to end — and that is a property of trsf under
+these conditions, not an immutable fact about the deployment.
+
+Stated as the falsifiable claim it is: the airtime accounting assumes both hops
+of each leg run at comparable PHY rates and that the AP relays at line rate.
+What it does not assume is anything about which link is worst — both routes
+cross the runner's own hop, so a bad link there cannot explain the gap on its
+own. The thing that differs is still which controller owns that hop: its own,
+or one that also owns everything else.
+
 **A regression of this document's own making, found by the control.** The
 previous amendment bounded the data-plane dial with `context.WithTimeout` on the
 caller's context. `peer.Dial` hands that context to `WrapAcceptedConn`, which
