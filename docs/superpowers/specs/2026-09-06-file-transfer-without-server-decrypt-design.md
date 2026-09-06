@@ -1223,3 +1223,52 @@ already tracks `MinRTT` and `InternalState` does not carry it. min_rtt against
 srtt is queueing delay, directly: if min_rtt is a few milliseconds while srtt is
 150, the window is standing in a buffer and the controller is filling it. That
 is the next increment, and it is one field rather than another investigation.
+
+## Amendment — min_rtt is 1.5 ms, and 98% of the round trip is queue (2026-09-06)
+
+The field landed and the answer is not ambiguous. Same Windows runner sending
+over Wi-Fi, 32 MiB pulls, sampled every 2 s:
+
+| min_rtt | srtt | queue | cwnd | in flight | BDP at min_rtt | in flight ÷ BDP |
+| --- | --- | --- | --- | --- | --- | --- |
+| **1.5 ms** | 118.7 ms | **99%** | 657,889 | 658,350 | 8,577 | **77×** |
+| **1.5 ms** | 131.9 ms | **99%** | 625,585 | 626,164 | 7,342 | **85×** |
+| **1.5 ms** | 146.8 ms | **99%** | 635,012 | 636,405 | 6,600 | **96×** |
+| **1.5 ms** | 79.1 ms | **98%** | 493,511 | 494,494 | 9,524 | **52×** |
+| **1.5 ms** | 8.8 ms | 83% | 340,038 | 1,463 | 253 | 6× |
+
+**The path is 1.5 milliseconds.** It never moved across any sample — it is a
+LAN Wi-Fi hop and it behaves like one. Everything above that is a queue this
+transport put there: the sender holds 50–96 times the bandwidth-delay product of
+the path it is actually on, and 83–99% of every round trip it measures is its
+own backlog.
+
+That closes the question the amendment above left open, and it closes it against
+the reading BOTH earlier amendments took:
+
+- The sender is window-blocked (`in flight == cwnd`) — still true, still the
+  only direct observation.
+- The window is not a constraint being hit, it is a buffer being filled. At 96×
+  BDP there is no throughput in it to recover; raising cwnd buys latency.
+- `cwnd/srtt` matching the delivered rate was tautological, and now measurably
+  so: srtt IS in-flight ÷ rate, to within the 1.5 ms of real path.
+
+**The mechanism is a loss-based controller with no delay signal.** NewReno grows
+cwnd until something is dropped; the queue in front of this hop absorbs ~700 KB
+before it drops anything, so cwnd grows to ~700 KB and stays, adding ~150 ms of
+delay and buying nothing. `loss_packets` climbs steadily (22–67 per 2 s) and
+`cwnd` never settles, which is that loop running.
+
+**What this does NOT explain is the 4 MB/s itself.** The path delivers about
+that, the controller has parked 150 ms of data in front of it, and the two are
+now separable rather than tangled — but nothing here says why a link whose
+weakest station measured 433 Mbit/s delivers ~30 Mbit/s at ~3,000 packets/s. The
+lab path carried 41,672 packets/s of raw UDP; the equivalent control has never
+been run between these two hosts, and that is the next measurement rather than
+another counter.
+
+**A change worth considering separately from the diagnosis**: min_rtt is now
+measured on both ends, and a cwnd cap of a few × min_rtt-BDP would remove ~150 ms
+of standing delay at no cost in throughput, on evidence rather than on taste.
+That is a congestion-control change and belongs in its own spec — recorded here
+so the evidence for it is not lost.
