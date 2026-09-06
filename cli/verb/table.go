@@ -233,6 +233,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "edit"},
 		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/fileedit.go:FileEditModel"},
 			{Surface: WebUI, At: "webui/index.html#file-editor-modal"},
 		},
 		Notes: []string{
@@ -253,6 +254,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "new"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/fileedit.go:FileEditModel"},
+		},
 		Notes: []string{
 			"create an empty file (refused when it exists)",
 		},
@@ -398,6 +402,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"git", "subrepos"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/git.go:DoGitSubrepos"},
+		},
 		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Notes: []string{
 			"list the nested repositories under the worktree",
@@ -749,7 +756,10 @@ var Verbs = []VerbSpec{
 	// design says -- and declared here rather than hand-parsed, which is what
 	// they were: the last verb-shaped token walk in tui/cmdline.go.
 	{
-		Path:            []string{"ssh-gateway", "start"},
+		Path: []string{"ssh-gateway", "start"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/sshgateway.go:DoStartSSHGateway"},
+		},
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "start"},
 		CmdlineSurfaces: TUI,
@@ -939,6 +949,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "subscribers"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:DoBoardSubscribers"},
+		},
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
 		},
@@ -955,6 +968,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "retract"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:DoBoardRetract"},
+		},
 		Notes: []string{
 			"withdraw one message: gone from every agent path, still readable here until the topic ages out.",
 			"--seq is required -- there is no whole-topic retract (cap: purge)",
@@ -981,6 +997,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"board", "purge"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:DoBoardPurge"},
+		},
 		Notes: []string{
 			"drop the whole topic ring (seq=0) or one message by seq.",
 			"Unlike retract this destroys the bytes, operator view included (cap: purge)",
@@ -1042,6 +1061,10 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"interactive"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/interactive.go:DoOpenInteractive"},
+			{Surface: WebUI, At: "webui/index.html#interactive"},
+		},
 		Notes: []string{
 			"attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)",
 			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
@@ -1063,6 +1086,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "new"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/interactive.go:DoOpenDetachableSession"},
+		},
 		Notes: []string{
 			"open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
 			"-d / --detach: start the session and exit immediately (don't attach the terminal)",
@@ -1252,6 +1278,10 @@ var Verbs = []VerbSpec{
 		// entry routes the command inputs through the same table as the rest;
 		// the parse itself still delegates to that function.
 		Path: []string{"grid"}, CmdlineSurfaces: TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/grid.go:GridModel"},
+			{Surface: WebUI, At: "webui/index.html#session-grid-modal"},
+		},
 		Action:  "GridAction",
 		Args:    []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "IDs"}},
 		Derived: []Derived{{Field: "Mode", Type: "GridScopeMode", From: "gridMode"}},
@@ -1266,6 +1296,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"cancel"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/client.go:DoCancel"},
+		},
 		Notes: []string{
 			"cancel a queued/running task",
 		},
@@ -1639,6 +1672,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"scope"}, CmdlineSurfaces: TUI | WebUI,
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
+			{Surface: WebUI, At: "webui/index.html#spawn-scope-details"},
 		},
 		Action: "SetDefaultsAction",
 		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
@@ -1658,6 +1692,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"caps", "set-parent"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/client.go:DoSetParent"},
+		},
 		Notes: []string{
 			"OPERATOR ONLY: re-point a LIVE task's parent link \u2014 the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched",
 		},
@@ -1695,6 +1732,9 @@ var Verbs = []VerbSpec{
 	// --- single-task session verbs ---
 	{
 		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/interactive.go:DoAttachSession"},
+		},
 		Notes: []string{
 			"reattach to a detached/running session",
 		},
@@ -1739,6 +1779,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/client.go:DoAwaitIdle"},
+		},
 		Notes: []string{
 			"one-shot: fire when the session's PTY output goes quiescent.",
 			"default long-polls; --notify/--topic arm a server-side sink and return",

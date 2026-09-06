@@ -338,6 +338,19 @@ type Trailing struct {
 // it. At names the entry point so a reader can jump straight to it:
 // "tui/conns.go:ConnsModal" for a Go symbol, "webui/index.html#conns-modal"
 // for a page element. A bare bitmask would only say "somewhere".
+//
+// HOW TO TELL whether a TUI action belongs here, because "there is a file
+// named after the verb" is not the test and answering it that way produced two
+// wrong rows on the first pass:
+//
+//	grep -rl DoThing tui/*.go        # who calls it
+//
+// Called only from dispatch.go, the action is the TUI's COMMAND LINE running
+// the verb — that is CmdlineSurfaces and it is already recorded. Called from
+// app.go, a modal, or a keybinding, the capability is reachable without typing
+// the verb, and that is this field. DoExecRun and DoServerDialRunner look like
+// TUI surfaces by their filenames and are cmdline-only by this test;
+// DoExecRunList in the same file is not.
 type ModalSurface struct {
 	Surface Surface
 	At      string
