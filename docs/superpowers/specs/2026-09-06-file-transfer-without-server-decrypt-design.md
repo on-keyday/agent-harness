@@ -856,3 +856,53 @@ It reached main because the live measurements ran against the main checkout's
 binary, built before that commit, while the fix was verified only by `go build`
 — which does not refresh `bin/`. The rule already written down for runners
 holds for the CLI too: rebuild `bin/` before believing a client-side check.
+
+## Amendment — the radios measured, and they are not the limit (2026-09-06)
+
+Every amendment above reasons about "a Wi-Fi path" without having measured one.
+All three stations have now been read, and they retire the explanation this
+document kept reaching for.
+
+| station | signal | PHY rate | note |
+| --- | --- | --- | --- |
+| client (Linux, gmkhost) | −58 dBm | tx 720.6 / rx 612.5 Mbit/s | Wi-Fi 6, 80 MHz, 2 streams; tx failed 12 |
+| **server (Raspberry Pi)** | −60 dBm | **433.3 Mbit/s both ways** | one spatial stream (80 MHz / MCS9 exactly); tx failed 18413 |
+| runner (Windows laptop) | −61 dBm | 907 / 961 Mbit/s | |
+
+All three sit between −58 and −61 dBm, and the WEAKEST link is 433 Mbit/s ≈ 54
+MB/s. The transfers measured in this document ran at 3–5 MB/s, an order of
+magnitude below that. The Pi's 18413 failed transmissions look alarming and are
+not: against 147 million packets over 125 days of uptime they are 0.0125%.
+
+**"The Pi is the bottleneck" does not survive either.** On a splice the Pi
+carries every byte twice on one stream, so call its ceiling ~27 MB/s — still
+five times what was measured. And `direct` does not involve the Pi at all: two
+strong stations, 720 and 961 Mbit/s, two air crossings, no middle endpoint. If
+the Pi were the limit, direct would have been the fastest route. It was the
+slowest.
+
+**What is left is the congestion control, and the runner-side counters now show
+it directly.** During a 32 MB pull, sampled from the sending runner:
+
+- `bytes_in_flight` tracks `cwnd` throughout — window-limited, not
+  bandwidth-limited and not CPU-limited
+- `cwnd` reaches roughly 1 MB; at the observed ~50 ms srtt that is ~20 MB/s
+  worth of window, the same order as the throughput actually seen
+- loss accumulates steadily and `loss_spurious` stays 0, so the window is being
+  cut by real losses rather than by mistimed retransmits
+
+Wi-Fi's own retries make the delay jitter, the controller cannot keep the window
+open, and on top of that sits the difference this document measured three ways:
+ONE loop over the whole path (`forwarded`, `direct`) against two half-length
+loops (`splice`).
+
+So physical placement matters — per-station rates, shared airtime, and
+station-to-station traffic crossing the air twice through the AP — but on THIS
+fleet it does not set the limit. Wiring the server would remove two of the four
+air crossings a splice makes and take the one-stream radio out of the path, and
+it is worth doing; it is not what decides the ordering of the three routes.
+
+The open question this leaves is the sharp one: a 433 Mbit/s medium is carrying
+30 Mbit/s of application traffic. That gap belongs to the transport, and
+`harness-cli conns --trsf --watch` is the first tool this project has had for
+looking at it from either end.
