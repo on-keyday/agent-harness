@@ -27,7 +27,6 @@ import (
 var (
 	listen               = flag.String("listen", "127.0.0.1:8539", "WebSocket listen host:port (use :8539 to dual-stack on all interfaces; loopback by default; empty disables WS leg, requires --udp-listen)")
 	udpListen            = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
-	dataPlaneDirect      = flag.Bool("data-plane-direct", false, "when a file transfer opts into the end-to-end route, have the client dial the RUNNER directly (one hop) instead of forwarding through this server (two). Only engages when both ends are on udp.")
 	dataDir              = flag.String("data-dir", "./harness-data", "persistent data dir")
 	taskRetain           = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
 	wsPath               = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
@@ -143,7 +142,6 @@ func main() {
 	s := server.New(server.Config{
 		Addr:                 strings.TrimSpace(*listen),
 		UDPAddr:              strings.TrimSpace(*udpListen),
-		DataPlaneDirect:      *dataPlaneDirect,
 		DataDir:              *dataDir,
 		TaskRetention:        *taskRetain,
 		Logger:               slog.Default(),

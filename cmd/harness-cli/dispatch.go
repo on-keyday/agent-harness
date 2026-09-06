@@ -66,7 +66,11 @@ func (h cliVerbs) withClient(fn func(c *cli.Client) error) error {
 
 func (h cliVerbs) FilePush(a verb.FilePushAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents, DataPlane: a.DataPlane}
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
+		opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents, Route: route}
 		if a.Recursive {
 			return c.FilePushDir(h.ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
 		}
@@ -76,46 +80,70 @@ func (h cliVerbs) FilePush(a verb.FilePushAction) error {
 
 func (h cliVerbs) FilePull(a verb.FilePullAction) error {
 	return h.withClient(func(c *cli.Client) error {
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
 		if a.Recursive {
 			// The --offset/--length combination is refused in Build, which
 			// every surface goes through.
-			return c.FilePullDir(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force, a.DataPlane)
+			return c.FilePullDir(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force, route)
 		}
 		return c.FilePull(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst,
-			cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force, a.DataPlane)
+			cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force, route)
 	})
 }
 
 func (h cliVerbs) FileLs(a verb.FileLsAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return c.FileLs(h.ctx, a.TaskID, a.RelPath, a.DataPlane, os.Stdout)
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
+		return c.FileLs(h.ctx, a.TaskID, a.RelPath, route, os.Stdout)
 	})
 }
 
 func (h cliVerbs) FileMkdir(a verb.FileMkdirAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return c.FileMkdir(h.ctx, a.TaskID, a.RelPath, a.Parents, a.DataPlane)
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
+		return c.FileMkdir(h.ctx, a.TaskID, a.RelPath, a.Parents, route)
 	})
 }
 
 func (h cliVerbs) FileDelete(a verb.FileDeleteAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		if a.Recursive {
-			return c.FileDeleteDir(h.ctx, a.TaskID, a.RelPath, a.Force, a.DataPlane)
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
 		}
-		return c.FileDelete(h.ctx, a.TaskID, a.RelPath, a.DataPlane)
+		if a.Recursive {
+			return c.FileDeleteDir(h.ctx, a.TaskID, a.RelPath, a.Force, route)
+		}
+		return c.FileDelete(h.ctx, a.TaskID, a.RelPath, route)
 	})
 }
 
 func (h cliVerbs) FileEdit(a verb.FileEditAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return runFileEdit(h.ctx, c, a.TaskID, a.RelPath, a.DataPlane)
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
+		return runFileEdit(h.ctx, c, a.TaskID, a.RelPath, route)
 	})
 }
 
 func (h cliVerbs) FileNew(a verb.FileNewAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return runFileNew(h.ctx, c, a.TaskID, a.RelPath, a.DataPlane)
+		route, err := verb.ParseFileTransferRoute(a.Route)
+		if err != nil {
+			return err
+		}
+		return runFileNew(h.ctx, c, a.TaskID, a.RelPath, route)
 	})
 }
 

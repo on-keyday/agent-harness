@@ -34,19 +34,12 @@ import (
 
 // Config holds the configuration for a Server instance.
 type Config struct {
-	Addr    string // host:port for the WebSocket listener; empty disables the WS leg (UDPAddr must then be set)
-	UDPAddr string // host:port for the UDP listener; empty disables the UDP leg. Combine with Addr for ws+udp dualstack.
-	// DataPlaneDirect makes a routed file transfer tell the client to dial the
-	// RUNNER instead of the server's slot, after having the runner punch a path
-	// open toward it. One hop instead of two, which is the whole reason the
-	// relayed route measured slower than the splice it replaced. Off by
-	// default, and it only engages when both ends are on udp: a WebSocket
-	// client cannot dial a runner at all.
-	DataPlaneDirect bool
-	DataDir         string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
-	TaskRetention   time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
-	PruneInterval   time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
-	Logger          *slog.Logger
+	Addr          string        // host:port for the WebSocket listener; empty disables the WS leg (UDPAddr must then be set)
+	UDPAddr       string        // host:port for the UDP listener; empty disables the UDP leg. Combine with Addr for ws+udp dualstack.
+	DataDir       string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
+	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
+	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
+	Logger        *slog.Logger
 
 	// PSK, when non-nil, requires every connecting client to present
 	// a matching PskAuthRequest before any other message is accepted.
@@ -540,13 +533,9 @@ func (s *Server) Run(ctx context.Context) error {
 	// Wired here rather than in New because the endpoint only exists once the
 	// listener is up, and SetProxy needs it. A nil hook is the splice path, so
 	// a server built without a listener keeps working.
-	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error) {
-		return s.setupDataPlane(ctx, ep, clientCID, entry, grant)
+	s.taskHandler.SetupDataPlane = func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool) (uint16, error) {
+		return s.setupDataPlane(ctx, ep, clientCID, entry, grant, direct)
 	}
-	// The same bit decides both halves: whether the runner is punched toward
-	// the client, and whether the client is told to dial it. They must agree,
-	// so they read one field.
-	s.taskHandler.DataPlaneDirect = s.cfg.DataPlaneDirect
 	s.dataPlaneEndpoint.Store(&ep)
 	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo) {
 		// connCtx is the server root context (long-lived). The ECDH-timeout

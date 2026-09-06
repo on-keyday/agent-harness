@@ -187,7 +187,7 @@ func (h tuiVerbs) FileLs(v verb.FileLsAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileLs(a.client, full, v.RelPath, v.DataPlane)
+	return DoFileLs(a.client, full, v.RelPath, mustRoute(v.Route))
 }
 
 func (h tuiVerbs) FilePush(v verb.FilePushAction) tea.Cmd {
@@ -197,7 +197,7 @@ func (h tuiVerbs) FilePush(v verb.FilePushAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents, v.DataPlane)
+	return DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents, mustRoute(v.Route))
 }
 
 func (h tuiVerbs) FilePull(v verb.FilePullAction) tea.Cmd {
@@ -207,7 +207,7 @@ func (h tuiVerbs) FilePull(v verb.FilePullAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force, v.DataPlane,
+	return DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force, mustRoute(v.Route),
 		cli.FileTransferRange{Offset: v.Offset, Length: v.Length})
 }
 
@@ -218,7 +218,7 @@ func (h tuiVerbs) FileMkdir(v verb.FileMkdirAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileMkdir(a.client, full, v.RelPath, v.Parents, v.DataPlane)
+	return DoFileMkdir(a.client, full, v.RelPath, v.Parents, mustRoute(v.Route))
 }
 
 func (h tuiVerbs) FileDelete(v verb.FileDeleteAction) tea.Cmd {
@@ -228,7 +228,7 @@ func (h tuiVerbs) FileDelete(v verb.FileDeleteAction) tea.Cmd {
 		a.cmdresult.Append(ErrorStyle.Render(errStr))
 		return nil
 	}
-	return DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force, v.DataPlane)
+	return DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force, mustRoute(v.Route))
 }
 
 func (h tuiVerbs) FileEdit(v verb.FileEditAction) tea.Cmd {
@@ -722,4 +722,15 @@ func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 		a.cmdresult.Append(OKStyle.Render("scope set: ") + label)
 	}
 	return nil
+}
+
+// mustRoute parses the verb's route word for the TUI's command line. A typo
+// takes the default rather than aborting the keystroke, and says so -- the
+// alternative is a cmdline that swallows the line with no output.
+func mustRoute(s string) protocol.FileTransferRoute {
+	r, err := verb.ParseFileTransferRoute(s)
+	if err != nil {
+		return protocol.FileTransferRoute_Splice
+	}
+	return r
 }

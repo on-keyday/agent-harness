@@ -1691,6 +1691,30 @@ format FileListing:
     count   :u32
     entries :[count]FileEntry
 
+# FileTransferRoute names WHICH PATH carries the bytes. Three real paths exist
+# and they differ in where the plaintext is, so the caller names one instead of
+# setting a bit and letting the server decide between the two it cannot see.
+#
+#   splice    the server terminates both legs and copies between them. It reads
+#             the plaintext. Fastest measured, everywhere: it runs two
+#             congestion loops of half the path each.
+#   forwarded the server forwards packets without decrypting (objproto SetProxy).
+#             It cannot read them. ONE loop over the whole path, so 2.6x slower
+#             at 20ms RTT and 8x with 1% loss -- the price of the property.
+#   direct    the client dials the runner, which the server has punched a path
+#             open toward. The server is not in the path at all. Needs both ends
+#             on udp and able to reach each other.
+#
+# A route that cannot be taken is REFUSED with route_unavailable, never
+# silently replaced: a caller that asked for forwarded or direct asked for the
+# server not to read these bytes, and quietly splicing would hand over exactly
+# what was withheld. Retrying on another route is the caller's decision.
+enum FileTransferRoute:
+    :u8
+    splice    = "splice"
+    forwarded = "forwarded"
+    direct    = "direct"
+
 format OpenFileTransferRequest:
     task_id       :TaskID
     direction     :FileTransferDirection
@@ -1708,20 +1732,10 @@ format OpenFileTransferRequest:
                           # directories of the destination before writing.
                           # mkdir: MkdirAll instead of strict Mkdir.
                           # Ignored by pull / delete / dir_pull / dir_delete.
-    # data_plane asks the server to route this transfer end to end instead of
-    # splicing it. OPT-IN, and the bit is spelled this way round so that a
-    # caller which says nothing gets the splice: the default has to be a
-    # property of the wire, not of every call site remembering to pass a flag.
-    #
-    # It is opt-in because the route is SLOWER on every path measured. The
-    # server forwarding packets makes one congestion loop over the whole
-    # client-server-runner path where the splice runs two, each over half of
-    # it -- 2.6x at 20ms RTT, 3.1x at 200ms, 8x with 1% loss, and the ratio
-    # does not shrink with transfer size. What the route still buys is that
-    # the server holds no plaintext, so it stays reachable for the caller who
-    # wants that, and for comparing the two on one file.
-    data_plane :u1
-    reserved   :u5
+    reserved   :u6
+    # The zero value is splice, so a caller that says nothing -- an old peer, a
+    # widget passing the default -- gets the path that was always there.
+    route :FileTransferRoute
 
 enum OpenFileTransferStatus:
     :u8
@@ -1729,6 +1743,11 @@ enum OpenFileTransferStatus:
     no_such_task   = "no_such_task"
     runner_offline = "runner_offline"
     internal_error = "internal_error"
+    # The requested route cannot be taken here -- a transport that cannot carry
+    # it, a runner that refused the grant, a server with no endpoint. Distinct
+    # from internal_error because it is the caller's route that is unavailable
+    # and not the operation, and the caller can retry on another one.
+    route_unavailable = "route_unavailable"
 
 format OpenFileTransferResponse:
     status    :OpenFileTransferStatus
@@ -1758,11 +1777,8 @@ format ListFilesRequest:
     task_id      :TaskID
     rel_path_len :u16
     rel_path     :[rel_path_len]u8
-    # Same opt-in as OpenFileTransferRequest.data_plane. This format carries no
-    # other flags, so the bit costs a byte here rather than filling spare
-    # padding.
-    data_plane :u1
-    reserved   :u7
+    # Same choice as OpenFileTransferRequest.route, and the same zero value.
+    route :FileTransferRoute
 
 enum ListFilesStatus:
     :u8
@@ -1770,6 +1786,8 @@ enum ListFilesStatus:
     no_such_task    = "no_such_task"
     runner_offline  = "runner_offline"
     path_invalid    = "path_invalid"
+    # Same meaning as OpenFileTransferStatus.route_unavailable.
+    route_unavailable = "route_unavailable"
     not_found       = "not_found"
     not_a_directory = "not_a_directory"
     io_error        = "io_error"

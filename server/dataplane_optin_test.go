@@ -1,50 +1,46 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// The default is the splice, and this is where that is decided. Measured on
-// scripts/netem-lab, forwarding loses on every path -- 1.23x at 4ms end-to-end
-// RTT, 2.59x at 20ms, 3.06x at 200ms, 8.05x once 1% loss is added -- because
-// the relay leaves one congestion loop spanning the whole path where the splice
-// runs two, each over half of it.
+// Splice is the default and it is decided here. Measured on scripts/netem-lab,
+// forwarding loses on every path -- 1.23x at 4ms end-to-end RTT, 2.59x at 20ms,
+// 3.06x at 200ms, 8.05x once 1% loss is added -- because the relay leaves one
+// congestion loop spanning the whole path where the splice runs two, each over
+// half of it.
 //
-// tryDataPlane must refuse BEFORE it looks at anything else, so a request that
-// did not ask pays nothing at all: no grant minted, no authorize round trip to
-// the runner, no proxy entry. It takes exactly the path it took before this
-// design existed.
-func TestDataPlaneRefusesWhenNotRequested(t *testing.T) {
-	// A handler with nothing wired: if the refusal did not come first, this
-	// would have to reach SetupDataPlane or a runner and would not return.
+// The refusal must come FIRST, so a request that named splice pays nothing at
+// all: no grant minted, no authorize round trip, no proxy entry.
+func TestSpliceRouteTouchesNothing(t *testing.T) {
+	// A handler with nothing wired: had the splice check not come first, this
+	// would reach SetupDataPlane or a runner and would not return.
 	h := &TaskHandler{}
-	_, slot, _, mtu, ok := h.tryDataPlane(nil, nil,
+	out, err := h.openDataPlane(nil, nil,
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push,
-		protocol.TaskID{}, false)
-	if ok {
-		t.Fatal("routed a request that did not ask for it")
+		protocol.TaskID{}, protocol.FileTransferRoute_Splice)
+	if err != nil {
+		t.Fatalf("splice must never fail: %v", err)
 	}
-	if slot != 0 || mtu != 0 {
-		t.Fatalf("a refusal must hand back nothing: slot=%d mtu=%d", slot, mtu)
+	if out != nil {
+		t.Fatalf("splice set something up: %+v", out)
 	}
 }
 
-// The bit is spelled data_plane, not no_data_plane, so that the default lives
-// on the wire rather than in every call site remembering to pass a flag. A
-// zero-valued request -- an old client, a caller that never heard of the route,
-// a widget passing the default -- must splice.
+// The zero value is splice, so a caller that says nothing -- an old peer, a
+// widget passing the default -- takes the path that was always there.
 func TestZeroValuedRequestsSplice(t *testing.T) {
 	var oft protocol.OpenFileTransferRequest
-	if oft.DataPlane() {
-		t.Fatal("a zero-valued OpenFileTransferRequest asks for the route")
+	if oft.Route != protocol.FileTransferRoute_Splice {
+		t.Fatalf("a zero-valued OpenFileTransferRequest names %v", oft.Route)
 	}
 	var lf protocol.ListFilesRequest
-	if lf.DataPlane() {
-		t.Fatal("a zero-valued ListFilesRequest asks for the route")
+	if lf.Route != protocol.FileTransferRoute_Splice {
+		t.Fatalf("a zero-valued ListFilesRequest names %v", lf.Route)
 	}
-
 	// And it survives a round trip, which is what an old peer actually sends.
 	b, err := oft.Append(nil)
 	if err != nil {
@@ -54,7 +50,35 @@ func TestZeroValuedRequestsSplice(t *testing.T) {
 	if _, err := back.Decode(b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if back.DataPlane() {
-		t.Fatal("the route bit came back set from an unset request")
+	if back.Route != protocol.FileTransferRoute_Splice {
+		t.Fatalf("the route came back as %v from an unset request", back.Route)
+	}
+}
+
+// The invariant the earlier shape got wrong: "not wanted" and "not possible"
+// were one false, so a missing endpoint came out as a splice nobody asked for.
+// A caller that named forwarded or direct asked for the server NOT to read
+// these bytes; answering with the splice would hand over exactly what was
+// withheld, and would do it silently.
+func TestANamedRouteThatCannotBeTakenIsRefusedNotSpliced(t *testing.T) {
+	h := &TaskHandler{} // no SetupDataPlane hook
+	for _, r := range []protocol.FileTransferRoute{
+		protocol.FileTransferRoute_Forwarded,
+		protocol.FileTransferRoute_Direct,
+	} {
+		out, err := h.openDataPlane(nil, nil,
+			protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push,
+			protocol.TaskID{}, r)
+		if err == nil {
+			t.Fatalf("route %v was not refused; out=%+v", r, out)
+		}
+		if out != nil {
+			t.Fatalf("route %v refused but still handed back %+v", r, out)
+		}
+		// The caller has to be able to say WHICH route failed, or it cannot
+		// decide what to retry on.
+		if !strings.Contains(err.Error(), r.String()) {
+			t.Errorf("refusal does not name the route: %v", err)
+		}
 	}
 }

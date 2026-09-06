@@ -656,6 +656,61 @@ reason to finish it rather than to abandon the idea: the original question was
 whether file transfer could go peer to peer, and what was measured slow is the
 substitute, not the answer.
 
+## Amendment — three routes, named by the caller (2026-09-06)
+
+**This replaces the `data_plane` bit, and with it D8 and the server-side
+choice.** There are three paths, they differ in where the plaintext is, and
+the request now names one:
+
+| route | the server | plaintext | measured |
+| --- | --- | --- | --- |
+| `splice` (default) | terminates both legs, copies between them | **reads it** | fastest everywhere |
+| `forwarded` | forwards packets (`SetProxy`) | cannot read it | 2.6x slower at 20ms RTT, 8x with 1% loss |
+| `direct` | not in the path at all | cannot read it | one hop; unmeasured across hosts |
+
+Two things were wrong with the bit it replaces, and they are the same mistake
+seen from two sides.
+
+**A bit cannot name three things.** Which of `forwarded` and `direct` a caller
+got was decided by a server flag it could not see or choose. Three modes, one
+bit, and the discriminator in the wrong process.
+
+**"Not wanted" and "not possible" were one `false`.** `tryDataPlane` returned
+the same answer for "the caller asked for the splice" and for "the hook is
+absent / the transports differ / the runner refused / setup timed out", so
+every one of those came out as a splice nobody asked for. That is not a
+fallback, it is a silent substitution — and for these two routes it substitutes
+the one path that hands the server exactly what the caller withheld. So a route
+that cannot be taken is now answered `route_unavailable` and nothing is
+attempted in its place. Retrying on another route is the caller's decision, and
+it cannot make one it is not told about.
+
+**There is no automatic fallback, deliberately.** A failed direct dial does not
+quietly become forwarded or spliced. Falling back to the splice would break the
+promise the caller made the request for; falling back to `forwarded` would keep
+the promise but silently take the slowest path; and either one hides which
+route ran, which makes the three impossible to compare. The failure is
+reported and the operator decides.
+
+The word is validated at bind time, before anything dials — the first version
+parsed it inside the action, so `--route bogus` opened a connection and
+complained afterwards. `ParseFileTransferRoute` lives in `cli/verb` because
+`cli` imports `verb` and not the reverse, and because the alternative is the
+list of spellings written down twice, which is how a CLI and a TUI drift into
+accepting different words for the same path.
+
+Verified on one all-udp `scripts/dummy-harness.sh --udp` instance, read off
+which address each connection goes to (server `:42229`, runner `:33861`):
+
+| invocation | connections | route taken |
+| --- | --- | --- |
+| default | server | splice |
+| `--route splice` | server | splice |
+| `--route forwarded` | server, server | forwarded |
+| `--route direct` | server, **runner** | direct |
+| `--route direct` from a **ws** client | server only, `route_unavailable` | refused, NOT spliced |
+| `--route bogus` | none — refused before dialing | — |
+
 Verified on one `scripts/dummy-harness.sh` instance by counting the connections
 each invocation opens — the data plane is a second connection, so the count is
 the route:

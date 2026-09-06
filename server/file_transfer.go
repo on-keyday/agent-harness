@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -39,18 +40,19 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 		slog.Error("file_transfer: nil client conn (programmer error)")
 		return errResp(protocol.OpenFileTransferStatus_InternalError)
 	}
-	// Preferred route: hand the client a grant and forward its packets, so
-	// these bytes cross this process without being decrypted. Falls back to the
-	// splice below when the hook is absent, the transports differ, or the
-	// runner refuses -- the client can tell the routes apart by grant_id.
-	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.DataPlane()); ok {
+	out, err := h.openDataPlane(conn, &runner,
+		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.Route)
+	if err != nil {
+		slog.Warn("file_transfer: requested route unavailable", "task_id", taskIDHex, "err", err)
+		return errResp(protocol.OpenFileTransferStatus_RouteUnavailable)
+	}
+	if out != nil {
 		return protocol.OpenFileTransferResponse{
 			Status:    protocol.OpenFileTransferStatus_Ok,
-			GrantId:   grantID,
-			SlotId:    slot,
-			Mtu:       mtu,
-			RunnerCid: rcid,
+			GrantId:   out.GrantID,
+			SlotId:    out.Slot,
+			Mtu:       out.MTU,
+			RunnerCid: out.DialAt,
 		}
 	}
 
@@ -118,14 +120,19 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		slog.Error("list_files: nil client conn (programmer error)")
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
-	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_ListFiles, 0, req.TaskId, req.DataPlane()); ok {
+	out, err := h.openDataPlane(conn, &runner,
+		protocol.TaskControlKind_ListFiles, 0, req.TaskId, req.Route)
+	if err != nil {
+		slog.Warn("list_files: requested route unavailable", "task_id", taskIDHex, "err", err)
+		return errResp(protocol.ListFilesStatus_RouteUnavailable)
+	}
+	if out != nil {
 		return protocol.ListFilesResponse{
 			Status:    protocol.ListFilesStatus_Ok,
-			GrantId:   grantID,
-			SlotId:    slot,
-			Mtu:       mtu,
-			RunnerCid: rcid,
+			GrantId:   out.GrantID,
+			SlotId:    out.Slot,
+			Mtu:       out.MTU,
+			RunnerCid: out.DialAt,
 		}
 	}
 
@@ -160,62 +167,84 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 	}
 }
 
-// tryDataPlane mints a grant and installs the forwarding route for one request.
-// It reports ok=false for every reason the splice path should be used instead,
-// so a caller reads it as "was this routed end to end?" and never has to know
-// which of the reasons applied.
-func (h *TaskHandler) tryDataPlane(
+// dataPlaneOutcome is what a non-splice route produced: the credential, the
+// connection id the bytes will cross at, and where the client is to dial.
+type dataPlaneOutcome struct {
+	GrantID [16]uint8
+	Slot    uint16
+	// DialAt is zero for forwarded -- the client dials the server's own address
+	// at Slot and the server relays. It names the runner for direct, which is
+	// legal only because the runner has been punched toward this client.
+	DialAt protocol.RunnerID
+	MTU    uint16
+}
+
+// openDataPlane sets up the route the request NAMED.
+//
+//	(nil, nil)  splice: the caller does what it always did
+//	(out, nil)  the named route is up
+//	(nil, err)  the named route cannot be taken here
+//
+// The third case is answered with route_unavailable, never by quietly splicing.
+// A caller that named forwarded or direct asked for the server not to read
+// these bytes; substituting the splice would hand over exactly what was
+// withheld, and would do it silently. Retrying on another route is the caller's
+// decision to make, which it cannot make if it is not told.
+//
+// This is the shape the earlier version got wrong: it collapsed "the route is
+// not wanted" and "the route is not possible" into one false, so a transport
+// mismatch, an absent endpoint and a runner refusal all came out as a splice
+// nobody asked for.
+func (h *TaskHandler) openDataPlane(
 	conn ConnHandle,
 	runner *RunnerEntry,
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	taskID protocol.TaskID,
-	requested bool,
-) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, mtu uint16, ok bool) {
-	// Opt-in, and this is the whole of the default: nothing routes unless the
-	// request asked. Measured on scripts/netem-lab, the route loses on every
-	// path -- 1.23x at 4ms end-to-end RTT, 2.59x at 20ms, 3.06x at 200ms, 8.05x
-	// with 1% loss added, and the ratio does not shrink with transfer size.
-	//
-	// The cause is structural, not a tuning problem. Forwarding packets leaves
-	// ONE congestion loop spanning client-server-runner; the splice terminates
-	// each leg, so it runs two loops over half the path each and recovers a
-	// loss in half the time. No size threshold repays that, which is why the
-	// earlier one is gone rather than raised.
-	//
-	// What the route still buys is P2: the server holds no plaintext. That is
-	// a property, not a speed, so it is worth asking for and not worth
-	// defaulting to.
-	if !requested {
-		return grantID, 0, runnerCID, 0, false
+	route protocol.FileTransferRoute,
+) (*dataPlaneOutcome, error) {
+	if route == protocol.FileTransferRoute_Splice {
+		return nil, nil
 	}
-	if h.SetupDataPlane == nil || runner == nil || runner.Conn == nil {
-		return grantID, 0, runnerCID, 0, false
+	if h.SetupDataPlane == nil {
+		return nil, fmt.Errorf("route %v: this server has no data-plane endpoint", route)
+	}
+	if runner == nil || runner.Conn == nil {
+		return nil, fmt.Errorf("route %v: runner offline", route)
 	}
 	clientCID := conn.ConnectionID()
 	rc := runner.Conn.ConnectionID()
 	if !dataPlaneRoute(clientCID, rc) {
-		return grantID, 0, runnerCID, 0, false
+		return nil, fmt.Errorf("route %v: one end has no transport (client=%q runner=%q)",
+			route, clientCID.Transport, rc.Transport)
+	}
+	direct := route == protocol.FileTransferRoute_Direct
+	if direct && !dataPlaneDirectOK(clientCID, rc) {
+		// Naming a transport pair that cannot dial is the common way to ask for
+		// direct by mistake -- a browser, or a ws client against a udp runner --
+		// so say which pair rather than just refusing.
+		return nil, fmt.Errorf("route direct: needs both ends on udp (client=%q runner=%q)",
+			clientCID.Transport, rc.Transport)
 	}
 	grant := mintGrant(kind, dir, taskID, dataPlaneGrantTTL)
 	ctx, cancel := context.WithTimeout(context.Background(), dataPlaneSetupTimeout)
 	defer cancel()
-	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant)
+	slot, err := h.SetupDataPlane(ctx, clientCID, runner, grant, direct)
 	if err != nil {
-		slog.Warn("file_transfer: data plane setup failed, splicing instead", "err", err)
-		return grantID, 0, runnerCID, 0, false
+		return nil, fmt.Errorf("route %v: %w", route, err)
 	}
-	// runner_cid is WHERE TO DIAL: zero means the server's slot, which is the
-	// relay. It names the runner only when the client is meant to reach it
-	// directly -- otherwise the client would dial an address the runner has not
-	// been punched toward and that a firewall will drop.
-	var dialAt protocol.RunnerID
-	if h.DataPlaneDirect && dataPlaneDirectOK(clientCID, rc) {
-		dialAt = protocol.ConnIDToRunnerID(rc)
+	out := &dataPlaneOutcome{
+		GrantID: grant.GrantId,
+		Slot:    slot,
+		MTU:     negotiatedMTU(clientCID.Transport, rc.Transport),
 	}
-	return grant.GrantId, slot, dialAt, negotiatedMTU(clientCID.Transport, rc.Transport), true
+	if direct {
+		out.DialAt = protocol.ConnIDToRunnerID(rc)
+	}
+	return out, nil
 }
 
-// dataPlaneSetupTimeout bounds the runner round trip in tryDataPlane. It is
-// short because the fallback is a working path, not an error.
+// dataPlaneSetupTimeout bounds the runner round trip in openDataPlane. Short
+// because exceeding it is now an answer the caller acts on, not a silent
+// downgrade it never learns about.
 const dataPlaneSetupTimeout = 5 * time.Second

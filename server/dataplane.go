@@ -137,6 +137,7 @@ func (s *Server) setupDataPlane(
 	clientCID objproto.ConnectionID,
 	entry *RunnerEntry,
 	grant protocol.DataPlaneGrant,
+	direct bool,
 ) (uint16, error) {
 	if ep == nil {
 		return 0, fmt.Errorf("data plane: no endpoint")
@@ -165,7 +166,6 @@ func (s *Server) setupDataPlane(
 	// Ordering: the runner starts punching when it answers this, and the client
 	// is not told to dial until that answer arrives, so the path is opening
 	// before the first dial packet leaves.
-	direct := s.cfg.DataPlaneDirect && dataPlaneDirectOK(clientCID, runnerCID)
 	if direct {
 		req.PunchTarget = protocol.ConnIDToRunnerID(
 			objproto.NewConnectionID(clientCID.Transport, clientCID.Addr, slot))

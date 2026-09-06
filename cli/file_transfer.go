@@ -45,7 +45,7 @@ func (c *Client) OpenFileTransfer(
 	rng FileTransferRange,
 	force bool,
 	mkdirParents bool,
-	dataPlane bool,
+	route protocol.FileTransferRoute,
 ) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
@@ -62,7 +62,7 @@ func (c *Client) OpenFileTransfer(
 	body.SetRelPath([]byte(relPath))
 	body.SetForce(force)
 	body.SetMkdirParents(mkdirParents)
-	body.SetDataPlane(dataPlane)
+	body.Route = route
 	req.SetOpenFileTransfer(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -131,7 +131,7 @@ func (s *dataPlaneStream) CloseBoth() error {
 
 // ListFiles round-trips a list_files request and decodes the FileListing
 // payload. Returns the entries in name order.
-func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, dataPlane bool) ([]FileEntryView, error) {
+func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, route protocol.FileTransferRoute) ([]FileEntryView, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("file ls: parse task id: %w", err)
@@ -139,7 +139,7 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, dataP
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListFiles}
 	body := protocol.ListFilesRequest{TaskId: tid}
 	body.SetRelPath([]byte(relPath))
-	body.SetDataPlane(dataPlane)
+	body.Route = route
 	req.SetListFiles(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -225,6 +225,12 @@ func openFileTransferStatusError(s protocol.OpenFileTransferStatus) error {
 		return errors.New("file: no such task (id unknown or task already finished)")
 	case protocol.OpenFileTransferStatus_RunnerOffline:
 		return errors.New("file: runner offline")
+	case protocol.OpenFileTransferStatus_RouteUnavailable:
+		// Naming the route is the point of refusing instead of substituting:
+		// the caller has to know WHICH path was declined to decide what to
+		// retry on. The server logs why; this end knows only that it was.
+		return errors.New("file: the requested --route cannot be taken for this task " +
+			"(direct needs both ends on udp; the server log says which check failed)")
 	default:
 		return fmt.Errorf("file: server error (status=%d)", s)
 	}
@@ -244,6 +250,9 @@ func listFilesStatusError(s protocol.ListFilesStatus) error {
 		return errors.New("file ls: not found")
 	case protocol.ListFilesStatus_NotADirectory:
 		return errors.New("file ls: not a directory")
+	case protocol.ListFilesStatus_RouteUnavailable:
+		return errors.New("file ls: the requested --route cannot be taken for this task " +
+			"(direct needs both ends on udp; the server log says which check failed)")
 	default:
 		return fmt.Errorf("file ls: server error (status=%d)", s)
 	}

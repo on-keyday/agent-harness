@@ -87,8 +87,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dst", Type: ArgString, Field: "RemoteDst"},
 		},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -96,6 +96,7 @@ var Verbs = []VerbSpec{
 			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories of the destination (mkdir -p)"},
 		},
+		Validate: validateRoute,
 		Examples: []string{
 			"file push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ./local.txt docs/local.txt",
 			"file push -r -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ./dir docs/dir",
@@ -122,8 +123,8 @@ var Verbs = []VerbSpec{
 			},
 		},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -137,6 +138,7 @@ var Verbs = []VerbSpec{
 			{Name: "length", Aliases: []string{"n"}, Type: FlagUint64, Default: uint64(0), Field: "Length",
 				Help: "max bytes to pull; 0 = to end of file"},
 		},
+		Validate: validateRoute,
 		Examples: []string{
 			"file pull aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt ./x.txt",
 			"file pull -r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs ./docs",
@@ -161,9 +163,10 @@ var Verbs = []VerbSpec{
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
 		},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
+		Validate: validateRoute,
 	},
 	{
 		Path: []string{"file", "mkdir"},
@@ -177,11 +180,12 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dir", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories (mkdir -p); also makes an existing directory a success"},
 		},
+		Validate: validateRoute,
 		Examples: []string{"file mkdir -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/sub"},
 	},
 	{
@@ -196,8 +200,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "target a directory tree instead of a single file (uses dir_delete)"},
 			// Without -r this flag is ignored, so its absence never widens: -r
@@ -205,6 +209,7 @@ var Verbs = []VerbSpec{
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
 				Help: "with -r: delete non-empty directory contents recursively (RemoveAll). Ignored without -r"},
 		},
+		Validate: validateRoute,
 		Examples: []string{
 			"file delete aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt",
 			"file delete -r -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
@@ -223,9 +228,10 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
+		Validate: validateRoute,
 	},
 	{
 		Path: []string{"file", "new"},
@@ -240,9 +246,10 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"file new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/new.txt"},
 		Flags: []Flag{
-			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
-				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
+			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
+				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
+		Validate: validateRoute,
 	},
 	// --- git ---
 	//

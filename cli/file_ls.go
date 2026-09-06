@@ -3,13 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"io"
 )
 
 // FileLs prints one line per entry under taskIDHex/<relPath> to out.
 // Format: "<mode-octal> <size> <name>[/]" (trailing slash for directories).
-func (c *Client) FileLs(ctx context.Context, taskIDHex, relPath string, dataPlane bool, out io.Writer) error {
-	entries, err := c.ListFiles(ctx, taskIDHex, relPath, dataPlane)
+func (c *Client) FileLs(ctx context.Context, taskIDHex, relPath string, route protocol.FileTransferRoute, out io.Writer) error {
+	entries, err := c.ListFiles(ctx, taskIDHex, relPath, route)
 	if err != nil {
 		return err
 	}

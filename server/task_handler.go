@@ -47,13 +47,7 @@ type TaskHandler struct {
 	// dial. A nil hook, an incompatible transport pair, or an error all fall
 	// back to the splice path -- both routes coexist and this is where the
 	// choice is made. Server.New wires it to Server.setupDataPlane.
-	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error)
-
-	// DataPlaneDirect makes a routed request tell the client to dial the RUNNER
-	// rather than the server's slot, the runner having been punched toward it.
-	// Off by default: it only works where both ends are on udp and can reach
-	// each other, and the relay is the answer everywhere else.
-	DataPlaneDirect bool
+	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant, direct bool) (uint16, error)
 
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
