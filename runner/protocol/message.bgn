@@ -1869,6 +1869,29 @@ format FileListing:
 #             open toward. The server is not in the path at all. Needs both ends
 #             on udp and able to reach each other.
 #
+# RE-MEASURED after objtrsf 5c3a630, which fixed a retransmit that dropped the
+# stream off the send queue and cost a round trip each time. That defect paid
+# splice for having a shorter RTT per loop, so the ratios above were partly it.
+# 16 MB push, udp, client in the lab's srv namespace so all three cross the same
+# shaped hop, interleaved x4 (MB/s):
+#
+#              50ms RTT   2ms RTT
+#   splice        14.7      28.0
+#   forwarded      5.1      26.4
+#   direct         4.6      29.1
+#
+# TWO THINGS CHANGED. **The penalty is strongly RTT-dependent** -- 2.9x at 50ms
+# but 1.06x at 2ms, where the choice is nearly free; a flat "2.6x" overstates it
+# on a short path. And **direct and forwarded are indistinguishable** (their
+# interleaved runs interleave: rank sums 19 vs 17), so relaying the packets
+# costs nothing measurable and splice's whole advantage is the halved RTT per
+# loop, NOT the server being out of the path. Taking the server out buys the
+# property, not speed.
+#
+# Over ws every route is faster than its udp twin and the forwarded penalty
+# falls to 1.70x at 50ms -- the kernel's TCP is doing the congestion control, so
+# a single long loop stops being the constraint.
+#
 # A route that cannot be taken is REFUSED with route_unavailable, never
 # silently replaced: a caller that asked for forwarded or direct asked for the
 # server not to read these bytes, and quietly splicing would hand over exactly
