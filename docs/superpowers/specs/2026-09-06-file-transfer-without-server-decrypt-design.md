@@ -1167,3 +1167,59 @@ An earlier reading also said in-flight sits at one packet on the lab path. One
 interval here shows 3,143,987 against a cwnd of 3,143,354, so that was an
 artifact of instantaneous sampling: the window does close there, just not
 always.
+
+## Amendment — the window is the delay, so cwnd/srtt proves nothing (2026-09-06)
+
+The fleet was restarted again, so the push reasons could be read on the real
+path. Windows runner sending over Wi-Fi, three 32 MiB pulls, 3.63 MB/s on the
+push and ~4 MB/s on the pulls, sampled from the runner every 2 s:
+
+| parks | timer | app | ack | self | cwnd | loss | in flight | cwnd | srtt |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 17,381 | **13** | 508 | 10,347 | 10,874 | 248 | 0 | 771,001 | 770,028 | 215 ms |
+| 10,373 | **6** | 270 | 5,802 | 6,197 | 229 | 0 | 605,682 | 604,402 | 113 ms |
+| 12,078 | **6** | 308 | 7,306 | 7,358 | 181 | 58 | 487,179 | 486,924 | 125 ms |
+| 11,522 | **8** | 302 | 6,924 | 6,927 | 207 | 26 | 415,492 | 414,042 | 68 ms |
+| 8,777 | **5** | 224 | 5,231 | 5,143 | 202 | 41 | 367,213 | 365,857 | 60 ms |
+
+Three things are now measured rather than argued on the path that raised the
+question:
+
+- **The timers are not it.** 5–18 timer wakes out of 7,900–17,400 parks.
+- **The application is not it.** `app` is 2–3% of pushes, the same as the lab.
+  The send buffer is not running dry on either path.
+- **`ack` and `self` are equal to within a percent, in every interval.** One
+  range retired, one packet emitted. That is an ACK-clocked sender, and with
+  `in flight` sitting on `cwnd` in every busy sample and a non-zero `cwnd` push
+  count (streams really are parking in `congestionBlocked` and being revived),
+  the sender is genuinely window-blocked.
+
+**And here is what the previous two amendments both got wrong, in opposite
+directions, using the same vacuous arithmetic.** "cwnd/srtt lands on the
+throughput measured" was offered as evidence of window-limitation — by the
+radios amendment, and again by the correction that retracted it. It is not
+evidence of anything:
+
+| interval | in flight | ÷ 4 MB/s | srtt |
+| --- | --- | --- | --- |
+| 1 | 771,001 | 193 ms | 215 ms |
+| 3 | 487,179 | 122 ms | 125 ms |
+| 4 | 415,492 | 104 ms | 68 ms |
+
+**The window's own drain time IS the round-trip time.** The bytes in flight are
+standing in a queue, and srtt is measuring that queue. So `cwnd/srtt` equals the
+delivered rate identically, for ANY cwnd, and can never distinguish "the window
+limits the rate" from "the window sets the queue depth". Both amendments read a
+tautology as a measurement.
+
+What survives is the direct observation, not the arithmetic: the sender is
+blocked by its window (`in flight == cwnd`). What does NOT follow is that a
+larger window would deliver more — at 25–40× a plausible bare-path BDP it would
+deliver more queue. An srtt of 60–215 ms on a two-station LAN Wi-Fi hop is the
+anomaly, and it is self-inflicted.
+
+**The cheapest thing that separates them is one field.** `congestion.RTTStats`
+already tracks `MinRTT` and `InternalState` does not carry it. min_rtt against
+srtt is queueing delay, directly: if min_rtt is a few milliseconds while srtt is
+150, the window is standing in a buffer and the controller is filling it. That
+is the next increment, and it is one field rather than another investigation.
