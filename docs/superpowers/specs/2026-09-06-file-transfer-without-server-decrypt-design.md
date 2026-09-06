@@ -1272,3 +1272,50 @@ measured on both ends, and a cwnd cap of a few × min_rtt-BDP would remove ~150 
 of standing delay at no cost in throughput, on evidence rather than on taste.
 That is a congestion-control change and belongs in its own spec — recorded here
 so the evidence for it is not lost.
+
+## Amendment — the instrument was wrong on Windows, and the answer did not change (2026-09-06)
+
+The 1.5 ms above was measured on a host whose clock cannot measure it. Go's
+`nanotime` on Windows reads the interrupt time out of `KUSER_SHARED_DATA`
+(`runtime/time_windows.h`, `_INTERRUPT_TIME` at `0x7ffe0008`), updated once per
+system timer interrupt — 15.625 ms by default, ~0.5 ms once something lowers it.
+Not `QueryPerformanceCounter`; golang/go#31160 says changing that "would be
+problematic (as seen in #8687)" and moved only the testing package to QPC.
+
+Measured with the same program on both hosts:
+
+| host | consecutive `time.Now()` pairs reporting the SAME instant | smallest non-zero gap |
+| --- | --- | --- |
+| Windows runner | **199,998 / 200,000** | **503.6 µs** |
+| Linux client | 0 / 200,000 | 39 ns |
+
+So any round trip faster than the timer period reads as exactly 0, and `MinRTT`
+— a minimum, kept for the life of the connection — latched it. Two defects fell
+out, and both were the same one: **"was this measured?" was being answered by
+comparing the value to zero.** The runner therefore reported no min_rtt at all
+while the server reported 1923 µs for the same connection, and the TUI's queue
+line was gated the same way. Fixed in objtrsf `6aad1bc` and harness `484da847`:
+a zero sample no longer enters the minimum, "no resolvable sample" is a state of
+its own, and a genuine zero would now be reported as zero.
+
+**Re-measured with the instrument working**, same runner, 32 MiB pulls at
+3.47 MB/s:
+
+| min_rtt | srtt | queue | queue % | cwnd | in flight | in flight ÷ BDP |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.50 ms | 202.7 ms | 202.2 ms | **99.8%** | 635,565 | 636,405 | **403×** |
+| 0.45 ms | 119.6 ms | 119.2 ms | **99.6%** | 643,184 | 643,720 | **265×** |
+| 0.45 ms | 156.3 ms | 155.8 ms | **99.7%** | 653,538 | 653,961 | **346×** |
+| 0.45 ms | 33.7 ms | 33.2 ms | **98.7%** | 331,100 | 332,101 | **74×** |
+
+**The conclusion is unchanged, and that is worth stating plainly rather than
+dressing up.** The queue share was 98–99% with a broken min_rtt and is 98.7–99.8%
+with a working one, because 1.5 ms and 0.45 ms are both negligible against an
+srtt of 33–203 ms. What changed is the BDP multiple, which got WORSE: an honest,
+smaller min_rtt means a smaller bandwidth-delay product, so the window is 74–403×
+it rather than 50–96×.
+
+Read `min_rtt` here as an upper bound on the path rather than a measurement of
+it: 0.45 ms is one tick of a clock whose smallest observable step was 503.6 µs,
+so the true round trip is at or below the resolution of the host doing the
+measuring. The path is sub-millisecond. The transport is running it at 33–203 ms.
