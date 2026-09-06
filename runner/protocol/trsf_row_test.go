@@ -3,6 +3,7 @@ package protocol
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,56 +11,85 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// Every numeric field the transport reports must reach the wire record. The
-// check is "no zero survives" against an InternalState whose every field is
-// distinct and non-zero: a field added to InternalState and forgotten here
-// leaves a zero, which on the operator's screen is indistinguishable from a
-// connection that really is idle.
-func TestTrsfRowFromCarriesEveryCounter(t *testing.T) {
-	st := &trsf.InternalState{
-		ActiveSendStreams:    1,
-		ActiveReceiveStreams: 2,
-		CurrentMTU:           1400,
-		SendQueueLength:      3,
-		ReceiveQueueLength:   4,
-		BytesInFlight:        5,
-		CongestionWindow:     6,
-		SmoothedRTT:          7 * time.Millisecond,
-		RTTVariance:          8 * time.Millisecond,
-		LoopIterations:       9,
-		Loss:                 trsf.LossStats{Events: 10, Packets: 11, Spurious: 12},
-		BlockedNs:            13,
-		Blocks:               14,
-		WakeTimer:            15,
-		WakeSend:             16,
-		ArmedPacer:           17,
-		SendPushApp:          18,
-		SendPushACK:          19,
-		SendPushSelf:         20,
-		SendPushCwnd:         21,
-		SendPushLoss:         22,
-		SendPushOther:        23,
-	}
-	row := TrsfRowFrom(st)
-	for name, got := range map[string]uint64{
-		"Mtu": uint64(row.Mtu), "Cwnd": uint64(row.Cwnd),
-		"BytesInFlight": uint64(row.BytesInFlight),
-		"SrttUs":        row.SrttUs, "RttvarUs": row.RttvarUs,
-		"SendQueue": uint64(row.SendQueue), "RecvQueue": uint64(row.RecvQueue),
-		"SendStreams": uint64(row.SendStreams), "RecvStreams": uint64(row.RecvStreams),
-		"LoopIterations": row.LoopIterations,
-		"LossEvents":     row.LossEvents, "LossPackets": row.LossPackets,
-		"LossSpurious": row.LossSpurious,
-		"BlockedNs":    row.BlockedNs, "Blocks": row.Blocks,
-		"WakeTimer": row.WakeTimer, "WakeSend": row.WakeSend,
-		"ArmedPacer":  row.ArmedPacer,
-		"SendPushApp": row.SendPushApp, "SendPushAck": row.SendPushAck,
-		"SendPushSelf": row.SendPushSelf, "SendPushCwnd": row.SendPushCwnd,
-		"SendPushLoss": row.SendPushLoss, "SendPushOther": row.SendPushOther,
-	} {
-		if got == 0 {
-			t.Errorf("%s is zero: TrsfRowFrom does not carry it", name)
+// setEveryNumber fills every numeric field of v — walking nested structs — with
+// a distinct value, and records what each one was. Durations get whole
+// microseconds so the value survives the .Microseconds() the projection applies.
+//
+// Reflection rather than a hand-written fixture, because the fixture is the
+// thing that rots: the previous version of this test listed the fields by hand,
+// so a field added to InternalState and forgotten in BOTH places would have left
+// it green. Slices (SentPackets) and non-numeric fields are skipped — the
+// projection does not carry them and says why.
+func setEveryNumber(t *testing.T, v reflect.Value, next *uint64, want map[uint64]string, path string) {
+	t.Helper()
+	durType := reflect.TypeOf(time.Duration(0))
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		name := path + v.Type().Field(i).Name
+		switch {
+		case f.Type() == durType:
+			*next++
+			f.SetInt(int64(time.Duration(*next) * time.Microsecond))
+			want[*next] = name
+		case f.Kind() == reflect.Struct:
+			setEveryNumber(t, f, next, want, name+".")
+		case f.CanInt():
+			*next++
+			f.SetInt(int64(*next))
+			want[*next] = name
+		case f.CanUint():
+			*next++
+			f.SetUint(*next)
+			want[*next] = name
 		}
+	}
+}
+
+// Every number InternalState reports must reach the wire.
+//
+// No map of field names to keys is needed: each field gets a unique value, and
+// every one of those values must come back among the counters. Add a field to
+// InternalState, forget it in TrsfRowFrom, and this names the field.
+func TestTrsfRowFromCarriesEveryNumberInInternalState(t *testing.T) {
+	st := &trsf.InternalState{}
+	want := map[uint64]string{}
+	var next uint64 = 1000
+	setEveryNumber(t, reflect.ValueOf(st).Elem(), &next, want, "")
+
+	row := TrsfRowFrom(st)
+	got := map[uint64]bool{}
+	for _, c := range row.Counters {
+		got[c.Value] = true
+	}
+	for v, name := range want {
+		if !got[v] {
+			t.Errorf("InternalState.%s (value %d) reaches no counter: TrsfRowFrom does not carry it",
+				name, v)
+		}
+	}
+	if int(row.CounterCount) != len(row.Counters) {
+		t.Errorf("CounterCount = %d against %d counters", row.CounterCount, len(row.Counters))
+	}
+}
+
+// Absent and zero are different answers, and the list is the only shape that
+// can say so. A runner older than a counter omits it; rendering that omission
+// as 0 would report a measurement nobody took.
+func TestCounterSeparatesAbsentFromZero(t *testing.T) {
+	row := TrsfRowFrom(&trsf.InternalState{}) // all zero, MinRTT unmeasured
+	if v, ok := row.Counter(TrsfCounterKey_Cwnd); !ok || v != 0 {
+		t.Errorf("cwnd = (%d, %v), want (0, true): a measured zero is present", v, ok)
+	}
+	if v, ok := row.Counter(TrsfCounterKey_MinRttUs); ok {
+		t.Errorf("min_rtt_us = (%d, true) before any ACK, want absent", v)
+	}
+	if got := row.CounterOr(TrsfCounterKey_MinRttUs, 42); got != 42 {
+		t.Errorf("CounterOr on an absent key = %d, want the default 42", got)
+	}
+	st := &trsf.InternalState{MinRTT: 3 * time.Millisecond}
+	measured := TrsfRowFrom(st)
+	if v, ok := measured.Counter(TrsfCounterKey_MinRttUs); !ok || v != 3000 {
+		t.Errorf("min_rtt_us = (%d, %v), want (3000, true) once measured", v, ok)
 	}
 }
 

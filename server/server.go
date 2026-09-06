@@ -944,23 +944,21 @@ func (s *Server) DumpTrsfState() {
 	rows, _ := s.trsfConnStates(nil, true)
 	log.Info("trsf dump: begin", "conns", len(rows))
 	for _, r := range rows {
-		log.Info("trsf dump: conn",
-			"cid", string(r.Cid), "role", r.Role,
-			"sendStreams", r.SendStreams, "recvStreams", r.RecvStreams,
-			"sendQ", r.SendQueue, "recvQ", r.RecvQueue,
-			"inflight", r.BytesInFlight, "cwnd", r.Cwnd,
-			"srtt_us", r.SrttUs, "rttvar_us", r.RttvarUs, "mtu", r.Mtu,
-			// lossEvents is how many times the congestion window was cut, and
-			// spuriousLoss how many of the packets behind those cuts were
-			// acknowledged afterwards. A spuriousLoss that climbs with the
-			// transfer says the sending rate is being set by a measurement
-			// error rather than by the path.
-			"lossEvents", r.LossEvents, "lostPkts", r.LossPackets, "spuriousLoss", r.LossSpurious,
-			// loopIters separates a run loop that is blocked (frozen counter
-			// across two dumps) from one that is busy-spinning (counter
-			// exploding) from one that is merely congestion-blocked (counter
-			// advancing slowly). Only meaningful as a delta, so dump twice.
-			"loopIters", r.LoopIterations)
+		// Every counter the answerer sent, by its own name, rather than a
+		// hand-listed subset. A measurement added to the transport reaches this
+		// dump with no edit here — and one this build does not know still
+		// appears, under the enum's numeric fallback, instead of vanishing.
+		//
+		// Read as DELTAS across two dumps. loopIters separates a run loop that
+		// is blocked (frozen) from one that is busy-spinning (exploding) from
+		// one that is merely congestion-blocked (advancing slowly); spuriousLoss
+		// climbing with a transfer says the sending rate is being set by a
+		// measurement error rather than by the path.
+		kv := []any{"cid", string(r.Cid), "role", r.Role}
+		for _, c := range r.Counters {
+			kv = append(kv, c.Key.String(), c.Value)
+		}
+		log.Info("trsf dump: conn", kv...)
 	}
 	if s.taskHandler != nil {
 		for _, pf := range s.taskHandler.pforwards().snapshot() {

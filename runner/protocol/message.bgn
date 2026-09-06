@@ -1610,92 +1610,94 @@ enum TrsfTarget:
     server = "server"
     runner = "runner"
 
-# TrsfConnState is one connection's congestion state -- the numbers a stalled
-# transfer is diagnosed from.
+# TrsfCounterKey names every number a connection reports about itself.
+#
+# The key is an ENUM and the row is a LIST because the alternative -- one named
+# fixed-layout field per counter -- makes every added measurement a wire change,
+# and a wire change means a coordinated fleet restart before anything can be
+# read at all. That cost was paid three times in one afternoon. Appending a
+# value here changes no layout, so a runner that does not know a key simply does
+# not send it and a reader that does not know one prints it by number.
+#
+# APPEND ONLY. The values are positional and a renumbering silently relabels
+# every counter a running fleet is reporting.
+#
+# The list also makes ABSENT expressible for free, which no fixed field could:
+# min_rtt_us is omitted before the first ACK, where it would otherwise have to
+# be a sentinel or a lie.
+enum TrsfCounterKey:
+    :u16
+    mtu = "mtu"
+    cwnd = "cwnd"
+    bytes_in_flight = "bytes_in_flight"
+    srtt_us = "srtt_us"
+    rttvar_us = "rttvar_us"
+    min_rtt_us = "min_rtt_us"           # omitted before the first ACK.
+                                        # srtt - min_rtt is queueing delay
+    send_queue = "send_queue"
+    recv_queue = "recv_queue"
+    send_action_count = "send_action_count"
+    update_window_count = "update_window_count"
+    cancel_stream_count = "cancel_stream_count"
+    send_streams = "send_streams"
+    recv_streams = "recv_streams"
+    loop_iterations = "loop_iterations"     # delta only
+    loss_events = "loss_events"             # delta only: times the window was cut
+    loss_packets = "loss_packets"           # delta only
+    loss_spurious = "loss_spurious"         # delta only: cuts whose packets were
+                                            # merely late. Climbing with a
+                                            # transfer means the sending rate is
+                                            # set by a measurement error
+    blocked_ns = "blocked_ns"               # delta only: ns parked in the select
+    blocks = "blocks"                       # delta only: parks entered
+    wake_timer = "wake_timer"               # delta only: parks ended by the timer
+    wake_send = "wake_send"                 # delta only: parks ended by the send
+                                            # trigger. Names the CHANNEL only --
+                                            # see the send_push_* keys for why
+    armed_pacer = "armed_pacer"             # delta only: parks whose deadline came
+                                            # from the pacer, not loss detection
+    send_push_app = "send_push_app"         # delta only: the application supplied
+                                            # data or EOF
+    send_push_ack = "send_push_ack"         # delta only: an ACK retired a range
+    send_push_self = "send_push_self"       # delta only: the loop's own continuation
+    send_push_cwnd = "send_push_cwnd"       # delta only: revived when cwnd reopened
+    send_push_loss = "send_push_loss"       # delta only: one per LOST PACKET
+    send_push_other = "send_push_other"     # delta only: open, cancel, peer window
+
+format TrsfCounter:
+    key :TrsfCounterKey
+    value :u64
+
+# TrsfConnState is one connection's state -- the numbers a stalled transfer is
+# diagnosed from.
+#
+# The split is IDENTITY versus MEASUREMENT, and it is the only line worth
+# drawing. cid, role and principal_task say WHICH connection the row describes;
+# they are the answerer's knowledge, not the transport's account of itself, and
+# they are not numbers. Everything the transport measures goes in counters,
+# uniformly -- cwnd and srtt included. An earlier draft kept the "structural"
+# values named and that boundary was fuzzy enough to be mis-applied on the next
+# addition, which is the whole failure this shape removes.
 #
 # These belong to the CONNECTION, not to any stream on it. A runner's server
-# connection multiplexes every task it runs, so its cwnd and loss counters are
-# the sum over all of them and cannot be attributed to one task. That is why
-# there is no per-task filter here and why a confined caller is not shown
-# runner connections at all.
+# connection multiplexes every task it runs, so its counters are the sum over
+# all of them and cannot be attributed to one task. That is why there is no
+# per-task filter here and why a confined caller is not shown runner
+# connections at all.
 #
 # InternalState.SentPackets is deliberately NOT carried: it is an unbounded
-# slice, and nothing in this diagnosis reads per-packet detail.
+# slice, and no reading of a stalled transfer needs per-packet detail.
 #
-# The counters that only mean something as a DELTA are marked. Reading one
-# sample of loop_iterations says nothing; two samples separate a run loop that
-# is blocked (frozen) from one that is busy-spinning (exploding) from one that
-# is merely congestion-blocked (advancing slowly). The wake counters at the end
-# split that last case further, into what the loop is waiting FOR.
+# Counters marked "delta only" say nothing as a single sample. Two samples
+# separate a run loop that is blocked (frozen) from one that is busy-spinning
+# (exploding) from one that is merely congestion-blocked (advancing slowly).
 format TrsfConnState:
     cid_len :u8
     cid :[cid_len]u8            # same canonical string ConnInfo.cid carries
     role :ConnRole
     principal_task :TaskID      # as ConnInfo: zero for runner and non-agent conns
-    mtu :u32
-    cwnd :u32
-    bytes_in_flight :u32
-    srtt_us :u64
-    rttvar_us :u64
-    send_queue :u32
-    recv_queue :u32
-    send_streams :u32
-    recv_streams :u32
-    loop_iterations :u64        # delta only
-    loss_events :u64            # delta only: times the window was cut
-    loss_packets :u64           # delta only
-    loss_spurious :u64          # delta only: cuts whose packets were merely late.
-                                # Climbing with a transfer means the sending rate
-                                # is being set by a measurement error, not the path.
-    # The run loop's account of its own WAITING. loop_iterations says how fast
-    # the loop turns; these say why it is not turning faster -- the question a
-    # transfer running far below its congestion window poses, and one no
-    # counter above can answer. All delta only.
-    #
-    #   duty cycle = blocked_ns / wall time between two readings
-    #   mean park  = blocked_ns / blocks
-    #   loop_iterations - blocks = iterations that never parked (the
-    #                              received-packet fast path)
-    #
-    # blocks counts parks ENTERED, so a loop still parked reads blocks=N with
-    # blocked_ns unchanged; a loop that has STOPPED is what a frozen
-    # loop_iterations already says.
-    blocked_ns :u64             # delta only: nanoseconds parked in the select
-    blocks :u64                 # delta only: parks entered
-    wake_timer :u64             # delta only: parks ended by the timer --
-                                # the transport waiting on a deadline of its own
-    wake_send :u64              # delta only: parks ended by the send trigger --
-                                # the application not feeding the transport.
-                                # blocks - wake_timer - wake_send is the
-                                # remainder, and means the peer.
-    armed_pacer :u64            # delta only: parks whose deadline came from the
-                                # pacer rather than loss detection. The pacer's
-                                # own floor is 1 ms, so a loop held by it and one
-                                # held by loss detection are indistinguishable in
-                                # wake_timer and call for opposite fixes.
-    # WHY the send trigger was pushed, counted where each push is MADE rather
-    # than at the channel it arrives on. wake_send says a park ended on that
-    # channel and nothing more, and the channel is many-to-one: two of these
-    # support OPPOSITE conclusions, so reading wake_send as either one is how
-    # a lossy path with its window pinned shut was first called "starved".
-    #
-    # EVENT counts, including pushes the queue's dedupe drops: the sum is >=
-    # blocks and these do NOT partition the wakes. All delta only.
-    send_push_app :u64          # the application supplied data or EOF --
-                                # the transport was waiting on its caller
-    send_push_ack :u64          # an ACK retired a range -- the window was the
-                                # constraint, not the application
-    send_push_self :u64         # the run loop's own continuation: more data
-                                # already buffered, or another packet took the
-                                # iteration's slot. Not waiting for anything
-    send_push_cwnd :u64         # a congestion-blocked stream revived when cwnd
-                                # reopened
-    send_push_loss :u64         # a packet was declared lost and requeued. ONE
-                                # PER PACKET, not per congestion event:
-                                # detectLost retires many in one pass, so this
-                                # can dwarf loss_events and is the honest
-                                # measure of retransmission pressure
-    send_push_other :u64        # stream open, cancel, peer flow-window update
+    counter_count :u16
+    counters :[counter_count]TrsfCounter
 
 enum TrsfStateStatus:
     :u8

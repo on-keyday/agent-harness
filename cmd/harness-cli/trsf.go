@@ -65,31 +65,51 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 	}
 }
 
-// parkSummary renders the two derived columns the wake counters exist for:
-// how much of the interval the run loop spent parked, and what ended those
-// parks. Both are undefined without a previous reading, and BLOCK% is also
-// undefined without elapsed time, so each returns "-" for ABSENCE — never for
-// a zero, which is a measurement and prints as 0%.
+// delta is the change in one counter between two readings, and whether that
+// change is DEFINED. An answerer older than a key omits it, so a missing key on
+// either side means "this end does not report it" — which is a different answer
+// from zero and must not render as one.
+func delta(r, p protocol.TrsfConnState, k protocol.TrsfCounterKey) (uint64, bool) {
+	rv, rok := r.Counter(k)
+	pv, pok := p.Counter(k)
+	if !rok || !pok {
+		return 0, false
+	}
+	return rv - pv, true
+}
+
+func deltaStr(r, p protocol.TrsfConnState, k protocol.TrsfCounterKey) string {
+	if d, ok := delta(r, p, k); ok {
+		return fmt.Sprintf("%d", d)
+	}
+	return "-"
+}
+
+// parkSummary renders the derived columns the wake counters exist for: how much
+// of the interval the run loop spent parked, and what ended those parks. Both
+// are undefined without a previous reading, and BLOCK% is also undefined
+// without elapsed time, so each returns "-" for ABSENCE — never for a zero,
+// which is a measurement and prints as 0%.
 //
-// The raw counters are not columns. All ten are in --json with deltas, because
-// a table that carries every one of them stops being readable at the width
-// where this one is already uncomfortable.
+// The raw counters are not columns. Every one is in --json with its delta,
+// because a table that carries them all stops being readable at the width where
+// this one is already uncomfortable.
 //
 // elapsed is measured between the two readings by the ANSWERER's clock, so
 // BLOCK% is a share of the interval the counters actually advanced over.
 func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, wait string) {
 	blockPct, wait = "-", "-"
-	if elapsed > 0 {
-		blockPct = fmt.Sprintf("%.0f%%", 100*float64(r.BlockedNs-p.BlockedNs)/float64(elapsed))
+	if blocked, ok := delta(r, p, protocol.TrsfCounterKey_BlockedNs); ok && elapsed > 0 {
+		blockPct = fmt.Sprintf("%.0f%%", 100*float64(blocked)/float64(elapsed))
 	}
-	parks := r.Blocks - p.Blocks
-	if parks == 0 {
+	parks, ok := delta(r, p, protocol.TrsfCounterKey_Blocks)
+	if !ok || parks == 0 {
 		// No park in the interval: the loop either never stopped or never ran.
 		// A share of nothing has no subject, so it is absent rather than zero.
 		return blockPct, wait
 	}
-	timer := r.WakeTimer - p.WakeTimer
-	send := r.WakeSend - p.WakeSend
+	timer, _ := delta(r, p, protocol.TrsfCounterKey_WakeTimer)
+	send, _ := delta(r, p, protocol.TrsfCounterKey_WakeSend)
 	peer := parks - timer - send
 	switch {
 	case timer >= send && timer >= peer:
@@ -97,7 +117,8 @@ func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, 
 		// is a majority reading rather than an identity: it says most parks in
 		// this interval carried the pacer's deadline, and the pacer's own floor
 		// is 1 ms.
-		if r.ArmedPacer-p.ArmedPacer > parks/2 {
+		pacer, _ := delta(r, p, protocol.TrsfCounterKey_ArmedPacer)
+		if pacer > parks/2 {
 			wait = "timer/pacer"
 		} else {
 			wait = "timer/loss"
@@ -122,20 +143,36 @@ func dominantPush(r, p protocol.TrsfConnState) string {
 	best, name := uint64(0), "?"
 	for _, c := range []struct {
 		n string
-		d uint64
+		k protocol.TrsfCounterKey
 	}{
-		{"app", r.SendPushApp - p.SendPushApp},    // waiting on its caller
-		{"ack", r.SendPushAck - p.SendPushAck},    // the window was the constraint
-		{"self", r.SendPushSelf - p.SendPushSelf}, // cycling, not waiting
-		{"cwnd", r.SendPushCwnd - p.SendPushCwnd}, // congestion-blocked, revived
-		{"loss", r.SendPushLoss - p.SendPushLoss}, // retransmission pressure
-		{"other", r.SendPushOther - p.SendPushOther},
+		{"app", protocol.TrsfCounterKey_SendPushApp},   // waiting on its caller
+		{"ack", protocol.TrsfCounterKey_SendPushAck},   // the window was the constraint
+		{"self", protocol.TrsfCounterKey_SendPushSelf}, // cycling, not waiting
+		{"cwnd", protocol.TrsfCounterKey_SendPushCwnd}, // congestion-blocked, revived
+		{"loss", protocol.TrsfCounterKey_SendPushLoss}, // retransmission pressure
+		{"other", protocol.TrsfCounterKey_SendPushOther},
 	} {
-		if c.d > best {
-			best, name = c.d, c.n
+		if d, ok := delta(r, p, c.k); ok && d > best {
+			best, name = d, c.n
 		}
 	}
 	return name
+}
+
+// queueDelay is srtt - min_rtt: how much of the round trip is a queue rather
+// than the path. The window's own drain time can BE the srtt, in which case
+// cwnd/srtt equals the delivered rate for any cwnd and says nothing; this is
+// the reading that separates the two.
+func queueDelay(r protocol.TrsfConnState) string {
+	minRTT, ok := r.Counter(protocol.TrsfCounterKey_MinRttUs)
+	if !ok {
+		return "-" // no ACK has arrived: not measured, which is not zero
+	}
+	srtt := r.CounterOr(protocol.TrsfCounterKey_SrttUs, 0)
+	if srtt < minRTT {
+		return "0s"
+	}
+	return (time.Duration(srtt-minRTT) * time.Microsecond).String()
 }
 
 // writeTrsf renders one reading. prev nil means "no previous reading", which is
@@ -158,8 +195,9 @@ func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]pro
 	if prevAt != 0 && sampledAt > prevAt {
 		elapsed = time.Duration(sampledAt - prevAt)
 	}
-	fmt.Fprintf(out, "%-34s %-7s %-9s %8s %9s %9s %8s %7s %7s %7s %-11s\n",
-		"CID", "ROLE", "TASK", "CWND", "INFLIGHT", "SRTT", "LOSS+", "SPUR+", "LOOP+", "BLOCK%", "WAIT")
+	const hdr = "%-34s %-7s %-9s %8s %9s %9s %8s %8s %7s %7s %7s %-11s\n"
+	fmt.Fprintf(out, hdr, "CID", "ROLE", "TASK", "CWND", "INFLIGHT", "SRTT", "QUEUE",
+		"LOSS+", "SPUR+", "LOOP+", "BLOCK%", "WAIT")
 	for _, r := range rows {
 		task := "-"
 		if r.PrincipalTask.Id != ([16]uint8{}) {
@@ -168,15 +206,17 @@ func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]pro
 		lossD, spurD, loopD := "-", "-", "-"
 		blockPct, wait := "-", "-"
 		if p, ok := prev[string(r.Cid)]; ok {
-			lossD = fmt.Sprintf("%d", r.LossEvents-p.LossEvents)
-			spurD = fmt.Sprintf("%d", r.LossSpurious-p.LossSpurious)
-			loopD = fmt.Sprintf("%d", r.LoopIterations-p.LoopIterations)
+			lossD = deltaStr(r, p, protocol.TrsfCounterKey_LossEvents)
+			spurD = deltaStr(r, p, protocol.TrsfCounterKey_LossSpurious)
+			loopD = deltaStr(r, p, protocol.TrsfCounterKey_LoopIterations)
 			blockPct, wait = parkSummary(r, p, elapsed)
 		}
-		fmt.Fprintf(out, "%-34s %-7s %-9s %8d %9d %9s %8s %7s %7s %7s %-11s\n",
+		fmt.Fprintf(out, hdr,
 			string(r.Cid), r.Role.String(), task,
-			r.Cwnd, r.BytesInFlight,
-			(time.Duration(r.SrttUs) * time.Microsecond).String(),
+			fmt.Sprintf("%d", r.CounterOr(protocol.TrsfCounterKey_Cwnd, 0)),
+			fmt.Sprintf("%d", r.CounterOr(protocol.TrsfCounterKey_BytesInFlight, 0)),
+			(time.Duration(r.CounterOr(protocol.TrsfCounterKey_SrttUs, 0)) * time.Microsecond).String(),
+			queueDelay(r),
 			lossD, spurD, loopD, blockPct, wait)
 	}
 	if len(rows) == 0 {
@@ -186,27 +226,20 @@ func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]pro
 	return nil
 }
 
+// trsfJSON emits every counter the answerer sent, by its own name, plus a delta
+// for each when there is something to compare against.
+//
+// Nothing here enumerates the counters. That is the point of the keyed row: a
+// counter added to the transport reaches this output with no edit, so the CLI
+// stops being one of the places a new measurement has to be threaded through —
+// and a key this build does not know still appears, under the enum's numeric
+// fallback name, rather than being silently dropped.
 func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) map[string]any {
 	m := map[string]any{
 		"cid": string(r.Cid), "role": r.Role.String(),
-		"cwnd": r.Cwnd, "bytes_in_flight": r.BytesInFlight,
-		"srtt_us": r.SrttUs, "rttvar_us": r.RttvarUs, "mtu": r.Mtu,
-		"send_queue": r.SendQueue, "recv_queue": r.RecvQueue,
-		"send_streams": r.SendStreams, "recv_streams": r.RecvStreams,
-		"loop_iterations": r.LoopIterations,
-		"loss_events":     r.LossEvents, "loss_packets": r.LossPackets,
-		"loss_spurious": r.LossSpurious,
-		// The run loop's account of its own waiting. All five raw, because the
-		// table shows only the two derived readings and this is where a
-		// consumer that wants the split gets it.
-		"blocked_ns": r.BlockedNs, "blocks": r.Blocks,
-		"wake_timer": r.WakeTimer, "wake_send": r.WakeSend,
-		"armed_pacer": r.ArmedPacer,
-		// Why the send trigger was pushed. EVENT counts, so these do not sum
-		// to blocks and are not a partition of the wakes.
-		"send_push_app": r.SendPushApp, "send_push_ack": r.SendPushAck,
-		"send_push_self": r.SendPushSelf, "send_push_cwnd": r.SendPushCwnd,
-		"send_push_loss": r.SendPushLoss, "send_push_other": r.SendPushOther,
+	}
+	for _, c := range r.Counters {
+		m[c.Key.String()] = c.Value
 	}
 	if r.PrincipalTask.Id != ([16]uint8{}) {
 		m["principal_task"] = hex.EncodeToString(r.PrincipalTask.Id[:])
@@ -214,20 +247,11 @@ func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) 
 	// Deltas are emitted only when there IS a previous reading, so a consumer
 	// can tell "no change" from "nothing to compare against".
 	if p, ok := prev[string(r.Cid)]; ok {
-		m["loss_events_delta"] = r.LossEvents - p.LossEvents
-		m["loss_spurious_delta"] = r.LossSpurious - p.LossSpurious
-		m["loop_iterations_delta"] = r.LoopIterations - p.LoopIterations
-		m["blocked_ns_delta"] = r.BlockedNs - p.BlockedNs
-		m["blocks_delta"] = r.Blocks - p.Blocks
-		m["wake_timer_delta"] = r.WakeTimer - p.WakeTimer
-		m["wake_send_delta"] = r.WakeSend - p.WakeSend
-		m["armed_pacer_delta"] = r.ArmedPacer - p.ArmedPacer
-		m["send_push_app_delta"] = r.SendPushApp - p.SendPushApp
-		m["send_push_ack_delta"] = r.SendPushAck - p.SendPushAck
-		m["send_push_self_delta"] = r.SendPushSelf - p.SendPushSelf
-		m["send_push_cwnd_delta"] = r.SendPushCwnd - p.SendPushCwnd
-		m["send_push_loss_delta"] = r.SendPushLoss - p.SendPushLoss
-		m["send_push_other_delta"] = r.SendPushOther - p.SendPushOther
+		for _, c := range r.Counters {
+			if d, ok := delta(r, p, c.Key); ok {
+				m[c.Key.String()+"_delta"] = d
+			}
+		}
 	}
 	return m
 }

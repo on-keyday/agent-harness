@@ -9,6 +9,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 func trsfRequest(t *testing.T, target protocol.TrsfTarget, runner protocol.RunnerID) []byte {
@@ -70,7 +71,8 @@ func TestServerTrsfStateReadsNoCapabilityAndPassesTheVisibility(t *testing.T) {
 	var sawAllowed map[string]bool
 	h.TrsfStateFn = func(allowed map[string]bool, globalView bool) ([]protocol.TrsfConnState, int64) {
 		sawGlobal, sawAllowed = globalView, allowed
-		return []protocol.TrsfConnState{{Cwnd: 4242}}, time.Now().UnixNano()
+		return []protocol.TrsfConnState{protocol.TrsfRowFrom(&trsf.InternalState{CongestionWindow: 4242})},
+			time.Now().UnixNano()
 	}
 	conn := trsfCaller(t, h, "9802")
 	conn.nextSendStreamID = 7 // the rows travel on a stream, so one must exist
@@ -97,8 +99,11 @@ func TestServerTrsfStateReadsNoCapabilityAndPassesTheVisibility(t *testing.T) {
 	if err := body.DecodeExact(conn.sendStreamBytes(t, 7)); err != nil {
 		t.Fatalf("decode body off the stream: %v", err)
 	}
-	if len(body.Conns) != 1 || body.Conns[0].Cwnd != 4242 {
+	if len(body.Conns) != 1 {
 		t.Fatalf("rows did not survive the stream: %+v", body.Conns)
+	}
+	if cwnd, ok := body.Conns[0].Counter(protocol.TrsfCounterKey_Cwnd); !ok || cwnd != 4242 {
+		t.Fatalf("cwnd = (%d, %v) off the stream, want (4242, true)", cwnd, ok)
 	}
 }
 

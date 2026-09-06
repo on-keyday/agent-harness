@@ -610,8 +610,14 @@ func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
 	a.cmdresult.Append(fmt.Sprintf("  streams: send=%d recv=%d   mtu=%d", st.ActiveSendStreams, st.ActiveReceiveStreams, st.CurrentMTU))
 	a.cmdresult.Append(fmt.Sprintf("  queues: send=%d recv=%d   triggers: sendAction=%d updateWin=%d cancel=%d",
 		st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
-	a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
-		st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
+	a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v, min %v) sentPkts=%d",
+		st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, st.MinRTT, len(st.SentPackets)))
+	// rtt - min is queueing delay. The window's own drain time can BE the srtt,
+	// and then cwnd/srtt equals the delivered rate for any cwnd and says
+	// nothing; this is the reading that tells those apart.
+	if st.MinRTT > 0 && st.SmoothedRTT > st.MinRTT {
+		a.cmdresult.Append(fmt.Sprintf("  queue: %v of the round trip is queueing delay", st.SmoothedRTT-st.MinRTT))
+	}
 	// spurious counts packets given up on and then acked: those cuts to
 	// the window were taken on nothing.
 	a.cmdresult.Append(fmt.Sprintf("  loss: events=%d packets=%d spurious=%d",
