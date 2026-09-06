@@ -88,23 +88,9 @@ func (s *Session) trsfStates() []protocol.TrsfConnState {
 		if st == nil {
 			continue
 		}
-		row := protocol.TrsfConnState{
-			Role:           c.role,
-			PrincipalTask:  c.task,
-			Mtu:            uint32(st.CurrentMTU),
-			Cwnd:           uint32(st.CongestionWindow),
-			BytesInFlight:  uint32(st.BytesInFlight),
-			SrttUs:         uint64(st.SmoothedRTT.Microseconds()),
-			RttvarUs:       uint64(st.RTTVariance.Microseconds()),
-			SendQueue:      uint32(st.SendQueueLength),
-			RecvQueue:      uint32(st.ReceiveQueueLength),
-			SendStreams:    uint32(st.ActiveSendStreams),
-			RecvStreams:    uint32(st.ActiveReceiveStreams),
-			LoopIterations: st.LoopIterations,
-			LossEvents:     uint64(st.Loss.Events),
-			LossPackets:    uint64(st.Loss.Packets),
-			LossSpurious:   uint64(st.Loss.Spurious),
-		}
+		row := protocol.TrsfRowFrom(st)
+		row.Role = c.role
+		row.PrincipalTask = c.task
 		row.SetCid([]byte(c.cid))
 		out = append(out, row)
 	}

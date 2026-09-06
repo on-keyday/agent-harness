@@ -26,7 +26,7 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 		if err != nil {
 			return err
 		}
-		return writeTrsf(out, rows, nil, asJSON)
+		return writeTrsf(out, rows, nil, time.Time{}, asJSON)
 	}
 	every, err := time.ParseDuration(watch)
 	if err != nil {
@@ -36,6 +36,10 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 		return fmt.Errorf("--watch %q: must be positive", watch)
 	}
 	prev := map[string]protocol.TrsfConnState{}
+	// The wall time of the previous reading, not the ticker interval: BLOCK% is
+	// a fraction of elapsed time, and a reading that took a round trip to a
+	// runner does not arrive one interval after the last one.
+	var prevAt time.Time
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -43,12 +47,14 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 		if err != nil {
 			return err
 		}
-		if err := writeTrsf(out, rows, prev, asJSON); err != nil {
+		now := time.Now()
+		if err := writeTrsf(out, rows, prev, prevAt, asJSON); err != nil {
 			return err
 		}
 		for _, r := range rows {
 			prev[string(r.Cid)] = r
 		}
+		prevAt = now
 		select {
 		case <-ctx.Done():
 			return nil
@@ -57,9 +63,53 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 	}
 }
 
+// parkSummary renders the two derived columns the wake counters exist for:
+// how much of the interval the run loop spent parked, and what ended those
+// parks. Both are undefined without a previous reading, and BLOCK% is also
+// undefined without elapsed time, so each returns "-" for ABSENCE — never for
+// a zero, which is a measurement and prints as 0%.
+//
+// The raw five counters are not columns. They are all in --json, with deltas,
+// because a table that carries every one of them stops being readable at the
+// width where this one is already uncomfortable.
+func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, wait string) {
+	blockPct, wait = "-", "-"
+	if elapsed > 0 {
+		blockPct = fmt.Sprintf("%.0f%%", 100*float64(r.BlockedNs-p.BlockedNs)/float64(elapsed))
+	}
+	parks := r.Blocks - p.Blocks
+	if parks == 0 {
+		// No park in the interval: the loop either never stopped or never ran.
+		// A share of nothing has no subject, so it is absent rather than zero.
+		return blockPct, wait
+	}
+	timer := r.WakeTimer - p.WakeTimer
+	send := r.WakeSend - p.WakeSend
+	peer := parks - timer - send
+	switch {
+	case timer >= send && timer >= peer:
+		// armed_pacer counts how a park was ARMED, not what ended it, so this
+		// is a majority reading rather than an identity: it says most parks in
+		// this interval carried the pacer's deadline, and the pacer's own floor
+		// is 1 ms.
+		if r.ArmedPacer-p.ArmedPacer > parks/2 {
+			wait = "timer/pacer"
+		} else {
+			wait = "timer/loss"
+		}
+	case send >= peer:
+		wait = "send" // the application is not feeding the transport
+	default:
+		wait = "peer" // an inbound packet, an ACK to send, a window update
+	}
+	return blockPct, wait
+}
+
 // writeTrsf renders one reading. prev nil means "no previous reading", which is
 // the one-shot form; otherwise the delta columns carry the change since it.
-func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]protocol.TrsfConnState, asJSON bool) error {
+// prevAt is when that previous reading was taken, and is what BLOCK% is a
+// fraction of.
+func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]protocol.TrsfConnState, prevAt time.Time, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(out)
 		for i := range rows {
@@ -69,24 +119,30 @@ func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]pro
 		}
 		return nil
 	}
-	fmt.Fprintf(out, "%-34s %-7s %-9s %8s %9s %9s %8s %7s %7s\n",
-		"CID", "ROLE", "TASK", "CWND", "INFLIGHT", "SRTT", "LOSS+", "SPUR+", "LOOP+")
+	var elapsed time.Duration
+	if !prevAt.IsZero() {
+		elapsed = time.Since(prevAt)
+	}
+	fmt.Fprintf(out, "%-34s %-7s %-9s %8s %9s %9s %8s %7s %7s %7s %-11s\n",
+		"CID", "ROLE", "TASK", "CWND", "INFLIGHT", "SRTT", "LOSS+", "SPUR+", "LOOP+", "BLOCK%", "WAIT")
 	for _, r := range rows {
 		task := "-"
 		if r.PrincipalTask.Id != ([16]uint8{}) {
 			task = hex.EncodeToString(r.PrincipalTask.Id[:])[:8]
 		}
 		lossD, spurD, loopD := "-", "-", "-"
+		blockPct, wait := "-", "-"
 		if p, ok := prev[string(r.Cid)]; ok {
 			lossD = fmt.Sprintf("%d", r.LossEvents-p.LossEvents)
 			spurD = fmt.Sprintf("%d", r.LossSpurious-p.LossSpurious)
 			loopD = fmt.Sprintf("%d", r.LoopIterations-p.LoopIterations)
+			blockPct, wait = parkSummary(r, p, elapsed)
 		}
-		fmt.Fprintf(out, "%-34s %-7s %-9s %8d %9d %9s %8s %7s %7s\n",
+		fmt.Fprintf(out, "%-34s %-7s %-9s %8d %9d %9s %8s %7s %7s %7s %-11s\n",
 			string(r.Cid), r.Role.String(), task,
 			r.Cwnd, r.BytesInFlight,
 			(time.Duration(r.SrttUs) * time.Microsecond).String(),
-			lossD, spurD, loopD)
+			lossD, spurD, loopD, blockPct, wait)
 	}
 	if len(rows) == 0 {
 		fmt.Fprintln(out, "(no connections visible to you)")
@@ -105,6 +161,12 @@ func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) 
 		"loop_iterations": r.LoopIterations,
 		"loss_events":     r.LossEvents, "loss_packets": r.LossPackets,
 		"loss_spurious": r.LossSpurious,
+		// The run loop's account of its own waiting. All five raw, because the
+		// table shows only the two derived readings and this is where a
+		// consumer that wants the split gets it.
+		"blocked_ns": r.BlockedNs, "blocks": r.Blocks,
+		"wake_timer": r.WakeTimer, "wake_send": r.WakeSend,
+		"armed_pacer": r.ArmedPacer,
 	}
 	if r.PrincipalTask.Id != ([16]uint8{}) {
 		m["principal_task"] = hex.EncodeToString(r.PrincipalTask.Id[:])
@@ -115,6 +177,11 @@ func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) 
 		m["loss_events_delta"] = r.LossEvents - p.LossEvents
 		m["loss_spurious_delta"] = r.LossSpurious - p.LossSpurious
 		m["loop_iterations_delta"] = r.LoopIterations - p.LoopIterations
+		m["blocked_ns_delta"] = r.BlockedNs - p.BlockedNs
+		m["blocks_delta"] = r.Blocks - p.Blocks
+		m["wake_timer_delta"] = r.WakeTimer - p.WakeTimer
+		m["wake_send_delta"] = r.WakeSend - p.WakeSend
+		m["armed_pacer_delta"] = r.ArmedPacer - p.ArmedPacer
 	}
 	return m
 }

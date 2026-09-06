@@ -99,7 +99,7 @@ type CatalogAction struct {
 // ConnsAction is built by: conns.
 type ConnsAction struct {
 	ActionMarker
-	// report congestion state (cwnd/srtt/in-flight/loss) instead of the connection list
+	// report congestion state (cwnd/srtt/in-flight/loss) and where the run loop's time goes, instead of th…
 	Trsf bool
 	// with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the gl…
 	Runner string

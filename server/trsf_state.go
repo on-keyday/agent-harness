@@ -9,7 +9,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // runnerTrsfTimeout bounds the round trip to a runner. Short: the answer is a
@@ -46,34 +45,13 @@ func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) []prot
 		if st == nil {
 			continue // a connection whose transport is already gone
 		}
-		row := trsfRow(st)
+		row := protocol.TrsfRowFrom(st)
 		row.Role = info.Role
 		row.PrincipalTask = info.PrincipalTask
 		row.SetCid(info.Cid)
 		out = append(out, row)
 	}
 	return out
-}
-
-// trsfRow projects trsf's own state onto the wire record. SentPackets is left
-// out deliberately: it is unbounded, and no reading of a stalled transfer needs
-// per-packet detail.
-func trsfRow(st *trsf.InternalState) protocol.TrsfConnState {
-	return protocol.TrsfConnState{
-		Mtu:            uint32(st.CurrentMTU),
-		Cwnd:           uint32(st.CongestionWindow),
-		BytesInFlight:  uint32(st.BytesInFlight),
-		SrttUs:         uint64(st.SmoothedRTT.Microseconds()),
-		RttvarUs:       uint64(st.RTTVariance.Microseconds()),
-		SendQueue:      uint32(st.SendQueueLength),
-		RecvQueue:      uint32(st.ReceiveQueueLength),
-		SendStreams:    uint32(st.ActiveSendStreams),
-		RecvStreams:    uint32(st.ActiveReceiveStreams),
-		LoopIterations: st.LoopIterations,
-		LossEvents:     uint64(st.Loss.Events),
-		LossPackets:    uint64(st.Loss.Packets),
-		LossSpurious:   uint64(st.Loss.Spurious),
-	}
 }
 
 // sendRunnerTrsfStateRequest asks one runner for its own transport state.

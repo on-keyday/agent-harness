@@ -1625,7 +1625,8 @@ enum TrsfTarget:
 # The counters that only mean something as a DELTA are marked. Reading one
 # sample of loop_iterations says nothing; two samples separate a run loop that
 # is blocked (frozen) from one that is busy-spinning (exploding) from one that
-# is merely congestion-blocked (advancing slowly).
+# is merely congestion-blocked (advancing slowly). The wake counters at the end
+# split that last case further, into what the loop is waiting FOR.
 format TrsfConnState:
     cid_len :u8
     cid :[cid_len]u8            # same canonical string ConnInfo.cid carries
@@ -1646,6 +1647,32 @@ format TrsfConnState:
     loss_spurious :u64          # delta only: cuts whose packets were merely late.
                                 # Climbing with a transfer means the sending rate
                                 # is being set by a measurement error, not the path.
+    # The run loop's account of its own WAITING. loop_iterations says how fast
+    # the loop turns; these say why it is not turning faster -- the question a
+    # transfer running far below its congestion window poses, and one no
+    # counter above can answer. All delta only.
+    #
+    #   duty cycle = blocked_ns / wall time between two readings
+    #   mean park  = blocked_ns / blocks
+    #   loop_iterations - blocks = iterations that never parked (the
+    #                              received-packet fast path)
+    #
+    # blocks counts parks ENTERED, so a loop still parked reads blocks=N with
+    # blocked_ns unchanged; a loop that has STOPPED is what a frozen
+    # loop_iterations already says.
+    blocked_ns :u64             # delta only: nanoseconds parked in the select
+    blocks :u64                 # delta only: parks entered
+    wake_timer :u64             # delta only: parks ended by the timer --
+                                # the transport waiting on a deadline of its own
+    wake_send :u64              # delta only: parks ended by the send trigger --
+                                # the application not feeding the transport.
+                                # blocks - wake_timer - wake_send is the
+                                # remainder, and means the peer.
+    armed_pacer :u64            # delta only: parks whose deadline came from the
+                                # pacer rather than loss detection. The pacer's
+                                # own floor is 1 ms, so a loop held by it and one
+                                # held by loss detection are indistinguishable in
+                                # wake_timer and call for opposite fixes.
 
 enum TrsfStateStatus:
     :u8

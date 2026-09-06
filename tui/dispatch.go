@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -619,6 +620,15 @@ func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
 	// is blocked (nothing is demuxed, so no stream ever becomes visible),
 	// exploding = busy-spin, advancing slowly = congestion-blocked.
 	a.cmdresult.Append(fmt.Sprintf("  loop: iterations=%d (run `trsf` twice — the delta is the signal)", st.LoopIterations))
+	// What the loop is WAITING for, which the iteration count alone cannot say.
+	// blocks counts parks ENTERED and blocked accrues on the wake, so a loop
+	// still parked shows blocks advancing with blocked flat. timer vs send vs
+	// the remainder separates a deadline of the transport's own from an
+	// application that is not feeding it from the peer; armedPacer splits the
+	// first, because the pacer's floor is 1ms and loss detection's is not.
+	a.cmdresult.Append(fmt.Sprintf("  waits: blocked=%v blocks=%d timer=%d send=%d peer=%d armedPacer=%d",
+		time.Duration(st.BlockedNs), st.Blocks, st.WakeTimer, st.WakeSend,
+		st.Blocks-st.WakeTimer-st.WakeSend, st.ArmedPacer))
 	return nil
 }
 
