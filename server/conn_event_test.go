@@ -392,7 +392,7 @@ func TestConnEvents_SameCIDAllThree(t *testing.T) {
 func TestConnEvents_PublishFilteredDelivery(t *testing.T) {
 	s := makeEventServer(t)
 
-	// Build a confined-caller subtree: leaf task L (no info_global). The confined
+	// Build a confined-caller subtree: leaf task L (no global visibility). The confined
 	// subscriber's principal is L, so it may see only agent conns in L's subtree.
 	var leafTask protocol.TaskID
 	lHex := s.tasks.Create("/r", "leaf", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
@@ -404,7 +404,7 @@ func TestConnEvents_PublishFilteredDelivery(t *testing.T) {
 	copyHexToID(t, uHex, &otherTask)
 
 	// --- Register the CONFINED subscriber on conns.status ---
-	// Its CID's principal is leafTask, with no info_global.
+	// Its CID's principal is leafTask, with no global visibility.
 	confinedCIDStr := "ws:127.0.0.1:9600-1"
 	confinedCID := objproto.MustParseConnectionID(confinedCIDStr)
 	recordAgent(s, confinedCIDStr, leafTask) // principal=L, caps=Spawn (no InfoGlobal)

@@ -188,10 +188,17 @@ func descendantsOf(children map[string][]string, selfHex string, allowed map[str
 //   - otherwise allowed = {self} ∪ scope.IDs, plus every descendant when the
 //     base is subtree.
 //
-// It deliberately does NOT consult Capability_BoardObserve. That bit widens what
-// may be SEEN; folding it in here would make it widen what may be DONE, and a
-// caller holding info_global and cancel would be able to kill anything on the
-// server. visibleToCaller is the wrapper that adds it.
+// It deliberately does NOT consult the VISIBILITY rank (TaskScope.vis_base).
+// That rank widens what may be SEEN; folding it in here would make it widen
+// what may be DONE, and a caller that could see the whole server while holding
+// cancel would be able to kill anything on it. visibleToCaller is the wrapper
+// that adds it.
+//
+// The argument used to be written about info_global, one bit that gated task
+// visibility, connection visibility AND the board. That bit is gone: the first
+// two became the visibility rank and the third became board_observe. The
+// reasoning survives the split unchanged, which is why it is restated rather
+// than deleted.
 func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all bool, allowed map[string]bool) {
 	return h.scopeSetWith(connID, want, h.childIndex())
 }

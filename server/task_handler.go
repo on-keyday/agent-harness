@@ -592,8 +592,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				if pf.direction == protocol.PortForwardDirection_Remote {
 					need = protocol.Capability_ForwardRemote
 				}
-				// authorize, not hasCap: a forward VISIBLE through info_global
-				// may still belong to a task outside the caller's action scope.
+				// authorize, not hasCap: a forward VISIBLE through the caller's
+				// visibility rank may still belong to a task outside its ACTION
+				// scope, and the two are deliberately different sets.
 				if !h.authorize(cid, need, pf.taskIDHex) {
 					h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 					return

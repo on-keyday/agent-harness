@@ -11,7 +11,7 @@ import (
 )
 
 // handleBoardTopics returns the agentboard topic overview (metadata only).
-// Cap (info_global) is enforced centrally via requiredCap before dispatch.
+// Cap (board_observe) is enforced centrally via requiredCap before dispatch.
 func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 	out := protocol.BoardTopicsResponse{RequestId: requestID}
 	for _, r := range h.Board.ListTopics() {

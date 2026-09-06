@@ -295,8 +295,10 @@ enum TaskControlKind:
     notify
     permission_denied
     list_conns      # appended (keeps existing ordinals stable): snapshot list of
-                    # live objproto connections. Requires info_global; confined
-                    # tasks see only their own subtree.
+                    # live objproto connections. Needs NO capability: what it
+                    # lists is a projection of task visibility, so confined
+                    # tasks see only their own subtree -- and, having no
+                    # principal task to project from, no runner connections.
     board_topics    # list all known agentboard topics (names + metadata)
     board_read      # read messages from a topic (returns stream_id for content)
     board_purge     # purge a single message (by seq) from a topic
@@ -319,7 +321,7 @@ enum TaskControlKind:
                             # reachable through refs/heads/harness/<taskID>.
     board_subscribers       # list each task's agentboard subscription set,
                             # optionally narrowed to the tasks a publish to one
-                            # topic would reach. Requires info_global.
+                            # topic would reach. Requires board_observe.
     set_caps                # operator-only: rewrite a live task's caps + scope.
                             # Gated on the caller having NO principal task, not
                             # on a capability bit — a bit authorising "rewrite
@@ -639,7 +641,7 @@ format TaskInfo:
     # skills_injected mirrors RunnerInfo.skills_injected for the runner this task
     # was ASSIGNED to, stamped at assign time so it survives that runner going
     # offline. It is carried on the task rather than read off RunnerInfo because
-    # a confined caller (no info_global, not operator) receives ZERO runners by
+    # a confined caller (not global by visibility rank, not operator) receives ZERO runners by
     # design — see handleList — and a confined agent deciding whether a peer
     # follows the agentboard conventions is exactly who needs this bit.
     #

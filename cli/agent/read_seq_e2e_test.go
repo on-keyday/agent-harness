@@ -106,7 +106,7 @@ func TestAgentCLI_E2E_ReadSeq_ReturnsTheBodyOfOneMessage(t *testing.T) {
 // reason the op is scoped at all. Seqs are board-global and consecutive, so an
 // unscoped read by seq would walk every ring without ever naming a topic —
 // and needing the NAME is what keeps rings from being browsable (listing them
-// is what info_global gates). A caller outside the topic must not be able to
+// is what board_observe gates). A caller outside the topic must not be able to
 // tell the message apart from one that never existed.
 func TestAgentCLI_E2E_ReadSeq_RefusesATopicTheCallerDoesNotSubscribeTo(t *testing.T) {
 	addr := freePortE2E(t)

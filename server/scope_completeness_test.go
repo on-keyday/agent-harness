@@ -24,7 +24,7 @@ const (
 	// answer the kind's own not-found when the target is out of scope.
 	targetGated targetClass = iota
 	// infoScoped: carries a target but is read-only listing; filtered through
-	// visibleToCaller, which is scope widened by info_global.
+	// visibleToCaller, which is the scope's own visibility rank.
 	infoScoped
 	// noTarget: names no task, or names only the caller's own connection.
 	noTarget
@@ -73,7 +73,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_DialRunner:  noTarget, // names a runner, not a task
 	protocol.TaskControlKind_Whoami:      noTarget, // the caller's own identity
 	// Agentboard kinds address topics, not tasks. Topics have no owner, so
-	// scope does not apply; info_global / purge remain their gates.
+	// scope does not apply; board_observe / purge remain their gates.
 	protocol.TaskControlKind_BoardTopics:      noTarget,
 	protocol.TaskControlKind_BoardRead:        noTarget,
 	protocol.TaskControlKind_BoardPurge:       noTarget,

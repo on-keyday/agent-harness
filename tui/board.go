@@ -21,7 +21,7 @@ import (
 type BoardTopicsMsg struct {
 	Rows []cli.BoardTopicRow
 	// Subs counts subscribers per topic NAME, including names that have no
-	// topic yet. Nil when the caller lacks info_global for BoardSubscribers;
+	// topic yet. Nil when the caller lacks board_observe for BoardSubscribers;
 	// the list still renders, with the Subs column blank.
 	Subs map[string]int
 	Err  error
@@ -380,7 +380,7 @@ func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
 		at = time.UnixMilli(int64(r.LastPublishedAtMs)).UTC().Format(time.RFC3339)
 		lastSeq = fmt.Sprintf("%d", r.LastSeq)
 	}
-	// Blank rather than 0 when counts are unavailable (no info_global), so an
+	// Blank rather than 0 when counts are unavailable (no board_observe), so an
 	// absent count is never read as "nobody is listening".
 	sub := ""
 	if subs != nil {

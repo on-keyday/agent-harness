@@ -806,7 +806,7 @@ func (s *Server) agentHandleRetract(conn ConnHandle, ac *agentConn, r *agentboar
 //
 // No capability gate (helloed only), like inbox/wait/send/subscribe. It is a
 // KEYED read of a topic the caller must already name — not a discovery sweep
-// (that is list_topics, which info_global gates). Everything it surfaces (seq /
+// (that is list_topics, which board_observe gates). Everything it surfaces (seq /
 // sender task id / size / time) is already obtainable uncapped by subscribing
 // and reading inbox/wait — metadata is a strict subset of that content — so a
 // cap here would gate a read more tightly than the content it summarizes, for

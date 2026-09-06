@@ -71,7 +71,7 @@ func TopicsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 			// Not an empty list: the caller may not enumerate the board at all.
 			// Same shape as purge.go's Denied arm — the status is what makes an
 			// empty result distinguishable from a refused one.
-			return errors.New("topics denied: requires capability \"info_global\"")
+			return errors.New("topics denied: requires capability \"board_observe\"")
 		default:
 			return fmt.Errorf("topics: unexpected status %v", r.Status)
 		}

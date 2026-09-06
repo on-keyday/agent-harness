@@ -43,8 +43,8 @@ func TestTaskLineOmitsSkillsMarkerWhenNotInjected(t *testing.T) {
 	}
 }
 
-// A confined caller receives ZERO runners (handleList gates them on
-// info_global), so runnerByID is empty for exactly the readers the marker is
+// A confined caller receives ZERO runners (handleList gates them on the
+// visibility rank), so runnerByID is empty for exactly the readers the marker is
 // for. Passing nil here is that caller, not an artificial case.
 func TestTaskLineMarkerSurvivesWithoutRunners(t *testing.T) {
 	line := taskLine(taskWithProfile("codex", true), map[string]protocol.RunnerInfo{})

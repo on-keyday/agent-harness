@@ -123,7 +123,7 @@ format SendResponse:
     # Without it `ok` covers both "everyone got it" and "nobody is listening",
     # and the sender cannot tell them apart: the retained ring accepts the
     # message either way, and the one command that would answer the question
-    # (board subscribers) needs info_global, which a confined task lacks. A
+    # (board subscribers) needs board_observe, which a confined task lacks. A
     # typo'd or stale chat.<short-id> is the common way to land on zero.
     #
     # It counts the PUBLISHER too when the publisher subscribes to the target
@@ -263,7 +263,7 @@ enum ListTopicsStatus:
     :u8
     ok
     # denied is its own answer rather than an empty list. The gate is a
-    # visibility scope (info_global), and an empty list is ALSO what a board
+    # the board_observe capability, and an empty list is ALSO what a board
     # with no topics returns — so collapsing the two made a confined agent
     # debugging "my messages aren't arriving" read the denial as "nobody is
     # subscribed", with rc=0. Every sibling response that can be refused
@@ -272,7 +272,7 @@ enum ListTopicsStatus:
     #
     # Unlike RetractStatus / ReadSeqStatus below, there is no enumeration
     # oracle to guard against here: denied reports a property of the CALLER
-    # (it lacks info_global — whoami already tells it that) and nothing about
+    # (it lacks board_observe — whoami already tells it that) and nothing about
     # which topics exist.
     denied
 

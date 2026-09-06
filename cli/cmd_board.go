@@ -137,7 +137,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				}
 			}
 		} else {
-			// Requires info_global; a caller without it still gets the topics.
+			// Requires board_observe; a caller without it still gets the topics.
 			subsOK = false
 			fmt.Fprintf(os.Stderr, "board topics: subscriber counts unavailable: %v\n", serr)
 		}

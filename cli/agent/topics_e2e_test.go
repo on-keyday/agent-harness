@@ -136,7 +136,11 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Topics: want a denial error for a caller without InfoGlobal, got nil (out=%q)", out.String())
 	}
-	if !strings.Contains(err.Error(), "info_global") {
+	// Naming the capability is the point of the message: a denial that does not
+	// say which bit is missing sends the reader looking. This pinned
+	// "info_global" for long enough that the capability was removed and the
+	// error kept advising people to obtain it.
+	if !strings.Contains(err.Error(), "board_observe") {
 		t.Errorf("denial should name the missing capability; got: %v", err)
 	}
 	got := out.String()

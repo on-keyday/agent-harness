@@ -12,7 +12,7 @@ import (
 // permission_denied — a missing-capability answer about a task the caller
 // cannot see is an existence oracle.
 //
-// The caller here holds every capability except info_global and has the
+// The caller here holds every capability and has the
 // default subtree scope, so a failure can only be the target gate. If any of
 // these regress, a --caps cancel worker can kill the operator's sessions
 // again.

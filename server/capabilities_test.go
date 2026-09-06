@@ -1068,7 +1068,7 @@ func TestTopicsGated(t *testing.T) {
 	}
 
 	// Case 1: no InfoGlobal → zero topics.
-	t.Run("no_info_global_zero_topics", func(t *testing.T) {
+	t.Run("no_board_observe_zero_topics", func(t *testing.T) {
 		s, ac := makeTestAgentConn(t, protocol.Capability_Spawn) // no InfoGlobal
 		publishToBoard(t, s.Board)
 		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-1")}
@@ -1085,7 +1085,7 @@ func TestTopicsGated(t *testing.T) {
 	})
 
 	// Case 2: with InfoGlobal → topics returned.
-	t.Run("info_global_sees_topics", func(t *testing.T) {
+	t.Run("board_observe_sees_topics", func(t *testing.T) {
 		s, ac := makeTestAgentConn(t, protocol.Capability_BoardObserve)
 		publishToBoard(t, s.Board)
 		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-2")}
@@ -1248,7 +1248,7 @@ func TestRequiredCap_BoardSubscribers(t *testing.T) {
 func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
 	t.Helper()
 	h = &TaskHandler{Tasks: NewTaskStore()}
-	// Deliberately NOT Capability_All: that includes info_global, which makes
+	// Deliberately NOT Capability_All: a global visibility rank makes
 	// visibleToCaller answer all=true and quietly voids every scope assertion
 	// below. Tests that want it grant it explicitly.
 	caps := protocol.Capability_All &^ protocol.Capability_BoardObserve

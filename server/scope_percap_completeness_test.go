@@ -56,7 +56,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 
 	// forward_tap names a FORWARD, which resolves to the task that owns it, and
 	// the handler passes the bit to authorize by name. Not capNoTargetResolution:
-	// a forward VISIBLE through info_global may still belong to a task outside
+	// a forward VISIBLE through the visibility rank may still belong to a task outside
 	// the caller's action scope, which is the same distinction kill_port_forward
 	// draws one line above.
 	protocol.Capability_ForwardTap: {kind: capResolvedLiteral},
