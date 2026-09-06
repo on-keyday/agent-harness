@@ -1771,6 +1771,14 @@ var Verbs = []VerbSpec{
 		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/interactive.go:DoAttachSession"},
+			// The grid is a session surface, not a separate feature: it tiles
+			// live interactive sessions and attaches to them. It uses all three
+			// modes rather than one — tui/grid.go:205 says "Control = takeover,
+			// View = read-only" and its input mode is cowrite (grid.go:75) —
+			// and the WebUI's tiles are cowrite too: cli/preview_wasm.go:82
+			// calls attachSessionRPC with AttachMode_Cowrite.
+			{Surface: TUI, At: "tui/grid.go:GridModel"},
+			{Surface: WebUI, At: "webui/index.html#session-grid-body"},
 		},
 		Notes: []string{
 			"reattach to a detached/running session",
@@ -1783,7 +1791,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
-		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
+		NoModalSurface: "DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry",
 		Notes: []string{
 			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
 			"vocabulary plus the session-only is_attached / ring_buffer_bytes fields.",
