@@ -1419,9 +1419,61 @@ packet — and the peer emits an ACK from its own run loop, which processes one
 packet per iteration. Two loops, each doing one packet per turn, taking turns.
 
 That is a claim about the loop's structure rather than about any layer under it,
-and it is where the next work goes. The obvious question it raises — whether the
-run loop can emit more than one packet per iteration without reviving the
-busy-spin the `congestionBlocked` comment describes — is a change to the loop,
-so it needs its own design rather than a patch appended here. Falsification #1 in
-the throughput notes is about exactly that loop and says why it must not be
-changed on a hunch.
+and it is where the next work goes.
+
+## Amendment — found it: a retransmit dropped the stream off the send queue (2026-09-06)
+
+**And the loop's structure was not the cost.** Park durations turned out to be
+bimodal, and the split settles it: about 32,000 parks per 5 s at **1–2 µs** —
+the loop cycling through queued work — and about **1,900 per 5 s at 2,359 µs**,
+which were **4.64 s of every 5 s**. Batching the loop would have recovered the
+50 ms, not the 4,640. The one-packet-per-iteration reading is retracted.
+
+What the slow parks were, from the state captured at the moment of parking —
+16,618 stalls over 1 ms with nothing queued:
+
+| | |
+| --- | --- |
+| buffer empty only | 6,330 (all in the initial ramp) |
+| flow window shut | 4 |
+| both | 6 |
+| **neither — data buffered, window open, simply not queued** | **10,278** |
+| mean buffered at the stall | **656,846 bytes** |
+| mean sendable | 14,115,860 bytes |
+
+**`sendStream.triggerPacket` returns from the TOP when it takes something off
+the retransmit queue, and that skipped the re-queue at the bottom.** The stream
+came off `sendTrigger` holding a full buffer with an open flow window and an
+open congestion window, and the only thing that re-queues a stream in that
+state is `onACK`, which pushes unconditionally — so the loop parked until the
+next ACK: one round trip, ~2,000 times a second. Counted directly: 18,045
+retransmits, every one with data still buffered, every one skipping the
+re-queue, tracking the stall count 1:1.
+
+Fixed in objtrsf `5c3a630` — the condition is now one expression called from
+both exits — with a test that fails without it and its mirror that pins the
+empty case, so re-queueing an idle stream cannot reintroduce the self-notify
+spin the `congestionBlocked` comment exists to prevent.
+
+| | before | after |
+| --- | --- | --- |
+| 128 MB pull, 2 ms | 3.3–4.0 MB/s | **42–47 MB/s** |
+| `bench --runs 5`, 2 ms | median 9.60, stdev **70%**, spread 4.44x | median **44.86**, stdev 9% |
+| `bench --runs 5`, 50 ms | median 7.49, stdev 16% | median **8.75**, stdev **3%** |
+| in-process `relay` rung, interleaved ×5 | 42.09 | **55.17 (+31%, resolution ±14%)** |
+| in-process `mock` control | 193.57 | 187.13 (−3.3%, ±5% — did not move) |
+
+47 MB/s is the raw UDP ceiling measured for that lab path (47.7 MB/s), so the
+transport now runs it at capacity.
+
+**Two earlier findings in this document were this bug.** The RTT ladder near the
+top — 43.54 MB/s at delay 0 collapsing to 9.60 at 2 ms — read as "the transport
+is hurt by the presence of latency, not its size". It was: latency is what made
+each dropped re-queue cost something. At 2 ms the fixed transport now reaches
+44.86, which is the delay-0 figure. And the run-to-run spread the netem-lab
+README recorded as unexplained was how many retransmits happened to fall inside
+a given transfer.
+
+**What did NOT change is the 50 ms row**: +17% and still 8.75 MB/s. Something
+else binds there, and it is now a much smaller question than the one this
+document opened with.

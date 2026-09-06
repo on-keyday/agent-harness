@@ -219,12 +219,23 @@ Two things measured about the noise itself, so nobody re-derives them:
   tail, so a larger sample raises the observed stdev and partly cancels the
   `1/√n` gain. Reaching ~10% would need on the order of 60 runs. Reducing the
   underlying variance is the better lever.
-- **The variance is a function of the delay.** Same 32 MB push, `--runs 5`:
-  stdev 7% at `--delay 0`, 28% at 0.25 ms, **70% at 1 ms**, 16% at 25 ms. It
-  peaks in the middle rather than growing with the path, which is why pinning
-  does not touch it. Measured in
-  [`2026-09-06-file-transfer-without-server-decrypt-design.md`](../../docs/superpowers/specs/2026-09-06-file-transfer-without-server-decrypt-design.md),
-  last amendment, alongside the throughput ladder it belongs to.
+- **~~The variance is a function of the delay.~~ SOLVED — it was a bug, not a
+  property of the lab.** A retransmit returned from the top of
+  `sendStream.triggerPacket` and skipped the re-queue at the bottom, so the
+  stream fell off the send trigger with its buffer full and nothing sent again
+  until the next ACK — one round trip. How many retransmits happened to land
+  inside a given transfer set that transfer's rate, which is exactly what a
+  4.44x spread looks like. objtrsf `5c3a630`:
+
+  | `--delay` | before | after |
+  | --- | --- | --- |
+  | 1 ms | median 9.60 MB/s, stdev **70%**, spread 4.44x | median **44.86**, stdev 9%, spread 1.26x |
+  | 25 ms | median 7.49 MB/s, stdev 16% | median **8.75**, stdev **3%**, spread 1.09x |
+
+  So the numbers this file quotes above (6.76–12.70 MB/s across six runs, and
+  the ±31–81% resolution) were all taken against that bug. **Re-measure before
+  comparing anything to them.** The resolution figures a `bench` run prints are
+  still the right way to read a result; they are simply much tighter now.
 
 ## Reading `show`
 
