@@ -777,3 +777,58 @@ for a CLI push has no deadline. A direct dial the punch had not opened parked
 forever — observed at six minutes with no CPU, on a pair that had completed in
 520 ms minutes earlier. Dial and hello now share one deadline. With no fallback
 by design, a prompt failure is the whole of what the caller gets back.
+
+## Amendment — the control that was missing, and what actually decides (2026-09-06)
+
+The amendment above concluded from the live fleet that hop count is the wrong
+model. It was measured without a control, and the control reverses half of it.
+
+Same three routes, 32 MiB, n=9, one host, no radio hop
+(`scripts/dummy-harness.sh --udp`), resolution ~11%:
+
+| route | median | MB/s | vs splice |
+| --- | --- | --- | --- |
+| splice | 909 ms | 36.9 | — |
+| forwarded | 813 ms | 41.3 | −10.6% (inside the noise) |
+| **direct** | **523 ms** | **64.1** | **−42.5% (REAL)** |
+
+Those three figures land almost exactly on the throughput ladder P1 was argued
+from — 36.4 splice, 65.6 forwarded-with-no-middle-endpoint. **The code does what
+the design said it would.** On a clean, latency-free path the direct route is
+the fastest thing here by a wide margin.
+
+So neither model is right on its own; each owns a regime:
+
+| path | winner | what decides |
+| --- | --- | --- |
+| clean, ~0 RTT, CPU-bound | **direct**, by 42% | how many times the bytes are crypto'd and copied |
+| lossy / high RTT | **splice** | whether the bad segment sits behind its own congestion controller |
+
+The live fleet is the second regime, and the reason is not the runner's
+operating system. The Windows runner served a splice at the same speed as a
+Linux one (16 MiB: 4066 ms against 4164 ms). What differs is the path: the
+client here is on `wlan1`, its wired interface is down, and the Windows host is
+a laptop. A direct connection between two wireless stations crosses the radio
+TWICE — station → AP → station — under one congestion controller, while the
+splice puts one radio hop under each of two. Fewer IP hops, more airtime, one
+loop spanning all of it.
+
+That is a property of this deployment, not of the route. `direct` is the right
+answer wherever the client↔runner path is genuinely better than
+client↔server↔runner: two wired ends, or a distant server. `splice` stays the
+default because this fleet is not that.
+
+**A regression of this document's own making, found by the control.** The
+previous amendment bounded the data-plane dial with `context.WithTimeout` on the
+caller's context. `peer.Dial` hands that context to `WrapAcceptedConn`, which
+derives the STREAM lifetime from it, and `Start` runs `AutoReceive` on it — so
+the deadline was not on the handshake, it was on the connection. Every
+`forwarded` and `direct` transfer died at "stream write: context canceled". The
+dial is now raced against a timer on a cancellable child whose cancel is handed
+to the connection's closer, so the bound applies to waiting and never to the
+transfer.
+
+It reached main because the live measurements ran against the main checkout's
+binary, built before that commit, while the fix was verified only by `go build`
+— which does not refresh `bin/`. The rule already written down for runners
+holds for the CLI too: rebuild `bin/` before believing a client-side check.

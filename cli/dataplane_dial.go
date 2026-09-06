@@ -63,10 +63,10 @@ const dataPlaneHandshakeTimeout = 10 * time.Second
 // straight to the runner's address once it has been punched toward this client.
 // The second crosses one hop instead of two, which is worth about 2.6x at 20ms
 // RTT and more with loss.
-func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Conn, error) {
+func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Conn, context.CancelFunc, error) {
 	ep := c.conn.Endpoint()
 	if ep == nil {
-		return nil, errors.New("file: no endpoint to open a data plane on (accepted conn?)")
+		return nil, nil, errors.New("file: no endpoint to open a data plane on (accepted conn?)")
 	}
 	// Where to dial, per the server's answer. The endpoint is the same either
 	// way and that is load-bearing for BOTH routes: the relay matches its
@@ -86,27 +86,51 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	// whose kind is not known until its first payload is read, by which time
 	// its trsf already exists, and flipping every accepted conn would put the
 	// server-dialed ones on the same half as the real server.
-	// ONE deadline over the whole ceremony, dial included. The first version
-	// bounded only the hello response, leaving peer.Dial on the caller's
-	// context -- which for a CLI push has no deadline at all. A direct dial the
-	// punch had not opened then parked forever instead of failing: observed on
-	// the live fleet at six minutes and no CPU, with the same route having
-	// completed in 520ms a few minutes earlier.
+	// The dial needs a bound, and the bound may NOT be a deadline on the
+	// connection's own context: peer.Dial hands that ctx to WrapAcceptedConn,
+	// which derives the STREAM lifetime from it, and Start runs AutoReceive on
+	// it. A context.WithTimeout here therefore killed the transfer ten seconds
+	// in -- "stream write: context canceled" on every forwarded and direct
+	// push. That was this function's own regression, fixed by bounding the
+	// WAIT instead of the connection.
 	//
-	// There is deliberately no fallback here (see the route amendment), so the
-	// failure being PROMPT is the whole of what the caller gets. An unbounded
-	// wait is worse than a refusal: it hides the choice instead of handing it
-	// back.
-	ctx, cancel := context.WithTimeout(ctx, dataPlaneHandshakeTimeout)
-	defer cancel()
+	// So: dial on a cancellable child of the caller's context, race it against
+	// the clock, and hand the cancel to the caller so it fires when the
+	// connection closes rather than when the handshake finishes.
+	//
+	// It has to be bounded at all because a direct dial the punch did not open
+	// otherwise parks forever -- observed on the live fleet at six minutes with
+	// no CPU, on a pair that had completed in 520ms minutes earlier. With no
+	// fallback by design, a prompt failure is the whole of what the caller gets.
+	dialCtx, cancelDial := context.WithCancel(ctx)
+	type dialed struct {
+		pc  *peer.Conn
+		err error
+	}
+	ch := make(chan dialed, 1) // buffered: the goroutine must never block on an abandoned dial
+	go func() {
+		pc, err := peer.Dial(dialCtx, ep, slotCID, peer.DialConfig{
+			Logger:                        slog.Default(),
+			CreatesServerInitiatedStreams: true,
+			MTU:                           int(t.MTU),
+		})
+		ch <- dialed{pc, err}
+	}()
 
-	pc, err := peer.Dial(ctx, ep, slotCID, peer.DialConfig{
-		Logger:                        slog.Default(),
-		CreatesServerInitiatedStreams: true,
-		MTU:                           int(t.MTU),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("file: dial data plane: %w", err)
+	var pc *peer.Conn
+	select {
+	case d := <-ch:
+		if d.err != nil {
+			cancelDial()
+			return nil, nil, fmt.Errorf("file: dial data plane: %w", d.err)
+		}
+		pc = d.pc
+	case <-time.After(dataPlaneHandshakeTimeout):
+		cancelDial() // stops the dial in flight; the goroutine's send still fits the buffer
+		return nil, nil, fmt.Errorf("file: dial data plane: no answer within %v", dataPlaneHandshakeTimeout)
+	case <-ctx.Done():
+		cancelDial()
+		return nil, nil, fmt.Errorf("file: dial data plane: %w", ctx.Err())
 	}
 
 	respCh := make(chan protocol.PskAuthResponse, 1)
@@ -129,20 +153,25 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	// former, and an operator secret has no business leaving for a runner.
 	if err := sendDataPlaneHello(pc, GetPSK(), t); err != nil {
 		pc.Connection().Close() //nolint:errcheck
-		return nil, err
+		cancelDial()
+		return nil, nil, err
 	}
 
+	waitCtx, cancelWait := context.WithTimeout(ctx, dataPlaneHandshakeTimeout)
+	defer cancelWait()
 	select {
-	case <-ctx.Done():
+	case <-waitCtx.Done():
 		pc.Connection().Close() //nolint:errcheck
-		return nil, fmt.Errorf("file: data plane handshake: %w", ctx.Err())
+		cancelDial()
+		return nil, nil, fmt.Errorf("file: data plane handshake: %w", waitCtx.Err())
 	case resp := <-respCh:
 		if err := dataPlaneStatusError(resp.Status); err != nil {
 			pc.Connection().Close() //nolint:errcheck
-			return nil, err
+			cancelDial()
+			return nil, nil, err
 		}
 	}
-	return pc, nil
+	return pc, cancelDial, nil
 }
 
 // sendDataPlaneHello writes the one message that proves fleet membership and
@@ -202,7 +231,7 @@ func (c *Client) openDataPlaneStream(
 	t dataPlaneTarget,
 	build func(streamID uint64) protocol.RunnerRequest,
 ) (trsf.BidirectionalStream, func(), error) {
-	pc, err := c.dialDataPlane(ctx, t)
+	pc, cancelDial, err := c.dialDataPlane(ctx, t)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -213,7 +242,7 @@ func (c *Client) openDataPlaneStream(
 	// side of this connection IS the runner, so telling it is the point --
 	// Pitfall 5's warning is about a close reaching a peer that was not meant
 	// to hear it.
-	closer := func() { pc.Close() }
+	closer := func() { pc.Close(); cancelDial() }
 
 	st := pc.Transport().CreateBidirectionalStream()
 	if st == nil {
