@@ -10,9 +10,12 @@ import (
 	// to need it next.
 	iofs "io/fs"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -92,6 +95,12 @@ type mainConfig struct {
 	// DETACHED_PROCESS child) can still close the WS cleanly instead of
 	// waiting for ping timeout.
 	ShutdownFile string
+
+	// PprofListen mirrors harness-server's flag of the same name. The runner
+	// needs it for the same reason the server did and for one more: on a pull
+	// the runner is the SENDER, so it is the end a stalled transfer is waiting
+	// on, and it was the only end with no way to ask where its time went.
+	PprofListen string
 }
 
 // newMainConfig returns a *mainConfig with all flag defaults pre-populated.
@@ -143,6 +152,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ShutdownFile, "shutdown-file", c.ShutdownFile, "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
 	fs.StringVar(&c.WSListen, "listen", c.WSListen, "WebSocket listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid; mirrors harness-server's --listen)")
 	fs.StringVar(&c.UDPListen, "udp-listen", c.UDPListen, "UDP listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid). Combine with --listen for ws+udp dualstack.")
+	fs.StringVar(&c.PprofListen, "pprof-listen", c.PprofListen, "serve net/http/pprof on this host:port (empty = off, the default). Turning it on ALSO enables the block and mutex profilers, which ship off because they sample on every blocking event: a CPU profile alone answers \"where does the CPU go\", which is the wrong question for a process sitting at a fraction of a core — the other half is waiting, and only the block profile and the execution trace say on what. Dev-only and unauthenticated: /debug/pprof exposes goroutine stacks and lets anyone who can reach it start a profile, so bind it to loopback or to a namespace nothing else can reach.")
 }
 
 // isListenMode reports whether either --listen or --udp-listen was set.
@@ -365,6 +375,22 @@ func main() {
 	// syscall.SIGTERM is a no-op — daemon.py uses TerminateProcess for
 	// DETACHED_PROCESS children, which is unsignalable from user space;
 	// the sentinel-file watcher started below covers that gap.
+	// Both rates are set to 1 (record every event) rather than a sampling
+	// fraction: this listener only exists when somebody asked for it, and a
+	// sampled block profile of a rare-but-long stall reports nothing. The
+	// overhead is real and perturbs throughput, so measure the rate you want to
+	// quote with the flag OFF and use this to explain it, not to produce it.
+	if addr := strings.TrimSpace(cfg.PprofListen); addr != "" {
+		runtime.SetBlockProfileRate(1)
+		runtime.SetMutexProfileFraction(1)
+		go func() {
+			slog.Warn("pprof listening — unauthenticated, dev only", "addr", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				slog.Error("pprof listener exited", "err", err)
+			}
+		}()
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

@@ -1378,3 +1378,50 @@ What is left is the stack itself — the per-packet path through `objproto` and
 transport offering 3,000 packets/s onto a link that carries 16,000 is somehow
 inflicting on itself. Every remaining candidate is inside this repository and
 its transport, which is a smaller place to look than where this started.
+
+## Amendment — both ends are idle, and the cost is the handoff (2026-09-06)
+
+Execution traces, 6-second windows, `netem-lab` at 1 ms so both ends could be
+profiled at once. The server already had `--pprof-listen`; the runner did not,
+and on a pull the runner is the SENDER — the end a stalled transfer is waiting
+on was the only end with no way to ask where its time went. It has the flag now.
+
+**Server (the splice, receiving from the runner):**
+
+| where | time in a 6 s window |
+| --- | --- |
+| `RawRead` / `recvmmsg` — waiting for packets | **5.64 s (94%)** |
+| `recvStream.ReadDirectContext` — the splice waiting for bytes | 1.41 s |
+| `sendStream.AppendDataContext` — the splice blocked on a full 1 MB buffer | 0.47 s |
+| syscalls (`sendto` + `recvmmsg`) | 0.33 s (5.4%) |
+| scheduler latency, all goroutines | 0.89 s |
+
+**Runner (the sender):**
+
+| where | time in a 6 s window |
+| --- | --- |
+| `RawRead` / `recvmmsg` — waiting for ACKs | **5.87 s (98%)** |
+| `UDPEndpointEx` send goroutine — **blocked waiting for something to send** | **5.88 s (98%)** |
+| `sendto` — actually transmitting | **89 ms (1.5%)** |
+| CPU, whole process | 900 ms of 6 s (15% of one core); AES-GCM 30 ms |
+| scheduler latency | 105 ms |
+
+**For every millisecond the sender spends transmitting it spends 66 waiting for
+something to transmit.** Both ends are idle. It is not the syscalls (2–5%), not
+the crypto (30 ms), not the scheduler (105 ms), and not the splice's copy.
+
+**The cost is the handoff, and the counters already say what shape it has.**
+`send_push_ack` and `send_push_self` are equal to within a percent in every
+interval, and both match the packet count: one range retired, one packet
+emitted, one loop iteration. The sender is clocked by the peer's ACKs rather
+than by its window — cwnd is 400× the BDP and in flight is frequently a single
+packet — and the peer emits an ACK from its own run loop, which processes one
+packet per iteration. Two loops, each doing one packet per turn, taking turns.
+
+That is a claim about the loop's structure rather than about any layer under it,
+and it is where the next work goes. The obvious question it raises — whether the
+run loop can emit more than one packet per iteration without reviving the
+busy-spin the `congestionBlocked` comment describes — is a change to the loop,
+so it needs its own design rather than a patch appended here. Falsification #1 in
+the throughput notes is about exactly that loop and says why it must not be
+changed on a hunch.
