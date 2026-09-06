@@ -1708,15 +1708,20 @@ format OpenFileTransferRequest:
                           # directories of the destination before writing.
                           # mkdir: MkdirAll instead of strict Mkdir.
                           # Ignored by pull / delete / dir_pull / dir_delete.
-    # no_data_plane asks the server to splice this transfer rather than route
-    # it end to end. The end-to-end route is the default and takes no opting
-    # in: it changes which socket the bytes cross and nothing the operator can
-    # see. This bit is the escape hatch for the other half of that -- it is the
-    # only file-transfer path, so a fault in it takes push, pull and ls with
-    # it, and one invocation must be able to get them back with no restart and
-    # no rebuild. It also lets the two routes be compared on the same file.
-    no_data_plane :u1
-    reserved      :u5
+    # data_plane asks the server to route this transfer end to end instead of
+    # splicing it. OPT-IN, and the bit is spelled this way round so that a
+    # caller which says nothing gets the splice: the default has to be a
+    # property of the wire, not of every call site remembering to pass a flag.
+    #
+    # It is opt-in because the route is SLOWER on every path measured. The
+    # server forwarding packets makes one congestion loop over the whole
+    # client-server-runner path where the splice runs two, each over half of
+    # it -- 2.6x at 20ms RTT, 3.1x at 200ms, 8x with 1% loss, and the ratio
+    # does not shrink with transfer size. What the route still buys is that
+    # the server holds no plaintext, so it stays reachable for the caller who
+    # wants that, and for comparing the two on one file.
+    data_plane :u1
+    reserved   :u5
 
 enum OpenFileTransferStatus:
     :u8
@@ -1741,11 +1746,11 @@ format ListFilesRequest:
     task_id      :TaskID
     rel_path_len :u16
     rel_path     :[rel_path_len]u8
-    # Same escape hatch as OpenFileTransferRequest.no_data_plane. This format
-    # carries no other flags, so the bit costs a byte here rather than filling
-    # spare padding.
-    no_data_plane :u1
-    reserved      :u7
+    # Same opt-in as OpenFileTransferRequest.data_plane. This format carries no
+    # other flags, so the bit costs a byte here rather than filling spare
+    # padding.
+    data_plane :u1
+    reserved   :u7
 
 enum ListFilesStatus:
     :u8
@@ -1864,15 +1869,11 @@ format RunnerOpenFileTransferRequest:
                           # directories of the destination before writing.
                           # mkdir: MkdirAll instead of strict Mkdir.
                           # Ignored by pull / delete / dir_pull / dir_delete.
-    # no_data_plane asks the server to splice this transfer rather than route it
-    # end to end. The end-to-end route is the default and takes no opting in: it
-    # changes which socket the bytes cross and nothing the operator can see.
-    # This bit is the other half of that -- it is the only file-transfer path,
-    # so a fault in it takes push, pull and ls with it, and one invocation must
-    # be able to get them back with no restart and no rebuild. It also lets the
-    # two routes be compared on the same file.
-    no_data_plane :u1
-    reserved      :u5
+    # No route bit here: by the time a request reaches the runner the route is
+    # already chosen -- this message arrives on the spliced stream or on the
+    # data-plane connection, and which one it came over IS the answer. The bit
+    # was mirrored here when the format was copied and no runner ever read it.
+    reserved      :u6
 
 format RunnerListFilesRequest:
     task_id      :TaskID

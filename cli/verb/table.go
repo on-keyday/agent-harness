@@ -87,8 +87,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dst", Type: ArgString, Field: "RemoteDst"},
 		},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -122,8 +122,8 @@ var Verbs = []VerbSpec{
 			},
 		},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -161,8 +161,8 @@ var Verbs = []VerbSpec{
 			"file ls aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs",
 		},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 		},
 	},
 	{
@@ -177,8 +177,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-dir", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories (mkdir -p); also makes an existing directory a success"},
 		},
@@ -196,8 +196,8 @@ var Verbs = []VerbSpec{
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
 		},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "target a directory tree instead of a single file (uses dir_delete)"},
 			// Without -r this flag is ignored, so its absence never widens: -r
@@ -223,8 +223,8 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 		},
 	},
 	{
@@ -240,8 +240,8 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"file new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/new.txt"},
 		Flags: []Flag{
-			{Name: "no-data-plane", Type: FlagBool, Default: false, Field: "NoDataPlane",
-				Help: "splice this transfer through the server instead of routing it end to end (escape hatch; the end-to-end route is the default and needs no flag)"},
+			{Name: "data-plane", Type: FlagBool, Default: false, Field: "DataPlane",
+				Help: "route this transfer end to end so the server cannot read it, instead of splicing it through the server (opt-in: the route is SLOWER on every path measured -- 2.6x at 20ms RTT, 8x with 1% loss -- because forwarding makes one congestion loop over the whole path where the splice runs two over half of it each)"},
 		},
 	},
 	// --- git ---

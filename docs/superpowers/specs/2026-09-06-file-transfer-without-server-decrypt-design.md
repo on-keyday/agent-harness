@@ -587,6 +587,75 @@ A kind the switch has not considered returns false. D2 names `git_query` and
 rather than inherit a yes from a default arm, which is the mistake this
 amendment corrects.
 
+## Amendment — the route is opt-in, because forwarding is slower than splicing (2026-09-06)
+
+**This reverses D8's default and deletes the size gate the amendment above
+added.** P1 priced the splice against a relay whose CPU was the bottleneck.
+That is not this deployment, and it is not most deployments, and where it is
+not true the whole argument inverts.
+
+Measured on `scripts/netem-lab`, 4 MB pushes, interleaved, n=7 (n=5 for the
+last two rows), loss held at 0 except where stated:
+
+| one-way delay | end-to-end RTT | data plane | splice | ratio |
+| --- | --- | --- | --- | --- |
+| 1 ms | 4 ms | 652 ms | 528 ms | 1.23x |
+| 5 ms | 20 ms | 1764 ms | 682 ms | 2.59x |
+| 25 ms | 100 ms | 5668 ms | 1960 ms | 2.89x |
+| 50 ms | 200 ms | 10811 ms | 3532 ms | 3.06x |
+| 25 ms + **1% loss** | 100 ms | 23305 ms (one run unfinished at 45 s) | 2895 ms | **8.05x** |
+
+**The cause is split-connection gain, and it is structural.** The splice
+terminates both legs, so it runs two congestion loops of half the path each; a
+loss is recovered in one leg's RTT and one leg's window backs off. Forwarding
+packets leaves ONE loop spanning client → server → runner: double the RTT,
+double the recovery time, and a single window that any loss on either leg
+collapses. Window-limited throughput is `W/RTT`, so doubling the RTT halves it
+— which is the 2.6–3.1x, and the ratio does not shrink with transfer size, so
+no threshold repays it. `dataPlaneWorthIt` is therefore removed rather than
+raised: with the route off by default, the default is what answers "should",
+and a size heuristic that second-guesses an explicit request only makes
+`--data-plane` untestable on small operations.
+
+Two hypotheses were killed on the way, and both had been asserted before they
+were tested:
+
+- **MTU negotiation.** A 2x2 of client × runner transport on the live fleet put
+  the negotiated pairs at both the smallest penalty (+813 ms) and the largest
+  (+3768 ms). Negotiation does not sort the cells.
+- **Loss recovery alone.** The lab shows 2.89x at 25 ms with **zero** loss, so
+  recovery cannot be what produces the gap. Loss multiplies an effect that is
+  already there; it does not create it.
+
+A third reading was wrong in the other direction: on the live fleet, raising
+parallelism did not raise aggregate throughput, and that was taken as ruling
+window-limitation out. It ruled out nothing — that path was bandwidth-limited
+at ~5 MB/s, where no flow count helps. The lab has no rate limit, and there
+window-limitation is exactly what shows up.
+
+**So the bit is now `data_plane`, opt-in, and spelled that way round on
+purpose.** The default has to be a property of the wire: a caller that says
+nothing splices. Under the old `no_data_plane` spelling the default lived in
+every call site remembering to pass a flag, and one forgotten widget routed
+silently — which is how the route became the default the first time.
+`RunnerOpenFileTransferRequest` loses its copy of the bit entirely: by the time
+a request reaches the runner the route is already chosen, the message arrives
+either on the spliced stream or on the data-plane connection, and no runner
+ever read it.
+
+What the route still buys is P2, unchanged: the server holds no plaintext. That
+is a property rather than a speed, so it is worth asking for and not worth
+defaulting to.
+
+**None of this is an argument against the direct path.** Every figure here is
+about a *relay*, and the defect is that the relay doubles the control loop. A
+direct client↔runner connection is ONE hop — its loop is the path's own RTT,
+not twice it, and it has no second leg to inherit a stall from. D10 was
+written so that path costs no runner change, and this measurement is the
+reason to finish it rather than to abandon the idea: the original question was
+whether file transfer could go peer to peer, and what was measured slow is the
+substitute, not the answer.
+
 Verified on one `scripts/dummy-harness.sh` instance by counting the connections
 each invocation opens — the data plane is a second connection, so the count is
 the route:

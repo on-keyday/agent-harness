@@ -28,12 +28,12 @@ type FileResultMsg struct {
 // DoFileLs lists a directory under the task's worktree. Captures the
 // runner's listing into a buffer (the cli method writes to an
 // io.Writer) and delivers it via FileResultMsg.Output.
-func DoFileLs(c *cli.Client, taskID, relPath string, noDataPlane bool) tea.Cmd {
+func DoFileLs(c *cli.Client, taskID, relPath string, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var buf bytes.Buffer
-		err := c.FileLs(ctx, taskID, relPath, noDataPlane, &buf)
+		err := c.FileLs(ctx, taskID, relPath, dataPlane, &buf)
 		return FileResultMsg{
 			Op:     "ls",
 			TaskID: taskID,
@@ -49,11 +49,11 @@ func DoFileLs(c *cli.Client, taskID, relPath string, noDataPlane bool) tea.Cmd {
 // non-recursive variant uses the single-file push path with optional
 // force overwrite. Parents creates missing parent directories of
 // remoteDst before the push (mkdir -p semantics).
-func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force, parents, noDataPlane bool) tea.Cmd {
+func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force, parents, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		opts := cli.FilePushOpts{Force: force, MkdirParents: parents, NoDataPlane: noDataPlane}
+		opts := cli.FilePushOpts{Force: force, MkdirParents: parents, DataPlane: dataPlane}
 		var err error
 		if recursive {
 			err = c.FilePushDir(ctx, taskID, localSrc, remoteDst, opts)
@@ -72,11 +72,11 @@ func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, fo
 // DoFileMkdir creates a directory under the task's worktree. parents
 // mirrors mkdir -p (create missing parents, existing dir is ok);
 // without it the runner is strict.
-func DoFileMkdir(c *cli.Client, taskID, relPath string, parents, noDataPlane bool) tea.Cmd {
+func DoFileMkdir(c *cli.Client, taskID, relPath string, parents, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := c.FileMkdir(ctx, taskID, relPath, parents, noDataPlane)
+		err := c.FileMkdir(ctx, taskID, relPath, parents, dataPlane)
 		label := relPath
 		if parents {
 			label += " (-p)"
@@ -94,15 +94,15 @@ func DoFileMkdir(c *cli.Client, taskID, relPath string, parents, noDataPlane boo
 // The recursive variant uses dir_pull (tar over the wire); the
 // non-recursive variant uses the single-file pull path with optional
 // force overwrite of the local destination.
-func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force, noDataPlane bool, rng cli.FileTransferRange) tea.Cmd {
+func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force, dataPlane bool, rng cli.FileTransferRange) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		var err error
 		if recursive {
-			err = c.FilePullDir(ctx, taskID, remoteSrc, localDst, force, noDataPlane)
+			err = c.FilePullDir(ctx, taskID, remoteSrc, localDst, force, dataPlane)
 		} else {
-			err = c.FilePull(ctx, taskID, remoteSrc, localDst, rng, force, noDataPlane)
+			err = c.FilePull(ctx, taskID, remoteSrc, localDst, rng, force, dataPlane)
 		}
 		return FileResultMsg{
 			Op:     "pull",
@@ -118,21 +118,21 @@ func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, fo
 // os.RemoveAll, otherwise the runner only removes empty directories.
 // Force without recursive is no-op (single-file delete has no force
 // semantics) but accepted to keep the flag set uniform.
-func DoFileDelete(c *cli.Client, taskID, relPath string, recursive, force, noDataPlane bool) tea.Cmd {
+func DoFileDelete(c *cli.Client, taskID, relPath string, recursive, force, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var err error
 		var label string
 		if recursive {
-			err = c.FileDeleteDir(ctx, taskID, relPath, force, noDataPlane)
+			err = c.FileDeleteDir(ctx, taskID, relPath, force, dataPlane)
 			label = relPath + " (recursive"
 			if force {
 				label += ", force"
 			}
 			label += ")"
 		} else {
-			err = c.FileDelete(ctx, taskID, relPath, noDataPlane)
+			err = c.FileDelete(ctx, taskID, relPath, dataPlane)
 			label = relPath
 		}
 		return FileResultMsg{
@@ -162,22 +162,22 @@ type FileEditCommittedMsg struct {
 
 // DoFileEditLoad pulls a file for editing. Threads a.client like every other
 // Do* here — it never dials.
-func DoFileEditLoad(c *cli.Client, taskID, rel string, noDataPlane bool) tea.Cmd {
+func DoFileEditLoad(c *cli.Client, taskID, rel string, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		doc, err := c.FileEditLoad(ctx, taskID, rel, noDataPlane, nil)
+		doc, err := c.FileEditLoad(ctx, taskID, rel, dataPlane, nil)
 		return FileEditLoadedMsg{TaskID: taskID, Rel: rel, Doc: doc, Err: err}
 	}
 }
 
 // DoFileEditCommit writes an edited buffer back to the file it came from,
 // re-reading the runner-side file first unless force is set.
-func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text string, force, noDataPlane bool) tea.Cmd {
+func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text string, force, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		st, err := c.FileEditCommit(ctx, taskID, doc, text, force, noDataPlane)
+		st, err := c.FileEditCommit(ctx, taskID, doc, text, force, dataPlane)
 		return FileEditCommittedMsg{Rel: doc.Rel, Status: st, Err: err}
 	}
 }
@@ -186,7 +186,7 @@ func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text st
 // file, or an edit retargeted to a different path (save-as). Force stays off
 // so an accidental collision is reported rather than silently overwritten;
 // parents are created, matching the WebUI's prompt-and-retry outcome.
-func DoFileEditCreate(c *cli.Client, taskID, rel, text string, doc cli.FileEditDoc, noDataPlane bool) tea.Cmd {
+func DoFileEditCreate(c *cli.Client, taskID, rel, text string, doc cli.FileEditDoc, dataPlane bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()

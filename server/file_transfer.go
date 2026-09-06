@@ -44,7 +44,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	// splice below when the hook is absent, the transports differ, or the
 	// runner refuses -- the client can tell the routes apart by grant_id.
 	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.ExpectedSize, req.NoDataPlane()); ok {
+		protocol.TaskControlKind_OpenFileTransfer, req.Direction, req.TaskId, req.DataPlane()); ok {
 		return protocol.OpenFileTransferResponse{
 			Status:    protocol.OpenFileTransferStatus_Ok,
 			GrantId:   grantID,
@@ -119,7 +119,7 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
 	if grantID, slot, rcid, mtu, ok := h.tryDataPlane(conn, &runner,
-		protocol.TaskControlKind_ListFiles, 0, req.TaskId, 0, req.NoDataPlane()); ok {
+		protocol.TaskControlKind_ListFiles, 0, req.TaskId, req.DataPlane()); ok {
 		return protocol.ListFilesResponse{
 			Status:    protocol.ListFilesStatus_Ok,
 			GrantId:   grantID,
@@ -170,19 +170,23 @@ func (h *TaskHandler) tryDataPlane(
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	taskID protocol.TaskID,
-	expectedSize uint64,
-	refused bool,
+	requested bool,
 ) (grantID [16]uint8, slot uint16, runnerCID protocol.RunnerID, mtu uint16, ok bool) {
-	// The caller asked for the splice. The end-to-end route is the default and
-	// needs no opting in; this bit exists so a single invocation can get file
-	// transfer back when that route is at fault, with no restart and no
-	// rebuild, and so the two can be compared on one file.
-	if refused {
-		return grantID, 0, runnerCID, 0, false
-	}
-	// Could is not should: a request that carries almost no bytes pays the
-	// route's setup for nothing and comes out slower than the splice.
-	if !dataPlaneWorthIt(kind, dir, expectedSize) {
+	// Opt-in, and this is the whole of the default: nothing routes unless the
+	// request asked. Measured on scripts/netem-lab, the route loses on every
+	// path -- 1.23x at 4ms end-to-end RTT, 2.59x at 20ms, 3.06x at 200ms, 8.05x
+	// with 1% loss added, and the ratio does not shrink with transfer size.
+	//
+	// The cause is structural, not a tuning problem. Forwarding packets leaves
+	// ONE congestion loop spanning client-server-runner; the splice terminates
+	// each leg, so it runs two loops over half the path each and recovers a
+	// loss in half the time. No size threshold repays that, which is why the
+	// earlier one is gone rather than raised.
+	//
+	// What the route still buys is P2: the server holds no plaintext. That is
+	// a property, not a speed, so it is worth asking for and not worth
+	// defaulting to.
+	if !requested {
 		return grantID, 0, runnerCID, 0, false
 	}
 	if h.SetupDataPlane == nil || runner == nil || runner.Conn == nil {

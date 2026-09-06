@@ -66,7 +66,7 @@ func (h cliVerbs) withClient(fn func(c *cli.Client) error) error {
 
 func (h cliVerbs) FilePush(a verb.FilePushAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents, NoDataPlane: a.NoDataPlane}
+		opts := cli.FilePushOpts{Force: a.Force, MkdirParents: a.Parents, DataPlane: a.DataPlane}
 		if a.Recursive {
 			return c.FilePushDir(h.ctx, a.TaskID, a.LocalSrc, a.RemoteDst, opts)
 		}
@@ -79,43 +79,43 @@ func (h cliVerbs) FilePull(a verb.FilePullAction) error {
 		if a.Recursive {
 			// The --offset/--length combination is refused in Build, which
 			// every surface goes through.
-			return c.FilePullDir(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force, a.NoDataPlane)
+			return c.FilePullDir(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst, a.Force, a.DataPlane)
 		}
 		return c.FilePull(h.ctx, a.TaskID, a.RemoteSrc, a.LocalDst,
-			cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force, a.NoDataPlane)
+			cli.FileTransferRange{Offset: a.Offset, Length: a.Length}, a.Force, a.DataPlane)
 	})
 }
 
 func (h cliVerbs) FileLs(a verb.FileLsAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return c.FileLs(h.ctx, a.TaskID, a.RelPath, a.NoDataPlane, os.Stdout)
+		return c.FileLs(h.ctx, a.TaskID, a.RelPath, a.DataPlane, os.Stdout)
 	})
 }
 
 func (h cliVerbs) FileMkdir(a verb.FileMkdirAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return c.FileMkdir(h.ctx, a.TaskID, a.RelPath, a.Parents, a.NoDataPlane)
+		return c.FileMkdir(h.ctx, a.TaskID, a.RelPath, a.Parents, a.DataPlane)
 	})
 }
 
 func (h cliVerbs) FileDelete(a verb.FileDeleteAction) error {
 	return h.withClient(func(c *cli.Client) error {
 		if a.Recursive {
-			return c.FileDeleteDir(h.ctx, a.TaskID, a.RelPath, a.Force, a.NoDataPlane)
+			return c.FileDeleteDir(h.ctx, a.TaskID, a.RelPath, a.Force, a.DataPlane)
 		}
-		return c.FileDelete(h.ctx, a.TaskID, a.RelPath, a.NoDataPlane)
+		return c.FileDelete(h.ctx, a.TaskID, a.RelPath, a.DataPlane)
 	})
 }
 
 func (h cliVerbs) FileEdit(a verb.FileEditAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return runFileEdit(h.ctx, c, a.TaskID, a.RelPath, a.NoDataPlane)
+		return runFileEdit(h.ctx, c, a.TaskID, a.RelPath, a.DataPlane)
 	})
 }
 
 func (h cliVerbs) FileNew(a verb.FileNewAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		return runFileNew(h.ctx, c, a.TaskID, a.RelPath, a.NoDataPlane)
+		return runFileNew(h.ctx, c, a.TaskID, a.RelPath, a.DataPlane)
 	})
 }
 

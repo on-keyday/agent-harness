@@ -1023,8 +1023,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FileEditRequestMsg:
 		a.cmdresult.Append("loading " + msg.Rel + " for edit…")
 		return a, DoFileEditLoad(a.client, msg.TaskID, msg.Rel,
-			// --no-data-plane is a command-line escape hatch; the interactive
-			// widgets take the default route.
+			// --data-plane is opt-in on the command line; the interactive
+			// widgets take the default, which is the splice.
 			false)
 
 	case FileEditNewRequestMsg:
