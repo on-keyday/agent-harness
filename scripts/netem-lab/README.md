@@ -218,8 +218,13 @@ Two things measured about the noise itself, so nobody re-derives them:
 - **More runs help slowly.** n=6 → 31%, n=16 → 26%: the distribution has a fat
   tail, so a larger sample raises the observed stdev and partly cancels the
   `1/√n` gain. Reaching ~10% would need on the order of 60 runs. Reducing the
-  underlying variance is the better lever, and where it comes from is not yet
-  known.
+  underlying variance is the better lever.
+- **The variance is a function of the delay.** Same 32 MB push, `--runs 5`:
+  stdev 7% at `--delay 0`, 28% at 0.25 ms, **70% at 1 ms**, 16% at 25 ms. It
+  peaks in the middle rather than growing with the path, which is why pinning
+  does not touch it. Measured in
+  [`2026-09-06-file-transfer-without-server-decrypt-design.md`](../../docs/superpowers/specs/2026-09-06-file-transfer-without-server-decrypt-design.md),
+  last amendment, alongside the throughput ladder it belongs to.
 
 ## Reading `show`
 
@@ -241,9 +246,27 @@ qdisc netem 800d: root refcnt 5 limit 10000 delay 75ms
   full, so every packet is paying the full queueing delay.
 - **`Sent` at zero** — the traffic is not crossing this device at all. Check
   that you ran the command through `exec`, not from your own shell. One
-  exception: `shape` **replaces** the qdisc, which resets every counter, so a
-  fresh zero right after a reshape means nothing has crossed *since then* — not
-  that nothing is crossing.
+  exception: a `shape` that changes the qdisc KIND installs a new one, so a
+  fresh zero right after such a reshape means nothing has crossed *since then* —
+  not that nothing is crossing.
+
+**A `shape` does NOT reliably reset the counters, and reading `show` as though
+it did will invent a result.** The commands are `tc qdisc replace`, and
+`replace` on a matching handle and kind updates in place and **keeps** the
+statistics. Measured: `lan` → `lan` left the handle at `809c` and the counters
+running (11698 → 11740 bytes across the reshape); `lan` → `bufferbloat` swapped
+netem for htb+netem and zeroed them. So a reshape between two `--delay` values
+carries every byte of the previous run forward, and treating the total as one
+transfer's is how a 1.10x wire overhead was once read as 11x amplification.
+
+**Take a delta, never a total.** `show` before and after the thing you are
+measuring, and subtract:
+
+```bash
+scripts/netem-lab/netem-lab.py --name t1 show | grep Sent   # before
+... the transfer ...
+scripts/netem-lab/netem-lab.py --name t1 show | grep Sent   # after
+```
 
 `show` also prints the conntrack entry count and the NAT rule, which is where
 to look when a UDP flow stops being translated.
