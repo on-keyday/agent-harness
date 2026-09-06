@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	"os"
 	"os/exec"
 	"syscall"
@@ -161,7 +162,12 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	if err != nil {
 		return -1, err
 	}
-	cmd := exec.CommandContext(runCtx, p.ClaudeBin, args...)
+	// hostcmd, not exec: this is the ONESHOT path -- stdout goes to a LogSink
+	// and nobody attaches to it -- so on Windows a bare spawn pops a console
+	// window on the operator's desktop for the life of the task. The attachable
+	// agent is not this function; it goes through
+	// agentexec.ExecuteCommandWithOption, which carries the flag itself.
+	cmd := hostcmd.CommandContext(runCtx, p.ClaudeBin, args...)
 	cmd.Dir = p.CWD
 	// PWD comes from cmd.Dir's own source so the two cannot drift; see
 	// AgentCwdEnv for why the chdir alone leaves some agents pointed at the

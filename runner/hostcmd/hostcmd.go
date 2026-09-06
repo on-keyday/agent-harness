@@ -13,9 +13,18 @@
 // Windows desktop. hostcmd_test.go fails the build if a bare exec.Command
 // starts git or xauth anywhere in the runner or cli packages.
 //
-// NOT for processes the operator is meant to see: the agent itself runs in a
-// PTY the operator attaches to (runner/process.go), and `file edit` launches
-// the user's $EDITOR on purpose (cli/file_edit.go). Both keep os/exec.
+// NOT for processes the operator is meant to see: `file edit` launches the
+// user's $EDITOR on purpose (cli/file_edit.go), which keeps os/exec.
+//
+// This exclusion used to name runner/process.go as well, on the ground that
+// "the agent runs in a PTY the operator attaches to". That is true of the
+// ATTACHABLE agent and it is not that file: the attachable one goes through
+// agentexec.ExecuteCommandWithOption (runner/session.go, exec_run.go,
+// streamtask.go), which carries the flag itself, while runner/process.go is the
+// ONESHOT path whose stdout goes to a LogSink and whose console nobody ever
+// looks at. So every oneshot task on a Windows runner popped a window for its
+// whole life, reported from the desktop it happened on. The exclusion was
+// written per FILE where it meant per PATH.
 //
 // One host-helper path does NOT come through here and cannot: `exec` runs its
 // child inside objtrsf (exec.ExecuteCommandWithOption), a different module, so

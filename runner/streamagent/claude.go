@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	"io"
 	"os"
 	"os/exec"
@@ -95,7 +96,10 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 		argv = append(argv, "--continue")
 	}
 
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// hostcmd, not exec: stdin/stdout are pipes the harness reads, so there is
+	// no console for anyone to look at -- but Windows allocates one anyway, and
+	// it appears on the desktop.
+	cmd := hostcmd.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = o.Dir
 	cmd.Env = os.Environ()
 	stdin, err := cmd.StdinPipe()
