@@ -550,6 +550,14 @@ var Verbs = []VerbSpec{
 		// come FIRST -- the inverse of what ParsePermuted guarantees
 		// everywhere else. Declaring it removes that constraint.
 		Path: []string{"forward"},
+		ModalSurfaces: []ModalSurface{
+			// The counterpart of -W, not of -L/-R: RawConnectModal is the raw
+			// stdio endpoint with a pane for the peer's output, and it builds
+			// the same one-shot HTTP request through cli.BuildHTTPRequest that
+			// --http-path does. Named after reading it, having first left this
+			// row empty for want of evidence.
+			{Surface: TUI, At: "tui/rawforward.go:RawConnectModal"},
+		},
 		Notes: []string{
 			"-L: forward a local port through the runner to remote host:port (ssh -L)",
 			"-R: runner listens, connections dial back to a client-side host:port (ssh -R)",
