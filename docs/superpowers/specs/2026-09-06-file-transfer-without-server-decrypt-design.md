@@ -906,3 +906,116 @@ The open question this leaves is the sharp one: a 433 Mbit/s medium is carrying
 30 Mbit/s of application traffic. That gap belongs to the transport, and
 `harness-cli conns --trsf --watch` is the first tool this project has had for
 looking at it from either end.
+
+## Amendment — the gap is not the congestion control, and it reproduces at 2 ms with no loss (2026-09-06)
+
+The amendment above hands that open question to the congestion controller. It
+was reasoned from the fleet, where the Wi-Fi, the Pi, the loss and the
+controller are all present at once and none of them can be turned off. Put the
+same transfer on `scripts/netem-lab` — one host, veth pairs, no radio, no rate
+limit, no configured loss — and **the same 3–5 MB/s appears.** Nothing in the
+fleet's physical layer is needed to produce it, so nothing in the fleet's
+physical layer explains it.
+
+### The ladder that decides it
+
+`file push` of one 32 MB file over the default `splice` route,
+`netem-lab bench --runs 5`, one knob changed between rows:
+
+| one-way delay | end-to-end RTT | median | stdev | spread |
+| --- | --- | --- | --- | --- |
+| 0 | ~0.1 ms | **43.54 MB/s** | 7% | 1.18x |
+| 0.25 ms | 0.5 ms | 21.47 MB/s | 28% | 2.18x |
+| 1 ms | 2 ms | 9.60 MB/s | 70% | 4.44x |
+| 25 ms | 50 ms | 7.49 MB/s | 16% | 1.51x |
+
+**Above about 2 ms the round trip stops mattering.** 2 ms → 50 ms is a 25x
+increase in RTT for a 22% loss of throughput, inside the 2 ms row's own
+resolution. Window-limited throughput is `W/RTT`; a window-limited transfer
+would have lost a factor of 25. This one lost nothing measurable.
+
+**Below it, a quarter of a millisecond each way costs half the throughput.**
+That is the opposite sensitivity: the transport is hurt by the *presence* of
+latency, not by its size. At zero delay it reaches 43.54 MB/s, which is the
+in-process relay rung on this same host — so with the path's latency removed,
+the deployed harness performs exactly as the ladder in P1 says it should.
+
+### Four controls, and what each one removes
+
+All on the same lab, same host (Intel N100), during or beside the same
+transfers:
+
+| control | measured | what it removes |
+| --- | --- | --- |
+| `iperf3` TCP through the lab | **1579 MB/s**, 0 retransmits | the path is not the limit |
+| `iperf3` UDP, 1200 B datagrams | **47.7 MB/s = 41,672 pkt/s**, 0.015% loss | the path carries our packet rate, losslessly |
+| objtrsf in-process, `udp` / `relay` rungs | **119–141** / **34–57 MB/s** | the transport code is not the limit |
+| server CPU, 25 s profile during a push | **21.3% of one core**; AES-GCM 1.5% | nothing is CPU-bound, and crypto is noise |
+| wire bytes for a 32 MB push (tc delta) | 36.9 MB toward the server, 36.3 MB toward the runner, **dropped 0** | 1.10x — there is no retransmission amplification |
+| sender's own counters during a 256 MB pull | cwnd **1.4–8.6 MB**, bytes in flight **1463 = one packet**, srtt 2.2–2.4 ms | the window is wide open and unused |
+
+The last row is the direct contradiction. `conns --trsf --runner … --watch 1s`,
+read from the sending runner, showed a congestion window of megabytes with one
+packet outstanding in nearly every sample. The sender never reaches its window,
+so the window cannot be what is holding it back.
+
+### What is left: the loop is waiting, not working
+
+`trsf/conn.go`'s run loop emits at most one packet per pass — it pops one send
+stream, builds one `SendAction`, and goes back to the top. So the loop's
+iteration rate *is* the packet rate, and that is what the `LOOP+` column
+measures. Two runs of the identical 32 MB push in the identical lab:
+
+| run | throughput | packet rate |
+| --- | --- | --- |
+| slow | 2.44 MB/s | ~1,850 pkt/s (`LOOP+` steady state) |
+| fast | 11.42 MB/s | 8,623 pkt/s (25,352 packets in 2.94 s, from tc) |
+| the path itself | 47.7 MB/s | 41,672 pkt/s at 0.015% loss |
+
+1,850 packets per second is 540 µs per packet on a machine that is 79% idle.
+The loop is not computing for 540 µs; it is asleep. Finding *what* it sleeps on
+— the pacer's `max(1*time.Millisecond, …)` floor, the loss-detection timer, or
+cross-process wakeup latency — is the next step, and it needs a wake-reason
+counter inside `trsf`, which no counter in `InternalState` currently provides.
+
+The same fact explains the variance the netem-lab README records as unexplained
+("where it comes from is not yet known"): the 4.4x spread at 2 ms is the same
+loop running at 1,850 pkt/s on some runs and 8,600 on others.
+
+### Corrections to the amendment above
+
+- "`bytes_in_flight` tracks `cwnd` throughout — window-limited" does not
+  reproduce. Whatever the fleet showed, the inference does not survive the RTT
+  ladder: a window-limited transfer scales with `1/RTT` and this one does not.
+- "`cwnd` reaches roughly 1 MB; at ~50 ms srtt that is ~20 MB/s worth of
+  window, the same order as the throughput actually seen" — 20 MB/s is not the
+  same order as the 3.33 MB/s in the table two amendments up. The arithmetic
+  was already saying the window was not the constraint.
+- "`loss_spurious` stays 0, so the window is being cut by real losses" is
+  weaker than it reads. `PacketNumTracker.GenerateACK` takes and CLEARS its
+  ranges, so a packet number is reported in exactly one ACK. A spurious loss is
+  counted only when the vindicating ACK arrives; if that ACK is itself lost the
+  loss is spurious in fact and invisible in the counter. (Code reading, not a
+  measurement — the lab's losses were not investigated.)
+
+### What this does not say
+
+The lab is one host with an N100 and netem on veth; the fleet is three hosts,
+one of them a Pi, over Wi-Fi. The absolute MB/s are not comparable and are not
+being compared. What transfers is the shape: the same order of throughput
+appears with the radios, the loss and the Pi all removed, and it varies with
+RTT in a way a congestion window cannot.
+
+The route ordering established by the amendments above is untouched. Splice
+stays the default; nothing here is an argument about `forwarded` versus
+`direct`. It is an argument that all three are being measured against a ceiling
+none of them set.
+
+### A tooling defect found on the way
+
+The netem-lab README says `shape` "**replaces** the qdisc, which resets every
+counter". It does not, at least when the new shaping has the same qdisc kind:
+`tc qdisc replace` on a matching handle updates in place and keeps the
+statistics. Reading `show` after a `shape` as if it were a fresh count turned
+one 32 MB push into an apparent 11x wire amplification that is not there — the
+real figure, taken as a delta across the push, is 1.10x.
