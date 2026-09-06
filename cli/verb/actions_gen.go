@@ -99,6 +99,12 @@ type CatalogAction struct {
 // ConnsAction is built by: conns.
 type ConnsAction struct {
 	ActionMarker
+	// report congestion state (cwnd/srtt/in-flight/loss) instead of the connection list
+	Trsf bool
+	// with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the gl…
+	Runner string
+	// with --trsf: re-read at this interval (e.g. 200ms) and print the DELTA. Several counters mean nothin…
+	Watch string
 	// output JSON lines instead of a table
 	JSON bool
 	// stream live connection events (conns.status)
@@ -2035,6 +2041,9 @@ func init() {
 		},
 		"conns\x00cli": func(b Bound) (Action, error) {
 			a := ConnsAction{}
+			a.Trsf = b.Bool("trsf")
+			a.Runner = b.Str("runner")
+			a.Watch = b.Str("watch")
 			a.JSON = b.Bool("json")
 			a.Follow = b.Bool("follow")
 			return a, nil

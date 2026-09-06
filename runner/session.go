@@ -137,9 +137,13 @@ type Session struct {
 	Profiles ProfileSet
 	Timeout  time.Duration
 	Sender   Sender
-	Streams  peer.BidirectionalStreamLookup // optional; required for handleOpenExec
-	Logger   *slog.Logger                   // optional; defaults to slog.Default()
-	Now      func() time.Time
+	// trsfConns is every connection this runner holds, so its congestion state
+	// can be reported. Nothing else in the runner keeps such a list.
+	trsfConns trsfRegistry
+
+	Streams peer.BidirectionalStreamLookup // optional; required for handleOpenExec
+	Logger  *slog.Logger                   // optional; defaults to slog.Default()
+	Now     func() time.Time
 
 	// creator makes bidi streams toward the server. Set to pc.Transport() for
 	// live runner connections; required by remote port-forward (one stream per

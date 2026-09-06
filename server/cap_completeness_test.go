@@ -88,10 +88,17 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_Whoami:      capNone,
 	// A RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: capNone,
+	// trsf_state reads no capability bit. What it hands back is bounded by
+	// VISIBILITY -- connInfoFor's decision, reused rather than restated -- and
+	// its runner branch additionally requires the global view. That is a
+	// visibility rank, not a bit: runner_admin was deliberately not reused
+	// because it also carries the power to make the server dial a NEW runner,
+	// which has no business travelling with a read-only diagnostic.
+	protocol.TaskControlKind_TrsfState: capNone,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_RestoreTasks); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TrsfState); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

@@ -266,17 +266,20 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		AllowedRoots:               cfg.AllowedRoots,
-		Profiles:                   cfg.Profiles,
-		ServerCID:                  serverCID,
-		Hostname:                   cfg.Hostname,
-		WSPath:                     cli.WebSocketPath,
-		BinDir:                     binDir,
-		PSK:                        psk,
-		ProxyVia:                   cfg.ProxyVia,
-		Sender:                     sender,
-		Streams:                    pc.Transport(),
-		creator:                    pc.Transport(),
+		AllowedRoots: cfg.AllowedRoots,
+		Profiles:     cfg.Profiles,
+		ServerCID:    serverCID,
+		Hostname:     cfg.Hostname,
+		WSPath:       cli.WebSocketPath,
+		BinDir:       binDir,
+		PSK:          psk,
+		ProxyVia:     cfg.ProxyVia,
+		Sender:       sender,
+		Streams:      pc.Transport(),
+		creator:      pc.Transport(),
+		// The uplink is the connection every task shares. Registered here
+		// because this is where it becomes the Session's, and it is the end
+		// that SENDS every pull -- the state nobody could see before.
 		Logger:                     cfg.Logger,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
@@ -285,6 +288,12 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}
+
+	// The uplink: one connection multiplexing every task on this runner, and the
+	// end that SENDS every pull. Its congestion state was unobservable before
+	// this -- the server's dump only ever saw the server's own side.
+	session.registerTrsfConn(pc.Connection().ConnectionID().String(),
+		protocol.ConnRole_Server, pc.Transport(), protocol.TaskID{})
 
 	h := &RunHandle{
 		pc:        pc,
@@ -624,6 +633,14 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if !session.DeliverChainedRelayResponse(*rcr) {
 			log.Warn("dispatch: ChainedRelayResponse without waiter", "status", rcr.Status)
 		}
+	case protocol.RunnerRequestType_TrsfState:
+		ts := req.TrsfState()
+		if ts == nil {
+			return
+		}
+		// Read-only and synchronous: a map walk plus one reply.
+		handleTrsfState(session, *ts, session.sendRunnerMessage)
+
 	case protocol.RunnerRequestType_AuthorizeDataPlane:
 		ad := req.AuthorizeDataPlane()
 		if ad == nil {

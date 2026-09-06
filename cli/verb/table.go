@@ -1219,10 +1219,18 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"conns"}, Surfaces: CLI,
 		Notes: []string{
-			"snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines",
+			"snapshot live connections; -f streams live events; --json emits JSON lines",
+			"no capability is needed: you see the connections whose principal task you can see, which is why a confined caller sees no runner connections at all",
+			"--trsf reads each connection's congestion state instead (cwnd, srtt, in-flight, loss); --runner asks a runner about its own, which needs the global view",
 		},
 		Action: "ConnsAction",
 		Flags: []Flag{
+			{Name: "trsf", Type: FlagBool, Default: false, Field: "Trsf",
+				Help: "report congestion state (cwnd/srtt/in-flight/loss) instead of the connection list"},
+			{Name: "runner", Type: FlagString, Default: "", Field: "Runner",
+				Help: "with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the global view"},
+			{Name: "watch", Type: FlagString, Default: "", Field: "Watch",
+				Help: "with --trsf: re-read at this interval (e.g. 200ms) and print the DELTA. Several counters mean nothing as a single sample -- loop_iterations separates a blocked run loop from a busy-spinning one only across two reads"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output JSON lines instead of a table"},
 			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Follow",
 				Help: "stream live connection events (conns.status)"},

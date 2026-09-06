@@ -130,6 +130,12 @@ type TaskHandler struct {
 	// StreamId=0 (error; safe for tests that don't exercise the conn-list path).
 	ConnListFn func(viewerTaskID protocol.TaskID, globalView bool) []protocol.ConnInfo
 
+	// TrsfStateFn reads this server's own connections; RunnerTrsfStateFn asks a
+	// named runner for its. Both nil on a server built without a listener,
+	// which answers unavailable rather than pretending.
+	TrsfStateFn       func(allowed map[string]bool, globalView bool) []protocol.TrsfConnState
+	RunnerTrsfStateFn func(ctx context.Context, runner protocol.RunnerID) ([]protocol.TrsfConnState, error)
+
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
@@ -717,6 +723,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_TrsfState:
+		ts := req.TrsfState()
+		if ts == nil {
+			slog.Error("TaskHandler: TrsfState variant is nil")
+			return
+		}
+		h.handleTrsfState(conn, req.RequestId, cid, ts)
 
 	case protocol.TaskControlKind_RestoreTasks:
 		// Operator-identity gate, like SetCaps below; deliberately NOT in

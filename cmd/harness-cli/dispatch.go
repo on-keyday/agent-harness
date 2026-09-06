@@ -206,6 +206,14 @@ func (h cliVerbs) Ls(a verb.ListAction) error {
 }
 
 func (h cliVerbs) Conns(a verb.ConnsAction) error {
+	if a.Trsf {
+		// A different question about the same connections, so it shares the
+		// verb rather than inventing one: --trsf asks what each connection's
+		// transport is doing, where the bare form asks which exist.
+		return h.withClient(func(c *cli.Client) error {
+			return runTrsf(h.ctx, c, a.Runner, a.Watch, a.JSON, os.Stdout)
+		})
+	}
 	if a.Follow {
 		var err error
 		if a.JSON {

@@ -15,6 +15,7 @@ enum RunnerMessageType:
     authorize_data_plane_response  # answer to AuthorizeDataPlaneRequest
     revoke_data_plane_response     # answer to RevokeDataPlaneRequest
     data_plane_finished            # a data-plane transfer ended; drop its state
+    trsf_state_response            # this runner's own transport state, as asked
 
 enum RunnerRequestType:
     :u8
@@ -37,6 +38,7 @@ enum RunnerRequestType:
                        # its input goroutine while the process runs on.
     authorize_data_plane  # expect a connection redeeming this grant
     revoke_data_plane     # drop a grant and close whatever redeems it
+    trsf_state            # report this runner's own transport state
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -252,6 +254,7 @@ format RunnerMessage:
         RunnerMessageType.authorize_data_plane_response => authorize_data_plane_response :AuthorizeDataPlaneResponse
         RunnerMessageType.revoke_data_plane_response => revoke_data_plane_response :RevokeDataPlaneResponse
         RunnerMessageType.data_plane_finished => data_plane_finished :DataPlaneFinished
+        RunnerMessageType.trsf_state_response => trsf_state_response :RunnerTrsfStateResponse
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -273,6 +276,7 @@ format RunnerRequest:
         RunnerRequestType.close_exec_run => close_exec_run :CloseExecRunRequest
         RunnerRequestType.authorize_data_plane => authorize_data_plane :AuthorizeDataPlaneRequest
         RunnerRequestType.revoke_data_plane => revoke_data_plane :RevokeDataPlaneRequest
+        RunnerRequestType.trsf_state => trsf_state :RunnerTrsfStateRequest
 
 enum TaskControlKind:
     :u8
@@ -365,6 +369,17 @@ enum TaskControlKind:
                             # afterwards passes the ordinary gate. A task that
                             # never existed cannot be invented, because every
                             # field comes from a WAL record the server wrote.
+    trsf_state              # appended: read a transport's congestion state
+                            # (cwnd, srtt, in-flight, loss) for diagnosis.
+                            # No capability bit. Which connections the answer
+                            # carries is decided the way `conns` already decides
+                            # it -- a projection of task visibility -- so a
+                            # confined caller sees the trsf state of exactly the
+                            # connections it can already see listed, and asking
+                            # a RUNNER needs the global view because every
+                            # connection a runner holds is either the shared
+                            # server one, which has no principal task to project
+                            # from, or a data-plane one.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1276,6 +1291,7 @@ format TaskControlRequest:
         TaskControlKind.board_retract         => board_retract         :BoardRetractRequest
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapRequest
         TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksRequest
+        TaskControlKind.trsf_state            => trsf_state            :TrsfStateRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1331,6 +1347,7 @@ format TaskControlResponse:
         TaskControlKind.board_retract         => board_retract         :BoardRetractResponse
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapResponse
         TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksResponse
+        TaskControlKind.trsf_state            => trsf_state            :TrsfStateResponse
 
 enum SetCapsStatus:
     :u8
@@ -1576,8 +1593,74 @@ enum ConnRole:
     webui
     agent
     runner
+    server        # appended: the peer is the SERVER. Only a runner reports this
+                  # -- ConnInfo, which the server produces, never emits it, the
+                  # way TaskControlKind admits kinds no grant ever carries. The
+                  # role always names the PEER, so a runner's own uplink is
+                  # "server" and its data-plane connections are the client kinds.
 
 # --- ConnInfo: one live (or just-opened/just-closed) connection. ---
+# TrsfTarget names WHICH transport stack to read. The two are different
+# machines: `server` is this process's own connections, `runner` is a named
+# runner's, which costs a round trip to fetch.
+enum TrsfTarget:
+    :u8
+    server = "server"
+    runner = "runner"
+
+# TrsfConnState is one connection's congestion state -- the numbers a stalled
+# transfer is diagnosed from.
+#
+# These belong to the CONNECTION, not to any stream on it. A runner's server
+# connection multiplexes every task it runs, so its cwnd and loss counters are
+# the sum over all of them and cannot be attributed to one task. That is why
+# there is no per-task filter here and why a confined caller is not shown
+# runner connections at all.
+#
+# InternalState.SentPackets is deliberately NOT carried: it is an unbounded
+# slice, and nothing in this diagnosis reads per-packet detail.
+#
+# The counters that only mean something as a DELTA are marked. Reading one
+# sample of loop_iterations says nothing; two samples separate a run loop that
+# is blocked (frozen) from one that is busy-spinning (exploding) from one that
+# is merely congestion-blocked (advancing slowly).
+format TrsfConnState:
+    cid_len :u8
+    cid :[cid_len]u8            # same canonical string ConnInfo.cid carries
+    role :ConnRole
+    principal_task :TaskID      # as ConnInfo: zero for runner and non-agent conns
+    mtu :u32
+    cwnd :u32
+    bytes_in_flight :u32
+    srtt_us :u64
+    rttvar_us :u64
+    send_queue :u32
+    recv_queue :u32
+    send_streams :u32
+    recv_streams :u32
+    loop_iterations :u64        # delta only
+    loss_events :u64            # delta only: times the window was cut
+    loss_packets :u64           # delta only
+    loss_spurious :u64          # delta only: cuts whose packets were merely late.
+                                # Climbing with a transfer means the sending rate
+                                # is being set by a measurement error, not the path.
+
+enum TrsfStateStatus:
+    :u8
+    ok             = "ok"
+    runner_offline = "runner_offline"   # named runner is not registered
+    not_permitted  = "not_permitted"    # asking a runner needs the global view
+    unavailable    = "unavailable"      # the runner did not answer in time
+
+format TrsfStateRequest:
+    target :TrsfTarget
+    runner_cid :RunnerID        # target == runner only; ignored otherwise
+
+format TrsfStateResponse:
+    status :TrsfStateStatus
+    count :u16
+    conns :[count]TrsfConnState
+
 format ConnInfo:
     cid_len :u8
     cid :[cid_len]u8                # ConnectionID canonical String(): "transport:ip:port-id".
@@ -1876,6 +1959,18 @@ format AuthorizeDataPlaneResponse:
 # server -> runner. Idempotent: revoking an unknown grant is ok.
 format RevokeDataPlaneRequest:
     grant_id :[16]u8
+
+# The runner reports every connection it holds; the SERVER decides which of them
+# the caller may see. Keeping the policy on the server is D7 -- the runner never
+# evaluates a scope, and a second implementation of the visibility rule is the
+# drift this design has already paid for once.
+format RunnerTrsfStateRequest:
+    request_id :u32
+
+format RunnerTrsfStateResponse:
+    request_id :u32
+    count :u16
+    conns :[count]TrsfConnState
 
 format RevokeDataPlaneResponse:
     closed :u32

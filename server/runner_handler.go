@@ -43,6 +43,9 @@ type RunnerHandler struct {
 	// grant go now rather than on a timer.
 	OnDataPlaneFinished func(grantID [16]byte)
 
+	// OnTrsfStateResponse routes a runner's answer to whoever asked for it.
+	OnTrsfStateResponse func(protocol.RunnerTrsfStateResponse)
+
 	// OnExecRunFinished, when non-nil, hands an out-of-band exec's outcome to
 	// the TaskHandler that registered it — a func field rather than a handler
 	// reference, like the callbacks above, because the two handlers are wired
@@ -252,6 +255,18 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				"runnerID", runnerID, "status", ad.Status)
 		}
 		// Mutates nothing schedulable, same as the relay response above.
+		return
+
+	case protocol.RunnerMessageType_TrsfStateResponse:
+		ts := msg.TrsfStateResponse()
+		if ts == nil {
+			slog.Error("RunnerHandler: TrsfStateResponse variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnTrsfStateResponse != nil {
+			h.OnTrsfStateResponse(*ts)
+		}
+		// Read-only diagnosis; nothing schedulable changed.
 		return
 
 	case protocol.RunnerMessageType_DataPlaneFinished:

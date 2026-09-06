@@ -89,12 +89,18 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// pruned task's creator edge survives only in its task_created record, so
 	// walChildIndex feeds scopeSetWith and the ordinary policy decides.
 	protocol.TaskControlKind_RestoreTasks: targetGated,
+	// trsf_state carries no task id. It is a read-only listing filtered through
+	// visibleToCaller, exactly as list_conns is -- and for the same reason: a
+	// connection's visibility is a projection of its principal task's, so a
+	// confined caller sees no runner connections, whose counters are the sum
+	// over every task on that runner and cannot be attributed to one.
+	protocol.TaskControlKind_TrsfState: infoScoped,
 	// permission_denied is a RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_RestoreTasks); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_TrsfState); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -109,13 +115,14 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// restore_tasks is the last kind; if the enum grows past it the loop above
-// stops short and silently covers nothing new. It caught restore_tasks itself:
-// the bound was open_forward_tap and this is what said so.
-func TestRestoreTasksIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_RestoreTasks) + 1)
+// trsf_state is the last kind; if the enum grows past it the loop above stops
+// short and silently covers nothing new. It has caught two appends now:
+// restore_tasks, when the bound was open_forward_tap, and trsf_state.
+func TestTrsfStateIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TrsfState) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after restore_tasks (%v) — raise the loop bound in "+
-			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
+		t.Fatalf("a kind was appended after trsf_state (%v) — raise the loop bound in "+
+			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
+			"which otherwise stop before it", next)
 	}
 }

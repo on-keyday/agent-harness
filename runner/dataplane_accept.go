@@ -205,6 +205,14 @@ func handleDataPlaneConn(
 
 	sendPskAuthStatus(pc, protocol.PskAuthStatus_Ok)
 
+	// Registered for reporting while it lives. A data-plane connection carries
+	// exactly one request for one task, so unlike the uplink its row CAN name a
+	// task -- which is what makes a routed transfer's cwnd separable from
+	// everything else the runner is doing.
+	dpCID := pc.Connection().ConnectionID().String()
+	sess.registerTrsfConn(dpCID, protocol.ConnRole_Cli, pc.Transport(), info.TaskId)
+	defer sess.unregisterTrsfConn(dpCID)
+
 	// The grant can be revoked while this connection is open; that has to reach
 	// the transfer, or a narrowing `caps set` would be advisory here.
 	sess.Grants.OnClose(info.GrantId, func() { pc.Connection().Close() }) //nolint:errcheck

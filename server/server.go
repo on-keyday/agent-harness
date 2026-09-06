@@ -116,6 +116,12 @@ type Server struct {
 	activeConnsMu sync.Mutex
 	activeConns   map[objproto.ConnectionID]streamingConn
 
+	// trsfRespCh correlates a runner's trsf_state answer with the caller
+	// waiting for it, keyed by the request_id that went out.
+	trsfRespMu sync.Mutex
+	trsfRespCh map[uint32]chan protocol.RunnerTrsfStateResponse
+	trsfReqSeq atomic.Uint32
+
 	// relayRespChMu / relayRespCh correlate inbound
 	// RunnerMessageType_EstablishRelayResponse messages back to the goroutine
 	// that sent the original EstablishRelayRequest. Keyed by the proxy_runner's
@@ -274,6 +280,14 @@ func New(cfg Config) *Server {
 	s.taskHandler.RevokeDataPlaneForTask = s.revokeDataPlaneForTask
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
+	s.taskHandler.TrsfStateFn = s.trsfConnStates
+	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, rid protocol.RunnerID) ([]protocol.TrsfConnState, error) {
+		entry, ok := s.registry.Get(protocol.RunnerIDToConnID(rid).String())
+		if !ok {
+			return nil, errRunnerOffline
+		}
+		return s.sendRunnerTrsfStateRequest(ctx, &entry)
+	}
 	// Wire notify ring + egress hook into the TaskHandler.
 	s.notifyRing = newNotifyRing(64)
 	s.taskHandler.NotifyHook = cfg.NotifyHook
@@ -292,6 +306,7 @@ func New(cfg Config) *Server {
 	// runner connection and belongs to the registry the TaskHandler holds.
 	s.runnerHandler.OnExecRunFinished = s.taskHandler.onExecRunFinished
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
+	s.runnerHandler.OnTrsfStateResponse = s.deliverRunnerTrsfStateResponse
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl:      s.runnerHandler.Handle,
 		OnTaskControl:        s.taskHandler.Handle,
@@ -923,43 +938,29 @@ type streamingConn struct {
 // wired to SIGUSR1 on Unix). role=runner/client makes a stuck remote-forward
 // relay visible — e.g. a runner conn whose recvStreams aren't draining.
 func (s *Server) DumpTrsfState() {
-	s.activeConnsMu.Lock()
-	conns := make([]streamingConn, 0, len(s.activeConns))
-	for _, c := range s.activeConns {
-		conns = append(conns, c)
-	}
-	s.activeConnsMu.Unlock()
-
 	log := s.cfg.Logger
-	log.Info("trsf dump: begin", "conns", len(conns))
-	for _, c := range conns {
-		cid := c.ConnectionID()
-		role := "client"
-		if _, ok := s.registry.GetByConnectionID(cid); ok {
-			role = "runner"
-		}
-		st := c.trans.GetInternalState()
-		if st == nil {
-			log.Info("trsf dump: conn", "cid", cid.String(), "role", role, "state", "nil")
-			continue
-		}
+	// The same walk the trsf_state request reads, with the operator's own view
+	// (nil allowed + globalView), so the log and the wire cannot disagree.
+	rows := s.trsfConnStates(nil, true)
+	log.Info("trsf dump: begin", "conns", len(rows))
+	for _, r := range rows {
 		log.Info("trsf dump: conn",
-			"cid", cid.String(), "role", role,
-			"sendStreams", st.ActiveSendStreams, "recvStreams", st.ActiveReceiveStreams,
-			"sendQ", st.SendQueueLength, "recvQ", st.ReceiveQueueLength,
-			"sendTrig", st.SendActionCount, "updWin", st.UpdateWindowCount, "cancel", st.CancelStreamCount,
-			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets),
+			"cid", string(r.Cid), "role", r.Role,
+			"sendStreams", r.SendStreams, "recvStreams", r.RecvStreams,
+			"sendQ", r.SendQueue, "recvQ", r.RecvQueue,
+			"inflight", r.BytesInFlight, "cwnd", r.Cwnd,
+			"srtt_us", r.SrttUs, "rttvar_us", r.RttvarUs, "mtu", r.Mtu,
 			// lossEvents is how many times the congestion window was cut, and
 			// spuriousLoss how many of the packets behind those cuts were
 			// acknowledged afterwards. A spuriousLoss that climbs with the
 			// transfer says the sending rate is being set by a measurement
 			// error rather than by the path.
-			"lossEvents", st.Loss.Events, "lostPkts", st.Loss.Packets, "spuriousLoss", st.Loss.Spurious,
+			"lossEvents", r.LossEvents, "lostPkts", r.LossPackets, "spuriousLoss", r.LossSpurious,
 			// loopIters separates a run loop that is blocked (frozen counter
 			// across two dumps) from one that is busy-spinning (counter
 			// exploding) from one that is merely congestion-blocked (counter
 			// advancing slowly). Only meaningful as a delta, so dump twice.
-			"loopIters", st.LoopIterations)
+			"loopIters", r.LoopIterations)
 	}
 	if s.taskHandler != nil {
 		for _, pf := range s.taskHandler.pforwards().snapshot() {
