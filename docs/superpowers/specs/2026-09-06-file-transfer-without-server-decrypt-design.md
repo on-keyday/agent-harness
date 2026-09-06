@@ -1351,15 +1351,30 @@ receiver's one-packet-per-loop-iteration processing, or the SPLICE in the middle
 which on this fleet is a Raspberry Pi doing a decrypt, a copy and a re-encrypt
 for every byte in both directions.
 
-**A caveat that decides the next step.** This probe measured Windows ↔ Linux
-client, which is *a* pair of stations on this AP but NOT the leg the counters
-were read from: that leg is Windows ↔ Pi, and the Pi is a much smaller machine
-that is also the splice. The radio is now exonerated; the Pi is not, and it has
-never been measured because nothing in the fleet can execute on it. Getting a
-shell or a probe onto the server host is the next thing this needs — a bigger
-step than another counter, and the first one in this whole thread that is not.
+**And then the leg itself.** The probe above measured Windows ↔ Linux client,
+which is *a* pair of stations on this AP but NOT the leg the counters were read
+from. That leg is Windows ↔ the server host, and the server is the small machine
+that also does the splice, so it was the last thing standing. It has now been
+measured too, same probe, same direction as a pull:
 
-Everything else has now been ruled out by measurement rather than by argument:
-the medium, the Pi's radio, the CPU on the client and server, the congestion
-window, the transport's own timers, the application feeding it, and now the
-path's capacity.
+| offered | delivered | loss | packets/s |
+| --- | --- | --- | --- |
+| 5 MB/s | 5.01 | **0.00%** | 4,176 |
+| 10 MB/s | 10.01 | **0.00%** | 8,342 |
+| 20 MB/s | 19.43 | 2.89% | 16,189 |
+
+**The server takes 10 MB/s with no loss at all and 19.4 MB/s at 2.9%** — two and
+a half to five times what a file transfer over the same leg achieves. It is not
+the bottleneck either.
+
+Everything outside the transport has now been ruled out BY MEASUREMENT rather
+than by argument: the medium, the radios, the CPU on both ends, the congestion
+window, the transport's own timers, the application feeding it, the path's
+capacity between the client and the runner, and the capacity of the exact leg
+the counters were read from.
+
+What is left is the stack itself — the per-packet path through `objproto` and
+`trsf`, the splice's copy between two streams, and the 150 ms of delay that a
+transport offering 3,000 packets/s onto a link that carries 16,000 is somehow
+inflicting on itself. Every remaining candidate is inside this repository and
+its transport, which is a smaller place to look than where this started.
