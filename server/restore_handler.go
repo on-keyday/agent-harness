@@ -11,13 +11,16 @@ import (
 // handleRestoreTasks puts back task records a prune forgot, rebuilt from the
 // server's own WAL.
 //
-// Scope-gated on prune, the same bit and the same target set the destructive
-// half takes. That symmetry is the whole argument: an agent may only prune
-// within its scope, so an agent that may not restore within its scope cannot
-// undo its own mistake, and the accident this verb exists for is exactly the
-// one an agent has. It grants no reach either -- the ids it can name are the
-// ids it could already have pruned, and everything it does with a restored
-// task afterwards passes the ordinary gate.
+// Cap- and scope-gated on prune, the same bit and the same target set the
+// destructive half takes. That symmetry is the whole argument: an agent may
+// only prune within its scope, so an agent that may not restore within its
+// scope cannot undo its own mistake, and the accident this verb exists for is
+// exactly the one an agent has. It grants no reach either -- the ids it can
+// name are the ids it could already have pruned, and everything it does with a
+// restored task afterwards passes the ordinary gate.
+//
+// Both gates, and separately: scope says WHICH tasks, the cap says WHETHER.
+// The list half takes the scope filter alone, on purpose.
 //
 // The target set needs the WAL. childIndex is built from the LIVE store, so a
 // forgotten task has no parent link there and would fall out of every subtree
@@ -69,6 +72,21 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 		}
 		body.SetCandidates(rows)
 		respond(body)
+		return
+	}
+
+	// The mutating half needs the CAP, not only the scope. Both halves arrive
+	// as the same kind and are told apart by list_only, which requiredCap
+	// cannot see -- the same reason AttachSession's gate is inline. Listing
+	// stays open deliberately: the ids of forgotten tasks live only in the WAL,
+	// so gating it too would leave the verb usable only by someone who had
+	// written the id down before the accident.
+	//
+	// Without this the scope check above ran alone, and scope answers "which
+	// tasks" and never "whether": a caller whose prune had been revoked could
+	// still put records back, which is the control the revocation was for.
+	if !hasCap(h.callerCaps(cid), protocol.Capability_Prune) {
+		h.denyTaskControl(conn, protocol.TaskControlKind_RestoreTasks, requestID, protocol.Capability_Prune)
 		return
 	}
 
