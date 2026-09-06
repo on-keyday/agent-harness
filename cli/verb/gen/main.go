@@ -169,7 +169,7 @@ import (
 			s    verb.Surface
 			name string
 		}{{verb.CLI, "cli"}, {verb.TUI, "tui"}, {verb.WebUI, "webui"}} {
-			if !v.Surfaces.Has(sf.s) {
+			if !v.CmdlineSurfaces.Has(sf.s) {
 				continue
 			}
 			nv := v.For(sf.s)
@@ -361,7 +361,7 @@ func emitDispatch(buf *bytes.Buffer) {
 	}{{verb.CLI, "CLI"}, {verb.TUI, "TUI"}} {
 		var verbs []verb.VerbSpec
 		for _, v := range verb.Verbs {
-			if v.Action != "" && v.Surfaces.Has(sf.s) {
+			if v.Action != "" && v.CmdlineSurfaces.Has(sf.s) {
 				verbs = append(verbs, v)
 			}
 		}

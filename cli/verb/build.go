@@ -291,13 +291,13 @@ func (v VerbSpec) For(s Surface) VerbSpec {
 	}
 	out.Flags = nil
 	for _, f := range v.Flags {
-		if f.Surfaces == 0 || f.Surfaces.Has(s) {
+		if f.CmdlineSurfaces == 0 || f.CmdlineSurfaces.Has(s) {
 			out.Flags = append(out.Flags, f)
 		}
 	}
 	out.Args = nil
 	for _, a := range v.Args {
-		if a.Surfaces == 0 || a.Surfaces.Has(s) {
+		if a.CmdlineSurfaces == 0 || a.CmdlineSurfaces.Has(s) {
 			out.Args = append(out.Args, a)
 		}
 	}

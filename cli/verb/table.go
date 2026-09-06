@@ -26,8 +26,8 @@ var Verbs = []VerbSpec{
 			"no ids: terminal tasks older than --before",
 			"with ids: only those (refuses active tasks unless --force)",
 		},
-		Surfaces: CLI | TUI | WebUI,
-		Action:   "PruneAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Action:          "PruneAction",
 		// The widest form has to be ASKED for. A bare `prune` forgot every
 		// terminal task older than the default, and the server deletes the
 		// TaskEntry and its log -- after which `submit --resume <id>` answers
@@ -67,22 +67,25 @@ var Verbs = []VerbSpec{
 	//
 	// Seven sub-verbs, and the family where per-surface narrowing first bites:
 	// a browser has no local path, so `file push` names two positionals there
-	// and three everywhere else. Declared with Arg.Surfaces rather than as a
+	// and three everywhere else. Declared with Arg.CmdlineSurfaces rather than as a
 	// separate verb, because it is one operation reached from three places.
 	{
 		Path: []string{"file", "push"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+		},
 		Notes: []string{
 			"copy a local file (or directory tree with -r) into the worktree",
 			"default: O_EXCL refuses to overwrite; -f permits replacement",
 		},
-		Action:   "FilePushAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FilePushAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{
 				Name: "local-src", Type: ArgString, Field: "LocalSrc",
-				Surfaces:      CLI | TUI,
-				SurfaceReason: "a browser has no local path to name; the WebUI supplies the bytes from a file picker",
+				CmdlineSurfaces: CLI | TUI,
+				SurfaceReason:   "a browser has no local path to name; the WebUI supplies the bytes from a file picker",
 			},
 			{Name: "worktree-rel-dst", Type: ArgString, Field: "RemoteDst"},
 		},
@@ -104,6 +107,9 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "pull"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+		},
 		Notes: []string{
 			"copy a worktree file (or directory tree with -r) to a local path",
 			"default: O_EXCL refuses to overwrite local; -f permits replacement",
@@ -111,15 +117,15 @@ var Verbs = []VerbSpec{
 		Action: "FilePullAction",
 		// A directory pull is a generated tar, whose byte offsets are not a
 		// stable thing to index into.
-		Exclusive: []Rule{{Flags: []string{"recursive", "offset"}}, {Flags: []string{"recursive", "length"}}},
-		Surfaces:  CLI | TUI | WebUI,
+		Exclusive:       []Rule{{Flags: []string{"recursive", "offset"}}, {Flags: []string{"recursive", "length"}}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "worktree-rel-src", Type: ArgString, Field: "RemoteSrc"},
 			{
 				Name: "local-dst", Type: ArgString, Field: "LocalDst",
-				Surfaces:      CLI | TUI,
-				SurfaceReason: "a browser downloads the file rather than writing it to a path it names",
+				CmdlineSurfaces: CLI | TUI,
+				SurfaceReason:   "a browser downloads the file rather than writing it to a path it names",
 			},
 		},
 		Flags: []Flag{
@@ -128,9 +134,9 @@ var Verbs = []VerbSpec{
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
-				Surfaces:      CLI | TUI,
-				SurfaceReason: "a browser hands the bytes to its save dialog; there is no destination here to overwrite",
-				Help:          "overwrite existing destination"},
+				CmdlineSurfaces: CLI | TUI,
+				SurfaceReason:   "a browser hands the bytes to its save dialog; there is no destination here to overwrite",
+				Help:            "overwrite existing destination"},
 			// -o / -n existed only in the TUI before the migration. Adding them
 			// to the other surfaces widens what parses and never narrows it.
 			{Name: "offset", Aliases: []string{"o"}, Type: FlagUint64, Default: uint64(0), Field: "Offset",
@@ -146,11 +152,14 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "ls"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+		},
 		Notes: []string{
 			"list a single directory under the worktree (default: worktree root)",
 		},
-		Action:   "FileLsAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FileLsAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			// Optional, not a list: MaxCount 1 makes it a single value the
@@ -170,11 +179,14 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "mkdir"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+		},
 		Notes: []string{
 			"create a directory in the worktree",
 		},
-		Action:   "FileMkdirAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FileMkdirAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "worktree-rel-dir", Type: ArgString, Field: "RelPath"},
@@ -190,11 +202,14 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "delete"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+		},
 		Notes: []string{
 			"remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused",
 		},
-		Action:   "FileDeleteAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FileDeleteAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
@@ -217,11 +232,14 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"file", "edit"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#file-editor-modal"},
+		},
 		Notes: []string{
 			"open the file in $EDITOR and write it back",
 		},
-		Action:   "FileEditAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FileEditAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
@@ -238,8 +256,8 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"create an empty file (refused when it exists)",
 		},
-		Action:   "FileNewAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "FileNewAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args: []Arg{
 			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
 			{Name: "worktree-rel-path", Type: ArgString, Field: "RelPath"},
@@ -270,13 +288,17 @@ var Verbs = []VerbSpec{
 	// surface. The WebUI accepted it and threw it away, which was worse than
 	// refusing it.
 	{
-		Path:          []string{"git", "log"},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "log"},
-		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
+		Path: []string{"git", "log"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
+		},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "log"},
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
 		Flags: []Flag{
 			{Name: "max", Type: FlagUint, Default: uint(0), Field: "Max", FieldType: "uint32", Help: "maximum commits (0 = 100, capped at 1000)"},
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
@@ -285,17 +307,21 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"git", "diff"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
+		},
 		Notes: []string{
 			"counts revisions the way git does: none = unstaged, one = that revision",
 			"against the working tree, two = commit against commit",
 			"--submodule inlines a submodule's own changes",
 		},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "diff"},
-		ExtraFields:   map[string]string{"TaskID": "string"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "diff"},
+		ExtraFields:     map[string]string{"TaskID": "string"},
 		// Counted the way git counts them: none = unstaged, one = that revision
 		// against the working tree, two = commit against commit. Two Optional
 		// positionals rather than a slice a Build interprets, so the mapping
@@ -333,15 +359,19 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"git", "show"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
+		},
 		Notes: []string{
 			"--submodule inlines a submodule's own changes",
 		},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "show"},
-		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "show"},
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}, {Name: "revision", Type: ArgString, Variadic: true, MaxCount: 1, Field: "BaseRev"}},
 		Flags: []Flag{
 			{Name: "submodule", Type: FlagBool, Default: false, Field: "Submodule", Help: "inline a submodule's own file-level changes"},
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxBytes", FieldType: "uint32", Help: "maximum bytes (0 = 2MiB, capped at 8MiB)"},
@@ -350,13 +380,17 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD"},
 	},
 	{
-		Path:          []string{"git", "status"},
-		Args:          []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "status"},
+		Path: []string{"git", "status"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
+		},
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "status"},
 		Flags: []Flag{
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "run the query inside this worktree-relative nested repo"},
 		},
@@ -368,23 +402,27 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"list the nested repositories under the worktree",
 		},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "subrepos"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "subrepos"},
 		Flags: []Flag{
 			{Name: "subrepo", Type: FlagString, Default: "", Field: "Subrepo", Help: "list nested repos under this worktree-relative directory"},
 		},
 		Examples: []string{"git subrepos aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path:          []string{"git", "file"},
-		Surfaces:      CLI | TUI | WebUI,
-		Pathspec:      true,
-		PathspecField: "Path",
-		Action:        "GitAction",
-		Const:         map[string]string{"Sub": "file"},
+		Path: []string{"git", "file"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
+		},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Pathspec:        true,
+		PathspecField:   "Path",
+		Action:          "GitAction",
+		Const:           map[string]string{"Sub": "file"},
 		// The path may arrive as a positional OR after `--`, never both and
 		// never neither -- so one lifted out of a diff header works either
 		// way. Neither an arity nor an exclusion: it is a choice between two
@@ -428,10 +466,10 @@ var Verbs = []VerbSpec{
 			"NOT `session exec`, which types into the session's foreground shell",
 			"--shell: hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)",
 		},
-		Surfaces: CLI | TUI | WebUI,
-		Action:   "ExecRunAction",
-		Const:    map[string]string{"Sub": "run"},
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Action:          "ExecRunAction",
+		Const:           map[string]string{"Sub": "run"},
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// The argv follows a literal `--` and stays a LIST: the runner needs
 		// the word boundaries. --shell is the one case that joins, and it does
 		// so because the operator asked for shell interpretation -- which is
@@ -461,36 +499,43 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"exec", "ls"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
+			{Surface: WebUI, At: "webui/index.html#exec-list"},
+		},
 		Notes: []string{
 			"list running execs; --task filters, --json emits JSON lines",
 		},
-		Action:   "ExecRunAction",
-		Const:    map[string]string{"Sub": "ls"},
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "ExecRunAction",
+		Const:           map[string]string{"Sub": "ls"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only execs against this task id"},
 			// --json was CLI-only before the migration; declaring it once gives
 			// it to the surfaces that silently lacked it.
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
-				Surfaces:      CLI | WebUI,
-				SurfaceReason: "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
-				Help:          "one JSON object per exec"},
+				CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason:   "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per exec"},
 		},
 		Examples: []string{"exec ls", "exec ls --json"},
 	},
 	{
 		Path: []string{"exec", "kill"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
+		},
 		Notes: []string{
 			"stop one or more running execs by id (from `exec ls`)",
 		},
 		// At least one id: `forward kill` with none is a mistyped line, not a
 		// request to kill nothing.
-		MinArgs:  1,
-		Action:   "ExecRunAction",
-		Const:    map[string]string{"Sub": "kill"},
-		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "exec-id", Type: ArgUint, Variadic: true, Field: "ExecIDs"}},
-		Examples: []string{"exec kill 3"},
+		MinArgs:         1,
+		Action:          "ExecRunAction",
+		Const:           map[string]string{"Sub": "kill"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "exec-id", Type: ArgUint, Variadic: true, Field: "ExecIDs"}},
+		Examples:        []string{"exec kill 3"},
 	},
 
 	// --- forward ---
@@ -513,9 +558,9 @@ var Verbs = []VerbSpec{
 			"with -W and --http-path: send one built HTTP request and stream the response (stdin is not spliced)",
 			"-W is mutually exclusive with -L / -R; not repeatable; exits with its peer",
 		},
-		Surfaces: CLI,
-		Action:   "ForwardOpenAction",
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		CmdlineSurfaces: CLI,
+		Action:          "ForwardOpenAction",
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// -W owns the foreground and exits with its peer, while -L/-R are
 		// long-lived listeners. ssh makes the same pair exclusive, for the
 		// same reason: one invocation, one lifetime. Two pairs rather than one
@@ -547,42 +592,52 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"forward", "ls"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
+			{Surface: WebUI, At: "webui/index.html#forward-list"},
+		},
 		Notes: []string{
 			"list registered port forwards; --task filters, --json emits JSON lines",
 		},
-		Action:   "ForwardLsAction",
-		Surfaces: CLI | TUI | WebUI,
+		Action:          "ForwardLsAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only forwards for this task id"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
-				Surfaces:      CLI | WebUI,
-				SurfaceReason: "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
-				Help:          "one JSON object per forward"},
+				CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason:   "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per forward"},
 		},
 		Examples: []string{"forward ls", "forward ls --json"},
 	},
 	{
 		Path: []string{"forward", "kill"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
+		},
 		Notes: []string{
 			"kill one or more registered forwards by id (from `forward ls`)",
 		},
 		// At least one id: `forward kill` with none is a mistyped line, not a
 		// request to kill nothing.
-		MinArgs:  1,
-		Action:   "ForwardKillAction",
-		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Variadic: true, Field: "ForwardIDs"}},
-		Examples: []string{"forward kill 7"},
+		MinArgs:         1,
+		Action:          "ForwardKillAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "forward-id", Type: ArgUint, Variadic: true, Field: "ForwardIDs"}},
+		Examples:        []string{"forward kill 7"},
 	},
 	{
 		Path: []string{"forward", "tap"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/forwardtap.go:ForwardTapView"},
+		},
 		Notes: []string{
 			"stream the bytes crossing one forward. A tap sees only what crosses AFTER it opens; nothing is recorded server-side",
 			"--raw writes payload bytes with no headers, so it needs an explicit --dir: two directions on one stdout is not a stream any decoder can read",
 		},
-		Surfaces: CLI | TUI | WebUI,
-		Action:   "ForwardTapAction",
-		Args:     []Arg{{Name: "forward-id", Type: ArgUint, Field: "ForwardID"}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Action:          "ForwardTapAction",
+		Args:            []Arg{{Name: "forward-id", Type: ArgUint, Field: "ForwardID"}},
 		// The four render modes are one choice, not four bools.
 		// They were CLI-only before -- the TUI took only --dir/--max-bytes.
 		Modes: &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
@@ -598,16 +653,16 @@ var Verbs = []VerbSpec{
 			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxRecordBytes", FieldType: "uint32",
 				Help: "cut each record's payload to this many bytes (0 = whole payload)"},
 			{Name: "hex", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
-				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
+				CmdlineSurfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "hexdump body (default)"},
 			{Name: "text", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
-				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
+				CmdlineSurfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "printable body, no offset column"},
 			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
-				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
+				CmdlineSurfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "payload bytes only; requires an explicit --dir"},
 			{Name: "json", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
-				Surfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
+				CmdlineSurfaces: CLI | TUI, SurfaceReason: "a browser tap is a panel, not a stream on stdout",
 				Help: "one JSON object per record"},
 		},
 		// --raw writes payloads with no headers, so two directions
@@ -638,9 +693,9 @@ var Verbs = []VerbSpec{
 			"(the runner must be running in --listen / --udp-listen mode)",
 			"prints the DialRunnerStatus and exits non-zero on non-Ok",
 		},
-		Action:   "ServerDialRunnerAction",
-		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "runner-cid", Type: ArgString, Field: "RunnerCID"}},
+		Action:          "ServerDialRunnerAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "runner-cid", Type: ArgString, Field: "RunnerCID"}},
 		Flags: []Flag{
 			{Name: "via", Type: FlagString, Default: "", Field: "Via",
 				Help: "relay through this registered runner CID (copy from `harness-cli ls`)"},
@@ -668,8 +723,8 @@ var Verbs = []VerbSpec{
 			"no scp/sftp and no ssh -R: use `file push`/`file pull` and `forward -R`",
 			"foreground; Ctrl-C stops it and every session it serves",
 		},
-		Action:   "SSHGatewayAction",
-		Surfaces: CLI,
+		Action:          "SSHGatewayAction",
+		CmdlineSurfaces: CLI,
 		Flags: []Flag{
 			{Name: "listen", Type: FlagString, Default: "127.0.0.1:2222", Field: "Listen",
 				Help: "ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)"},
@@ -686,16 +741,16 @@ var Verbs = []VerbSpec{
 	// design says -- and declared here rather than hand-parsed, which is what
 	// they were: the last verb-shaped token walk in tui/cmdline.go.
 	{
-		Path:     []string{"ssh-gateway", "start"},
-		Action:   "SSHGatewayAction",
-		Const:    map[string]string{"Sub": "start"},
-		Surfaces: TUI,
+		Path:            []string{"ssh-gateway", "start"},
+		Action:          "SSHGatewayAction",
+		Const:           map[string]string{"Sub": "start"},
+		CmdlineSurfaces: TUI,
 		// The default is the CLI flag's, declared once: it lived here as a
 		// fallback inside a hand-written parser and there as Flag.Default,
 		// which is two places for one address.
 		Args: []Arg{{Name: "bind-addr", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Listen",
-			Default:  "127.0.0.1:2222",
-			Surfaces: TUI, SurfaceReason: "the CLI names the same address with --listen, in the foreground form"}},
+			Default:         "127.0.0.1:2222",
+			CmdlineSurfaces: TUI, SurfaceReason: "the CLI names the same address with --listen, in the foreground form"}},
 		Examples: []string{"ssh-gateway start", "ssh-gateway start 127.0.0.1:2223"},
 	},
 	{
@@ -704,18 +759,18 @@ var Verbs = []VerbSpec{
 		// the declaration's for the other two, which is the shadowing footgun
 		// exactly: two types with the same name, both satisfying Action, and a
 		// `case SSHGatewayAction:` written by habit never matches.
-		Path:     []string{"ssh-gateway", "status"},
-		Action:   "SSHGatewayAction",
-		Const:    map[string]string{"Sub": "status"},
-		Surfaces: TUI,
-		Examples: []string{"ssh-gateway status"},
+		Path:            []string{"ssh-gateway", "status"},
+		Action:          "SSHGatewayAction",
+		Const:           map[string]string{"Sub": "status"},
+		CmdlineSurfaces: TUI,
+		Examples:        []string{"ssh-gateway status"},
 	},
 	{
-		Path:     []string{"ssh-gateway", "stop"},
-		Action:   "SSHGatewayAction",
-		Const:    map[string]string{"Sub": "stop"},
-		Surfaces: TUI,
-		Examples: []string{"ssh-gateway stop"},
+		Path:            []string{"ssh-gateway", "stop"},
+		Action:          "SSHGatewayAction",
+		Const:           map[string]string{"Sub": "stop"},
+		CmdlineSurfaces: TUI,
+		Examples:        []string{"ssh-gateway stop"},
 	},
 
 	// --- workspace ---
@@ -743,22 +798,22 @@ var Verbs = []VerbSpec{
 			}
 			return nil
 		},
-		Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString, Field: "Name"}},
+		CmdlineSurfaces: CLI | TUI,
+		Args:            []Arg{{Name: "name", Type: ArgString, Field: "Name"}},
 		Flags: []Flag{
-			{Name: "task", Type: FlagString, Default: "", Field: "TaskID", Surfaces: CLI,
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskID", CmdlineSurfaces: CLI,
 				SurfaceReason: "the TUI picks the tasks in a picker instead of naming one on the line",
 				Help:          "record only this task (32 hex); omitted = every task the registry reports a forward for"},
-			{Name: "resume", Type: FlagString, Default: "continue", Field: "Resume", Surfaces: CLI,
+			{Name: "resume", Type: FlagString, Default: "continue", Field: "Resume", CmdlineSurfaces: CLI,
 				SurfaceReason: "written through the TUI's picker rather than a flag",
 				Help:          "no | continue | fresh — for a task block being written for the FIRST time"},
-			{Name: "runner", Type: FlagString, Default: "assigned", Field: "Runner", Surfaces: CLI,
+			{Name: "runner", Type: FlagString, Default: "assigned", Field: "Runner", CmdlineSurfaces: CLI,
 				SurfaceReason: "written through the TUI's picker rather than a flag",
 				Help:          "assigned | any — for a task block being written for the FIRST time"},
-			{Name: "repo", Type: FlagString, Default: "", Field: "Repo", Surfaces: CLI,
+			{Name: "repo", Type: FlagString, Default: "", Field: "Repo", CmdlineSurfaces: CLI,
 				SurfaceReason: "the TUI already knows its repo from the session",
 				Help:          "repo identifier to record in the workspace"},
-			{Name: "all", Type: FlagBool, Default: false, Field: "All", Surfaces: TUI,
+			{Name: "all", Type: FlagBool, Default: false, Field: "All", CmdlineSurfaces: TUI,
 				SurfaceReason: "skips the TUI's task picker; the CLI has no picker to skip",
 				Help:          "write every live session without opening the picker"},
 		},
@@ -769,9 +824,9 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"delete one workspace from .harness/config (other workspaces and comments kept)",
 		},
-		Action:   "WorkspaceAction",
-		Const:    map[string]string{"Sub": "rm"},
-		Surfaces: CLI | TUI,
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "rm"},
+		CmdlineSurfaces: CLI | TUI,
 		// A name is required, and there is no "the current one" shorthand:
 		// deleting is the one verb here that cannot be undone by re-running it.
 		Args:     []Arg{{Name: "name", Type: ArgString, Field: "Name"}},
@@ -779,41 +834,47 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"workspace", "ls"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePicker"},
+		},
 		Notes: []string{
 			"list the workspaces in .harness/config",
 		},
-		Action:   "WorkspaceAction",
-		Const:    map[string]string{"Sub": "ls"},
-		Surfaces: CLI | TUI,
-		Examples: []string{"workspace ls"},
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "ls"},
+		CmdlineSurfaces: CLI | TUI,
+		Examples:        []string{"workspace ls"},
 	},
 	{
 		Path: []string{"workspace", "show"},
 		Notes: []string{
 			"print one workspace, or all of them when no name is given",
 		},
-		Action:   "WorkspaceAction",
-		Const:    map[string]string{"Sub": "show"},
-		Surfaces: CLI | TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
-		Examples: []string{"workspace show", "workspace show dev"},
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "show"},
+		CmdlineSurfaces: CLI | TUI,
+		Args:            []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
+		Examples:        []string{"workspace show", "workspace show dev"},
 	},
 	{
-		Path:   []string{"workspace", "apply"},
+		Path: []string{"workspace", "apply"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePicker"},
+		},
 		Action: "WorkspaceAction",
 		Const:  map[string]string{"Sub": "apply"},
 		// TUI-only: applying establishes forwards and resumes tasks, and a
 		// forward dies with the process that holds it -- so there is nothing
 		// for a one-shot CLI invocation to apply. usage() says as much.
-		Surfaces: TUI,
-		Args:     []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
-		Examples: []string{"workspace apply", "workspace apply dev"},
+		CmdlineSurfaces: TUI,
+		Args:            []Arg{{Name: "name", Type: ArgString, Variadic: true, MaxCount: 1, Field: "Name"}},
+		Examples:        []string{"workspace apply", "workspace apply dev"},
 	},
 	{
-		Path:     []string{"workspace", "detach"},
-		Action:   "WorkspaceAction",
-		Const:    map[string]string{"Sub": "detach"},
-		Surfaces: TUI,
+		Path:            []string{"workspace", "detach"},
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "detach"},
+		CmdlineSurfaces: TUI,
 		// Takes no name on purpose: there is only ever one installed
 		// workspace, and accepting a name would invite `detach other` to read
 		// as "detach that one instead of mine".
@@ -832,27 +893,35 @@ var Verbs = []VerbSpec{
 	// widening when unset.
 	{
 		Path: []string{"board", "topics"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-topics"},
+		},
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
 		},
 		Notes: []string{
 			"list every topic on the board with metadata (cap: board_observe)",
 		},
-		Surfaces: CLI,
-		Examples: []string{"board topics"},
-		Action:   "BoardAction",
-		Const:    map[string]string{"Sub": "topics"},
+		CmdlineSurfaces: CLI,
+		Examples:        []string{"board topics"},
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "topics"},
 	},
 	{
 		Path: []string{"board", "read"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-topics"},
+		},
 		Notes: []string{
 			"print retained messages for <topic> (text: header + pretty payload;",
 			"--json: JSON Lines, the same record shape as `agent inbox --json`; not found = exit 0)",
 		},
-		Surfaces: CLI,
-		Action:   "BoardAction",
-		Const:    map[string]string{"Sub": "read"},
-		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "read"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Flags: []Flag{
 			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
 				Help: "only messages replying to this seq"},
@@ -868,9 +937,9 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"list each task's subscriptions; with <topic>, only the tasks a publish there reaches (cap: board_observe)",
 		},
-		Surfaces: CLI,
-		Action:   "BoardAction",
-		Const:    map[string]string{"Sub": "subscribers"},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "subscribers"},
 		// At most one, expressed as arity rather than as a check in Build:
 		// MaxArgs is what the declaration already knows.
 		Args:     []Arg{{Name: "topic", Type: ArgTopic, Variadic: true, MaxCount: 1, Field: "Topic"}},
@@ -882,10 +951,10 @@ var Verbs = []VerbSpec{
 			"withdraw one message: gone from every agent path, still readable here until the topic ages out.",
 			"--seq is required -- there is no whole-topic retract (cap: purge)",
 		},
-		Surfaces: CLI,
-		Action:   "BoardAction",
-		Const:    map[string]string{"Sub": "retract"},
-		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "retract"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		// Required is presence, and presence is not enough here: --seq 0 is
 		// purge's "the whole topic", and withdrawing a topic-full of other
 		// agents' messages on a mistyped flag is exactly the accident this
@@ -908,10 +977,10 @@ var Verbs = []VerbSpec{
 			"drop the whole topic ring (seq=0) or one message by seq.",
 			"Unlike retract this destroys the bytes, operator view included (cap: purge)",
 		},
-		Surfaces: CLI,
-		Action:   "BoardAction",
-		Const:    map[string]string{"Sub": "purge"},
-		Args:     []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "purge"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Flags: []Flag{
 			// THE flag this whole design is named after. `board purge <topic>
 			// --seq N` -- the exact line the help text printed -- left --seq at
@@ -937,7 +1006,7 @@ var Verbs = []VerbSpec{
 			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
 			"--resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)",
 		},
-		Surfaces: CLI | TUI | WebUI,
+		CmdlineSurfaces: CLI | TUI | WebUI,
 		// The prompt is a positional on the TUI and the WebUI and --task on the
 		// CLI. Both work everywhere now: the flag wins when given, the trailing
 		// words are the prompt otherwise.
@@ -970,12 +1039,12 @@ var Verbs = []VerbSpec{
 			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
 			"--resume reuses an existing terminal interactive task id + worktree branch",
 		},
-		Surfaces:  CLI | TUI,
-		Action:    "SpawnAction",
-		Const:     map[string]string{"Kind": "interactive"},
-		Flags:     spawnFlags(spawnInteractive),
-		Exclusive: spawnExclusive(spawnInteractive),
-		Requires:  spawnRequires(spawnInteractive),
+		CmdlineSurfaces: CLI | TUI,
+		Action:          "SpawnAction",
+		Const:           map[string]string{"Kind": "interactive"},
+		Flags:           spawnFlags(spawnInteractive),
+		Exclusive:       spawnExclusive(spawnInteractive),
+		Requires:        spawnRequires(spawnInteractive),
 		Validate: func(b Bound) error {
 			if err := spawnValidate(b); err != nil {
 				return fmt.Errorf("interactive: %w", err)
@@ -990,12 +1059,12 @@ var Verbs = []VerbSpec{
 			"open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
 			"-d / --detach: start the session and exit immediately (don't attach the terminal)",
 		},
-		Surfaces:  CLI | TUI,
-		Action:    "SpawnAction",
-		Const:     map[string]string{"Kind": "session-new"},
-		Flags:     spawnFlags(spawnSessionNew),
-		Exclusive: spawnExclusive(spawnSessionNew),
-		Requires:  spawnRequires(spawnSessionNew),
+		CmdlineSurfaces: CLI | TUI,
+		Action:          "SpawnAction",
+		Const:           map[string]string{"Kind": "session-new"},
+		Flags:           spawnFlags(spawnSessionNew),
+		Exclusive:       spawnExclusive(spawnSessionNew),
+		Requires:        spawnRequires(spawnSessionNew),
 		Validate: func(b Bound) error {
 			if err := spawnValidate(b); err != nil {
 				return fmt.Errorf("session new: %w", err)
@@ -1019,9 +1088,9 @@ var Verbs = []VerbSpec{
 			"--enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH",
 			"flags must precede <task-id>; everything after it is joined with spaces and sent literally",
 		},
-		Surfaces: CLI,
-		Action:   "SendAction",
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		CmdlineSurfaces: CLI,
+		Action:          "SendAction",
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
 			Reason: "the literal text to type into the PTY"},
 		// The snapshot knobs only mean something with --snapshot. Naming one
@@ -1080,9 +1149,9 @@ var Verbs = []VerbSpec{
 			"NOT `exec`, which runs its own process in the worktree with separate stdout/stderr",
 			"flags must precede <task-id>; everything after it is joined with spaces as the command line",
 		},
-		Surfaces: CLI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
-		Action:   "SessionExecAction",
+		CmdlineSurfaces: CLI,
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Action:          "SessionExecAction",
 		Trailing: &Trailing{Name: "command", Field: "Cmd", Required: true,
 			Reason: "the command line to run in the session's foreground shell"},
 		Flags: []Flag{
@@ -1102,8 +1171,8 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"send one user turn to an event-stream session",
 		},
-		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		// SessionAction like the rest of the family, not a type of its own:
 		// the TUI dispatches the namespace on Sub, and one verb answering with
 		// a different type made that verb the one that stayed hand-parsed.
@@ -1118,11 +1187,14 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"notify"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/notify.go:NotifyModel"},
+		},
 		Notes: []string{
 			"send a notification (one short line; detail goes in the task log)",
 		},
-		Action:   "NotifyAction",
-		Surfaces: CLI | TUI,
+		Action:          "NotifyAction",
+		CmdlineSurfaces: CLI | TUI,
 		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
 			Reason: "the notification body is free-form"},
 		Flags: []Flag{
@@ -1141,9 +1213,9 @@ var Verbs = []VerbSpec{
 			"--in-reply-to SEQ replies to that message; --topic is then optional (the server routes it where that message asked).",
 			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
 		},
-		Surfaces: CLI,
-		Action:   "AgentSendAction",
-		Const:    map[string]string{"Kind": "send"},
+		CmdlineSurfaces: CLI,
+		Action:          "AgentSendAction",
+		Const:           map[string]string{"Kind": "send"},
 		Trailing: &Trailing{Name: "text", Field: "Positional",
 			Reason: "the message body is free-form; --data or stdin are the alternatives"},
 		Flags:    agentSendFlags(false),
@@ -1156,9 +1228,9 @@ var Verbs = []VerbSpec{
 			"default is your own chat.<short-id>. --timeout bounds the WHOLE call, publish ack included",
 			"(scripting; NOT from an agent turn)",
 		},
-		Surfaces: CLI,
-		Action:   "AgentSendAction",
-		Const:    map[string]string{"Kind": "dispatch"},
+		CmdlineSurfaces: CLI,
+		Action:          "AgentSendAction",
+		Const:           map[string]string{"Kind": "dispatch"},
 		Trailing: &Trailing{Name: "text", Field: "Positional",
 			Reason: "the message body is free-form; --data or stdin are the alternatives"},
 		Flags:    agentSendFlags(true),
@@ -1171,7 +1243,7 @@ var Verbs = []VerbSpec{
 		// saved selection cannot name a spelling the command rejects. This
 		// entry routes the command inputs through the same table as the rest;
 		// the parse itself still delegates to that function.
-		Path: []string{"grid"}, Surfaces: TUI | WebUI,
+		Path: []string{"grid"}, CmdlineSurfaces: TUI | WebUI,
 		Action:  "GridAction",
 		Args:    []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "IDs"}},
 		Derived: []Derived{{Field: "Mode", Type: "GridScopeMode", From: "gridMode"}},
@@ -1185,7 +1257,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"grid", "grid --under aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"cancel"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"cancel"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"cancel a queued/running task",
 		},
@@ -1194,7 +1266,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"cancel aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"ls"}, Surfaces: CLI | WebUI,
+		Path: []string{"ls"}, CmdlineSurfaces: CLI | WebUI,
 		Notes: []string{
 			"list runners and recent tasks; --json emits one {runners,tasks} object",
 		},
@@ -1209,7 +1281,7 @@ var Verbs = []VerbSpec{
 			{Name: "tree", Type: FlagBool, Default: false, Field: "Tree",
 				Help: "order tasks by their creator link and draw the hierarchy"},
 			{
-				Name: "filtered", Type: FlagBool, Default: false, Surfaces: WebUI, Field: "Filtered",
+				Name: "filtered", Type: FlagBool, Default: false, CmdlineSurfaces: WebUI, Field: "Filtered",
 				SurfaceReason: "only the WebUI has a task-list filter pane; the CLI has no filter to honour and the TUI's only filter is on the logs panel",
 				Help:          "list only the rows the task-list filter currently admits",
 			},
@@ -1217,11 +1289,15 @@ var Verbs = []VerbSpec{
 		Examples: []string{"ls", "ls --json", "ls --tree"},
 	},
 	{
-		Path: []string{"conns"}, Surfaces: CLI,
+		Path: []string{"conns"}, CmdlineSurfaces: CLI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/conns.go:ConnsModal"},
+		},
 		Notes: []string{
 			"snapshot live connections; -f streams live events; --json emits JSON lines",
 			"no capability is needed: you see the connections whose principal task you can see, which is why a confined caller sees no runner connections at all",
 			"--trsf reads each connection's congestion state instead (cwnd, srtt, in-flight, loss); --runner asks a runner about its own, which needs the global view",
+			"the TUI shows the same connections in its own modal (see ModalSurfaces); only the --trsf reading is CLI-only so far",
 		},
 		Action: "ConnsAction",
 		Flags: []Flag{
@@ -1242,7 +1318,7 @@ var Verbs = []VerbSpec{
 		// capabilities carry a description of what they actually gate, and it
 		// used to be reachable from the CLI alone -- so a TUI or WebUI
 		// operator picking chips had the names and not the sentences.
-		Path: []string{"caps"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"caps"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"list the grantable --caps capability names and --scope forms",
 		},
@@ -1261,7 +1337,7 @@ var Verbs = []VerbSpec{
 		// Its own Const rather than a shared one, because Const values are
 		// strings and --list is a bool: the two spellings reach the same
 		// body through two methods, not one.
-		Path: []string{"skill", "ls"}, Surfaces: CLI,
+		Path: []string{"skill", "ls"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"name every embedded skill; the same as `skill --list`",
 		},
@@ -1270,7 +1346,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"skill ls"},
 	},
 	{
-		Path: []string{"whoami"}, Surfaces: CLI,
+		Path: []string{"whoami"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",
 		},
@@ -1283,7 +1359,7 @@ var Verbs = []VerbSpec{
 	// usage guard, not by review: usage() printed them and PathsForSurface did
 	// not know them, so every completeness check passed over them.
 	{
-		Path: []string{"skill"}, Surfaces: CLI,
+		Path: []string{"skill"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"print the embedded agent skill (default: harness-cli)",
 		},
@@ -1296,7 +1372,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"skill", "skill --list", "skill harness-cli"},
 	},
 	{
-		Path: []string{"watch"}, Surfaces: CLI,
+		Path: []string{"watch"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"stream task and runner status events",
 		},
@@ -1305,7 +1381,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"watch"},
 	},
 	{
-		Path: []string{"notify-watch"}, Surfaces: CLI,
+		Path: []string{"notify-watch"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"stream notifications (backlog + live); one human-readable line each",
 		},
@@ -1314,7 +1390,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"notify-watch"},
 	},
 	{
-		Path: []string{"version"}, Surfaces: CLI,
+		Path: []string{"version"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"the commit this binary \u2014 and the skills embedded in it \u2014 was built from",
 		},
@@ -1324,7 +1400,10 @@ var Verbs = []VerbSpec{
 		Examples: []string{"version"},
 	},
 	{
-		Path: []string{"logs"}, Surfaces: CLI,
+		Path: []string{"logs"}, CmdlineSurfaces: CLI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/logs.go:LogsModel"},
+		},
 		Notes: []string{
 			"dump task log history; -f also streams live chunks until task terminal",
 		},
@@ -1337,7 +1416,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"logs aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "logs -f aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"prune-local"}, Surfaces: CLI,
+		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)",
 			"with no ids: time-based, removes entries older than --before",
@@ -1370,7 +1449,7 @@ var Verbs = []VerbSpec{
 		// Ids are required and there is no --before: the WAL holds every task
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
-		Path: []string{"restore"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
 			"with ids: put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget",
@@ -1404,12 +1483,12 @@ var Verbs = []VerbSpec{
 	// allowlist in cmdline_help_test.go, which is two more copies of a list
 	// the table can hold.
 	{
-		Path: []string{"clear"}, Surfaces: TUI,
+		Path: []string{"clear"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "clear"},
 		Examples: []string{"clear"},
 	},
 	{
-		Path: []string{"quit"}, Surfaces: TUI,
+		Path: []string{"quit"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"quit"},
 	},
@@ -1418,27 +1497,27 @@ var Verbs = []VerbSpec{
 		// path-alias mechanism because it preserves two spellings for one
 		// verb, and two declared paths sharing an Action say the same thing
 		// without the mechanism.
-		Path: []string{"exit"}, Surfaces: TUI,
+		Path: []string{"exit"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"exit"},
 	},
 	{
-		Path: []string{"help"}, Surfaces: TUI,
+		Path: []string{"help"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "help"},
 		Examples: []string{"help"},
 	},
 	{
-		Path: []string{"refresh"}, Surfaces: TUI,
+		Path: []string{"refresh"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"refresh"},
 	},
 	{
-		Path: []string{"sync"}, Surfaces: TUI,
+		Path: []string{"sync"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"sync"},
 	},
 	{
-		Path: []string{"trsf"}, Surfaces: TUI,
+		Path: []string{"trsf"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "trsf"},
 		Examples: []string{"trsf"},
 	},
@@ -1447,14 +1526,14 @@ var Verbs = []VerbSpec{
 		// script or a second operator saying `diag on` must not turn it OFF
 		// because someone already did, which is why the positional carries the
 		// word rather than the action carrying a bool.
-		Path: []string{"diag"}, Surfaces: TUI,
+		Path: []string{"diag"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "diag"},
 		Args: []Arg{{Name: "on-off", Type: ArgString, Variadic: true, MaxCount: 1,
 			Field: "Arg", OneOfArg: []string{"on", "off"}}},
 		Examples: []string{"diag", "diag on", "diag off"},
 	},
 	{
-		Path: []string{"repo"}, Surfaces: TUI,
+		Path: []string{"repo"}, CmdlineSurfaces: TUI,
 		Action: "ScreenAction", Const: map[string]string{"Sub": "repo"},
 		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
 		Examples: []string{"repo /r"},
@@ -1462,7 +1541,7 @@ var Verbs = []VerbSpec{
 
 	// --- caps set / set-parent ---
 	{
-		Path: []string{"caps", "set"}, Surfaces: CLI | TUI,
+		Path: []string{"caps", "set"}, CmdlineSurfaces: CLI | TUI,
 		Notes: []string{
 			"OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart",
 		},
@@ -1513,7 +1592,7 @@ var Verbs = []VerbSpec{
 		// The WebUI holds the same state as the chips in the compose panel
 		// (spawnCaps / spawnScope), so this is a second door onto one value,
 		// not a second value.
-		Path: []string{"caps", "set-defaults"}, Surfaces: TUI | WebUI,
+		Path: []string{"caps", "set-defaults"}, CmdlineSurfaces: TUI | WebUI,
 		Action: "SetDefaultsAction",
 		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
 		// show the current defaults (the TUI opens the picker on it) -- where
@@ -1539,7 +1618,7 @@ var Verbs = []VerbSpec{
 		// `quit`: same Action, no Const on either, so the generator collapses
 		// them onto ONE handler method rather than minting a second one
 		// nothing calls.
-		Path: []string{"scope"}, Surfaces: TUI | WebUI,
+		Path: []string{"scope"}, CmdlineSurfaces: TUI | WebUI,
 		Action: "SetDefaultsAction",
 		Requires: []Requirement{{Flags: []string{"scope-for"}, Needs: "scope",
 			Reason: "a narrowing has no base to narrow unless this call names one"}},
@@ -1557,7 +1636,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"scope", "scope --scope none"},
 	},
 	{
-		Path: []string{"caps", "set-parent"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"caps", "set-parent"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"OPERATOR ONLY: re-point a LIVE task's parent link \u2014 the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched",
 		},
@@ -1594,7 +1673,7 @@ var Verbs = []VerbSpec{
 
 	// --- single-task session verbs ---
 	{
-		Path: []string{"session", "attach"}, Surfaces: CLI | TUI,
+		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
 		Notes: []string{
 			"reattach to a detached/running session",
 		},
@@ -1605,7 +1684,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "ls"}, Surfaces: CLI | TUI,
+		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
 		Notes: []string{
 			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
 			"vocabulary plus the session-only is_attached / ring_buffer_bytes fields.",
@@ -1628,7 +1707,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session ls", "session ls --json"},
 	},
 	{
-		Path: []string{"session", "kill"}, Surfaces: CLI | TUI,
+		Path: []string{"session", "kill"}, CmdlineSurfaces: CLI | TUI,
 		Notes: []string{
 			"cancel a session (alias of cancel)",
 		},
@@ -1638,7 +1717,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session kill aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "await-idle"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"one-shot: fire when the session's PTY output goes quiescent.",
 			"default long-polls; --notify/--topic arm a server-side sink and return",
@@ -1657,7 +1736,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "resize"}, Surfaces: CLI,
+		Path: []string{"session", "resize"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"set a live session's PTY size; the server echoing the new size back IS the acknowledgement",
 		},
@@ -1679,7 +1758,7 @@ var Verbs = []VerbSpec{
 		// route for a text render, and neither ever grew one: declared for all
 		// three, it was reachable on one, and the TUI's help was made to
 		// advertise a line its cmdline refuses.
-		Path: []string{"session", "snapshot"}, Surfaces: CLI,
+		Path: []string{"session", "snapshot"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
 			"--style/--color append attribute/color spans; --json emits {rows,cols,title,lines[],spans[]} instead of text",
@@ -1720,7 +1799,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session snapshot aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "stream", "attach"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"session", "stream", "attach"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"follow an event-stream session's events",
 		},
@@ -1730,7 +1809,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream attach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "stream", "interrupt"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"session", "stream", "interrupt"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"abandon the running TURN; the agent survives to take the next one",
 		},
@@ -1741,7 +1820,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream interrupt aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "stream", "finish"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"session", "stream", "finish"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"close the agent's stdin so it completes the turn in flight and exits 0",
 		},
@@ -1752,7 +1831,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream finish aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"session", "stream", "approve"}, Surfaces: CLI | TUI | WebUI,
+		Path: []string{"session", "stream", "approve"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		Notes: []string{
 			"answer one pending tool request. The request id is the staleness guard: an answer aimed at a request that has gone is REFUSED, not applied to whatever is pending now",
 			"--message is the DENY reason and reaches the AGENT verbatim as a failed tool result; --suggestion accepts the request's Nth suggestion (a STANDING change, so it rides either verdict)",
@@ -1792,7 +1871,7 @@ var Verbs = []VerbSpec{
 	// CLI-only by construction: they are called from inside a task's Bash tool
 	// and read HARNESS_* env, which no operator surface has.
 	{
-		Path: []string{"agent", "inbox"}, Surfaces: CLI,
+		Path: []string{"agent", "inbox"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"idempotent dump of subscribed topics; --since 0 (default) = the whole ring",
 		},
@@ -1808,7 +1887,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent inbox", "agent inbox --json"},
 	},
 	{
-		Path: []string{"agent", "wait"}, Surfaces: CLI,
+		Path: []string{"agent", "wait"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"take everything after --since, blocking only if there is nothing;",
 			"omitting --since means cursor 0, so a non-empty ring returns AT ONCE with old messages",
@@ -1826,7 +1905,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent wait --topic chat.abcd1234"},
 	},
 	{
-		Path: []string{"agent", "subscribe"}, Surfaces: CLI,
+		Path: []string{"agent", "subscribe"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"register a subscription",
 		},
@@ -1839,7 +1918,7 @@ var Verbs = []VerbSpec{
 		Examples:  []string{"agent subscribe --topic chat.abcd1234"},
 	},
 	{
-		Path: []string{"agent", "unsubscribe"}, Surfaces: CLI,
+		Path: []string{"agent", "unsubscribe"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"remove a subscription",
 		},
@@ -1852,7 +1931,7 @@ var Verbs = []VerbSpec{
 		Examples:  []string{"agent unsubscribe --topic chat.abcd1234"},
 	},
 	{
-		Path: []string{"agent", "topics"}, Surfaces: CLI,
+		Path: []string{"agent", "topics"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"list every topic on the board (JSON Lines) (cap: board_observe)",
 		},
@@ -1862,7 +1941,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent topics"},
 	},
 	{
-		Path: []string{"agent", "subscriptions"}, Surfaces: CLI,
+		Path: []string{"agent", "subscriptions"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"list this agent's registered patterns (JSON Lines)",
 		},
@@ -1872,7 +1951,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent subscriptions"},
 	},
 	{
-		Path: []string{"agent", "retained"}, Surfaces: CLI,
+		Path: []string{"agent", "retained"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"list a topic's retained ring as metadata only, no payload (no cap)",
 		},
@@ -1885,7 +1964,7 @@ var Verbs = []VerbSpec{
 		Examples:  []string{"agent retained --self"},
 	},
 	{
-		Path: []string{"agent", "purge"}, Surfaces: CLI,
+		Path: []string{"agent", "purge"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"drop a topic's retained buffer, or one message by seq (cap: purge)",
 		},
@@ -1901,7 +1980,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent purge --self", "agent purge --topic chat.abcd1234 --seq 42"},
 	},
 	{
-		Path: []string{"agent", "read"}, Surfaces: CLI,
+		Path: []string{"agent", "read"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
 			"Limited to topics this task subscribes to.",
@@ -1913,7 +1992,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent read 42"},
 	},
 	{
-		Path: []string{"agent", "retract"}, Surfaces: CLI,
+		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,
 		Notes: []string{
 			"withdraw a message YOU sent: gone from every agent path, still visible to the operator as retracted",
 			"(no cap; authorship-checked). A reply to a message addressed to you retracts it automatically;",
@@ -1971,7 +2050,7 @@ func Lookup(path ...string) (VerbSpec, bool) {
 func PathsForSurface(s Surface) []string {
 	var out []string
 	for _, v := range Verbs {
-		if v.Surfaces.Has(s) {
+		if v.CmdlineSurfaces.Has(s) {
 			out = append(out, v.FlagSetName())
 		}
 	}

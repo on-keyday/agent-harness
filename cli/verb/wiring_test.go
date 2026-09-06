@@ -64,7 +64,7 @@ func TestEveryDeclaredFlagIsReadByItsBuild(t *testing.T) {
 			// the CLI's build reads as a flag nobody carries -- which is the
 			// correct answer for the CLI and the wrong question to ask there.
 			for _, sf := range []Surface{CLI, TUI, WebUI} {
-				if !v.Surfaces.Has(sf) || (f.Surfaces != 0 && !f.Surfaces.Has(sf)) {
+				if !v.CmdlineSurfaces.Has(sf) || (f.CmdlineSurfaces != 0 && !f.CmdlineSurfaces.Has(sf)) {
 					continue
 				}
 				nv := v.For(sf)

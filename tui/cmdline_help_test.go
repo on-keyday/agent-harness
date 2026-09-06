@@ -16,7 +16,7 @@ import (
 //
 // The list used to also carry clear / refresh / quit / help / trsf / diag /
 // repo on the grounds that only this surface has them. That is what
-// Surfaces: TUI says, and saying it in the table instead deleted this list's
+// CmdlineSurfaces: TUI says, and saying it in the table instead deleted this list's
 // other half, a hand-written parse switch, and a hand-written action type per
 // verb. (`ssh-gateway start|stop|status` left the same way.)
 //

@@ -3742,7 +3742,7 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	if !ok {
 		return js.ValueOf(map[string]any{"error": "unknown command: " + strings.Join(fields, " ")})
 	}
-	if !sp.Surfaces.Has(verb.WebUI) {
+	if !sp.CmdlineSurfaces.Has(verb.WebUI) {
 		return js.ValueOf(map[string]any{"error": sp.FlagSetName() + ": not available on this surface"})
 	}
 	sp = sp.For(verb.WebUI)

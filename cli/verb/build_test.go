@@ -12,9 +12,9 @@ import (
 // meaning the same thing when the real declaration changes.
 func testSpec() VerbSpec {
 	return VerbSpec{
-		Path:     []string{"probe"},
-		Surfaces: CLI | TUI | WebUI,
-		Args:     []Arg{{Name: "id", Type: ArgString, Variadic: true}},
+		Path:            []string{"probe"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "id", Type: ArgString, Variadic: true}},
 		Flags: []Flag{
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Help: "force it"},
 			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Help: "cutoff"},

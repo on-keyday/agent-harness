@@ -106,8 +106,8 @@ type Arg struct {
 
 	// Surfaces narrower than the verb's requires a reason: `file push` takes
 	// one fewer positional in a browser, which has no local path to name.
-	Surfaces      Surface
-	SurfaceReason string
+	CmdlineSurfaces Surface
+	SurfaceReason   string
 
 	// Field is the Action field this positional lands in. Empty means the
 	// generator skips it, which is how a verb whose Build interprets its
@@ -163,8 +163,8 @@ type Flag struct {
 	// flag instead of in a comment beside the parser.
 	WidensIfUnset bool
 
-	Surfaces      Surface
-	SurfaceReason string
+	CmdlineSurfaces Surface
+	SurfaceReason   string
 
 	// Field is the Action field this flag lands in. The generator writes both
 	// the struct field and the assignment, so the two cannot disagree -- the
@@ -334,13 +334,41 @@ type Trailing struct {
 	AfterSeparator bool
 }
 
+// ModalSurface is one place a verb's capability is reachable without typing
+// it. At names the entry point so a reader can jump straight to it:
+// "tui/conns.go:ConnsModal" for a Go symbol, "webui/index.html#conns-modal"
+// for a page element. A bare bitmask would only say "somewhere".
+type ModalSurface struct {
+	Surface Surface
+	At      string
+}
+
 // VerbSpec is one verb path's whole grammar.
 type VerbSpec struct {
-	Path     []string
-	Surfaces Surface
-	Args     []Arg
-	Flags    []Flag
-	Trailing *Trailing
+	Path []string
+
+	// CmdlineSurfaces is where this verb can be TYPED: the CLI's argv, the
+	// TUI's command line, the WebUI's. It is reachability through the verb
+	// machinery and nothing else.
+	//
+	// It was called Surfaces, and the name over-promised: a reader takes
+	// "Surfaces: CLI" to mean the feature exists only on the CLI, and that is
+	// how `conns` came to be described as CLI-only in a design discussion while
+	// tui/conns.go's ConnsModal sat in the tree. The table said where the verb
+	// dispatches; the reader heard where the feature lives. ModalSurfaces below
+	// carries the other half, and the name here now refuses the wider reading.
+	CmdlineSurfaces Surface
+
+	// ModalSurfaces records where this verb's capability ALSO exists as a
+	// surface's own UI -- a TUI modal, a WebUI panel -- reached by a keystroke
+	// or a click rather than by typing the verb. Empty means "no such surface
+	// is known", which is not the same as "none exists": nothing here can
+	// detect an undeclared one. What the declarations buy is that they are
+	// greppable, and that ModalSurfaceEntryPointsExist fails when one rots.
+	ModalSurfaces []ModalSurface
+	Args          []Arg
+	Flags         []Flag
+	Trailing      *Trailing
 
 	// PathspecField is the Action field the trailing `-- <path>` lands in.
 	PathspecField string
@@ -453,7 +481,7 @@ func (v VerbSpec) BuildFunc() func(Bound) (Action, error) {
 		s    Surface
 		name string
 	}{{CLI, "cli"}, {TUI, "tui"}, {WebUI, "webui"}} {
-		if !v.Surfaces.Has(sf.s) {
+		if !v.CmdlineSurfaces.Has(sf.s) {
 			continue
 		}
 		if b, ok := generatedBuilds[v.FlagSetName()+"\x00"+sf.name]; ok {

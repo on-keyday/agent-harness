@@ -75,13 +75,13 @@ func TestWidensIfUnsetVerbsPermute(t *testing.T) {
 func TestSurfaceNarrowingHasAReason(t *testing.T) {
 	for _, v := range Verbs {
 		for _, f := range v.Flags {
-			if f.Surfaces != 0 && f.Surfaces != v.Surfaces && strings.TrimSpace(f.SurfaceReason) == "" {
+			if f.CmdlineSurfaces != 0 && f.CmdlineSurfaces != v.CmdlineSurfaces && strings.TrimSpace(f.SurfaceReason) == "" {
 				t.Errorf("%s: --%s is declared for a narrower surface set than its verb "+
 					"and gives no SurfaceReason", v.FlagSetName(), f.Name)
 			}
 		}
 		for _, a := range v.Args {
-			if a.Surfaces != 0 && a.Surfaces != v.Surfaces && strings.TrimSpace(a.SurfaceReason) == "" {
+			if a.CmdlineSurfaces != 0 && a.CmdlineSurfaces != v.CmdlineSurfaces && strings.TrimSpace(a.SurfaceReason) == "" {
 				t.Errorf("%s: positional <%s> is declared for a narrower surface set than "+
 					"its verb and gives no SurfaceReason", v.FlagSetName(), a.Name)
 			}
@@ -122,7 +122,7 @@ func TestVariadicArgIsLast(t *testing.T) {
 // from anywhere, which is a declaration nobody can invoke.
 func TestEveryVerbReachesSomeSurface(t *testing.T) {
 	for _, v := range Verbs {
-		if v.Surfaces == 0 {
+		if v.CmdlineSurfaces == 0 {
 			t.Errorf("%s: declared for no surface", v.FlagSetName())
 		}
 		// BuildFunc, not Build: a verb that declares Action gets its build

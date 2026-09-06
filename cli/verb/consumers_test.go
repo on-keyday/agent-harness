@@ -611,7 +611,7 @@ func TestConsumerTablesAreLive(t *testing.T) {
 			t.Errorf("verbConsumers names %q, which is not in the table", c.path)
 			continue
 		}
-		if !sp.Surfaces.Has(c.surface) {
+		if !sp.CmdlineSurfaces.Has(c.surface) {
 			t.Errorf("%s is listed as consumed by %s, but the declaration does not offer it there",
 				c.path, surfaceName(c.surface))
 		}
