@@ -615,8 +615,15 @@ func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
 	// rtt - min is queueing delay. The window's own drain time can BE the srtt,
 	// and then cwnd/srtt equals the delivered rate for any cwnd and says
 	// nothing; this is the reading that tells those apart.
-	if st.MinRTT > 0 && st.SmoothedRTT > st.MinRTT {
+	//
+	// Gated on MinRTTValid and never on the value: a host whose clock is coarser
+	// than the path measures a legitimate zero, and `> 0` reported that as if
+	// nothing had been measured. Same bug as the wire projection had, one
+	// surface over.
+	if st.MinRTTValid && st.SmoothedRTT > st.MinRTT {
 		a.cmdresult.Append(fmt.Sprintf("  queue: %v of the round trip is queueing delay", st.SmoothedRTT-st.MinRTT))
+	} else if !st.MinRTTValid {
+		a.cmdresult.Append("  queue: unknown — no round trip this clock could resolve")
 	}
 	// spurious counts packets given up on and then acked: those cuts to
 	// the window were taken on nothing.

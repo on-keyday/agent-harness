@@ -29,10 +29,13 @@ func TrsfRowFrom(st *trsf.InternalState) TrsfConnState {
 	add(TrsfCounterKey_BytesInFlight, uint64(st.BytesInFlight))
 	add(TrsfCounterKey_SrttUs, uint64(st.SmoothedRTT.Microseconds()))
 	add(TrsfCounterKey_RttvarUs, uint64(st.RTTVariance.Microseconds()))
-	// Omitted rather than zeroed before the first ACK: the keyed list can say
-	// "not measured", which no fixed field could, and a min_rtt of 0 would read
-	// as a zero-latency path.
-	if st.MinRTT > 0 {
+	// Gated on whether a round trip was MEASURED, never on the value. A host
+	// whose clock is coarser than the path reports a legitimate zero — Go's
+	// nanotime on Windows is the system timer interrupt, ~0.5 ms there — and
+	// testing st.MinRTT > 0 reported that as if nothing had been measured.
+	// The keyed list can say "absent", which no fixed field could; what it must
+	// not do is say it about a number somebody actually observed.
+	if st.MinRTTValid {
 		add(TrsfCounterKey_MinRttUs, uint64(st.MinRTT.Microseconds()))
 	}
 	add(TrsfCounterKey_SendQueue, uint64(st.SendQueueLength))

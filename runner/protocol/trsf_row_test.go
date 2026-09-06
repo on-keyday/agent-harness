@@ -41,6 +41,10 @@ func setEveryNumber(t *testing.T, v reflect.Value, next *uint64, want map[uint64
 			*next++
 			f.SetUint(*next)
 			want[*next] = name
+		case f.Kind() == reflect.Bool:
+			// Validity flags, not measurements: set so the values they gate are
+			// emitted, but nothing to look for in the counters.
+			f.SetBool(true)
 		}
 	}
 }
@@ -86,10 +90,19 @@ func TestCounterSeparatesAbsentFromZero(t *testing.T) {
 	if got := row.CounterOr(TrsfCounterKey_MinRttUs, 42); got != 42 {
 		t.Errorf("CounterOr on an absent key = %d, want the default 42", got)
 	}
-	st := &trsf.InternalState{MinRTT: 3 * time.Millisecond}
+	st := &trsf.InternalState{MinRTT: 3 * time.Millisecond, MinRTTValid: true}
 	measured := TrsfRowFrom(st)
 	if v, ok := measured.Counter(TrsfCounterKey_MinRttUs); !ok || v != 3000 {
 		t.Errorf("min_rtt_us = (%d, %v), want (3000, true) once measured", v, ok)
+	}
+
+	// The case that produced the bug: a host whose clock is coarser than the
+	// path measures a round trip of zero. That is a number somebody observed,
+	// and it must reach the wire AS zero — gating on the VALUE reported it as if
+	// nothing had been measured, on every Windows runner in the fleet.
+	zero := TrsfRowFrom(&trsf.InternalState{MinRTT: 0, MinRTTValid: true})
+	if v, ok := zero.Counter(TrsfCounterKey_MinRttUs); !ok || v != 0 {
+		t.Errorf("min_rtt_us = (%d, %v) for a MEASURED zero, want (0, true)", v, ok)
 	}
 }
 
