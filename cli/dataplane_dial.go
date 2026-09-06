@@ -48,7 +48,11 @@ var (
 	ErrDataPlaneRevoked = errors.New("file: this transfer's authorization no longer covers it (capabilities narrowed?)")
 )
 
-// dataPlaneHandshakeTimeout bounds the runner's answer to the hello.
+// dataPlaneHandshakeTimeout bounds the WHOLE data-plane setup: the dial's key
+// exchange and the runner's answer to the hello, together. Both can hang on a
+// path that is not open -- the forwarded route if the server's proxy entry is
+// gone, the direct route if the punch did not reach -- and neither has any
+// other deadline over it.
 const dataPlaneHandshakeTimeout = 10 * time.Second
 
 // dialDataPlane opens the connection that carries one request's bytes.
@@ -82,6 +86,20 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	// whose kind is not known until its first payload is read, by which time
 	// its trsf already exists, and flipping every accepted conn would put the
 	// server-dialed ones on the same half as the real server.
+	// ONE deadline over the whole ceremony, dial included. The first version
+	// bounded only the hello response, leaving peer.Dial on the caller's
+	// context -- which for a CLI push has no deadline at all. A direct dial the
+	// punch had not opened then parked forever instead of failing: observed on
+	// the live fleet at six minutes and no CPU, with the same route having
+	// completed in 520ms a few minutes earlier.
+	//
+	// There is deliberately no fallback here (see the route amendment), so the
+	// failure being PROMPT is the whole of what the caller gets. An unbounded
+	// wait is worse than a refusal: it hides the choice instead of handing it
+	// back.
+	ctx, cancel := context.WithTimeout(ctx, dataPlaneHandshakeTimeout)
+	defer cancel()
+
 	pc, err := peer.Dial(ctx, ep, slotCID, peer.DialConfig{
 		Logger:                        slog.Default(),
 		CreatesServerInitiatedStreams: true,
@@ -114,12 +132,10 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 		return nil, err
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, dataPlaneHandshakeTimeout)
-	defer cancel()
 	select {
-	case <-waitCtx.Done():
+	case <-ctx.Done():
 		pc.Connection().Close() //nolint:errcheck
-		return nil, fmt.Errorf("file: data plane handshake: %w", waitCtx.Err())
+		return nil, fmt.Errorf("file: data plane handshake: %w", ctx.Err())
 	case resp := <-respCh:
 		if err := dataPlaneStatusError(resp.Status); err != nil {
 			pc.Connection().Close() //nolint:errcheck

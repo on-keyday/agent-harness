@@ -725,3 +725,55 @@ the route:
 | `file push` 2 MiB `--no-data-plane` | 1 | escape hatch intact |
 
 md5 identical across the spliced and the routed pull of the same file.
+
+## Amendment — the direct path measured, and it loses too (2026-09-06)
+
+The previous amendment ended by saying the relay's defect was that it doubles
+the control loop, and that a direct client↔runner connection is one hop and so
+does not have it. The direct path now exists and has been measured on the live
+fleet. **It loses to the splice as well**, and the reason retires the hop-count
+argument entirely.
+
+udp client (gmkhost) → udp runner on a Windows host across the LAN, interleaved,
+no failures in any run:
+
+| size | n | splice | forwarded | direct | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 4 MiB | 13 | 1271 ms | 1714 ms (+35%) | 922 ms (−28%) | forwarded REAL; direct inside the ~30% noise |
+| 4 MiB | 27 | 1580 ms | — | 1795 ms (+14%) | inside the ~20% noise |
+| 32 MiB | 9 | 10085 ms | — | **16143 ms (+60%)** | **REAL** (resolution ~36%) |
+
+The 32 MiB row is the one that decides it. If the direct path were merely
+paying a variable setup, the gap would SHRINK as the transfer grows. It widens.
+
+The distributions say the rest. At 32 MiB the splice runs 8.1–14.1 s with 19%
+stdev; direct runs 6.2–42.9 s with 53%. Its best case is the fastest thing
+measured all day, and its worst is four times the splice's worst.
+
+**What actually decides these three is not hop count but whether the bad
+segment is isolated behind its own congestion controller.** The splice
+terminates each leg, so the lossy hop — a Windows laptop over Wi-Fi — is
+absorbed by a controller that spans only it, and the client's leg never sees
+that loss. Both other routes put ONE controller across the bad segment:
+`forwarded` spans client→server→runner, `direct` spans client→runner. Fewer
+hops does not help when the single loop still contains the hop that misbehaves.
+
+That is the same mechanism as the earlier `forwarded` result, and it now covers
+every measurement in this document. It also predicts where the direct path
+WOULD win: a deployment whose client↔runner path is better than its
+client↔server↔runner path — a distant server with two well-behaved local ends —
+which is not this fleet.
+
+So all three routes stay, splice stays the default, and the two others remain
+what they became one amendment ago: ways to ask for the server not to read the
+bytes, at a measured cost. Nothing here argues for removing the direct path —
+it works, it traverses the Windows host firewall the punch was built for, and
+it is the only route whose best case beat everything else. It argues against
+claiming it is faster.
+
+One defect was found by the measurement and fixed. `dialDataPlane` bounded only
+the runner's answer to the hello; `peer.Dial` ran on the caller's context, which
+for a CLI push has no deadline. A direct dial the punch had not opened parked
+forever — observed at six minutes with no CPU, on a pair that had completed in
+520 ms minutes earlier. Dial and hello now share one deadline. With no fallback
+by design, a prompt failure is the whole of what the caller gets back.
