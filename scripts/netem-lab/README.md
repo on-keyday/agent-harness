@@ -232,6 +232,13 @@ Two things measured about the noise itself, so nobody re-derives them:
   | 1 ms | median 9.60 MB/s, stdev **70%**, spread 4.44x | median **44.86**, stdev 9%, spread 1.26x |
   | 25 ms | median 7.49 MB/s, stdev 16% | median **8.75**, stdev **3%**, spread 1.09x |
 
+  Those two 25 ms figures come from labs built on different days, and read as
+  "+17%". A **paired** A/B — the same 64 MB push six times per build, each on a
+  freshly created lab, nothing differing but the binary — puts it at 8.62 vs
+  **11.42 MB/s**, +32%, with four of six post-fix runs beating every pre-fix
+  run. **Build a fresh lab per arm and interleave; do not compare a number to
+  one you took yesterday.**
+
   So the numbers this file quotes above (6.76–12.70 MB/s across six runs, and
   the ±31–81% resolution) were all taken against that bug. **Re-measure before
   comparing anything to them.** The resolution figures a `bench` run prints are

@@ -1474,6 +1474,53 @@ each dropped re-queue cost something. At 2 ms the fixed transport now reaches
 README recorded as unexplained was how many retransmits happened to fall inside
 a given transfer.
 
-**What did NOT change is the 50 ms row**: +17% and still 8.75 MB/s. Something
-else binds there, and it is now a much smaller question than the one this
-document opened with.
+## Amendment — the 50 ms row, which the fix appeared not to move (2026-09-07)
+
+**+17% was a cross-lab comparison and it was wrong.** The two numbers came from
+labs built on different days. Run as a paired A/B instead — the same 64 MB push
+six times per build, each on a freshly created lab at 50 ms RTT, the only
+difference being objtrsf `6aad1bc` vs `5c3a630`:
+
+| | median | mean | min | max |
+| --- | --- | --- | --- | --- |
+| pre-fix | 7781 ms (**8.62 MB/s**) | 8749 | 7594 | 13285 |
+| post-fix | 5876 ms (**11.42 MB/s**) | 6574 | 5444 | 7662 |
+
+**+32%**, and the distributions barely touch: four of the six post-fix runs beat
+every pre-fix run (Mann-Whitney U = 2, p < 0.01). The fix does work at 50 ms.
+
+It reads smaller than it is because **a per-push cost sits in front of it that is
+proportional to RTT and identical on both builds** — 1 MB pushes take 1276 and
+1389 ms pre-fix, 1267 to 1531 ms post-fix. Decomposed, each figure an average of
+three or four runs at 50 ms:
+
+| | cost | in RTTs |
+| --- | --- | --- |
+| the measurement wrapper (netns exec, no harness-cli) | 210 ms | — |
+| `+` connect, one request, exit | 250 ms | ~5 |
+| `+` push a 1 MB file | 840 ms | ~17 |
+
+So ~1.3 s of every run is spent before the transfer rate matters at all, and a
+size ladder shows exactly that shape — 16 MB reaches 5.1 and 6.1 MB/s, 64 MB
+9.3 and 10.1, 128 MB 10.4 and 11.1, rising toward an asymptote. Subtract the
+1.3 s and the steady-state rates are 10.35 vs 14.67 MB/s: **+42%**. A 100 MB
+`bench` run at 50 ms is 13% preamble, which is most of the gap between +32% and
+the +17% it reported.
+
+**Why the fix is worth 5x at 2 ms and 1.3x here.** A stalled stream is revived by
+the next ACK, so the stall costs the time until one arrives — not a round trip.
+At 50 ms the fixed transport runs with `inflight` tracking `cwnd` to within 0.03%
+(1231846 against 1231463, then 1376683 against 1376531), a 13 ms standing queue
+and 60-200 loss events/s, which is an ordinary NewReno sawtooth against a full
+bottleneck queue. A pipe that full returns ACKs near-continuously. The arithmetic
+confirms it: even a few thousand stalls of a whole RTT each would be 100+ s, and
+the pre-fix push took 7.8 s — so the stalls there were already a small fraction
+of an RTT. At 2 ms the window is small and ACK arrivals are sparse next to the
+loop's own work, so the same defect swallowed 93% of wall clock.
+
+That also means the 50 ms regime is now genuinely congestion-controlled rather
+than stalled: `BLOCK%` *falls* as the transfer ramps (98% to 54%) and `WAIT`
+reads `send/ack` and `send/self`, never a park with data buffered and the window
+open. What is left there is NewReno's own behaviour and an RTT-proportional
+per-push preamble — two ordinary questions, not the one this document opened
+with.
