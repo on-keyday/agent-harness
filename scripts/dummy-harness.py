@@ -21,7 +21,7 @@ PSK, and a temp data dir that goes away on teardown.
 
 Usage:
   scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--udp]
-                              [-- <extra agent-runner flags>]
+                              [--server-arg=--flag ...] [-- <extra agent-runner flags>]
   scripts/dummy-harness.py env  [--name N]   # print `export` lines for an instance
   scripts/dummy-harness.py down [--name N]
 
@@ -373,7 +373,8 @@ def cmd_down(name: str) -> int:
     return 0
 
 
-def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: list[str]) -> int:
+def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: list[str],
+           server_args: list[str]) -> int:
     if agent not in ("claude", "fake"):
         die(f"unknown --agent: {agent} (want claude or fake)")
 
@@ -409,7 +410,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: li
     server = spawn(
         [daemon.bin_path("harness-server"), "--listen", f"127.0.0.1:{port}",
          "--udp-listen", f"127.0.0.1:{udp_port}",
-         "--psk", psk, "--operator-psk", psk, "--data-dir", str(data)],
+         "--psk", psk, "--operator-psk", psk, "--data-dir", str(data)] + server_args,
         tmp / "server.log",
     )
     for _ in range(40):
@@ -533,6 +534,10 @@ def main(argv: list[str]) -> int:
     p.add_argument("--agent", default="claude")
     p.add_argument("--model", default="claude-haiku-4-5-20251001")
     p.add_argument("--detach", "-d", action="store_true")
+    # Same shape as netem-lab's: repeatable, and the "=" form is required for
+    # anything starting with a dash or argparse reads it as a flag of its own.
+    p.add_argument("--server-arg", action="append", default=[],
+                   help="extra flag for harness-server; repeatable (use --server-arg=--flag)")
     p.add_argument("--udp", action="store_true",
                    help="run the runner over the UDP leg while the client keeps ws, "
                         "so the pair is mixed-transport (the server is dualstack either way)")
@@ -551,7 +556,8 @@ def main(argv: list[str]) -> int:
         die(f"unknown flag: {unknown[0]}")
 
     if args.sub == "up":
-        return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, extra)
+        return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, extra,
+                      args.server_arg)
     if args.sub == "env":
         return cmd_env(args.name)
     if args.sub == "down":

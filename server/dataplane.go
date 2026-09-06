@@ -110,6 +110,19 @@ func dataPlaneRoute(clientCID, runnerCID objproto.ConnectionID) bool {
 	return clientCID.Transport != "" && runnerCID.Transport != ""
 }
 
+// dataPlaneDirectOK reports whether this pair can skip the relay entirely and
+// have the client dial the runner.
+//
+// Both ends must be on the SAME transport and it must be one a client can dial:
+// udp. A WebSocket client is a browser or a client behind an HTTP path, and it
+// cannot open a socket to a runner at all -- for those the relay is the only
+// end-to-end route there is. Equality is required rather than merely "both
+// dialable" because the two ends address each other directly here; there is no
+// forwarder in the middle to translate.
+func dataPlaneDirectOK(clientCID, runnerCID objproto.ConnectionID) bool {
+	return clientCID.Transport == "udp" && runnerCID.Transport == "udp"
+}
+
 // setupDataPlane mints a grant, pushes it to the runner, and installs the
 // forwarding entry that carries the client's packets to it.
 //
@@ -142,8 +155,21 @@ func (s *Server) setupDataPlane(
 		Mtu:    negotiatedMTU(clientCID.Transport, runnerCID.Transport),
 		Grant:  grant,
 	}
-	// punch_target stays absent: this route forwards, and the runner's punch
-	// handler is here for the direct route that does not exist yet.
+	// The direct route needs the runner to open the return path first. A host
+	// firewall drops an unsolicited inbound datagram even on a LAN with no NAT
+	// -- measured, not assumed: three live runners refused a dial that then
+	// completed in 33ms once this loop had run. The target must name the exact
+	// socket the client will dial FROM, which is the one its control connection
+	// already uses, at the slot this connection will carry.
+	//
+	// Ordering: the runner starts punching when it answers this, and the client
+	// is not told to dial until that answer arrives, so the path is opening
+	// before the first dial packet leaves.
+	direct := s.cfg.DataPlaneDirect && dataPlaneDirectOK(clientCID, runnerCID)
+	if direct {
+		req.PunchTarget = protocol.ConnIDToRunnerID(
+			objproto.NewConnectionID(clientCID.Transport, clientCID.Addr, slot))
+	}
 	resp, err := s.sendAuthorizeDataPlaneRequest(ctx, entry, req)
 	if err != nil {
 		return 0, fmt.Errorf("data plane: authorize: %w", err)

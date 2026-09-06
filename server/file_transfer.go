@@ -205,7 +205,15 @@ func (h *TaskHandler) tryDataPlane(
 		slog.Warn("file_transfer: data plane setup failed, splicing instead", "err", err)
 		return grantID, 0, runnerCID, 0, false
 	}
-	return grant.GrantId, slot, protocol.ConnIDToRunnerID(rc), negotiatedMTU(clientCID.Transport, rc.Transport), true
+	// runner_cid is WHERE TO DIAL: zero means the server's slot, which is the
+	// relay. It names the runner only when the client is meant to reach it
+	// directly -- otherwise the client would dial an address the runner has not
+	// been punched toward and that a firewall will drop.
+	var dialAt protocol.RunnerID
+	if h.DataPlaneDirect && dataPlaneDirectOK(clientCID, rc) {
+		dialAt = protocol.ConnIDToRunnerID(rc)
+	}
+	return grant.GrantId, slot, dialAt, negotiatedMTU(clientCID.Transport, rc.Transport), true
 }
 
 // dataPlaneSetupTimeout bounds the runner round trip in tryDataPlane. It is

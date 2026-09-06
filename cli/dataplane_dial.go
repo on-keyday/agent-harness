@@ -26,6 +26,13 @@ type dataPlaneTarget struct {
 	// because it is the only party that sees both transports; neither end
 	// restates the rule.
 	MTU uint16
+	// RunnerCID is WHERE TO DIAL. Zero means the server's own address at
+	// SlotID, which it forwards; non-zero is the runner's address, reached
+	// directly because the server has already had it punch a path open toward
+	// this client. The client does not choose between them -- the server
+	// answers with one or the other, because only the server knows whether the
+	// punch was asked for.
+	RunnerCID protocol.RunnerID
 }
 
 // use reports whether the server routed this request end to end.
@@ -46,19 +53,28 @@ const dataPlaneHandshakeTimeout = 10 * time.Second
 
 // dialDataPlane opens the connection that carries one request's bytes.
 //
-// It dials the SERVER's address at the slot the server allocated, and the
-// server forwards those packets to the runner without decrypting them — so the
-// far end of this connection, and the peer the AEAD is with, is the runner.
-// The endpoint must be the one the control connection was dialed on: the
-// server matched its forwarding entry on the address that connection's packets
-// come from, and a second socket would not be recognised.
+// The far end, and the peer the AEAD is with, is the runner either way. What
+// the server's answer decides is how the packets get there: to the server's own
+// address at the allocated slot, which it forwards without decrypting, or
+// straight to the runner's address once it has been punched toward this client.
+// The second crosses one hop instead of two, which is worth about 2.6x at 20ms
+// RTT and more with loss.
 func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Conn, error) {
 	ep := c.conn.Endpoint()
 	if ep == nil {
 		return nil, errors.New("file: no endpoint to open a data plane on (accepted conn?)")
 	}
+	// Where to dial, per the server's answer. The endpoint is the same either
+	// way and that is load-bearing for BOTH routes: the relay matches its
+	// forwarding entry on the address this socket sends from, and the direct
+	// route was punched toward that same address. A second socket would be
+	// recognised by neither.
 	serverCID := c.conn.Connection().ConnectionID()
 	slotCID := objproto.NewConnectionID(serverCID.Transport, serverCID.Addr, t.SlotID)
+	if t.RunnerCID.TransportLen != 0 {
+		rc := protocol.RunnerIDToConnID(t.RunnerCID)
+		slotCID = objproto.NewConnectionID(rc.Transport, rc.Addr, t.SlotID)
+	}
 
 	// Both ends here are peer.Conn, which defaults to the client half of the
 	// stream-id space, so neither could create a stream the other would accept.

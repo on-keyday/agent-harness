@@ -1740,6 +1740,18 @@ format OpenFileTransferResponse:
     # the only party that sees both transports; neither end restates the
     # rule. 0 = use your own default.
     mtu :u16
+    # runner_cid is WHERE TO DIAL, and its zero value is the answer for the
+    # relayed route.
+    #
+    # Zero: dial the server's own address at slot_id. The server forwards those
+    # packets to the runner without decrypting them, and the client never
+    # learns the runner's address.
+    #
+    # Non-zero: the runner's own address. The server has told the runner to
+    # punch toward this client (AuthorizeDataPlaneRequest.punch_target), so the
+    # path is open by the time this answer arrives, and the bytes cross ONE hop
+    # instead of two. Only ever set when both ends are on the same dialable
+    # transport -- a browser on WebSocket cannot dial a runner at all.
     runner_cid :RunnerID
 
 format ListFilesRequest:
@@ -1773,6 +1785,18 @@ format ListFilesResponse:
     # the only party that sees both transports; neither end restates the
     # rule. 0 = use your own default.
     mtu :u16
+    # runner_cid is WHERE TO DIAL, and its zero value is the answer for the
+    # relayed route.
+    #
+    # Zero: dial the server's own address at slot_id. The server forwards those
+    # packets to the runner without decrypting them, and the client never
+    # learns the runner's address.
+    #
+    # Non-zero: the runner's own address. The server has told the runner to
+    # punch toward this client (AuthorizeDataPlaneRequest.punch_target), so the
+    # path is open by the time this answer arrives, and the bytes cross ONE hop
+    # instead of two. Only ever set when both ends are on the same dialable
+    # transport -- a browser on WebSocket cannot dial a runner at all.
     runner_cid :RunnerID
 
 # A grant is one request on one task, for a bounded time. It is NOT the task's

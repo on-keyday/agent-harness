@@ -49,6 +49,12 @@ type TaskHandler struct {
 	// choice is made. Server.New wires it to Server.setupDataPlane.
 	SetupDataPlane func(ctx context.Context, clientCID objproto.ConnectionID, entry *RunnerEntry, grant protocol.DataPlaneGrant) (uint16, error)
 
+	// DataPlaneDirect makes a routed request tell the client to dial the RUNNER
+	// rather than the server's slot, the runner having been punched toward it.
+	// Off by default: it only works where both ends are on udp and can reach
+	// each other, and the relay is the answer everywhere else.
+	DataPlaneDirect bool
+
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
 	NotifyHook string
