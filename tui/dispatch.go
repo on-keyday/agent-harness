@@ -621,14 +621,21 @@ func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
 	// exploding = busy-spin, advancing slowly = congestion-blocked.
 	a.cmdresult.Append(fmt.Sprintf("  loop: iterations=%d (run `trsf` twice — the delta is the signal)", st.LoopIterations))
 	// What the loop is WAITING for, which the iteration count alone cannot say.
-	// blocks counts parks ENTERED and blocked accrues on the wake, so a loop
-	// still parked shows blocks advancing with blocked flat. timer vs send vs
-	// the remainder separates a deadline of the transport's own from an
-	// application that is not feeding it from the peer; armedPacer splits the
-	// first, because the pacer's floor is 1ms and loss detection's is not.
+	// blocks counts parks ENTERED; blocked includes the park in progress, so a
+	// loop still parked keeps accruing. timer vs send vs the remainder names
+	// the CHANNEL that ended each park, and armedPacer splits the first because
+	// the pacer's floor is 1ms and loss detection's is not.
 	a.cmdresult.Append(fmt.Sprintf("  waits: blocked=%v blocks=%d timer=%d send=%d peer=%d armedPacer=%d",
 		time.Duration(st.BlockedNs), st.Blocks, st.WakeTimer, st.WakeSend,
 		st.Blocks-st.WakeTimer-st.WakeSend, st.ArmedPacer))
+	// The send channel is many-to-one, so the wake above cannot say WHY it
+	// fired. These count the pushes where each is made: app means the transport
+	// was waiting on its caller, ack means the window was the constraint, self
+	// means it was cycling and not waiting at all. Event counts -- they do not
+	// sum to blocks.
+	a.cmdresult.Append(fmt.Sprintf("  sendPush: app=%d ack=%d self=%d cwnd=%d loss=%d other=%d",
+		st.SendPushApp, st.SendPushACK, st.SendPushSelf, st.SendPushCwnd,
+		st.SendPushLoss, st.SendPushOther))
 	return nil
 }
 

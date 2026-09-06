@@ -38,5 +38,11 @@ func TrsfRowFrom(st *trsf.InternalState) TrsfConnState {
 		WakeTimer:      st.WakeTimer,
 		WakeSend:       st.WakeSend,
 		ArmedPacer:     st.ArmedPacer,
+		SendPushApp:    st.SendPushApp,
+		SendPushAck:    st.SendPushACK,
+		SendPushSelf:   st.SendPushSelf,
+		SendPushCwnd:   st.SendPushCwnd,
+		SendPushLoss:   st.SendPushLoss,
+		SendPushOther:  st.SendPushOther,
 	}
 }

@@ -1673,6 +1673,29 @@ format TrsfConnState:
                                 # own floor is 1 ms, so a loop held by it and one
                                 # held by loss detection are indistinguishable in
                                 # wake_timer and call for opposite fixes.
+    # WHY the send trigger was pushed, counted where each push is MADE rather
+    # than at the channel it arrives on. wake_send says a park ended on that
+    # channel and nothing more, and the channel is many-to-one: two of these
+    # support OPPOSITE conclusions, so reading wake_send as either one is how
+    # a lossy path with its window pinned shut was first called "starved".
+    #
+    # EVENT counts, including pushes the queue's dedupe drops: the sum is >=
+    # blocks and these do NOT partition the wakes. All delta only.
+    send_push_app :u64          # the application supplied data or EOF --
+                                # the transport was waiting on its caller
+    send_push_ack :u64          # an ACK retired a range -- the window was the
+                                # constraint, not the application
+    send_push_self :u64         # the run loop's own continuation: more data
+                                # already buffered, or another packet took the
+                                # iteration's slot. Not waiting for anything
+    send_push_cwnd :u64         # a congestion-blocked stream revived when cwnd
+                                # reopened
+    send_push_loss :u64         # a packet was declared lost and requeued. ONE
+                                # PER PACKET, not per congestion event:
+                                # detectLost retires many in one pass, so this
+                                # can dwarf loss_events and is the honest
+                                # measure of retransmission pressure
+    send_push_other :u64        # stream open, cancel, peer flow-window update
 
 enum TrsfStateStatus:
     :u8

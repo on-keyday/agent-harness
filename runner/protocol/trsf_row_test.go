@@ -33,6 +33,12 @@ func TestTrsfRowFromCarriesEveryCounter(t *testing.T) {
 		WakeTimer:            15,
 		WakeSend:             16,
 		ArmedPacer:           17,
+		SendPushApp:          18,
+		SendPushACK:          19,
+		SendPushSelf:         20,
+		SendPushCwnd:         21,
+		SendPushLoss:         22,
+		SendPushOther:        23,
 	}
 	row := TrsfRowFrom(st)
 	for name, got := range map[string]uint64{
@@ -46,7 +52,10 @@ func TestTrsfRowFromCarriesEveryCounter(t *testing.T) {
 		"LossSpurious": row.LossSpurious,
 		"BlockedNs":    row.BlockedNs, "Blocks": row.Blocks,
 		"WakeTimer": row.WakeTimer, "WakeSend": row.WakeSend,
-		"ArmedPacer": row.ArmedPacer,
+		"ArmedPacer":  row.ArmedPacer,
+		"SendPushApp": row.SendPushApp, "SendPushAck": row.SendPushAck,
+		"SendPushSelf": row.SendPushSelf, "SendPushCwnd": row.SendPushCwnd,
+		"SendPushLoss": row.SendPushLoss, "SendPushOther": row.SendPushOther,
 	} {
 		if got == 0 {
 			t.Errorf("%s is zero: TrsfRowFrom does not carry it", name)

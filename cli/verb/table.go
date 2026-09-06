@@ -1363,7 +1363,7 @@ var Verbs = []VerbSpec{
 			"snapshot live connections; -f streams live events; --json emits JSON lines",
 			"no capability is needed: you see the connections whose principal task you can see, which is why a confined caller sees no runner connections at all",
 			"--trsf reads each connection's congestion state instead (cwnd, srtt, in-flight, loss) AND the run loop's account of its own waiting (BLOCK%, WAIT); --runner asks a runner about its own, which needs the global view",
-			"BLOCK% is the share of the interval the loop spent parked and WAIT names what ended those parks -- timer/pacer, timer/loss, send (the application is not feeding it) or peer. The five raw counters behind them are in --json, with deltas",
+			"BLOCK% is the share of the interval the loop spent parked and WAIT names what ended those parks -- timer/pacer, timer/loss, peer, or send/<reason>. The send channel is many-to-one, so its label carries the dominant PUSH reason: app (the transport was waiting on its caller), ack (the window was the constraint), self (cycling, not waiting), cwnd (congestion-blocked and revived), loss (retransmission pressure, one per lost PACKET). The eleven raw counters are in --json, with deltas -- the push counts are EVENTS and do not partition the wakes",
 			"the TUI shows the same connections in its own modal (see ModalSurfaces); only the --trsf reading is CLI-only so far",
 		},
 		Action: "ConnsAction",

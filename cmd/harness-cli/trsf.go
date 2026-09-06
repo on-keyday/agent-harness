@@ -71,9 +71,10 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 // undefined without elapsed time, so each returns "-" for ABSENCE — never for
 // a zero, which is a measurement and prints as 0%.
 //
-// The raw five counters are not columns. They are all in --json, with deltas,
-// because a table that carries every one of them stops being readable at the
-// width where this one is already uncomfortable.
+// The raw counters are not columns. All ten are in --json with deltas, because
+// a table that carries every one of them stops being readable at the width
+// where this one is already uncomfortable.
+//
 // elapsed is measured between the two readings by the ANSWERER's clock, so
 // BLOCK% is a share of the interval the counters actually advanced over.
 func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, wait string) {
@@ -102,11 +103,39 @@ func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, 
 			wait = "timer/loss"
 		}
 	case send >= peer:
-		wait = "send" // the application is not feeding the transport
+		// "send" names the CHANNEL, and the channel is many-to-one: the same
+		// wake follows the application supplying data and an ACK retiring a
+		// range, which support opposite conclusions. So the label carries the
+		// dominant PUSH reason, counted where each push is made.
+		wait = "send/" + dominantPush(r, p)
 	default:
 		wait = "peer" // an inbound packet, an ACK to send, a window update
 	}
 	return blockPct, wait
+}
+
+// dominantPush names which kind of event pushed the send trigger most over the
+// interval. Not a partition of the wakes — these are event counts, and several
+// collapse onto one wake — so it answers "what mostly wanted the loop to run",
+// which is the question "send" on its own cannot.
+func dominantPush(r, p protocol.TrsfConnState) string {
+	best, name := uint64(0), "?"
+	for _, c := range []struct {
+		n string
+		d uint64
+	}{
+		{"app", r.SendPushApp - p.SendPushApp},    // waiting on its caller
+		{"ack", r.SendPushAck - p.SendPushAck},    // the window was the constraint
+		{"self", r.SendPushSelf - p.SendPushSelf}, // cycling, not waiting
+		{"cwnd", r.SendPushCwnd - p.SendPushCwnd}, // congestion-blocked, revived
+		{"loss", r.SendPushLoss - p.SendPushLoss}, // retransmission pressure
+		{"other", r.SendPushOther - p.SendPushOther},
+	} {
+		if c.d > best {
+			best, name = c.d, c.n
+		}
+	}
+	return name
 }
 
 // writeTrsf renders one reading. prev nil means "no previous reading", which is
@@ -173,6 +202,11 @@ func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) 
 		"blocked_ns": r.BlockedNs, "blocks": r.Blocks,
 		"wake_timer": r.WakeTimer, "wake_send": r.WakeSend,
 		"armed_pacer": r.ArmedPacer,
+		// Why the send trigger was pushed. EVENT counts, so these do not sum
+		// to blocks and are not a partition of the wakes.
+		"send_push_app": r.SendPushApp, "send_push_ack": r.SendPushAck,
+		"send_push_self": r.SendPushSelf, "send_push_cwnd": r.SendPushCwnd,
+		"send_push_loss": r.SendPushLoss, "send_push_other": r.SendPushOther,
 	}
 	if r.PrincipalTask.Id != ([16]uint8{}) {
 		m["principal_task"] = hex.EncodeToString(r.PrincipalTask.Id[:])
@@ -188,6 +222,12 @@ func trsfJSON(r protocol.TrsfConnState, prev map[string]protocol.TrsfConnState) 
 		m["wake_timer_delta"] = r.WakeTimer - p.WakeTimer
 		m["wake_send_delta"] = r.WakeSend - p.WakeSend
 		m["armed_pacer_delta"] = r.ArmedPacer - p.ArmedPacer
+		m["send_push_app_delta"] = r.SendPushApp - p.SendPushApp
+		m["send_push_ack_delta"] = r.SendPushAck - p.SendPushAck
+		m["send_push_self_delta"] = r.SendPushSelf - p.SendPushSelf
+		m["send_push_cwnd_delta"] = r.SendPushCwnd - p.SendPushCwnd
+		m["send_push_loss_delta"] = r.SendPushLoss - p.SendPushLoss
+		m["send_push_other_delta"] = r.SendPushOther - p.SendPushOther
 	}
 	return m
 }
