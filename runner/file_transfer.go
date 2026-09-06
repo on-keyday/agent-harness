@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -144,6 +145,61 @@ func writeAckRange(st trsf.BidirectionalStream, status protocol.FileTransferStat
 	return nil
 }
 
+const (
+	// recvEOFDrainBudget caps how much of an unfinished upload the drain below
+	// will read before giving up. Past this, the client really did leave bytes
+	// behind and a cancel is the honest answer.
+	recvEOFDrainBudget = 64 << 10
+	// recvEOFDrainTimeout bounds the wait on a client that never half-closes.
+	//
+	// Short on purpose: no direction served here has to wait a round trip for
+	// the EOF. Every client half-closes before the runner writes its first
+	// byte, so by the time a handler returns the EOF is already queued and the
+	// drain returns at once; push and dir_push read the body to EOF themselves
+	// and never reach the drain at all. So this bounds a client that is not
+	// going to half-close, and nothing else -- a long wait would only delay
+	// giving up on it.
+	recvEOFDrainTimeout = 250 * time.Millisecond
+)
+
+// drainRecvEOF consumes the rest of the client's half of the stream, so that
+// closing it does not tell the peer this transfer was abandoned.
+//
+// trsf emits a cancel only for a receive half closed while it has not reported
+// EOF -- `if cancelStream != nil && !cancelStream.EOF()` in trsf/conn.go -- and
+// a recvStream reports EOF only once a READ has consumed through the EOF chunk.
+// Every direction served here except push and dir_push writes without ever
+// reading, so the client's opening half-close sits unread and CloseBoth cancels
+// a stream that in fact ran to completion. The peer has finished and reaped it
+// by then, so it logs "received cancel for unknown stream" at ERROR: in the
+// server's log on the splice path, and in the operator's terminal on the data
+// plane, where the client is the runner's direct peer.
+//
+// Bounded twice, because a cancel is the CORRECT signal when the client really
+// did stop early -- a push whose copy failed has the rest of a file still
+// coming, and draining that would mean reading bytes nobody wants.
+func drainRecvEOF(ctx context.Context, st trsf.BidirectionalStream) {
+	if st.EOF() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, recvEOFDrainTimeout)
+	defer cancel()
+	for left := recvEOFDrainBudget; left > 0; {
+		data, eof, err := st.ReadDirectContext(ctx, uint64(left))
+		if err != nil || eof {
+			return
+		}
+		left -= len(data)
+	}
+}
+
+// closeServedStream is the end of every served file-transfer stream: consume
+// the client's EOF, then close. Split out so the two dispatchers cannot drift.
+func closeServedStream(ctx context.Context, st trsf.BidirectionalStream) {
+	drainRecvEOF(ctx, st)
+	_ = st.CloseBoth()
+}
+
 // handleOpenFileTransfer is the runner-side dispatcher for push/pull. It
 // owns the stream after this call: it writes the FileTransferAck and
 // closes the stream regardless of outcome.
@@ -163,7 +219,7 @@ func (s *Session) handleOpenFileTransferOn(ctx context.Context, lookup peer.Bidi
 		log.Error("file_transfer: stream not visible", "stream_id", req.StreamId)
 		return
 	}
-	defer stream.CloseBoth()
+	defer closeServedStream(ctx, stream)
 
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	worktreeDir := s.worktreeDirFor(taskIDHex)
@@ -445,7 +501,7 @@ func (s *Session) handleListFilesOn(ctx context.Context, lookup peer.Bidirection
 		log.Error("list_files: stream not visible", "stream_id", req.StreamId)
 		return
 	}
-	defer stream.CloseBoth()
+	defer closeServedStream(ctx, stream)
 
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	worktreeDir := s.worktreeDirFor(taskIDHex)

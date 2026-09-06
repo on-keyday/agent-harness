@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/peer"
@@ -370,6 +371,7 @@ type memBidi struct {
 	r         *io.PipeReader
 	w         *io.PipeWriter
 	closeOnce sync.Once
+	eofSeen   atomic.Bool
 }
 
 func newMemoryBidiPair() (*memBidi, *memBidi) {
@@ -411,6 +413,7 @@ func (m *memBidi) ReadDirect(maxN uint64) ([]byte, bool, error) {
 	buf := make([]byte, maxN)
 	n, err := m.r.Read(buf)
 	if err == io.EOF {
+		m.eofSeen.Store(true)
 		return buf[:n], true, nil
 	}
 	if err != nil {
@@ -419,8 +422,27 @@ func (m *memBidi) ReadDirect(maxN uint64) ([]byte, bool, error) {
 	return buf[:n], false, nil
 }
 
+// ReadDirectContext honours ctx, because trsf's does (recv_stream.go selects on
+// ctx.Done()) and a fake that takes a context and ignores it turns a bounded
+// wait in production into a test that hangs forever. The read goroutine is
+// unblocked by the CloseBoth that follows.
 func (m *memBidi) ReadDirectContext(ctx context.Context, maxN uint64) ([]byte, bool, error) {
-	return m.ReadDirect(maxN)
+	type result struct {
+		data []byte
+		eof  bool
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		d, eof, err := m.ReadDirect(maxN)
+		ch <- result{d, eof, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.data, r.eof, r.err
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
 }
 
 func (m *memBidi) Write(p []byte) (int, error) { return m.w.Write(p) }
@@ -442,8 +464,11 @@ func (m *memBidi) CloseBoth() error {
 func (m *memBidi) HasSendData() bool { return false }
 func (m *memBidi) Completed() bool   { return false }
 func (m *memBidi) HasRecvData() bool { return false }
-func (m *memBidi) EOF() bool         { return false }
-func (m *memBidi) Cancel()           { _ = m.CloseBoth() }
+
+// EOF reports what trsf's does: whether a READ has consumed through the EOF
+// chunk. Returning a flat false made every served stream look mid-transfer.
+func (m *memBidi) EOF() bool { return m.eofSeen.Load() }
+func (m *memBidi) Cancel()   { _ = m.CloseBoth() }
 
 func TestHandleOpenFileTransfer_DeleteOK(t *testing.T) {
 	tmp := t.TempDir()
