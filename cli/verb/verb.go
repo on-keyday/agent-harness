@@ -379,9 +379,21 @@ type VerbSpec struct {
 	// detect an undeclared one. What the declarations buy is that they are
 	// greppable, and that ModalSurfaceEntryPointsExist fails when one rots.
 	ModalSurfaces []ModalSurface
-	Args          []Arg
-	Flags         []Flag
-	Trailing      *Trailing
+
+	// NoModalSurface is the OTHER answer, and it exists because an empty
+	// ModalSurfaces could not tell "nobody has looked" from "looked, and there
+	// is none". Those are different facts and the second one is a result worth
+	// keeping: it is what stops the next reader repeating the search, and what
+	// stops them concluding a surface exists merely because the row is blank.
+	//
+	// Non-empty means SURVEYED and none found, and the string says why. Empty
+	// alongside an empty ModalSurfaces means nobody has checked yet — which
+	// TestEveryVerbHasASurfaceVerdict refuses, so that state cannot survive a
+	// commit.
+	NoModalSurface string
+	Args           []Arg
+	Flags          []Flag
+	Trailing       *Trailing
 
 	// PathspecField is the Action field the trailing `-- <path>` lands in.
 	PathspecField string

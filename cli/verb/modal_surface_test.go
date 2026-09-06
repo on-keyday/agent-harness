@@ -61,3 +61,37 @@ func TestEveryVerbIsReachableSomehow(t *testing.T) {
 		}
 	}
 }
+
+// Every verb must carry a VERDICT about its non-cmdline surfaces: either at
+// least one ModalSurfaces row, or a NoModalSurface reason saying it was looked
+// for and is not there.
+//
+// This is the completeness claim the other test cannot make. Nothing can detect
+// an UNDECLARED modal, so "the table is complete" is unprovable — but "somebody
+// has looked at every row" is checkable, and it is what makes a blank row
+// meaningful. Before this, an empty ModalSurfaces meant either "surveyed, none"
+// or "nobody has been here", and a reader could not tell which. That ambiguity
+// is the whole reason `conns` was called CLI-only while two of its surfaces sat
+// in the tree.
+func TestEveryVerbHasASurfaceVerdict(t *testing.T) {
+	for _, v := range Verbs {
+		if len(v.ModalSurfaces) == 0 && strings.TrimSpace(v.NoModalSurface) == "" {
+			t.Errorf("%v has no verdict about non-cmdline surfaces.\n"+
+				"  Look for a TUI action or a WebUI element. `grep -rl DoThing tui/*.go`:\n"+
+				"  dispatch.go only means the cmdline, which CmdlineSurfaces already covers.\n"+
+				"  Then either add a ModalSurfaces row, or set NoModalSurface to what you found.",
+				v.Path)
+		}
+	}
+}
+
+// The two answers are exclusive. A verb that declares a surface AND says there
+// is none has been edited twice and read once.
+func TestNoVerbBothDeclaresAndDeniesASurface(t *testing.T) {
+	for _, v := range Verbs {
+		if len(v.ModalSurfaces) > 0 && strings.TrimSpace(v.NoModalSurface) != "" {
+			t.Errorf("%v declares %d modal surface(s) and also says there are none: %q",
+				v.Path, len(v.ModalSurfaces), v.NoModalSurface)
+		}
+	}
+}

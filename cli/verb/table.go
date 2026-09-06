@@ -20,7 +20,8 @@ import (
 // one family whose TUI parser had no arity check at all.
 var Verbs = []VerbSpec{
 	{
-		Path: []string{"prune"},
+		Path:           []string{"prune"},
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"ask the server to forget tasks",
 			"no ids: terminal tasks older than --before",
@@ -463,7 +464,8 @@ var Verbs = []VerbSpec{
 	},
 	// --- exec (exec_run) ---
 	{
-		Path: []string{"exec"},
+		Path:           []string{"exec"},
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"run a command in the task's WORKTREE as its own process:",
 			"stdout and stderr stay separate, and the command's own exit code becomes ours",
@@ -701,7 +703,8 @@ var Verbs = []VerbSpec{
 
 	// --- server ---
 	{
-		Path: []string{"server", "dial-runner"},
+		Path:           []string{"server", "dial-runner"},
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"ask the server to reverse-dial RUNNER_CID (Phase A/B)",
 			"--via relays through an already-connected runner (Phase B)",
@@ -724,7 +727,8 @@ var Verbs = []VerbSpec{
 	// flags, while the TUI starts and stops a background one. Declared as
 	// separate paths because they are separate operations wearing one name.
 	{
-		Path: []string{"ssh-gateway"},
+		Path:           []string{"ssh-gateway"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,",
 			"so ssh config aliases, tmux and mosh reach a task with no harness binary there",
@@ -778,6 +782,7 @@ var Verbs = []VerbSpec{
 		// exactly: two types with the same name, both satisfying Action, and a
 		// `case SSHGatewayAction:` written by habit never matches.
 		Path:            []string{"ssh-gateway", "status"},
+		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "status"},
 		CmdlineSurfaces: TUI,
@@ -785,6 +790,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:            []string{"ssh-gateway", "stop"},
+		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "stop"},
 		CmdlineSurfaces: TUI,
@@ -793,7 +799,8 @@ var Verbs = []VerbSpec{
 
 	// --- workspace ---
 	{
-		Path: []string{"workspace", "save"},
+		Path:           []string{"workspace", "save"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"records every task the registry reports a forward for; --task narrows it to one,",
 			"and is also how a task's forwards get CLEARED after you stop them.",
@@ -838,7 +845,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace save dev"},
 	},
 	{
-		Path: []string{"workspace", "rm"},
+		Path:           []string{"workspace", "rm"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"delete one workspace from .harness/config (other workspaces and comments kept)",
 		},
@@ -864,7 +872,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"workspace ls"},
 	},
 	{
-		Path: []string{"workspace", "show"},
+		Path:           []string{"workspace", "show"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print one workspace, or all of them when no name is given",
 		},
@@ -890,6 +899,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:            []string{"workspace", "detach"},
+		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "WorkspaceAction",
 		Const:           map[string]string{"Sub": "detach"},
 		CmdlineSurfaces: TUI,
@@ -1028,6 +1038,9 @@ var Verbs = []VerbSpec{
 	// once gives every surface the same set.
 	{
 		Path: []string{"submit"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/client.go:DoSubmitWithOpts"},
+		},
 		Notes: []string{
 			"enqueue a new task (--repo: HARNESS_REPO_PATH)",
 			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
@@ -1116,7 +1129,8 @@ var Verbs = []VerbSpec{
 	// because they read their positionals inside resolvePayload rather than
 	// off the FlagSet.
 	{
-		Path: []string{"session", "send"},
+		Path:           []string{"session", "send"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
 			"--enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH",
@@ -1176,7 +1190,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"session", "exec"},
+		Path:           []string{"session", "exec"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"run one shell command line in the session's foreground shell and block until it finishes",
 			"exits with the command's own code (124 timeout, 125 error, 126 foreground shell exited); needs a POSIX shell",
@@ -1201,7 +1216,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ls -la"},
 	},
 	{
-		Path: []string{"session", "stream", "turn"},
+		Path:           []string{"session", "stream", "turn"},
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"send one user turn to an event-stream session",
 		},
@@ -1239,7 +1255,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"notify --level warn --title build the tree is red"},
 	},
 	{
-		Path: []string{"agent", "send"},
+		Path:           []string{"agent", "send"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
 			"A bare \"-\" is a VALUE OF --data, never a positional: `send --topic T -` publishes the one-byte body \"-\".",
@@ -1256,7 +1273,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent send --topic chat.abcd1234 hello there"},
 	},
 	{
-		Path: []string{"agent", "dispatch"},
+		Path:           []string{"agent", "dispatch"},
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"send, then block for the reply to THAT message. --reply-to R declares R as the destination AND waits there;",
 			"default is your own chat.<short-id>. --timeout bounds the WHOLE call, publish ack included",
@@ -1367,6 +1385,7 @@ var Verbs = []VerbSpec{
 		// used to be reachable from the CLI alone -- so a TUI or WebUI
 		// operator picking chips had the names and not the sentences.
 		Path: []string{"caps"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list the grantable --caps capability names and --scope forms",
 		},
@@ -1386,6 +1405,7 @@ var Verbs = []VerbSpec{
 		// strings and --list is a bool: the two spellings reach the same
 		// body through two methods, not one.
 		Path: []string{"skill", "ls"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"name every embedded skill; the same as `skill --list`",
 		},
@@ -1395,6 +1415,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"whoami"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",
 		},
@@ -1408,6 +1429,7 @@ var Verbs = []VerbSpec{
 	// not know them, so every completeness check passed over them.
 	{
 		Path: []string{"skill"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the embedded agent skill (default: harness-cli)",
 		},
@@ -1421,6 +1443,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"watch"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"stream task and runner status events",
 		},
@@ -1430,6 +1453,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"notify-watch"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"stream notifications (backlog + live); one human-readable line each",
 		},
@@ -1439,6 +1463,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"version"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"the commit this binary \u2014 and the skills embedded in it \u2014 was built from",
 		},
@@ -1465,6 +1490,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)",
 			"with no ids: time-based, removes entries older than --before",
@@ -1498,6 +1524,7 @@ var Verbs = []VerbSpec{
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
 			"with ids: put those back, rebuilt from the WAL. Requires the `prune` capability and the same scope: what you could forget, you can un-forget",
@@ -1532,12 +1559,14 @@ var Verbs = []VerbSpec{
 	// the table can hold.
 	{
 		Path: []string{"clear"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "clear"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "clear"},
 		Examples: []string{"clear"},
 	},
 	{
 		Path: []string{"quit"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"quit"},
 	},
 	{
@@ -1546,27 +1575,32 @@ var Verbs = []VerbSpec{
 		// verb, and two declared paths sharing an Action say the same thing
 		// without the mechanism.
 		Path: []string{"exit"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "quit"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"exit"},
 	},
 	{
 		Path: []string{"help"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "help"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "help"},
 		Examples: []string{"help"},
 	},
 	{
 		Path: []string{"refresh"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"refresh"},
 	},
 	{
 		Path: []string{"sync"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "refresh"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"sync"},
 	},
 	{
 		Path: []string{"trsf"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "trsf"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "trsf"},
 		Examples: []string{"trsf"},
 	},
 	{
@@ -1575,14 +1609,16 @@ var Verbs = []VerbSpec{
 		// because someone already did, which is why the positional carries the
 		// word rather than the action carrying a bool.
 		Path: []string{"diag"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "diag"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "diag"},
 		Args: []Arg{{Name: "on-off", Type: ArgString, Variadic: true, MaxCount: 1,
 			Field: "Arg", OneOfArg: []string{"on", "off"}}},
 		Examples: []string{"diag", "diag on", "diag off"},
 	},
 	{
 		Path: []string{"repo"}, CmdlineSurfaces: TUI,
-		Action: "ScreenAction", Const: map[string]string{"Sub": "repo"},
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "repo"},
 		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
 		Examples: []string{"repo /r"},
 	},
@@ -1644,7 +1680,8 @@ var Verbs = []VerbSpec{
 		// (spawnCaps / spawnScope), so this is a second door onto one value,
 		// not a second value.
 		Path: []string{"caps", "set-defaults"}, CmdlineSurfaces: TUI | WebUI,
-		Action: "SetDefaultsAction",
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
+		Action:         "SetDefaultsAction",
 		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
 		// show the current defaults (the TUI opens the picker on it) -- where
 		// on a re-grant it would be a no-op request against a live task.
@@ -1746,6 +1783,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
 			"vocabulary plus the session-only is_attached / ring_buffer_bytes fields.",
@@ -1769,6 +1807,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "kill"}, CmdlineSurfaces: CLI | TUI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"cancel a session (alias of cancel)",
 		},
@@ -1801,6 +1840,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "resize"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"set a live session's PTY size; the server echoing the new size back IS the acknowledgement",
 		},
@@ -1823,6 +1863,7 @@ var Verbs = []VerbSpec{
 		// three, it was reachable on one, and the TUI's help was made to
 		// advertise a line its cmdline refuses.
 		Path: []string{"session", "snapshot"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
 			"--style/--color append attribute/color spans; --json emits {rows,cols,title,lines[],spans[]} instead of text",
@@ -1949,6 +1990,7 @@ var Verbs = []VerbSpec{
 	// and read HARNESS_* env, which no operator surface has.
 	{
 		Path: []string{"agent", "inbox"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"idempotent dump of subscribed topics; --since 0 (default) = the whole ring",
 		},
@@ -1965,6 +2007,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "wait"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"take everything after --since, blocking only if there is nothing;",
 			"omitting --since means cursor 0, so a non-empty ring returns AT ONCE with old messages",
@@ -1983,6 +2026,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscribe"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"register a subscription",
 		},
@@ -1996,6 +2040,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "unsubscribe"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"remove a subscription",
 		},
@@ -2009,6 +2054,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "topics"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list every topic on the board (JSON Lines) (cap: board_observe)",
 		},
@@ -2019,6 +2065,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "subscriptions"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list this agent's registered patterns (JSON Lines)",
 		},
@@ -2029,6 +2076,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retained"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list a topic's retained ring as metadata only, no payload (no cap)",
 		},
@@ -2042,6 +2090,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "purge"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"drop a topic's retained buffer, or one message by seq (cap: purge)",
 		},
@@ -2058,6 +2107,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "read"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"fetch one retained message, whole; the hooks name it when they decline to inline a large body.",
 			"Limited to topics this task subscribes to.",
@@ -2070,6 +2120,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"agent", "retract"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"withdraw a message YOU sent: gone from every agent path, still visible to the operator as retracted",
 			"(no cap; authorship-checked). A reply to a message addressed to you retracts it automatically;",
