@@ -1700,8 +1700,21 @@ format TrsfStateResponse:
     stream_id :u64
 
 # TrsfStateResultBody is what travels on that stream.
+# sampled_unix_ns is when the ANSWERER walked its connections, by the
+# answerer's own clock -- the server's for a server reading, the runner's for a
+# runner reading, passed through unchanged.
+#
+# It exists because every counter in TrsfConnState is meaningful only as a
+# delta, and a delta needs an interval. Timing that interval at the CLIENT
+# divides a server-side delta by a client-side elapsed, and the two differ by
+# the change in round-trip time between the readings. Measured: a BLOCK% column
+# built that way printed 135%, which a share of an interval cannot be.
+#
+# Only the DIFFERENCE of two of these is ever used, and both come from the same
+# host, so no clock is compared against another's.
 format TrsfStateResultBody:
     count :u16
+    sampled_unix_ns :u64
     conns :[count]TrsfConnState
 
 format ConnInfo:
@@ -2014,9 +2027,13 @@ format RunnerTrsfStateRequest:
 # holds, and the server re-encodes onto the client's stream. A runner reports
 # only its own connections -- an uplink plus whatever data planes are open --
 # so this is small where the server's answer is not.
+# sampled_unix_ns is by the RUNNER's clock, and the server passes it through
+# rather than restamping: the interval the counters advanced over is the
+# runner's, and the server's own clock is one round trip away from it.
 format RunnerTrsfStateResponse:
     request_id :u32
     count :u16
+    sampled_unix_ns :u64
     conns :[count]TrsfConnState
 
 format RevokeDataPlaneResponse:

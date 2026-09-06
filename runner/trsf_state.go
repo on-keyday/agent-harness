@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -105,7 +106,12 @@ func handleTrsfState(sess *Session, req protocol.RunnerTrsfStateRequest, send fu
 	rm.SetTrsfStateResponse(protocol.RunnerTrsfStateResponse{
 		RequestId: req.RequestId,
 		Count:     uint16(len(rows)),
-		Conns:     rows,
+		// Stamped HERE, by the clock the counters advanced against. The server
+		// passes it through rather than restamping: its own clock is one round
+		// trip away, and the delta between two readings is the interval every
+		// one of these counters is read as a rate over.
+		SampledUnixNs: uint64(time.Now().UnixNano()),
+		Conns:         rows,
 	})
 	if err := send(rm); err != nil && sess != nil {
 		sess.logger().Warn("trsf_state: could not answer", "err", err)

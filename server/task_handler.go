@@ -133,8 +133,12 @@ type TaskHandler struct {
 	// TrsfStateFn reads this server's own connections; RunnerTrsfStateFn asks a
 	// named runner for its. Both nil on a server built without a listener,
 	// which answers unavailable rather than pretending.
-	TrsfStateFn       func(allowed map[string]bool, globalView bool) []protocol.TrsfConnState
-	RunnerTrsfStateFn func(ctx context.Context, runner protocol.RunnerID) ([]protocol.TrsfConnState, error)
+	//
+	// Both report WHEN they sampled, by the clock of the host that did: every
+	// counter on a row is read as a rate, and timing the interval at the caller
+	// instead divides one host's delta by another's elapsed.
+	TrsfStateFn       func(allowed map[string]bool, globalView bool) ([]protocol.TrsfConnState, int64)
+	RunnerTrsfStateFn func(ctx context.Context, runner protocol.RunnerID) ([]protocol.TrsfConnState, int64, error)
 
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).

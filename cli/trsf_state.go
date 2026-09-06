@@ -23,12 +23,19 @@ var (
 // runnerCID empty asks the SERVER about its own connections; otherwise the
 // server asks that runner about its. The two are different machines and the
 // answer says which by the role on each row.
-func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.TrsfConnState, error) {
+//
+// The second return is when the ANSWERER sampled, by its own clock. Every
+// counter on a row is read as a rate, and the interval has to be measured where
+// the counters advanced: timing it here divides one host's delta by another's
+// elapsed, which is how a share-of-the-interval column came to print 135%.
+// Only the difference of two of these is ever used, and both come from the same
+// host, so no clock is compared against another's.
+func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.TrsfConnState, int64, error) {
 	body := protocol.TrsfStateRequest{Target: protocol.TrsfTarget_Server}
 	if runnerCID != "" {
 		cid, err := objproto.ParseConnectionID(runnerCID, objproto.ParseOption_ResolveAddr)
 		if err != nil {
-			return nil, fmt.Errorf("trsf: parse runner cid %q: %w", runnerCID, err)
+			return nil, 0, fmt.Errorf("trsf: parse runner cid %q: %w", runnerCID, err)
 		}
 		body.Target = protocol.TrsfTarget_Runner
 		body.RunnerCid = protocol.ConnIDToRunnerID(cid)
@@ -38,14 +45,14 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resp.Kind != protocol.TaskControlKind_TrsfState {
-		return nil, fmt.Errorf("trsf: unexpected response kind %v", resp.Kind)
+		return nil, 0, fmt.Errorf("trsf: unexpected response kind %v", resp.Kind)
 	}
 	r := resp.TrsfState()
 	if r == nil {
-		return nil, errors.New("trsf: response variant missing")
+		return nil, 0, errors.New("trsf: response variant missing")
 	}
 	switch r.Status {
 	case protocol.TrsfStateStatus_Ok:
@@ -53,20 +60,20 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 		// response is one application message that has to fit a path MTU, and
 		// ten of these rows already exceed udp's 1200.
 		if r.StreamId == 0 {
-			return nil, fmt.Errorf("trsf: server returned no stream id")
+			return nil, 0, fmt.Errorf("trsf: server returned no stream id")
 		}
 		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 		if st == nil {
-			return nil, fmt.Errorf("trsf: stream %d not visible after the response", r.StreamId)
+			return nil, 0, fmt.Errorf("trsf: stream %d not visible after the response", r.StreamId)
 		}
 		var raw []byte
 		for {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			data, eof, rerr := st.ReadDirect(64 * 1024)
 			if rerr != nil {
-				return nil, fmt.Errorf("trsf: stream read: %w", rerr)
+				return nil, 0, fmt.Errorf("trsf: stream read: %w", rerr)
 			}
 			raw = append(raw, data...)
 			if eof {
@@ -75,14 +82,14 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 		}
 		body := &protocol.TrsfStateResultBody{}
 		if derr := body.DecodeExact(raw); derr != nil {
-			return nil, fmt.Errorf("trsf: decode body (%d bytes): %w", len(raw), derr)
+			return nil, 0, fmt.Errorf("trsf: decode body (%d bytes): %w", len(raw), derr)
 		}
-		return body.Conns, nil
+		return body.Conns, int64(body.SampledUnixNs), nil
 	case protocol.TrsfStateStatus_RunnerOffline:
-		return nil, ErrTrsfRunnerOffline
+		return nil, 0, ErrTrsfRunnerOffline
 	case protocol.TrsfStateStatus_NotPermitted:
-		return nil, ErrTrsfNotPermitted
+		return nil, 0, ErrTrsfNotPermitted
 	default:
-		return nil, ErrTrsfUnavailable
+		return nil, 0, ErrTrsfUnavailable
 	}
 }

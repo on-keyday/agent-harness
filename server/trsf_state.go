@@ -27,7 +27,8 @@ const runnerTrsfTimeout = 3 * time.Second
 // part is load-bearing rather than incidental: a runner's connection
 // multiplexes every task on that runner, so its congestion counters are the sum
 // over all of them and cannot be attributed to, or filtered by, one task.
-func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) []protocol.TrsfConnState {
+func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) ([]protocol.TrsfConnState, int64) {
+	sampled := time.Now().UnixNano()
 	s.activeConnsMu.Lock()
 	conns := make([]streamingConn, 0, len(s.activeConns))
 	for _, c := range s.activeConns {
@@ -51,7 +52,7 @@ func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) []prot
 		row.SetCid(info.Cid)
 		out = append(out, row)
 	}
-	return out
+	return out, sampled
 }
 
 // sendRunnerTrsfStateRequest asks one runner for its own transport state.
@@ -60,9 +61,9 @@ func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) []prot
 // what the data-plane sibling uses. The id is on the wire, so reading it is
 // what keeps it from being a field nobody consults -- and it lets two callers
 // poll the same runner at once, which --watch makes ordinary.
-func (s *Server) sendRunnerTrsfStateRequest(ctx context.Context, entry *RunnerEntry) ([]protocol.TrsfConnState, error) {
+func (s *Server) sendRunnerTrsfStateRequest(ctx context.Context, entry *RunnerEntry) ([]protocol.TrsfConnState, int64, error) {
 	if entry == nil || entry.Conn == nil {
-		return nil, fmt.Errorf("runner offline")
+		return nil, 0, fmt.Errorf("runner offline")
 	}
 	id := s.trsfReqSeq.Add(1)
 	respCh := make(chan protocol.RunnerTrsfStateResponse, 1)
@@ -83,18 +84,20 @@ func (s *Server) sendRunnerTrsfStateRequest(ctx context.Context, entry *RunnerEn
 	rr.SetTrsfState(protocol.RunnerTrsfStateRequest{RequestId: id})
 	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, 0, fmt.Errorf("encode: %w", err)
 	}
 	if _, _, err := entry.Conn.SendMessage(payload); err != nil {
-		return nil, fmt.Errorf("send: %w", err)
+		return nil, 0, fmt.Errorf("send: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, runnerTrsfTimeout)
 	defer cancel()
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	case resp := <-respCh:
-		return resp.Conns, nil
+		// The RUNNER's stamp, not this server's: the counters advanced on the
+		// runner's clock and one round trip separates the two.
+		return resp.Conns, int64(resp.SampledUnixNs), nil
 	}
 }
 
@@ -135,9 +138,10 @@ func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid str
 		resp.SetTrsfState(protocol.TrsfStateResponse{Status: st, StreamId: streamID})
 		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 	}
-	send := func(rows []protocol.TrsfConnState) {
+	send := func(rows []protocol.TrsfConnState, sampledUnixNs int64) {
 		var body protocol.TrsfStateResultBody
 		body.Count = uint16(len(rows))
+		body.SampledUnixNs = uint64(sampledUnixNs)
 		body.SetConns(rows)
 		bodyBytes, err := body.EncodeCopy(nil)
 		if err != nil {
@@ -179,7 +183,7 @@ func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid str
 		respond(protocol.TrsfStateStatus_Unavailable, 0)
 		return
 	}
-	rows, err := h.RunnerTrsfStateFn(context.Background(), req.RunnerCid)
+	rows, sampled, err := h.RunnerTrsfStateFn(context.Background(), req.RunnerCid)
 	switch {
 	case errors.Is(err, errRunnerOffline):
 		respond(protocol.TrsfStateStatus_RunnerOffline, 0)
@@ -187,7 +191,7 @@ func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid str
 		slog.Warn("trsf_state: runner did not answer", "err", err)
 		respond(protocol.TrsfStateStatus_Unavailable, 0)
 	default:
-		send(rows)
+		send(rows, sampled)
 	}
 }
 

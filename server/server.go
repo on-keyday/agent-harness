@@ -281,10 +281,10 @@ func New(cfg Config) *Server {
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
 	s.taskHandler.TrsfStateFn = s.trsfConnStates
-	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, rid protocol.RunnerID) ([]protocol.TrsfConnState, error) {
+	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, rid protocol.RunnerID) ([]protocol.TrsfConnState, int64, error) {
 		entry, ok := s.registry.Get(protocol.RunnerIDToConnID(rid).String())
 		if !ok {
-			return nil, errRunnerOffline
+			return nil, 0, errRunnerOffline
 		}
 		return s.sendRunnerTrsfStateRequest(ctx, &entry)
 	}
@@ -941,7 +941,7 @@ func (s *Server) DumpTrsfState() {
 	log := s.cfg.Logger
 	// The same walk the trsf_state request reads, with the operator's own view
 	// (nil allowed + globalView), so the log and the wire cannot disagree.
-	rows := s.trsfConnStates(nil, true)
+	rows, _ := s.trsfConnStates(nil, true)
 	log.Info("trsf dump: begin", "conns", len(rows))
 	for _, r := range rows {
 		log.Info("trsf dump: conn",

@@ -22,11 +22,11 @@ import (
 // one-shot form prints the absolute values it has.
 func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON bool, out io.Writer) error {
 	if watch == "" {
-		rows, err := c.TrsfStateOn(ctx, runnerCID)
+		rows, _, err := c.TrsfStateOn(ctx, runnerCID)
 		if err != nil {
 			return err
 		}
-		return writeTrsf(out, rows, nil, time.Time{}, asJSON)
+		return writeTrsf(out, rows, nil, 0, 0, asJSON)
 	}
 	every, err := time.ParseDuration(watch)
 	if err != nil {
@@ -36,25 +36,27 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 		return fmt.Errorf("--watch %q: must be positive", watch)
 	}
 	prev := map[string]protocol.TrsfConnState{}
-	// The wall time of the previous reading, not the ticker interval: BLOCK% is
-	// a fraction of elapsed time, and a reading that took a round trip to a
-	// runner does not arrive one interval after the last one.
-	var prevAt time.Time
+	// When the ANSWERER sampled the previous reading, by its own clock — not
+	// this process's, and not the ticker interval. BLOCK% is a share of the
+	// interval the counters advanced over, which happened on the answering
+	// host; measuring it here divides that delta by a local elapsed that also
+	// contains a round trip whose length changes between readings. Doing so
+	// printed 135%, which a share of an interval cannot be.
+	var prevAt int64
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		rows, err := c.TrsfStateOn(ctx, runnerCID)
+		rows, sampledAt, err := c.TrsfStateOn(ctx, runnerCID)
 		if err != nil {
 			return err
 		}
-		now := time.Now()
-		if err := writeTrsf(out, rows, prev, prevAt, asJSON); err != nil {
+		if err := writeTrsf(out, rows, prev, prevAt, sampledAt, asJSON); err != nil {
 			return err
 		}
 		for _, r := range rows {
 			prev[string(r.Cid)] = r
 		}
-		prevAt = now
+		prevAt = sampledAt
 		select {
 		case <-ctx.Done():
 			return nil
@@ -72,6 +74,8 @@ func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON
 // The raw five counters are not columns. They are all in --json, with deltas,
 // because a table that carries every one of them stops being readable at the
 // width where this one is already uncomfortable.
+// elapsed is measured between the two readings by the ANSWERER's clock, so
+// BLOCK% is a share of the interval the counters actually advanced over.
 func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, wait string) {
 	blockPct, wait = "-", "-"
 	if elapsed > 0 {
@@ -107,9 +111,11 @@ func parkSummary(r, p protocol.TrsfConnState, elapsed time.Duration) (blockPct, 
 
 // writeTrsf renders one reading. prev nil means "no previous reading", which is
 // the one-shot form; otherwise the delta columns carry the change since it.
-// prevAt is when that previous reading was taken, and is what BLOCK% is a
-// fraction of.
-func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]protocol.TrsfConnState, prevAt time.Time, asJSON bool) error {
+//
+// prevAt and sampledAt are when the ANSWERER took the two readings, by its own
+// clock, and their difference is what BLOCK% is a share of. Both zero in the
+// one-shot form, where there is nothing to compare against.
+func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]protocol.TrsfConnState, prevAt, sampledAt int64, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(out)
 		for i := range rows {
@@ -120,8 +126,8 @@ func writeTrsf(out io.Writer, rows []protocol.TrsfConnState, prev map[string]pro
 		return nil
 	}
 	var elapsed time.Duration
-	if !prevAt.IsZero() {
-		elapsed = time.Since(prevAt)
+	if prevAt != 0 && sampledAt > prevAt {
+		elapsed = time.Duration(sampledAt - prevAt)
 	}
 	fmt.Fprintf(out, "%-34s %-7s %-9s %8s %9s %9s %8s %7s %7s %7s %-11s\n",
 		"CID", "ROLE", "TASK", "CWND", "INFLIGHT", "SRTT", "LOSS+", "SPUR+", "LOOP+", "BLOCK%", "WAIT")
