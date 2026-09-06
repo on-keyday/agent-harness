@@ -1319,3 +1319,47 @@ Read `min_rtt` here as an upper bound on the path rather than a measurement of
 it: 0.45 ms is one tick of a clock whose smallest observable step was 503.6 µs,
 so the true round trip is at or below the resolution of the host doing the
 measuring. The path is sub-millisecond. The transport is running it at 33–203 ms.
+
+## Amendment — the radio carries 20 MB/s, and the queue is not in the network (2026-09-06)
+
+The control this whole investigation had been missing. A raw UDP probe between
+the Windows runner host and the Linux client host — 1200-byte datagrams, the
+size trsf puts on this path, an 8 MB socket buffer at both ends so a small one
+is not what gets measured:
+
+| offered | delivered | loss | packets/s |
+| --- | --- | --- | --- |
+| 5 MB/s | 5.00 | 0.05% | 4,168 |
+| 10 MB/s | 10.02 | **0.00%** | 8,347 |
+| 20 MB/s | 19.91 | 0.75% | 16,595 |
+| 40 MB/s | 22.46 | 8.15% | 18,718 (the sender itself managed only 24.4) |
+
+**The radio carries 20 MB/s at 16,600 packets/s essentially losslessly, and
+saturates near 22–24.** A file transfer over the same fleet runs at 3.5–4.5 MB/s
+and about 3,000 packets/s. Five times.
+
+**That kills the bufferbloat reading of the amendment above, and the arithmetic
+is short.** 650 KB in flight drains in 162 ms at 4 MB/s — which is the srtt
+measured, and is why the queue interpretation fit. But it drains in **32 ms** at
+the 20 MB/s the path will actually take. A sender offering 3,000 packets/s to a
+link that carries 16,600 cannot be building a network queue: there is nothing to
+queue behind. The 150 ms is real, and it is not the network.
+
+So the standing delay is inside the endpoints — between a packet reaching the
+socket and its acknowledgement coming back. That is the sender's send queue, the
+receiver's one-packet-per-loop-iteration processing, or the SPLICE in the middle,
+which on this fleet is a Raspberry Pi doing a decrypt, a copy and a re-encrypt
+for every byte in both directions.
+
+**A caveat that decides the next step.** This probe measured Windows ↔ Linux
+client, which is *a* pair of stations on this AP but NOT the leg the counters
+were read from: that leg is Windows ↔ Pi, and the Pi is a much smaller machine
+that is also the splice. The radio is now exonerated; the Pi is not, and it has
+never been measured because nothing in the fleet can execute on it. Getting a
+shell or a probe onto the server host is the next thing this needs — a bigger
+step than another counter, and the first one in this whole thread that is not.
+
+Everything else has now been ruled out by measurement rather than by argument:
+the medium, the Pi's radio, the CPU on the client and server, the congestion
+window, the transport's own timers, the application feeding it, and now the
+path's capacity.
