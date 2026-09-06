@@ -1892,6 +1892,30 @@ format FileListing:
 # falls to 1.70x at 50ms -- the kernel's TCP is doing the congestion control, so
 # a single long loop stops being the constraint.
 #
+# WHAT THE PENALTY ACTUALLY IS, and it is not the route. openDataPlaneStream
+# dials a FRESH connection per transfer and closes it after, so forwarded and
+# direct pay a cold congestion window every time while splice rides the server's
+# long-lived connection to the runner. The sender's own counters over a 64 MB
+# forwarded push at 50ms say it plainly: bytes_in_flight tracks cwnd to within a
+# fraction of a percent at every sample, srtt sits 0.3-1.2ms above min_rtt (so
+# there is no standing queue to blame), and cwnd sawtooths between 0.5 and
+# 0.9 MB against 218 loss events. The warm splice leg runs the same path at
+# 1.7 MB+.
+#
+# Handing a fresh connection 2 MB of initial window -- a DIAGNOSTIC, not a
+# proposal; it bursts and it drove loss_events from 12 to 372 -- takes forwarded
+# from 7903ms to 2737ms on that push, 8.5 -> 24.5 MB/s against splice's 34. So
+# nearly the whole gap is window the long-lived connection already paid for and
+# the per-transfer one cannot re-earn inside one file. If this is ever worth
+# closing, the lever is carrying a learned window to a new connection toward the
+# same peer (RFC 2140-style), not the route and not the proxy.
+#
+# One deviation found while measuring, unrelated to the choice above:
+# NewReno.RecordACK's congestion-avoidance term is cwnd += size*size/cwnd where
+# size is the ACKED BYTE COUNT, so over one RTT cwnd grows by exactly one ACK's
+# worth of bytes -- 1 MSS with per-packet ACKs, N MSS when an ACK covers N
+# packets. Measured +26 KB/RTT at MTU 1470, ~18x what RFC 5681 s3.1 allows.
+#
 # A route that cannot be taken is REFUSED with route_unavailable, never
 # silently replaced: a caller that asked for forwarded or direct asked for the
 # server not to read these bytes, and quietly splicing would hand over exactly
