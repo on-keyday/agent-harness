@@ -1906,9 +1906,26 @@ format FileListing:
 # proposal; it bursts and it drove loss_events from 12 to 372 -- takes forwarded
 # from 7903ms to 2737ms on that push, 8.5 -> 24.5 MB/s against splice's 34. So
 # nearly the whole gap is window the long-lived connection already paid for and
-# the per-transfer one cannot re-earn inside one file. If this is ever worth
-# closing, the lever is carrying a learned window to a new connection toward the
-# same peer (RFC 2140-style), not the route and not the proxy.
+# the per-transfer one cannot re-earn inside one file. Not the route, and not
+# the proxy.
+#
+# The obvious lever is NOT TCB sharing, and it is worth saying why. RFC 9040
+# (2021, Informational, Touch/Welzl/Islam -- it updates and replaces RFC 2140's
+# description of sharing TCP state) splits this into temporal sharing, s6, from
+# a closed connection to the same host, and ensemble sharing, s7, from a
+# concurrent one. Neither applies to the CLIENT here: it has never had a
+# connection to the runner, so there is nothing of its own to carry. And the one
+# value we would want is the one nobody carries -- Table 1 in s6.1 does list
+# old_sendcwnd -> new sendcwnd, but Table 9 in s10 records old_sendcwnd as NOT
+# shared by any surveyed OS, and s8.3 warns that sharing even ssthresh helps
+# only for long flows and can hurt individual short ones.
+#
+# What DOES exist here is a third party that already measured the path: the
+# server holds the long-lived connection to that runner and it is the party
+# minting the grant. It already tells the client one path property it measured,
+# `mtu` above. A path estimate would be the same shape and the same trust
+# assumption -- a hint the client may clamp, not state it inherits. That is the
+# design to write up if this ever becomes worth the field.
 #
 # One deviation found while measuring, unrelated to the choice above:
 # NewReno.RecordACK's congestion-avoidance term is cwnd += size*size/cwnd where
