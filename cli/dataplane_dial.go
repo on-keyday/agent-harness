@@ -102,6 +102,12 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	// otherwise parks forever -- observed on the live fleet at six minutes with
 	// no CPU, on a pair that had completed in 520ms minutes earlier. With no
 	// fallback by design, a prompt failure is the whole of what the caller gets.
+	//
+	// The bound is no longer one shot, though: objproto retransmits the
+	// handshake from inside its own wait, first after 333ms and doubling, so
+	// ten seconds is about five attempts. That matters here because losing the
+	// race with the punch's first probe used to cost the whole transfer -- the
+	// path opens milliseconds later and stays open for the grant's lifetime.
 	dialCtx, cancelDial := context.WithCancel(ctx)
 	type dialed struct {
 		pc  *peer.Conn

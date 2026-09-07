@@ -263,8 +263,47 @@ the same datagram. So:
   nil. If it differs, keep today's rejection -- a *different* handshake at a
   live cid is key confusion and must still be refused.
 
-Both are objtrsf, so a publish plus a `go.mod` bump, before the harness-side
-retry is worth writing. Nothing here is implemented.
+Both are objtrsf, so a publish plus a `go.mod` bump.
+
+### Item 5 is DONE — objtrsf `b0f45e6` (2026-09-08)
+
+Built as described above, and it turned out to need nothing on the harness side.
+Two independent halves, each covering a different loss, which the tests
+demonstrate by removing one at a time:
+
+| removed | which tests fail |
+| --- | --- |
+| the responder's replay | only the dropped-ACK one |
+| the dialer's retransmission | both loss tests, and the byte-identity one |
+
+**The dialer needed no new state.** `sentHandshake[cid]` already held
+`PrivateKey` and `Transcript` — the exact encoded packet — and `sendPacket`
+enqueues that slice verbatim, so `retransmitHandshake` re-sends the same
+datagram. It deliberately does not call `sendHandshake`, whose `else` branch
+rotates the ephemeral key.
+
+**And no new goroutine**, which matters given how goroutine-sensitive this
+project already is. Whoever dialed is already blocked in
+`ChanWithTimeout.WaitWithTimeout`, so the schedule lives there as an optional
+tick hook: 333 ms first (RFC 9002's `kInitialRtt`, also trsf's initial srtt —
+neither layer has an estimate at handshake time), doubling after each, one timer
+with `Reset`. An unset hook leaves the wait exactly as it was.
+
+**The responder** replaces the flat duplicate check with the three outcomes a
+caller actually needs — no connection, the same hello, a different hello at a
+live cid — and replays the stored ack for the middle one, bounded to 10 s from
+`connTime` per S3.
+
+**Nothing changed in the harness** except this note and a comment. `peer.Dial`
+goes through `DoECDHHandshake`, which waits 10 s, and `dialDataPlane` bounds the
+wait rather than the connection — so the retransmissions fit inside the budget
+that was already there. Five attempts where there was one. Losing the race with
+the punch's first probe no longer costs the transfer, since the path opens
+milliseconds later and stays open for the grant's lifetime.
+
+What is NOT addressed: S6, the punch doubling as the access control, and S7, the
+16-bit slot. Both are about who may reach a slot, not about whether a dial that
+should succeed does.
 
 ### Security considerations
 
