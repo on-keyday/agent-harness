@@ -412,6 +412,19 @@ func (a *App) Init() tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return a.updateKey(msg)
+	case tea.WindowSizeMsg:
+		return a.updateWindowSize(msg)
+	}
+	return a.updateResult(msg)
+}
+
+// updateResult handles every message that is neither a key nor a resize:
+// the results of the Do* commands, the tickers, the pump traffic. A type it
+// does not name belongs to whichever pane has focus.
+func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case actAgeTickMsg:
 		// Local aging re-render only; always re-arm so the tick survives
 		// disconnects. No RPC here — act data arrives via events/snapshots.
@@ -1351,1160 +1364,107 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.rawModal.MarkClosed(msg.Gen, msg.Reason)
 		a.rawModal.Refresh()
 		return a, nil
+	}
+	return a.updatePane(msg)
+}
 
-	case tea.WindowSizeMsg:
-		a.width = msg.Width
-		a.height = msg.Height
-		a.layout()
-		a.filepicker.SetSize(a.width, a.height)
-		a.fileEditor.SetSize(a.width, a.height)
-		a.connsModal.SetSize(a.width, a.height)
-		a.forwardsModal.SetSize(a.width, a.height)
-		a.forwardTap.SetSize(a.width, a.height)
-		a.execsModal.SetSize(a.width, a.height)
-		a.boardModal.SetSize(a.width, a.height)
-		a.gitModal.SetSize(a.width, a.height)
-		a.grid.SetSize(a.width, a.height)
-		a.chat.SetSize(a.width, a.height)
-		a.rawModal.SetSize(a.width, a.height)
-		a.authorityPicker.SetSize(a.width, a.height)
-		a.workspacePicker.SetSize(a.width, a.height)
+func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	a.width = msg.Width
+	a.height = msg.Height
+	a.layout()
+	a.filepicker.SetSize(a.width, a.height)
+	a.fileEditor.SetSize(a.width, a.height)
+	a.connsModal.SetSize(a.width, a.height)
+	a.forwardsModal.SetSize(a.width, a.height)
+	a.forwardTap.SetSize(a.width, a.height)
+	a.execsModal.SetSize(a.width, a.height)
+	a.boardModal.SetSize(a.width, a.height)
+	a.gitModal.SetSize(a.width, a.height)
+	a.grid.SetSize(a.width, a.height)
+	a.chat.SetSize(a.width, a.height)
+	a.rawModal.SetSize(a.width, a.height)
+	a.authorityPicker.SetSize(a.width, a.height)
+	a.workspacePicker.SetSize(a.width, a.height)
+	return a, nil
+}
+
+// updateKey routes one key. An open overlay owns it outright (appOverlays,
+// topmost first); otherwise the structural keys — quit, help, focus — are
+// checked, then the mainKeyBindings row that names the key runs where its
+// Scope applies, and whatever nothing claimed reaches the focused pane.
+func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	for _, o := range appOverlays {
+		if o.open(a) {
+			return a, o.key(a, msg)
+		}
+	}
+	// Ctrl+C always quits.
+	if msg.Type == tea.KeyCtrlC {
+		return a, a.quit()
+	}
+	// While the logs panel is in filter-edit mode, every printable rune
+	// (including 'q', 's', 'c') belongs to the filter draft, just like
+	// in cmdline focus.
+	logsEditing := a.focus == focusLogs && a.logs.IsEditingFilter()
+	// `q` quits when not in the cmdline / not composing a filter (those
+	// must accept literal 'q').
+	if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Quit {
+		return a, a.quit()
+	}
+	// `?` shows every binding. The footer is one row and drops what does
+	// not fit (see footerHints), so this is where the full list lives.
+	// Reuses the read-only DetailPopup — same Esc-closes / swallow-all
+	// handling as the `d` detail view.
+	if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Help {
+		a.detail.Open("keys", keyHelpBody())
 		return a, nil
-
-	case tea.KeyMsg:
-		// Detail popup is read-only — Esc closes, all other keys swallowed
-		// so cursor movement / 'q' / etc. don't leak through.
-		if a.detail.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.detail.Close()
-				return a, nil
-			}
-			// Everything else scrolls: the body can be taller than the screen
-			// (`?` is), and a popup you cannot scroll hides its own top.
-			var cmd tea.Cmd
-			a.detail, cmd = a.detail.Update(msg)
-			return a, cmd
-		}
-		// Connections modal: Esc closes; arrow keys scroll the table; all
-		// other keys (q, s, etc.) are swallowed so they don't leak through.
-		if a.connsModal.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.connsModal.Close()
-				return a, nil
-			}
-			var cmd tea.Cmd
-			a.connsModal, cmd = a.connsModal.Update(msg)
-			return a, cmd
-		}
-		// Forwards list modal: Esc closes; `x` arms a y/n kill confirmation
-		// for the selected row (server RPC via DoKillForward — works on any
-		// visible forward, not just this TUI's own; the target may belong to
-		// another operator's `harness-cli forward` session, so it is
-		// deliberately not a direct kill — see BeginKillConfirm's doc
-		// comment for the confirm-gate precedent). `j`/`k` are intentionally
-		// left alone here so they reach the embedded table's own
-		// LineDown/LineUp navigation instead of colliding with a destructive
-		// action (this repo's convention: destructive full-screen-overlay
-		// actions use x/X, e.g. the grid's dismiss and the file picker's
-		// delete — never k, which is universally "up" in this layer).
-		if a.execsModal.IsOpen() {
-			if a.execsModal.IsConfirming() {
-				switch msg.String() {
-				case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
-					if id, ok := a.execsModal.ConfirmKill(); ok {
-						return a, DoExecRunKill(a.client, id)
-					}
-					return a, nil
-				case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
-					a.execsModal.CancelKillConfirm()
-					return a, nil
-				}
-				// Swallow everything else so the table cannot move under the
-				// operator mid-confirm, as the forwards modal does below.
-				return a, nil
-			}
-			if msg.Type == tea.KeyEsc {
-				a.execsModal.Close()
-				return a, nil
-			}
-			if msg.String() == modalKeys.ForwardKill {
-				a.execsModal.BeginKillConfirm()
-				return a, nil
-			}
-			var cmd tea.Cmd
-			a.execsModal, cmd = a.execsModal.Update(msg)
-			return a, cmd
-		}
-		// The tap view is checked BEFORE the forwards pane: it is opened from
-		// that pane and drawn on top of it, so it owns the keys while it is up.
-		if a.forwardTap.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.stopForwardTap()
-				// Straight back onto a pane whose counters moved while the tap
-				// was up — refetch rather than show the numbers from before.
-				if a.forwardsModal.IsOpen() {
-					return a, DoListForwards(a.client, false)
-				}
-				return a, nil
-			}
-			cmd := a.forwardTap.Update(msg)
-			return a, cmd
-		}
-		if a.forwardsModal.IsOpen() {
-			if a.forwardsModal.IsConfirming() {
-				switch msg.String() {
-				case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
-					if id, taskID, spec, ok := a.forwardsModal.ConfirmKill(); ok {
-						return a, DoKillForward(a.client, id, taskID, spec)
-					}
-					return a, nil
-				case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
-					a.forwardsModal.CancelKillConfirm()
-					return a, nil
-				}
-				// Swallow every other key while a kill is pending so the
-				// table (and its j/k navigation) can't move — and nothing
-				// else can be triggered — mid-confirm.
-				return a, nil
-			}
-			if msg.Type == tea.KeyEsc {
-				a.forwardsModal.Close()
-				return a, nil
-			}
-			if msg.String() == modalKeys.ForwardKill {
-				a.forwardsModal.BeginKillConfirm()
-				return a, nil
-			}
-			if msg.String() == modalKeys.ForwardTap {
-				if id, ok := a.forwardsModal.SelectedID(); ok {
-					return a, a.startForwardTap(verb.ForwardTapAction{ForwardID: id, Dir: "both"})
-				}
-				return a, nil
-			}
-			// The pane fetches once on open and forwards have no push
-			// subscription, so its rows age in place. That was harmless while a
-			// row was pure configuration; now it carries counters, and a stale
-			// pane shows 0/0 while bytes are crossing — which reads as "this
-			// forward is idle", the one thing the counters exist to answer.
-			if msg.String() == modalKeys.ForwardRefresh {
-				return a, DoListForwards(a.client, false)
-			}
-			var cmd tea.Cmd
-			a.forwardsModal, cmd = a.forwardsModal.Update(msg)
-			return a, cmd
-		}
-		// Live session viewer grid: full-screen overlay, intercepts ALL
-		// keys when open (focus movement / Enter / x / Esc-q are handled
-		// inside GridModel.Update).
-		if a.grid.IsOpen() {
-			var cmd tea.Cmd
-			a.grid, cmd = a.grid.Update(msg)
-			return a, cmd
-		}
-		// Chat: the event-stream kind's full-screen driving surface. Like the
-		// grid it intercepts ALL keys — the text input is focused, so anything
-		// not claimed by ChatModel.Update is a character being typed.
-		if a.chat.IsOpen() {
-			var cmd tea.Cmd
-			a.chat, cmd = a.chat.Update(msg)
-			return a, cmd
-		}
-		// Board modal: two-mode overlay (topics / messages).
-		// The App dispatches Do* cmds for Enter/r/x/X; the modal handles
-		// table/viewport navigation itself.
-		if a.boardModal.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers {
-					a.boardModal.PopToTopics()
-					return a, nil
-				}
-				a.boardModal.Close()
-				return a, nil
-			}
-			if a.boardModal.Mode() == boardTopics {
-				switch msg.Type {
-				case tea.KeyEnter:
-					topic := a.boardModal.SelectedTopicName()
-					if topic != "" {
-						return a, DoBoardRead(a.client, topic)
-					}
-					return a, nil
-				}
-				switch msg.String() {
-				case modalKeys.BoardRefresh:
-					return a, DoBoardTopics(a.client)
-				case modalKeys.BoardPurgeTopic:
-					topic := a.boardModal.SelectedTopicName()
-					if topic != "" {
-						return a, DoBoardPurge(a.client, topic, 0)
-					}
-					return a, nil
-				case modalKeys.BoardSubscribers:
-					topic := a.boardModal.SelectedTopicName()
-					if topic != "" {
-						return a, DoBoardSubscribers(a.client, topic)
-					}
-					return a, nil
-				}
-			} else if a.boardModal.Mode() == boardSubscribers {
-				if msg.String() == modalKeys.BoardSubscribers {
-					return a, DoBoardSubscribers(a.client, a.boardModal.CurTopic())
-				}
-			} else {
-				// boardMessages mode
-				switch msg.String() {
-				case modalKeys.BoardPurgeMsg:
-					seq := a.boardModal.SelectedMsgSeq()
-					if seq != 0 {
-						return a, DoBoardPurge(a.client, a.boardModal.CurTopic(), seq)
-					}
-					return a, nil
-				case modalKeys.BoardRetractMsg:
-					seq := a.boardModal.SelectedMsgSeq()
-					if seq != 0 {
-						return a, DoBoardRetract(a.client, a.boardModal.CurTopic(), seq)
-					}
-					return a, nil
-				case modalKeys.BoardRefresh:
-					return a, DoBoardRead(a.client, a.boardModal.CurTopic())
-				}
-			}
-			var cmd tea.Cmd
-			a.boardModal, cmd = a.boardModal.Update(msg)
-			return a, cmd
-		}
-		// Git modal: row picker over a diff viewport. The App dispatches the
-		// keys that need a client (Enter / r / s); the modal owns selection,
-		// the baseline and scrolling.
-		if a.gitModal.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.gitModal.Close()
-				return a, nil
-			}
-			taskID := a.gitModal.TaskID()
-			if msg.Type == tea.KeyEnter {
-				row := a.gitModal.SelectedRow()
-				if row.Kind == gitRowSubrepo {
-					// A [REPO] row is a destination, not content: re-root and
-					// reload everything, because none of it belonged to the
-					// repository we are leaving.
-					a.gitModal.EnterSubrepo(row.Subrepo)
-					a.gitModal.SetSize(a.width, a.height)
-					return a, a.gitReload(taskID, nil)
-				}
-				kind, target, rev := a.gitModal.GitQueryForRow(row)
-				q := a.gitModal.Query()
-				q.BaseRev = rev
-				if kind == protocol.GitQueryKind_Show {
-					q.Kind = protocol.GitQueryKind_Show
-					a.gitModal.RecordContentQuery(q)
-					return a, DoGitShow(a.client, taskID, q)
-				}
-				q.Target = target
-				q.Kind = protocol.GitQueryKind_Diff
-				a.gitModal.RecordContentQuery(q)
-				return a, DoGitDiff(a.client, taskID, q)
-			}
-			switch msg.String() {
-			case modalKeys.GitOpenFile:
-				// Toggle: into the whole file, or back to the diff it came from.
-				if a.gitModal.LeaveFileView() {
-					q := a.gitModal.LastContentQuery()
-					if q.Kind == protocol.GitQueryKind_Show {
-						return a, DoGitShow(a.client, taskID, q)
-					}
-					return a, DoGitDiff(a.client, taskID, q)
-				}
-				fq, ok := a.gitModal.OpenFileQuery()
-				if !ok {
-					a.gitModal.SetError("no file here — scroll to a diff hunk, or the file was deleted")
-					return a, nil
-				}
-				return a, DoGitFile(a.client, taskID, fq)
-			case modalKeys.BoardRefresh:
-				return a, a.gitReload(taskID, nil)
-			case modalKeys.GitStatus:
-				a.gitStatusToContent = true
-				return a, DoGitStatus(a.client, taskID, a.gitModal.Query())
-			case modalKeys.GitUp:
-				if !a.gitModal.LeaveSubrepo() {
-					return a, nil
-				}
-				a.gitModal.SetSize(a.width, a.height)
-				return a, a.gitReload(taskID, nil)
-			case modalKeys.GitSubmodule:
-				a.gitModal.ToggleSubmodule()
-				// Re-issue the current row so the toggle is visible at once
-				// rather than on the next unrelated keypress.
-				row := a.gitModal.SelectedRow()
-				if row.Kind == gitRowSubrepo {
-					return a, nil
-				}
-				kind, target, rev := a.gitModal.GitQueryForRow(row)
-				q := a.gitModal.Query()
-				q.BaseRev = rev
-				if kind == protocol.GitQueryKind_Show {
-					q.Kind = protocol.GitQueryKind_Show
-					a.gitModal.RecordContentQuery(q)
-					return a, DoGitShow(a.client, taskID, q)
-				}
-				q.Target = target
-				q.Kind = protocol.GitQueryKind_Diff
-				a.gitModal.RecordContentQuery(q)
-				return a, DoGitDiff(a.client, taskID, q)
-			}
-			var cmd tea.Cmd
-			a.gitModal, cmd = a.gitModal.Update(msg)
-			return a, cmd
-		}
-		// The editor popup sits on top of the file picker (which is what
-		// opens it), so it must claim keys first — the picker's block below
-		// swallows everything it sees.
-		if a.fileEditor.IsOpen() {
-			var ecmd tea.Cmd
-			a.fileEditor, ecmd = a.fileEditor.Update(msg)
-			return a, ecmd
-		}
-		// File picker intercepts ALL keys when open.
-		if a.filepicker.IsOpen() {
-			var pcmd tea.Cmd
-			a.filepicker, pcmd = a.filepicker.Update(msg)
-			return a, pcmd
-		}
-		// Submit popup intercepts ALL keys when open.
-		if a.popup.IsOpen() {
-			switch msg.Type {
-			case tea.KeyEsc:
-				a.popup.Close()
-				return a, nil
-			case tea.KeyCtrlJ:
-				// Bubbletea reports Ctrl+Enter as Ctrl+J on most terminals.
-				repo := a.popup.Repo()
-				prompt := a.popup.Prompt()
-				host := a.popup.Host()
-				agent := a.popup.Agent()
-				extraArgs := a.popup.ExtraArgs()
-				resumeID := a.popup.ResumeTaskID()
-				resumeConversation := a.popup.ResumeConversation()
-				a.popup.Close()
-				if prompt == "" {
-					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
-					return a, nil
-				}
-				// repo is irrelevant on resume — server uses the existing
-				// task's RepoPath. Only require it for fresh submits.
-				if repo == "" && resumeID == "" {
-					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
-					return a, nil
-				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.authority(), false, resumeConversation, agent)
-			case tea.KeyTab:
-				a.popup.CycleRepo(+1)
-				return a, nil
-			case tea.KeyShiftTab:
-				a.popup.CycleHost(+1)
-				return a, nil
-			case tea.KeyCtrlA:
-				a.popup.CycleAgent(+1)
-				return a, nil
-			case tea.KeyCtrlE:
-				a.popup.ToggleFocus()
-				return a, nil
-			case tea.KeyCtrlR:
-				a.popup.ToggleResumeConversation()
-				return a, nil
-			}
-			var pcmd tea.Cmd
-			a.popup, pcmd = a.popup.Update(msg)
-			return a, pcmd
-		}
-		// Authority picker intercepts keys when open: j/k move, space
-		// toggles, enter applies, esc cancels.
-		if a.workspacePicker.IsOpen() {
-			// The forward editor owns every key while it is up, or typing "-L
-			// 3000:…" would be read as move/include/cycle commands. Only Enter
-			// and Esc are claimed back.
-			if a.workspacePicker.IsEditing() {
-				switch msg.Type {
-				case tea.KeyEsc:
-					a.workspacePicker.CancelEdit()
-					return a, nil
-				case tea.KeyEnter:
-					if err := a.workspacePicker.CommitEdit(); err != nil {
-						a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
-					}
-					return a, nil
-				}
-				return a, a.workspacePicker.UpdateInput(msg)
-			}
-			switch {
-			case msg.Type == tea.KeyEsc:
-				a.workspacePicker.Close()
-				a.cmdresult.Append("workspace save: cancelled")
-				return a, nil
-			case msg.Type == tea.KeyUp:
-				a.workspacePicker.Move(-1)
-				return a, nil
-			case msg.Type == tea.KeyDown:
-				a.workspacePicker.Move(1)
-				return a, nil
-			case msg.Type == tea.KeySpace:
-				a.workspacePicker.Toggle()
-				return a, nil
-			case msg.Type == tea.KeyEnter:
-				return a, a.commitWorkspacePicker()
-			case msg.Type == tea.KeyRunes:
-				// Per rune, not msg.String(): fast key-repeat batches a "jjj"
-				// burst into ONE KeyMsg, and comparing the string would make it
-				// an unknown key rather than three moves.
-				for _, r := range msg.Runes {
-					switch r {
-					case 'j':
-						a.workspacePicker.Move(1)
-					case 'k':
-						a.workspacePicker.Move(-1)
-					case ' ':
-						a.workspacePicker.Toggle()
-					case 'r':
-						a.workspacePicker.CycleResume()
-					case 'u':
-						a.workspacePicker.CycleRunner()
-					case 'g':
-						a.workspacePicker.CycleGrid()
-					case 's':
-						a.workspacePicker.CycleGateway()
-					case 'f':
-						a.workspacePicker.BeginEdit()
-					case 'a':
-						a.workspacePicker.SetAll(true)
-					case 'n':
-						a.workspacePicker.SetAll(false)
-					}
-				}
-				return a, nil
-			}
-			return a, nil
-		}
-		if a.authorityPicker.IsOpen() {
-			switch {
-			case msg.Type == tea.KeyEsc:
-				a.authorityPicker.Close()
-				return a, nil
-			case msg.Type == tea.KeyUp:
-				a.authorityPicker.Move(-1)
-				return a, nil
-			case msg.Type == tea.KeyDown:
-				a.authorityPicker.Move(1)
-				return a, nil
-			case msg.Type == tea.KeySpace:
-				a.authorityPicker.Toggle()
-				return a, nil
-			case msg.Type == tea.KeyRunes:
-				// Fast key-repeat (and paste) batches runes into ONE KeyMsg,
-				// so compare per rune, not msg.String() — a "jjj" burst is
-				// three moves, not an unknown key.
-				for _, r := range msg.Runes {
-					switch r {
-					case 'j':
-						a.authorityPicker.Move(1)
-					case 'k':
-						a.authorityPicker.Move(-1)
-					case ' ':
-						a.authorityPicker.Toggle()
-					case 'v':
-						// The task rows' second checkbox: +vis-ids:, the
-						// see-only set. Space stays the action set because
-						// that is the common edit; a plain second key keeps
-						// both reachable without introducing a mode.
-						a.authorityPicker.ToggleVisID()
-					case 'A':
-						// WebUI chip row's [all] / [none] quick-set, as keys.
-						a.authorityPicker.SetAllCaps(true)
-					case 'N':
-						a.authorityPicker.SetAllCaps(false)
-					}
-				}
-				return a, nil
-			case msg.Type == tea.KeyEnter:
-				if a.authorityPicker.Mode() == PickerModeParent {
-					parentHex, _, swap, ok := a.authorityPicker.ParentChoice()
-					target := a.authorityPicker.TargetID()
-					a.authorityPicker.Close()
-					if !ok {
-						return a, nil
-					}
-					if a.client == nil {
-						a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
-						return a, nil
-					}
-					// ParentID == "" without Swap IS the detach form on the wire.
-					return a, DoSetParent(a.client, cli.SetParentOpts{
-						TaskID: target, ParentID: parentHex, Swap: swap,
-					})
-				}
-				caps, spec, cascade, keep := a.authorityPicker.Result()
-				// Carried, not edited: the picker never clears the target's
-				// per-capability narrowings, because they travel with the scope
-				// under one presence bit and an empty list would erase them.
-				overrides := a.authorityPicker.Overrides()
-				mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
-				a.authorityPicker.Close()
-				if mode == PickerModeSession {
-					a.sessionCaps = caps
-					if spec == "" {
-						a.sessionScope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree}
-						a.sessionOverrides = nil
-					} else {
-						sc, err := cli.ParseScope(spec)
-						if err != nil {
-							a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
-							return a, nil
-						}
-						a.sessionScope = sc
-						a.sessionOverrides = overrides
-					}
-					label := capsLabel(a.sessionCaps) + "  scope=" + cli.ScopeLabel(a.sessionScope)
-					if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
-						label += " +" + ov
-					}
-					a.cmdresult.Append(OKStyle.Render("defaults set: ") + label)
-					return a, nil
-				}
-				if a.client == nil {
-					a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
-					return a, nil
-				}
-				sc, err := cli.ParseScope(spec)
-				if err != nil {
-					// Unreachable for picker-built specs; surfaced rather
-					// than swallowed in case the serializer regresses.
-					a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
-					return a, nil
-				}
-				return a, DoSetCaps(a.client, cli.SetCapsOpts{
-					TaskID: target, Caps: &caps, Scope: &sc, Overrides: overrides,
-					Cascade: cascade, KeepConns: keep,
-				})
-			}
-			return a, nil
-		}
-		// Runner picker intercepts keys when open (digit picks, Esc cancels).
-		if a.runnerPicker.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.runnerPicker.Close()
-				a.cmdresult.Append(WarnStyle.Render("runner pick cancelled"))
-				return a, nil
-			}
-			if c := a.runnerPicker.Pick(msg.String()); c != nil {
-				p := a.pendingInteractive
-				sel, agentProfile := pickerSelection(c)
-				a.runnerPicker.Close()
-				pickLabel := c.Hostname + "  " + c.Cid
-				if agentProfile != "" {
-					pickLabel += "  (" + agentProfile + ")"
-				}
-				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + pickLabel)
-				return a, DoOpenDetachableSession(a.client, p.repo, sel, p.extraArgs, p.resumeTaskID, p.auth, p.capsOverride, p.resumeConversation, agentProfile)
-			}
-			return a, nil
-		}
-		// Forward-stop picker intercepts keys when open (digit selects, Esc cancels).
-		if a.forwardPicker.IsOpen() {
-			if msg.Type == tea.KeyEsc {
-				a.forwardPicker.Close()
-				return a, nil
-			}
-			if sess := a.forwardPicker.Pick(msg.String()); sess != nil {
-				a.forwardPicker.Close()
-				return a, a.killLocalForward(sess)
-			}
-			return a, nil
-		}
-		// Port-forward modal intercepts ALL keys when open.
-		if a.portForwardModal.IsOpen() {
-			switch msg.Type {
-			case tea.KeyEsc:
-				a.portForwardModal.Close()
-				return a, nil
-			case tea.KeyEnter:
-				spec := a.portForwardModal.Spec()
-				taskID := a.portForwardModal.TaskID()
-				mode := a.portForwardModal.Mode()
-				a.portForwardModal.Close()
-				if spec == "" {
-					a.cmdresult.Append(WarnStyle.Render("forward cancelled (empty spec)"))
-					return a, nil
-				}
-				a.nextForwardID++
-				if mode == ForwardRemote {
-					return a, DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
-				}
-				return a, DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
-			}
-			var pfcmd tea.Cmd
-			a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)
-			return a, pfcmd
-		}
-		// Raw-connect modal intercepts ALL keys when open: the input line needs
-		// every printable rune while composing a target or a send line, which
-		// is also why the pane keys below are arrows and esc rather than
-		// letters. Esc only HIDES — panes are connections, and closing one is
-		// `x`. Enter is overloaded by which tab is selected: on [+ new] it
-		// parses the entered spec and opens a pane tagged with a fresh
-		// generation; on a live pane it sends the line.
-		if a.rawModal.IsOpen() {
-			// Three screens, three key sets. The list has no focused text
-			// input, so a letter is free there (`n`); the other two take every
-			// printable rune, which is why their actions are chords.
-			switch a.rawModal.Mode() {
-			case rawModeList:
-				switch {
-				case msg.Type == tea.KeyEsc:
-					a.rawModal.Hide()
-					return a, nil
-				case msg.Type == tea.KeyEnter:
-					a.rawModal.OpenSelected()
-					return a, nil
-				case msg.Type == tea.KeyCtrlX:
-					a.rawModal.CloseSelectedPane()
-					return a, nil
-				case msg.String() == "n":
-					a.rawModal.BeginNew()
-					return a, nil
-				}
-				return a, a.rawModal.UpdateList(msg)
-
-			case rawModeNew:
-				switch msg.Type {
-				case tea.KeyEsc:
-					a.rawModal.BackToList()
-					return a, nil
-				case tea.KeyEnter:
-					// Reported inside the modal: cmdresult is behind it.
-					host, port, ok := a.rawModal.TargetOrError()
-					if !ok {
-						return a, nil
-					}
-					// Each attempt gets its own generation and its own pane, so
-					// two attempts can never share one — which is what used to
-					// let the loser's close tear down the winner.
-					a.rawGenSeq++
-					gen := a.rawGenSeq
-					taskID := a.rawModal.TaskID()
-					a.rawModal.AddPane(taskID, host, port, gen)
-					return a, DoStartRawForward(a.client, taskID, host, port, gen, a.program)
-				}
-				var rmcmd tea.Cmd
-				a.rawModal, rmcmd = a.rawModal.Update(msg)
-				return a, rmcmd
-			}
-
-			// rawModeView.
-			switch msg.Type {
-			case tea.KeyEsc:
-				a.rawModal.BackToList()
-				return a, nil
-			case tea.KeyCtrlX:
-				a.rawModal.CloseSelectedPane()
-				return a, nil
-			case tea.KeyCtrlT:
-				a.rawModal.ToggleForm()
-				return a, nil
-			case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
-				if !a.rawModal.InForm() {
-					return a, a.rawModal.ScrollViewport(msg)
-				}
-			}
-			if a.rawModal.InForm() {
-				switch msg.Type {
-				case tea.KeyTab:
-					a.rawModal.FormNextField()
-					return a, nil
-				case tea.KeyLeft, tea.KeyRight:
-					d := 1
-					if msg.Type == tea.KeyLeft {
-						d = -1
-					}
-					a.rawModal.FormCycleMethod(d)
-					return a, nil
-				case tea.KeyEnter:
-					if err := a.rawModal.SendForm(); err != nil {
-						a.rawModal.SetActiveNote(err.Error())
-					}
-					a.rawModal.Refresh()
-					return a, nil
-				}
-				return a, a.rawModal.UpdateForm(msg)
-			}
-			switch msg.Type {
-			case tea.KeyCtrlR:
-				a.rawModal.ToggleHex()
-				return a, nil
-			case tea.KeyCtrlO:
-				a.rawModal.CycleNewline()
-				return a, nil
-			case tea.KeyEnter:
-				if p := a.rawModal.ActivePane(); p != nil && p.live {
-					// SendEntry applies the mode: hex sends exact bytes, text
-					// appends the selected terminator. A hex typo is reported
-					// on the pane and sends nothing.
-					if err := a.rawModal.SendEntry(); err != nil {
-						if strings.HasPrefix(err.Error(), "hex:") {
-							a.rawModal.SetActiveNote(err.Error())
-						} else {
-							a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
-						}
-					}
-					a.rawModal.Refresh()
-				}
-				return a, nil
-			}
-			var rmcmd tea.Cmd
-			a.rawModal, rmcmd = a.rawModal.Update(msg)
-			return a, rmcmd
-		}
-		// Ctrl+C always quits.
-		if msg.Type == tea.KeyCtrlC {
-			return a, a.quit()
-		}
-		// While the logs panel is in filter-edit mode, every printable rune
-		// (including 'q', 's', 'c') belongs to the filter draft, just like
-		// in cmdline focus.
-		logsEditing := a.focus == focusLogs && a.logs.IsEditingFilter()
-		// `q` quits when not in the cmdline / not composing a filter (those
-		// must accept literal 'q').
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Quit {
-			return a, a.quit()
-		}
-		// `?` shows every binding. The footer is one row and drops what does
-		// not fit (see footerHints), so this is where the full list lives.
-		// Reuses the read-only DetailPopup — same Esc-closes / swallow-all
-		// handling as the `d` detail view.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Help {
-			a.detail.Open("keys", keyHelpBody())
-			return a, nil
-		}
-		// Tab cycles focus.
-		switch msg.Type {
-		case tea.KeyTab:
-			a.cycleFocus(+1)
-			return a, nil
-		case tea.KeyShiftTab:
-			a.cycleFocus(-1)
-			return a, nil
-		}
-		// `s` opens the submit popup when not in cmdline focus / filter edit.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Submit {
-			a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
-			a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
-			a.popup.SetAgentChoices(uniqueAgentProfiles(a.runnersSnapshot))
-			a.popup.Open()
-			return a, nil
-		}
-		// `C` (capital) opens the live connections view. It fetches the
-		// initial snapshot via ConnListWith (long-lived client, no new dial)
-		// and subscribes to conns.status for live updates. Esc closes.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Conns {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("conns: not connected"))
-				return a, nil
-			}
-			a.connsModal.Open()
-			a.connsModal.SetSize(a.width, a.height)
-			return a, DoConnSnapshot(a.client)
-		}
-		// `f` opens the full-screen port-forward list: every forward visible to
-		// this operator on the server (DoListForwards / ForwardsSnapshotMsg),
-		// not just ones this TUI process started. Esc closes; `x` (then y/n)
-		// kills the selected row (see the forwardsModal.IsOpen() key block
-		// above). The tasks pane's P/B keys remain a shortcut for stopping
-		// this TUI's own forwards, now routed through the same DoKillForward
-		// RPC. false: this is the modal-refresh path, not `forward ls` — no
-		// text dump into cmdresult (see ForwardsSnapshotMsg).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Forwards {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("forwards: not connected"))
-				return a, nil
-			}
-			a.forwardsModal.SetSize(a.width, a.height)
-			a.forwardTap.SetSize(a.width, a.height)
-			a.forwardsModal.Open()
-			return a, DoListForwards(a.client, false)
-		}
-		// `e` opens the full-screen running-exec list: every exec visible to
-		// this operator on the server, not just ones this TUI started. Esc
-		// closes; `x` (then y/n) kills the selected row through the same
-		// DoExecRunKill the cmdline verb uses. The task pane's Obs cell says
-		// HOW MANY are running; this is the one surface that says WHICH.
-		// false: the modal-refresh path, not `exec ls` — no text dump.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Execs {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("execs: not connected"))
-				return a, nil
-			}
-			a.execsModal.SetSize(a.width, a.height)
-			a.execsModal.Open()
-			return a, DoExecRunList(a.client, "", false)
-		}
-		// `g` opens the live session viewer grid: a full-screen overlay
-		// tiling read-only PaneStreamers for the live interactive sessions,
-		// replacing the task-list view (task-list model state is preserved
-		// and restored on Esc/q — this is a full-screen takeover, not a
-		// split). Reuses the long-lived client (no fresh dial) and never
-		// sends a PTY size (the grid has no size authority).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Grid {
-			return a, a.openGrid(cli.GridAll, "", nil)
-		}
-		// `z` / `Z` open the same grid narrowed to the SELECTED task's subtree —
-		// itself plus every task it spawned (z), or only what it spawned (Z),
-		// for when that one session is already on screen in another terminal
-		// and its workers are what is missing. Both narrow through cli.GridSet,
-		// the same call behind the `grid` verb and the WebUI's button, so no
-		// two surfaces can disagree about who is whose child.
-		if a.focus == focusTasks && !logsEditing &&
-			(msg.String() == mainKeys.GridSubtree || msg.String() == mainKeys.GridDescendants) {
-			mode := cli.GridSubtree
-			if msg.String() == mainKeys.GridDescendants {
-				mode = cli.GridDescendants
-			}
-			anchor := a.tasks.SelectedID()
-			if anchor == "" {
-				a.cmdresult.Append(WarnStyle.Render("grid: no task selected"))
-				return a, nil
-			}
-			return a, a.openGrid(mode, anchor, nil)
-		}
-		// `O` (capital) opens the agentboard topics view. Fetches the topic
-		// list on open via DoBoardTopics (long-lived client, no new dial).
-		// Enter drills into a topic; Esc closes or returns to the topic list.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Board {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("board: not connected"))
-				return a, nil
-			}
-			a.boardModal.Open()
-			a.boardModal.SetSize(a.width, a.height)
-			return a, DoBoardTopics(a.client)
-		}
-		// `T` flips the task table between flat order and creator-tree order.
-		// Purely local: the rows are already in hand, so it re-renders from the
-		// last snapshot instead of waiting for the next poll — a toggle that
-		// visibly does nothing for five seconds reads as broken.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Tree {
-			on := a.tasks.SetTree(!a.tasks.TreeMode())
-			// Same geometry the layout pass uses; the column set changed, so
-			// the widths have to be refitted before the rows are rebuilt.
-			half := a.width / 2
-			a.tasks.SetSize(a.width-half-2, 10)
-			a.tasks.SetRows(a.tasks.Rows(), a.runnersSnapshot)
-			mode := "flat"
-			if on {
-				mode = "creator tree"
-			}
-			a.cmdresult.Append("tasks: " + mode + " order")
-			return a, nil
-		}
-		// `i` opens a new interactive PTY session in the default repo. The
-		// dance is two-stage: the Cmd dispatches the RPC, the response arrives
-		// as InteractiveReadyMsg, and Update then hands the terminal to the
-		// PTY (suspend.go) after gating on termReleased. The session is
-		// detachable (like `S`); `i` differs only in skipping the ambiguous-
-		// runner picker. Reattach lives on `r` (see below).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Interactive {
-			return a, DoOpenInteractive(a.client, a.defaultRepo, a.authority())
-		}
-		// `S` (capital) opens a new detachable interactive PTY session in the
-		// default repo (equivalent to `harness-cli session new`).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Session {
-			a.pendingInteractive = pendingInteractive{
-				repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
-				auth: a.authority(), capsOverride: false,
-			}
-			a.pickerArmed = true
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.authority(), false, false, "")
-		}
-		// `F` opens the file picker for the task currently focused in the
-		// tasks pane. No-op when the tasks pane is not focused or no task
-		// is selected (the cmdresult line explains).
-		// `G` opens the read-only git view for the selected task: its commit
-		// list, its uncommitted diff, and a baseline the operator can move.
-		// Unlike the file picker this does NOT require a live worktree — a
-		// finished task still answers through its retained harness/<id>
-		// branch (server/git_query.go).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Git {
-			if a.focus != focusTasks {
-				a.cmdresult.Append(WarnStyle.Render("git: focus the tasks pane first"))
-				return a, nil
-			}
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("git: no task selected"))
-				return a, nil
-			}
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("git: not connected"))
-				return a, nil
-			}
-			a.gitModal.Open(taskID)
-			a.gitModal.SetSize(a.width, a.height)
-			a.gitStatusToContent = false
-			return a, a.gitReload(taskID, nil)
-		}
-		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.FilePicker {
-			if a.focus != focusTasks {
-				a.cmdresult.Append(WarnStyle.Render("file picker: focus the tasks pane first"))
-				return a, nil
-			}
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("file picker: no task selected"))
-				return a, nil
-			}
-			// Only a Running or Detached task has a worktree the runner can
-			// reach; the server answers NoSuchTask for anything else
-			// (server/file_transfer.go). Say so here rather than opening a
-			// picker whose first listing fails.
-			if t := a.tasks.SelectedTask(); t != nil && !taskSessionAlive(t.Status) {
-				a.cmdresult.Append(WarnStyle.Render(
-					"file picker: task is " + taskStatusStr(t.Status) + " — only Running or Detached tasks have a worktree"))
-				return a, nil
-			}
-			cmd := a.filepicker.OpenFor(a.client, taskID)
-			a.filepicker.SetSize(a.width, a.height)
-			return a, cmd
-		}
-		// `w` arms an await-idle watcher on the selected task: the fire lands
-		// as a result line in cmdresult when the session's output goes idle.
-		// `W` routes the fire through the operator-notification egress
-		// instead (notify feed + --notify-hook, e.g. the phone) — for when
-		// you're about to walk away.
-		if a.focus == focusTasks && !logsEditing && (msg.String() == mainKeys.AwaitIdle || msg.String() == mainKeys.AwaitIdleNotify) {
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("await-idle: no task selected"))
-				return a, nil
-			}
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("await-idle: not connected"))
-				return a, nil
-			}
-			sink := protocol.AwaitIdleSink_Reply
-			if msg.String() == mainKeys.AwaitIdleNotify {
-				sink = protocol.AwaitIdleSink_Notify
-			} else {
-				a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
-			}
-			return a, DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "")
-		}
-		// `d` opens the detail popup for the focused row (runners or tasks).
-		if !logsEditing && msg.String() == mainKeys.Detail {
-			switch a.focus {
-			case focusRunners:
-				if r := a.runners.SelectedRunner(); r != nil {
-					a.detail.Open("Runner detail", formatRunnerDetail(*r))
-				} else {
-					a.cmdresult.Append(WarnStyle.Render("no runner selected"))
-				}
-				return a, nil
-			case focusTasks:
-				if t := a.tasks.SelectedTask(); t != nil {
-					a.detail.Open("Task detail", formatTaskDetail(*t))
-				} else {
-					a.cmdresult.Append(WarnStyle.Render("no task selected"))
-				}
-				return a, nil
-			}
-		}
-		// `c` cancels the selected task when tasks panel is focused.
-		if a.focus == focusTasks && msg.String() == mainKeys.Cancel {
-			id := a.tasks.SelectedID()
-			if id == "" {
-				a.cmdresult.Append(WarnStyle.Render("no task selected"))
-				return a, nil
-			}
-			return a, DoCancel(a.client, id, id)
-		}
-		// `a` re-grants the selected task's authority: it opens the authority
-		// picker prefilled from the task's stored caps/scope. Opening needs
-		// no client; applying goes through the picker's Enter handler.
-		// Unconditionally available — a TUI connection is an operator
-		// connection by construction (spec §7). The typed
-		// `caps set <id> --caps/--scope` cmdline form remains for scripting.
-		if a.focus == focusTasks && msg.String() == mainKeys.ReGrant {
-			t := a.tasks.SelectedTask()
-			if t == nil {
-				a.cmdresult.Append(WarnStyle.Render("no task selected"))
-				return a, nil
-			}
-			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenRegrant(*t, a.tasks.Rows())
-			return a, nil
-		}
-		// `A` opens the same picker as a parent chooser: re-point the selected
-		// task's parent link (root / swap / another task). Operator-only
-		// server-side, like re-grant; applying goes through the picker's
-		// Enter handler.
-		if a.focus == focusTasks && msg.String() == mainKeys.SetParent {
-			t := a.tasks.SelectedTask()
-			if t == nil {
-				a.cmdresult.Append(WarnStyle.Render("no task selected"))
-				return a, nil
-			}
-			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenParent(*t, a.tasks.Rows())
-			return a, nil
-		}
-		// `r` / `R` re-enter the selected session: reattach a live Detached
-		// session, or resume a finished task into a new detachable session.
-		// r resumes with --continue (keep claude's memory); R resumes fresh.
-		// `u` / `U` are the same resume variants but intentionally skip the
-		// assigned-runner preference so ambiguous runner selection can be
-		// reopened even when the previous runner is still available.
-		if a.focus == focusTasks && (msg.String() == mainKeys.ResumeAssignedContinue || msg.String() == mainKeys.ResumeAssignedFresh || msg.String() == mainKeys.ResumeAnyContinue || msg.String() == mainKeys.ResumeAnyFresh) {
-			t := a.tasks.SelectedTask()
-			unpinnedResume := msg.String() == mainKeys.ResumeAnyContinue || msg.String() == mainKeys.ResumeAnyFresh
-			act := resumeReattachAction(t, msg.String() == mainKeys.ResumeAssignedContinue || msg.String() == mainKeys.ResumeAnyContinue)
-			switch act.Kind {
-			case actionReattach:
-				if unpinnedResume {
-					a.cmdresult.Append(WarnStyle.Render("u/U: pick a finished task to resume without assigned runner"))
-					return a, nil
-				}
-				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_Control)
-			case actionChat:
-				// The event-stream kind's take-over-equivalent. Pinning is
-				// meaningless here: the task is already RUNNING on a runner and
-				// this attaches to it, so u/U (whose whole point is to leave the
-				// runner unpinned for a fresh spawn) has nothing to offer.
-				if unpinnedResume {
-					a.cmdresult.Append(WarnStyle.Render("u/U: pick a finished task to resume without assigned runner"))
-					return a, nil
-				}
-				a.chat.Open(a.appCtx, a.client, a.program, a.tasks.SelectedID())
-				a.chat.SetSize(a.width, a.height)
-				return a, chatTickCmd()
-			case actionResume:
-				// repo is irrelevant on resume — the server reuses the task's
-				// RepoPath and worktree branch. Prefer the runner the task last
-				// ran on (t.AssignedTo) so resume stays one keypress even when
-				// another runner ties on this repo's roots score. u/U deliberately
-				// use Any instead, which can reopen the ambiguous runner picker.
-				a.pendingInteractive = pendingInteractive{
-					repo: "", resumeTaskID: a.tasks.SelectedID(),
-					extraArgs: nil, auth: a.authority(), capsOverride: false,
-					resumeConversation: act.ResumeConversation,
-				}
-				a.pickerArmed = true
-				if unpinnedResume {
-					// Unpinned (u/U): leave agentProfile unresolved — the
-					// (runner, profile) picker (§4a) supplies both when the
-					// combo set is ambiguous, exactly like the Any-selector
-					// runner pin above.
-					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, "")
-				}
-				// Pinned (r/R): default to the task's own recorded profile
-				// (§4b) so the pinned path stays one keypress — no picker.
-				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, string(t.AgentProfile))
-			case actionNone:
-				a.cmdresult.Append(WarnStyle.Render(act.Hint))
-				return a, nil
-			}
-		}
-		// `v` view-attaches the selected live session in read-only mode (no input sent).
-		if a.focus == focusTasks && msg.String() == mainKeys.ViewOnly {
-			act := resumeReattachAction(a.tasks.SelectedTask(), true)
-			if act.Kind == actionReattach {
-				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_View)
-			}
-		}
-		// `p` / `b` open the local / remote port-forward modal for the selected task.
-		if a.focus == focusTasks && (msg.String() == mainKeys.ForwardLocal || msg.String() == mainKeys.ForwardRemote) {
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
-				return a, nil
-			}
-			dir := ForwardLocal
-			if msg.String() == mainKeys.ForwardRemote {
-				dir = ForwardRemote
-			}
-			a.portForwardModal.OpenMode(taskID, dir)
-			return a, nil
-		}
-		// `P` / `B` stop a local / remote forward for the selected task. With more
-		// than one active, a digit picker is shown; with exactly one, kill now.
-		// Both route through DoKillForward (killLocalForward) — the same RPC
-		// the forwards modal's `x` (then y/n) and `forward kill` use, so there is
-		// exactly one way to stop a forward.
-		if a.focus == focusTasks && (msg.String() == mainKeys.ForwardLocalStop || msg.String() == mainKeys.ForwardRemoteStop) {
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
-				return a, nil
-			}
-			dir := ForwardLocal
-			if msg.String() == mainKeys.ForwardRemoteStop {
-				dir = ForwardRemote
-			}
-			sel := selectForwards(a.activeForwards, taskID, dir)
-			switch len(sel) {
-			case 0:
-				a.cmdresult.Append(WarnStyle.Render("forward: no active " + dir.flag() + " forward for selected task"))
-			case 1:
-				return a, a.killLocalForward(sel[0])
-			default:
-				a.forwardPicker.Open(dir, sel)
-			}
-			return a, nil
-		}
-		// `t` opens the raw-connect modal for the selected task: a third way to
-		// start a forward, alongside `p` (-L) and `b` (-R) above, for a client
-		// endpoint that lives inside this TUI process rather than a socket. It
-		// belongs beside the start keys, not behind `f` (the registry listing,
-		// whose per-row action is kill) — see RawConnectModal's doc comment and
-		// the rawModal field comment for why P/B don't apply to it.
-		if a.focus == focusTasks && msg.String() == mainKeys.RawConnect {
-			taskID := a.tasks.SelectedID()
-			if taskID == "" {
-				a.cmdresult.Append(WarnStyle.Render("raw connect: no task selected"))
-				return a, nil
-			}
-			a.rawModal.Show(taskID)
-			a.rawModal.SetSize(a.width, a.height)
-			return a, nil
-		}
-		// Cmdline submit.
-		if a.focus == focusCmdline && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown) {
-			if a.navigateCmdHistory(msg.Type == tea.KeyUp) {
-				return a, nil
-			}
-		}
-		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
-			input := a.cmdline.Value()
-			a.addCmdHistory(input)
-			a.cmdline.SetValue("")
-			act, err := ParseCommand(input, a.defaultRepo)
-			if err != nil {
-				a.cmdresult.Append(ErrorStyle.Render("error: " + err.Error()))
-				return a, nil
-			}
-			if act == nil {
-				return a, nil
-			}
-			a.cmdresult.Append("> " + input)
-			return a.runAction(act)
-		}
-		// Follow task on Enter when tasks panel is focused.
-		if a.focus == focusTasks && msg.Type == tea.KeyEnter {
-			id := a.tasks.SelectedID()
-			if id != "" {
-				return a, a.followTask(id)
-			}
+	}
+	// Tab cycles focus.
+	switch msg.Type {
+	case tea.KeyTab:
+		a.cycleFocus(+1)
+		return a, nil
+	case tea.KeyShiftTab:
+		a.cycleFocus(-1)
+		return a, nil
+	}
+	if cmd, ok := a.dispatchMainKey(msg, logsEditing); ok {
+		return a, cmd
+	}
+	// Cmdline submit.
+	if a.focus == focusCmdline && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown) {
+		if a.navigateCmdHistory(msg.Type == tea.KeyUp) {
 			return a, nil
 		}
 	}
+	if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
+		input := a.cmdline.Value()
+		a.addCmdHistory(input)
+		a.cmdline.SetValue("")
+		act, err := ParseCommand(input, a.defaultRepo)
+		if err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("error: " + err.Error()))
+			return a, nil
+		}
+		if act == nil {
+			return a, nil
+		}
+		a.cmdresult.Append("> " + input)
+		return a.runAction(act)
+	}
+	// Follow task on Enter when tasks panel is focused.
+	if a.focus == focusTasks && msg.Type == tea.KeyEnter {
+		id := a.tasks.SelectedID()
+		if id != "" {
+			return a, a.followTask(id)
+		}
+		return a, nil
+	}
+	return a.updatePane(msg)
+}
 
-	// Forward to focused panel.
+// updatePane forwards a message to the focused pane.
+func (a *App) updatePane(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch a.focus {
 	case focusRunners:

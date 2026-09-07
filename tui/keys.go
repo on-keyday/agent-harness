@@ -3,15 +3,18 @@ package tui
 import (
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 )
 
-// Every key this TUI binds is declared in this file, once. The dispatchers in
-// app.go compare against these fields instead of inline string literals, and
-// the footer hint line plus the `?` popup both render from mainKeyBindings —
-// so a key cannot exist in the dispatcher while being missing from the help,
-// which is exactly the drift that kept happening when the literals were
-// scattered across a 400-line key switch.
+// Every key this TUI binds is declared in this file, once. mainKeyBindings is
+// the main view's dispatch table as well as its help: a row's Keys say what
+// fires it, Scope where, Do what happens (dispatchMainKey, actions.go), and the
+// footer hint line plus the `?` popup render from the same rows — so a key
+// cannot be dispatched without being documented, nor documented without being
+// dispatched (keys_test.go checks both directions), which is exactly the drift
+// that kept happening when the literals were scattered across a 400-line key
+// switch.
 //
 // mainKeys is a struct rather than a const block on purpose: keys_test.go
 // enumerates its fields with reflect and fails when a field has no matching
@@ -155,9 +158,9 @@ var modalKeys = modalKeyMap{
 	GitOpenFile:      "o",
 }
 
-// keyScope is a bitmask of the panes a main-view binding applies to. The
-// dispatcher's focus guards are the authority; these bits mirror them so the
-// footer only advertises keys that actually do something right now.
+// keyScope is a bitmask of the panes a main-view binding applies to. These
+// bits ARE the dispatcher's guard — a row fires only in a pane its Scope names
+// — so the footer advertises exactly the keys that do something right now.
 type keyScope uint8
 
 const (
@@ -171,20 +174,29 @@ const (
 
 const (
 	scopeAllPanes = scopeRunners | scopeTasks | scopeLogs | scopeNotify | scopeCmdresult | scopeCmdline
-	// scopeGlobal matches the dispatcher's `a.focus != focusCmdline` guard:
-	// these keys work from any pane except the command line, where they must
+	// scopeGlobal is every pane but the command line, where a letter must
 	// stay typeable text.
 	scopeGlobal = scopeAllPanes &^ scopeCmdline
 )
 
-// keyBinding is one row of help. Keys carries the exact key values so
-// keys_test.go can prove every declared key is documented; Short is the
-// footer wording and Long the `?` popup wording.
+// keyBinding is one row of the main view's key table. Keys carries the exact
+// key values so keys_test.go can prove every declared key is documented; Do is
+// what pressing one does; Short is the footer wording and Long the `?` popup
+// wording.
 type keyBinding struct {
 	Keys  []string
 	Scope keyScope
-	Short string
-	Long  string
+	// Do runs the key and reports whether it consumed it; false lets the key
+	// fall through to the focused pane. nil marks a row that documents a key
+	// dispatched elsewhere: inside a pane model (`/`), or structurally in
+	// updateKey (tab, enter, q, ?).
+	Do func(*App, tea.KeyMsg) (tea.Cmd, bool)
+	// OutsideHint, when set, is what the operator is told for pressing the
+	// key in a pane its Scope excludes — the command line excepted, which
+	// types the letter instead.
+	OutsideHint string
+	Short       string
+	Long        string
 }
 
 // isGlobal reports whether the binding applies to every pane. The footer
@@ -192,30 +204,30 @@ type keyBinding struct {
 // survive truncation on a narrow terminal.
 func (b keyBinding) isGlobal() bool { return b.Scope == scopeGlobal }
 
-// mainKeyBindings is the help table. Order within a scope is the order the
+// mainKeyBindings is the main view's key table: dispatch and help in one. Order within a scope is the order the
 // footer uses. mainKeys.Quit / mainKeys.Help are pinned to the footer's tail
 // by footerHints and so carry no Short text here.
 var mainKeyBindings = []keyBinding{
 	// --- tasks pane ---
 	{Keys: []string{"enter"}, Scope: scopeTasks, Short: "enter follow", Long: "follow the selected task's log"},
-	{Keys: []string{mainKeys.ResumeAssignedContinue, mainKeys.ResumeAssignedFresh}, Scope: scopeTasks,
+	{Keys: []string{mainKeys.ResumeAssignedContinue, mainKeys.ResumeAssignedFresh}, Scope: scopeTasks, Do: (*App).onResume,
 		Short: "r/R assigned resume", Long: "reattach / resume on the assigned runner (r keeps the agent's conversation, R starts fresh). On a live EVENT-STREAM task it opens the chat view instead — that kind has no terminal to take over, but it is driven from there"},
-	{Keys: []string{mainKeys.ResumeAnyContinue, mainKeys.ResumeAnyFresh}, Scope: scopeTasks,
+	{Keys: []string{mainKeys.ResumeAnyContinue, mainKeys.ResumeAnyFresh}, Scope: scopeTasks, Do: (*App).onResume,
 		Short: "u/U any resume", Long: "same as r/R but unpinned — any runner may take it"},
-	{Keys: []string{mainKeys.ViewOnly}, Scope: scopeTasks, Short: "v view-only", Long: "attach read-only (no input forwarded)"},
-	{Keys: []string{mainKeys.Cancel}, Scope: scopeTasks, Short: "c cancel", Long: "cancel the selected task"},
-	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Short: "a re-grant", Long: "open the re-grant picker for the selected task's caps/scope (operator-only)"},
-	{Keys: []string{mainKeys.SetParent}, Scope: scopeTasks, Short: "A set parent", Long: "re-point the selected task's parent link (root / swap / another task; operator-only)"},
-	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks,
+	{Keys: []string{mainKeys.ViewOnly}, Scope: scopeTasks, Do: (*App).onViewOnly, Short: "v view-only", Long: "attach read-only (no input forwarded)"},
+	{Keys: []string{mainKeys.Cancel}, Scope: scopeTasks, Do: (*App).onCancel, Short: "c cancel", Long: "cancel the selected task"},
+	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Do: (*App).onReGrant, Short: "a re-grant", Long: "open the re-grant picker for the selected task's caps/scope (operator-only)"},
+	{Keys: []string{mainKeys.SetParent}, Scope: scopeTasks, Do: (*App).onSetParent, Short: "A set parent", Long: "re-point the selected task's parent link (root / swap / another task; operator-only)"},
+	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks, Do: (*App).onAwaitIdle,
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
-	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Short: "F files", Long: "open the file picker on the selected task's worktree"},
-	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Short: "G git", Long: "browse the selected task's git state — commit log, diff, status — read-only, without touching its shell"},
-	{Keys: []string{mainKeys.ForwardLocal, mainKeys.ForwardLocalStop}, Scope: scopeTasks,
+	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Do: (*App).onFilePicker, OutsideHint: "file picker: focus the tasks pane first", Short: "F files", Long: "open the file picker on the selected task's worktree"},
+	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Do: (*App).onGit, OutsideHint: "git: focus the tasks pane first", Short: "G git", Long: "browse the selected task's git state — commit log, diff, status — read-only, without touching its shell"},
+	{Keys: []string{mainKeys.ForwardLocal, mainKeys.ForwardLocalStop}, Scope: scopeTasks, Do: (*App).onForward,
 		Short: "p/P L-forward", Long: "start / stop a local port forward for the selected task"},
-	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks,
+	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks, Do: (*App).onForward,
 		Short: "b/B R-forward", Long: "start / stop a remote port forward for the selected task"},
-	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
-	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Short: "z/Z subtree grid",
+	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Do: (*App).onRawConnect, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
+	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Do: (*App).onGridSubtree, Short: "z/Z subtree grid",
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
 
 	// --- logs pane ---
@@ -227,19 +239,19 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{"enter"}, Scope: scopeCmdline, Short: "enter run", Long: "run the typed command"},
 
 	// --- runners + tasks ---
-	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks, Short: "d detail", Long: "detail popup for the selected runner / task"},
+	{Keys: []string{mainKeys.Detail}, Scope: scopeRunners | scopeTasks, Do: (*App).onDetail, Short: "d detail", Long: "detail popup for the selected runner / task"},
 
 	// --- global (every pane but the command line) ---
 	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus between panes (shift-tab reverses)"},
-	{Keys: []string{mainKeys.Submit}, Scope: scopeGlobal, Short: "s submit", Long: "open the submit popup (one-shot task)"},
-	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Short: "S session", Long: "open a new detachable session"},
-	{Keys: []string{mainKeys.Interactive}, Scope: scopeGlobal, Short: "i interactive", Long: "open an interactive session in the default repo"},
-	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Short: "g grid", Long: "live session viewer grid"},
-	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Short: "C conns", Long: "connections view"},
-	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Short: "O board", Long: "agentboard topics view"},
-	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
-	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
-	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
+	{Keys: []string{mainKeys.Submit}, Scope: scopeGlobal, Do: (*App).onSubmit, Short: "s submit", Long: "open the submit popup (one-shot task)"},
+	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Do: (*App).onSession, Short: "S session", Long: "open a new detachable session"},
+	{Keys: []string{mainKeys.Interactive}, Scope: scopeGlobal, Do: (*App).onInteractive, Short: "i interactive", Long: "open an interactive session in the default repo"},
+	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Do: (*App).onGrid, Short: "g grid", Long: "live session viewer grid"},
+	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Do: (*App).onConns, Short: "C conns", Long: "connections view"},
+	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},
+	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
+	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
+	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},
 }
