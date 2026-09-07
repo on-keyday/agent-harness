@@ -1927,6 +1927,29 @@ format FileListing:
 # assumption -- a hint the client may clamp, not state it inherits. That is the
 # design to write up if this ever becomes worth the field.
 #
+# AND ON A REAL FLEET, direct finally beats forwarded -- the case no netem lab
+# can stage. The lab puts the client and the runner in one namespace, so a
+# direct dial either skips the shaped router entirely or cannot be routed at
+# all; direct and forwarded there necessarily share a path, which is why they
+# measured identical. On the fleet they do not: the client and the runner sit on
+# one LAN segment and the server is a separate host a hop away, so direct is
+# genuinely the shorter path. 16 MB push to a Windows runner, client on udp,
+# interleaved x3 (MB/s):
+#
+#   splice 5.0    direct 4.1    forwarded 2.3
+#
+# So the ordering is topological, not architectural. Taking the server out of
+# the path is worth 1.75x when it removes a hop, and worth nothing when it does
+# not. splice still leads, on the two mechanisms above.
+#
+# What direct costs instead is AVAILABILITY. The first push after an idle period
+# failed with "no answer within 10s", and one of three warm attempts failed the
+# same way -- the punch has a lifetime, and the peer here is behind a host
+# firewall that drops even ICMP. dialDataPlane's comment records the same thing
+# from an earlier run: a pair that had completed in 520ms went unreachable
+# minutes later. There is no fallback by design, so a caller choosing direct is
+# choosing a route that intermittently is not there.
+#
 # One deviation found while measuring, unrelated to the choice above:
 # NewReno.RecordACK's congestion-avoidance term is cwnd += size*size/cwnd where
 # size is the ACKED BYTE COUNT, so over one RTT cwnd grows by exactly one ACK's
