@@ -179,6 +179,55 @@ This is a reversal of the list, not a correction of the measurements: probes
 1–3 stand, and F5's constraint — the punch and the dial must name the same
 address and port — is exactly what reusing one socket satisfies.
 
+**⚠ That last sentence holds only for an endpoint-INDEPENDENT NAT, which is the
+only kind this project has ever run against.** See the amendment below; it is
+the difference between "this works" and "this works here".
+
+## Amendment — why a global-IP deployment would break, mechanically (2026-09-08)
+
+F8 records the consequences. This is the cause, and it is worth separating
+because it decides whether the current shape can be fixed or has to be replaced.
+
+**The punch names a SERVER-REFLEXIVE address.** `setupDataPlane` writes
+`req.PunchTarget = NewConnectionID(clientCID.Transport, clientCID.Addr, slot)`,
+and `clientCID.Addr` is the address the SERVER observed. Under an
+address-dependent (symmetric) NAT that `addr:port` is valid only for packets
+from the server: the client's mapping toward the runner is a different external
+port. So the runner's probes are dropped by the client's NAT and the hole never
+opens for the port the client actually dials from. Symmetrically, the client
+dials `rc.Addr`, the runner's server-reflexive address, which is server-only
+under a symmetric NAT on the runner's side.
+
+**And only one side punches.** `SendProbe` has exactly one caller in the repo,
+`runner/dataplane_punch.go`. On a cone NAT that suffices — the client's own dial
+creates its outbound mapping — which is why one-sided punching has never looked
+insufficient. It is insufficient the moment the mapping is destination-dependent.
+
+Believing one server-reflexive address is the most optimistic case of STUN, and
+it is the reason ICE gathers candidate SETS (host, server-reflexive, relayed)
+and probes pairs, and the reason TURN exists as the fallback.
+
+**The third reason is the expensive one.** `migrat|path.?validat|rebind|address.?change`
+still matches nothing in `objproto/` or `trsf/`, and a `ConnectionID` IS
+`transport:addr-id`. So a mapping that changes mid-transfer kills the connection
+with nothing to recover it, and fixing that is not a change to the punch — it is
+a change to what identifies a connection. QUIC decoupled connection IDs from the
+path and added PATH_CHALLENGE/RESPONSE for precisely this.
+
+**The failure mode is safe, and that is what makes this not urgent.** An
+unreachable pair is answered `route_unavailable` and never silently spliced, and
+since objtrsf `b0f45e6` a punch that never opens costs ten seconds and a clean
+error rather than the six-minute hang `dialDataPlane`'s comment records. More
+importantly `forwarded` provides the same "the server cannot read these bytes"
+property with NO reachability requirement — so a NATed deployment loses direct's
+1.75x on a shorter path, not the property. Nothing about server-blind transfer
+depends on the direct route.
+
+**netem-lab cannot reproduce this.** Its MASQUERADE is endpoint-independent, so
+it cannot present a symmetric NAT; the `direct` refusal observed in the lab is
+the unrelated "no route from srv to cli's private address". F8's "What was not
+measured" stands, and measuring it needs a NAT the lab does not model.
+
 ## What was not measured
 
 - Any deployment with a NAT between client and runner (F8's two failure modes).
