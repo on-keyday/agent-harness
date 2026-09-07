@@ -73,7 +73,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "push"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
 		Notes: []string{
 			"copy a local file (or directory tree with -r) into the worktree",
@@ -109,7 +109,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "pull"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
 		Notes: []string{
 			"copy a worktree file (or directory tree with -r) to a local path",
@@ -154,7 +154,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "ls"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
 		Notes: []string{
 			"list a single directory under the worktree (default: worktree root)",
@@ -181,7 +181,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "mkdir"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
 		Notes: []string{
 			"create a directory in the worktree",
@@ -204,7 +204,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"file", "delete"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/filepicker.go:FilePicker"},
+			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
 		Notes: []string{
 			"remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused",
@@ -404,7 +404,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"git", "subrepos"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/git.go:DoGitSubrepos"},
+			// Enter on a [REPO] row re-roots the git modal into that repository.
+			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
+			{Surface: WebUI, At: "webui/index.html#git-repo"},
 		},
 		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
 		Notes: []string{
@@ -533,6 +535,8 @@ var Verbs = []VerbSpec{
 		Path: []string{"exec", "kill"},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
+			// Each row of the exec list carries its own kill button.
+			{Surface: WebUI, At: "webui/index.html#exec-list"},
 		},
 		Notes: []string{
 			"stop one or more running execs by id (from `exec ls`)",
@@ -566,6 +570,8 @@ var Verbs = []VerbSpec{
 			// --http-path does. Named after reading it, having first left this
 			// row empty for want of evidence.
 			{Surface: TUI, At: "tui/rawforward.go:RawConnectModal"},
+			// -L / -R: p / b on the tasks pane prompt for one spec.
+			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
 		},
 		Notes: []string{
 			"-L: forward a local port through the runner to remote host:port (ssh -L)",
@@ -610,7 +616,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"forward", "ls"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
+			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
 			{Surface: WebUI, At: "webui/index.html#forward-list"},
 		},
 		Notes: []string{
@@ -630,7 +636,14 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"forward", "kill"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
+			// The f pane: x on a row, then y/n.
+			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
+			// P / B on the tasks pane stop this TUI's own forward for the selected
+			// task; with several, ForwardPicker asks which.
+			{Surface: TUI, At: "tui/actions.go:onForwardStop"},
+			{Surface: TUI, At: "tui/portforward.go:ForwardPicker"},
+			// Each row of the forward list carries its own kill button.
+			{Surface: WebUI, At: "webui/index.html#forward-list"},
 		},
 		Notes: []string{
 			"kill one or more registered forwards by id (from `forward ls`)",
@@ -861,7 +874,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "ls"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePicker"},
+			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePickerModel"},
 		},
 		Notes: []string{
 			"list the workspaces in .harness/config",
@@ -886,7 +899,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"workspace", "apply"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePicker"},
+			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePickerModel"},
 		},
 		Action: "WorkspaceAction",
 		Const:  map[string]string{"Sub": "apply"},
@@ -960,7 +973,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "subscribers"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/board.go:DoBoardSubscribers"},
+			// s inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
 		},
 		Flags: []Flag{
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
@@ -979,7 +993,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "retract"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/board.go:DoBoardRetract"},
+			// w on a message inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
 		},
 		Notes: []string{
 			"withdraw one message: gone from every agent path, still readable here until the topic ages out.",
@@ -1008,7 +1023,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"board", "purge"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/board.go:DoBoardPurge"},
+			// x on a topic / X on a message inside the board modal.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-purge-topic-btn"},
 		},
 		Notes: []string{
 			"drop the whole topic ring (seq=0) or one message by seq.",
@@ -1039,7 +1056,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"submit"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/client.go:DoSubmitWithOpts"},
+			// The s popup; DoSubmitWithOpts is what it runs, not where it is.
+			{Surface: TUI, At: "tui/popup.go:PopupModel"},
+			{Surface: WebUI, At: "webui/index.html#compose"},
 		},
 		Notes: []string{
 			"enqueue a new task (--repo: HARNESS_REPO_PATH)",
@@ -1075,7 +1094,7 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"interactive"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/interactive.go:DoOpenInteractive"},
+			{Surface: TUI, At: "tui/actions.go:onInteractive"},
 			{Surface: WebUI, At: "webui/index.html#interactive"},
 		},
 		Notes: []string{
@@ -1100,7 +1119,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "new"},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/interactive.go:DoOpenDetachableSession"},
+			{Surface: TUI, At: "tui/actions.go:onSession"},
+			{Surface: WebUI, At: "webui/index.html#open-detachable"},
 		},
 		Notes: []string{
 			"open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)",
@@ -1315,7 +1335,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"cancel"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/client.go:DoCancel"},
+			{Surface: TUI, At: "tui/actions.go:onCancel"},
+			// The task sheet's "✕ Cancel" item, built in JS with no id of its own.
+			{Surface: WebUI, At: "webui/static/main.js:buildTaskSheet"},
 		},
 		Notes: []string{
 			"cancel a queued/running task",
@@ -1630,6 +1652,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"caps", "set"}, CmdlineSurfaces: CLI | TUI,
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
+			{Surface: WebUI, At: "webui/index.html#regrant-apply"},
 		},
 		Notes: []string{
 			"OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart",
@@ -1732,7 +1755,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"caps", "set-parent"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/client.go:DoSetParent"},
+			// A on the tasks pane opens the picker in parent mode.
+			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
+			{Surface: WebUI, At: "webui/index.html#parent-apply"},
 		},
 		Notes: []string{
 			"OPERATOR ONLY: re-point a LIVE task's parent link \u2014 the edge subtree scopes walk. --none detaches it to the operator root; --swap inverts it with its current parent. Caps and scope are untouched",
@@ -1772,7 +1797,9 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/interactive.go:DoAttachSession"},
+			// r / R take a live session over; v attaches view-only.
+			{Surface: TUI, At: "tui/actions.go:onResume"},
+			{Surface: TUI, At: "tui/actions.go:onViewOnly"},
 			// The grid is a session surface, not a separate feature: it tiles
 			// live interactive sessions by ATTACHING to each one.
 			//
@@ -1788,6 +1815,8 @@ var Verbs = []VerbSpec{
 			// mode is in the streamer's call, not beside it.
 			{Surface: TUI, At: "tui/grid.go:GridModel"},
 			{Surface: WebUI, At: "webui/index.html#session-grid-body"},
+			{Surface: WebUI, At: "webui/index.html#reattach"},
+			{Surface: WebUI, At: "webui/index.html#reattach-quick"},
 		},
 		Notes: []string{
 			"reattach to a detached/running session",
@@ -1836,7 +1865,8 @@ var Verbs = []VerbSpec{
 	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/client.go:DoAwaitIdle"},
+			{Surface: TUI, At: "tui/actions.go:onAwaitIdle"},
+			{Surface: WebUI, At: "webui/index.html#await-idle-btn"},
 		},
 		Notes: []string{
 			"one-shot: fire when the session's PTY output goes quiescent.",
