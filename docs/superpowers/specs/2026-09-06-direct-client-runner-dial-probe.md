@@ -265,3 +265,68 @@ the same datagram. So:
 
 Both are objtrsf, so a publish plus a `go.mod` bump, before the harness-side
 retry is worth writing. Nothing here is implemented.
+
+### Security considerations
+
+Peer authentication is delegated to the application layer by design
+(`objproto/packet/packet.bgn`'s header comment), so its absence is not on this
+list. What follows is what the retransmission fix and the direct route each
+introduce that the previous shape did not have.
+
+**S1. The duplicate check sits AFTER the expensive crypto, and a retransmit
+timer makes that path hot.** `receiveHandshake` runs `NewECDHHandshake` (a P521
+keygen), `ECDHFromHandshake` and `keySchedule` before it takes `endpointLock`
+and looks at `activeConnections[cid]` — so every duplicate already costs a
+keygen plus an ECDH that is then discarded. A client-side retransmit timer
+raises how often normal operation hits it, and a replayer gets a cheap CPU
+amplifier. So compare-and-re-ack has to happen BEFORE that crypto, which needs a
+double-checked shape: a brief lock to look the cid up, release, crypto, re-lock
+to insert. The lock is late on purpose — holding it across a keygen serialises
+the whole endpoint — so it cannot simply be hoisted.
+
+**S2. Re-acking is not a reflector, and the cid is why.** A ClientHello and an
+ack both carry a P521 share (~133 B), so the response is not larger than the
+request. And an inbound cid is built from the datagram's source address (F2), so
+a spoofed source yields a DIFFERENT cid and therefore a fresh handshake, not a
+re-ack. There is no way to make a responder re-ack toward a third party.
+
+**S3. Replaying a captured ClientHello gains nothing but liveness.** The re-ack
+discloses the responder's public share, which is public, and is useless without
+the dialer's private key. It does confirm that a cid is live.
+
+**S4. A non-identical handshake at a live cid must keep being refused — for the
+transcript, not only for the keys.** `GetTranscript()` is the Phase-2 seam an
+application binds identity to, and `objproto.go`'s comment requires transcripts
+to stay byte-identical on both ends. Letting a different handshake replace a
+live cid would change the transcript underneath any such binding. The comparison
+has to be exact.
+
+**S5. On the direct route the handshake completes before ANY authorization.**
+The grant is checked by `grantStore.Validate`, called from
+`runner/dataplane_accept.go` on the first payload — after the connection exists.
+So a runner's pre-auth surface there is: ECDH handshake, one message decode, the
+grant check. That layering is the design; what is new is that the surface faces
+an arbitrary address instead of only the one server the runner dialed.
+
+**S6. The punch is also the access control.** F3 measured that unsolicited
+inbound is dropped even on a NAT-free LAN, and `punchToward` is what opens it —
+toward the client's exact address and port. So who may reach a slot is decided
+by host-firewall state, not by the protocol. On a host with no firewall, or a
+permissive network, that slot is dialable by anyone who can reach the runner for
+the grant's whole 5-minute TTL. The reachability argument and the access-control
+argument are the same mechanism, which is worth saying out loud.
+
+**S7. The grant is 128-bit; the slot is 16-bit.** `grant_id :[16]u8` is
+crypto/rand and `Validate` compares it in constant time, ordered so an unknown
+grant and a wrong-task grant are not distinguishable by timing. `randomSlotID`
+draws 16 bits. Guessing a slot confers no authority — the grant is still
+required — but OCCUPYING one does: whoever completes a handshake at that cid
+first owns it, and a later different handshake is refused (S4), so a reachable
+attacker can deny a transfer by squatting the slot. 65536 values against a
+5-minute window, gated only by S6.
+
+Worth contrasting with the forwarded route, where the same squat is far harder
+to reach: that slot is reachable only through the server's forwarding entry, and
+`setupDataPlane` keys it to the client's address
+(`owned := NewConnectionID(clientCID.Transport, clientCID.Addr, slot)`). So
+forwarded is gated in the protocol and direct is gated in a host firewall.
