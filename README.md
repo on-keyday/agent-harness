@@ -134,9 +134,14 @@ an operator surface before the secure session opens. Operator surfaces
 `harness-server --operator-psk` (env `HARNESS_OPERATOR_PSK` /
 `HARNESS_OPERATOR_PSK_FILE`), which is deliberately never injected into
 agents — without it an in-task agent could drop its capability ticket,
-reconnect as a plain client, and escalate to operator. Leaving
-`--operator-psk` empty keeps the legacy behaviour (operator surfaces
-validated against `--psk`) with a startup warning. Server and runner can
+reconnect as a plain client, and escalate to operator. The operator secret
+is **required**: with neither `--operator-psk` nor `--operator-psk-file`
+given, the server generates one into `<data-dir>/operator-psk` on first
+run and reads it back on every later start, and operator surfaces are
+handed that file's contents through the client-side `HARNESS_OPERATOR_PSK`
+/ `HARNESS_OPERATOR_PSK_FILE`. Only `--dangerously-permit-no-operator-psk`
+runs without one — operator surfaces are then validated against `--psk`,
+which every agent also holds, and the server says so at startup. Server and runner can
 run on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
 ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
 runner / clients dial; the transport prefix selects the underlay.
@@ -148,9 +153,12 @@ binaries under `bin/`; the examples below assume that.
 
 ```bash
 # 1. Start the server. --listen accepts host:port (use :8539 to bind all
-# interfaces; defaults to 127.0.0.1:8539 / loopback). PSK file is auto-generated on first
-# run if --psk-file is unset. The WebUI is mounted on the same HTTP listener,
-# so http://<server-host>:8539/ in a browser gives you the WASM frontend.
+# interfaces; defaults to 127.0.0.1:8539 / loopback). With no --operator-psk
+# the operator secret is generated into <data-dir>/operator-psk; the CLI / TUI
+# terminals below read it via HARNESS_OPERATOR_PSK_FILE. --psk / --psk-file
+# set the connect PSK runners and agents prove (unset = none). The WebUI is
+# mounted on the same HTTP listener, so http://<server-host>:8539/ in a
+# browser gives you the WASM frontend.
 bin/harness-server --listen :8539 --data-dir ./harness-data
 # Optional: add UDP underlay alongside WS (or use UDP only by leaving --listen
 # empty — but UDP-only disables the WebUI).
@@ -173,6 +181,9 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 
 # 3. Submit a task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).
+# Operator surfaces prove the operator secret: export it in THIS terminal only,
+# never in the runner's — the agents a runner spawns inherit its environment.
+export HARNESS_OPERATOR_PSK_FILE=./harness-data/operator-psk
 bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
                 submit --repo /abs/path/to/repo --task "test task"
 # → prints task ID

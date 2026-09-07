@@ -13,6 +13,7 @@ import (
 	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -36,8 +37,9 @@ var (
 	agentboardMaxPayload = flag.Int("agentboard-max-payload", 1024*1024, "agentboard max payload bytes per message. Costs scale with it in two places: retention (max-topics x ring x this) and the transient read of an in-flight send (this + 64KiB each). It does NOT set what an agent is handed inline — the inbox hooks stop inlining a body past 64KiB and point at a command that fetches it, so raising this admits larger messages without spending the recipient's context on them.")
 	psk                  = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
 	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
-	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. Empty = legacy behaviour (operator surfaces validated against --psk) with a startup warning, because then an in-task agent can escalate to operator by dropping its ticket.")
+	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. With neither this nor --operator-psk-file set, one is generated into <data-dir>/operator-psk.")
 	operatorPSKFile      = flag.String("operator-psk-file", "", "path to operator-psk file; auto-generated on first run if absent")
+	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces are then validated against --psk (or nothing, when that is empty too), which every in-task agent also holds, so an agent can drop its ticket, reconnect as kind=Client and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	idleTimeout          = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
@@ -82,6 +84,33 @@ func resolvePSK(pskVal, pskFile string) ([]byte, error) {
 	return []byte(encoded), nil
 }
 
+// operatorPSKFileName is where the operator secret is generated when nothing
+// names one: under --data-dir, beside the WAL.
+const operatorPSKFileName = "operator-psk"
+
+// resolveOperatorPSK is resolvePSK with the default the connect PSK does not
+// have: an operator secret is REQUIRED. Given no value and no file it is
+// generated into <data-dir>/operator-psk, so a server started with nothing
+// still refuses operator authority to whoever has not read that file. Only
+// permitNone (--dangerously-permit-no-operator-psk) lifts that; the gate then
+// validates operator surfaces against the connect PSK and server.Run warns.
+func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, error) {
+	if val == "" && file == "" {
+		if permitNone {
+			return nil, nil
+		}
+		if dataDir == "" {
+			return nil, errors.New("no operator PSK and no --data-dir to generate one into; pass --operator-psk / HARNESS_OPERATOR_PSK / --operator-psk-file, or --dangerously-permit-no-operator-psk")
+		}
+		// server.Run creates the data dir too, but only after this has run.
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			return nil, fmt.Errorf("data-dir for %s: %w", operatorPSKFileName, err)
+		}
+		file = filepath.Join(dataDir, operatorPSKFileName)
+	}
+	return resolvePSK(val, file)
+}
+
 func main() {
 	flag.Parse()
 	cli.WebSocketPath = *wsPath
@@ -110,10 +139,13 @@ func main() {
 	if resolvedOperatorPSKVal == "" {
 		resolvedOperatorPSKVal = os.Getenv("HARNESS_OPERATOR_PSK")
 	}
-	operatorPSKBytes, err := resolvePSK(resolvedOperatorPSKVal, *operatorPSKFile)
+	operatorPSKBytes, err := resolveOperatorPSK(resolvedOperatorPSKVal, *operatorPSKFile, *dataDir, *permitNoOperatorPSK)
 	if err != nil {
 		slog.Error("operator-PSK setup failed", "err", err)
 		os.Exit(1)
+	}
+	if *permitNoOperatorPSK && len(operatorPSKBytes) > 0 {
+		slog.Warn("--dangerously-permit-no-operator-psk has no effect: an operator PSK was supplied and is enforced")
 	}
 
 	nh, nhSource := server.ResolveNotifyHook(*notifyHook, os.Getenv("HARNESS_NOTIFY_HOOK"), *dataDir)
