@@ -233,9 +233,35 @@ two layers:
 
 That makes the ordering of any fix load-bearing. **A client-side retry (item 5
 as written) is unsafe on its own** -- half the time it retries into the wedged
-case. The responder has to become idempotent first: on a duplicate handshake for
-a connection still in its handshake phase, re-send the stored ack rather than
-erroring. The bytes are already retained -- `addActiveConnection` is handed
-`append(originalPacket, ackData...)` as the transcript. This is what DTLS 1.2
-s4.2.4 requires of a responder, and it is an objtrsf change, so a publish plus a
-`go.mod` bump, before the harness-side retry is worth writing.
+case.
+
+### Correction — "re-send the stored ack" is only half of it
+
+An earlier version of this amendment said the responder should just re-send the
+stored ack. That does not work by itself, and the reason is in the top half of
+`receiveHandshake`: the ack is bound to the ClientHello that produced it.
+`ECDHFromHandshake(priv, hs)` mixes the caller's share, and
+`keySchedule(sharedSecret, integrityInfo(cid, hs))` binds the transcript. A
+client that "retries" by dialing again brings a NEW ephemeral key, so the stored
+ack derives a secret it cannot reproduce. **A retransmission has to be
+byte-identical**, which is exactly why DTLS 1.2 s4.2.4 defines it that way.
+
+**The good news: both halves need no new state.** `sendHandshake` already
+retains everything a byte-identical retransmission needs --
+`s.sentHandshake[cid]` holds `PrivateKey` and `Transcript`, the exact encoded
+packet, and `sendPacket` enqueues that slice verbatim, so re-sending it produces
+the same datagram. So:
+
+- **Dialer:** while waiting, re-send `sentHandshake[cid].Transcript` on a timer
+  (`LastTime` is already there to drive it). Do NOT call `sendHandshake` again
+  for the same cid -- its `else` branch closes the old `hsDone`, `clear()`s the
+  old private key and replaces the transcript, i.e. it ROTATES the key and
+  guarantees the stored ack can never match.
+- **Responder:** on a Handshake for an existing cid, compare the datagram
+  against `transcript[:len(originalPacket)]`; if identical, re-send
+  `transcript[len(originalPacket):]`, which is the stored `ackData`, and return
+  nil. If it differs, keep today's rejection -- a *different* handshake at a
+  live cid is key confusion and must still be refused.
+
+Both are objtrsf, so a publish plus a `go.mod` bump, before the harness-side
+retry is worth writing. Nothing here is implemented.
