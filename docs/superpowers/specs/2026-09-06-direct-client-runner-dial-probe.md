@@ -182,7 +182,60 @@ address and port — is exactly what reusing one socket satisfies.
 ## What was not measured
 
 - Any deployment with a NAT between client and runner (F8's two failure modes).
-- Whether a punched path survives idle periods, or how often it must be
-  re-punched.
-- Throughput over a direct path. The ladder's `udp` rung prices it at 3.0x the
-  splicing relay, but that is one process on loopback, not two hosts.
+- ~~Whether a punched path survives idle periods~~ — measured, see below.
+- ~~Throughput over a direct path~~ — measured, see below.
+
+## Amendment — the direct path now exists and was measured on the fleet (2026-09-07)
+
+Two of the three unmeasured items above are answered, and one expectation in
+this document is falsified.
+
+**Throughput. It is not 3.0x, and it does not win.** 16 MB push to a
+`<windows-host>` runner from `<linux-host>`, client on udp, interleaved x3:
+
+| route | MB/s |
+| --- | --- |
+| splice | **5.0** |
+| direct | 4.1 |
+| forwarded | 2.3 |
+
+The Why section above reasoned that removing the middle box "removes 3.0x". It
+does remove a hop -- direct beats forwarded by 1.75x, which is the first
+measurement anywhere that separates those two, because a netem lab puts client
+and runner in one namespace and so cannot make direct the shorter path. But
+splice still leads at 1.2x over direct. The relay has two mechanisms working for
+it that the `udp` rung on loopback could not show: it splits one long congestion
+loop into two shorter ones, and its legs are long-lived, so their congestion
+window is already paid for. See the route comment in `runner/protocol/message.bgn`
+for the numbers behind both.
+
+**Idle survival: no.** The first push after an idle period failed with
+"no answer within 10s", and one of three warm attempts failed the same way.
+
+**Item 5 is still the only one standing, and it is now diagnosed.** The failure
+is NOT the punch. `punchToward` re-probes every 500 ms for the grant's whole
+5-minute TTL, and probe 3 landed 240 of 240. The failure is on the dial side, in
+two layers:
+
+1. **objproto never retransmits a handshake.** `sendHandshake` transmits once
+   and waits. The only mention of retransmission in the package is
+   `prevKeyRetention`'s comment, which says objproto "has no PTO estimate" and
+   that "trsf retransmits them" -- but a handshake runs BEFORE trsf exists, so
+   nothing does. One dropped datagram costs the whole dial.
+2. **A retransmitted handshake would be REFUSED anyway.**
+   `receiveHandshake` does `if _, exists := s.activeConnections[cid]; exists`
+   and returns `connection already exists for %v` without re-sending the
+   HandshakeAck it already built. So the two loss cases differ in kind:
+   - ClientHello lost: no connection exists, so re-dialing the same slot works.
+   - **HandshakeAck lost: re-dialing that slot is refused forever** and the
+     responder never re-acks. One lost ack wedges the connection id
+     permanently; only a new id recovers.
+
+That makes the ordering of any fix load-bearing. **A client-side retry (item 5
+as written) is unsafe on its own** -- half the time it retries into the wedged
+case. The responder has to become idempotent first: on a duplicate handshake for
+a connection still in its handshake phase, re-send the stored ack rather than
+erroring. The bytes are already retained -- `addActiveConnection` is handed
+`append(originalPacket, ackData...)` as the transcript. This is what DTLS 1.2
+s4.2.4 requires of a responder, and it is an objtrsf change, so a publish plus a
+`go.mod` bump, before the harness-side retry is worth writing.
