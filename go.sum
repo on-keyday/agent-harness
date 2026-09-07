@@ -78,6 +78,8 @@ github.com/on-keyday/objtrsf v0.0.0-20260906164157-5c3a63036d91 h1:FcdTQ9F5mOjP3
 github.com/on-keyday/objtrsf v0.0.0-20260906164157-5c3a63036d91/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
 github.com/on-keyday/objtrsf v0.0.0-20260907145136-712049a32a9d h1:jCeaas1IHe0Z+febIVUi+olBHiRVhhmUqQ5bJY2JYxY=
 github.com/on-keyday/objtrsf v0.0.0-20260907145136-712049a32a9d/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
+github.com/on-keyday/objtrsf v0.0.0-20260907150435-d9dc28a4bbcc h1:nPipa5R0qPbv0kicSTustxhDXeGtHHHkm8qqOa6oz9s=
+github.com/on-keyday/objtrsf v0.0.0-20260907150435-d9dc28a4bbcc/go.mod h1:j6CRtUG9O6xteS+5FJXOs8cUQn4UrgEecTdYPbB4E1w=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/u-root/gobusybox/src v0.0.0-20221229083637-46b2883a7f90 h1:zTk5683I9K62wtZ6eUa6vu6IWwVHXPnoKK5n2unAwv0=
