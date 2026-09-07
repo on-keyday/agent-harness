@@ -236,11 +236,27 @@ func parseAgentArgsFlag(name, value string) ([]string, error) {
 	return args, nil
 }
 
+// scrubOperatorSecret drops the operator-only secret from this process's
+// environment before anything is spawned. Every spawn path hands an agent this
+// process's environment — os/exec and objtrsf/exec both build the child env as
+// os.Environ() plus extras — so there is no per-spawn place to filter it, and
+// a runner never proves that secret itself. An agent holding it could drop its
+// ticket, reconnect as kind=Client and be operator, which is what the secret
+// exists to prevent. scripts/daemon.py additionally keeps it out of the
+// runner's INITIAL environment, which /proc/<pid>/environ shows to any
+// same-uid process regardless of what is unset here.
+func scrubOperatorSecret() {
+	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv} {
+		os.Unsetenv(k)
+	}
+}
+
 func main() {
 	fs := flag.CommandLine
 	cfg := newMainConfig()
 	cfg.bindFlags(fs)
 	flag.Parse()
+	scrubOperatorSecret()
 
 	// Detect whether --server-cid was explicitly set on the command line
 	// (as opposed to retaining its default value). fs.Visit only visits

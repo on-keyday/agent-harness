@@ -181,8 +181,9 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 
 # 3. Submit a task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).
-# Operator surfaces prove the operator secret: export it in THIS terminal only,
-# never in the runner's — the agents a runner spawns inherit its environment.
+# Operator surfaces prove the operator secret: export it where the CLI runs.
+# A runner never needs it: agent-runner drops it before spawning an agent, and
+# scripts/runner.sh never hands it to the runner in the first place.
 export HARNESS_OPERATOR_PSK_FILE=./harness-data/operator-psk
 bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
                 submit --repo /abs/path/to/repo --task "test task"

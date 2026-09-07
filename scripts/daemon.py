@@ -121,24 +121,36 @@ def _binary_is_executable(path: Path) -> bool:
 _CLAUDE_MARKER_PREFIXES = ("CLAUDE_CODE",)
 _CLAUDE_MARKER_EXACT = frozenset({"CLAUDECODE", "CLAUDE_EFFORT", "AI_AGENT"})
 
+# The operator-only secret never belongs in a runner: a runner does not prove
+# it, and every agent it spawns inherits its environment. agent-runner drops
+# these names itself before spawning (cmd/agent-runner/main.go,
+# scrubOperatorSecret), but a process's INITIAL environment stays readable in
+# /proc/<pid>/environ for any same-uid process however much it unsets later, so
+# the launch has to leave them out too. Runner-only: harness-server takes
+# HARNESS_OPERATOR_PSK from the environment on purpose.
+_OPERATOR_SECRET_EXACT = frozenset({"HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE"})
+_DROP_FOR_BIN = {"agent-runner": _OPERATOR_SECRET_EXACT}
 
-def _clean_child_env() -> dict[str, str]:
-    """os.environ minus claude-code's leaked session markers."""
+
+def _clean_child_env(drop: frozenset[str] = frozenset()) -> dict[str, str]:
+    """os.environ minus claude-code's leaked session markers and *drop*."""
     return {
         k: v
         for k, v in os.environ.items()
         if k not in _CLAUDE_MARKER_EXACT
+        and k not in drop
         and not any(k.startswith(p) for p in _CLAUDE_MARKER_PREFIXES)
     }
 
 
-def _spawn_detached(args: list[str], log_path: Path) -> int:
+def _spawn_detached(args: list[str], log_path: Path, drop: frozenset[str] = frozenset()) -> int:
     """Start *args* as a detached background process; return its pid.
 
     - stdout / stderr appended to *log_path*; stdin /dev/null.
     - Detached from controlling terminal: setsid on Unix, DETACHED_PROCESS
       | CREATE_NEW_PROCESS_GROUP on Windows.
-    - Env scrubbed of claude-code session markers (see _clean_child_env).
+    - Env scrubbed of claude-code session markers plus *drop* (see
+      _clean_child_env).
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
@@ -149,7 +161,7 @@ def _spawn_detached(args: list[str], log_path: Path) -> int:
             stderr=subprocess.STDOUT,
             close_fds=True,
             cwd=str(_ROOT),
-            env=_clean_child_env(),
+            env=_clean_child_env(drop),
         )
         if os.name == "nt":
             # CREATE_NEW_PROCESS_GROUP is what _graceful_terminate's
@@ -251,7 +263,7 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
     args = _strip_flag(list(args), "shutdown-file")
     spawn_args = ["--shutdown-file", str(sf), *args]
 
-    pid = _spawn_detached([str(bp), *spawn_args], lf)
+    pid = _spawn_detached([str(bp), *spawn_args], lf, drop=_DROP_FOR_BIN.get(bin_name, frozenset()))
     # setsid does not re-parent the cgroup: without this the daemon stays in
     # the *caller's* unit cgroup and dies with it. See adopt_into_unit_cgroup.
     adopt_into_unit_cgroup(pid, slot)

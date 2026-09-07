@@ -137,7 +137,7 @@ func main() {
 
 	resolvedOperatorPSKVal := *operatorPSK
 	if resolvedOperatorPSKVal == "" {
-		resolvedOperatorPSKVal = os.Getenv("HARNESS_OPERATOR_PSK")
+		resolvedOperatorPSKVal = os.Getenv(cli.OperatorPSKEnv)
 	}
 	operatorPSKBytes, err := resolveOperatorPSK(resolvedOperatorPSKVal, *operatorPSKFile, *dataDir, *permitNoOperatorPSK)
 	if err != nil {

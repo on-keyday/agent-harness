@@ -32,18 +32,19 @@ func GetPSK() []byte {
 	return nil
 }
 
-// GetOperatorPSK resolves the operator-only secret (HARNESS_OPERATOR_PSK /
-// HARNESS_OPERATOR_PSK_FILE), mirroring GetPSK. It is deliberately a DISTINCT
-// env var from HARNESS_PSK: an agent-runner reads HARNESS_PSK from its own env
+// GetOperatorPSK resolves the operator-only secret (OperatorPSKEnv /
+// OperatorPSKFileEnv), mirroring GetPSK. It is deliberately a DISTINCT env var
+// from HARNESS_PSK: an agent-runner reads HARNESS_PSK from its own env
 // (cmd/agent-runner/main.go) and injects it into spawned agents, so if the
-// operator secret lived in HARNESS_PSK a runner launched in the same shell would
-// inherit it and leak it to agents — reopening the kind=Client → operator
-// escalation. Keeping it in HARNESS_OPERATOR_PSK keeps it off that path.
+// operator secret lived in HARNESS_PSK it would reach every agent by design —
+// reopening the kind=Client → operator escalation. The other route, an agent
+// inheriting the runner's environment wholesale, is closed by the runner
+// dropping exactly these two names before it spawns anything.
 func GetOperatorPSK() []byte {
-	if v := os.Getenv("HARNESS_OPERATOR_PSK"); v != "" {
+	if v := os.Getenv(OperatorPSKEnv); v != "" {
 		return []byte(v)
 	}
-	if path := os.Getenv("HARNESS_OPERATOR_PSK_FILE"); path != "" {
+	if path := os.Getenv(OperatorPSKFileEnv); path != "" {
 		data, err := os.ReadFile(path)
 		if err == nil {
 			if v := strings.TrimSpace(string(data)); v != "" {
