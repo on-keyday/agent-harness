@@ -315,7 +315,12 @@ def cmd_up(args) -> int:
          "--vcpus", str(args.vcpus),
          "--cpu", "host-passthrough",
          "--import",
-         "--disk", f"path={disk},format=qcow2,bus=virtio",
+         # discard=unmap + detect_zeroes=unmap, or the image only ever grows:
+         # the guest's virtio-blk advertises discard by default and issues it
+         # (fstrim reports success), but qemu's blockdev drops it unless asked,
+         # so freed guest blocks never come back to the host. Measured: fstrim
+         # trimmed 35.8 GiB inside the guest and the qcow2 did not shrink.
+         "--disk", f"path={disk},format=qcow2,bus=virtio,discard=unmap,detect_zeroes=unmap",
          "--osinfo", args.osinfo,
          "--network", net,
          "--graphics", "none",
@@ -579,6 +584,46 @@ def cmd_snapshot(args) -> int:
     return 0
 
 
+def live_agents(args) -> list[str]:
+    """Slots that currently have an agent process under them.
+
+    Reported per slot rather than as a count: what the operator needs to
+    decide is whose work is about to die, not how many.
+    """
+    p = guest_sh(args, f"""
+shopt -s nullglob
+for pidf in {GUEST_RUN}/agent-runner-*.pid; do
+  slot=$(basename "$pidf" .pid); slot=${{slot#agent-runner-}}
+  pid=$(cat "$pidf") || continue
+  kids=$(ps --ppid "$pid" -o comm= 2>/dev/null | tr '\n' ' ')
+  [ -n "$kids" ] && echo "$slot: $kids"
+done
+""", capture=True, check=False)
+    return [l for l in p.stdout.splitlines() if ":" in l] if p.returncode == 0 else []
+
+
+def guard_live_agents(args, what: str) -> None:
+    """Refuse a whole-guest operation while a task is running on the guest.
+
+    Taking the guest down under a live task is not a partial loss: the runner's
+    connection drops and the server marks every task active on it Failed, and
+    each one is then resumed BY HAND. This guard exists because that was done
+    here once, with the evidence of the live children already on screen.
+    """
+    if args.force:
+        return
+    live = live_agents(args)
+    if live:
+        for l in live:
+            print(f"  live: {l}")
+        # die() writes to stderr, which is unbuffered: without this the reason
+        # prints BEFORE the list it refers to.
+        sys.stdout.flush()
+        die(f"{what} would fail those task(s) — the server marks every task on a "
+            f"dropped runner Failed, and a human resumes each one. Wait for them, "
+            f"kill them deliberately, or pass --force.")
+
+
 def stop_all_slots(args) -> None:
     """Stop every slot in the guest, not just --slot's.
 
@@ -613,6 +658,7 @@ def cmd_revert(args) -> int:
         if not names:
             die("no snapshots to revert to")
         tag = names[-1]
+    guard_live_agents(args, f"reverting {args.name} to {tag}")
     print(f"reverting {args.name} to {tag} — every task on this guest dies with it")
     stop_all_slots(args)
     virsh("snapshot-revert", "--domain", args.name, "--snapshotname", tag, "--running")
@@ -661,6 +707,7 @@ def cmd_down(args) -> int:
     if domain_state(args.name) != "running":
         print("already off")
         return 0
+    guard_live_agents(args, f"shutting {args.name} down")
     stop_all_slots(args)
     virsh("shutdown", args.name)
     for _ in range(60):
@@ -676,6 +723,10 @@ def cmd_down(args) -> int:
 def cmd_destroy(args) -> int:
     if not args.force:
         die("destroy removes the domain AND its disk; pass --force")
+    # --force already means "yes, destroy it", so it cannot also mean "and I
+    # know what is running": say what dies.
+    for l in live_agents(args):
+        print(f"  live: {l} — will be marked Failed")
     # Ask libvirt where the disk actually is instead of assuming this script's
     # own layout: a domain defined by hand, or before a layout change, points
     # somewhere else, and the assumed path would unlink nothing while
@@ -771,7 +822,11 @@ def main() -> int:
     sn.add_argument("--tag", default="")
     rv = sub.add_parser("revert")
     rv.add_argument("--tag", default="")
-    sub.add_parser("down")
+    rv.add_argument("--force", action="store_true",
+                    help="revert even while a task is running on the guest")
+    dn = sub.add_parser("down")
+    dn.add_argument("--force", action="store_true",
+                    help="take the guest down even while a task is running on it")
     ds = sub.add_parser("destroy")
     ds.add_argument("--force", action="store_true")
 
