@@ -1622,6 +1622,16 @@ var Verbs = []VerbSpec{
 		Examples: []string{"sync"},
 	},
 	{
+		// Force the client↔server link to re-dial NOW rather than wait out a dead
+		// UDP path's idle timeout. TUI-only, like the other screen verbs: it acts
+		// on THIS client's own connection, not on server state, so there is
+		// nothing for the CLI or WebUI to reach here.
+		Path: []string{"reconnect"}, CmdlineSurfaces: TUI,
+		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
+		Action:         "ScreenAction", Const: map[string]string{"Sub": "reconnect"},
+		Examples: []string{"reconnect"},
+	},
+	{
 		Path: []string{"trsf"}, CmdlineSurfaces: TUI,
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "trsf"},

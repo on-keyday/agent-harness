@@ -2120,6 +2120,7 @@ var tuiVerbHelp = map[string]string{
 	"notify":                   "send a notification (shows in this feed + --notify-hook egress; keep it one line)",
 	"prune":                    "ask the server to forget tasks (ids, or --before; active tasks need --force)",
 	"quit":                     "leave the TUI (alias: exit); the sessions it opened keep running",
+	"reconnect":                "force the client↔server link to re-dial NOW, instead of waiting out a dead path's idle timeout (e.g. after the UDP route drops)",
 	"refresh":                  "force a full runners+tasks snapshot re-sync now (alias: sync)",
 	"repo":                     "the default repo a spawn uses when its own line names none",
 	"restore":                  "with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the task log does not)",

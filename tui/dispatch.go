@@ -595,6 +595,27 @@ func (h tuiVerbs) Refresh(v verb.ScreenAction) tea.Cmd {
 	return RefreshSnapshot(a.client)
 }
 
+// Reconnect forces the client↔server link to re-dial NOW instead of waiting out
+// a dead path's idle timeout (a dropped UDP route can hang for tens of seconds
+// before the transport gives up). It closes the current connection's PEER only —
+// not the *Client — so PersistLoop's watcher sees Peer().Done() fire, tears the
+// iteration down and re-dials on its own; the normal ConnectionMsg flow then
+// repaints the badge and re-runs the subscriptions. Closing the *Client here
+// instead would double with the loop's own h.Close() on teardown.
+func (h tuiVerbs) Reconnect(v verb.ScreenAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("reconnect: not connected"))
+		return nil
+	}
+	a.cmdresult.Append("reconnecting…")
+	client := a.client
+	return func() tea.Msg {
+		client.Peer().Close()
+		return nil
+	}
+}
+
 func (h tuiVerbs) Trsf(v verb.ScreenAction) tea.Cmd {
 	a := h.a
 	if a.client == nil {

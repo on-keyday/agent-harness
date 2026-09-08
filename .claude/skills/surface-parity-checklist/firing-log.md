@@ -1483,6 +1483,63 @@ third entry in this log recording a defect that is invisible to a surface walk
 and obvious within one screen of a running system (the others: `forwards.status`
 staleness, and the rate that animated while its subject was still).
 
+### 2026-09-08 (pre-landing) — `reconnect` verb + grid-pane vertical scroll
+
+Two small TUI additions from one operator ask: force the client↔server link to
+re-dial (a dead UDP path otherwise hangs until its idle timeout), and shift a
+grid cell's crop up so a full-screen app's TOP rows (htop's CPU meters over its
+process list) can be pinned above the auto-followed bottom.
+
+done:    1 (`reconnect` is a TUI-only ScreenAction verb in `table.go`, twin of
+         `refresh`/`sync`; `go generate ./cli/verb` regenerated and the generated
+         `TUIDispatch` then REQUIRED `tuiVerbs.Reconnect`, so a missing handler
+         would not compile — the point of that shape), 10 + 30 (result to
+         `a.cmdresult`, never the connection badge — the badge keeps flowing
+         through `ConnectionMsg` as it does for a real drop), 35 (help via
+         `tuiVerbHelp["reconnect"]`, which `TestEveryTuiVerbHasADescription` and
+         `TestHelpDescribesEveryDeclaredVerb` enforce), 38 (the grid-pane scroll
+         IS a `pane_streamer.go` change — a per-pane `viewOff` shifting `Render`'s
+         content-anchored bottom up, clamped against the live content height in
+         Render so a stored offset survives the pane growing/shrinking; the pane
+         header marks a scrolled pane `↑N` so a parked pane is not read as stuck)
+omitted: 4 (the grid's own keys — h/j/k/l, H/J/K/L — are hardcoded literals in
+         `grid.go`'s switch, NOT `mainKeyMap`; shift+up/down/`0` join them there,
+         and keys_test covers only main/modal keys, so there is no pair to add.
+         `reconnect` is a cmdline verb, not a keybinding)
+         6, 7 (WebUI): `reconnect` is declared TUI-only like every other screen
+         verb — it acts on THIS client's link, not server state — so
+         `pathsForSurface("webui")` never yields it and no `WEBUI_DISPATCH` case
+         is owed. The WebUI WASM also runs PersistLoop and could grow its own
+         reconnect, but that is a separate change. The grid-pane scroll's WebUI
+         analogue is the session preview (item 38's other half), left for the
+         same reason
+         35 (README): its cmdline verb list already OMITS the sibling screen
+         verbs `refresh`/`sync`/`trsf`/`diag` and says the TUI `help` is
+         authoritative; adding `reconnect` alone would be inconsistent, and the
+         `tuiVerbHelp` entry above is the authoritative description
+missed:  —
+
+**Verified live, not only in unit tests.** Stood up a dummy harness, ran
+`harness-tui` (this worktree's build, via the script's own `make build`) inside a
+dummy bash session pointed at the same server, and typed `reconnect`: the
+cmdresult showed `reconnecting (attempt 1, next try in 0s)` and the log went
+`persist: reconnecting … → persist: connected`, settling back to CONNECTED — the
+peer close, the PersistLoop re-dial and the badge flow, end to end. The grid
+scroll is unit-tested through a real `tea.KeyShiftUp` fed to `GridModel.Update`
+(not only `Render`), so its key path is exercised too.
+
+**A driving lesson worth keeping for the next TUI E2E.** Separate `session send`
+then `session snapshot` connections did NOT deliver keystrokes to the nested
+bubbletea (a single shift-tab landed once, then letters and `q` did nothing);
+`session send --enter --snapshot` in ONE connection delivered reliably. Drive a
+nested interactive TUI with the send's OWN embedded snapshot, not a follow-up
+snapshot call.
+
+**Item 38's search, done the way its own recorded miss says to.** Before
+recording the WebUI-preview half as omitted, checked what that surface actually
+renders rather than assuming — a separate xterm.js renderer with no crop-window
+concept, so a scroll offset there is a different mechanism, not a missing pixel.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -1498,12 +1555,12 @@ Update when adding an entry.
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
 | 10 (other verb families) | 13 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
-| 1–10 (input surfaces) | 5 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
+| 1–10 (input surfaces) | 6 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. Sixth walk added the `reconnect` verb (item 1), a TUI-only ScreenAction whose generated dispatch method the compiler then demanded. |
 | 27 (shared funnel) | 8 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. Eighth firing was 27, 28a and 32 arriving as ONE finding on a diagnostic row: two hand-written projections of `trsf.InternalState`, one per answerer, about to gain five fields. Worth noting that for a DIAGNOSTIC the miss is worse than for a display field — a counter present on one answerer and zero on the other is indistinguishable from a real zero. |
 | 32 (one serializer, round-trip tested) | 15 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
 | 28a (follow the value to the request build) | 13 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
 | 34a (same KIND of control as its neighbours) | 4 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
-| 38 (live screen-rendering surfaces) | 6 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. |
+| 38 (live screen-rendering surfaces) | 7 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. Latest firing is the grid-pane vertical scroll itself — the pane IS the surface — with its WebUI-preview half recorded `omitted` only after checking that renderer has no crop window to offset. |
 | 29 (result messages name the target and the change) | 10 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 | 36 (agent-facing skill texts) | 4 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 | 6 (WebUI controls) | 5 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |

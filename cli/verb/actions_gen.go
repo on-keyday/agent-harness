@@ -364,7 +364,7 @@ type SSHGatewayAction struct {
 	Sub            string
 }
 
-// ScreenAction is built by: clear, diag, exit, help, quit, refresh, repo, sync, trsf.
+// ScreenAction is built by: clear, diag, exit, help, quit, reconnect, refresh, repo, sync, trsf.
 type ScreenAction struct {
 	ActionMarker
 	Sub string
@@ -2174,6 +2174,11 @@ func init() {
 			a.Sub = "refresh"
 			return a, nil
 		},
+		"reconnect\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "reconnect"
+			return a, nil
+		},
 		"trsf\x00tui": func(b Bound) (Action, error) {
 			a := ScreenAction{}
 			a.Sub = "trsf"
@@ -2787,6 +2792,7 @@ const (
 	CmdHelp                   = "help"
 	CmdRefresh                = "refresh"
 	CmdSync                   = "sync"
+	CmdReconnect              = "reconnect"
 	CmdTrsf                   = "trsf"
 	CmdDiag                   = "diag"
 	CmdRepo                   = "repo"
@@ -2843,6 +2849,7 @@ const (
 	SubPurge           = "purge"
 	SubQuit            = "quit"
 	SubRead            = "read"
+	SubReconnect       = "reconnect"
 	SubRefresh         = "refresh"
 	SubRepo            = "repo"
 	SubResize          = "resize"
@@ -4266,6 +4273,27 @@ func ParseCmdSync(sf Surface, args []string, ctx map[string]string) (ScreenActio
 	sp, ok := Lookup("sync")
 	if !ok {
 		return zero, fmt.Errorf("sync: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ScreenAction)
+	return a, nil
+}
+
+func ParseCmdReconnect(sf Surface, args []string, ctx map[string]string) (ScreenAction, error) {
+	var zero ScreenAction
+	sp, ok := Lookup("reconnect")
+	if !ok {
+		return zero, fmt.Errorf("reconnect: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -6292,6 +6320,8 @@ type TUIDispatch[R any] interface {
 	Help(ScreenAction) R
 	// refresh (also: sync)
 	Refresh(ScreenAction) R
+	// reconnect
+	Reconnect(ScreenAction) R
 	// trsf
 	Trsf(ScreenAction) R
 	// diag
@@ -6601,6 +6631,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Refresh(a), true, nil
+	case CmdReconnect:
+		a, perr := ParseCmdReconnect(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Reconnect(a), true, nil
 	case CmdTrsf:
 		a, perr := ParseCmdTrsf(TUI, args, ctx)
 		if perr != nil {
@@ -6844,6 +6880,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.Help(a), true
 		case "refresh":
 			return h.Refresh(a), true
+		case "reconnect":
+			return h.Reconnect(a), true
 		case "trsf":
 			return h.Trsf(a), true
 		case "diag":
@@ -7145,6 +7183,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSync:
 			a, perr := ParseCmdSync(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdReconnect:
+			a, perr := ParseCmdReconnect(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
