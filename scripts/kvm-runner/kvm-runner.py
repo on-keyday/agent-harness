@@ -316,19 +316,41 @@ def cmd_up(args) -> int:
 
 # ------------------------------------------------------------------ provision
 
-def host_binaries() -> list[Path]:
-    """The three harness binaries the guest slot needs, from bin/.
+def default_bin_dir() -> Path:
+    """The MAIN checkout's bin/, even when this script runs from a worktree.
 
-    Deliberately the built binaries and not a guest-side `go build`: the slot
-    must be wire-compatible with the running server, and bin/ is what the
-    host's own slots run.
+    Not `_ROOT/bin`: a harness task worktree has no bin/ of its own, and one
+    built there is a private artifact that nothing refreshes — not the
+    post-landing `make build`, not build_and_restart_all.py — so the guest
+    would drift into running a build no other slot runs, which is the wire
+    skew this fleet is careful about. The main checkout's bin/ is the trunk
+    build every other slot runs. Pass --bin-dir to deliberately ship an
+    unlanded build into the guest.
     """
+    p = run(["git", "-C", str(_ROOT), "worktree", "list", "--porcelain"],
+            capture=True, check=False)
+    for line in p.stdout.splitlines() if p.returncode == 0 else []:
+        if line.startswith("worktree "):
+            return Path(line[len("worktree "):].strip()) / "bin"
+    return _ROOT / "bin"
+
+
+def host_binaries(args) -> list[Path]:
+    """The three harness binaries the guest slot needs.
+
+    Deliberately built binaries and not a guest-side `go build`: the slot must
+    be wire-compatible with the running server, so it ships the same bytes the
+    rest of the fleet runs.
+    """
+    bindir = Path(args.bin_dir).expanduser() if args.bin_dir else default_bin_dir()
     missing, found = [], []
     for name in ("agent-runner", "harness-cli", "harness-stream-adapter"):
-        p = _ROOT / "bin" / name
-        (found if p.exists() else missing).append(p)
+        b = bindir / name
+        (found if b.exists() else missing).append(b)
     if missing:
-        die("missing " + ", ".join(str(m) for m in missing) + " — run `make build` first")
+        die("missing " + ", ".join(str(m) for m in missing) +
+            f" — run `make build` in {bindir.parent}")
+    print(f"binaries from {bindir}")
     return found
 
 
@@ -336,9 +358,13 @@ def cmd_provision(args) -> int:
     if domain_state(args.name) != "running":
         die(f"domain {args.name} is not running (try `up`)")
 
-    guest_sh(args, f"mkdir -p {GUEST_BIN} {GUEST_RUN} "
+    stage = f"{GUEST_BIN}/.staged"
+    guest_sh(args, f"mkdir -p {stage} {GUEST_RUN} "
                    f"{shlex.quote(str(Path(GUEST_TOKEN).parent))} {GUEST_HOME}/workspace")
-    scp_to(args, host_binaries(), f"{GUEST_BIN}/")
+    # Everything lands in a staging dir and is then renamed into place. Writing
+    # over a binary a live slot is executing fails with ETXTBSY; a rename does
+    # not, because the running process keeps the old inode.
+    scp_to(args, host_binaries(args), f"{stage}/")
 
     if args.agent in BRIDGED_AGENTS:
         agent_src = args.agent_bin or shutil.which(args.agent)
@@ -346,7 +372,7 @@ def cmd_provision(args) -> int:
             die(f"no {args.agent} binary on PATH; pass --agent-bin")
         # The agent binary is usually a symlink into a versioned directory, and
         # scp would copy the link, not the payload.
-        scp_to(args, [Path(agent_src).resolve()], f"{GUEST_BIN}/{args.agent}", preserve=True)
+        scp_to(args, [Path(agent_src).resolve()], f"{stage}/{args.agent}", preserve=True)
     else:
         # Copying the host's /usr/bin/bash into ~/.local/bin would shadow the
         # guest's own on PATH with a binary built against a different libc.
@@ -369,6 +395,8 @@ def cmd_provision(args) -> int:
     who = run(["git", "config", "--get", "user.name"], capture=True, check=False).stdout.strip()
     lab = args.roots or f"{GUEST_HOME}/workspace/ebpf-lab"
     guest_sh(args, f"""set -e
+for f in {stage}/*; do mv -f "$f" {GUEST_BIN}/"$(basename "$f")"; done
+rmdir {stage}
 chmod 700 {GUEST_BIN}/*
 if [ -f {GUEST_TOKEN} ]; then chmod 600 {GUEST_TOKEN}; fi
 git config --global init.defaultBranch main
@@ -653,6 +681,9 @@ def main() -> int:
                     help="slot label for this guest's pid/log files (default: the agent name). "
                          "Slots share the guest's hostname and are told apart by profile.")
     ap.add_argument("--roots", default="", help="guest-side repo root the slot serves")
+    ap.add_argument("--bin-dir", default="",
+                    help="harness bin/ to ship into the guest "
+                         "(default: the MAIN checkout's, i.e. the build the rest of the fleet runs)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     up = sub.add_parser("up", help="create (or start) the guest and wait for ssh")
