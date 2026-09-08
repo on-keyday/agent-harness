@@ -87,7 +87,15 @@ import agent_presets  # noqa: E402  (path set above; stdlib-only, no venv needed
 # Where the pristine download and the per-guest disk live. Outside the repo:
 # these are multi-hundred-MB artifacts, not source.
 VM_DIR = Path.home() / "vm"
-IMAGE_URL = "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
+
+# Default image, overridable with --image-url. Note what `latest` means for the
+# cache: the file it downloads to is named from the URL, which carries no
+# version, so once ~/vm/<basename> exists nothing ever re-fetches it. The guest
+# is then pinned to whenever `up` first ran, silently, while the URL keeps
+# claiming to be current. `up` prints the cached file's date for that reason,
+# and --refresh-image re-fetches.
+DEFAULT_IMAGE_URL = "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
+DEFAULT_OSINFO = "archlinux"
 
 # Guest-side layout. GUEST_USER matches the host user so that a shared
 # filesystem, if one is ever added, needs no uid mapping.
@@ -98,7 +106,10 @@ GUEST_RUN = f"{GUEST_HOME}/.run"
 GUEST_TOKEN = f"{GUEST_HOME}/.config/harness/agent-token"
 
 # Packages cloud-init installs. The eBPF set is the point of the guest; the
-# rest is what an agent needs to be useful in a checkout.
+# rest is what an agent needs to be useful in a checkout. These are PACMAN
+# names, so they travel with DEFAULT_IMAGE_URL — a non-Arch --image-url needs
+# --packages and a matching --osinfo, or cloud-init installs nothing and the
+# guest comes up without a toolchain.
 GUEST_PACKAGES = [
     "git", "base-devel", "python", "ripgrep",
     "clang", "llvm", "linux-headers",
@@ -112,10 +123,19 @@ GUEST_PACKAGES = [
 # slot at a path that does not exist in the guest.
 BRIDGED_AGENTS = {"claude", "codex", "agy", "opencode"}
 
-# Only claude has a revocable-token mode (scripts/sandbox/README.md); the others
-# authenticate from mounted config, which this script does not copy. A slot
+# Only claude has a revocable-token mode (scripts/sandbox/README.md). A slot
 # whose agent has no entry here never sees the token in its environment — a
 # bash slot does not need the credential and should not carry it.
+#
+# It is NOT the default here, and the podman kit's reasoning does not carry
+# over. That kit trades resume away for token auth because the container's HOME
+# is ephemeral; a guest's home is a real disk, so `~/.claude` keeps both the
+# credentials and the session store across tasks and resume works either way.
+# And measured 2026-09-08 in this guest: after one run under
+# CLAUDE_CODE_OAUTH_TOKEN, claude had written a full `claudeAiOauth` blob
+# *including a refreshToken* plus a trustedDeviceToken into
+# ~/.claude/.credentials.json — so token auth does not keep a refresh token out
+# of the guest either. Logging in inside the guest is the honest default.
 TOKEN_ENV_BY_AGENT = {"claude": "CLAUDE_CODE_OAUTH_TOKEN"}
 
 CONNECT = "qemu:///session"
@@ -223,7 +243,8 @@ def wait_for_ssh(args, timeout: int = 600) -> None:
 # ------------------------------------------------------------------------- up
 
 def cloud_init_user_data(args, pubkey: str) -> str:
-    packages = "\n".join(f"  - {p}" for p in GUEST_PACKAGES)
+    names = args.packages.split(",") if args.packages else GUEST_PACKAGES
+    packages = "\n".join(f"  - {p.strip()}" for p in names if p.strip())
     return f"""#cloud-config
 hostname: {args.name}
 fqdn: {args.name}
@@ -267,13 +288,16 @@ def cmd_up(args) -> int:
 
     vmd = VM_DIR / args.name
     vmd.mkdir(parents=True, exist_ok=True)
-    base = VM_DIR / Path(IMAGE_URL).name
-    if not base.exists():
-        print(f"fetching {IMAGE_URL}")
+    base = VM_DIR / Path(args.image_url).name
+    if args.refresh_image or not base.exists():
+        print(f"fetching {args.image_url}")
         tmp = base.with_suffix(base.suffix + ".part")
-        run(["curl", "-fsSL", "-o", str(tmp), IMAGE_URL])
-        tmp.rename(base)
-    print(f"base image: {base} ({base.stat().st_size // (1 << 20)} MiB)")
+        run(["curl", "-fsSL", "-o", str(tmp), args.image_url])
+        tmp.replace(base)
+    st = base.stat()
+    print(f"base image: {base} ({st.st_size // (1 << 20)} MiB, fetched "
+          f"{time.strftime('%Y-%m-%d', time.localtime(st.st_mtime))}"
+          f"{' — --refresh-image to re-fetch' if not args.refresh_image else ''})")
 
     disk = vmd / f"{args.name}.qcow2"
     if not disk.exists():
@@ -301,7 +325,7 @@ def cmd_up(args) -> int:
          "--cpu", "host-passthrough",
          "--import",
          "--disk", f"path={disk},format=qcow2,bus=virtio",
-         "--osinfo", "archlinux",
+         "--osinfo", args.osinfo,
          "--network", net,
          "--graphics", "none",
          "--console", "pty,target_type=serial",
@@ -379,17 +403,23 @@ def cmd_provision(args) -> int:
         print(f"{args.agent}: using the guest image's own binary, nothing bridged")
 
     token = Path(args.token_file).expanduser() if args.token_file else None
-    if args.agent not in TOKEN_ENV_BY_AGENT:
-        pass  # no token mode for this agent, and nothing to warn about
+    if args.agent not in TOKEN_ENV_BY_AGENT or args.auth == "none":
+        # The guest logs itself in, and its home is persistent, so that login
+        # and its session store survive every task and every slot restart.
+        # Removing any token file left by an earlier `--auth token` keeps the
+        # answer to "how does this slot authenticate" a single one: the launch
+        # script exports the token only when that file exists.
+        guest_sh(args, f"rm -f {GUEST_TOKEN}")
+        if args.agent in TOKEN_ENV_BY_AGENT:
+            print(f"auth=none: log in inside the guest once —\n"
+                  f"  scripts/kvm-runner/kvm-runner.py --name {args.name} ssh -- {args.agent}\n"
+                  f"  (or `{args.agent} setup-token`); it persists in the guest's ~/.claude")
     elif token and token.exists():
-        # Passed straight to scp: the bytes never enter this process, and a
-        # dedicated revocable token means a compromised guest costs one token
-        # rather than the account's refresh token.
+        # Passed straight to scp: the bytes never enter this process.
         scp_to(args, [token], GUEST_TOKEN)
-        print(f"token installed from {token} (session resume is unavailable in token auth)")
+        print(f"auth=token: installed from {token}")
     else:
-        print("no token file: the guest agent needs its own login "
-              "(see scripts/sandbox/README.md on mount auth vs token auth)")
+        die(f"--auth token but no token file at {token} (pass --token-file, or --auth none)")
 
     email = run(["git", "config", "--get", "user.email"], capture=True, check=False).stdout.strip()
     who = run(["git", "config", "--get", "user.name"], capture=True, check=False).stdout.strip()
@@ -473,7 +503,13 @@ def cmd_runner_up(args) -> int:
         argv.append("--no-worktree")
 
     token_env = TOKEN_ENV_BY_AGENT.get(args.agent)
-    export = (f"export {token_env}=\"$(cat {GUEST_TOKEN} 2>/dev/null)\"\n"
+    # `-s`, and only then: exporting the variable EMPTY (which
+    # `$(cat missing-file)` does) is worse than not exporting it, because the
+    # agent sees its token env set and can take the token path with nothing in
+    # it instead of reading the credentials the guest holds. Measured: after
+    # `--auth none` removed the file, the slot still carried an empty
+    # CLAUDE_CODE_OAUTH_TOKEN.
+    export = (f"if [ -s {GUEST_TOKEN} ]; then export {token_env}=\"$(cat {GUEST_TOKEN})\"; fi\n"
               if token_env else "")
     # TERM, explicitly, because nothing downstream supplies it: the runner does
     # not set one on the PTY it opens for the agent, so the agent inherits the
@@ -650,8 +686,10 @@ def cmd_destroy(args) -> int:
     virsh("destroy", args.name, check=False)
     virsh("undefine", args.name, "--nvram", "--snapshots-metadata", check=False)
     for disk in disks:
-        if disk == VM_DIR / Path(IMAGE_URL).name:
-            print(f"kept {disk} (the shared base image)")
+        if disk.parent == VM_DIR:
+            # Per-guest disks live in VM_DIR/<name>/; anything directly in
+            # VM_DIR is a base image other guests share.
+            print(f"kept {disk} (a shared base image)")
             continue
         if disk.exists():
             disk.unlink()
@@ -690,11 +728,25 @@ def main() -> int:
     up.add_argument("--memory", type=int, default=4096)
     up.add_argument("--vcpus", type=int, default=2)
     up.add_argument("--disk", type=int, default=40, help="disk size in GiB")
+    up.add_argument("--image-url", default=DEFAULT_IMAGE_URL,
+                    help="cloud image to import; cached in ~/vm/ under its basename")
+    up.add_argument("--refresh-image", action="store_true",
+                    help="re-fetch the image even when the cached copy exists "
+                         "(a 'latest' URL is otherwise frozen at first use)")
+    up.add_argument("--osinfo", default=DEFAULT_OSINFO,
+                    help="virt-install --osinfo; must match --image-url")
+    up.add_argument("--packages", default="",
+                    help="comma-separated packages for cloud-init to install "
+                         "(default: the Arch/pacman eBPF set; change it with a non-Arch image)")
 
     pv = sub.add_parser("provision", help="push binaries + token, seed the lab repo")
     pv.add_argument("--agent-bin", default="", help="host path to the agent binary (default: from PATH)")
+    pv.add_argument("--auth", choices=("none", "token"), default="none",
+                    help="none (default): the guest holds its own login, done once "
+                         "inside it and persistent. token: install --token-file and "
+                         "export it to the slot instead.")
     pv.add_argument("--token-file", default="~/.config/harness/sandbox-claude-token",
-                    help="agent OAuth token file to install; '' to skip")
+                    help="the token --auth token installs")
 
     rn = sub.add_parser("runner", help="start/stop the agent-runner in the guest")
     rnsub = rn.add_subparsers(dest="rcmd", required=True)
