@@ -12,21 +12,12 @@ program needs CAP_BPF against a *shared* kernel, so a container can only
 either refuse the capability or hand over the host's kernel. Neither is a
 place to develop eBPF. Here the kernel the agent can wedge is the guest's.
 
-What this does NOT give you, and cannot:
-
-- **A fresh kernel per task.** The guest kernel outlives every task on the
-  slot. Pinned programs in bpffs, attached tc/XDP/kprobe hooks and modified
-  sysctls carry into the next one. ``snapshot`` / ``revert`` is the cleanup.
-- **A blast radius of one task.** When the guest panics, the runner's
-  connection drops and the server marks EVERY task active on that runner
-  Failed (server.failAndRevokeTasksOf), which a human then resumes. That is
-  why --max-tasks defaults to 1 here and not to the 4-8 a host slot runs.
-- **Isolation inside the guest.** BPF needs root there, so the agent gets
-  passwordless sudo. Put nothing in the guest you cannot re-create: the
-  agent can destroy its checkout and its credentials.
-
-Landing work out of the guest is a push to the remote and a fast-forward on
-the trunk-authoritative checkout, exactly as it is from the Windows slot.
+**README.md beside this file is the operator document** — what the guest
+does not give you (no fresh kernel per task; a guest panic fails EVERY task
+on the slot; no isolation whatsoever inside it), how the two slots are
+addressed, how auth is arranged and why the podman kit's reasoning does not
+transfer, and how to check each of those claims instead of trusting it.
+Read it before relying on this.
 
 Usage:
   kvm-runner.py [--name N] up          [--memory MB] [--vcpus N] [--disk GB]
@@ -752,7 +743,7 @@ def main() -> int:
                     help="comma-separated packages for cloud-init to install "
                          "(default: the Arch/pacman eBPF set; change it with a non-Arch image)")
 
-    pv = sub.add_parser("provision", help="push binaries + token, seed the lab repo")
+    pv = sub.add_parser("provision", help="push binaries, settle auth, seed the lab repo")
     pv.add_argument("--agent-bin", default="", help="host path to the agent binary (default: from PATH)")
     pv.add_argument("--auth", choices=("none", "token"), default="none",
                     help="none (default): the guest holds its own login, done once "
