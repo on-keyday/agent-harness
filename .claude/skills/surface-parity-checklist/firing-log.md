@@ -1528,12 +1528,21 @@ peer close, the PersistLoop re-dial and the badge flow, end to end. The grid
 scroll is unit-tested through a real `tea.KeyShiftUp` fed to `GridModel.Update`
 (not only `Render`), so its key path is exercised too.
 
-**A driving lesson worth keeping for the next TUI E2E.** Separate `session send`
-then `session snapshot` connections did NOT deliver keystrokes to the nested
-bubbletea (a single shift-tab landed once, then letters and `q` did nothing);
-`session send --enter --snapshot` in ONE connection delivered reliably. Drive a
-nested interactive TUI with the send's OWN embedded snapshot, not a follow-up
-snapshot call.
+**A driving lesson — recorded first WRONG, then corrected, and the correction
+is the lesson.** During the drive several keystroke sends "did nothing", and I
+theorised in turn: input was unstable, then that separate send/snapshot
+connections do not deliver while a single `--snapshot` send does. Both were
+wrong. The sends that "failed" every carried `--settle-ms` WITHOUT `--snapshot`,
+which `session send` REJECTS at parse time (`session send: --settle-ms needs
+--snapshot`, exit 1) — so nothing was ever sent. I had piped stderr to
+`/dev/null` and read the rejections as undelivered input. `c.SessionSend`
+delivers UNCONDITIONALLY; `--snapshot` only adds a readback and gates the
+snapshot-only flags (`--settle-ms`/`--rows`/`--cols`/`--style`/`--color`/…). The
+real rules: a plain `session send <id> <keys>` delivers on its own; pass
+`--settle-ms` only alongside `--snapshot`; and NEVER discard stderr while driving
+— the one-line rejection was the answer the entire time. Proven without a server
+(the guard fires pre-dial): `session send --settle-ms 3000 <id> x` errors, `session
+send <id> x` gets past validation to the dial.
 
 **Item 38's search, done the way its own recorded miss says to.** Before
 recording the WebUI-preview half as omitted, checked what that surface actually
