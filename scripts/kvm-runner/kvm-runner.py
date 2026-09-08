@@ -486,7 +486,20 @@ def cmd_runner_up(args) -> int:
     if not cid:
         die("no --server-cid and no HARNESS_SERVER_CID in the environment")
 
-    lab = args.roots or f"{GUEST_HOME}/workspace/ebpf-lab"
+    # A no-worktree slot runs tasks IN its root, so the useful root is the
+    # whole workspace rather than one repo inside it — and it needs no git repo
+    # there, because --roots is only made absolute (no existence or repo check)
+    # and the worktree path never runs. A worktree slot keeps the lab repo,
+    # which `git worktree add` requires.
+    #
+    # The two are a super-set/sub-set pair on purpose. Registry.Candidates keeps
+    # only the entries tying for the LONGEST matching root, so `--repo <lab>`
+    # resolves to the worktree slot alone and `--repo <workspace>` to this one;
+    # they never make each other ambiguous. The corollary to know:
+    # `--repo <lab> --agent bash` is then ProfileUnavailable, not a fallback.
+    default_root = (f"{GUEST_HOME}/workspace" if args.no_worktree
+                    else f"{GUEST_HOME}/workspace/ebpf-lab")
+    lab = args.roots or default_root
     base = slot_base(args)
     argv = [f"{GUEST_BIN}/agent-runner",
             "--shutdown-file", f"{base}.shutdown",
