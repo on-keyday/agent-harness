@@ -31,6 +31,15 @@ type PaneStreamer struct {
 	cancel  context.CancelFunc
 	stopped bool // Stop() ran; a still-attaching pump must close its stream
 
+	// viewOff shifts this pane's crop window UP from its content-anchored bottom
+	// by this many rows (0 = the default bottom-follow). A full-screen app whose
+	// interesting rows sit ABOVE the auto-followed bottom — htop's CPU meters over
+	// its process list — cannot be seen in a short cell otherwise. It is a
+	// REQUEST, not a resolved start row: Render clamps the effect against the live
+	// content height so a stored offset stays valid as the pane's content grows or
+	// shrinks. Guarded by mu.
+	viewOff int
+
 	// startDelay staggers this pane's FIRST attach (set by GridModel.Open per
 	// pane index). Opening N panes fires N attaches over the one shared client at
 	// once; their replay bursts starve the later attaches' control responses so
@@ -92,6 +101,34 @@ func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
 }
 
 func (p *PaneStreamer) TaskID() string { return p.taskID }
+
+// ScrollBy shifts this pane's crop window up (delta > 0) or back down toward the
+// bottom (delta < 0), flooring at 0 — a negative sum would push the window below
+// the content. The request may exceed the reachable range; Render clamps the
+// effect, so over-scrolling parks at the top rather than blanking the pane.
+func (p *PaneStreamer) ScrollBy(delta int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.viewOff += delta
+	if p.viewOff < 0 {
+		p.viewOff = 0
+	}
+}
+
+// ResetScroll drops back to the default bottom-following crop.
+func (p *PaneStreamer) ResetScroll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.viewOff = 0
+}
+
+// ScrollOffset is the current requested up-shift (0 = bottom-following). The
+// grid header reads it to mark a pane that is no longer auto-following.
+func (p *PaneStreamer) ScrollOffset() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.viewOff
+}
 
 // DiagLine reports the pane's internal state as a single line, so a black pane
 // can render WHY it's black instead of leaving us to guess. It bisects the two
@@ -482,6 +519,20 @@ func (p *PaneStreamer) Render(width, height int) string {
 	}
 	if bottom > rows {
 		bottom = rows
+	}
+	// Apply the user's up-shift, clamped against the reachable range: the window
+	// can rise until its top hits row 0 (off == bottom-height) and no further, so
+	// an over-scroll parks at the top instead of blanking the pane. Clamped here
+	// rather than in ScrollBy because the reachable range is (bottom, height),
+	// neither of which ScrollBy knows.
+	if p.viewOff > 0 {
+		off := p.viewOff
+		if max := bottom - height; off > max {
+			off = max
+		}
+		if off > 0 {
+			bottom -= off
+		}
 	}
 	startY := bottom - height
 	if startY < 0 {

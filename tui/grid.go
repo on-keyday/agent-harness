@@ -351,6 +351,24 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 			m.movePane(-m.pageCols())
 		case "J":
 			m.movePane(m.pageCols())
+		// Shift+Up/Down scroll the FOCUSED pane's view within its own cell so a
+		// full-screen app's TOP rows (htop's CPU meters over its process list)
+		// can be pinned above the auto-followed bottom; `0` drops back to
+		// following. Per-pane, so each cell can sit at its own offset. Distinct
+		// from k/j (move focus) and K/J (reorder pane): those move BETWEEN cells,
+		// these move WITHIN one.
+		case "shift+up":
+			if p := m.focusedPane(); p != nil {
+				p.ScrollBy(1)
+			}
+		case "shift+down":
+			if p := m.focusedPane(); p != nil {
+				p.ScrollBy(-1)
+			}
+		case "0":
+			if p := m.focusedPane(); p != nil {
+				p.ResetScroll()
+			}
 		}
 	case gridTickMsg:
 		if !m.open {
@@ -455,7 +473,7 @@ func (m GridModel) scopeLabel() string {
 // go to the pane, not the grid.
 func (m GridModel) statusLine() string {
 	bg, fg := lipgloss.Color("236"), lipgloss.Color("252")
-	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  i:input  ⏎:attach  v:view  x:close  q:quit ",
+	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⇧↑↓:scroll  0:reset  i:input  ⏎:attach  v:view  x:close  q:quit ",
 		m.scopeLabel(), m.page+1, m.pageCount(), len(m.panes))
 	if m.input {
 		bg, fg = lipgloss.Color("22"), lipgloss.Color("231") // green bar
@@ -527,6 +545,12 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	}
 	if err := p.Err(); err != nil {
 		head += " (ended)"
+	}
+	// Mark a pane that is scrolled off its bottom anchor: its content no longer
+	// auto-follows, so a still-looking pane that is really just parked up-screen
+	// is not read as stuck. ↑N is the up-shift; `0` clears it.
+	if off := p.ScrollOffset(); off > 0 {
+		head += fmt.Sprintf(" ↑%d", off)
 	}
 	// Truncate the header to the cell width so a long id + " (ended)" can never
 	// wrap onto a second line (which would push the pane past its budgeted
