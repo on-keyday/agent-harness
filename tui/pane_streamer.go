@@ -40,6 +40,14 @@ type PaneStreamer struct {
 	// shrinks. Guarded by mu.
 	viewOff int
 
+	// colOff is the horizontal twin of viewOff: the crop is a bottom-LEFT window,
+	// and the emulator is the SESSION's full width (the grid has no size
+	// authority — a 200-column session in a 60-column cell shows only its left
+	// slice), so a full-screen app is cut on the right by default. colOff pans the
+	// window right by this many columns. Same REQUEST-not-resolved contract as
+	// viewOff: Render clamps it against the emulator width. Guarded by mu.
+	colOff int
+
 	// startDelay staggers this pane's FIRST attach (set by GridModel.Open per
 	// pane index). Opening N panes fires N attaches over the one shared client at
 	// once; their replay bursts starve the later attaches' control responses so
@@ -115,11 +123,25 @@ func (p *PaneStreamer) ScrollBy(delta int) {
 	}
 }
 
-// ResetScroll drops back to the default bottom-following crop.
+// ScrollHBy pans the crop window right (delta > 0) or back left (delta < 0),
+// flooring at 0. Like ScrollBy, the request may exceed the reachable range;
+// Render clamps the effect against the emulator width.
+func (p *PaneStreamer) ScrollHBy(delta int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.colOff += delta
+	if p.colOff < 0 {
+		p.colOff = 0
+	}
+}
+
+// ResetScroll drops back to the default bottom-LEFT auto-following crop — BOTH
+// axes, so one key (`0`) fully un-scrolls a pane however it was moved.
 func (p *PaneStreamer) ResetScroll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.viewOff = 0
+	p.colOff = 0
 }
 
 // ScrollOffset is the current requested up-shift (0 = bottom-following). The
@@ -128,6 +150,13 @@ func (p *PaneStreamer) ScrollOffset() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.viewOff
+}
+
+// ColOffset is the current requested right-shift (0 = left-anchored).
+func (p *PaneStreamer) ColOffset() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.colOff
 }
 
 // DiagLine reports the pane's internal state as a single line, so a black pane
@@ -520,20 +549,21 @@ func (p *PaneStreamer) Render(width, height int) string {
 	if bottom > rows {
 		bottom = rows
 	}
-	// Apply the user's up-shift, clamped against the reachable range: the window
-	// can rise until its top hits row 0 (off == bottom-height) and no further, so
-	// an over-scroll parks at the top instead of blanking the pane. Clamped here
-	// rather than in ScrollBy because the reachable range is (bottom, height),
-	// neither of which ScrollBy knows.
-	if p.viewOff > 0 {
-		off := p.viewOff
-		if max := bottom - height; off > max {
-			off = max
-		}
-		if off > 0 {
-			bottom -= off
-		}
+	// Apply the user's up-shift, clamped to the reachable range AND stored back:
+	// the window can rise until its top hits row 0 (viewOff == bottom-height) and
+	// no further. Writing the clamp back to viewOff (Render already holds mu) is
+	// what stops the counter — and the header's ↑N — from inflating past the
+	// limit when the key is held at the top, and lets one press the other way
+	// move immediately instead of unwinding a huge number. Render is the only
+	// place that knows height and the content bottom, so the clamp lives here.
+	maxUp := bottom - height
+	if maxUp < 0 {
+		maxUp = 0
 	}
+	if p.viewOff > maxUp {
+		p.viewOff = maxUp
+	}
+	bottom -= p.viewOff
 	startY := bottom - height
 	if startY < 0 {
 		startY = 0
@@ -542,12 +572,24 @@ func (p *PaneStreamer) Render(width, height int) string {
 	if endY > rows {
 		endY = rows
 	}
+	// Horizontal twin, same clamp-and-store: the crop is bottom-LEFT and the
+	// emulator is the session's FULL width, so panning right reveals the columns
+	// a narrow cell cuts off. Clamp to [0, cols-width] — the emulator's right
+	// edge — and store the clamp so the counter cannot inflate past it either.
+	maxRight := cols - width
+	if maxRight < 0 {
+		maxRight = 0
+	}
+	if p.colOff > maxRight {
+		p.colOff = maxRight
+	}
+	colStart := p.colOff
 	var b strings.Builder
 	for y := startY; y < endY; y++ {
 		if y > startY {
 			b.WriteByte('\n')
 		}
-		x := 0
+		x := colStart
 		painted := 0
 		// Coalesce adjacent cells with the same style into one lipgloss run to
 		// keep the escape volume down.

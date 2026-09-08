@@ -1549,6 +1549,24 @@ recording the WebUI-preview half as omitted, checked what that surface actually
 renders rather than assuming — a separate xterm.js renderer with no crop-window
 concept, so a scroll offset there is a different mechanism, not a missing pixel.
 
+**Addendum (same session): horizontal scroll, and a clamp-and-store UX fix on
+both axes.** The operator corrected a wrong assumption I had stated aloud — that
+a width-filling app like htop needs no horizontal scroll. It does: the grid
+emulator is the SESSION's full width (the pane has no size authority), so a cell
+shows only a left slice and even htop is cut on the right; horizontal truncation
+is the norm, not the exception. Added `colOff` symmetric to `viewOff`
+(shift+←/→, `0` now clears both). Surface verdicts identical to the vertical add
+(item 38 done; grid keys item 4 n/a — grid-local literals; WebUI preview 38/6/7
+omitted, same reason). The operator also caught a UX defect that applied to both
+axes: the offset was a raw request that `Render` only clamped for DISPLAY, so
+holding the key past the limit inflated the stored counter (and the `↑N`/`→M`
+header) without bound and then needed an equal number of reverse presses to
+undo. `Render` now clamps-and-STORES the offset back — it is the only place that
+knows height/width/content — so the counter caps at the reachable max and one
+reverse press moves immediately, and the header reads the offsets AFTER `Render`
+so it shows the capped value. Pinned by `TestPaneStreamer_ScrollOffsetCapsAtRenderedMax`
+and its horizontal twin.
+
 ## Standing tallies
 
 Update when adding an entry.

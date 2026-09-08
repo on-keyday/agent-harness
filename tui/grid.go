@@ -351,12 +351,14 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 			m.movePane(-m.pageCols())
 		case "J":
 			m.movePane(m.pageCols())
-		// Shift+Up/Down scroll the FOCUSED pane's view within its own cell so a
-		// full-screen app's TOP rows (htop's CPU meters over its process list)
-		// can be pinned above the auto-followed bottom; `0` drops back to
-		// following. Per-pane, so each cell can sit at its own offset. Distinct
-		// from k/j (move focus) and K/J (reorder pane): those move BETWEEN cells,
-		// these move WITHIN one.
+		// Shift+arrows pan the FOCUSED pane's view within its own cell. Up/Down
+		// pins a full-screen app's TOP rows (htop's CPU meters over its process
+		// list) above the auto-followed bottom; Left/Right reveals the columns
+		// the cell cuts off — the cell is a small crop of the session's FULL
+		// terminal width, so even a width-filling app is cut on the right. `0`
+		// drops both axes back to following. Per-pane, so each cell holds its own
+		// offset. Distinct from k/j (move focus) and K/J (reorder pane): those
+		// move BETWEEN cells, these move WITHIN one.
 		case "shift+up":
 			if p := m.focusedPane(); p != nil {
 				p.ScrollBy(1)
@@ -364,6 +366,14 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 		case "shift+down":
 			if p := m.focusedPane(); p != nil {
 				p.ScrollBy(-1)
+			}
+		case "shift+right":
+			if p := m.focusedPane(); p != nil {
+				p.ScrollHBy(1)
+			}
+		case "shift+left":
+			if p := m.focusedPane(); p != nil {
+				p.ScrollHBy(-1)
 			}
 		case "0":
 			if p := m.focusedPane(); p != nil {
@@ -473,7 +483,7 @@ func (m GridModel) scopeLabel() string {
 // go to the pane, not the grid.
 func (m GridModel) statusLine() string {
 	bg, fg := lipgloss.Color("236"), lipgloss.Color("252")
-	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⇧↑↓:scroll  0:reset  i:input  ⏎:attach  v:view  x:close  q:quit ",
+	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⇧↑↓←→:scroll  0:reset  i:input  ⏎:attach  v:view  x:close  q:quit ",
 		m.scopeLabel(), m.page+1, m.pageCount(), len(m.panes))
 	if m.input {
 		bg, fg = lipgloss.Color("22"), lipgloss.Color("231") // green bar
@@ -546,19 +556,24 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	if err := p.Err(); err != nil {
 		head += " (ended)"
 	}
-	// Mark a pane that is scrolled off its bottom anchor: its content no longer
-	// auto-follows, so a still-looking pane that is really just parked up-screen
-	// is not read as stuck. ↑N is the up-shift; `0` clears it.
+	// Render FIRST: it clamps-and-stores the scroll offsets against the live
+	// content, so the markers below show the offset actually IN EFFECT (↑N up,
+	// →M right), not the raw request a held key inflated past the limit. A
+	// scrolled pane no longer auto-follows, so the marker keeps a parked pane
+	// from reading as stuck; `0` clears both axes.
+	body := p.Render(w, h)
 	if off := p.ScrollOffset(); off > 0 {
 		head += fmt.Sprintf(" ↑%d", off)
 	}
-	// Truncate the header to the cell width so a long id + " (ended)" can never
-	// wrap onto a second line (which would push the pane past its budgeted
-	// height and overflow the grid).
+	if off := p.ColOffset(); off > 0 {
+		head += fmt.Sprintf(" →%d", off)
+	}
+	// Truncate the header to the cell width so a long id + markers can never wrap
+	// onto a second line (which would push the pane past its budgeted height and
+	// overflow the grid).
 	if len(head) > w {
 		head = head[:w]
 	}
-	body := p.Render(w, h)
 	if gridDiag {
 		// Overlay the pane's own state on its first row (truncated to width) so a
 		// black pane shows WHY. Replaces the top body row rather than adding one,

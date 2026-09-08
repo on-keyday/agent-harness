@@ -70,6 +70,30 @@ func TestPaneStreamer_ScrollClampsAtTop(t *testing.T) {
 	}
 }
 
+// Rendering at the top clamps the STORED request back down, so pressing up at
+// the limit cannot inflate the counter (and the `↑N` header) past what is
+// reachable — and one press down then moves immediately instead of unwinding a
+// huge number. Render is the only place that knows the reachable max, so it
+// writes the clamp back. fillPane(80,20) at height 5: bottom=20, max=15.
+func TestPaneStreamer_ScrollOffsetCapsAtRenderedMax(t *testing.T) {
+	p := fillPane(80, 20)
+	p.ScrollBy(1000)
+	_ = p.Render(80, 5)
+	if got := p.ScrollOffset(); got != 15 {
+		t.Fatalf("over-scroll must be clamped-and-stored to the reachable max 15, got %d", got)
+	}
+}
+
+// Horizontal twin: over-scrolling right caps colOff at cols-width after render.
+func TestPaneStreamer_HScrollOffsetCapsAtRenderedMax(t *testing.T) {
+	p := fillWidePane(40, 3)
+	p.ScrollHBy(1000)
+	_ = p.Render(10, 3)
+	if got := p.ColOffset(); got != 30 {
+		t.Fatalf("over-scroll right must be clamped-and-stored to cols-width=30, got %d", got)
+	}
+}
+
 // ResetScroll returns to the bottom-following default.
 func TestPaneStreamer_ResetScrollReturnsToBottom(t *testing.T) {
 	p := fillPane(80, 20)
@@ -116,5 +140,112 @@ func TestGrid_ScrollKeysDriveFocusedPane(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}})
 	if got := p.ScrollOffset(); got != 0 {
 		t.Fatalf("`0` must reset the focused pane's scroll to 0, got %d", got)
+	}
+}
+
+// fillWidePane writes a `cols`-wide row of ten-column blocks A…J so a narrow
+// crop reads a single letter. The emulator is the SESSION's width (much wider
+// than a grid cell), which is why a cell shows only its left slice and the rest
+// is cut horizontally — the case horizontal scroll exists for.
+func fillWidePane(cols, rows int) *PaneStreamer {
+	p := &PaneStreamer{emu: vtgrid.New(cols, rows), cols: cols, rows: rows}
+	var b strings.Builder
+	for c := 0; c < cols; c++ {
+		b.WriteByte(byte('A' + (c / 10))) // AAAAAAAAAA BBBBBBBBBB … per 10 cols
+	}
+	line := b.String()
+	lines := make([]string, rows)
+	for i := range lines {
+		lines[i] = line
+	}
+	p.emu.Write([]byte(strings.Join(lines, "\r\n")))
+	return p
+}
+
+// Default (colOff==0) is the LEFT crop: a 10-wide cell over a 40-wide session
+// shows the leftmost ten columns, all 'A'.
+func TestPaneStreamer_HScrollDefaultIsLeft(t *testing.T) {
+	p := fillWidePane(40, 3)
+	out := p.Render(10, 3)
+	if !strings.Contains(out, "AAAAAAAAAA") {
+		t.Fatalf("default crop must be the left 10 columns (all A)\ngot:\n%s", out)
+	}
+	if strings.Contains(out, "B") {
+		t.Fatalf("default crop must not reach the B block\ngot:\n%s", out)
+	}
+}
+
+// ScrollHBy shifts the window RIGHT by that many columns: +10 shows the B block
+// and drops the A block — panning across the wider session terminal.
+func TestPaneStreamer_HScrollRightShowsFurther(t *testing.T) {
+	p := fillWidePane(40, 3)
+	p.ScrollHBy(10)
+	if got := p.ColOffset(); got != 10 {
+		t.Fatalf("ColOffset after ScrollHBy(10) = %d, want 10", got)
+	}
+	out := p.Render(10, 3)
+	if !strings.Contains(out, "BBBBBBBBBB") {
+		t.Fatalf("scroll right 10 must show the B block\ngot:\n%s", out)
+	}
+	if strings.Contains(out, "A") || strings.Contains(out, "C") {
+		t.Fatalf("scroll right 10 must show only the B block\ngot:\n%s", out)
+	}
+}
+
+// The window clamps at the right edge: over-scrolling parks on the last block
+// (D, columns 30-39) rather than reading past the emulator width.
+func TestPaneStreamer_HScrollClampsAtRight(t *testing.T) {
+	p := fillWidePane(40, 3)
+	p.ScrollHBy(1000)
+	out := p.Render(10, 3)
+	if !strings.Contains(out, "DDDDDDDDDD") {
+		t.Fatalf("scroll past the right must show the last block (D)\ngot:\n%s", out)
+	}
+	if strings.Contains(out, "C") {
+		t.Fatalf("the right crop must not still show the C block\ngot:\n%s", out)
+	}
+}
+
+// ScrollHBy(-n) floors at zero.
+func TestPaneStreamer_HScrollFloorsAtZero(t *testing.T) {
+	p := fillWidePane(40, 3)
+	p.ScrollHBy(-5)
+	if got := p.ColOffset(); got != 0 {
+		t.Fatalf("ColOffset after ScrollHBy(-5) from 0 = %d, want 0 (no underflow)", got)
+	}
+}
+
+// ResetScroll clears BOTH axes, so `0` is one key that drops a pane back to the
+// bottom-left auto-following default however it was scrolled.
+func TestPaneStreamer_ResetScrollClearsBothAxes(t *testing.T) {
+	p := fillWidePane(40, 6)
+	p.ScrollBy(3)
+	p.ScrollHBy(20)
+	p.ResetScroll()
+	if v, h := p.ScrollOffset(), p.ColOffset(); v != 0 || h != 0 {
+		t.Fatalf("ResetScroll must clear both axes, got viewOff=%d colOff=%d", v, h)
+	}
+}
+
+// The grid routes shift+left/right to the focused pane's horizontal scroll and
+// `0` resets both axes.
+func TestGrid_HScrollKeysDriveFocusedPane(t *testing.T) {
+	p := fillWidePane(40, 3)
+	m := GridModel{panes: []*PaneStreamer{p}, focus: 0}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+	if got := p.ColOffset(); got != 1 {
+		t.Fatalf("shift+right must scroll the focused pane right by 1, got %d", got)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftLeft})
+	if got := p.ColOffset(); got != 0 {
+		t.Fatalf("shift+left must scroll back to 0, got %d", got)
+	}
+	// `0` clears both axes at once.
+	p.ScrollBy(2)
+	p.ScrollHBy(2)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}})
+	if v, h := p.ScrollOffset(), p.ColOffset(); v != 0 || h != 0 {
+		t.Fatalf("`0` must reset both axes, got viewOff=%d colOff=%d", v, h)
 	}
 }
