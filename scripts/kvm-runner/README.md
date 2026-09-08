@@ -94,8 +94,54 @@ does not advertise `bash`.
   nothing in the guest you cannot re-create. The VM is the wall; inside it,
   everything is trusted.
 
-Landing work out of the guest is a push to the remote plus a fast-forward on the
-trunk-authoritative checkout — the same as from any other separate runner host.
+## Getting work out
+
+Two shapes, and which one you want depends on where the code lives.
+
+**Work created in the guest** — nothing to set up. The host reads the guest's
+repo over the ssh forward that already exists, so no credential ever goes into
+the guest:
+
+```sh
+# ~/.ssh/config: Host <name> / HostName 127.0.0.1 / Port 2222 / IdentityFile …
+git remote add kvm <name>:workspace/<repo>
+git fetch kvm 'refs/heads/harness/*:refs/remotes/kvm/harness/*'   # task branches too
+git push origin <branch>
+```
+
+**A host repo you want the guest to work on** — share it, and the transfer step
+disappears: the agent's commits land in the host's own `.git`, so all that is
+left for you is `git push`.
+
+```sh
+scripts/kvm-runner/kvm-runner.py up --share ~/workspace/<repo>   # also adds it to an existing guest
+scripts/kvm-runner/kvm-runner.py provision                       # mounts it, with an fstab entry
+```
+
+The share is mounted at the **same absolute path** in the guest, so a path means
+the same thing on both sides.
+
+Three things about it are worth knowing:
+
+- **The guest needs an idmap, and libvirt's default is the wrong way round.**
+  For a rootless virtiofsd libvirt maps guest *root* to the host user and guest
+  1000 into the subuid range, so the agent cannot write the share at all —
+  host files read as root-owned inside the guest, and git adds "dubious
+  ownership" on top. `up --share` installs the keep-id equivalent instead (the
+  agent's own uid maps through unchanged, everything else to subuids) and
+  bounces the guest once, because a filesystem device and its shared memory
+  backing are both boot-time.
+- **An agent with root in the guest can write whatever you export.** Export one
+  repo, not `$HOME` — the same trade the podman kit makes with its bind mounts.
+- **Do not give a guest slot the same exact `--roots` string as a host slot.**
+  That is the one configuration where the server cannot tell the two runners
+  apart. A share alone does not cause it: root matching keeps only the longest
+  match, so a host slot serving `~/workspace/<repo>` shadows a guest slot
+  serving `~/workspace`, and the guest's no-worktree slot never creates
+  worktrees anyway.
+
+Landing to a trunk still works the way it does from any other separate runner
+host: push, then fast-forward the trunk-authoritative checkout.
 
 ## Authentication
 

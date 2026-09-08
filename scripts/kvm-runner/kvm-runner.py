@@ -21,7 +21,8 @@ Read it before relying on this.
 
 Usage:
   kvm-runner.py [--name N] up          [--memory MB] [--vcpus N] [--disk GB]
-  kvm-runner.py [--name N] provision   [--agent-bin PATH] [--token-file PATH]
+                                       [--share HOSTDIR[,...]] [--image-url URL]
+  kvm-runner.py [--name N] provision   [--auth none|token] [--agent-bin PATH]
   kvm-runner.py [--name N] runner up   [--server-cid CID] [--max-tasks N]
                                        [--slot S] [--no-worktree]
   kvm-runner.py [--name N] runner down [--slot S]
@@ -61,6 +62,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -261,6 +263,115 @@ runcmd:
 """
 
 
+def keepid_idmap(indent: str) -> str:
+    """A <idmap> that maps the guest's own uid/gid to the host user's.
+
+    Without one, libvirt writes its own for a rootless virtiofsd: guest ROOT
+    becomes the host user and guest 1000 lands in the subuid range. The agent
+    then cannot write the share at all (host files read as root-owned inside
+    the guest, and git adds "dubious ownership" on top) — measured, not
+    guessed. This is the keep-id equivalent: the one uid the agent runs as maps
+    through unchanged, everything else goes to subuids.
+    """
+    uid, gid = os.getuid(), os.getgid()
+    user = GUEST_USER
+
+    def sub(path: str) -> tuple[int, int]:
+        for line in Path(path).read_text().splitlines():
+            f = line.split(":")
+            if len(f) == 3 and f[0] == user:
+                return int(f[1]), int(f[2])
+        die(f"no {user} entry in {path}; --share needs a subordinate id range")
+
+    su, sun = sub("/etc/subuid")
+    sg, sgn = sub("/etc/subgid")
+    if sun < 65535 or sgn < 65535:
+        die(f"{user}'s subordinate id range is too small for --share "
+            f"({sun}/{sgn}, need >= 65535)")
+
+    rows = []
+    for kind, own, base in (("uid", uid, su), ("gid", gid, sg)):
+        if own > 0:
+            rows.append(f"<{kind} start='0' target='{base}' count='{own}'/>")
+        rows.append(f"<{kind} start='{own}' target='{own}' count='1'/>")
+        rows.append(f"<{kind} start='{own + 1}' target='{base + own}' "
+                    f"count='{65536 - own - 1}'/>")
+    body = "".join(f"{indent}  {r}\n" for r in rows)
+    return f"{indent}<idmap>\n{body}{indent}</idmap>\n"
+
+
+def missing_shares(args, wanted: list[Path]) -> list[Path]:
+    """Which of `wanted` the domain does not carry yet.
+
+    Separate from applying them so the live-task guard runs BEFORE anything is
+    defined: attaching first left the config changed and the guest un-bounced,
+    i.e. a share that silently does not work until someone reboots.
+    """
+    xml = virsh("dumpxml", "--inactive", args.name, capture=True).stdout
+    return [d for d in wanted if f"<source dir='{d}'/>" not in xml]
+
+
+def attach_shares(args, missing: list[Path]) -> int:
+    """Add the given virtiofs shares to a domain that already exists."""
+    if not missing:
+        return 0
+    xml = virsh("dumpxml", "--inactive", args.name, capture=True).stdout
+    ind = "    "
+    devs = ""
+    for src in missing:
+        devs += (f"{ind}<filesystem type='mount' accessmode='passthrough'>\n"
+                 f"{ind}  <driver type='virtiofs'/>\n"
+                 f"{keepid_idmap(ind + '  ')}"
+                 f"{ind}  <source dir='{src}'/>\n"
+                 f"{ind}  <target dir='{src}'/>\n"
+                 f"{ind}</filesystem>\n")
+    lines = []
+    for line in xml.splitlines(keepends=True):
+        if line.strip() == "</devices>":
+            lines.append(devs)
+        lines.append(line)
+    out = "".join(lines)
+    if "<memoryBacking>" not in out:
+        # virtiofs cannot attach without it, and there is no virsh subcommand
+        # for this element — it has to go in with the device.
+        out = out.replace("</currentMemory>",
+                          "</currentMemory>\n  <memoryBacking>\n"
+                          "    <access mode='shared'/>\n  </memoryBacking>", 1)
+    dom = VM_DIR / args.name / "domain-shares.xml"
+    dom.parent.mkdir(parents=True, exist_ok=True)
+    dom.write_text(out)
+    virsh("define", str(dom))
+    for src in missing:
+        print(f"share attached: {src} (guest path identical)")
+    return len(missing)
+
+
+def install_share_idmap(args) -> None:
+    """Put keepid_idmap() into every virtiofs device of the defined domain.
+
+    Idempotent: a domain that already carries an <idmap> is left alone, so
+    re-running `up` on an existing guest does not stack them.
+    """
+    xml = virsh("dumpxml", "--inactive", args.name, capture=True).stdout
+    if "<idmap>" in xml:
+        print("share idmap already present")
+        return
+    out, n = [], 0
+    for line in xml.splitlines(keepends=True):
+        out.append(line)
+        m = re.match(r"([ \t]*)<driver type=[\'\"]virtiofs[\'\"]/>", line)
+        if m:
+            out.append(keepid_idmap(m.group(1)))
+            n += 1
+    if not n:
+        return
+    dom = VM_DIR / args.name / "domain-idmap.xml"
+    dom.write_text("".join(out))
+    virsh("define", str(dom))
+    print(f"idmap installed on {n} share(s): guest uid {os.getuid()} stays "
+          f"uid {os.getuid()} on the host")
+
+
 def cmd_up(args) -> int:
     for tool in ("virt-install", "virsh", "qemu-img", "curl", "passt"):
         if not shutil.which(tool):
@@ -269,12 +380,39 @@ def cmd_up(args) -> int:
         die("/dev/kvm is not readable+writable by this user "
             "(join the kvm group, or check its mode)")
 
+    shares = [Path(x).expanduser().resolve()
+              for x in args.share.split(",") if x.strip()]
+    for src in shares:
+        if not src.is_dir():
+            die(f"--share {src}: not a directory")
+
     state = domain_state(args.name)
     if state:
-        if state != "running":
+        missing = missing_shares(args, shares) if shares else []
+        if missing:
+            # A filesystem device and the shared memory backing it needs are
+            # both boot-time, so the guest has to go around once — and that
+            # fails every task on it, hence the same guard `down` uses. Checked
+            # before the define, so a refusal leaves nothing half-applied.
+            guard_live_agents(args, f"attaching {len(missing)} share(s) to {args.name}")
+        added = attach_shares(args, missing)
+        if added:
+            if state == "running":
+                stop_all_slots(args)
+                virsh("shutdown", args.name)
+                for _ in range(60):
+                    if domain_state(args.name) != "running":
+                        break
+                    time.sleep(1)
+                else:
+                    virsh("destroy", args.name, check=False)
+            virsh("start", args.name)
+        elif state != "running":
             virsh("start", args.name)
         print(f"domain {args.name} already defined ({state}); waiting for ssh")
         wait_for_ssh(args)
+        if added:
+            mount_shares(args)
         return cmd_status(args)
 
     vmd = VM_DIR / args.name
@@ -306,7 +444,22 @@ def cmd_up(args) -> int:
     net = ("user,model=virtio,backend.type=passt,"
            "portForward0.proto=tcp,portForward0.address=127.0.0.1,"
            f"portForward0.range0.start={args.port},portForward0.range0.to=22")
-    run(["virt-install", "--connect", CONNECT,
+
+    # Shares are mounted at the SAME absolute path in the guest, so a path
+    # means the same thing on both sides — the podman kit's reason for
+    # identical-path bind mounts, and what lets a repo's git worktree links
+    # and an agent's cwd survive the boundary.
+    fs_args: list[str] = []
+    for src in shares:
+        fs_args += ["--filesystem",
+                    f"type=mount,accessmode=passthrough,driver.type=virtiofs,"
+                    f"source.dir={src},target.dir={src}"]
+    if fs_args:
+        # virtiofs needs the guest's memory to be shareable with virtiofsd;
+        # without this libvirt refuses the domain outright.
+        fs_args += ["--memorybacking", "access.mode=shared"]
+
+    vi = ["virt-install", "--connect", CONNECT,
          "--name", args.name,
          "--memory", str(args.memory),
          # freePageReporting hands unused guest pages back to a host that has
@@ -326,11 +479,33 @@ def cmd_up(args) -> int:
          "--graphics", "none",
          "--console", "pty,target_type=serial",
          "--cloud-init", f"user-data={user_data}",
-         "--noautoconsole"])
+         *fs_args,
+         "--noautoconsole"]
+    run(vi)
 
     print("waiting for ssh (cloud-init installs the toolchain on first boot)")
     wait_for_ssh(args)
     guest_sh(args, "sudo cloud-init status --wait >/dev/null 2>&1 || true")
+
+    if fs_args:
+        # The idmap goes in AFTER the first boot, and the guest is bounced once.
+        # Two things force that order: virt-install has no --filesystem idmap
+        # suboption, and its --print-xml does not materialise the cloud-init
+        # seed ISO it references (nor does --noreboot apply to --import), so
+        # generating the XML ourselves trades a wrong idmap for a guest that
+        # cannot boot at all. Nothing writes the share before `provision`, so
+        # one boot under libvirt's own mapping costs nothing.
+        install_share_idmap(args)
+        print("bouncing the guest once so the share mapping takes effect")
+        virsh("shutdown", args.name)
+        for _ in range(60):
+            if domain_state(args.name) != "running":
+                break
+            time.sleep(1)
+        else:
+            virsh("destroy", args.name, check=False)
+        virsh("start", args.name)
+        wait_for_ssh(args)
     return cmd_status(args)
 
 
@@ -417,6 +592,8 @@ def cmd_provision(args) -> int:
     else:
         die(f"--auth token but no token file at {token} (pass --token-file, or --auth none)")
 
+    mount_shares(args)
+
     email = run(["git", "config", "--get", "user.email"], capture=True, check=False).stdout.strip()
     who = run(["git", "config", "--get", "user.name"], capture=True, check=False).stdout.strip()
     lab = args.roots or f"{GUEST_HOME}/workspace/ebpf-lab"
@@ -447,6 +624,60 @@ ls -l /sys/kernel/btf/vmlinux || echo "NO BTF: CO-RE will not work"
 def slot_base(args) -> str:
     """Per-slot file prefix in the guest. One guest can carry several slots."""
     return f"{GUEST_RUN}/agent-runner-{args.slot or args.agent}"
+
+
+def domain_shares(args) -> list[str]:
+    """Guest paths of the domain's virtiofs filesystems, from libvirt.
+
+    Read back from the domain rather than from a flag, so `provision` mounts
+    what the guest actually has however it was attached.
+    """
+    p = virsh("dumpxml", args.name, capture=True, check=False)
+    if p.returncode != 0:
+        return []
+    out, in_fs = [], False
+    for line in p.stdout.splitlines():
+        if "<filesystem" in line:
+            in_fs = True
+        elif "</filesystem>" in line:
+            in_fs = False
+        elif in_fs and "<target" in line:
+            m = re.search(r"dir='([^']+)'", line)
+            if m:
+                out.append(m.group(1))
+    return out
+
+
+def mount_shares(args) -> None:
+    """Mount the domain's virtiofs shares in the guest, persistently.
+
+    The target dir doubles as the mount TAG, which nothing mounts for you.
+    An fstab entry rather than a bare mount, so a guest reboot does not
+    silently come back with the share missing and the agent writing into an
+    empty directory that looks like the real one.
+    """
+    tags = domain_shares(args)
+    if not tags:
+        return
+    lines = "\n".join(
+        f"echo {shlex.quote(f'{t} {t} virtiofs defaults,nofail 0 0')} | "
+        f"sudo tee -a /etc/fstab >/dev/null"
+        for t in tags)
+    checks = "\n".join(f"sudo mkdir -p {shlex.quote(t)}" for t in tags)
+    guest_sh(args, f"""set -e
+{checks}
+for t in {' '.join(shlex.quote(t) for t in tags)}; do
+  grep -qF " $t virtiofs " /etc/fstab || NEED=1
+done
+if [ -n "${{NEED:-}}" ]; then
+{lines}
+  sudo systemctl daemon-reload
+fi
+sudo mount -a
+for t in {' '.join(shlex.quote(t) for t in tags)}; do
+  findmnt -no FSTYPE,TARGET "$t" | sed 's/^/share     /'
+done
+""")
 
 
 def runner_flags(args) -> list[str]:
@@ -596,10 +827,15 @@ for pidf in {GUEST_RUN}/agent-runner-*.pid; do
   slot=$(basename "$pidf" .pid); slot=${{slot#agent-runner-}}
   pid=$(cat "$pidf") || continue
   kids=$(ps --ppid "$pid" -o comm= 2>/dev/null | tr '\n' ' ')
-  [ -n "$kids" ] && echo "$slot: $kids"
+  [ -n "$kids" ] && echo "LIVE|$slot: $kids"
 done
 """, capture=True, check=False)
-    return [l for l in p.stdout.splitlines() if ":" in l] if p.returncode == 0 else []
+    # A marker, because capture merges the guest's stderr in: ssh's own
+    # "Permanently added ... to the list of known hosts" warning contains a
+    # colon and was read as a live agent.
+    if p.returncode != 0:
+        return []
+    return [l.split("|", 1)[1] for l in p.stdout.splitlines() if l.startswith("LIVE|")]
 
 
 def guard_live_agents(args, what: str) -> None:
@@ -610,7 +846,7 @@ def guard_live_agents(args, what: str) -> None:
     each one is then resumed BY HAND. This guard exists because that was done
     here once, with the evidence of the live children already on screen.
     """
-    if args.force:
+    if getattr(args, "force", False):
         return
     live = live_agents(args)
     if live:
@@ -783,6 +1019,15 @@ def main() -> int:
     up.add_argument("--memory", type=int, default=4096)
     up.add_argument("--vcpus", type=int, default=2)
     up.add_argument("--disk", type=int, default=40, help="disk size in GiB")
+    up.add_argument("--force", action="store_true",
+                    help="attach a share even while a task is running on the guest "
+                         "(it needs a reboot, which fails those tasks)")
+    up.add_argument("--share", default="",
+                    help="comma-separated HOST directories to expose over virtiofs, "
+                         "mounted at the SAME path in the guest. An agent with root "
+                         "in the guest can write them, so export one repo, not $HOME. "
+                         "Commits made there land in the host's own .git, which is the "
+                         "point: nothing to transfer, just push from the host.")
     up.add_argument("--image-url", default=DEFAULT_IMAGE_URL,
                     help="cloud image to import; cached in ~/vm/ under its basename")
     up.add_argument("--refresh-image", action="store_true",
