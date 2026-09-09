@@ -1026,8 +1026,13 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// by exact id (a truncated prefix could match the wrong
 					// row) — same label+raw pattern as capsBits/scopeBase.
 					"createdById": creatorFull(t.CreatorTaskId),
-					"caps":        cli.CapsLabel(t.Capabilities),
-					"scope":       cli.ScopeLabel(t.Scope),
+					// holdDeadline is the raw nanos, not a label: the sheet
+					// shows a countdown, and a formatted string cannot be
+					// counted down from. 0 for a task with no hold. Same
+					// label+raw split the caps/scope fields use.
+					"holdDeadline": float64(t.HoldDeadlineNs),
+					"caps":         cli.CapsLabel(t.Capabilities),
+					"scope":        cli.ScopeLabel(t.Scope),
 					// Raw prefill fields beside the labels: the re-grant
 					// dialog seeds its chips/radios/checklist from these —
 					// back-parsing label forms like "all,-spawn" would mean

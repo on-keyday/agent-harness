@@ -1091,17 +1091,27 @@ adding `Held` is a decision at each. Enumerated, with the verdict:
 | `server/port_forward.go:28`, `:92` | register / close a port forward | **stays out** — no runner connection exists, so the forward has nowhere to go |
 | `server/port_forward_list.go:75` | list a task's forwards | **stays out** — §2 does not hold forwards; there are none to list |
 | `server/file_transfer.go:32`, `:112` | push / pull into a worktree | **stays out** — the transfer needs the runner leg |
-| `cli/list.go:229` | renders a task as live | **goes in** — the child is running; this is the one class where a held task is alive |
-| `tui/tasks.go:414` | same predicate, TUI side | **goes in**, same reason |
+| `cli/list.go:229` | prints the `cowrite=/viewer=` pair | **stays out** — those counts come from a live SessionMux, and a held task has none. "No session to describe" is a different thing from a session with zero watchers, which is the distinction that rule exists to keep |
+| `tui/tasks.go:414` (`taskSessionAlive`) | reattach, grid tiling, the file picker | **stays out** — it gates ACTIONS, and its own doc says it mirrors the server's refusals. Held in here would offer a reattach the server then refuses |
+| `webui/static/main.js` ×6 | the same predicate in the browser | **stays out**, same reason |
 | `tui/taskaction.go:69` | `Running && Kind == Oneshot` — a per-row action gate | **stays out**: the action needs a live runner leg |
 | `server/task_handler.go:1460` | `afterMuxStopped` cancels a still-`Running` task | **stays out**, and the ordering that makes it safe is a race today — see §5 step 7 |
 
-The refusals are the interesting half. Leaving `Held` out of them is correct —
-but it is correct *by accident*, because the disjunction happens not to name it,
-and an implementer who "fixes" the predicates by adding `Held` everywhere would
-make `forward`, `file push` and `file pull` accept a task whose runner is not
-connected. Written down here so that outcome is a decision rather than a diff
-nobody questioned.
+**Corrected while implementing: `Held` stays out of EVERY liveness predicate,
+not just the refusals.** The first draft of this table had the two render
+predicates taking it in, on the reasoning that a held task's child is alive.
+Reading what they actually gate settles it the other way: `taskSessionAlive`
+gates reattach, grid tiling and the file picker, and its own doc says it mirrors
+the server's refusals; `cli/list.go:229` gates the observer counts, which come
+from a mux that no longer exists. So the rule is simpler than the table
+suggested — in this codebase "alive" means **a live server-side session**, and a
+held task is exactly the case with a live CHILD and no session.
+
+That also makes the refusals correct on purpose rather than by accident, which
+is what the first draft could not claim: an implementer who "fixes" the
+predicates by adding `Held` everywhere would make `forward`, `file push`,
+`file pull`, reattach and the grid all accept a task whose runner is not
+connected.
 
 **And two label switches fall through to `"?"`.** `cli/list.go:745-751` and
 `tui/tasks.go:425-432` map each status to a fixed-width label and `return "?"`

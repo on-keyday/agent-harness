@@ -410,6 +410,11 @@ func originCell(k protocol.ClientKind) string {
 // file picker can list. The server draws the same line (it answers NoSuchTask
 // for file ops outside it, server/file_transfer.go), so it is named once here
 // rather than open-coded at each call site.
+// Held is deliberately absent. "Alive" here means a live SERVER-SIDE session —
+// a mux to attach to, a worktree the file picker can reach through it — and a
+// held task is precisely the case with a live CHILD and no session: its mux
+// died with the previous server. Adding it here would offer a reattach the
+// server then refuses.
 func taskSessionAlive(s protocol.TaskStatus) bool {
 	return s == protocol.TaskStatus_Running || s == protocol.TaskStatus_Detached
 }
@@ -428,6 +433,8 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Cancel"
 	case protocol.TaskStatus_Detached:
 		return "Detachd"
+	case protocol.TaskStatus_Held:
+		return "Held"
 	}
 	return "?"
 }

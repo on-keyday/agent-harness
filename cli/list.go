@@ -414,6 +414,12 @@ type taskJSON struct {
 	Viewers   uint16 `json:"viewers"`
 	Cowriters uint16 `json:"cowriters"`
 	ExecCount uint16 `json:"exec_count"`
+	// HeldUntil is when a HELD task's runner stops keeping its child alive,
+	// RFC3339 on the clock of the server that arranged the hold. Empty for
+	// every task that is not held — absence here is not an elided zero, it is
+	// "this task has no hold to describe", the same rule the observer counts
+	// follow from the other side.
+	HeldUntil string `json:"held_until,omitempty"`
 	Caps      string `json:"caps"`
 	Scope     string `json:"scope"`
 	// ScopeByCap is the FULLY RESOLVED capability -> scope map: every bit the
@@ -513,6 +519,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Viewers:        t.Viewers,
 		Cowriters:      t.Cowriters,
 		ExecCount:      t.ExecCount,
+		HeldUntil:      heldUntilStr(t.HoldDeadlineNs),
 		Caps:           CapsLabel(t.Capabilities),
 		Scope:          ScopeLabel(t.Scope),
 		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
@@ -584,6 +591,17 @@ func runnerStatusJSON(s protocol.RunnerStatus) string {
 	default:
 		return "offline"
 	}
+}
+
+// heldUntilStr renders a hold deadline for a machine reader, or "" when the
+// task has no hold. RFC3339 rather than raw nanos: every other timestamp this
+// output carries is formatted, and a scripting caller comparing "how long
+// left" wants a date it can parse with the same tool as the rest.
+func heldUntilStr(ns uint64) string {
+	if ns == 0 {
+		return ""
+	}
+	return time.Unix(0, int64(ns)).Format(time.RFC3339)
 }
 
 // taskStatusJSON renders TaskStatus as a lowercase scripting token, the trimmed
@@ -747,6 +765,8 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Cancelled"
 	case protocol.TaskStatus_Detached:
 		return "Detached "
+	case protocol.TaskStatus_Held:
+		return "Held     "
 	}
 	return "?"
 }

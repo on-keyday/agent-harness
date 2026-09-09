@@ -1719,6 +1719,11 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		// live session: a task that ended dirty keeps its worktree and can be
 		// exec'd into long after its mux is gone.
 		taskInfos[i].ExecCount = h.execs().countForTask(t.ID)
+		// The hold deadline is STORED state, not a live read: it belongs to
+		// the server that arranged the hold and survived a restart in the WAL,
+		// which is exactly why the operator cannot derive it client-side.
+		// Zero for every task that is not Held.
+		taskInfos[i].HoldDeadlineNs = uint64(t.HoldDeadline)
 	}
 	var body protocol.ListResultBody
 	body.SetRunners(runnerInfos)

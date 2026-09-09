@@ -196,6 +196,14 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	// difference belongs. Always printed — a hidden default reads as "this
 	// task has no such property".
 	fmt.Fprintf(&sb, "skills:        %s\n", skillsInjectedDetail(t))
+	// A held task's deadline, which is the only question the operator has
+	// about one: status=held cannot tell 5 seconds of window from 85, and that
+	// is the whole decision. Gated on the hold EXISTING rather than on its
+	// value — a task with no hold has nothing to describe here, which is a
+	// different thing from a hold of zero length.
+	if t.HoldDeadlineNs > 0 {
+		fmt.Fprintf(&sb, "held until:    %s\n", formatNanoTs(t.HoldDeadlineNs))
+	}
 	// Busy/idle badge + last-output timestamp for a live interactive session,
 	// mirroring the task table's Act column (blank there for tasks without a
 	// live session — the server leaves last_output_at at 0 for those).

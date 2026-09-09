@@ -838,6 +838,17 @@ format TaskInfo:
     # does not report execs", which is the ambiguity the counts exist to
     # remove. It is 0 for a task with no worktree to run anything in.
     exec_count :u16
+    # hold_deadline_ns is when the runner's promise to keep a HELD task's child
+    # alive expires — unix nanos on the clock of the server that arranged the
+    # hold. 0 for every task that is not Held, which is every task in ordinary
+    # operation.
+    #
+    # It is on the wire because the operator's only question about a held task
+    # is how long is left: status=held alone cannot distinguish 5 seconds of
+    # window from 85, and that difference is the whole decision ("do I hurry?").
+    # Not derivable client-side either — the window belongs to the server that
+    # went away.
+    hold_deadline_ns :u64
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes

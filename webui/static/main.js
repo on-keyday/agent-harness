@@ -4560,6 +4560,15 @@ const POLL_INTERVAL_MS = 5000;
       // scope is half a task's authority and is never absent, a narrowing that
       // is not there has nothing to report.
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
+      // A held task's remaining window. Present only when there IS a hold —
+      // a task with none has nothing to describe here, unlike the observer
+      // counts below, whose zeros are measurements. Counted down from the raw
+      // deadline rather than shown as a timestamp: the operator's question is
+      // "how long have I got", and this is the surface they act on.
+      if (t.holdDeadline) {
+        const leftMs = t.holdDeadline / 1e6 - Date.now();
+        metaText += `  held_for=${leftMs > 0 ? Math.ceil(leftMs / 1000) + "s" : "expired"}`;
+      }
       // Who is on the live session, cowriters first — same wording and the same
       // always-printed rule as the CLI row: zeros included, so "nobody is
       // watching" never looks like "this row does not report watchers". This is
