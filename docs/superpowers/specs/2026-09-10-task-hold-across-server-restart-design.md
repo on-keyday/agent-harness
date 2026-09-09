@@ -118,7 +118,7 @@ with on its merits.
 | D5 | The hold is a two-message exchange: the runner ACKs with the exact task set it will keep, and that ack is what the server persists | author |
 | D6 | Nothing in the runner's report grants authority. caps, scope, worktree, profile and args are re-derived from the WAL | author |
 | D7 | The report rides in `RunnerHello`, not in a message after the handshake | author |
-| D8 | One new WAL record, `task_held`, per held task. No runner-scoped record | author |
+| D8 | Two new WAL records — `task_held` per held task and `task_readopted` per re-adoption. No runner-scoped record | author |
 | D9 | `TaskStatus` gains `held`, appended | author |
 | D10 | The window `T` is chosen by the SERVER and carried in the request | author |
 | D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
@@ -196,7 +196,9 @@ takes the same server-first rule as its prerequisite did.
 **D8**: `task_held` carries the task, the runner identity, the hold id and the
 deadline, so the server's intent, the runner's agreement and the expiry are one
 record. A separate runner-scoped record would have to be correlated back to the
-tasks on replay for no gain. Replay is order-sensitive, which resolves the
+tasks on replay for no gain. `task_readopted` is the closing half and is not
+optional: without it `task_held` stays the last word about the task, and a
+SECOND restart offers it for re-adoption again against the previous hold's id. Replay is order-sensitive, which resolves the
 awkward case by itself: if a shutdown writes `task_held` and the process then
 carries on and finishes the task, the later `task_finished` wins.
 
@@ -295,6 +297,17 @@ what `Detached` means. It must not be re-adopted into `Running` — that would
 claim a client is attached — and the startup sweep that Cancels Detached
 survivors (`server/server.go:674-679`) must not see it before re-adoption,
 which it will not: replay puts it in `held`, a status that sweep does not match.
+
+**But `SetDetached` will refuse it.** That method rejects anything whose status
+is not `Running` — `SetDetached: task %q status is %v, want Running`
+(`server/taskstore.go:700-709`) — and it is also what stamps `DetachedAt` and
+clears `IsAttached`, so bypassing it with a field assignment silently produces a
+Detached task with a zero `DetachedAt`. Re-adoption therefore goes `Held →
+Running` through the assign path (which already handles a `wasDetached` task
+coming back, `server/taskstore.go:505-520`) and then calls `SetDetached`, or
+`SetDetached` learns `Held` as a second accepted precondition. The first is
+preferable: it reuses a transition that already exists and keeps the "want
+Running" invariant true, and D16's `BindTask` belongs on that same assign step.
 
 ## 4. Wire changes — all of them, in one place
 
@@ -422,15 +435,34 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +# addressed by task id and not by a stream.
 +format RebindSessionRequest:
 +    task_id :TaskID
-+    stream_id :u64
++    stream_id :u64   # u64 to match OpenExecRunnerRequest.stream_id (line 199)
++
++# No new response format. A rebind that CANNOT be honoured — the child died
++# between the report and this request — is answered with the existing
++# TaskFinished{exit_code:-1, error_message:"rebind_failed: …"}, which the
++# server already handles as Finish + UnbindTask + Revoke. A rebind with no
++# failure path at all would leave the server holding a task it believes is
++# alive on a stream nothing will ever write to.
 ```
 
-WAL — one new record type, written by the shutdown path and read by replay:
+WAL — two new record types, written by the shutdown path and by re-adoption,
+both read by replay:
 
 ```
 {"type":"task_held","task_id":<hex>,"runner_id":<identity hex>,
  "hold_id":<hex>,"hold_deadline_ns":<int64>,"ts":<int64>}
+
+{"type":"task_readopted","task_id":<hex>,"runner_id":<identity hex>,
+ "hold_id":<hex>,"ts":<int64>}
 ```
+
+`task_readopted` is not decoration: it is what makes a SECOND restart correct.
+Without it, replay sees `task_held` as the last word and offers the task for
+re-adoption again, against a `hold_id` from the restart before. Its replay
+meaning is "Running (or Detached) again on `runner_id`, and the hold named by
+`hold_id` is closed". The ticket is NOT written to it (D6). §5 used this record
+before this section declared it — the same omission as the ticket field, found
+by the audit that produced §6c.
 
 `WALEvent` gains `HoldID string` and `HoldDeadlineNs int64`; the shadow struct
 `walEventJSON` gains both, or `TestWALEventJSONRoundTripCopiesEveryField` fails
@@ -728,6 +760,35 @@ message's encoded body.
   a fast unit test with the arithmetic named in it, not a datagram-sized
   integration case.
 
+## 6c. The liveness predicate is written out eight times
+
+Items 11–23 walk the surfaces that must SHOW a status. Nothing in them reaches
+the places that *branch* on one, and a new `TaskStatus` value silently falls
+outside every such branch. There is no `IsLive(status)` function in this tree:
+the notion is spelled `Status == Running || Status == Detached` at each site, so
+adding `Held` is a decision at each. Enumerated, with the verdict:
+
+| Site | What it gates | `Held` |
+|---|---|---|
+| `server/port_forward.go:28`, `:92` | register / close a port forward | **stays out** — no runner connection exists, so the forward has nowhere to go |
+| `server/port_forward_list.go:75` | list a task's forwards | **stays out** — §2 does not hold forwards; there are none to list |
+| `server/file_transfer.go:32`, `:112` | push / pull into a worktree | **stays out** — the transfer needs the runner leg |
+| `cli/list.go:229` | renders a task as live | **goes in** — the child is running; this is the one class where a held task is alive |
+| `tui/tasks.go:414` | same predicate, TUI side | **goes in**, same reason |
+
+The refusals are the interesting half. Leaving `Held` out of them is correct —
+but it is correct *by accident*, because the disjunction happens not to name it,
+and an implementer who "fixes" the predicates by adding `Held` everywhere would
+make `forward`, `file push` and `file pull` accept a task whose runner is not
+connected. Written down here so that outcome is a decision rather than a diff
+nobody questioned.
+
+**And two label switches fall through to `"?"`.** `cli/list.go:745-751` and
+`tui/tasks.go:425-432` map each status to a fixed-width label and `return "?"`
+on anything unlisted, so a `Held` task ships as a literal question mark on the
+`ls` rows and in the TUI table until both gain an arm. Not a crash, which is
+why it would survive a demo.
+
 ## 7. Surface matrix
 
 Walked against the `surface-parity-checklist` numbering; the numbers are what
@@ -735,15 +796,16 @@ the implementation's own walk must return a verdict for.
 
 | # | Surface | Change |
 |---|---|---|
-| 11 | `ls` text rows | `status=held` renders; no new column |
+| 11 | `ls` text rows | `status=held` renders — needs an arm in `cli/list.go:745-751` or it prints `?` (§6c); no new column |
 | 12 | `ls --json` | `status` carries `held`; `held_until` (RFC3339) and `hold_id` added, never elided |
-| 16 | TUI task table | `held` in the status cell, with its own colour — not the Failed colour |
+| 16 | TUI task table | `held` in the status cell, with its own colour — not the Failed colour; needs an arm in `tui/tasks.go:425-432` or it prints `?` (§6c) |
 | 17 | TUI task detail (`d`) | `held until …` line, plus the runner identity it is held by |
 | 19 | TUI picker rows | `held` is a status a picker row can show |
 | 20 | WebUI task row meta | `held` in the status chip |
 | 21 | WebUI task detail sheet | `held until …` |
 | 23 | wasm snapshot | `held` label AND the raw deadline, per item 22's raw-value rule |
 | 24 | `cancel` on a held task | Cancels in the store; the child dies when the runner is refused at re-adoption. Written down because "cancel" on a task with no live runner connection is a path with its own meaning |
+| — | Liveness branches | §6c: five refusal sites keep `Held` OUT, two render predicates take it IN. Not reachable from items 11-23 |
 | 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence. Plus `<data-dir>/held/<task-id>.screen`, which is state on disk that is NOT in the WAL — deleted after it is fed, and orphans swept at startup |
 | 35 | `README.md` | the two server flags, and one paragraph stating that a CRASH recovers nothing |
 | 37 | This spec | an Amendment section if the shipped behaviour differs |
