@@ -160,10 +160,42 @@ start_server(){ # $1 = binary
   SPID=$!
   for _ in $(seq 1 30); do
     grep -qi "server exited" "$TMP/server.log" && return 1
+    # The pid check is not belt-and-braces, it is the whole assertion: a
+    # successful connect to $PORT says SOMEBODY is listening, not that it is the
+    # process just spawned. Phase 2 replaces a server on a fixed port, so if the
+    # previous one has not finished exiting, the probe answers from IT while the
+    # new binary dies on "address already in use" — and every later phase then
+    # talks to nothing. Measured 2026-09-10: the hold sequence made a deliberate
+    # shutdown take ~2s, the fixed `sleep 1` below stopped being enough, and
+    # phase 2 failed as "the runner did not self-heal" with the real cause two
+    # steps upstream.
+    kill -0 "$SPID" 2>/dev/null || return 1
     (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && return 0
     sleep 0.3
   done
   return 1
+}
+
+# stop_server terminates the running server and WAITS for the port to be
+# released. A deliberate SIGTERM now runs the hold sequence (asking every runner
+# to keep its children, collecting acks, writing records), so exit is no longer
+# immediate and the duration is a property of the feature, not a constant this
+# script can guess.
+stop_server(){
+  [ -n "$SPID" ] || return 0
+  kill "$SPID" 2>/dev/null
+  for _ in $(seq 1 60); do
+    kill -0 "$SPID" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -9 "$SPID" 2>/dev/null
+  wait "$SPID" 2>/dev/null
+  # The socket outlives the process by a moment; bind fails while it does.
+  for _ in $(seq 1 20); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null || return 0
+    sleep 0.25
+  done
+  return 0
 }
 runner_alive(){ [ -n "$RPID" ] && kill -0 "$RPID" 2>/dev/null; }
 
@@ -225,7 +257,7 @@ fi
 echo
 echo "  [2/3] upgrade server to NEW: runner must self-heal (no manual restart)"
 before="$(grep -c "persist: connected" "$TMP/runner.log" 2>/dev/null)"; before="${before:-0}"
-kill "$SPID" 2>/dev/null; sleep 1
+stop_server
 start_server "$TMP/new-server" || { echo "wire-skew-check: NEW server failed to listen — setup error"; head -3 "$TMP/server.log"; exit 2; }
 
 # Assert self-heal from the RUNNER's own log, not via harness-cli: the cli would
