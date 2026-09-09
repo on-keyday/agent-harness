@@ -155,6 +155,19 @@ func (s *Session) taskRootCtx(connCtx context.Context) context.Context {
 	return connCtx
 }
 
+// sendTaskMsg delivers a task lifecycle message through whatever connection is
+// CURRENT, waiting while a hold is armed.
+//
+// Only the terminal messages need this, and they need it badly: TaskAccepted
+// and TaskStarted are sent at spawn, long before any hold, but TaskFinished can
+// be the one thing a held task still has to say — and bound to the connection
+// the task STARTED on it went into a dead socket, so the server never learned
+// the task had ended and the row stayed Running forever. Found on a
+// re-adopted oneshot that had actually run to completion.
+func (s *Session) sendTaskMsg(data []byte) error {
+	return s.reg.sendWhenConnected(data, s.Sender)
+}
+
 // childLive reports that this task's child process has started and not yet
 // exited — the only condition under which a hold may promise it.
 func (e *taskEntry) childLive() bool {
@@ -501,7 +514,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.Sender.Send(data)
+		_ = s.sendTaskMsg(data)
 	}
 
 	// Panic recovery: report as TaskFinished so the server doesn't wait forever.
@@ -632,8 +645,12 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		Env:                       env,
 		LogFormat:                 agentProfile.LogFormat,
 	}
+	// Through the REGISTRY, not through s.Sender: a held task outlives this
+	// Session, and a sink bound to this connection publishes into a dead one
+	// forever after a re-adoption. It also waits rather than dropping while a
+	// hold is armed, which is D12 on this path.
 	logSink := func(data []byte) {
-		_ = s.Sender.Publish(topic, data)
+		_ = s.reg.publishWhenConnected(topic, data, s.Sender)
 	}
 	// The oneshot path's child brackets: Run starts the process and returns
 	// when it has exited, so the pair is exact here without a hook. A hold may
@@ -655,7 +672,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.Sender.Send(data)
+		_ = s.sendTaskMsg(data)
 	}
 
 	// Step 6: Conditionally clean up the worktree directory. The branch ref
@@ -710,7 +727,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
 		tf.ErrorMessage = []byte(reason)
 		m.SetTaskFinished(tf)
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+		_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	if s.Streams == nil {
@@ -941,7 +958,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 				tf.ErrorMessage = []byte("stream_adapter: " + runErr.Error())
 			}
 			m.SetTaskFinished(tf)
-			_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+			_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 		}
 
 		if !s.NoWorktree {
@@ -1042,7 +1059,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+		_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	// Step 6: Conditionally clean up the worktree directory. See handleAssign

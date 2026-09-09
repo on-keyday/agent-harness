@@ -785,8 +785,16 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		}
 
 		// Register taps for tasks that survived replay and may still emit logs.
+		//
+		// Held belongs here more than anything else on the list: its child is
+		// alive on a runner right now and will resume publishing the moment
+		// re-adoption reconnects it. Without a tap that output is dropped
+		// server-side, so a held oneshot's log truncates at the restart and
+		// silently resumes nowhere — measured, and it looked like a runner-side
+		// send failure for two rounds of debugging.
 		for _, t := range s.tasks.List(0) {
-			if t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Running {
+			if t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Running ||
+				t.Status == protocol.TaskStatus_Held {
 				logTaps.Register(t.ID)
 			}
 		}

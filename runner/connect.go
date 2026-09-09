@@ -318,6 +318,9 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}
+	// The registry outlives this Session, so a held task's output can find
+	// whatever connection is current instead of the one it started on.
+	cfg.Tasks.setSender(sender)
 
 	// The uplink: one connection multiplexing every task on this runner, and the
 	// end that SENDS every pull. Its congestion state was unobservable before
