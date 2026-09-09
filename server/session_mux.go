@@ -979,6 +979,20 @@ func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }
 // Stdout/Stderr frame from the runner, or 0 if none has arrived yet.
 func (m *SessionMux) LastOutputUnixNano() int64 { return m.lastOutput.Load() }
 
+// lastWinSizeBytes is the most recent TerminalWindowSize frame as wire bytes,
+// or nil. Re-adoption writes it into a freshly created runner stream, which
+// both hands the runner the PTY size it needs and makes the stream exist for
+// the peer at all — a stream nothing has crossed is not findable, and the
+// runner's side of a rebind is a lookup that waits.
+func (m *SessionMux) lastWinSizeBytes() []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.lastWinSize) == 0 {
+		return nil
+	}
+	return append([]byte(nil), m.lastWinSize...)
+}
+
 // idleWatchTick is the poll interval of an armed idle watcher. Worst-case
 // fire latency is threshold+idleWatchTick — irrelevant at human/agent
 // timescales, and polling an atomic avoids any per-frame timer churn.

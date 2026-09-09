@@ -330,16 +330,23 @@ func (s *Server) captureHeldScreen(taskIDHex string) {
 	}
 	mux := s.taskHandler.Sessions.Get(taskIDHex)
 	if mux == nil {
-		return // oneshot, or a session that has already gone
+		// A oneshot has none, which is ordinary. An INTERACTIVE task with no
+		// mux here is not: it means the session registry was already emptied,
+		// and the rebind that follows will have no screen to replay.
+		s.cfg.Logger.Info("hold: no session mux to capture", "task", taskIDHex)
+		return
 	}
 	rp := mux.screenRepaint()
 	if len(rp) == 0 {
+		s.cfg.Logger.Warn("hold: screen repaint was empty", "task", taskIDHex)
 		return
 	}
 	path := holdScreenPath(s.cfg.DataDir, taskIDHex)
 	if err := os.WriteFile(path, rp, 0o644); err != nil {
 		s.cfg.Logger.Warn("hold: screen capture failed", "task", taskIDHex, "err", err)
+		return
 	}
+	s.cfg.Logger.Info("hold: screen captured", "task", taskIDHex, "bytes", len(rp))
 }
 
 // readHeldScreen returns a held task's captured screen and removes the file.

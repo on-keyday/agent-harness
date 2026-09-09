@@ -1346,9 +1346,33 @@ reachable only this way and none of them could have failed a unit test.
 | 4. deadline with no runner | `Failed err="hold_expired"` at the deadline, from the single timer |
 | 5. cancel while held | refused at re-adoption (`status=Cancelled`), child reaped in ~500 ms rather than at the deadline |
 | 6. runner PROCESS restart | unit-level (`TestReadoptRefusesAnotherRunnersTask`); the live run was blocked by the test harness's own argv quoting, not by the product |
+| 7. the same suite over UDP | passes, at ~40 s instead of ~2 s — see below, and the one defect it alone exposed |
 
-Still to run: the UDP pass (§6a.1's timing differs by transport) and D12's
-per-agent stall behaviour for claude, codex and agy.
+**The UDP pass, run 2026-09-10.** Everything above holds — child alive on the
+same pid, capture written, rebind honoured, `session snapshot` showing `tick 70`
+after a `tick 6` before — but the TIMING is a different animal, and one defect
+showed up only here.
+
+- **Re-adoption took ~40 s of the 90 s window**, against ~2 s over WebSocket.
+  The runner did not see a `trsf.Close` at all: its relay logged the far-side
+  error 40 s after the shutdown, where the WS run logs it at the instant. So
+  §6a.1's fallback is not a rare case on this leg, it is the normal one — and
+  the reason is that the shutdown closes the HTTP/WS listener
+  (`closeListeners` is `shutdownHTTP`) while nothing tears down UDP
+  connections before the process exits, so no Close is ever sent there. That
+  asymmetry predates this change; the hold is what turned it into a cost.
+- **Therefore the window has a floor, and it is not arbitrary**: ping interval
+  (15 s) + max reconnect backoff (30 s) = 45 s before a UDP runner can even
+  present its report. The 90 s default clears it twice over. Lowering it to
+  "30 s, because restarts are fast" would silently strand every UDP runner
+  while WS runners kept their children — the worst shape of partial failure,
+  since it looks like a flaky subset of the fleet.
+- Sending a Close on the UDP leg during shutdown would collapse that 40 s to
+  ~2 s. Worth doing, out of scope here, and named so the 45 s floor is
+  understood as a consequence of a missing teardown rather than a property of
+  UDP.
+
+Still to run: D12's per-agent stall behaviour for claude, codex and agy.
 
 ### The plan, as written before any of that
 

@@ -185,6 +185,26 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 			mux.injectServerBytes(screen)
 		}
 
+		// Make the stream REAL before asking the runner to find it.
+		//
+		// A trsf stream the server creates does not exist for the peer until
+		// something crosses it, and the runner's side of a rebind is a lookup
+		// that waits — so with nothing written this deadlocks: the runner
+		// waits for a stream the server will only populate once the child
+		// produces output, and the child cannot, because its relay is still
+		// parked. Over WebSocket it happened to work; over UDP it failed every
+		// time with "stream lookup failed", and the session came back with a
+		// live child and a blank screen.
+		//
+		// The winsize is the right thing to send: the runner needs the PTY
+		// dimensions anyway, the mux already holds the last one as wire bytes,
+		// and a rebound session with a stale size renders wrong.
+		if wz := mux.lastWinSizeBytes(); len(wz) > 0 {
+			if err := runnerStream.AppendData(false, wz); err != nil {
+				log.Warn("rebind: could not prime the stream", "task", taskID, "err", err)
+			}
+		}
+
 		var rr protocol.RunnerRequest
 		rr.Kind = protocol.RunnerRequestType_RebindSession
 		var tid protocol.TaskID
