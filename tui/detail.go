@@ -116,6 +116,10 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
 	fmt.Fprintf(&sb, "id:            %s\n", r.Id.Hex())
+	// WHERE it is reached, as its own line: id used to BE the connection id, so
+	// one value answered both. Hostname does not replace it — two slots on one
+	// machine share a hostname and differ only here.
+	fmt.Fprintf(&sb, "cid:           %s\n", cli.RunnerCIDStr(r.Cid))
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
 	// Always printed. A runner has a platform whether or not it reported one,
 	// and it decides real things — which shell an `ssh host cmd` reaches, which

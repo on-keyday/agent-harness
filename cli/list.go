@@ -147,7 +147,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -156,6 +156,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			r.Id.Hex(),
+			RunnerCIDStr(r.Cid),
 		)
 	}
 
@@ -287,7 +288,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -296,6 +297,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			r.Id.Hex(),
+			RunnerCIDStr(r.Cid),
 		)
 	}
 
@@ -337,6 +339,7 @@ const orphanMarker = "\u2020 orphan"
 // skills_injected is broken out as its own bool.
 type runnerJSON struct {
 	Id             string   `json:"id"`
+	Cid            string   `json:"cid"`
 	Status         string   `json:"status"`
 	Hostname       string   `json:"hostname"`
 	GOOS           string   `json:"goos"`
@@ -345,6 +348,21 @@ type runnerJSON struct {
 	Agents         []string `json:"agents"`
 	SkillsInjected bool     `json:"skills_injected"`
 	Roots          []string `json:"roots"`
+}
+
+// RunnerCIDStr renders RunnerInfo.cid — WHERE a runner is reached right now.
+//
+// It is its own column because id= stopped answering it: a RunnerID used to BE
+// the connection id, so one value showed both at once. An absent cid renders
+// "-" rather than the malformed string a zero ConnID stringifies to.
+//
+// Exported because the TUI's detail popup needs the same rendering; a second
+// copy there is how the two surfaces would drift.
+func RunnerCIDStr(cid protocol.ConnID) string {
+	if cid.TransportLen == 0 {
+		return "-"
+	}
+	return cid.ToObjproto().String()
 }
 
 // RunnerGOOSStr words RunnerInfo.goos for a row.
@@ -428,6 +446,7 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 		}
 		doc.Runners = append(doc.Runners, runnerJSON{
 			Id:             r.Id.Hex(),
+			Cid:            RunnerCIDStr(r.Cid),
 			Status:         runnerStatusJSON(r.Status),
 			Hostname:       string(r.Hostname),
 			GOOS:           RunnerGOOSStr(r.Goos),

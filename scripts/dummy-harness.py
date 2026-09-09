@@ -19,6 +19,11 @@ Both are scrubbed here. Do not "simplify" that away.
 The live fleet is never touched: loopback only, an ephemeral port, a fresh
 PSK, and a temp data dir that goes away on teardown.
 
+The WebUI is served from webui/ on disk (--webui-dir), not from the binary's
+embedded copy: an embedded one is frozen at compile time, so a JS/wasm edit
+would need `make build` plus a new instance before the browser saw it, and until
+then the page looks like the change did not work.
+
 Usage:
   scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--udp]
                               [--server-arg=--flag ...] [-- <extra agent-runner flags>]
@@ -413,9 +418,21 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: li
         check=True,
     )
 
+    # --webui-dir by DEFAULT, unlike the flag's own default of "serve the
+    # embedded copy". An embedded WebUI is frozen at the server binary's compile
+    # time, so a JS/wasm edit reaches a dummy only after `make build` AND a fresh
+    # instance — and until then the browser shows the OLD page, which reads as
+    # "my change did not work" rather than "you are looking at last build's
+    # assets". That is the one class of change this script exists to check and
+    # the one it silently could not, so the default is inverted here.
+    #
+    # It is placed BEFORE server_args so an explicit
+    # --server-arg=--webui-dir=... still wins: Go's flag package keeps the last
+    # occurrence.
     server = spawn(
         [daemon.bin_path("harness-server"), "--listen", f"127.0.0.1:{port}",
          "--udp-listen", f"127.0.0.1:{udp_port}",
+         "--webui-dir", str(REPO_ROOT / "webui"),
          "--psk", psk, "--operator-psk", psk, "--data-dir", str(data)] + server_args,
         tmp / "server.log",
     )

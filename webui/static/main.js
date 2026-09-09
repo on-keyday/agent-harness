@@ -5872,7 +5872,7 @@ function renderRunners(runners) {
     // os= is always shown, "unknown" included: a runner has a platform whether
     // or not it reported one, and it decides which shell an `ssh host cmd`
     // reaches on it.
-    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  os=${r.goos || "unknown"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}`;
+    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  os=${r.goos || "unknown"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}  id=${r.id || "-"}  cid=${r.cid || "-"}`;
   }).join("\n");
 }
 
@@ -6467,7 +6467,7 @@ async function runVerbCommand(tokens, ctx) {
         "                            create a worktree directory (-p: parents, idempotent)",
         "  file pull [-r] <task> <rel>",
         "                            download a remote file, or -r for a directory as a .tar",
-        "  server dial-runner <cid> [--via <cid>]",
+        "  server dial-runner <cid> [--via <runner-id>]",
         "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
         "  exec <task-id> [--] <cmd> [args...]",
         "                            run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",

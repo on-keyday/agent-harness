@@ -414,7 +414,7 @@ type SendAction struct {
 // ServerDialRunnerAction is built by: server dial-runner.
 type ServerDialRunnerAction struct {
 	ActionMarker
-	// relay through this registered runner CID (copy from `harness-cli ls`)
+	// relay through this registered runner, by its 32-hex identity (the id= column of `harness-cli ls`)
 	Via       string
 	RunnerCID string
 }

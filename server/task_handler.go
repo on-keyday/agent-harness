@@ -1925,7 +1925,7 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info.SetSkillsInjected(r.SkillsInjected)
 	info.Id = r.Identity
 	// WHERE it is reached, which id used to answer by being an address.
-	info.Addr = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
+	info.Cid = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
 
 	// Populate AllowedRoots.
 	roots := make([]protocol.AllowedRoot, len(r.AllowedRoots))

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -34,7 +35,12 @@ const (
 
 // App is the top-level Bubble Tea Model.
 type App struct {
-	server      string
+	server string
+	// principal is what this process connects AS — "operator" or
+	// "agent <short-task-id>". Shown in the header because an agent's
+	// caps=none makes the runner list come back empty, which otherwise
+	// reads as a broken pane.
+	principal   string
 	defaultRepo string
 
 	runners    RunnersModel
@@ -326,6 +332,7 @@ func New(cfg Config) *App {
 	cmd.Width = 60
 	a := &App{
 		server:          cfg.Server,
+		principal:       principalLabel(),
 		defaultRepo:     cfg.DefaultRepo,
 		workspaceFile:   cfg.WorkspaceFile,
 		workspacePath:   cfg.WorkspacePath,
@@ -1591,7 +1598,7 @@ func (a *App) View() string {
 	if a.connected {
 		connectedTag = OKStyle.Render("CONNECTED")
 	}
-	header := HeaderStyle.Render(fmt.Sprintf("harness-tui · %s · %s", a.server, connectedTag))
+	header := HeaderStyle.Render(fmt.Sprintf("harness-tui · %s · %s · %s", a.server, connectedTag, a.principal))
 
 	runnersView := a.runners.View()
 	tasksView := a.tasks.View()
@@ -2182,4 +2189,21 @@ func cmdlineHelpLines() []string {
 		}
 	}
 	return append(out, tuiKeyHelp...)
+}
+
+// principalLabel words what this process connects AS for the header.
+//
+// It asks cli for the same decision the handshake makes rather than inspecting
+// the env here: a second reading of HARNESS_* is how the header would come to
+// claim one thing while the connection is another.
+func principalLabel() string {
+	kind, tid := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	if kind != protocol.ClientKind_Agent {
+		return "operator"
+	}
+	hexID := hex.EncodeToString(tid.Id[:])
+	if len(hexID) > 8 {
+		hexID = hexID[:8]
+	}
+	return "agent " + hexID
 }

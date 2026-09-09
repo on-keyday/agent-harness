@@ -720,7 +720,11 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"ask the server to reverse-dial RUNNER_CID (Phase A/B)",
-			"--via relays through an already-connected runner (Phase B)",
+			"RUNNER_CID is an ADDRESS: the target is not registered yet, so there",
+			"is no identity to resolve — copy the cid= column of `harness-cli ls`",
+			"--via relays through an already-connected runner (Phase B), and takes",
+			"that runner's IDENTITY (the id= column): the server resolves it, so it",
+			"keeps working after that proxy reconnects",
 			"(the runner must be running in --listen / --udp-listen mode)",
 			"prints the DialRunnerStatus and exits non-zero on non-Ok",
 		},
@@ -729,7 +733,7 @@ var Verbs = []VerbSpec{
 		Args:            []Arg{{Name: "runner-cid", Type: ArgString, Field: "RunnerCID"}},
 		Flags: []Flag{
 			{Name: "via", Type: FlagString, Default: "", Field: "Via",
-				Help: "relay through this registered runner CID (copy from `harness-cli ls`)"},
+				Help: "relay through this registered runner, by its 32-hex identity (the id= column of `harness-cli ls`)"},
 		},
 		Examples: []string{"server dial-runner ws:127.0.0.1:9000-abcd"},
 	},

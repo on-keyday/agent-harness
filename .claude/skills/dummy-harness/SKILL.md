@@ -32,7 +32,11 @@ scripts/dummy-harness.sh down [--name N]
 ```
 
 Loopback only, ephemeral port, fresh PSK, temp data dir; `down` removes all of
-it. `--agent claude` runs a real claude (default model is the cheapest one) —
+it. The WebUI is served from `webui/` on disk, not from the server binary's
+embedded copy — that default is inverted here on purpose, because an embedded
+WebUI is frozen at compile time and a JS/wasm edit would then show the OLD page
+until `make build` plus a fresh instance. A stale page reads as "my change did
+not work", which is the worst way to lose an afternoon. `--agent claude` runs a real claude (default model is the cheapest one) —
 use it when the property under test involves a real agent's behaviour.
 `--agent fake` emits claude's `stream-json` shapes on a timer, for checks that
 must not depend on a model or the network.

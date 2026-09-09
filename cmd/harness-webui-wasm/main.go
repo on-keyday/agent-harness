@@ -928,7 +928,7 @@ func connRemoteAddr(cid string) string {
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners:  [{hostname, goos, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
+//	  runners:  [{id, cid, hostname, goos, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
 //	              viewers, cowriters, execCount, errorMsg}],
@@ -966,6 +966,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					profiles = append(profiles, string(p.Name))
 				}
 				runners = append(runners, map[string]any{
+					// id is WHICH runner process, cid is WHERE it is reached.
+					// One value answered both until identity stopped being an
+					// address, and neither was exposed here before that.
+					"id":       r.Id.Hex(),
+					"cid":      cli.RunnerCIDStr(r.Cid),
 					"hostname": string(r.Hostname),
 					// Which platform a runner is decides real things — the shell
 					// an `ssh host cmd` reaches, how its roots are spelled.

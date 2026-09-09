@@ -622,7 +622,12 @@ format RunnerInfo:
     # WHERE this runner is reached right now. Implicit while id was itself an
     # address; without it `ls` loses transport, host and port, and hostname
     # alone cannot separate two slots on one machine.
-    addr :ConnID
+    #
+    # Named cid, not addr: that is what this codebase calls a connection id
+    # everywhere else — ConnInfo.cid, runner_cid, --server-cid,
+    # HARNESS_SERVER_CID — and inventing a second word for it would be the only
+    # place it is spelled differently.
+    cid :ConnID
     hostname_len :u8
     hostname :[hostname_len]u8
     # Relayed from RunnerHello.goos, so an operator can see which runners are
