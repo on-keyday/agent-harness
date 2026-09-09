@@ -8,10 +8,19 @@ states the dependency from the other side.
 Scope word used throughout: **hold**. A task is *held* when the server has told
 its runner, before going down on purpose, to keep the task's child process alive
 with no server to report to, and the runner has agreed. IN scope: the agent
-child process, its PTY or pipes, and the task's identity in the store. OUT of
-scope, stated here because the word could be read wider: exec runs, port
-forwards, file transfers, board tickets held by *clients*, and any client's seat
-in a session (§2).
+child process, its PTY or pipes, the task's identity in the store, and **the
+agentboard ticket that task's agent is holding** (D6 — the agent survives, so
+its credential has to survive with it). OUT of scope, stated here because the
+word could be read wider: exec runs, port forwards, file transfers, and any
+client's seat in a session (§2).
+
+There is exactly one kind of ticket, and only an agent has one: it rides
+`ClientHello` under `kind == ClientKind.agent` as
+`AgentInfo{runner_id, task_id, auth_ticket}`
+(`runner/protocol/message.bgn:423-425`), and an operator's CLI, TUI or WebUI
+authenticates with the PSK and holds none. An earlier draft of this paragraph
+put "board tickets held by clients" out of scope, naming a credential class that
+does not exist — a reader would have gone looking for what this design drops.
 
 ## 1. Problem
 
@@ -159,6 +168,14 @@ comparison as every other entry, so the check is already there. The alternative
 was persisting the ticket in the WAL, which would leave a live credential in
 plaintext in `events.log` for the lifetime of the task; the wire carries it
 under an authenticated, encrypted connection to a peer that already has it.
+
+One consumer downstream makes the re-registration matter beyond the agent
+itself: `exec` hands a task's board identity to a process it starts in that
+task's name, and it must look the EXISTING ticket up rather than issue one —
+`registry.Ticket`'s doc says why ("Reuse, not reissue: a second Register for the
+same pair OVERWRITES the entry, which would invalidate the credential the
+running agent is already holding"). So a re-adoption that minted a fresh ticket
+would break `exec` into that task as well, and it would break it silently.
 
 **D7**: a report sent *after* the handshake would need the server to hold a
 window open before it may fail held tasks — a new timing dependency in exactly
@@ -524,12 +541,14 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   hold. Also kill immediately when the server refuses a reported task, and when
   the reconnect ends in a non-retryable PSK rejection (there is no server that
   will ever adopt them).
-- **Keep the ticket where the hold path can reach it.** `AuthTicket` arrives in
-  `AssignTaskBody` and is currently consumed inline while building the agent's
-  env (`runner/session.go:552`, `runner/agentenv.go:73-74`); the per-task
-  `taskEntry` holds only `{cancel, repoPath}`. It gains the ticket, because the
-  report needs it (D6) and a value that only exists in a goroutine's frame is
-  not reachable from the hold handler.
+- **Keep the ticket where the hold path can reach it, on BOTH arrival paths.**
+  `AuthTicket` is consumed inline while building the agent's env
+  (`runner/agentenv.go:73-74`) and it arrives twice: `AssignTaskBody.AuthTicket`
+  for a oneshot (`runner/session.go:552`) and `OpenExecRunnerRequest.AuthTicket`
+  for an interactive session (`runner/session.go:793`). The per-task `taskEntry`
+  holds only `{cancel, repoPath}`, so it gains the ticket — from both sites. The
+  interactive one is the case the whole design exists for, and it is the second
+  of the two, which is exactly how a single-site wiring passes review.
 - **Report on every reconnect.** The report is in `RunnerHello`, so it goes out
   with the identity. Nothing held → zero-length list and a zero `hold_id`.
 - **Re-bind, then resume draining.** On `RebindSessionRequest`, splice the held
