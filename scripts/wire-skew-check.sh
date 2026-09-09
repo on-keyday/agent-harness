@@ -76,6 +76,27 @@ OLD_REF="${1:-$(git merge-base origin/main HEAD 2>/dev/null)}"
 OLD_SHA="$(git rev-parse --short "$OLD_REF" 2>/dev/null)" || { echo "wire-skew-check: bad ref '$OLD_REF'"; exit 2; }
 NEW_SHA="$(git rev-parse --short HEAD)"
 
+# "Nothing to compare" is NOT "nothing changed", and conflating the two makes
+# this guard unable to fail at the exact moment it is most likely to be run:
+# right after landing, when the default OLD_REF (merge-base with origin/main)
+# resolves to HEAD itself. It then diffs a revision against itself, finds no
+# wire change, and exits 0 — a skip that reads like a pass.
+#
+# Measured 2026-09-10, on this script, one command after landing a schema
+# change it had genuinely passed minutes earlier.
+if [ "$OLD_SHA" = "$NEW_SHA" ]; then
+  cat >&2 <<EOM
+wire-skew-check: OLD_REF resolved to HEAD ($NEW_SHA), so there is nothing to
+  compare and this run proves NOTHING. That happens right after landing, when
+  the merge-base with origin/main IS HEAD.
+  Pass the revision you are deploying OVER, explicitly:
+      scripts/wire-skew-check.sh <the currently-deployed sha>
+  Exiting 2 (setup error), deliberately not 0: a skip must not be readable as
+  a pass.
+EOM
+  exit 2
+fi
+
 # A wire change reaches this repo two ways. Local .bgn files are one. The other
 # is a go.mod bump of github.com/on-keyday/objtrsf, which owns objproto's
 # packet.bgn since the shared-module extraction — the handshake wire format
