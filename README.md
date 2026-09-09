@@ -1130,6 +1130,20 @@ Run WS+UDP dualstack if you want both.
   `harness-cli prune` asks the server to forget terminal task records
   and per-task log files. The server can auto-prune via
   `harness-server --task-retain=DUR` (e.g. `--task-retain=720h`).
+- **A DELIBERATE server restart keeps its tasks; a crash does not.** Before
+  going down on a signal or its `--shutdown-file` sentinel, the server asks
+  every runner to keep its children alive, records what each one agreed to,
+  and re-adopts them when the runners reconnect — so `scripts/restart.py
+  harness-server` no longer kills every live session. A held task reads
+  `held` in `ls`, with `held_until` in `--json`.
+  The window is `--hold-window` (default `90s`) and the wait for each runner's
+  answer is `--hold-ack-timeout` (default `1.5s`); `--hold-window=0` restores
+  the old behaviour. **A crash recovers nothing**, on purpose: the hold is
+  entered only by an explicit instruction, so there is no path by which a
+  server that died can leave children believing somebody is coming back.
+  Runners kill any child the restarted server does not re-adopt, and kill
+  everything they are holding if the window passes with no server. Design:
+  `docs/superpowers/specs/2026-09-10-task-hold-across-server-restart-design.md`.
 - **No sandbox between agent and host *by default*.** Spawned agents run
   with user-level filesystem and network access — the worktree is the
   CWD, not a chroot. Single-user dogfood deployments only; do not point

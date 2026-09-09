@@ -1208,6 +1208,10 @@ Also:
   unchecked in the first place.
   A manual verification step in a spec is a defect in the spec. It survives
   exactly one landing and then nobody runs it.
+  **Done**: phase 3 exists, and on this change it reports
+  `skew exercised: server rejected: NoIdentity` / `stayed alive, kept
+  retrying` — the same outcome the prerequisite change had to establish by
+  hand.
 - Rollback: a binary that predates `task_held` ignores the record, so whatever
   was held replays as an interrupted task and its own sweep fails it (§4) —
   the same outcome as today's restart. The children are then killed by their

@@ -22,8 +22,12 @@
 #   our retryable classification would not cover it. Only running the two real
 #   binaries against each other catches that. That is this script's whole point.
 #
-#   NOT asserted: OLD runner x NEW server. Pre-fix runners exit fatally by
-#   construction; that is history and cannot be fixed retroactively.
+#   ALSO asserted (phase 3): OLD runner x NEW server. This used to be skipped
+#   with "pre-fix runners exit fatally by construction" -- true only of runners
+#   built before d4f7a5a made NoIdentity retryable, so the reason expired. The
+#   phase is gated on OLD_REF being at or past that commit and SKIPS WITH THE
+#   REASON PRINTED otherwise: a silent skip is how the direction went unchecked
+#   in the first place.
 #
 #   FOURTH OUTCOME: SKEW BELOW THE HANDSHAKE LAYER
 #   objproto's packet.bgn lives in the objtrsf module, so a bump can move the
@@ -123,6 +127,9 @@ cp webui/static/main.wasm "$TMP/old/webui/static/main.wasm" 2>/dev/null \
 # under test reads it. Applied to the NEW builds too, so both sides are built
 # the same way and a future breakage cannot be blamed on the asymmetry.
 ( cd "$TMP/old" && go build -buildvcs=false -o "$TMP/old-server" ./cmd/harness-server ) || exit 2
+# The OLD runner too, for phase 3. Cheap (same worktree, same toolchain) and it
+# is the only way to exercise the direction this script used to skip.
+( cd "$TMP/old" && go build -buildvcs=false -o "$TMP/old-runner" ./cmd/agent-runner ) || exit 2
 
 mkdir -p "$TMP/repo" "$TMP/data"
 ( cd "$TMP/repo" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
@@ -141,7 +148,7 @@ runner_alive(){ [ -n "$RPID" ] && kill -0 "$RPID" 2>/dev/null; }
 
 # --- 1) NEW runner vs OLD server: skew must be EXERCISED, then survived ------
 echo
-echo "  [1/2] NEW runner -> OLD server (skew): must be rejected, retry, not exit"
+echo "  [1/3] NEW runner -> OLD server (skew): must be rejected, retry, not exit"
 start_server "$TMP/old-server" || { echo "wire-skew-check: OLD server ($OLD_SHA) failed to listen — setup error, NOT a pass"; head -3 "$TMP/server.log"; exit 2; }
 "$TMP/new-runner" --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
   --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
@@ -165,14 +172,14 @@ if grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed" "$TMP
   echo "        skew exercised: $(grep -oiE 'server rejected: [A-Za-z]+' "$TMP/runner.log" | head -1)"
   runner_alive || fail "runner EXITED against the old server — a wire-skew rejection is being classified FATAL again (see cli.PskRejectedError.Retryable). A landing would wipe the fleet."
   grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
-  echo "  [1/2] PASS — rejected, stayed alive, kept retrying"
+  echo "  [1/3] PASS — rejected, stayed alive, kept retrying"
 elif grep -q "persist: connected" "$TMP/runner.log"; then
   # Outcome 2: NO rejection, but the OLD server accepted the NEW runner's hello
   # outright — a HANDSHAKE-COMPATIBLE skew (see header). Still require the
   # runner to actually be alive, and still fail on any fatal-exit log line.
   runner_alive || fail "runner connected to the OLD server, then EXITED — investigate before landing (a fatal path was apparently taken after a successful handshake)."
   grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' despite being connected (fatal path taken on a supposedly compatible skew)"
-  echo "  [1/2] PASS — no rejection: OLD server accepted the new hello (handshake-compatible skew); runner registered and stays alive"
+  echo "  [1/3] PASS — no rejection: OLD server accepted the new hello (handshake-compatible skew); runner registered and stays alive"
 elif grep -qiE "ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log"; then
   # Outcome 4: the wire change is BELOW the handshake application layer -- the
   # objproto packet header itself moved, so the old server cannot even decode
@@ -183,7 +190,7 @@ elif grep -qiE "ecdh: message receive timeout|ecdh: message channel closed" "$TM
   echo "        skew exercised at the objproto layer: $(grep -oiE 'ecdh: [a-z ]+' "$TMP/runner.log" | head -1)"
   runner_alive || fail "runner EXITED against the old server — an objproto-layer handshake timeout is being classified FATAL. A landing would wipe the fleet."
   grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
-  echo "  [1/2] PASS — objproto handshake timed out, stayed alive, kept retrying"
+  echo "  [1/3] PASS — objproto handshake timed out, stayed alive, kept retrying"
 elif grep -qi "connection refused" "$TMP/runner.log"; then
   # Outcome 3a: setup broken — the OLD server was never reachable at all.
   fail "the OLD server was not reachable — skew never exercised (setup broken, not a pass)"
@@ -195,7 +202,7 @@ fi
 
 # --- 2) upgrade the server: runner must SELF-HEAL ----------------------------
 echo
-echo "  [2/2] upgrade server to NEW: runner must self-heal (no manual restart)"
+echo "  [2/3] upgrade server to NEW: runner must self-heal (no manual restart)"
 before="$(grep -c "persist: connected" "$TMP/runner.log" 2>/dev/null)"; before="${before:-0}"
 kill "$SPID" 2>/dev/null; sleep 1
 start_server "$TMP/new-server" || { echo "wire-skew-check: NEW server failed to listen — setup error"; head -3 "$TMP/server.log"; exit 2; }
@@ -212,7 +219,49 @@ for _ in $(seq 1 60); do
 done
 runner_alive || fail "runner died while the server was being upgraded"
 [ "$healed" = 1 ] || fail "runner did NOT reconnect within 30s of the server upgrade — no self-heal, so a real landing would strand the fleet"
-echo "  [2/2] PASS — runner re-registered on its own after the upgrade"
+echo "  [2/3] PASS — runner re-registered on its own after the upgrade"
+
+# --- 3) OLD runner vs NEW server: the reverse direction ----------------------
+echo
+echo "  [3/3] OLD runner ($OLD_SHA) -> NEW server (reverse skew)"
+# d4f7a5a is what made a NoIdentity rejection retryable. Before it, a runner
+# exits fatally on any hello the server cannot decode, so the direction is
+# genuinely untestable rather than merely unpleasant -- and saying so out loud
+# is the difference between this and the silent skip it replaces.
+if ! git merge-base --is-ancestor d4f7a5a "$OLD_REF" 2>/dev/null; then
+  echo "  [3/3] SKIP — OLD_REF ($OLD_SHA) predates d4f7a5a, so a pre-fix runner"
+  echo "        exits fatally on ANY undecodable hello by construction. Not a"
+  echo "        property of this change; nothing to assert."
+else
+  kill "$RPID" 2>/dev/null; wait "$RPID" 2>/dev/null
+  : >"$TMP/runner.log"
+  # The NEW server is already the one running from phase 2.
+  "$TMP/old-runner" --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
+    --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
+  RPID=$!
+  for _ in $(seq 1 40); do
+    grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed|persist: connected|connection refused|ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log" && break
+    kill -0 "$RPID" 2>/dev/null || break
+    sleep 1
+  done
+  sleep 3
+  if grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed" "$TMP/runner.log"; then
+    echo "        skew exercised: $(grep -oiE 'server rejected: [A-Za-z]+' "$TMP/runner.log" | head -1)"
+    runner_alive || fail "the OLD runner EXITED against the NEW server — this direction is fatal, so upgrading the server first would strand every runner that has not been restarted yet"
+    grep -q "runner exit" "$TMP/runner.log" && fail "OLD runner logged 'runner exit' (fatal path taken on the reverse skew)"
+    echo "  [3/3] PASS — rejected, stayed alive, kept retrying"
+  elif grep -q "persist: connected" "$TMP/runner.log"; then
+    runner_alive || fail "the OLD runner connected to the NEW server, then EXITED"
+    echo "  [3/3] PASS — no rejection: NEW server accepted the old hello (handshake-compatible in this direction)"
+  elif grep -qiE "ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log"; then
+    runner_alive || fail "the OLD runner EXITED on an objproto-layer timeout against the NEW server"
+    echo "  [3/3] PASS — objproto handshake timed out, stayed alive, kept retrying"
+  elif grep -qi "connection refused" "$TMP/runner.log"; then
+    fail "the NEW server was not reachable in phase 3 — skew never exercised (setup broken, not a pass)"
+  else
+    fail "no outcome reached the OLD runner — the reverse skew was NOT exercised, so this phase proves nothing"
+  fi
+fi
 
 echo
 echo "wire-skew-check: PASS — the $OLD_SHA -> $NEW_SHA wire change degrades recoverably."

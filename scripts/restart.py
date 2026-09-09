@@ -62,6 +62,25 @@ _DETACHED_FLAG = "--__detached"
 # "flags=" line so a rotation doesn't archive the new secret in plaintext.
 _SECRET_FLAGS = frozenset({"psk", "operator-psk"})
 
+# The server asks its runners to keep their children alive before it goes down,
+# collects their answers, drains each held session and writes the result — and
+# daemon_down's default hard-kills five seconds after the graceful signal. A
+# SIGKILL mid-sequence is the CRASH case, which by design recovers nothing, so
+# whatever had not been written yet silently degrades to the old behaviour.
+#
+# 15s is the server's budget: room for the ack window (1.5s), the drains and
+# the per-session captures, with slack for a fleet larger than this one.
+# Runners keep the 5s default — they have no such sequence.
+_SERVER_DOWN_TIMEOUT = 15.0
+
+
+def _down_timeout(bin_name: str) -> float:
+    """Graceful-shutdown budget for *bin_name* before the hard kill."""
+    if bin_name == "harness-server":
+        return _SERVER_DOWN_TIMEOUT
+    return 5.0
+
+
 
 def _override_names(overrides: list[str]) -> list[str]:
     """The ``--flag`` names present in *overrides* (``--name`` / ``--name=v``)."""
@@ -188,7 +207,7 @@ def _do_restart(slot: str, bin_name: str, flags: list[str], orig_cwd: str) -> No
         sys.stderr = fh
         try:
             try:
-                _daemon.daemon_down(slot, bin_name)
+                _daemon.daemon_down(slot, bin_name, timeout=_down_timeout(bin_name))
             except Exception as e:
                 emit(f"[{slot}] daemon_down failed: {e}")
                 return
