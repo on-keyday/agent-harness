@@ -76,7 +76,13 @@ type UserOpts struct {
 // only thing that reaches this gateway from a client that builds its own ssh
 // invocation.
 func ParseUserName(name string) (string, UserOpts, error) {
-	const forms = "use <32-hex-task-id>[.<opt>[,<opt>...]]@host, where opt is control | view | sshd-parent (lowercase hex; no suffix means cowrite)"
+	// The dotted spellings appear LITERALLY, not just as [.<opt>] in the
+	// grammar: what an operator has to produce is `<id>.control@host`, and a
+	// bare list of opts beside an abstract grammar leaves them assembling it.
+	// The integration test asserts `.control` and `.view` are in here for that
+	// reason, and it had been failing since the list was reworded — on main as
+	// well as here, which is how a message nobody reads until it fires drifts.
+	const forms = "use <32-hex-task-id>[.<opt>[,<opt>...]]@host — e.g. <id>.control@host, or <id>.view,sshd-parent@host; opt is control | view | sshd-parent (lowercase hex; no suffix means cowrite)"
 	id, suffix, hasSuffix := strings.Cut(name, ".")
 	if !isTaskIDHex(id) {
 		return "", UserOpts{}, fmt.Errorf("ssh user name %q is not a task id: %s", name, forms)
