@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -313,5 +314,128 @@ func TestHeldScreenIsConsumedOnceAndSweptWhenOrphaned(t *testing.T) {
 	}
 	if got := srv.readHeldScreen(held); got != nil {
 		t.Errorf("second read = %q, want nil — the capture must be consumed once", got)
+	}
+}
+
+// readoptHeldTasks accepts only when all three conditions hold, and the three
+// refusals are separate tests' worth of behaviour in one table because they
+// share every line of setup.
+func TestReadoptRequiresTaskHoldIdAndIdentity(t *testing.T) {
+	var mine, other protocol.RunnerID
+	mine.Id[0] = 0xaa
+	other.Id[0] = 0xbb
+
+	cases := []struct {
+		name    string
+		mangle  func(s *TaskStore, id string, report *protocol.HeldTasksReport)
+		accepts bool
+	}{
+		{"everything matches", func(*TaskStore, string, *protocol.HeldTasksReport) {}, true},
+		{"hold id from a previous shutdown", func(s *TaskStore, id string, r *protocol.HeldTasksReport) {
+			r.HoldId.Id[0] ^= 0xff
+		}, false},
+		{"task was never held", func(s *TaskStore, id string, r *protocol.HeldTasksReport) {
+			s.FailHeld(id, "hold_expired")
+		}, false},
+		{"unknown task id", func(s *TaskStore, id string, r *protocol.HeldTasksReport) {
+			r.Tasks[0].TaskId.Id[0] ^= 0xff
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := storeWithWAL(t)
+			srv := &Server{tasks: store, registry: NewRegistry(), cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
+			id := runningTask(t, store, mine)
+			var hold protocol.HoldID
+			hold.Id[0] = 0xc0
+			holdHex := hex.EncodeToString(hold.Id[:])
+			if err := store.MarkHold(id, mine.Hex(), holdHex, time.Now().Add(time.Hour).UnixNano()); err != nil {
+				t.Fatal(err)
+			}
+			var tid protocol.TaskID
+			raw, _ := hex.DecodeString(id)
+			copy(tid.Id[:], raw)
+			report := protocol.HeldTasksReport{HoldId: hold}
+			report.SetTasks([]protocol.HeldTask{{TaskId: tid, Ticket: [16]byte{1}}})
+			tc.mangle(store, id, &report)
+
+			res := srv.readoptHeldTasks(mine, report)
+
+			if got := len(res.Accepted) == 1; got != tc.accepts {
+				t.Errorf("accepted=%v, want %v", got, tc.accepts)
+			}
+			if !tc.accepts {
+				// A refusal must also end the hold, or the child lingers for
+				// the whole window with nobody coming for it.
+				if st, _ := store.Get(id); st.Status == protocol.TaskStatus_Held {
+					t.Error("task is still Held after a refusal")
+				}
+			}
+		})
+	}
+}
+
+// A runner reporting a task the log says belongs to somebody else is refused —
+// the identity comparison is the only thing standing between a report and
+// another runner's task.
+func TestReadoptRefusesAnotherRunnersTask(t *testing.T) {
+	store, _ := storeWithWAL(t)
+	srv := &Server{tasks: store, registry: NewRegistry(), cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
+	var owner, thief protocol.RunnerID
+	owner.Id[0] = 0xaa
+	thief.Id[0] = 0xbb
+	id := runningTask(t, store, owner)
+	var hold protocol.HoldID
+	hold.Id[0] = 0xc0
+	if err := store.MarkHold(id, owner.Hex(), hex.EncodeToString(hold.Id[:]), time.Now().Add(time.Hour).UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(id)
+	copy(tid.Id[:], raw)
+	report := protocol.HeldTasksReport{HoldId: hold}
+	report.SetTasks([]protocol.HeldTask{{TaskId: tid, Ticket: [16]byte{9}}})
+
+	res := srv.readoptHeldTasks(thief, report)
+
+	if len(res.Accepted) != 0 {
+		t.Fatal("a runner re-adopted a task assigned to another identity")
+	}
+	if st, _ := store.Get(id); st.Status != protocol.TaskStatus_Held {
+		t.Errorf("the OWNER's hold was ended by a stranger's report: %v", st.Status)
+	}
+}
+
+// A held task the reconnecting runner does NOT name is dead: the runner is the
+// authority on what it kept, and it just enumerated it.
+func TestReadoptFailsHeldTasksTheReportOmits(t *testing.T) {
+	store, _ := storeWithWAL(t)
+	srv := &Server{tasks: store, registry: NewRegistry(), cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xaa
+	kept := runningTask(t, store, rid)
+	dropped := runningTask(t, store, rid)
+	var hold protocol.HoldID
+	hold.Id[0] = 0xc0
+	holdHex := hex.EncodeToString(hold.Id[:])
+	for _, id := range []string{kept, dropped} {
+		if err := store.MarkHold(id, rid.Hex(), holdHex, time.Now().Add(time.Hour).UnixNano()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(kept)
+	copy(tid.Id[:], raw)
+	report := protocol.HeldTasksReport{HoldId: hold}
+	report.SetTasks([]protocol.HeldTask{{TaskId: tid, Ticket: [16]byte{1}}})
+
+	srv.readoptHeldTasks(rid, report)
+
+	if st, _ := store.Get(dropped); st.Status != protocol.TaskStatus_Failed ||
+		string(st.ErrorMsg) != "not_held_by_runner" {
+		t.Errorf("omitted task = %v/%q, want Failed/not_held_by_runner", st.Status, st.ErrorMsg)
+	}
+	if st, _ := store.Get(kept); st.Status == protocol.TaskStatus_Failed {
+		t.Error("the reported task was failed too")
 	}
 }

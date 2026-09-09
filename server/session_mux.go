@@ -325,6 +325,60 @@ func (m *SessionMux) activityWatcher(fn func(taskID string, busy bool, lastOutpu
 // future Append wraps around, the dropped entry is one or more *whole*
 // frames, never a partial header. It calls Stop on exit so that a
 // runner-side EOF/error tears everything down.
+// recordFrame applies one inbound frame to everything that must see it: the
+// mode tracker, the screen model, the ring, and the alt-screen bookkeeping the
+// replay start point depends on.
+//
+// Extracted so a second producer of frames cannot see a subset. The
+// alt-transition mark in particular lives OUTSIDE the obvious
+// feed-modes-and-write-screen block, so code that copied the visible part
+// would silently keep a stale replay start point.
+func (m *SessionMux) recordFrame(frameBytes []byte) {
+	// Track DEC private-mode state from display output so a reattach can
+	// re-establish modes (e.g. a hidden cursor) whose controlling sequence
+	// has since been evicted from the ring. Only Stdout/Stderr carry it.
+	wasAlt := m.modes.onAltScreen()
+	if len(frameBytes) >= frameHeaderSize {
+		switch frame.FrameType(frameBytes[0]) {
+		case frame.FrameType_Stdout, frame.FrameType_Stderr:
+			m.modes.feed(frameBytes[frameHeaderSize:])
+			m.screenMu.Lock()
+			_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
+			m.screenMu.Unlock()
+			m.lastOutput.Store(time.Now().UnixNano())
+		}
+	}
+	m.ring.Append(frameBytes)
+	// If this frame carried the alt-screen exit (alt → primary), mark it as
+	// the replay start point: everything before is a now-finished
+	// full-screen episode that must not be replayed verbatim. The mark is
+	// the just-appended frame's index, so replay includes the ESC[?1049l
+	// itself (ensuring a reattaching client also leaves the alt buffer).
+	if nowAlt := m.modes.onAltScreen(); nowAlt != wasAlt {
+		idx := m.ring.AppendCount() - 1
+		if wasAlt && !nowAlt {
+			m.mainMark.Store(int64(idx))
+		}
+		m.altMu.Lock()
+		m.altTransitions = append(m.altTransitions, altTransition{index: idx, entered: nowAlt})
+		m.altMu.Unlock()
+	}
+}
+
+// injectServerBytes feeds bytes the SERVER produced into the session as if the
+// runner had sent them, through the same recordFrame path so the screen model,
+// the ring and the mode tracker all see them.
+//
+// Used by re-adoption to replay a held session's captured screen before the
+// runner resumes draining, so the gap's buffered output paints on top of it
+// rather than under it.
+func (m *SessionMux) injectServerBytes(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	m.recordFrame(encodeSynthFrame(b))
+}
+
 func (m *SessionMux) runnerPump() {
 	defer m.Stop()
 	for {
@@ -335,35 +389,7 @@ func (m *SessionMux) runnerPump() {
 		if err != nil {
 			return
 		}
-		// Track DEC private-mode state from display output so a reattach can
-		// re-establish modes (e.g. a hidden cursor) whose controlling sequence
-		// has since been evicted from the ring. Only Stdout/Stderr carry it.
-		wasAlt := m.modes.onAltScreen()
-		if len(frameBytes) >= frameHeaderSize {
-			switch frame.FrameType(frameBytes[0]) {
-			case frame.FrameType_Stdout, frame.FrameType_Stderr:
-				m.modes.feed(frameBytes[frameHeaderSize:])
-				m.screenMu.Lock()
-				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
-				m.screenMu.Unlock()
-				m.lastOutput.Store(time.Now().UnixNano())
-			}
-		}
-		m.ring.Append(frameBytes)
-		// If this frame carried the alt-screen exit (alt → primary), mark it as
-		// the replay start point: everything before is a now-finished
-		// full-screen episode that must not be replayed verbatim. The mark is
-		// the just-appended frame's index, so replay includes the ESC[?1049l
-		// itself (ensuring a reattaching client also leaves the alt buffer).
-		if nowAlt := m.modes.onAltScreen(); nowAlt != wasAlt {
-			idx := m.ring.AppendCount() - 1
-			if wasAlt && !nowAlt {
-				m.mainMark.Store(int64(idx))
-			}
-			m.altMu.Lock()
-			m.altTransitions = append(m.altTransitions, altTransition{index: idx, entered: nowAlt})
-			m.altMu.Unlock()
-		}
+		m.recordFrame(frameBytes)
 		m.mu.Lock()
 		tui := m.tui
 		m.mu.Unlock()

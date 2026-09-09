@@ -43,6 +43,12 @@ type RunnerHandler struct {
 	// grant go now rather than on a timer.
 	OnDataPlaneFinished func(grantID [16]byte)
 
+	// OnHeldTasksReported reconciles a reconnecting runner's held-task report
+	// against the log and returns what the server accepted. Called at the
+	// identity gate, inside the hello handling, so registration and
+	// re-adoption are one decision.
+	OnHeldTasksReported func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult
+
 	// OnHoldTasksAck routes a runner's hold ack to the shutdown sequence
 	// waiting for it. The first argument is the runner's IDENTITY hex, which
 	// is the correlation key: one hold goes to every registered runner and
@@ -165,10 +171,26 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		// runner to name itself first). It stays on the wire so a value that
 		// comes back different is visible instead of silently disagreeing, and
 		// because the runner gates HARNESS_RUNNER_ID on having heard it.
+		// Re-adoption happens HERE, in the same step as registration, because
+		// the report rode in on the hello. A runner that held nothing sends an
+		// empty list and this is a no-op.
+		var readopted ReadoptResult
+		if h.OnHeldTasksReported != nil {
+			readopted = h.OnHeldTasksReported(hello.RunnerId, hello.Held)
+		}
+
 		rhResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
-		rhResp.SetRunnerHelloResponse(protocol.RunnerHelloResponse{
-			YourRunnerId: hello.RunnerId,
-		})
+		resp := protocol.RunnerHelloResponse{YourRunnerId: hello.RunnerId}
+		// The ACCEPTED ids, not the refused ones: the runner kills every held
+		// child absent from this list, so a set the server forgets to fill
+		// kills children (loud, recoverable) instead of stranding them
+		// (silent). It is also the only channel that reaches a task cancelled
+		// while it was held.
+		if !resp.SetAccepted(readopted.Accepted) {
+			slog.Error("RunnerHandler: accepted list too long for the response",
+				"runner", runnerID, "count", len(readopted.Accepted))
+		}
+		rhResp.SetRunnerHelloResponse(resp)
 		if rhBytes, err := rhResp.Append([]byte{byte(appwire.AppKind_RunnerControl)}); err != nil {
 			slog.Error("RunnerHandler: encode RunnerHelloResponse failed", "runner", runnerID, "err", err)
 		} else if _, _, err := conn.SendMessage(rhBytes); err != nil {

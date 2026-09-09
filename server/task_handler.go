@@ -1394,21 +1394,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		ringSize = 1 << 20 // 1 MiB default
 	}
 
-	hooks := SessionHooks{
-		OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
-		OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
-		OnStop:   func(id string) { h.Sessions.Remove(id) },
-		OnObservers: func(id string) {
-			if h.OnSessionObservers != nil {
-				h.OnSessionObservers(id)
-			}
-		},
-		OnActivity: func(id string, busy bool, lo int64) {
-			if h.OnSessionActivity != nil {
-				h.OnSessionActivity(id, busy, lo)
-			}
-		},
-	}
+	hooks := h.sessionHooks()
 
 	parentCtx := h.Ctx
 	if parentCtx == nil {
@@ -1455,6 +1441,30 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 // Detached forever. For a still-non-terminal task the slot is instead released
 // by whichever event lands next: TaskFinished (Finish + UnbindTask in the
 // runner_handler) or runner deregistration (the whole entry is deleted).
+// sessionHooks is the hook set every SessionMux in this server gets.
+//
+// One constructor rather than a literal per creation site: re-adoption builds a
+// mux too (rebindHeldSessions), and a second literal is how one of them ends up
+// missing OnDetach or OnStop — a session that then never releases its registry
+// entry, or never moves the task back to Detached.
+func (h *TaskHandler) sessionHooks() SessionHooks {
+	return SessionHooks{
+		OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
+		OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
+		OnStop:   func(id string) { h.Sessions.Remove(id) },
+		OnObservers: func(id string) {
+			if h.OnSessionObservers != nil {
+				h.OnSessionObservers(id)
+			}
+		},
+		OnActivity: func(id string, busy bool, lo int64) {
+			if h.OnSessionActivity != nil {
+				h.OnSessionActivity(id, busy, lo)
+			}
+		},
+	}
+}
+
 func (h *TaskHandler) afterMuxStopped(taskIDHex, runnerID string) {
 	h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
 	if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {

@@ -332,6 +332,15 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.runnerHandler.OnTrsfStateResponse = s.deliverRunnerTrsfStateResponse
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
+	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
+		res := s.readoptHeldTasks(identity, report)
+		// Rebinding needs a fresh session stream per task, which is the
+		// server's move to make, not the runner's — see rebindHeldSessions.
+		if len(res.Rebind) > 0 {
+			go s.rebindHeldSessions(identity, res.Rebind)
+		}
+		return res
+	}
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl:      s.runnerHandler.Handle,
 		OnTaskControl:        s.taskHandler.Handle,
