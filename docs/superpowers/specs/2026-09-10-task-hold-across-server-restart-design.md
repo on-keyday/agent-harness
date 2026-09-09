@@ -314,6 +314,10 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 
 +# HeldTask is one task id in a hold exchange. A format rather than a bare
 +# TaskID list so a later field (a child pid, a byte count) has somewhere to go.
++# HeldTask is one entry of the RECONNECT report — the only message that needs
++# the ticket. The ack at shutdown carries bare TaskIDs instead: the server's
++# registry is still alive at that moment and already holds every ticket, so
++# sending them back would be a credential on the wire for no reason.
 +format HeldTask:
 +    task_id :TaskID
 +    # The agentboard ticket this task's agent is HOLDING, in the env it froze at
@@ -321,7 +325,10 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +    # restart forgets every ticket while the surviving agent keeps presenting
 +    # its own; re-registering a freshly minted one would answer BadTicket. The
 +    # runner is the right carrier because it already knows this value — it
-+    # received it in AssignTaskBody.AuthTicket and wrote the env itself. See D6.
++    # received it in AssignTaskBody.AuthTicket (oneshot) or
++    # OpenExecRunnerRequest.AuthTicket (interactive) and wrote the env itself.
++    # See D6.
++    ticket :[16]u8
 
 +# --- server → runner, RunnerRequestType.hold_tasks ---
 +# Sent to every registered runner as the FIRST step of a deliberate shutdown,
@@ -341,11 +348,14 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +format HoldTasksAck:
 +    hold_id :HoldID
 +    tasks_len :u16
-+    tasks :[tasks_len]HeldTask
++    tasks :[tasks_len]TaskID   # ids only — see HeldTask on why the ticket is not here
 
 +# HeldTasksReport rides in RunnerHello: what this runner process is still
-+# holding from the hold named by hold_id. tasks_len == 0 with a zero hold_id is
-+# the normal case for every reconnect that follows no hold.
++# holding from the hold named by hold_id, each entry carrying the ticket its
++# agent is still presenting. tasks_len == 0 with a zero hold_id is the normal
++# case for every reconnect that follows no hold. This is the message D6 means
++# by "the runner reports the ticket back" — 32 bytes per task, and the only
++# place a ticket travels in this design.
 +format HeldTasksReport:
 +    hold_id :HoldID
 +    tasks_len :u16
