@@ -470,7 +470,7 @@ func (m *ForwardsModal) ApplySnapshot(fs []protocol.PortForwardInfo) {
 	for i := range m.forwards {
 		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 }
 
 // ApplyEvent folds one forwards.status event into the rows, so an open pane
@@ -520,7 +520,7 @@ func (m *ForwardsModal) ApplyEvent(ev protocol.ForwardStatusEvent) {
 	for i := range m.forwards {
 		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 	if hadSelection {
 		for i := range m.forwards {
 			if m.forwards[i].ForwardId == selected {

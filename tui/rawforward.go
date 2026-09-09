@@ -294,7 +294,7 @@ func (m *RawConnectModal) syncRows() {
 			formatByteCount(p.inBytes), formatByteCount(p.outBytes), p.note,
 		})
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 	if c := m.table.Cursor(); c >= len(rows) && len(rows) > 0 {
 		m.table.SetCursor(len(rows) - 1)
 	}

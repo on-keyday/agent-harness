@@ -100,3 +100,47 @@ func TestIDColumnIsWideEnoughToIdentifyWhenShown(t *testing.T) {
 		}
 	}
 }
+
+// The regression the operator hit: with more runners than fit, the pane showed
+// one row fewer than it had room for and the last slot sat blank until the
+// cursor moved. Same defect as `db6fa142` fixed for the TASKS table, brought
+// back in this pane the moment it gained a conditional column set — because
+// swapping columns empties the rows, and the first SetSize runs before any
+// runner has arrived.
+func TestRunnersTableCursorNeverStaysNegative(t *testing.T) {
+	rs := make([]protocol.RunnerInfo, 0, 3)
+	for i := 0; i < 3; i++ {
+		r := protocol.RunnerInfo{Id: protocol.RunnerID{Id: [16]byte{byte(i + 1)}}}
+		r.SetHostname([]byte("gmkhost"))
+		rs = append(rs, r)
+	}
+
+	// Route 1 (certain): the first SetSize crosses idColumnMinWidth and empties
+	// the rows to swap the column set, before any runner has arrived.
+	m := NewRunners()
+	m.SetSize(120, 10)
+	m.SetRows(rs)
+	if got := m.table.Cursor(); got < 0 {
+		t.Errorf("cursor = %d after the startup resize-then-rows order; "+
+			"a negative cursor renders one row short with a blank last slot", got)
+	}
+
+	// Route 2 (latent): the list going empty at any point and coming back —
+	// every runner disconnecting, or a server restart.
+	m2 := NewRunners()
+	m2.SetSize(120, 10)
+	m2.SetRows(rs)
+	m2.SetRows(nil)
+	m2.SetRows(rs)
+	if got := m2.table.Cursor(); got < 0 {
+		t.Errorf("cursor = %d after the list emptied and refilled", got)
+	}
+
+	// An empty table legitimately has no selection; do not invent one.
+	m3 := NewRunners()
+	m3.SetSize(120, 10)
+	m3.SetRows(nil)
+	if m3.SelectedRunner() != nil {
+		t.Error("an empty table reported a selection")
+	}
+}

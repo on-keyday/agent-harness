@@ -145,7 +145,7 @@ func (m *RunnersModel) rebuild() {
 		)
 		rows = append(rows, row)
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 }
 
 // SelectedRunner returns the full RunnerInfo for the focused row, or nil

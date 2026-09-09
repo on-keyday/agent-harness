@@ -21,6 +21,35 @@ const minColWidth = 3
 // column widths from the space they were given, on every resize.
 const tableCellPadding = 2
 
+// setTableRows is the ONLY way a pane in this package should set a table's
+// rows. It sets them and then lifts a negative cursor back onto the list.
+//
+// bubbles drives the cursor to -1 whenever SetRows is handed an empty slice
+// (`cursor > len(rows)-1` with len 0) and never lifts it back when rows
+// return. A negative cursor is not cosmetic: UpdateViewport computes the
+// window as `end = cursor + viewport.Height`, so at -1 the table renders one
+// row SHORT and the last visible slot sits blank — until the first keypress
+// moves the cursor to 0, which reads as the list ending early and then
+// "growing" when you touch it.
+//
+// Every table here can legitimately be handed an empty slice: no conns, no
+// forwards, no execs, no topics, a fresh server, everything pruned. So one
+// such moment poisons that pane for the rest of the session, and any pane that
+// empties its rows to swap a column set (see the runners and tasks panes) hits
+// it at startup by construction, before the first snapshot arrives.
+//
+// A function rather than a guard to remember: this was fixed once for the
+// tasks table (`db6fa142`) and reintroduced in the runners table the moment
+// that pane gained a conditional column set, because the fix lived as three
+// lines at one call site. An empty table keeps its negative cursor — it has no
+// selection and should not invent one.
+func setTableRows(t *table.Model, rows []table.Row) {
+	t.SetRows(rows)
+	if len(rows) > 0 && t.Cursor() < 0 {
+		t.SetCursor(0)
+	}
+}
+
 // fitColumns returns base rewritten to render in w cells: surplus goes to the
 // flex column, and a shortfall comes out of every column in proportion,
 // floored at minColWidth.

@@ -105,7 +105,7 @@ func (m *ExecsModal) ApplySnapshot(es []protocol.ExecRunInfo) {
 	for i := range m.execs {
 		rows = append(rows, execRunInfoRow(&m.execs[i], now))
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 }
 
 // ApplyEvent folds one execs.status event into the rows. Two kinds, because an
@@ -150,7 +150,7 @@ func (m *ExecsModal) ApplyEvent(ev protocol.ExecStatusEvent) {
 	for i := range m.execs {
 		rows = append(rows, execRunInfoRow(&m.execs[i], now))
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 	if hadSelection {
 		for i := range m.execs {
 			if m.execs[i].ExecId == selected {

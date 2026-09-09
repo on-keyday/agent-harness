@@ -366,7 +366,7 @@ func (m *BoardModal) rebuildTopicsRows() {
 	for i := range m.rowTopics {
 		rows = append(rows, boardTopicToRow(&m.rowTopics[i], m.subs))
 	}
-	m.topicsTable.SetRows(rows)
+	setTableRows(&m.topicsTable, rows)
 }
 
 // boardTopicToRow maps a BoardTopicRow to a table.Row (4 columns).

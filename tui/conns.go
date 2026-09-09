@@ -134,7 +134,7 @@ func (m *ConnsModal) rebuildRows() {
 	for i := range m.rowConns {
 		rows = append(rows, connInfoToRow(&m.rowConns[i]))
 	}
-	m.table.SetRows(rows)
+	setTableRows(&m.table, rows)
 }
 
 // connInfoToRow maps a ConnInfo to a table.Row (6 columns).
