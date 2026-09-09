@@ -130,6 +130,7 @@ func main() {
 		"execArgvText":       js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"help":               js.FuncOf(harnessHelp),
+		"dispatch":           js.FuncOf(harnessDispatch),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
@@ -3974,6 +3975,45 @@ func harnessHelp(this js.Value, args []js.Value) any {
 	out := make([]any, 0, len(lines))
 	for _, l := range lines {
 		out = append(out, l)
+	}
+	return js.ValueOf(out)
+}
+
+// harnessDispatch hands the WebUI its command dispatch map, from the same verb
+// declarations the parser and the help come from.
+//
+// main.js held this as a literal RUNCMD_DISPATCH, and what kept it in step with
+// the table was three assertions — declared-but-not-dispatchable,
+// dispatchable-but-not-declared, and does-the-named-function-exist — plus a
+// list of page-local exceptions duplicated between the page and its test. The
+// first two are structural now: a map built from PathsForSurface cannot
+// disagree with it. The third is not, and stays.
+//
+//	harness.dispatch() -> {path: {fn, local, cache, stale}}
+func harnessDispatch(this js.Value, args []js.Value) any {
+	out := map[string]any{}
+	for _, path := range verb.PathsForSurface(verb.WebUI) {
+		sp, ok := verb.Lookup(strings.Fields(path)...)
+		if !ok {
+			continue
+		}
+		d := sp.WebUIDispatch
+		if d.IsZero() {
+			// A declaration gap, and verb.TestEveryWebUIVerbDeclaresDispatch
+			// fails on it — but a build that shipped anyway should say so here
+			// rather than hand the page an entry with no way to run.
+			continue
+		}
+		e := map[string]any{}
+		if d.Fn != "" {
+			e["fn"] = d.Fn
+			e["local"] = d.Local
+		}
+		if d.Cache != "" {
+			e["cache"] = d.Cache
+			e["stale"] = d.Stale
+		}
+		out[path] = e
 	}
 	return js.ValueOf(out)
 }

@@ -2323,34 +2323,20 @@ const POLL_INTERVAL_MS = 5000;
   // Asserted from inside the runtime that owns the dispatch: scanning this
   // file from a Go test would be a regex over JavaScript.
   {
-    const declared = window.harness.pathsForSurface("webui");
-    const missing = declared.filter((p) => !RUNCMD_DISPATCH[p]);
-    if (missing.length) {
-      setStatus("webui: declared but not dispatchable: " + missing.join(", "), "error");
-      throw new Error("webui dispatch is missing declared verbs: " + missing.join(", "));
-    }
-    // The other direction: an entry for a path the declaration does not give
-    // this surface is a promise nothing keeps.
-    const declaredSet = new Set(declared);
-    const orphans = Object.keys(RUNCMD_DISPATCH).filter((p) => !declaredSet.has(p));
-    if (orphans.length) {
-      throw new Error("webui dispatch names undeclared verbs: " + orphans.join(", "));
-    }
-    // Each entry must say HOW it answers, so a path served from a stale cache
-    // cannot be added without recording the bound (D17) -- and when it names a
-    // bridge function, that function must EXIST. A name is a hand-written
-    // string; `{ fn: "streamFinsh" }` passed this check while the verb it
-    // describes failed at typing time.
-    // openChatFor is this page's own function, not a bridge export: `session
-    // stream attach` opens the chat panel rather than calling the server.
-    // Page-local handlers: the page does the work itself, so no bridge
-    // function of that name exists.
-    const local = { openChatFor: true, refreshSnapshot: true, openSessionPreview: true };
+    // Built from the declaration, so the two coverage checks that used to live
+    // here are gone rather than passing: a map derived from PathsForSurface
+    // cannot miss a declared verb nor name an undeclared one. What is NOT
+    // structural is whether the function a declaration NAMES exists — `{ fn:
+    // "streamFinsh" }` once passed every check and failed at typing time — so
+    // that is what this still asserts.
+    RUNCMD_DISPATCH = window.harness.dispatch();
     for (const [p, how] of Object.entries(RUNCMD_DISPATCH)) {
       if (!how.fn && !(how.cache && how.stale)) {
         throw new Error(`webui dispatch ${p}: needs {fn} or {cache, stale}`);
       }
-      if (how.fn && !local[how.fn] && typeof window.harness[how.fn] !== "function") {
+      // how.local is declared beside the name now (WebUIDispatch.Local), so
+      // the page and its test no longer keep separate lists of exceptions.
+      if (how.fn && !how.local && typeof window.harness[how.fn] !== "function") {
         throw new Error(`webui dispatch ${p}: names harness.${how.fn}, which the bridge does not export`);
       }
     }
@@ -5964,60 +5950,17 @@ async function runGitAction(taskID, g) {
 // called; it just stopped describing anything. The startup assertion and
 // cmd_test.mjs both check the name resolves now.
 //
-// FULL paths, not head words. This was a set of 16 heads matched against
-// p.split(" ")[0], and 27 of the 33 declared paths are multi-word -- so
-// `session snapshot` (no case at all) and the five `session stream *` paths
-// (which threw ReferenceError on an undeclared `args`) all passed the
-// assertion on the strength of the word `session`.
-const RUNCMD_DISPATCH = {
-  "submit": { fn: "submit" },
-  // Page-local, and declared here so the coverage test can see them: these
-  // three are handled entirely in this page's switch. They were reachable all
-  // along but absent from the DECLARATION, so PathsForSurface(webui) did not
-  // name them and the help could not either — `preview` had no VerbSpec at
-  // all, `help` and `refresh` were declared TUI-only.
-  "help": { fn: "help" },
-  "refresh": { fn: "refreshSnapshot" },
-  "preview": { fn: "openSessionPreview" },
-  "cancel": { fn: "cancel" },
-  "prune": { fn: "prune" },
-  "restore": { fn: "restore" },
-  "ls": { fn: "list" },
-  "grid": { fn: "gridSet" },
-  "caps": { fn: "capsCatalog" },
-  // Page-local: the spawn defaults live in this page's compose panel, so
-  // there is no server call to name. parseAuthority is the bridge half --
-  // the grammar is the declaration's, not a JS copy of it.
-  "caps set-defaults": { fn: "parseAuthority" },
-  "scope": { fn: "parseAuthority" },
-  "caps set-parent": { fn: "setParent" },
-  "server dial-runner": { fn: "serverDialRunner" },
-  "exec": { fn: "execRun" },
-  "exec ls": { fn: "execRunList" },
-  "exec kill": { fn: "execRunKill" },
-  "file push": { fn: "filePushBytes" },
-  "file pull": { fn: "filePullBytes" },
-  "file ls": { fn: "fileLs" },
-  "file mkdir": { fn: "fileMkdir" },
-  "file delete": { fn: "fileDelete" },
-  "file edit": { fn: "fileEditLoad" },
-  "file new": { fn: "filePushBytes" },
-  "git log": { fn: "gitQuery" },
-  "git diff": { fn: "gitQuery" },
-  "git show": { fn: "gitQuery" },
-  "git status": { fn: "gitQuery" },
-  "git subrepos": { fn: "gitQuery" },
-  "git file": { fn: "gitQuery" },
-  "forward ls": { cache: "lastForwards", stale: "one snapshot poll" },
-  "forward tap": { cache: "lastForwards", stale: "one snapshot poll" },
-  "forward kill": { fn: "forwardKill" },
-  "session await-idle": { fn: "awaitIdle" },
-  "session stream turn": { fn: "streamTurn" },
-  "session stream approve": { fn: "streamApprove" },
-  "session stream interrupt": { fn: "streamInterrupt" },
-  "session stream finish": { fn: "streamFinish" },
-  "session stream attach": { fn: "openChatFor" },
-};
+// RUNCMD_DISPATCH comes from the verb declarations, via the wasm bridge — it
+// was a literal map here, and what kept it in step with the table was three
+// assertions plus a page-local exception list duplicated between this file and
+// cmd_test.mjs. Two of those assertions are structural now: a map built from
+// PathsForSurface cannot name a verb the declaration does not give this
+// surface, nor miss one it does.
+//
+// It is populated at startup rather than at module load, because the bridge is
+// what supplies it; assertDispatchIsWired below is the first thing that reads
+// it and runs after the wasm module is up.
+let RUNCMD_DISPATCH = {};
 
 // runVerbCommand is the WebUI's command-line dispatch: one parsed verb in,
 // the text to print out (or undefined when the case reported through ctx.echo

@@ -59,24 +59,20 @@ test("every declared webui path is dispatched, none falls through", async () => 
 // parks on a stubbed fetch long before reaching it, so none of it runs there.
 // Both directions are checked HERE too, or `make js-test` is green with a
 // declared path that has no entry and an entry for a path nobody declares.
-test("RUNCMD_DISPATCH covers exactly the declared paths", () => {
-  const declared = page.harness.pathsForSurface("webui");
-  const entries = Object.keys(page.RUNCMD_DISPATCH);
-  const missing = declared.filter((p) => !page.RUNCMD_DISPATCH[p]);
-  assert.deepEqual(plain(missing), [], "declared here and not dispatchable");
-  const declaredSet = new Set(declared);
-  const orphans = entries.filter((p) => !declaredSet.has(p));
-  assert.deepEqual(plain(orphans), [], "dispatch names verbs the declaration does not give this surface");
-});
+// The two coverage directions used to be tested here. They are gone because
+// they cannot fail any more: RUNCMD_DISPATCH is built from
+// harness.dispatch(), which walks PathsForSurface(webui) — so it cannot name a
+// verb the declaration withholds, nor miss one it gives. The declaration-side
+// guard is verb.TestEveryWebUIVerbDeclaresDispatch.
 
-// The map the startup assertion checks must name real bridge functions.
 test("RUNCMD_DISPATCH names bridge functions that exist", () => {
-  // Page-local handlers: no bridge function of that name exists, because the
-  // page does the work itself.
-  const local = new Set(["openChatFor", "refreshSnapshot", "openSessionPreview"]);
+  // No local list here any more: whether a handler is the page's own is
+  // declared beside its name (WebUIDispatch.Local) and arrives as how.local.
+  // Keeping a second copy of that list is what let this test and the page's own
+  // assertion disagree — the page rejected refreshSnapshot while this passed.
   for (const [p, how] of Object.entries(page.RUNCMD_DISPATCH)) {
     assert.ok(how.fn || (how.cache && how.stale), `${p}: needs {fn} or {cache, stale}`);
-    if (how.fn && !local.has(how.fn)) {
+    if (how.fn && !how.local) {
       // page.bridge, not page.harness: the latter is whatever recorder the
       // last run() installed, and a recorder answers for every name.
       assert.equal(typeof page.bridge[how.fn], "function", `${p}: harness.${how.fn} does not exist`);

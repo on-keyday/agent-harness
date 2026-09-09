@@ -489,6 +489,16 @@ type VerbSpec struct {
 	// list and cannot pick the wrong one.
 	SurfaceNotes map[Surface][]string
 
+	// WebUIDispatch says how the WebUI's command input reaches this verb.
+	//
+	// The CLI and TUI dispatch through generated Go interfaces, so their wiring
+	// cannot drift from the declaration. The WebUI's runs through JS, and it
+	// held this as a hand-written RUNCMD_DISPATCH map kept honest by three
+	// assertions plus a page-local exception list that had to be edited in two
+	// places — a tax paid during the change that moved the help here, by
+	// updating the test's copy of that list and not the page's.
+	WebUIDispatch WebUIDispatch
+
 	Examples []string
 
 	// narrowedFor records which surface For() produced this spec for, so
@@ -584,3 +594,30 @@ func (v VerbSpec) FlagSetName() string {
 // argument NewFlagSet takes: the CLI wants ExitOnError, the TUI
 // ContinueOnError with a discarded writer.
 type ErrorHandling = flag.ErrorHandling
+
+// WebUIDispatch is how one verb reaches its implementation from the WebUI's
+// command input. Exactly one of Fn or (Cache, Stale) is set.
+type WebUIDispatch struct {
+	// Fn is the name of the function the page calls: a harness bridge export
+	// by default, or one the PAGE itself owns when Local is set.
+	Fn string
+
+	// Local marks an Fn the page implements rather than the wasm bridge —
+	// `preview` opens a panel, `refresh` re-polls, `session stream attach`
+	// opens the chat. Declared rather than listed on the JS side, because the
+	// list of exceptions lived in two files and they disagreed.
+	Local bool
+
+	// Cache and Stale describe a verb answered from the last snapshot poll
+	// instead of a call: Cache names the page field, Stale is what the operator
+	// is told the data's age is. `forward ls` and `forward tap` read the
+	// forwards the snapshot already carries.
+	Cache string
+	Stale string
+}
+
+// IsZero reports whether this verb declares no WebUI dispatch at all, which is
+// correct for a verb the WebUI cannot type and a declaration gap for one it can.
+func (d WebUIDispatch) IsZero() bool {
+	return d.Fn == "" && d.Cache == "" && d.Stale == ""
+}
