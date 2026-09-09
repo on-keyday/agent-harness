@@ -30,6 +30,98 @@ so: skipping the walk is itself a datum about when the trigger fails to fire.
 
 ## Entries
 
+### 2026-09-10 `546d6899` — the runner identity becomes visible and joinable again
+
+Post-landing repair walk, not a feature walk: `20d13b5c` made `RunnerID` an
+opaque 16 bytes, and this is the walk that should have run WITH it. Two operator
+questions started it — 「TUIのあれもrunnerにIDを表示してもええんちゃうか?」 and
+「あとconnsはどうなっとるんだ?」 — and a third
+(「assigned_toでもともとcidが見えてたのに見えなくなったのはどうなんです?」) found the
+regression the first two had not.
+
+done:    11 (`ls` runner rows already carried `id=`/`cid=` from the landing
+         itself), 12 (`ls --json` task rows gain `assigned_to`; the conns JSON
+         gains `principal_runner`), 17 (`assigned to:` in the task detail popup
+         now performs the join — `<identity>  at <cid> (<host>)`, or says the
+         runner is not connected), **18a** (NEW — the runners table's ID column;
+         see below), 20/21 (checked, not changed: the WebUI task row meta and
+         action sheet never displayed `assignedTo` — it feeds the pinned-resume
+         control only, item 6's answer), 23 (`principalRunner` on the conns map,
+         and `assignedTo` now `""` rather than 32 zeros for an unassigned task),
+         31 (both principal columns report `-` on absence; the runner-id chip is
+         gated on EXISTENCE of the link, not on its value; `assigned_to` is not
+         omitempty), 32 (three collapses in one walk — the two TUI copies of
+         `cli.principalShort`/`connAge` deleted and the originals exported, the
+         conns header and row format collapsed onto one `connRowFormat`, and the
+         two JS join sites collapsed onto `tasksOnRunner`), 34 (the ID column is
+         width-conditional, so the swap invariant applies: `rebuild()` is the
+         only cell builder and both directions of the swap are pinned), 37, 39
+omitted: 6/7/8 for the conns view's INPUT half — nothing new is typed anywhere;
+         the change is display-only, so 1–5, 9, 10 are `n/a` rather than omitted.
+         35 (grep: the README documents `conns` nowhere — two mentions, both
+         `--keep-conns` on a different verb — and has no runners-table
+         reference. Pre-existing gap this neither creates nor widens, same
+         verdict as the `conns --trsf` entries.)
+         36 (grep: no `runner/agentskills/*/SKILL.md` mentions `conns` or the
+         runner table; both are operator surfaces.)
+missed:  **39 — retroactively, again, and that answers the open question this
+         row has been carrying.** Its note asked whether 39 would ever fire as
+         `done` on a feature's last walk or only as a post-mortem. Second
+         firing, second post-mortem. The identity spec's §7 row said
+         "`ls` task rows | assigned_to renders the runner's identity; **the
+         address comes from the join**" — the join was written into the row and
+         then built nowhere. `tui/detail.go:202` had printed
+         `RunnerIDToConnID(t.AssignedTo).String()`, a dial ADDRESS, and shipped
+         as a bare 32-hex; the wasm snapshot's `assignedTo` did the same. On
+         `ls` the row's claim is fair (the runner rows sit beside the task rows
+         carrying `cid=`), but the detail popup REPLACES the view, so there the
+         join has to be performed and was not. Caught by the operator one day
+         after landing. The item now has its teeth used rather than admired:
+         the row is TRUE as of this commit instead of struck through.
+missed:  **34a — second miss, same shape as its first.** The identity was added
+         to the WebUI conn LIST and not to its sibling, the topology. Those two
+         are not alternatives: `.conn-list-mobile` is hidden at >=601px, so the
+         half a desktop operator actually sees named no runner at all, and the
+         topology's leaf labels are three characters ("run") so it could not
+         carry one in a label. Caught by the operator asking "chip renders?",
+         which is what made me measure PAINT state at 1200px instead of DOM
+         presence — the chip was in the DOM and contributing zero pixels.
+         Answered with a native SVG `<title>` (zero-sized, verified: the
+         topology's visible text is byte-identical before and after). Its first
+         miss was a control not carried to a sibling ROW; this is a value not
+         carried to a sibling VIEW of the same data.
+missed:  **18a — the item did not exist, which is why it is now item 18a.** The
+         operator's request had no cell on this list to land in: 16 is the task
+         table, 18 is runner DETAIL, and the runner ROW was unlisted. Per the
+         skill's closing rule the number is added rather than the walk excused.
+
+**The three defects were one shape, and it is worth naming.** Identity replaced
+the connection id in a field that had been carrying both meanings, and every
+consumer that needed the second meaning kept only the first. `conns` had a
+`principal_runner` field in the schema and the generated Go, encoded on every
+row, that nothing set and nothing read — so the WebUI joined tasks to runner
+rows on the CID, which WAS the identity right up until the landing, and both
+renderers then matched nothing and drew childless runners however many tasks
+were running. A dead wire field is not a neutral placeholder: it is what let the
+join look implemented.
+
+**Item 34's cost is worth recording against its own row.** Shipping the ID
+column unconditionally put it at 3 cells on an 80-column terminal — two hex
+digits and an ellipsis — while taking 5 cells from the columns most starved at
+that width. The threshold (72) was set by calling `fitColumns` itself across
+panel widths 40–120 and reading where it first hands the column 6 cells, then
+pinned by a test that fails if a NEIGHBOURING column's width ever pushes it back
+under. That is the difference between a constant and a measured constant, and
+the test is what makes the difference survive.
+
+**What no item asked, and the operator did.** 「見づらくはならないん?」 about the
+topology tooltip. Nothing on this list asks whether an addition COSTS anything
+on the surface it lands on — 31 asks whether a value is shown, 34/34a about
+arity and control kind. The answer here was measurable (a `<title>` has a
+0x0 box and the visible text set is unchanged), and the honest part of the
+answer was that the tooltip is not load-bearing: it was added because 34a fired
+at me, not because anyone needed it. Recorded rather than defended.
+
 ### 2026-08-22 `fe894b4` — cursor + alt_screen on the session snapshot object
 
 done:    10 (`session send --snapshot` shares `printSessionScreen`, so the two
@@ -1573,25 +1665,26 @@ Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 18 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
+| 31 (don't hide a value for what it IS) | 19 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
 | 16 (TUI task table) | 3 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
-| 34 (dynamic column sets) | 5 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. |
-| 17 (TUI detail popup) | 4 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
+| 34 (dynamic column sets) | 6 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. Sixth is the first where the item decided WHETHER to ship a column rather than how: unconditional, the runners table's ID cell was 3 cells at 80 columns, so the item's machinery (conditional set + one cell builder + a pinned swap) was the price of the column existing at all. |
+| 17 (TUI detail popup) | 5 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. Fifth firing is the one that shows why this popup is not interchangeable with a row: it REPLACES the view, so a field whose value is only meaningful joined to another listing has to be joined HERE — `assigned to:` printed a bare identity while `ls` could get away with pointing at the runner rows beside it. |
+| 18a (TUI runner table) | 1 | **1** | Born as a MISS, like 39: the runner ROW was the one display surface with no cell, while the task row, the task detail and the runner detail all had one. A field can therefore read `done` on every number and still be absent from the table an operator looks at first. Its constraint is the opposite of 18's — that table is over-subscribed, so the answer is usually a width-conditional column, which pulls 34 in. |
 | 33 (take effect or error) | 17 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
 | 10 (other verb families) | 13 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 6 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. Sixth walk added the `reconnect` verb (item 1), a TUI-only ScreenAction whose generated dispatch method the compiler then demanded. |
 | 27 (shared funnel) | 8 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. Eighth firing was 27, 28a and 32 arriving as ONE finding on a diagnostic row: two hand-written projections of `trsf.InternalState`, one per answerer, about to gain five fields. Worth noting that for a DIAGNOSTIC the miss is worse than for a display field — a counter present on one answerer and zero on the other is indistinguishable from a real zero. |
-| 32 (one serializer, round-trip tested) | 15 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 32 (one serializer, round-trip tested) | 16 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. Sixteenth collapsed three at once, and one of them is the cheapest case there is: two functions in `tui/` whose own comments said "mirrors cli.X but lives in the tui package", where `tui` already imports `cli`. No runtime boundary, no reason, only drift — worth grepping for that comment shape directly. |
 | 28a (follow the value to the request build) | 13 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
-| 34a (same KIND of control as its neighbours) | 4 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
+| 34a (same KIND of control as its neighbours) | 5 | **2** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. SECOND miss, same shape one level up: a value carried to the WebUI conn list and not to the topology — two VIEWS of the same data where a media query decides which one a viewer gets, so "added to the WebUI" was true and half the operators saw nothing. Two misses, both "carried, but not to the sibling". If it misses a third time the wording should lead with the sibling sweep rather than close on it. |
 | 38 (live screen-rendering surfaces) | 7 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. Latest firing is the grid-pane vertical scroll itself — the pane IS the surface — with its WebUI-preview half recorded `omitted` only after checking that renderer has no crop window to offset. |
 | 29 (result messages name the target and the change) | 10 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 | 36 (agent-facing skill texts) | 4 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 | 6 (WebUI controls) | 5 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |
-| 39 (feature's own surface matrix vs. what shipped) | 3 | **1** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). |
+| 39 (feature's own surface matrix vs. what shipped) | 4 | **2** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). **That question now has an answer: second firing, second post-mortem.** The identity spec's §7 row promised "the address comes from the join" and no join was built; the operator found it one day after landing. Two for two retroactive means the item as written does not fire during a walk — the walk reads the spec's table as a description of what exists. Treat it as a landing gate, not a checklist line: the row is not `done` until someone has opened the file it names. |
 | 15 (caps catalog) | 2 | 0 | First row, and it fired on a change that added NO capability: `purge` now gates two verbs with different outcomes (`board purge` destroys, `board retract` withdraws), so the catalog line understated the grant while being literally accurate. The item's question is not "was a bit added" but "does the description still name everything the bit reaches". |
 
 **Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after

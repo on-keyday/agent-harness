@@ -92,6 +92,21 @@ when their trigger fires, with the same three verdicts.
 17. TUI task detail popup (`d`) — `tui/detail.go` `formatTaskDetail` —
     **this one had no scope line for a full release**.
 18. TUI runner detail — `tui/detail.go` `formatRunnerDetail`.
+
+18a. **TUI runner table — `tui/runners.go` `runnerColsFor` + `rebuild`.** The
+    runner ROW, which had no cell on this list while the task row (16), the task
+    detail (17) and the runner detail (18) all did. That asymmetry is not
+    academic: a runner field could be added to its detail popup and to all three
+    `ls` forms with every number reading `done`, and the table an operator looks
+    at first would still not carry it. Found 2026-09-10, on the operator asking
+    「TUIのあれもrunnerにIDを表示してもええんちゃうか?」 — the runner's own IDENTITY
+    was reachable only by opening the popup, on a fleet where two slots share a
+    hostname by design and the rows therefore differed only by Agent.
+    Ask it separately from 18, because the two have opposite constraints: a
+    detail popup has a line for anything, and this table is over-subscribed
+    (79 natural cells before the column was added), so the answer here is often a
+    width-conditional column — which drags item 34 in with it. Numbered 18a
+    rather than appended so it sits beside the runner surface it belongs to.
 19. TUI picker rows — `tui/authoritypicker.go` `buildRows` (id, status,
     agent, repo, prompt head).
 20. WebUI task row meta — `renderTaskList` metaText in `main.js`.
