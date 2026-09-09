@@ -330,6 +330,16 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +    # See D6.
 +    ticket :[16]u8
 
++# HeldTask is fixed-size; expose its on-the-wire byte length so the runner's
++# budget arithmetic (§6b) divides by a value the SCHEMA owns. Same facility and
++# same reason as FileTransferAckSize (message.bgn:1899), which exists so
++# readers pre-allocate exactly what the format costs; here the consumer is a
++# capacity computation rather than a buffer, and the failure it prevents is
++# worse — a
++# stale divisor makes the hello outgrow its datagram, which over UDP is
++# silently dropped (§6b).
++HeldTaskSize ::= sizeof(HeldTask)
+
 +# --- server → runner, RunnerRequestType.hold_tasks ---
 +# Sent to every registered runner as the FIRST step of a deliberate shutdown,
 +# before any connection is torn down. Not sent on a crash — there is nothing to
@@ -658,24 +668,41 @@ message's encoded body.
   runner's `--roots` rather than add slots, so the first list grows over time.
 - **The report is bounded when the runner ACKs, not truncated when it sends.**
   The runner already builds its hello every connect, so it can compute
-  `K = (budget − len(hello without the report)) / 32` and ack at most `K` tasks.
-  32, not 16: a `HeldTask` carries the task id and the agentboard ticket (D6).
+  `K = (budget − len(hello without the report)) / protocol.HeldTaskSize` and ack
+  at most `K` tasks. **No literal element size anywhere**: `HeldTaskSize ::=
+  sizeof(HeldTask)` is declared in §4 and the divisor is the generated constant,
+  because a field added to `HeldTask` must move `K` or the hello outgrows its
+  datagram and is dropped in silence — the exact failure this item exists to
+  prevent, reintroduced by its own guard. The `budget` half is derived the same
+  way as far as it can be: `trsf.DefaultInitialMTU` is exported
+  (`trsf/conn.go:980`), and the per-packet overhead objproto adds on top of the
+  payload (`pktLen := 8 + len(data) + Overhead()`,
+  `objproto/objproto.go:1455`) is a named constant in this repo with that
+  citation beside it, since objproto exports neither the 8 nor the tag length.
   Tasks beyond `K` are simply not held and take today's path — killed, Failed.
   A runner with many roots therefore holds *fewer tasks*, which is legible; the
   alternative shapes are a hello that cannot be sent (silent, and it takes the
   whole runner down, not one task) or a report truncated at send time (the
   server would then Fail tasks whose children are alive, per D11).
   At current settings `K` is not binding and should be recognised as a guard
-  rather than a live limit: with a ~300-byte hello it is about 27, against a
-  fleet running `--max-tasks 8`. It becomes binding for a runner configured
-  with a large `--max-tasks` or a long root list, which is exactly the
-  configuration that would otherwise fail silently.
+  rather than a live limit. Measured 2026-09-10: the widest hello in the fleet
+  is ~300 bytes, which against a ~1170-byte budget leaves room for a couple of
+  dozen entries, versus a fleet running `--max-tasks 8`. That figure is an
+  illustration of the headroom, not an input to anything — nothing computes from
+  it, and it goes stale the day a runner gains a root. `K` becomes binding for a
+  runner configured with a large `--max-tasks` or a long root list, which is
+  exactly the configuration that would otherwise fail silently.
 - **A guard that goes red.** One test encodes a worst-case hello — roots at
   their real path lengths, profiles, `K` held tasks — and fails above the
   budget. It has to be *demonstrated* red by inflating the input before it is
   believed, because a size guard that cannot fail is worse than none, and this
   one is guarding a limit that the WS transport hides. The same test covers the
-  pre-existing exposure, which nothing checks today.
+  pre-existing exposure, which nothing checks today. A second, cheaper test
+  pins `protocol.HeldTaskSize` against the value the budget arithmetic was
+  written for, the way `FileTransferAckSize` is pinned at
+  `runner/file_transfer_test.go:1243`: a field added to `HeldTask` should fail
+  a fast unit test with the arithmetic named in it, not a datagram-sized
+  integration case.
 
 ## 7. Surface matrix
 
