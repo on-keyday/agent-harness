@@ -129,7 +129,7 @@ with on its merits.
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
 | D18 | `RunnerHelloResponse` answers with the ACCEPTED ids, not the refused ones, and the runner kills every held child not named | author |
-| D19 | Screen captures happen BEFORE the hold exchange, not after the acks — the sequence has a 5s hard-kill ceiling it does not own | author |
+| D19 | Screen captures happen LAST — after the ack and after the session streams are drained. Capturing early loses everything the child wrote in between | author — corrected |
 
 **D1 is the whole design, not a scope cut.** An automatic hold — the runner
 noticing a drop and holding on its own — cannot distinguish a deliberate
@@ -284,12 +284,34 @@ today, not deferred.
 What a restart destroys is that model, because it lives in the mux's memory —
 not the ability to reconstruct a screen. And the server is still running at hold
 time, which is exactly when it can call `screenRepaint()` for every session it
-is about to hold and write those bytes beside the WAL. Re-adoption then replays
-the snapshot into the rebuilt mux, the runner resumes draining, and the bytes
-the child produced during the gap — which D12 left sitting in the kernel buffer
-rather than dropping — land on top. Snapshot-at-hold plus everything-since is
-the child's current screen by construction, with no dependency on the
-application being willing to redraw.
+is about to hold and write those bytes beside the WAL. Re-adoption replays the
+snapshot into the rebuilt mux, the runner resumes draining, and the bytes the
+child produced during the gap — which D12 left sitting in the kernel buffer
+rather than dropping — land on top.
+
+**"Continuous by construction" holds only if three windows are closed, and
+naming them is the whole of D19.** A byte the child writes in this shutdown can
+be in one of four places, and only one of them takes care of itself:
+
+1. Written before the capture ⇒ in the mux's `vtgrid` model ⇒ in the snapshot.
+2. Written after the capture but before the runner stops draining ⇒ read off
+   the PTY, forwarded, applied to a model that is about to be discarded, and in
+   NO buffer anywhere. **Lost unless the capture happens after the drain**,
+   which is why D19 inverted (§5 step 5).
+3. Sent by the runner but not yet read by `runnerPump` when its context is
+   cancelled — that loop abandons whatever is unread
+   (`server/session_mux.go:328-337`). **Lost unless the shutdown drains the
+   stream before capturing**, the other half of §5 step 5.
+4. Read off the PTY by the relay but not forwardable, because the write failed.
+   **Lost unless the relay keeps it** — one read's worth, held and prepended
+   after the rebind (§6).
+5. Still in the PTY buffer ⇒ D12 keeps it ⇒ delivered after the rebind. This is
+   the only one that needed no work.
+
+With 2, 3 and 4 closed the composition is exact and needs no cooperation from
+the application. Without them the screen is stale by however much the child
+wrote during the shutdown, and a full-screen app hides that (its next repaint
+covers it) while a line-oriented one does not (those lines are simply gone).
 
 The resize nudge survives only as the fallback for a session with no snapshot
 (the hold was armed but the capture did not land) and for a plain shell, which
@@ -506,12 +528,7 @@ PHASE 1 — SHUTDOWN.  Everything here is inside a 5 s hard-kill window
 
  server: root ctx CANCELLED
    │
-   ├─(a) screenRepaint() for every LIVE interactive session
-   │        └─▶ disk: <data-dir>/held/<task-id>.screen
-   │            ahead of the exchange on purpose (D19): the only step whose
-   │            cost grows with the fleet, and it needs nothing from the acks
-   │
-   ├─(b) holdCtx = WithTimeout(context.Background(), --hold-ack-timeout)
+   ├─(a) holdCtx = WithTimeout(context.Background(), --hold-ack-timeout)
    │        ▲ NOT the root ctx. Sending on the cancelled one holds nothing,
    │          silently, and passes every test that calls shutdown directly
    │
@@ -524,6 +541,16 @@ PHASE 1 — SHUTDOWN.  Everything here is inside a 5 s hard-kill window
    │     server ◀═ HoldTasksAck{hold_id, [task_id …]} ════ runner
    │                        only tasks whose child is ALIVE: OnStdinWriter
    │                        fired / command started, OnProcessExit not fired
+   │                        AND: the ack means "I stopped reading their output",
+   │                        so no NEW frame can follow it for a held session
+   │
+   ├─(b) drain each held session's stream until quiet, THEN capture
+   │        └─▶ disk: <data-dir>/held/<task-id>.screen
+   │            LAST, not first (D19). runnerPump is a synchronous
+   │            read→model→ring loop that abandons what is unread when its
+   │            ctx dies, so a snapshot taken before the drain misses every
+   │            byte written between it and the ack — bytes that sit in no
+   │            buffer anywhere. See D14's four windows.
    │
    ├─(c) merge = ack ∩ { t : t.AssignedTo == that identity }   ← intersection
    │        └─▶ disk: task_held{task_id, runner_id, hold_id, deadline_ns}
@@ -545,6 +572,7 @@ PHASE 2 — THE GAP.  No server exists.
           and the child blocks in write(), so nothing is dropped and there
           is no ring to size
           does NOT close the PTY master (SIGHUP would kill what it is keeping)
+          keeps the one chunk it read but could not forward, for the rebind
           the relay makes exec's EOF→SIGHUP ladder unreachable (D13)
           timer fires ⇒ kill every held child, forget the hold (D4)
 
@@ -610,19 +638,10 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    effect through its default. Enabling it by argv instead would mean every
    restart until someone passed `scripts/restart.py harness-server
    --hold-window 90s` behaved as though the change had not landed.
-2. **Capture the screens FIRST**, before any message goes out (D19).
-   `SessionMux.screenRepaint()` is callable for every live interactive session
-   right now, and the bytes go to `<data-dir>/held/<task-id>.screen` (D14).
-   This runs ahead of the exchange because it is the only step whose cost
-   scales with the number of sessions, and because it needs nothing from the
-   acks — the server already knows which sessions it has. Snapshots for tasks
-   that turn out not to be held are wasted writes of a few KB, cleared by the
-   startup sweep. A capture that fails is logged and the hold continues: a held
-   task with no snapshot falls back to the resize nudge, which is worse than a
-   snapshot and much better than not holding.
-3. Mint one `HoldID`. Send `HoldTasksRequest{hold_id, hold_ms}` to every
-   registered runner, in parallel, **on a context that is not the one that just
-   got cancelled**. Both shutdown triggers converge on `cancel()` of the root
+2. Mint one `HoldID`. (The screen capture used to be here; D19 explains why it
+   moved to step 5.)
+3. Send `HoldTasksRequest{hold_id, hold_ms}` to every registered runner, in
+   parallel, **on a context that is not the one that just got cancelled**. Both shutdown triggers converge on `cancel()` of the root
    context — `signal.NotifyContext` (`cmd/harness-server/main.go:122`) and the
    sentinel watcher (`cli/shutdownwatch.go:44-47`) — so a hold that sends on
    the root context sends on a dead one, holds nothing, and says nothing. It
@@ -630,9 +649,30 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    only the real path arrives with the context already cancelled. Use
    `context.WithTimeout(context.Background(), ackTimeout)`.
 4. Collect acks into a map keyed by (identity, task id), bounded by
-   `--hold-ack-timeout` (default `1.5s`, see the ceiling below). A runner that does not ack in time holds nothing: its
-   tasks take the normal path.
-5. **Merge by intersection, not union.** For each acked (identity, task id),
+   `--hold-ack-timeout` (default `1.5s`, see the ceiling below). A runner that
+   does not ack in time holds nothing: its tasks take the normal path.
+   **The ack means "I have stopped reading these tasks' output."** The runner
+   stops draining when the request arrives, not when the connection dies
+   (§6), so after its ack no NEW frame can be sent for a held session. That is
+   what makes the next step's boundary a statement instead of a guess.
+5. **Drain the session streams, then capture the screens** (D19). Everything
+   the runner sent before its ack is still arriving — trsf is reliable, and the
+   ack rides a different stream, so it carries no ordering against those
+   frames. Read each held session's stream until it goes quiet (a short
+   bounded window; there is no EOF to wait for, because nobody is closing
+   anything), which lets `runnerPump` apply the last frames to the mux's
+   `vtgrid` model. THEN call `SessionMux.screenRepaint()` per held interactive
+   task and write the bytes to `<data-dir>/held/<task-id>.screen`.
+   Order matters here and the first draft had it backwards: `runnerPump` is a
+   synchronous read→model→ring loop that abandons whatever is unread when its
+   context is cancelled (`server/session_mux.go:328-360`), so a snapshot taken
+   before the drain misses every byte the child wrote between the capture and
+   the runner's ack — read off the PTY, applied to a model that is about to be
+   discarded, and present in no buffer anywhere. A capture that fails is
+   logged and the hold continues: a held task with no snapshot falls back to
+   the resize nudge, which is worse than a snapshot and much better than not
+   holding.
+6. **Merge by intersection, not union.** For each acked (identity, task id),
    accept it only if the store says that task is assigned to that identity
    (`task.AssignedTo`); drop and log anything else. This is the same check the
    re-adoption gate makes, applied at the near end so a bad entry never reaches
@@ -649,7 +689,7 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    offer a task whose child has exited. `WAL.Write` flushes per record
    (`server/wal.go:261-277`), so an interrupted pass is a partial hold — some
    tasks held, the rest on the normal path — never a lost tail.
-6. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
+7. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
    process's life. This is the single most important line in the change: the
    teardown in step 6 fires `registry.OnRemove` for every runner
    (`server/server.go:488-491`), and without the suppression the WAL ends with
@@ -672,14 +712,14 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    the ordering a statement instead of a race. `afterMuxStopped` also gains
    `Held` to its skip condition — one extra comparison, and cheap insurance
    against a future path that stops a mux for its own reasons.
-   Note what step 6 does *not* buy. The `Revoke` half of that function is
+   Note what step 7 does *not* buy. The `Revoke` half of that function is
    irrelevant here: the ticket registry is in memory
    (`agentboard/registry.go:23-29`) and dies with the process whether or not
    the shutdown revokes. Skipping the revoke is worth doing only for tidiness
    in the case where the shutdown is aborted. The agent's credential survives
    because the runner reports the ticket back and the restarted server
    re-registers it (D6), not because this step declined to delete a map entry.
-7. Tear down connections and exit as today.
+8. Tear down connections and exit as today.
 
 **The whole sequence has a 5-second hard ceiling, and it is not ours.**
 `scripts/restart.py harness-server` calls `daemon_down(slot, bin_name)` with no
@@ -691,8 +731,11 @@ that overruns is SIGKILLed mid-sequence — and SIGKILL is the crash case, which
 by D1 recovers nothing, so whatever had not yet been written silently degrades
 to today's behaviour.
 
-That ceiling is why step 2 comes before step 3: the screen captures are the only
-part whose cost grows with the fleet, and they are now outside the ack window.
+That ceiling is what the capture ordering has to live inside, and measuring it
+settles the tension: a repaint program is a few KB and the code notes ~380
+bytes for a BLANK 80x24 screen, so `--max-tasks` of them is microseconds of
+CPU and one small write each. The early-capture optimisation D19 originally
+made was buying nothing and costing correctness.
 It also sets `--hold-ack-timeout`'s real bound: `3s` would leave under two seconds
 for every write plus teardown, which is too close to the edge to choose
 casually. Take `1.5s` as the default and treat `restart.py` passing a larger
@@ -842,6 +885,12 @@ present is the normal case.
   was started and has not returned. Both hooks already exist
   (`objtrsf/exec.ExecuteOption`), so this needs bookkeeping rather than new
   plumbing.
+- **The relay keeps what it could not forward.** When its write to the server
+  fails it must not read further and must not discard the chunk in hand: that
+  chunk was already taken off the PTY, so it exists nowhere else (D14's window
+  4). Hold it and prepend it to the first write after the rebind. One read's
+  worth, bounded by the read size, and it is the difference between exact
+  continuity and a gap whose size depends on when the connection died.
 - **Interpose a relay on every interactive session (D13).** The runner passes
   its own `trsf.BidirectionalStream` to `agentexec` instead of the server's
   stream, and copies between the two itself. This is the load-bearing piece:
@@ -1246,10 +1295,15 @@ Also:
      must match what it reported before the restart. That comparison is D14's
      proof, and it is available headlessly because snapshot renders through the
      same screen model the repaint comes from.
-  1a. The same, with the child made to write during the gap (a clock or a
-     progress line). The reattached screen must show the LATER content, not the
-     snapshot — this is the ordering in §6 that a wrong implementation gets
-     backwards, and it looks correct in test 1 either way.
+  1a. The same, with the child writing CONTINUOUSLY across the restart (a clock,
+     or `agy` at its own framerate). Two separate things must hold, and an idle
+     child hides both: the reattached screen must show content produced AFTER
+     the snapshot rather than the snapshot itself (the §6 replay ordering), and
+     it must show content produced DURING the shutdown itself — D14's windows
+     2, 3 and 4, which is what a capture taken before the drain silently drops.
+     The falsifier is a monotonic counter in the child's output: no value may
+     be missing between the last one seen before the restart and the first one
+     seen after it.
   1b. The credential, which is the check the prerequisite spec could not run at
      all: from inside the surviving task, `agent send` must return
      `delivered_to=1` and `agent inbox` must read it back with
