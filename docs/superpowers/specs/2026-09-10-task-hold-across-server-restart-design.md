@@ -111,6 +111,7 @@ with on its merits.
 | D15 | A re-adopted interactive task lands in `Detached`; a oneshot lands in `Running` | author |
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
+| D18 | `RunnerHelloResponse` answers with the ACCEPTED ids, not the refused ones, and the runner kills every held child not named | author |
 
 **D1 is the whole design, not a scope cut.** An automatic hold — the runner
 noticing a drop and holding on its own — cannot distinguish a deliberate
@@ -356,6 +357,19 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
      trsf_state_response
 +    hold_tasks_ack    # the exact set I will keep
 
++ format RunnerHelloResponse:
++     your_runner_id :RunnerID
++    # Which reported held tasks the server ACCEPTED. The polarity is deliberate:
++    # a refused-list that the server forgets to fill leaves the runner holding a
++    # child nobody will adopt, while an accepted-list that is forgotten kills
++    # children — loud, and recoverable, instead of silent. So the runner kills
++    # every held child whose id is absent here, and this is the ONLY channel
++    # that reaches a task cancelled while it was held: CancelTask is best-effort
++    # and its send site returns when the runner is not registered, which is
++    # every moment a task spends in Held (server/dispatch.go:230-258).
++    accepted_len :u16
++    accepted :[accepted_len]TaskID   # ids only — the ticket is not echoed back
+
 +# --- server → runner, RunnerRequestType.rebind_session ---
 +# Re-adoption of an INTERACTIVE task: the server has created a fresh bidi
 +# stream and the runner must splice the PTY it is already holding onto it. The
@@ -462,11 +476,21 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   the newer output. Delete the file once it has been fed — a stale snapshot
   replayed into a later session would show an operator a screen from before the
   restart with no sign that it is old.
-- Refused entries are reported back so the runner can kill those children
-  (§6). The refusal is per task, not per hello: a runner reporting one stale
-  task still registers and keeps the rest.
-- A task the operator Cancelled while it was held is not `Held` any more, so it
-  is refused by the same rule — no special case.
+- The answer is the ACCEPTED id list on `RunnerHelloResponse` (D18); the runner
+  kills every held child not named there. Per task, not per hello: a runner
+  reporting one stale task still registers and keeps the rest.
+- **Cancel needs no special case, but it does depend on that channel.**
+  `TaskStore.Cancel` marks the store unconditionally and the wire message is
+  best-effort: `Dispatcher.OnCancel` resolves the assignee and simply returns
+  when it is not registered (`server/dispatch.go:230-258`), with no retry. A
+  held task is never registered — re-adoption happens *at the identity gate*,
+  so there is no moment where the runner is registered and the task is still
+  `Held` — therefore a `CancelTask` for a held task can never be delivered.
+  What kills that child is its absence from the accepted list, which is why
+  D18's polarity is not cosmetic: with a refused-list the operator's cancel
+  would leave a live agent working in a worktree for a task the store calls
+  Cancelled. Ordering in the WAL takes care of itself: `task_cancelled` after
+  `task_held` replays as Cancelled, so the restarted server does not offer it.
 
 ## 6. Runner
 
@@ -779,7 +803,11 @@ Also:
      instruction is not what armed it.
   4. `hold_ms` elapsing with no server: the children must be gone, and the next
      server start must Fail those tasks rather than offer them.
-  5. A task Cancelled while held: refused at re-adoption, child killed.
+  5. A task Cancelled while held: absent from the accepted list, child killed,
+     and no CancelTask is ever sent (it cannot be — §5). Check the child's pid
+     is gone, not just that the row says Cancelled: the row says that the
+     moment the operator types it, which is exactly why this case needs a live
+     check.
   6. A runner PROCESS restart during the hold: the new identity must be refused
      and nothing re-adopted (and note (4) above — its children are the orphans
      §9.4 describes).
