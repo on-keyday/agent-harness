@@ -122,6 +122,15 @@ arity and control kind. The answer here was measurable (a `<title>` has a
 answer was that the tooltip is not load-bearing: it was added because 34a fired
 at me, not because anyone needed it. Recorded rather than defended.
 
+**Items 11 and 16 closed as `omitted` by the OPERATOR, not by me.** The walk
+left one asymmetry open — `ls`'s text rows and the TUI task table do not name
+the runner a task runs on — and reported it as a live question rather than
+deciding it. Answer: 「task tableにはまあいいよ今はなくても困ってないし」. That is
+assent, which is a different verdict from an omission I would have written
+myself, so it is recorded with its provenance in the spec's addendum. Worth a
+line here because the log's purpose is which items keep firing: 11/16 are now
+answered for this field and a later walk should not reopen them as a gap.
+
 ### 2026-08-22 `fe894b4` — cursor + alt_screen on the session snapshot object
 
 done:    10 (`session send --snapshot` shares `printSessionScreen`, so the two

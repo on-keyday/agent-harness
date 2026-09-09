@@ -430,6 +430,28 @@ the matrix was built from `PathsForSurface(WebUI)` and they were missing from it
 `help` and `refresh` were declared `TUI`-only while the WebUI accepted both, and
 `preview` had no `VerbSpec` at all. All three are declared now.
 
+### The display half, repaired a day late (`546d6899`)
+
+§7 said of `ls` task rows: "assigned_to renders the runner's identity; **the
+address comes from the join**". The join was written into that row and built
+nowhere, so four surfaces shipped identity-only — including `tui/detail.go`'s
+`assigned to:` line, which had been printing a dial address and is the one
+surface that cannot lean on §7's argument, because the popup REPLACES the view
+instead of sitting beside the runner rows. It now performs the join. Two WebUI
+task↔runner joins were matching nothing for the same reason, `ConnInfo`'s
+`principal_runner` was in the schema and set by nobody, and the wasm bridge was
+exporting an absent identity as 32 truthy zeros. Details in the commit and in
+`surface-parity-checklist/firing-log.md`.
+
+**Decided by the operator, 2026-09-10: a task's runner stays off the task
+TABLES.** `ls`'s text rows and the TUI task table do not name the runner a task
+runs on, and will not — 「task tableにはまあいいよ今はなくても困ってないし」. The
+machine-readable half is `assigned_to` in `ls --json`, the TUI's `d` popup names
+it in full, and the WebUI hangs the task off its runner in the connection views.
+Recorded here with its provenance because this is operator assent and not a
+v1 boundary I chose: a later reader finding the asymmetry should not treat it as
+an unfinished row of §7.
+
 ### The one this spec got wrong: skew across the DISK, not the wire
 
 §8's WAL bullet is the near-miss, and it is worth reading against what happened.
