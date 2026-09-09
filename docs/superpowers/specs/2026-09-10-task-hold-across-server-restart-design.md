@@ -133,9 +133,31 @@ the authority has to come from the server's own disk. It already does: a
 `task_assigned` record carries the assignee's identity hex
 (`server/taskstore.go:535`), and the WAL also holds `Capabilities`, `ScopeBase`,
 `ScopeIDs`, `ScopeOverrides`, `WorktreeDir`, `AgentProfile` and `ExtraArgs`
-(`server/wal.go:116-149`). So re-adoption needs nothing from the runner except
-"this task id, still alive", and a runner claiming a task assigned to another
-identity is refused by comparing against `task_held.runner_id`.
+(`server/wal.go:116-149`). So re-adoption takes no *authority* from the runner:
+caps, scope, worktree, profile and args are read from the log, and a runner
+claiming a task assigned to another identity is refused by comparing against
+`task_held.runner_id`.
+
+**The agentboard ticket is the one exception, and it grants nothing new.** The
+board's registry is `map[ticketKey][16]byte` held in memory
+(`agentboard/registry.go:23-29`); nothing persists it. So a restarted server
+does not know what any task's ticket was, while the surviving agent still
+presents the one frozen into its env at spawn — and `Validate` is an exact
+compare (`agentboard/registry.go:61-73`), so re-registering a freshly minted
+ticket answers `BadTicket` and leaves a live agent unable to use the board or
+`harness-cli` at all. The runner therefore reports the ticket back and the
+server re-registers *that* value.
+
+Why this is not a hole in D6: the runner received the ticket in
+`AssignTaskBody.AuthTicket` and wrote it into the agent's environment itself
+(`runner/session.go:552`, `runner/agentenv.go:73-74`), so it can already hand
+that task's board identity to any process it starts. Reporting it grants a
+capability it has by construction. What it must NOT be allowed to do is name a
+ticket for a task the log does not say is its own — which is the same identity
+comparison as every other entry, so the check is already there. The alternative
+was persisting the ticket in the WAL, which would leave a live credential in
+plaintext in `events.log` for the lifetime of the task; the wire carries it
+under an authenticated, encrypted connection to a peer that already has it.
 
 **D7**: a report sent *after* the handshake would need the server to hold a
 window open before it may fail held tasks — a new timing dependency in exactly
@@ -245,6 +267,12 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +# TaskID list so a later field (a child pid, a byte count) has somewhere to go.
 +format HeldTask:
 +    task_id :TaskID
++    # The agentboard ticket this task's agent is HOLDING, in the env it froze at
++    # spawn (HARNESS_AUTH_TICKET). The board's registry is an in-memory map, so a
++    # restart forgets every ticket while the surviving agent keeps presenting
++    # its own; re-registering a freshly minted one would answer BadTicket. The
++    # runner is the right carrier because it already knows this value — it
++    # received it in AssignTaskBody.AuthTicket and wrote the env itself. See D6.
 
 +# --- server → runner, RunnerRequestType.hold_tasks ---
 +# Sent to every registered runner as the FIRST step of a deliberate shutdown,
@@ -361,10 +389,14 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    teardown in step 6 fires `registry.OnRemove` for every runner
    (`server/server.go:488-491`), and without the suppression the WAL ends with
    `task_failed` after `task_held` — replay is order-sensitive, so the hold
-   would be silently undone and the children left orphaned. The board
-   registration must NOT be revoked either: revoking it is what makes a
-   surviving agent's credential invalid, and keeping the agent's credential
-   valid across the restart is the reason the identity work was done.
+   would be silently undone and the children left orphaned.
+   Note what this does *not* buy. The `Revoke` half of that function is
+   irrelevant here: the ticket registry is in memory
+   (`agentboard/registry.go:23-29`) and dies with the process whether or not
+   the shutdown revokes. Skipping the revoke is worth doing only for tidiness
+   in the case where the shutdown is aborted. The agent's credential survives
+   because the runner reports the ticket back and the restarted server
+   re-registers it (D6), not because this step declined to delete a map entry.
 6. Tear down connections and exit as today.
 
 **Startup.** After `ReplayEvents`:
@@ -386,9 +418,11 @@ and it happens inside `serve`, before the deferred `wal.Close()`
 - Every `Held` task belonging to that identity and NOT in the report is Failed
   with `reason="not_held_by_runner"` (D11).
 - Re-adopted tasks: `Registry.BindTask` for capacity (D16), board
-  `RegisterTask` under (identity, task id) so the agent's existing ticket
-  validates, status → `Detached` for interactive / `Running` for oneshot (D15),
-  and a `task_readopted` WAL record for the audit trail.
+  `Register(identity, task id, ticket)` with **the ticket the runner reported**
+  — not a fresh one, or the surviving agent gets `BadTicket` (D6) — status →
+  `Detached` for interactive / `Running` for oneshot (D15), and a
+  `task_readopted` WAL record for the audit trail. The ticket is not written to
+  that record.
 - An interactive re-adoption rebuilds the `SessionMux` and, before the runner
   resumes draining, feeds it the persisted screen bytes so the model and the
   ring both start from the screen as it was at hold time (D14). The ordering is
@@ -428,6 +462,12 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   hold. Also kill immediately when the server refuses a reported task, and when
   the reconnect ends in a non-retryable PSK rejection (there is no server that
   will ever adopt them).
+- **Keep the ticket where the hold path can reach it.** `AuthTicket` arrives in
+  `AssignTaskBody` and is currently consumed inline while building the agent's
+  env (`runner/session.go:552`, `runner/agentenv.go:73-74`); the per-task
+  `taskEntry` holds only `{cancel, repoPath}`. It gains the ticket, because the
+  report needs it (D6) and a value that only exists in a goroutine's frame is
+  not reachable from the hold handler.
 - **Report on every reconnect.** The report is in `RunnerHello`, so it goes out
   with the identity. Nothing held → zero-length list and a zero `hold_id`.
 - **Re-bind, then resume draining.** On `RebindSessionRequest`, splice the held
@@ -527,14 +567,15 @@ message's encoded body.
   runner's `--roots` rather than add slots, so the first list grows over time.
 - **The report is bounded when the runner ACKs, not truncated when it sends.**
   The runner already builds its hello every connect, so it can compute
-  `K = (budget − len(hello without the report)) / 16` and ack at most `K` tasks.
+  `K = (budget − len(hello without the report)) / 32` and ack at most `K` tasks.
+  32, not 16: a `HeldTask` carries the task id and the agentboard ticket (D6).
   Tasks beyond `K` are simply not held and take today's path — killed, Failed.
   A runner with many roots therefore holds *fewer tasks*, which is legible; the
   alternative shapes are a hello that cannot be sent (silent, and it takes the
   whole runner down, not one task) or a report truncated at send time (the
   server would then Fail tasks whose children are alive, per D11).
   At current settings `K` is not binding and should be recognised as a guard
-  rather than a live limit: with a ~300-byte hello it is about 54, against a
+  rather than a live limit: with a ~300-byte hello it is about 27, against a
   fleet running `--max-tasks 8`. It becomes binding for a runner configured
   with a large `--max-tasks` or a long root list, which is exactly the
   configuration that would otherwise fail silently.
@@ -640,10 +681,12 @@ Also:
 7. **The shutdown does not actually exit** after writing `task_held`. Replay is
    order-sensitive, so whatever the still-live server writes afterwards wins;
    the hold records are then stale rather than wrong. Accepted.
-8. **Board registration revoked at shutdown despite the hold.** The agent
-   survives with a credential that no longer validates, which presents as
-   `UnknownTask` from a live agent — the exact symptom the identity work was
-   done to remove, arriving from the other end.
+8. **A fresh ticket minted at re-adoption instead of the reported one** (D6).
+   The agent survives and its session looks perfect; every `harness-cli` call
+   it makes answers `BadTicket`, and an `agent send` from it silently reaches
+   nobody. A session you can watch but that cannot report is the worst of the
+   available failures, because nothing about the screen says so. `UnknownTask`
+   is the same defect one step earlier — the task never re-registered at all.
 9. **The screen snapshot fed in the wrong order, or left on disk.** Fed after
    the gap's buffered bytes it overwrites newer output with older; left
    undeleted it can repaint a later session with a screen from before the
@@ -681,6 +724,12 @@ Also:
      progress line). The reattached screen must show the LATER content, not the
      snapshot — this is the ordering in §6 that a wrong implementation gets
      backwards, and it looks correct in test 1 either way.
+  1b. The credential, which is the check the prerequisite spec could not run at
+     all: from inside the surviving task, `agent send` must return
+     `delivered_to=1` and `agent inbox` must read it back with
+     `from.runner_id` equal to the runner's identity — AFTER the restart, with
+     the agent process never having been respawned. This is the only proof that
+     the reported ticket was re-registered rather than replaced.
   2. A oneshot mid-run across the same restart: its exit code must arrive, and
      the log must have no hole where the gap was (D12 claims no loss, so a
      missing chunk falsifies it).
