@@ -65,10 +65,9 @@ are wrong.
   exactly today's behaviour: children killed, tasks Failed. This is the
   load-bearing simplification (D1) and the reason the change has no fail-open
   path.
-- **Restoring scrollback or terminal state.** The reattach byte ring and the
-  mode tracker are server-side (`server/mode_tracker.go:11-22`) and die with the
-  process. §6's resize nudge makes the child repaint; it does not reconstruct
-  history. Alt-screen residue after a reattach is already WONTFIX and stays so.
+- **Restoring scrollback.** The byte ring is server-side and dies with the
+  process, so the history a reattaching client would normally replay is gone.
+  The SCREEN is a different matter and is not a non-goal — see D14.
 - **Restoring client seats.** Cowrite/view seats, `--control` ownership and PTY
   size ownership are rebuilt by the clients reconnecting and attaching again.
   The server does not remember who was watching.
@@ -108,7 +107,7 @@ with on its merits.
 | D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
 | D12 | While held, the runner STOPS DRAINING the child's output. The kernel buffer is the gap buffer | author |
 | D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it | author — forced, see below |
-| D14 | After re-binding, the runner nudges the PTY size by one column to force a repaint | author |
+| D14 | The server captures each held session's screen as a repaint program at hold time and persists it; re-adoption replays it. A resize nudge is the fallback when no snapshot exists | author — corrected, see below |
 | D15 | A re-adopted interactive task lands in `Detached`; a oneshot lands in `Running` | author |
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
@@ -177,12 +176,40 @@ survive; the PTY behind it can. So re-adoption is necessarily "here is a new
 stream id, attach the thing you are already holding to it", which is a new
 server→runner request rather than anything the runner can initiate.
 
-**D14**: without the server-side ring there is nothing to replay into a
-reattaching client, so a re-adopted alt-screen TUI would show a blank or stale
-screen. A one-column resize makes the child redraw everything it knows about,
-which is the only mechanism that reaches a full-screen application. This
-project has repeatedly observed a resize repairing a session's appearance; the
-same lever is being pulled deliberately here.
+**D14 is a correction, and the first draft of this spec had it wrong.** That
+draft said a resize nudge was "the only mechanism that reaches a full-screen
+application", on the premise that a restart leaves nothing to replay. The
+premise was stale. `SessionMux` already holds a live screen model — `screen
+*vtgrid.Terminal`, fed from the same byte stream as the ring
+(`server/session_mux.go:183-193,347`) — and **every** attach and reattach
+already sends `screenRepaint()`, outside any replay cap, so a client gets a
+correct screen even when it asked for no history at all
+(`server/session_mux.go:439-442`, `:517-536`). `vtgrid.Repaint` synthesises the
+program that puts a terminal into that state: screen selection first, then the
+modes needed to address cells absolutely, every row, the cursor and the title
+(`vtgrid/repaint.go`). Alt-screen content on reattach is therefore *solved*
+today, not deferred.
+
+What a restart destroys is that model, because it lives in the mux's memory —
+not the ability to reconstruct a screen. And the server is still running at hold
+time, which is exactly when it can call `screenRepaint()` for every session it
+is about to hold and write those bytes beside the WAL. Re-adoption then replays
+the snapshot into the rebuilt mux, the runner resumes draining, and the bytes
+the child produced during the gap — which D12 left sitting in the kernel buffer
+rather than dropping — land on top. Snapshot-at-hold plus everything-since is
+the child's current screen by construction, with no dependency on the
+application being willing to redraw.
+
+The resize nudge survives only as the fallback for a session with no snapshot
+(the hold was armed but the capture did not land) and for a plain shell, which
+repaints nothing on SIGWINCH anyway and has no screen worth restoring. Keeping
+it is cheap; leading with it would have been choosing a hack over a facility
+this repo already ships.
+
+One consequence for §6b: a repaint program for an 80×24 screen costs a few KB
+(the code notes ~380 bytes for a *blank* one), so it can never travel in a
+control message. It goes to disk on the server, never over the wire to the
+runner.
 
 **D15**: a re-adopted interactive task has a live child and no client, which is
 what `Detached` means. It must not be re-adopted into `Running` — that would
@@ -324,6 +351,11 @@ and it happens inside `serve`, before the deferred `wal.Close()`
 3. Collect acks, bounded by `--hold-ack-timeout` (default `3s`). A runner that
    does not ack in time holds nothing: its tasks take the normal path.
 4. For every task in an ack, write `task_held` and move the store to `Held`.
+   For an interactive one, also capture its screen: `SessionMux.screenRepaint()`
+   is still callable at this moment, and its bytes go to
+   `<data-dir>/held/<task-id>.screen` (D14). A capture that fails is logged and
+   the hold continues — a held task with no snapshot falls back to the resize
+   nudge, which is worse than a snapshot and much better than not holding.
 5. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
    process's life. This is the single most important line in the change: the
    teardown in step 6 fires `registry.OnRemove` for every runner
@@ -357,6 +389,14 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   `RegisterTask` under (identity, task id) so the agent's existing ticket
   validates, status → `Detached` for interactive / `Running` for oneshot (D15),
   and a `task_readopted` WAL record for the audit trail.
+- An interactive re-adoption rebuilds the `SessionMux` and, before the runner
+  resumes draining, feeds it the persisted screen bytes so the model and the
+  ring both start from the screen as it was at hold time (D14). The ordering is
+  the whole point: bytes buffered during the gap arrive after the snapshot and
+  paint on top of it. Feed them in the other order and the snapshot overwrites
+  the newer output. Delete the file once it has been fed — a stale snapshot
+  replayed into a later session would show an operator a screen from before the
+  restart with no sign that it is old.
 - Refused entries are reported back so the runner can kill those children
   (§6). The refusal is per task, not per hello: a runner reporting one stale
   task still registers and keeps the rest.
@@ -390,9 +430,11 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   will ever adopt them).
 - **Report on every reconnect.** The report is in `RunnerHello`, so it goes out
   with the identity. Nothing held → zero-length list and a zero `hold_id`.
-- **Re-bind and repaint.** On `RebindSessionRequest`, splice the held PTY onto
-  the new stream, then resize the PTY by one column and back (D14) so a
-  full-screen agent repaints. Resume draining in the same step.
+- **Re-bind, then resume draining.** On `RebindSessionRequest`, splice the held
+  PTY onto the new stream and resume draining. The screen is restored by the
+  server replaying its own snapshot ahead of those bytes (D14, §5), so the
+  runner does nothing about it — except in the no-snapshot fallback, where it
+  resizes the PTY by one column and back to make a full-screen agent redraw.
 - The identity must NOT change across any of this — it is minted once per
   process above `PersistLoop` (`cmd/agent-runner/main.go:438-439`), and a
   held-task report from a new identity is refused by §5's rule, correctly.
@@ -519,7 +561,7 @@ the implementation's own walk must return a verdict for.
 | 21 | WebUI task detail sheet | `held until …` |
 | 23 | wasm snapshot | `held` label AND the raw deadline, per item 22's raw-value rule |
 | 24 | `cancel` on a held task | Cancels in the store; the child dies when the runner is refused at re-adoption. Written down because "cancel" on a task with no live runner connection is a path with its own meaning |
-| 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence |
+| 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence. Plus `<data-dir>/held/<task-id>.screen`, which is state on disk that is NOT in the WAL — deleted after it is fed, and orphans swept at startup |
 | 35 | `README.md` | the two server flags, and one paragraph stating that a CRASH recovers nothing |
 | 37 | This spec | an Amendment section if the shipped behaviour differs |
 | — | Server flags | `--hold-window`, `--hold-ack-timeout`. Not verb-table surfaces (item 1 does not reach server flags), so they need the README and the runner-up preset docs instead |
@@ -602,7 +644,12 @@ Also:
    survives with a credential that no longer validates, which presents as
    `UnknownTask` from a live agent — the exact symptom the identity work was
    done to remove, arriving from the other end.
-9. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
+9. **The screen snapshot fed in the wrong order, or left on disk.** Fed after
+   the gap's buffered bytes it overwrites newer output with older; left
+   undeleted it can repaint a later session with a screen from before the
+   restart. Both look correct in a test where the child is idle across the
+   restart, which is the test anyone writes first (§10.1a exists for this).
+10. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
    registers over WebSocket and, over UDP, loops on the handshake with no error
    logged at either end. Nothing in the stack reports it, so it will not be
    found by reading logs — only by noticing that the transport is the variable.
@@ -622,10 +669,18 @@ Also:
 - Live, on `scripts/dummy-harness.sh`, because nothing above crosses a process
   boundary. The parser and key-dispatch layers are also only reachable this way
   (Pitfall 13), so the status must be read through the real command lines:
-  1. An interactive session with a live child. Restart the server deliberately.
-     The child must still be the same process (compare pids), the task must
-     report `held` between the two servers and `detached` after, and the screen
-     must come back on reattach — which is D14's only proof.
+  1. An interactive session with a live child, running a FULL-SCREEN app (not a
+     shell prompt — a shell cannot distinguish a restored screen from an empty
+     one). Restart the server deliberately. The child must still be the same
+     process (compare pids), the task must report `held` between the two
+     servers and `detached` after, and `session snapshot` after the reattach
+     must match what it reported before the restart. That comparison is D14's
+     proof, and it is available headlessly because snapshot renders through the
+     same screen model the repaint comes from.
+  1a. The same, with the child made to write during the gap (a clock or a
+     progress line). The reattached screen must show the LATER content, not the
+     snapshot — this is the ordering in §6 that a wrong implementation gets
+     backwards, and it looks correct in test 1 either way.
   2. A oneshot mid-run across the same restart: its exit code must arrive, and
      the log must have no hole where the gap was (D12 claims no loss, so a
      missing chunk falsifies it).
