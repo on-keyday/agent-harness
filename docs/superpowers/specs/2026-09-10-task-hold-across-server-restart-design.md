@@ -364,7 +364,7 @@ which it will not: replay puts it in `held`, a status that sweep does not match.
 +# holding from the hold named by hold_id, each entry carrying the ticket its
 +# agent is still presenting. tasks_len == 0 with a zero hold_id is the normal
 +# case for every reconnect that follows no hold. This is the message D6 means
-+# by "the runner reports the ticket back" — 32 bytes per task, and the only
++# by "the runner reports the ticket back" — HeldTaskSize per task, and the only
 +# place a ticket travels in this design.
 +format HeldTasksReport:
 +    hold_id :HoldID
