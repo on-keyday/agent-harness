@@ -531,7 +531,40 @@ format DialGreeting:
 format ListQuery:
     query :[..]u8 # currently opaque
 
+# RunnerID names WHICH RUNNER. Its body is an address only because identity was
+# never designed here — it was borrowed from the connection, and every field
+# below is part of one: runnerIDFromConnID fills them straight from the runner's
+# objproto.ConnectionID, Port and UniqueNumber included. So the value changes on
+# every reconnect, which is sound only while a task cannot outlive its runner's
+# connection (see server/boardkey.go for the premise and who still enforces it).
+#
+# The target state is a 16-byte opaque id like TaskID, minted per runner PROCESS
+# so that it survives a reconnect and differs after a restart. Getting there
+# needs every field that says "runner" to be sorted into identity or address
+# first, which is what ConnID below is for.
 format RunnerID:
+    transport_len :u8
+    transport :[transport_len]u8
+    ip_addr_len :u8
+    ip_addr_len == 0 || ip_addr_len == 4 || ip_addr_len == 16
+    ip_addr :[ip_addr_len]u8
+    port :u16
+    unique_number :u16
+
+# ConnID names WHERE TO DIAL: transport + ip:port + the per-connection id, i.e.
+# the wire form of objproto.ConnectionID.
+#
+# Byte-identical to RunnerID above, deliberately. A field carrying a dial
+# address can therefore be re-typed to ConnID without changing a single wire
+# byte, so this split records WHICH MEANING each field has — checked by the
+# compiler from here on — while old and new binaries still interoperate. It buys
+# no new capability by itself and is not meant to: it is the classification the
+# opaque-RunnerID change needs in place before it can be safe.
+#
+# A field still typed RunnerID that is in fact dialed is the remaining
+# conflation. The converters between these types and objproto.ConnectionID are
+# where to grep for it.
+format ConnID:
     transport_len :u8
     transport :[transport_len]u8
     ip_addr_len :u8
