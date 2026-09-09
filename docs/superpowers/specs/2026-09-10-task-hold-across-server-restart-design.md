@@ -563,7 +563,7 @@ to today's behaviour.
 
 That ceiling is why step 2 comes before step 3: the screen captures are the only
 part whose cost grows with the fleet, and they are now outside the ack window.
-It also sets `--hold-ack-timeout`'s real bound — `3s` leaves under two seconds
+It also sets `--hold-ack-timeout`'s real bound: `3s` would leave under two seconds
 for every write plus teardown, which is too close to the edge to choose
 casually. Take `1.5s` as the default and treat `restart.py` passing a larger
 `timeout` as the operational change that buys more (§8), rather than assuming
@@ -708,9 +708,17 @@ into §6 because three of the four are server-side obligations.
    outlive the server's own deadline, which is the one disagreement D11 cannot
    repair — the runner would still be reporting a task the server has already
    failed.
-2. **`--hold-ack-timeout` is sized for a retransmit, not a LAN RTT.** 3s is
-   chosen for that reason. A runner whose ack does not arrive in time holds
-   nothing and its tasks take the normal path, so loss here fails safe.
+2. **`--hold-ack-timeout` is squeezed from both sides, and the two sides
+   disagree.** Over UDP the ack may need a retransmit, which wants a longer
+   window; §5's 5-second hard-kill ceiling — imposed by `daemon_down`, not by
+   this design — wants a shorter one. The ceiling wins, so the default is
+   `1.5s`, and the honest consequence is that on a lossy path a runner can miss
+   the window and hold nothing. That direction fails safe (its tasks take the
+   normal path: children killed, tasks Failed) but it means the feature
+   degrades exactly where the link is bad. Raising `daemon_down`'s timeout for
+   the server slot is what buys both ends room, which is why §8 names it as an
+   operational change rather than leaving the tension inside a default nobody
+   revisits.
 3. **A listen-mode runner cannot reconnect at all.**
    `runner.ListenAndServe` only listens (`runner/listen.go:46-64`); its link is
    established by the server, or by an operator's `server dial-runner`. Nothing
