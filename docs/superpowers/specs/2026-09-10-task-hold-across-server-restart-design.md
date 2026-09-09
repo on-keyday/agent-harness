@@ -101,7 +101,7 @@ are wrong.
   it cannot report them, and they are not on the log. A held agent therefore
   comes back reachable on its own topic and no longer subscribed to whatever
   else it had asked for. Persisting the pattern list would fix it and is a
-  separate change; the failure is silent, so it is also §9.11.
+  separate change; the failure is silent, so it is also §9.13.
 
 ## 3. Decisions taken
 
@@ -562,7 +562,7 @@ PHASE 1 — SHUTDOWN.  Everything here is inside a 5 s hard-kill window
    │
    ├─(e) cancel the SESSIONS ctx   ← after (c) and (d). Today the muxes hang
    │        off the ROOT ctx, so this step does not exist and their teardown
-   │        RACES (c), cancelling held interactive tasks. §5 step 6.
+   │        RACES (c), cancelling held interactive tasks. §5 step 7.
    │
    └─(f) tear down connections, exit
 
@@ -691,7 +691,7 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    tasks held, the rest on the normal path — never a lost tail.
 7. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
    process's life. This is the single most important line in the change: the
-   teardown in step 6 fires `registry.OnRemove` for every runner
+   teardown in step 8 fires `registry.OnRemove` for every runner
    (`server/server.go:488-491`), and without the suppression the WAL ends with
    `task_failed` after `task_held` — replay is order-sensitive, so the hold
    would be silently undone and the children left orphaned.
@@ -1081,7 +1081,7 @@ adding `Held` is a decision at each. Enumerated, with the verdict:
 | `cli/list.go:229` | renders a task as live | **goes in** — the child is running; this is the one class where a held task is alive |
 | `tui/tasks.go:414` | same predicate, TUI side | **goes in**, same reason |
 | `tui/taskaction.go:69` | `Running && Kind == Oneshot` — a per-row action gate | **stays out**: the action needs a live runner leg |
-| `server/task_handler.go:1460` | `afterMuxStopped` cancels a still-`Running` task | **stays out**, and the ordering that makes it safe is a race today — see §5 step 6 |
+| `server/task_handler.go:1460` | `afterMuxStopped` cancels a still-`Running` task | **stays out**, and the ordering that makes it safe is a race today — see §5 step 7 |
 
 The refusals are the interesting half. Leaving `Held` out of them is correct —
 but it is correct *by accident*, because the disjunction happens not to name it,
@@ -1200,7 +1200,7 @@ Also:
    of interposing.
 2. **A pump closes the PTY master on write error.** Same symptom as (1) via
    SIGHUP, from the drain side rather than the reap side.
-3. **`failAndRevokeTasksOf` not suppressed** (§5 step 6) → `task_failed` after
+3. **`failAndRevokeTasksOf` not suppressed** (§5 step 7) → `task_failed` after
    `task_held` → replay undoes the hold and the children are orphaned for the
    full window with nobody to adopt them. Worse than a plain failure, because
    the runner still believes it is holding.
@@ -1246,7 +1246,7 @@ Also:
    nobody. A session you can watch but that cannot report is the worst of the
    available failures, because nothing about the screen says so. `UnknownTask`
    is the same defect one step earlier — the task never re-registered at all.
-9. **The mux teardown wins the race against the hold** (§5 step 6). The WAL
+9. **The mux teardown wins the race against the hold** (§5 step 7). The WAL
    ends `task_held` then `task_cancelled`, so every held INTERACTIVE task comes
    back Cancelled and its child is killed at re-adoption. Presents as "the hold
    works for oneshots and does nothing for sessions", which reads like a
@@ -1270,6 +1270,13 @@ Also:
    found by reading logs — only by noticing that the transport is the variable.
    The `K` bound and its test are what keep this unreachable; a report that is
    truncated instead would trade it for D11 failing tasks whose children live.
+13. **A re-adopted agent's runtime subscriptions are gone** (§2). Only the
+   self-topic is re-seeded, so a board message addressed to a pattern the
+   agent had added with `agent subscribe` matches nothing and the agent is
+   never woken for it. Nothing logs a miss, and the agent has no way to notice
+   its own subscription is absent — it is listed here because that combination
+   is what makes an accepted limitation dangerous rather than merely
+   incomplete.
 
 ## 10. Testing
 
@@ -1277,7 +1284,7 @@ Also:
   already passed at startup → Failed; re-adoption accept/refuse across the three
   match conditions (id, `hold_id`, identity); a `Held` task absent from the
   report → Failed; capacity re-bound after re-adoption; both suppressions in §5
-  step 6 (a teardown after a hold must not write `task_failed`, and a stopping
+  step 7 (a teardown after a hold must not write `task_failed`, and a stopping
   mux must not write `task_cancelled`); an unknown WAL
   `type` is ignored, pinned so the rollback claim in §4 is measured rather than
   asserted.
