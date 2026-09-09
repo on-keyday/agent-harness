@@ -120,7 +120,7 @@ with on its merits.
 | D7 | The report rides in `RunnerHello`, not in a message after the handshake | author |
 | D8 | Two new WAL records — `task_held` per held task and `task_readopted` per re-adoption. No runner-scoped record | author |
 | D9 | `TaskStatus` gains `held`, appended | author |
-| D10 | The window `T` is chosen by the SERVER and carried in the request | author |
+| D10 | The window `T` is chosen by the SERVER and carried in the request; `--hold-window` default `90s` | operator (the value, 2026-09-10) |
 | D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
 | D12 | While held, the runner STOPS DRAINING the child's output. The kernel buffer is the gap buffer | author |
 | D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it — via a runner-owned relay interposed on every interactive session, not a rebind inside `agentexec` | author — forced, see below |
@@ -130,6 +130,7 @@ with on its merits.
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
 | D18 | `RunnerHelloResponse` answers with the ACCEPTED ids, not the refused ones, and the runner kills every held child not named | author |
 | D19 | Screen captures happen LAST — after the ack and after the session streams are drained. Capturing early loses everything the child wrote in between | author — corrected |
+| D20 | `daemon_down`'s timeout is raised for the server slot, so the hold is not racing a 5 s hard kill | operator |
 
 **D1 is the whole design, not a scope cut.** An automatic hold — the runner
 noticing a drop and holding on its own — cannot distinguish a deliberate
@@ -1147,11 +1148,10 @@ The deployed procedure, in order:
 The procedure also sets the hold's time budget, and it is tighter than it
 looks: `daemon_down`'s default `timeout=5.0` hard-kills the server five seconds
 after the graceful signal (`scripts/daemon.py:320`, called without an override
-at `scripts/restart.py:191`). §5 is written to fit inside that. Raising it —
-`daemon_down(..., timeout=15)` for the server slot — is an operational change
-worth making before a fleet with many live sessions leans on the feature, and
-it belongs in the same commit as the flag defaults rather than being discovered
-by a SIGKILL mid-hold.
+at `scripts/restart.py:191`). §5 is written to fit inside that. **Raising it is decided** (D20): `restart.py` passes a larger `timeout` for
+the server slot — 15 s — in the same commit as the flag defaults. §5 still fits
+inside 5 s so a stale `restart.py` degrades rather than breaks, and §6a.2's
+ack window stops being squeezed against a ceiling nobody chose for it.
 
 Two consequences of `restart.py` replaying the running process's argv:
 
@@ -1204,33 +1204,54 @@ Also:
    `task_held` → replay undoes the hold and the children are orphaned for the
    full window with nobody to adopt them. Worse than a plain failure, because
    the runner still believes it is holding.
-4. **The runner process dies during the hold.** Nothing then reaps its children:
-   they were setsid'd out of the runner's control group deliberately
-   (`3ce441c`), and whether a claude child exits when its PTY master closes is
-   agent- and OS-dependent — this project has seen an agent survive a stdin EOF
-   on Windows. This hole is NOT closed by this design; the window it opens is
-   `hold_ms` wide.
-   **And the obvious fix is not available.** "Record the held child's pid so the
-   next runner in the same slot can reap it" is what an earlier draft of this
-   item proposed, and for the case that matters it cannot be written: the
-   interactive child is spawned inside
-   `agentexec.ExecuteCommandWithOption`, whose entire hook surface is
-   `OnStdinWriter`, `Audit`, `OnProcessExit` and `StdinDevNull`, with
-   `Auditor.Start(command, args, ptyEnabled)` carrying no pid and `grep -i pid`
-   over the package's `exec.go` returning nothing. The process-tree helpers
-   there are unexported. So the pid is available on the ONESHOT path only,
-   where the runner owns `cmd` itself (`runner/process.go:170`).
-   Two routes, and the cheaper one is upstream. Adding a pid to
-   `Auditor.Start` — or an `OnStart(pid)` beside `OnProcessExit` — is a few
-   lines in objtrsf, which is this operator's own module with its own landing
-   policy; the propagation cost is a publish and a `go.mod` bump, not a
-   negotiation. The alternative is the runner enumerating its own children from
-   the OS at startup, which works (it is the parent) but needs a per-platform
-   implementation and can only guess which child belongs to which task.
-   **So this hole is cheap to close, and whether it closes in v1 is an operator
-   call rather than a technical boundary.** An earlier draft of this item
-   presented the upstream change as prohibitive, which was wrong and is why the
-   hole read as unavoidable.
+4. **The runner process dies during the hold — the orphan hole, mechanism
+   first.** Exactly three things can kill an agent child, and during the hold
+   the first is the only one in play:
+   - the runner itself: `procTree.kill` sends `SIGTERM` then `SIGKILL` to the
+     child's process GROUP (`objtrsf/exec/proctree_unix.go:44-56`), which is
+     why the child is spawned `Setpgid`;
+   - systemd, when the slot is a registered unit: the children inherit the
+     runner's unit cgroup — `setsid` does not re-parent a cgroup, which is the
+     whole point of `adopt_into_unit_cgroup` (`scripts/cgroup_adopt.py:82-110`,
+     fix `3ce441c`) — so a `systemctl stop/restart` of that unit takes them
+     with it under the default `KillMode=control-group`;
+   - nothing else.
+   **And the terminal does NOT do it.** The child is `Setpgid` only: a grep for
+   `Setsid|Setctty|Ctty` across the whole `objtrsf/exec` package and all of
+   `runner/` returns nothing, so the PTY is not the child's controlling
+   terminal and closing the master delivers **no SIGHUP**. What the child gets
+   is EIO on its next read or write of the slave, and whether that ends the
+   process is the program's choice — this project has already watched an agent
+   survive a stdin EOF on Windows.
+   So the hole is: the runner is SIGKILLed *alone* — OOM killer, `kill -9`, a
+   crash — while a hold is armed. No `procTree.kill` runs, no cgroup is torn
+   down, no signal arrives from the terminal, and the children keep running,
+   reparented, holding worktrees. On this host that is not hypothetical: 16 GB
+   with swap 0 and heavy agent processes.
+   The mechanism is **not new**; a runner SIGKILLed today orphans its children
+   the same way. What the hold adds is a deliberate window, `hold_ms` wide, in
+   which children are alive with no supervisor by design — so a runner death
+   during it is ordinary operations rather than a coincidence of two failures.
+   Three ways to close it, in increasing attractiveness:
+   - **a pid recorded for the next runner in the slot to reap.** Needs the
+     upstream hook §9.4 used to call prohibitive (it is not — see
+     `landing-policy-objtrsf`), plus a file and a startup pass.
+   - **the cgroup as the record.** A registered slot has a stable unit name, so
+     a starting runner can kill whatever is already in its own unit cgroup
+     before registering. No pid bookkeeping at all — but it does nothing for a
+     slot spawned without a unit, which `cgroup_adopt` warns about rather than
+     prevents.
+   - **`Setsid` + `Setctty` on the PTY child**, i.e. make the pty its
+     controlling terminal. Then the KERNEL is the reaper of last resort:
+     while the runner lives it holds the master open and nothing fires, and the
+     moment the runner dies the master closes and the child's session gets
+     SIGHUP. The hole closes itself with no bookkeeping, and it is a few lines
+     in objtrsf. It is not free: it changes signal and job-control semantics
+     for every interactive session (a session leader with a controlling
+     terminal is what a terminal app expects, but this repo has a history of
+     Ctrl-C behaviour differing by platform), and it does nothing on Windows,
+     where ConPTY has its own rules and the hole stays open.
+   Which of the three, and whether in v1, is an operator call.
 5. **An agent that dies on a stalled write** (D12's forbidden case). Measured
    per agent in §10; if one turns out to behave this way, the answer is a disk
    spill for that agent, not a ring for everyone.
