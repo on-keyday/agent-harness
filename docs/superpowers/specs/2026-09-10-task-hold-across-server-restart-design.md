@@ -129,6 +129,7 @@ with on its merits.
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
 | D18 | `RunnerHelloResponse` answers with the ACCEPTED ids, not the refused ones, and the runner kills every held child not named | author |
+| D19 | Screen captures happen BEFORE the hold exchange, not after the acks — the sequence has a 5s hard-kill ceiling it does not own | author |
 
 **D1 is the whole design, not a scope cut.** An automatic hold — the runner
 noticing a drop and holding on its own — cannot distinguish a deliberate
@@ -496,17 +497,46 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    effect through its default. Enabling it by argv instead would mean every
    restart until someone passed `scripts/restart.py harness-server
    --hold-window 90s` behaved as though the change had not landed.
-2. Mint one `HoldID`. Send `HoldTasksRequest{hold_id, hold_ms}` to every
-   registered runner.
-3. Collect acks, bounded by `--hold-ack-timeout` (default `3s`). A runner that
-   does not ack in time holds nothing: its tasks take the normal path.
-4. For every task in an ack, write `task_held` and move the store to `Held`.
-   For an interactive one, also capture its screen: `SessionMux.screenRepaint()`
-   is still callable at this moment, and its bytes go to
-   `<data-dir>/held/<task-id>.screen` (D14). A capture that fails is logged and
-   the hold continues — a held task with no snapshot falls back to the resize
-   nudge, which is worse than a snapshot and much better than not holding.
-5. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
+2. **Capture the screens FIRST**, before any message goes out (D19).
+   `SessionMux.screenRepaint()` is callable for every live interactive session
+   right now, and the bytes go to `<data-dir>/held/<task-id>.screen` (D14).
+   This runs ahead of the exchange because it is the only step whose cost
+   scales with the number of sessions, and because it needs nothing from the
+   acks — the server already knows which sessions it has. Snapshots for tasks
+   that turn out not to be held are wasted writes of a few KB, cleared by the
+   startup sweep. A capture that fails is logged and the hold continues: a held
+   task with no snapshot falls back to the resize nudge, which is worse than a
+   snapshot and much better than not holding.
+3. Mint one `HoldID`. Send `HoldTasksRequest{hold_id, hold_ms}` to every
+   registered runner, in parallel, **on a context that is not the one that just
+   got cancelled**. Both shutdown triggers converge on `cancel()` of the root
+   context — `signal.NotifyContext` (`cmd/harness-server/main.go:122`) and the
+   sentinel watcher (`cli/shutdownwatch.go:44-47`) — so a hold that sends on
+   the root context sends on a dead one, holds nothing, and says nothing. It
+   would also pass any test that calls a shutdown routine directly, because
+   only the real path arrives with the context already cancelled. Use
+   `context.WithTimeout(context.Background(), ackTimeout)`.
+4. Collect acks into a map keyed by (identity, task id), bounded by
+   `--hold-ack-timeout` (default `1.5s`, see the ceiling below). A runner that does not ack in time holds nothing: its
+   tasks take the normal path.
+5. **Merge by intersection, not union.** For each acked (identity, task id),
+   accept it only if the store says that task is assigned to that identity
+   (`task.AssignedTo`); drop and log anything else. This is the same check the
+   re-adoption gate makes, applied at the near end so a bad entry never reaches
+   the disk. Tasks the store believes are on that runner but which the ack does
+   not name are simply not held — D11's polarity, at shutdown time: the runner
+   is the authority on what it will keep.
+   Then, per accepted task, one store transition writes `task_held` and moves
+   the status, under the store's lock and in the store, the way every other
+   transition does it (`server/taskstore.go:535`). That transition **re-checks
+   the status and refuses anything not `Running`/`Detached`**, which is what
+   closes the race the ack window opens: a `TaskFinished` can land while acks
+   are being collected, and because replay is order-sensitive a `task_held`
+   written after that task's `task_finished` would win and the restart would
+   offer a task whose child has exited. `WAL.Write` flushes per record
+   (`server/wal.go:261-277`), so an interrupted pass is a partial hold — some
+   tasks held, the rest on the normal path — never a lost tail.
+6. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
    process's life. This is the single most important line in the change: the
    teardown in step 6 fires `registry.OnRemove` for every runner
    (`server/server.go:488-491`), and without the suppression the WAL ends with
@@ -519,7 +549,30 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    in the case where the shutdown is aborted. The agent's credential survives
    because the runner reports the ticket back and the restarted server
    re-registers it (D6), not because this step declined to delete a map entry.
-6. Tear down connections and exit as today.
+7. Tear down connections and exit as today.
+
+**The whole sequence has a 5-second hard ceiling, and it is not ours.**
+`scripts/restart.py harness-server` calls `daemon_down(slot, bin_name)` with no
+timeout override (`scripts/restart.py:191`), and that default is `timeout=5.0`
+(`scripts/daemon.py:320`): graceful terminate, then `p.kill()` five seconds
+later. The sentinel is touched just before the signal (`scripts/daemon.py:356-363`),
+so on Linux both triggers land at once and the clock starts immediately. A hold
+that overruns is SIGKILLed mid-sequence — and SIGKILL is the crash case, which
+by D1 recovers nothing, so whatever had not yet been written silently degrades
+to today's behaviour.
+
+That ceiling is why step 2 comes before step 3: the screen captures are the only
+part whose cost grows with the fleet, and they are now outside the ack window.
+It also sets `--hold-ack-timeout`'s real bound — `3s` leaves under two seconds
+for every write plus teardown, which is too close to the edge to choose
+casually. Take `1.5s` as the default and treat `restart.py` passing a larger
+`timeout` as the operational change that buys more (§8), rather than assuming
+the budget is ours to spend.
+
+Nothing needs the server to delete the sentinel: the watcher only stats it and
+cancels (`cli/shutdownwatch.go:36-51`), and `daemon.py` clears a stale one
+before spawning (`scripts/daemon.py:247-256`). A server that exits with the file
+present is the normal case.
 
 **Startup.** After `ReplayEvents`:
 
@@ -835,6 +888,15 @@ The deployed procedure, in order:
    harness-server`. Build before restart, not after — this is the existing
    operation and it is what makes the new binary the one that comes up.
 2. Then the runner fleet: `scripts/build_and_restart_all.py`.
+
+The procedure also sets the hold's time budget, and it is tighter than it
+looks: `daemon_down`'s default `timeout=5.0` hard-kills the server five seconds
+after the graceful signal (`scripts/daemon.py:320`, called without an override
+at `scripts/restart.py:191`). §5 is written to fit inside that. Raising it —
+`daemon_down(..., timeout=15)` for the server slot — is an operational change
+worth making before a fleet with many live sessions leans on the feature, and
+it belongs in the same commit as the flag defaults rather than being discovered
+by a SIGKILL mid-hold.
 
 Two consequences of `restart.py` replaying the running process's argv:
 
