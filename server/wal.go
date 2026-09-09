@@ -94,7 +94,19 @@ type WALEvent struct {
 	// Persisted on task_created so a server restart replaying the WAL re-creates
 	// the queued task with the same per-task arg list.
 	ExtraArgs []string `json:"extra_args,omitempty"`
-	Ts        int64    `json:"ts"` // unix nano
+	// HoldID names the shutdown whose hold covers this task. Written on
+	// task_held and echoed on task_readopted, so a runner's reconnect report
+	// can be matched against the shutdown that authorised it rather than
+	// against a task list alone. Hex of a protocol.HoldID; legacy entries have
+	// neither key.
+	HoldID string `json:"hold_id,omitempty"`
+	// HoldDeadlineNs is when the runner's promise to keep this task's child
+	// alive expires, absolute, from the SHUTTING-DOWN server's clock. The
+	// runner enforces its own copy as a duration on its own monotonic clock,
+	// so the two are never compared: this one exists so a restart that took
+	// too long fails the task instead of offering it.
+	HoldDeadlineNs int64 `json:"hold_deadline_ns,omitempty"`
+	Ts             int64 `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -142,6 +154,8 @@ type walEventJSON struct {
 	BoundRunnerID       string             `json:"bound_runner_id,omitempty"`
 	Reason              string             `json:"reason,omitempty"`
 	ExtraArgs           []string           `json:"extra_args,omitempty"`
+	HoldID              string             `json:"hold_id,omitempty"`
+	HoldDeadlineNs      int64              `json:"hold_deadline_ns,omitempty"`
 	Ts                  int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -178,6 +192,8 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		BoundRunnerID:       e.BoundRunnerID,
 		Reason:              e.Reason,
 		ExtraArgs:           e.ExtraArgs,
+		HoldID:              e.HoldID,
+		HoldDeadlineNs:      e.HoldDeadlineNs,
 		Ts:                  e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -220,6 +236,8 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.BoundRunnerID = j.BoundRunnerID
 	e.Reason = j.Reason
 	e.ExtraArgs = j.ExtraArgs
+	e.HoldID = j.HoldID
+	e.HoldDeadlineNs = j.HoldDeadlineNs
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

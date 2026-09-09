@@ -99,6 +99,14 @@ type TaskEntry struct {
 	// Running → Detached transition. Zero means the task has never been
 	// detached (or has re-attached since). Cleared on Detached → Running.
 	DetachedAt uint64
+	// HoldID / HoldDeadline describe a hold a deliberate server shutdown
+	// arranged for this task (see the held-task spec). Non-empty HoldID with
+	// Status == Held means: the runner promised to keep this task's child
+	// alive with no server, until HoldDeadline. Both are cleared on
+	// re-adoption. Kept in memory only in the sense that the WAL is what
+	// restores them — a replayed task_held sets both.
+	HoldID       string
+	HoldDeadline int64
 	// RingBufferBytes is the most-recent cached size of the session's ring
 	// buffer as reported by the SessionMux owner. Used for informational
 	// display in task listings. Updated via SetRingBufferBytes.
@@ -710,6 +718,86 @@ func (s *TaskStore) SetDetached(id string) error {
 	return nil
 }
 
+// MarkHold moves a task to Held: a deliberate shutdown asked its runner to keep
+// the child alive with no server, and the runner acked it by task id.
+//
+// It REFUSES anything that is not Running or Detached, and that refusal is the
+// point rather than defensiveness: the ack window is wide enough for a
+// TaskFinished to land in it, and because WAL replay is order-sensitive a
+// task_held written after that task's task_finished would win — the next
+// server would then offer a task whose child has already exited. Checking
+// under the same lock that the finish path takes closes the race with no
+// coordination between the two.
+//
+// The WAL write happens here, inside the store, the way task_assigned does
+// (see Assign): a caller that wrote the record itself could not have made the
+// status check and the write atomic.
+func (s *TaskStore) MarkHold(id, runnerIdentityHex, holdIDHex string, deadlineNs int64) error {
+	s.mu.Lock()
+	t, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("MarkHold: task %q not found", id)
+	}
+	if t.Status != protocol.TaskStatus_Running && t.Status != protocol.TaskStatus_Detached {
+		status := t.Status
+		s.mu.Unlock()
+		return fmt.Errorf("MarkHold: task %q status is %v, want Running or Detached", id, status)
+	}
+	t.Status = protocol.TaskStatus_Held
+	t.HoldID = holdIDHex
+	t.HoldDeadline = deadlineNs
+	wal := s.wal
+	s.mu.Unlock()
+	if wal != nil {
+		if err := wal.Write(WALEvent{
+			Type: "task_held", TaskID: id, RunnerID: runnerIdentityHex,
+			HoldID: holdIDHex, HoldDeadlineNs: deadlineNs,
+			Ts: time.Now().UnixNano(),
+		}); err != nil {
+			slog.Error("WAL write failed", "op", "task_held", "task_id", id, "err", err)
+		}
+	}
+	return nil
+}
+
+// MarkReadopted closes a hold: the runner came back still holding this task and
+// the server accepted it. Status goes Held → Running; an interactive task is
+// then moved on to Detached by the caller through SetDetached, which is why
+// this stops at Running (SetDetached refuses any other status, and it is also
+// what stamps DetachedAt).
+//
+// The task_readopted record is not an audit trail. Without it task_held stays
+// the last word about the task, so a SECOND restart would offer it for
+// re-adoption again against the previous hold's id.
+func (s *TaskStore) MarkReadopted(id, runnerIdentityHex, holdIDHex string) error {
+	s.mu.Lock()
+	t, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("MarkReadopted: task %q not found", id)
+	}
+	if t.Status != protocol.TaskStatus_Held {
+		status := t.Status
+		s.mu.Unlock()
+		return fmt.Errorf("MarkReadopted: task %q status is %v, want Held", id, status)
+	}
+	t.Status = protocol.TaskStatus_Running
+	t.HoldID = ""
+	t.HoldDeadline = 0
+	wal := s.wal
+	s.mu.Unlock()
+	if wal != nil {
+		if err := wal.Write(WALEvent{
+			Type: "task_readopted", TaskID: id, RunnerID: runnerIdentityHex,
+			HoldID: holdIDHex, Ts: time.Now().UnixNano(),
+		}); err != nil {
+			slog.Error("WAL write failed", "op", "task_readopted", "task_id", id, "err", err)
+		}
+	}
+	return nil
+}
+
 // MarkAttached updates the IsAttached field for a task. Called by SessionMux
 // hooks when a client attaches or detaches from the interactive session.
 // If attached==true and the task is currently Detached, the status is
@@ -860,6 +948,25 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
 			}
+		case "task_held":
+			// A held task is alive on a runner that has no server to report
+			// to. Status and both hold fields come off the record; the
+			// deadline is what a later expiry pass compares against.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Held
+				t.HoldID = ev.HoldID
+				t.HoldDeadline = ev.HoldDeadlineNs
+			}
+		case "task_readopted":
+			// The hold closed. Running is right for both kinds here: an
+			// interactive task's Detached is set by the re-adoption path
+			// through SetDetached, and replaying that would need a record
+			// this design does not write.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Running
+				t.HoldID = ""
+				t.HoldDeadline = 0
+			}
 		case "task_cancelled":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Status = protocol.TaskStatus_Cancelled
@@ -947,6 +1054,14 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	// Failed with a recorded reason, symmetric with MarkFailed's
 	// "runner_disconnected" — both mark a resumable interruption, not a task
 	// that errored on its own.
+	//
+	// Held is deliberately NOT swept. It is the one status that says "this
+	// task's child is alive on a runner that agreed to keep it", which is
+	// exactly the claim this sweep exists to deny for every other status. A
+	// held task leaves Held when its runner comes back with it (MarkReadopted),
+	// when the runner comes back WITHOUT it, or when its deadline passes —
+	// never by being swept here, or the whole hold would be undone by the
+	// replay that was supposed to restore it.
 	for _, t := range s.tasks {
 		if t.Status == protocol.TaskStatus_Running {
 			t.Status = protocol.TaskStatus_Failed

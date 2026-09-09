@@ -177,6 +177,8 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		BoundRunnerID:  "ws:127.0.0.1:8539-1",
 		Reason:         "boom",
 		ExtraArgs:      []string{"--flag"},
+		HoldID:         "0f0e0d0c0b0a09080706050403020100",
+		HoldDeadlineNs: 1234567891,
 		Ts:             1234567890,
 		Selector:       sel,
 	}

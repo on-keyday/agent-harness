@@ -46,19 +46,25 @@ The mechanism, in the order it fires today:
    `cmd/agent-runner/main.go:147-151`; backoff 500ms→30s, ±25% jitter,
    `cli/persist.go:127-181`), and since the identity change it comes back under
    the *same* `RunnerID`. It re-registers with nothing to do.
-6. On the next server start, replay rebuilds the store. A task that was assigned
-   and never finished replays as Running (`server/taskstore.go:835-848`), so
-   whether the operator sees a phantom Running row depends on (2)'s
-   `task_failed` having reached the log before `serve`'s deferred `wal.Close()`
-   ran (`server/server.go:681-685`) — an ordering this code does not currently
-   pin either way. Interactive survivors that were Detached are explicitly
-   Cancelled (`server/server.go:674-679`), because the `SessionMux` was in
-   memory.
+6. On the next server start, replay rebuilds the store — and **`ReplayEvents`
+   ends with a sweep that forces every still-`Running` task to
+   `Failed("server_restart")`** (the tail of `ReplayEvents`,
+   `server/taskstore.go`). So an interrupted task is failed by the replay
+   itself, whether or not (2)'s `task_failed` reached the log first; the
+   ordering against `serve`'s deferred `wal.Close()` is therefore cosmetic
+   rather than load-bearing. Interactive survivors that were Detached are
+   separately Cancelled (`server/server.go:674-679`), because the `SessionMux`
+   was in memory.
 
-   That unpinned ordering is inherited, not introduced here, but the hold path
-   cannot leave it unpinned: §5 orders the hold writes ahead of any teardown
-   precisely because a `task_failed` racing a `task_held` decides the fate of a
-   live child.
+   That sweep is the reason `Held` has to be exempt from it, which is the one
+   line of this change that makes the whole thing anything but inert: a status
+   that says "the child is alive on a runner that agreed to keep it" is exactly
+   the claim the sweep exists to deny for every other status. Pinned by
+   `TestReplaySweepDoesNotFailAHeldTask`, with an un-held task beside it as the
+   control so the test proves an exemption rather than the absence of a sweep.
+   (An earlier draft of this section had replay leaving a phantom `Running` row
+   and built an argument about WAL write ordering on top of it. Both were
+   wrong; the sweep had been there all along.)
 
 Everything in that list is correct for a *crash*. None of it distinguishes a
 crash from a restart the operator asked for, and the restart is the case worth
@@ -512,8 +518,10 @@ task history by treating a persisted format as a wire format
 and what an older binary does with it. `task_held` is a new `type` string;
 replay switches on `ev.Type` with no default arm (`server/restore.go:86-101`,
 `server/taskstore.go:835-899`), so a rollback to a binary that predates it
-ignores the record and replays the task as Running from its `task_assigned` —
-a phantom Running row, not a corrupt file, and `prune` clears it. No field on an
+ignores the record and replays the task as Running from its `task_assigned`,
+which its own sweep then turns into `Failed("server_restart")` — an ordinary
+interrupted task, not a corrupt file and not a phantom row. Measured by
+`TestUnknownWALRecordTypeIsIgnoredOnReplay`. No field on an
 existing record changes meaning, and nothing wire-encoded is persisted, so the
 class of failure that cost the history here cannot recur through this change.
 `TestOnlySelectorEmbedsAWireFormatInTheWAL` keeps that true.
@@ -1190,8 +1198,10 @@ Also:
   unchecked in the first place.
   A manual verification step in a spec is a defect in the spec. It survives
   exactly one landing and then nobody runs it.
-- Rollback: a binary that predates `task_held` ignores the record and shows
-  phantom Running rows for whatever was held (§4). `prune` clears them.
+- Rollback: a binary that predates `task_held` ignores the record, so whatever
+  was held replays as an interrupted task and its own sweep fails it (§4) —
+  the same outcome as today's restart. The children are then killed by their
+  runner when re-adoption is refused.
 
 ## 9. What could go wrong
 
