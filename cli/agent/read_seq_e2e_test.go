@@ -11,15 +11,16 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli/agent"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // sendAndSeq sends a payload as the given identity and returns the seq the
 // board assigned, so a test can address that one message afterwards.
-func sendAndSeq(t *testing.T, ctx context.Context, addr, ridStr string, tid [16]byte, ticket [16]byte, topic, data string) uint64 {
+func sendAndSeq(t *testing.T, ctx context.Context, addr string, rid protocol.RunnerID, tid [16]byte, ticket [16]byte, topic, data string) uint64 {
 	t.Helper()
 	var protoTid = mkTidE2E(0)
 	protoTid.Id = tid
-	restore := setAgentEnv(addr, ridStr, protoTid, ticket)
+	restore := setAgentEnv(addr, rid, protoTid, ticket)
 	defer restore()
 	var out bytes.Buffer
 	if err := agent.Send(ctx, []string{"--topic", topic, "--data", data}, nil, &out); err != nil {
@@ -47,10 +48,6 @@ func TestAgentCLI_E2E_ReadSeq_ReturnsTheBodyOfOneMessage(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9310-41"
-		ridStrB = "ws:5.6.7.8:9311-42"
-	)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9310, 41)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9311, 42)
 	tidA, tidB := mkTidE2E(0x41), mkTidE2E(0x42)
@@ -62,7 +59,7 @@ func TestAgentCLI_E2E_ReadSeq_ReturnsTheBodyOfOneMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", "topic/read"}, &subOut); err != nil {
 		restoreB()
@@ -70,9 +67,9 @@ func TestAgentCLI_E2E_ReadSeq_ReturnsTheBodyOfOneMessage(t *testing.T) {
 	}
 	restoreB()
 
-	seq := sendAndSeq(t, ctx, addr, ridStrA, tidA.Id, ticketA, "topic/read", "hello-read")
+	seq := sendAndSeq(t, ctx, addr, ridA, tidA.Id, ticketA, "topic/read", "hello-read")
 
-	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB2 := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB2()
 
 	var out bytes.Buffer
@@ -112,10 +109,6 @@ func TestAgentCLI_E2E_ReadSeq_RefusesATopicTheCallerDoesNotSubscribeTo(t *testin
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9320-51"
-		ridStrC = "ws:9.9.9.9:9322-53"
-	)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9320, 51)
 	ridC := mkRidE2E([4]byte{9, 9, 9, 9}, 9322, 53)
 	tidA, tidC := mkTidE2E(0x51), mkTidE2E(0x53)
@@ -127,11 +120,11 @@ func TestAgentCLI_E2E_ReadSeq_RefusesATopicTheCallerDoesNotSubscribeTo(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	seq := sendAndSeq(t, ctx, addr, ridStrA, tidA.Id, ticketA, "topic/private", "secret-body")
+	seq := sendAndSeq(t, ctx, addr, ridA, tidA.Id, ticketA, "topic/private", "secret-body")
 
 	// C subscribes to something else entirely, so it is a live agent with a
 	// subscription set — just not one covering topic/private.
-	restoreC := setAgentEnv(addr, ridStrC, tidC, ticketC)
+	restoreC := setAgentEnv(addr, ridC, tidC, ticketC)
 	defer restoreC()
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", "topic/elsewhere"}, &subOut); err != nil {

@@ -65,6 +65,7 @@ func TestPortForwardE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -337,6 +338,7 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -652,6 +654,7 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -794,6 +797,7 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -970,6 +974,7 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -1192,6 +1197,7 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),
@@ -1347,6 +1353,7 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    serverCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),

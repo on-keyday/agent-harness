@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,17 +35,12 @@ func DoServerDialRunner(c *cli.Client, runnerCIDStr, viaCIDStr string) tea.Cmd {
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}
-		var viaCID objproto.ConnectionID
-		if v := strings.TrimSpace(viaCIDStr); v != "" {
-			viaCID, err = objproto.ParseConnectionID(v,
-				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-			if err != nil {
-				return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: fmt.Errorf("--via: %w", err)}
-			}
+		via, err := cli.ParseDialVia(viaCIDStr)
+		if err != nil {
+			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}
 		resp, err := cli.ServerDialRunnerWith(ctx, c,
-			protocol.ConnIDToRunnerID(targetCID),
-			protocol.ConnIDToRunnerID(viaCID))
+			protocol.ConnIDFromObjproto(targetCID), via)
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}

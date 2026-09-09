@@ -267,7 +267,7 @@ func New(cfg Config) *Server {
 		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
 		// wired later in Run (they need the constructed Endpoint), but these
 		// two don't depend on the transport so we set them here.
-		ResolveVia:            s.registry.GetByConnectionID,
+		ResolveVia:            s.registry.GetLiveByIdentity,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
 	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
@@ -388,7 +388,7 @@ func New(cfg Config) *Server {
 			Kind:         kind,
 			Ts:           uint64(time.Now().UnixNano()),
 			RunnerStatus: status,
-			RunnerId:     placeholderRunnerID(),
+			RunnerId:     protocol.RunnerID{},
 		}
 		payload := ev.MustAppend(nil)
 		s.pubsub.Publish("server", topics.RunnersStatus(), payload)
@@ -1290,7 +1290,7 @@ func (s *Server) Tasks() *TaskStore {
 func (s *Server) failAndRevokeTasksOf(runnerID string, snap RunnerEntry) {
 	for taskID := range snap.ActiveTasks {
 		s.tasks.MarkFailed(taskID, "runner_disconnected")
-		boardRevokeTask(s.Board, runnerID, taskID)
+		boardRevokeTask(s.Board, snap.Identity, taskID)
 	}
 }
 
@@ -1319,7 +1319,7 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if _, err := rand.Read(ticket[:]); err != nil {
 		return fmt.Errorf("ticket gen: %w", err)
 	}
-	boardRegisterTask(s.Board, runnerID, taskID, ticket, task.AgentProfile)
+	boardRegisterTask(s.Board, entry.Identity, taskID, ticket, task.AgentProfile)
 	stream := entry.Conn.CreateSendStream()
 	if stream == nil {
 		return fmt.Errorf("CreateSendStream returned nil")

@@ -21,7 +21,7 @@ func clearAgentEnv(t *testing.T) {
 // task-id + auth-ticket), the same signal buildMergedClientHello keys on.
 func setAgentEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("HARNESS_RUNNER_ID", "ws:127.0.0.1:8539-1")
+	t.Setenv("HARNESS_RUNNER_ID", "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0")
 	t.Setenv("HARNESS_TASK_ID", strings.Repeat("ab", 16))
 	t.Setenv("HARNESS_AUTH_TICKET", strings.Repeat("cd", 16))
 }

@@ -28,7 +28,7 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
 		return errResp(protocol.OpenPortForwardStatus_NoSuchTask)
 	}
-	runner, ok := h.Registry.Get(task.AssignedTo)
+	runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
 	}
@@ -123,7 +123,7 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 	if req.Direction == protocol.PortForwardDirection_Remote {
-		runner, ok := h.Registry.Get(task.AssignedTo)
+		runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 		if !ok || runner.Conn == nil {
 			return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
 		}

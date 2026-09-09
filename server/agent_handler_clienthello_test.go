@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"testing"
 	"time"
 
@@ -22,21 +23,19 @@ func newTestBoard(t *testing.T) *agentboard.Board {
 	return b
 }
 
-// makeProtoRunnerID builds a protocol.RunnerID from a connection-ID string
-// (same conversion as runnerIDFromConnID) so tests can build matching
-// AgentInfo.RunnerId without going through the wire.
+// makeProtoRunnerID derives a stable runner identity from a connection-id
+// string, so a test can build an AgentInfo.RunnerId matching whatever it
+// registered on the board without going through the wire.
+//
+// It used to mirror runnerIDFromConnID, converting the string field by field —
+// which is exactly the conflation that is gone: an identity is no longer
+// derivable from an address. The hash here is a TEST convenience for keeping
+// two call sites in agreement, not a rule the server follows.
 func makeProtoRunnerID(t *testing.T, connIDStr string) protocol.RunnerID {
 	t.Helper()
-	cid, err := objproto.ParseConnectionID(connIDStr, 0)
-	if err != nil {
-		t.Fatalf("makeProtoRunnerID: parse %q: %v", connIDStr, err)
-	}
+	sum := sha256.Sum256([]byte(connIDStr))
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte(cid.Transport))
-	ip := cid.Addr.Addr().AsSlice()
-	rid.SetIpAddr(ip)
-	rid.Port = uint16(cid.Addr.Port())
-	rid.UniqueNumber = cid.ID
+	copy(rid.Id[:], sum[:])
 	return rid
 }
 
@@ -130,8 +129,7 @@ func TestEstablishAgentIdentity_NilBoard(t *testing.T) {
 	s := &Server{}
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-79")}
 	info := &protocol.AgentInfo{}
-	info.RunnerId.SetTransport([]byte("ws"))
-	info.RunnerId.SetIpAddr([]byte{127, 0, 0, 1})
+	info.RunnerId = makeProtoRunnerID(t, "ws:127.0.0.1:8539-79")
 	info.SetHostname([]byte("x"))
 
 	status := s.establishAgentIdentity(conn, info)

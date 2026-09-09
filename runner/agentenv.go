@@ -13,7 +13,7 @@ import (
 // AgentEnvSpec is the input bundle for BuildAgentEnv.
 type AgentEnvSpec struct {
 	ServerCID  objproto.ConnectionID
-	RunnerID   objproto.ConnectionID
+	RunnerID   protocol.RunnerID
 	TaskID     protocol.TaskID
 	RepoPath   string
 	Hostname   string
@@ -52,7 +52,7 @@ type AgentEnvSpec struct {
 func BuildAgentEnv(s AgentEnvSpec) []string {
 	env := []string{
 		"HARNESS_SERVER_CID=" + s.ServerCID.String(),
-		"HARNESS_RUNNER_ID=" + s.RunnerID.String(),
+		"HARNESS_RUNNER_ID=" + s.RunnerID.Hex(),
 		"HARNESS_TASK_ID=" + hex.EncodeToString(s.TaskID.Id[:]),
 		"HARNESS_REPO_PATH=" + s.RepoPath,
 		"HARNESS_WS_PATH=" + s.WSPath,

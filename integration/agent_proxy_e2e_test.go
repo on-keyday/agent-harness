@@ -94,6 +94,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	go func() {
 		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
 			Config: runner.Config{
+				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
 				Hostname:     hostname,
@@ -117,7 +118,7 @@ func TestAgentProxyE2E(t *testing.T) {
 		t.Fatalf("parse runner cid: %v", err)
 	}
 
-	dialResp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID, objproto.ConnectionID{})
+	dialResp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID, protocol.RunnerID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunner: %v", err)
 	}
@@ -176,14 +177,10 @@ func TestAgentProxyE2E(t *testing.T) {
 
 	// The server keys the runner by its ConnectionID string. Convert the
 	// same string the Registry uses → protocol.RunnerID for board register.
+	// The board keys the ticket by the runner's IDENTITY, which the server
+	// recorded from the hello — it is no longer derivable from the connection id.
 	srvRunnerEntry := registered[0]
-	srvRunnerCID, err := objproto.ParseConnectionID(srvRunnerEntry.ID, 0)
-	if err != nil {
-		t.Fatalf("parse registered runner ID %q: %v", srvRunnerEntry.ID, err)
-	}
-	protoRid := protocol.ConnIDToRunnerID(srvRunnerCID)
-
-	board.Registry().Register(protoRid, taskID, ticket)
+	board.Registry().Register(srvRunnerEntry.Identity, taskID, ticket)
 
 	// 5. End-to-end conn through the runner proxy.
 	proxyConn, err := cli.DialViaProxy(ctx, runnerCID, taskID)
@@ -219,7 +216,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	// we build the request manually to embed AgentInfo without setting process env.
 	pskCtx, pskCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pskCancel()
-	info := protocol.AgentInfo{RunnerId: protoRid, TaskId: taskID, AuthTicket: ticket}
+	info := protocol.AgentInfo{RunnerId: srvRunnerEntry.Identity, TaskId: taskID, AuthTicket: ticket}
 	info.SetHostname([]byte("proxy-e2e-agent"))
 	{
 		req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}

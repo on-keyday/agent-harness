@@ -82,6 +82,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	// 2. Start Q via runner.Connect (dial mode, reverse-dial).
 	//    Q registers with the server outbound; acts as the top-level relay proxy.
 	qCfg := runner.Config{
+		RunnerID:     runner.NewRunnerID(),
 		ServerCID:    serverCID,
 		AllowedRoots: []string{t.TempDir()},
 		MaxTasks:     1,
@@ -98,16 +99,14 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	qEntry := waitForRunnerByHostname(t, srv, "chained-Q", 5*time.Second)
 	t.Logf("Q registered: ID=%s", qEntry.ID)
 
-	qRegisteredCID, err := objproto.ParseConnectionID(qEntry.ID, 0)
-	if err != nil {
-		t.Fatalf("parse Q registered CID %q: %v", qEntry.ID, err)
-	}
+	qRegisteredID := qEntry.Identity
 
 	// 4. Start P via runner.ListenAndServe (listen mode at pListen).
 	pDone := make(chan error, 1)
 	go func() {
 		pDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
 			Config: runner.Config{
+				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
 				Hostname:     "chained-P",
@@ -124,7 +123,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 		t.Fatalf("parse P listen cid: %v", err)
 	}
 	dialCtxP, dialCancelP := context.WithTimeout(ctx, 15*time.Second)
-	respP, err := cli.ServerDialRunner(dialCtxP, serverCID, pListenCID, qRegisteredCID)
+	respP, err := cli.ServerDialRunner(dialCtxP, serverCID, pListenCID, qRegisteredID)
 	dialCancelP()
 	if err != nil {
 		t.Fatalf("ServerDialRunner (P via Q): %v", err)
@@ -137,10 +136,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	pEntry := waitForRunnerByHostname(t, srv, "chained-P", 5*time.Second)
 	t.Logf("P registered via Q: ID=%s", pEntry.ID)
 
-	pRegisteredCID, err := objproto.ParseConnectionID(pEntry.ID, 0)
-	if err != nil {
-		t.Fatalf("parse P registered CID %q: %v", pEntry.ID, err)
-	}
+	pRegisteredID := pEntry.Identity
 
 	// 7. Start L via runner.ListenAndServe (listen mode at lListen).
 	//    L is the leaf runner — the agent dials into L.
@@ -148,6 +144,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	go func() {
 		lDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
 			Config: runner.Config{
+				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
 				Hostname:     "chained-L",
@@ -164,7 +161,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 		t.Fatalf("parse L listen cid: %v", err)
 	}
 	dialCtxL, dialCancelL := context.WithTimeout(ctx, 15*time.Second)
-	respL, err := cli.ServerDialRunner(dialCtxL, serverCID, lListenCID, pRegisteredCID)
+	respL, err := cli.ServerDialRunner(dialCtxL, serverCID, lListenCID, pRegisteredID)
 	dialCancelL()
 	if err != nil {
 		t.Fatalf("ServerDialRunner (L via P): %v", err)

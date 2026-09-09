@@ -16,10 +16,7 @@ func TestResumeSelectorOpts(t *testing.T) {
 	}
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{192, 168, 3, 14})
-	rid.Port = 37386
-	rid.UniqueNumber = 6360
+	rid.Id = [16]byte{216, 24}
 	got := resumeSelectorOpts(rid)
 	if got.Runner == "" {
 		t.Fatalf("non-zero AssignedTo: want a Runner pin, got empty SelectorOpts")
@@ -129,10 +126,7 @@ func TestUnpinnedResumeKeyArmsPickerWithAnySelector(t *testing.T) {
 	}
 	task := protocol.TaskInfo{Id: tid, Status: protocol.TaskStatus_Succeeded, Kind: protocol.TaskKind_Interactive}
 	var assigned protocol.RunnerID
-	assigned.SetTransport([]byte("ws"))
-	assigned.SetIpAddr([]byte{192, 168, 3, 14})
-	assigned.Port = 37386
-	assigned.UniqueNumber = 6360
+	assigned.Id = [16]byte{216, 24}
 	task.AssignedTo = assigned
 	a.tasks.SetRows([]protocol.TaskInfo{task}, nil)
 

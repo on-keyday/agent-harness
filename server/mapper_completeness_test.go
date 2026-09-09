@@ -70,7 +70,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		},
 		AgentProfile:    "codex",
 		Status:          protocol.TaskStatus_Running,
-		AssignedTo:      "ws:127.0.0.1:8539-1",
+		AssignedTo:      testRunnerID("ws:127.0.0.1:8539-1"),
 		WorktreeDir:     "/wt",
 		CreatedAt:       now,
 		StartedAt:       &now,
@@ -114,6 +114,7 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 	now := time.Now()
 	e := RunnerEntry{
 		ID:             "ws:127.0.0.1:8539-1",
+		Identity:       testRunnerID("ws:127.0.0.1:8539-1"),
 		Hostname:       "gmkhost",
 		GOOS:           "linux",
 		AllowedRoots:   []string{"/repo"},
@@ -142,7 +143,7 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 		forwardID:  42,
 		direction:  protocol.PortForwardDirection_Remote,
 		taskIDHex:  "00112233445566778899aabbccddeeff",
-		runnerID:   "ws:127.0.0.1:8539-1",
+		runnerID:   testRunnerID("ws:127.0.0.1:8539-1"),
 		clientCID:  "ws:127.0.0.1:9-1",
 		clientKind: protocol.ClientKind_Cli,
 		bindAddr:   "127.0.0.1",

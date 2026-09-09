@@ -121,15 +121,9 @@ func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byt
 	fmt.Fprintln(w, string(line))
 }
 
-// boardRunnerIDString renders an agentboard.RunnerID as "transport:ip:port-unique"
-// matching HARNESS_RUNNER_ID / cliopts format.
+// boardRunnerIDString renders an agentboard.RunnerID as the 32-hex identity,
+// which is also what HARNESS_RUNNER_ID and cliopts carry. It used to assemble
+// "transport:ip:port-unique" by hand, because the identity was an address.
 func boardRunnerIDString(r agentboard.RunnerID) string {
-	ip := ""
-	switch len(r.IpAddr) {
-	case 4:
-		ip = fmt.Sprintf("%d.%d.%d.%d", r.IpAddr[0], r.IpAddr[1], r.IpAddr[2], r.IpAddr[3])
-	case 16:
-		ip = "[" + hex.EncodeToString(r.IpAddr) + "]"
-	}
-	return fmt.Sprintf("%s:%s:%d-%d", string(r.Transport), ip, r.Port, r.UniqueNumber)
+	return hex.EncodeToString(r.Id[:])
 }

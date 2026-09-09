@@ -19,7 +19,7 @@ import (
 type ViaRegistrationInfo struct {
 	// Via is the proxy_runner entry through which the target was registered.
 	Via *RunnerEntry
-	// ViaDialAddr = protocol.RunnerIDToConnID(target), the addr the proxy_runner
+	// ViaDialAddr = target.ToObjproto(), the addr the proxy_runner
 	// actually dialed to reach the target during EstablishRelay. Only Transport +
 	// Addr are load-bearing; ID happens to carry admin's UniqueNumber.
 	ViaDialAddr objproto.ConnectionID
@@ -57,11 +57,11 @@ type DialRunnerHandler struct {
 	// check status codes without wanting a live connection).
 	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
 
-	// ResolveVia, when non-nil, is called for via-relay dispatch to look up
-	// the registered proxy_runner by exact ConnectionID match. Returns the
-	// RunnerEntry and true on hit, nil/false on miss. Server.New wires this
-	// to Registry.GetByConnectionID.
-	ResolveVia func(cid objproto.ConnectionID) (*RunnerEntry, bool)
+	// ResolveVia, when non-nil, is called for via-relay dispatch to look up the
+	// registered proxy_runner by IDENTITY. Returns the RunnerEntry and true on
+	// hit, nil/false on miss. Server.New wires this to Registry.GetByIdentity.
+	// It matched by exact ConnectionID until identity stopped being one.
+	ResolveVia func(via protocol.RunnerID) (*RunnerEntry, bool)
 
 	// ViaSendEstablishRelay, when non-nil, sends an EstablishRelayRequest
 	// over the given proxy_runner's existing registered ConnHandle and blocks
@@ -74,7 +74,7 @@ type DialRunnerHandler struct {
 // Handle performs the dial and returns the response struct. Does NOT wait
 // for PSK / Hello to complete — those happen asynchronously in the goroutine
 // spawned by OnDialed.
-func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID) protocol.DialRunnerResponse {
+func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.ConnID) protocol.DialRunnerResponse {
 	if len(target.Transport) == 0 {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: invalid target: empty transport")
@@ -91,7 +91,7 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
 	}
 
-	cid := protocol.RunnerIDToConnID(target)
+	cid := target.ToObjproto()
 
 	timeout := h.DialTimeout
 	if timeout == 0 {
@@ -157,8 +157,8 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 //     normal handleConnection goroutine — identical to the direct-dial path.
 //
 // All wait points respect the dial timeout (DialTimeout, default 10s).
-func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via protocol.RunnerID) protocol.DialRunnerResponse {
-	if via.TransportLen == 0 {
+func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.ConnID, via protocol.RunnerID) protocol.DialRunnerResponse {
+	if via.IsZero() {
 		// "via not specified" — fall through to direct-dial path.
 		return h.Handle(ctx, target)
 	}
@@ -190,12 +190,14 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
 	}
 
-	// Step 2: resolve via against registered runners.
-	viaCID := protocol.RunnerIDToConnID(via)
-	entry, ok := h.ResolveVia(viaCID)
+	// Step 2: resolve via against registered runners. By IDENTITY, not by
+	// address: via names a runner that is already registered, so the server has
+	// the mapping, and an identity keeps resolving after that proxy's own
+	// reconnect where an exact-address match would not.
+	entry, ok := h.ResolveVia(via)
 	if !ok {
 		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: registered runner not found", "via", viaCID.String())
+			h.Logger.Warn("dial-runner via: registered runner not found", "via", via.Hex())
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaNotFound}
 	}
@@ -209,13 +211,10 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	slotID := target.UniqueNumber
 
 	relayReq := protocol.EstablishRelayRequest{
-		// The one place an identity is laundered into an address: `target`
-		// names WHICH runner the operator asked for, and EstablishRelay wants
-		// WHERE the proxy dials. They are the same value today, which is why
-		// DialRunnerRequest's own fields are still undecided (see the schema).
-		// Written out rather than hidden so this conversion is what a grep for
-		// the remaining conflation finds.
-		Target: protocol.ConnIDFromObjproto(protocol.RunnerIDToConnID(target)),
+		// Both sides are addresses now, so the conversion that used to sit here
+		// — an identity laundered into a dial address to fit the field — is
+		// gone rather than merely explicit.
+		Target: target,
 		SlotId: slotID,
 	}
 
@@ -230,7 +229,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	if err != nil || relayResp.Status != protocol.EstablishRelayStatus_Ok {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner via: EstablishRelay non-Ok",
-				"via", viaCID.String(),
+				"via", via.Hex(),
 				"relay_status", relayResp.Status,
 				"err", err)
 		}
@@ -334,7 +333,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	// Hello handler can populate entry.Via + entry.ViaDialAddr on the RunnerEntry.
 	viaInfo := &ViaRegistrationInfo{
 		Via:         entry,
-		ViaDialAddr: protocol.RunnerIDToConnID(target),
+		ViaDialAddr: target.ToObjproto(),
 	}
 	if h.OnDialed != nil {
 		h.OnDialed(ctx, endToEndConn, viaInfo)
@@ -345,8 +344,8 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 
 	if h.Logger != nil {
 		h.Logger.Info("dial-runner via: relay established",
-			"target", protocol.RunnerIDToConnID(target).String(),
-			"via", viaCID.String(),
+			"target", target.ToObjproto().String(),
+			"via", via.Hex(),
 			"slot_id", slotID)
 	}
 	return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_Ok}

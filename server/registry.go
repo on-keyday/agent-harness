@@ -24,7 +24,12 @@ import (
 // ActiveTasks is a set of task IDs (hex strings) currently bound to this
 // runner. len(ActiveTasks) is the current load; capacity is MaxTasks.
 type RunnerEntry struct {
-	ID       string // = objproto.ConnectionID.String()
+	ID string // = objproto.ConnectionID.String()
+	// Identity is the runner PROCESS behind this connection, from
+	// RunnerHello.runner_id. Unlike ID it survives that process's reconnects,
+	// which is the whole reason it exists: a credential keyed on it then
+	// outlives a connection. Zero for a runner that predates the field.
+	Identity protocol.RunnerID
 	Hostname string // from RunnerHello.hostname
 	// GOOS is runtime.GOOS on the runner's host, from RunnerHello.goos. Empty
 	// for a runner that predates the field — reported as "unknown" rather than
@@ -103,6 +108,14 @@ func (e RunnerEntry) DefaultProfile() string {
 type Registry struct {
 	mu      sync.RWMutex
 	runners map[string]*RunnerEntry
+	// byIdentity maps a runner identity's hex to the connection id currently
+	// holding it. At most one live connection per identity, and a second Add
+	// under the same identity TAKES OVER rather than being refused: that is the
+	// reconnect path, the runner re-dialled so the old path is dead by
+	// hypothesis, and the runner is the authority on its own liveness. Making
+	// the new connection wait for the old to be reaped would cost a full
+	// --ping-interval, which is the latency this whole change exists to remove.
+	byIdentity map[string]string
 
 	OnAdd    func(RunnerEntry)                 // optional; called after Add inserts an entry.
 	OnRemove func(id string, snap RunnerEntry) // optional; called after Remove deletes an entry.
@@ -111,24 +124,38 @@ type Registry struct {
 // NewRegistry creates an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		runners: make(map[string]*RunnerEntry),
+		runners:    make(map[string]*RunnerEntry),
+		byIdentity: make(map[string]string),
 	}
 }
 
-// Add inserts or replaces the entry keyed by e.ID.
-func (r *Registry) Add(e *RunnerEntry) {
+// Add inserts or replaces the entry keyed by e.ID and claims e.Identity for it.
+//
+// Returns the connection id that previously held that identity, when there was
+// one and it was a different connection. The caller must tear that connection
+// down: two connections claiming one runner would both be dispatched to, and
+// the agents of one of them hold tickets the board now keys to the other.
+func (r *Registry) Add(e *RunnerEntry) (displaced string) {
 	r.mu.Lock()
 	// Ensure ActiveTasks is initialized.
 	if e.ActiveTasks == nil {
 		e.ActiveTasks = make(map[string]struct{})
 	}
 	r.runners[e.ID] = e
+	if !e.Identity.IsZero() {
+		key := e.Identity.Hex()
+		if prev, ok := r.byIdentity[key]; ok && prev != e.ID {
+			displaced = prev
+		}
+		r.byIdentity[key] = e.ID
+	}
 	snapshot := *e
 	onAdd := r.OnAdd
 	r.mu.Unlock()
 	if onAdd != nil {
 		onAdd(snapshot)
 	}
+	return displaced
 }
 
 // Remove deletes the entry with the given id. No-op if absent.
@@ -142,11 +169,53 @@ func (r *Registry) Remove(id string) {
 		snap = *e
 	}
 	delete(r.runners, id)
+	// Only release the identity if it still points at THIS connection. A
+	// takeover repoints it and the displaced connection's teardown arrives
+	// afterwards — the normal order, since the runner notices a drop before the
+	// server's ping timeout does. Without this check that late teardown would
+	// strip the identity from the connection now legitimately holding it, and
+	// the symptom would be a runner that reconnects and then cannot be found by
+	// identity, intermittently.
+	if existed && !e.Identity.IsZero() && r.byIdentity[e.Identity.Hex()] == id {
+		delete(r.byIdentity, e.Identity.Hex())
+	}
 	onRemove := r.OnRemove
 	r.mu.Unlock()
 	if existed && onRemove != nil {
 		onRemove(id, snap)
 	}
+}
+
+// GetByIdentity returns a value snapshot of whichever connection currently
+// holds this runner identity — the counterpart of Get for callers that have a
+// task's AssignedTo rather than a connection id, and independent of the
+// internal map like Get's return.
+func (r *Registry) GetByIdentity(rid protocol.RunnerID) (RunnerEntry, bool) {
+	e, ok := r.GetLiveByIdentity(rid)
+	if !ok {
+		return RunnerEntry{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return *e, true
+}
+
+// GetLiveByIdentity returns the LIVE entry for an identity. Same caveat as
+// GetByConnectionID: the pointer aliases registry state, so it is for callers
+// that need to store the entry itself (ResolveVia hands it to entry.Via), not
+// for reading fields off it.
+func (r *Registry) GetLiveByIdentity(rid protocol.RunnerID) (*RunnerEntry, bool) {
+	if rid.IsZero() {
+		return nil, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	id, ok := r.byIdentity[rid.Hex()]
+	if !ok {
+		return nil, false
+	}
+	e, ok := r.runners[id]
+	return e, ok
 }
 
 // Get returns a value snapshot of the entry for id. The returned value is
@@ -279,8 +348,17 @@ func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {
 	case protocol.RunnerSelectorKind_Any:
 		return true
 	case protocol.RunnerSelectorKind_ByRunnerId:
+		// Identity equality, 16 bytes against 16 bytes. It used to parse the
+		// entry's connection id and compare four address fields, because the
+		// selector carried an address.
 		want := sel.RunnerId()
-		return want != nil && runnerIDMatches(e.ID, want)
+		return want != nil && !want.IsZero() && *want == e.Identity
+	case protocol.RunnerSelectorKind_ByConnId:
+		// Pins a CONNECTION, so unlike ByRunnerId it stops matching once that
+		// runner reconnects. Exists because an operator can still paste the
+		// addr= column.
+		want := sel.ConnId()
+		return want != nil && want.ToObjproto().String() == e.ID
 	case protocol.RunnerSelectorKind_ByHostname:
 		h := sel.Hostname()
 		return h != nil && string(h.Name) == e.Hostname
@@ -289,34 +367,6 @@ func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {
 		return ip != nil && runnerIDIPMatches(e.ID, ip.Addr)
 	}
 	return false
-}
-
-// runnerIDMatches checks if a protocol.RunnerID matches a ConnectionID string.
-// Matches when transport, IP, port, and UniqueNumber all equal.
-func runnerIDMatches(id string, rid *protocol.RunnerID) bool {
-	if rid == nil {
-		return false
-	}
-	cid, err := objproto.ParseConnectionID(id, 0)
-	if err != nil {
-		return false
-	}
-	if string(rid.Transport) != cid.Transport {
-		return false
-	}
-	gotIP := cid.Addr.Addr().AsSlice()
-	if len(gotIP) != len(rid.IpAddr) {
-		return false
-	}
-	for i := range gotIP {
-		if gotIP[i] != rid.IpAddr[i] {
-			return false
-		}
-	}
-	if uint16(cid.Addr.Port()) != rid.Port {
-		return false
-	}
-	return uint16(cid.ID) == rid.UniqueNumber
 }
 
 // runnerIDIPMatches extracts the IP bytes from a ConnectionID-encoded ID string

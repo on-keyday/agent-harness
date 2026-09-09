@@ -62,7 +62,7 @@ func startUDPServerE2E(t *testing.T, udpAddr string) *agentboard.Board {
 // setAgentEnvUDP mirrors setAgentEnv but emits a "udp:" CID for
 // HARNESS_SERVER_CID so cliopts.ResolveServerCID returns Transport="udp".
 // This is the path BuildClientEndpoint dispatches to UDPEndpoint.
-func setAgentEnvUDP(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]byte) func() {
+func setAgentEnvUDP(serverAddr string, rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) func() {
 	prev := map[string]string{
 		"HARNESS_SERVER_CID":  os.Getenv("HARNESS_SERVER_CID"),
 		"HARNESS_RUNNER_ID":   os.Getenv("HARNESS_RUNNER_ID"),
@@ -70,7 +70,7 @@ func setAgentEnvUDP(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]b
 		"HARNESS_AUTH_TICKET": os.Getenv("HARNESS_AUTH_TICKET"),
 	}
 	os.Setenv("HARNESS_SERVER_CID", "udp:"+serverAddr+"-*")
-	os.Setenv("HARNESS_RUNNER_ID", ridStr)
+	os.Setenv("HARNESS_RUNNER_ID", rid.Hex())
 	os.Setenv("HARNESS_TASK_ID", hex.EncodeToString(tid.Id[:]))
 	os.Setenv("HARNESS_AUTH_TICKET", hex.EncodeToString(ticket[:]))
 	return func() {
@@ -84,14 +84,13 @@ func setAgentEnvUDP(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]b
 	}
 }
 
-// mkRidUDP_E2E is mkRidE2E's sibling that tags Transport="udp", matching the
-// runner identity a UDP-dialed runner would register with.
+// mkRidUDP_E2E was mkRidE2E's sibling that tagged Transport="udp". An identity
+// carries no transport any more — which underlay a runner dialled over is a
+// property of its connection, not of who it is — so this differs only by a
+// discriminator byte, kept so the two suites cannot collide.
 func mkRidUDP_E2E(ip [4]byte, port uint16, unique uint16) protocol.RunnerID {
-	var r protocol.RunnerID
-	r.SetTransport([]byte("udp"))
-	r.SetIpAddr(ip[:])
-	r.Port = port
-	r.UniqueNumber = unique
+	r := mkRidE2E(ip, port, unique)
+	r.Id[15] = 'u'
 	return r
 }
 
@@ -104,11 +103,6 @@ func mkRidUDP_E2E(ip [4]byte, port uint16, unique uint16) protocol.RunnerID {
 func TestAgentCLI_E2E_SendThenWait_UDP(t *testing.T) {
 	addr := freeUDPPortE2E(t)
 	board := startUDPServerE2E(t, addr)
-
-	const (
-		ridStrA = "udp:1.2.3.4:9600-91"
-		ridStrB = "udp:5.6.7.8:9601-92"
-	)
 
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xA9
@@ -127,7 +121,7 @@ func TestAgentCLI_E2E_SendThenWait_UDP(t *testing.T) {
 	defer cancel()
 
 	// Agent A sends.
-	restoreA := setAgentEnvUDP(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnvUDP(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/udp-e2e", "--data", `{"msg":"udp-hello"}`},
@@ -144,7 +138,7 @@ func TestAgentCLI_E2E_SendThenWait_UDP(t *testing.T) {
 	}
 
 	// Agent B waits.
-	restoreB := setAgentEnvUDP(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnvUDP(addr, ridB, tidB, ticketB)
 	var waitOut bytes.Buffer
 	if err := agent.Wait(ctx,
 		[]string{"--topic", "topic/udp-e2e", "--timeout", "2s"},

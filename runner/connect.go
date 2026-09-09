@@ -41,10 +41,21 @@ func skillsInjected(noWorktree, forceInject bool) bool {
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerCID    objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
-	AllowedRoots []string              // absolute repo paths (or root prefixes) this runner serves
-	MaxTasks     int                   // maximum concurrent tasks (0 → defaults to 1)
-	Hostname     string                // hostname reported in Hello (empty → no hostname sent)
+	ServerCID objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
+
+	// RunnerID identifies this runner PROCESS, and must be minted ONCE by the
+	// caller before PersistLoop starts — NewRunnerID does it. Minting it per
+	// connection instead would silently undo the whole point: the server would
+	// see a different runner on every reconnect, agent credentials would keep
+	// expiring exactly as they used to, and nothing would look broken.
+	//
+	// A restart SHOULD change it: the value differing is what tells the server
+	// the children this runner had are gone.
+	RunnerID protocol.RunnerID
+
+	AllowedRoots []string // absolute repo paths (or root prefixes) this runner serves
+	MaxTasks     int      // maximum concurrent tasks (0 → defaults to 1)
+	Hostname     string   // hostname reported in Hello (empty → no hostname sent)
 
 	// Profiles is the set of agent launch profiles this runner exec's: the
 	// default profile (basename becomes RunnerHello.agent_bin) plus any
@@ -266,17 +277,18 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		AllowedRoots: cfg.AllowedRoots,
-		Profiles:     cfg.Profiles,
-		ServerCID:    serverCID,
-		Hostname:     cfg.Hostname,
-		WSPath:       cli.WebSocketPath,
-		BinDir:       binDir,
-		PSK:          psk,
-		ProxyVia:     cfg.ProxyVia,
-		Sender:       sender,
-		Streams:      pc.Transport(),
-		creator:      pc.Transport(),
+		AllowedRoots:   cfg.AllowedRoots,
+		Profiles:       cfg.Profiles,
+		ServerCID:      serverCID,
+		Hostname:       cfg.Hostname,
+		MintedRunnerID: cfg.RunnerID,
+		WSPath:         cli.WebSocketPath,
+		BinDir:         binDir,
+		PSK:            psk,
+		ProxyVia:       cfg.ProxyVia,
+		Sender:         sender,
+		Streams:        pc.Transport(),
+		creator:        pc.Transport(),
 		// The uplink is the connection every task shares. Registered here
 		// because this is where it becomes the Session's, and it is the end
 		// that SENDS every pull -- the state nobody could see before.
@@ -365,7 +377,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 // to the message previously sent in OnConnect. It is now embedded in the merged
 // PskAuthRequest so the server can register the runner in one round-trip.
 func buildRunnerHello(cfg Config) protocol.RunnerHello {
-	hh := protocol.RunnerHello{Version: 1}
+	hh := protocol.RunnerHello{Version: 1, RunnerId: cfg.RunnerID}
 	// The harness had no idea what OS a runner ran on, and the ssh gateway was
 	// guessing (`sh -c` for every command, on every platform). Reported once at
 	// hello time; it cannot change without a reconnect.

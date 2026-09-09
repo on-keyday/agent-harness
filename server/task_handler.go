@@ -157,11 +157,11 @@ type TaskHandler struct {
 	// Safe to leave nil in tests.
 	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
 
-	// ResolveVia resolves a via-relay CID against the registered runners.
+	// ResolveVia resolves a via-relay proxy runner by IDENTITY.
 	// Server.Run wires this to Registry.GetByConnectionID. Tests that exercise
 	// the via-relay branch (TaskControlKind_DialRunner with non-empty Via)
 	// wire a stub directly.
-	ResolveVia func(cid objproto.ConnectionID) (*RunnerEntry, bool)
+	ResolveVia func(via protocol.RunnerID) (*RunnerEntry, bool)
 
 	// ViaSendEstablishRelay sends an EstablishRelayRequest to the resolved
 	// proxy_runner and blocks for the EstablishRelayResponse. Server.Run wires
@@ -788,7 +788,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			ViaSendEstablishRelay: h.ViaSendEstablishRelay,
 		}
 		var dialResp protocol.DialRunnerResponse
-		if dr.Via.TransportLen == 0 {
+		if dr.Via.IsZero() {
 			dialResp = handler.Handle(dialCtx, dr.Target)
 		} else {
 			dialResp = handler.HandleWithVia(dialCtx, dr.Target, dr.Via)
@@ -1301,14 +1301,14 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Mark the task Running and bound to this runner immediately so the
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
-	h.Tasks.Assign(taskIDHex, runner.ID, "", runner.SkillsInjected)
+	h.Tasks.Assign(taskIDHex, runner.Identity, "", runner.SkillsInjected)
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
 		slog.Error("handleOpenInteractive: "+reason, "task", taskIDHex, "runner", runner.Hostname)
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
 		h.Registry.UnbindTask(runner.ID, taskIDHex)
-		boardRevokeTask(h.Board, runner.ID, taskIDHex)
+		boardRevokeTask(h.Board, runner.Identity, taskIDHex)
 	}
 
 	// Generate a fresh ticket for the agent Hello handshake.
@@ -1318,7 +1318,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		finishWithError("ticket gen failed: " + err.Error())
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
-	boardRegisterTask(h.Board, runner.ID, taskIDHex, ticket, resolved)
+	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, resolved)
 
 	tuiStream := tuiConn.CreateBidirectionalStream()
 	if tuiStream == nil {
@@ -1923,7 +1923,9 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	}
 	info.SetAgentProfiles(profs)
 	info.SetSkillsInjected(r.SkillsInjected)
-	info.Id = protocol.ConnIDToRunnerID(r.Conn.ConnectionID())
+	info.Id = r.Identity
+	// WHERE it is reached, which id used to answer by being an address.
+	info.Addr = protocol.ConnIDFromObjproto(r.Conn.ConnectionID())
 
 	// Populate AllowedRoots.
 	roots := make([]protocol.AllowedRoot, len(r.AllowedRoots))
@@ -1977,10 +1979,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// without this, operator surfaces fall back to the runner's default AgentBin
 	// and never show that a task was resumed under a different agent.
 	info.SetAgentProfile([]byte(t.AgentProfile))
-	parsed, err := objproto.ParseConnectionID(t.AssignedTo, 0)
-	if err == nil {
-		info.AssignedTo = protocol.ConnIDToRunnerID(parsed)
-	}
+	info.AssignedTo = t.AssignedTo
 
 	if t.StartedAt != nil {
 		info.StartedAt = uint64(t.StartedAt.UnixNano())
@@ -2089,20 +2088,6 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 	resp.SetNotify(protocol.NotifyResponse{Status: status})
 	out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	conn.SendMessage(out) //nolint:errcheck
-}
-
-// placeholderRunnerID returns a safe, encodable RunnerID with a loopback IPv4 address.
-// The RunnerID encoder has a hard assertion that IpAddrLen == 4 || IpAddrLen == 16;
-// encoding a zero-value RunnerID PANICS. Always use this function when building a
-// RunnerInfo or TaskInfo that requires a RunnerID field.
-func placeholderRunnerID() protocol.RunnerID {
-	rid := protocol.RunnerID{
-		Port:         0,
-		UniqueNumber: 0,
-	}
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{127, 0, 0, 1})
-	return rid
 }
 
 // matchedRoot returns the first AllowedRoots entry whose MatchLen(root, repo)

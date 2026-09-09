@@ -32,7 +32,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
 		return errResp(protocol.OpenFileTransferStatus_NoSuchTask)
 	}
-	runner, ok := h.Registry.Get(task.AssignedTo)
+	runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.OpenFileTransferStatus_RunnerOffline)
 	}
@@ -112,7 +112,7 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
 		return errResp(protocol.ListFilesStatus_NoSuchTask)
 	}
-	runner, ok := h.Registry.Get(task.AssignedTo)
+	runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.ListFilesStatus_RunnerOffline)
 	}

@@ -38,10 +38,8 @@ func freePort(t *testing.T) string {
 // mkRid builds a protocol.RunnerID for registry registration.
 func mkRid(n uint16) protocol.RunnerID {
 	var r protocol.RunnerID
-	r.SetTransport([]byte("ws"))
-	r.SetIpAddr([]byte{127, 0, 0, 1})
-	r.Port = 9000
-	r.UniqueNumber = n
+	r.Id[0] = byte(n)
+	r.Id[1] = byte(n >> 8)
 	return r
 }
 

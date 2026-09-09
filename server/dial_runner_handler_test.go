@@ -25,7 +25,7 @@ func TestDialRunnerViaInvalidTarget(t *testing.T) {
 	resolved := false
 	h := &DialRunnerHandler{
 		Logger: slog.Default(),
-		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+		ResolveVia: func(_ protocol.RunnerID) (*RunnerEntry, bool) {
 			resolved = true
 			return nil, false
 		},
@@ -34,12 +34,9 @@ func TestDialRunnerViaInvalidTarget(t *testing.T) {
 			return protocol.EstablishRelayResponse{}, nil
 		},
 	}
-	var target protocol.RunnerID // empty Transport
+	var target protocol.ConnID // empty Transport
 	var via protocol.RunnerID
-	via.SetTransport([]byte("ws"))
-	via.SetIpAddr([]byte{1, 2, 3, 4})
-	via.Port = 1234
-	via.UniqueNumber = 12345
+	via.Id = [16]byte{57, 48}
 
 	resp := h.HandleWithVia(context.Background(), target, via)
 	if resp.Status != protocol.DialRunnerStatus_InvalidTarget {
@@ -57,7 +54,7 @@ func TestDialRunnerViaNotFound(t *testing.T) {
 	h := &DialRunnerHandler{
 		Logger:   slog.Default(),
 		Endpoint: nil, // not reached
-		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+		ResolveVia: func(_ protocol.RunnerID) (*RunnerEntry, bool) {
 			return nil, false
 		},
 		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
@@ -65,16 +62,13 @@ func TestDialRunnerViaNotFound(t *testing.T) {
 			return protocol.EstablishRelayResponse{}, nil
 		},
 	}
-	var target protocol.RunnerID
+	var target protocol.ConnID
 	target.SetTransport([]byte("ws"))
 	target.SetIpAddr([]byte{10, 0, 0, 5})
 	target.Port = 8540
 
 	var via protocol.RunnerID
-	via.SetTransport([]byte("ws"))
-	via.SetIpAddr([]byte{1, 2, 3, 4})
-	via.Port = 9999
-	via.UniqueNumber = 12345
+	via.Id = [16]byte{57, 48}
 
 	resp := h.HandleWithVia(context.Background(), target, via)
 	if resp.Status != protocol.DialRunnerStatus_ViaNotFound {
@@ -96,23 +90,20 @@ func TestDialRunnerViaRelayFailed(t *testing.T) {
 	h := &DialRunnerHandler{
 		Logger:   slog.Default(),
 		Endpoint: nil, // not reached because we short-circuit before SendHandshake
-		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+		ResolveVia: func(_ protocol.RunnerID) (*RunnerEntry, bool) {
 			return fakeEntry, true
 		},
 		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_SlotCollision}, nil
 		},
 	}
-	var target protocol.RunnerID
+	var target protocol.ConnID
 	target.SetTransport([]byte("ws"))
 	target.SetIpAddr([]byte{10, 0, 0, 5})
 	target.Port = 8540
 
 	var via protocol.RunnerID
-	via.SetTransport([]byte("ws"))
-	via.SetIpAddr([]byte{192, 168, 1, 10})
-	via.Port = 8540
-	via.UniqueNumber = 12345
+	via.Id = [16]byte{57, 48}
 
 	resp := h.HandleWithVia(context.Background(), target, via)
 	if resp.Status != protocol.DialRunnerStatus_ViaRelayFailed {
@@ -129,8 +120,8 @@ func TestDialRunnerViaEmptyVia(t *testing.T) {
 		Logger:   slog.Default(),
 		Endpoint: nil, // not reached: target.Transport empty triggers InvalidTarget first
 	}
-	var target protocol.RunnerID // empty Transport → InvalidTarget via Handle
-	var via protocol.RunnerID    // empty Transport — triggers direct fallback
+	var target protocol.ConnID // empty Transport → InvalidTarget via Handle
+	var via protocol.RunnerID  // zero identity — triggers direct fallback
 
 	resp := h.HandleWithVia(context.Background(), target, via)
 	if resp.Status != protocol.DialRunnerStatus_InvalidTarget {
@@ -144,9 +135,8 @@ func TestDialRunnerInvalidTargetTransport(t *testing.T) {
 		Logger:   slog.Default(),
 		Endpoint: nil, // not reached when validation fails first
 	}
-	var bad protocol.RunnerID
-	// Leave transport empty (SetTransport with empty slice produces TransportLen=0)
-	bad.SetTransport([]byte{})
+	// An address with no transport: the handler must refuse before it dials.
+	var bad protocol.ConnID
 	bad.SetIpAddr([]byte{127, 0, 0, 1})
 	bad.Port = 8540
 
@@ -166,7 +156,7 @@ func TestDialRunnerDialFailsUnboundedPort(t *testing.T) {
 		Endpoint:    ep,
 		DialTimeout: 500 * time.Millisecond,
 	}
-	var target protocol.RunnerID
+	var target protocol.ConnID
 	target.SetTransport([]byte("ws"))
 	target.SetIpAddr([]byte{127, 0, 0, 1})
 	target.Port = 1 // nothing listens here
@@ -348,7 +338,7 @@ func TestDialRunnerSendsGreeting(t *testing.T) {
 			dialedCh <- struct{}{}
 		},
 	}
-	var target protocol.RunnerID
+	var target protocol.ConnID
 	target.SetTransport([]byte("ws"))
 	target.SetIpAddr([]byte{127, 0, 0, 1})
 	target.Port = 18570
@@ -400,15 +390,11 @@ func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
 	pCID := buildTestCID("ws:127.0.0.1:9100-2")
 	pEntry := addEntry(reg, pCID.String(), qEntry, pViaDialAddr)
 
-	// Build the RunnerIDs for via=P and target=L.
-	var pRunnerID protocol.RunnerID
-	pRunnerID.SetTransport([]byte("ws"))
-	pRunnerID.SetIpAddr([]byte{127, 0, 0, 1})
-	pRunnerID.Port = 9100
-	pRunnerID.UniqueNumber = 2
+	// via names P by IDENTITY; the stub resolves it the same way.
+	pRunnerID := makeProtoRunnerID(t, pCID.String())
 
-	const slotID uint16 = 77 // = target.UniqueNumber below
-	var targetRunnerID protocol.RunnerID
+	const slotID uint16 = 77           // = target.UniqueNumber below
+	var targetRunnerID protocol.ConnID // the dial target is an ADDRESS
 	targetRunnerID.SetTransport([]byte("ws"))
 	targetRunnerID.SetIpAddr([]byte{10, 0, 0, 99})
 	targetRunnerID.Port = 8541
@@ -428,8 +414,10 @@ func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
 	h := &DialRunnerHandler{
 		Logger:   slog.Default(),
 		Endpoint: nil, // intentionally nil — causes DialFailed after Step 3b succeeds
-		ResolveVia: func(cid objproto.ConnectionID) (*RunnerEntry, bool) {
-			if cid.String() == pCID.String() {
+		ResolveVia: func(via protocol.RunnerID) (*RunnerEntry, bool) {
+			// via is an identity now; pEntry's is derived from its cid so the
+			// two sides of this stub agree without a second literal.
+			if via == makeProtoRunnerID(t, pCID.String()) {
 				return pEntry, true
 			}
 			return nil, false
@@ -489,11 +477,11 @@ func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
 	}
 
 	// call[1] target must equal ConnIDToRunnerID(pViaDialAddr) (P's ViaDialAddr).
-	wantQ := protocol.ConnIDToRunnerID(pViaDialAddr)
+	wantQ := protocol.ConnIDFromObjproto(pViaDialAddr)
 	wantQBytes, _ := wantQ.Append(nil)
 	call1Bytes, _ := gotCalls[1].target.Append(nil)
 	if !bytes.Equal(wantQBytes, call1Bytes) {
-		t.Errorf("call[1]: Target = %v, want ConnIDToRunnerID(pViaDialAddr)", gotCalls[1].target)
+		t.Errorf("call[1]: Target = %v, want ConnIDFromObjproto(pViaDialAddr)", gotCalls[1].target)
 	}
 }
 
@@ -526,12 +514,9 @@ func TestDialRunnerViaLoopDetected(t *testing.T) {
 
 	// Build the RunnerID for via=P.
 	var pRunnerID protocol.RunnerID
-	pRunnerID.SetTransport([]byte("ws"))
-	pRunnerID.SetIpAddr([]byte{127, 0, 0, 1})
-	pRunnerID.Port = 9101
-	pRunnerID.UniqueNumber = 1
+	pRunnerID.Id = [16]byte{1}
 
-	var targetRunnerID protocol.RunnerID
+	var targetRunnerID protocol.ConnID // the dial target is an ADDRESS
 	targetRunnerID.SetTransport([]byte("ws"))
 	targetRunnerID.SetIpAddr([]byte{10, 0, 0, 50})
 	targetRunnerID.Port = 8542
@@ -542,7 +527,7 @@ func TestDialRunnerViaLoopDetected(t *testing.T) {
 	h := &DialRunnerHandler{
 		Logger:   slog.Default(),
 		Endpoint: nil,
-		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+		ResolveVia: func(_ protocol.RunnerID) (*RunnerEntry, bool) {
 			return pEntry, true
 		},
 		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {

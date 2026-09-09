@@ -29,9 +29,9 @@ func makeRunnerInfo(hostname string, status protocol.RunnerStatus, maxTasks int,
 	r.ActiveTasks = active
 	r.ActiveTasksLen = uint16(activeCount)
 
-	// Use a placeholder IPv4 so taskIDStr doesn't render "-"
-	r.Id.SetIpAddr([]byte{127, 0, 0, 1})
-	r.Id.IpAddrLen = 4
+	// A non-zero identity so the id column renders something. The placeholder
+	// IPv4 this replaces was there because a zero RunnerID could not be encoded.
+	r.Id.Id[0] = 1
 
 	return r
 }

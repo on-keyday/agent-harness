@@ -205,8 +205,7 @@ func TestPSKGate_AgentStillUsesConnectPSKWhenOperatorPSKSet(t *testing.T) {
 	}
 
 	var protoRID protocol.RunnerID
-	protoRID.SetTransport([]byte("ws"))
-	protoRID.SetIpAddr([]byte{127, 0, 0, 1})
+	protoRID.Id = [16]byte{1}
 	var protoTID protocol.TaskID
 	protoTID.Id = [16]byte{0xAA, 0xBB}
 	info := protocol.AgentInfo{RunnerId: protoRID, TaskId: protoTID, AuthTicket: ticket}
@@ -247,8 +246,7 @@ func TestPSKGate_ValidBinderAgentValidTicket(t *testing.T) {
 	}
 
 	var protoRID protocol.RunnerID
-	protoRID.SetTransport([]byte("ws"))
-	protoRID.SetIpAddr([]byte{127, 0, 0, 1})
+	protoRID.Id = [16]byte{1}
 
 	info := protocol.AgentInfo{
 		RunnerId:   protoRID,
@@ -288,8 +286,7 @@ func TestPSKGate_ValidBinderAgentBadTicket(t *testing.T) {
 	}
 
 	var protoRID protocol.RunnerID
-	protoRID.SetTransport([]byte("ws"))
-	protoRID.SetIpAddr([]byte{127, 0, 0, 1})
+	protoRID.Id = [16]byte{1}
 	var protoTID protocol.TaskID
 	protoTID.Id = [16]byte{0xCC, 0xDD}
 	var badTicket [16]byte
@@ -448,7 +445,8 @@ func TestPSKGate_RunnerRole(t *testing.T) {
 	psk := []byte("s3cr3t")
 	g := newPSKGate(psk)
 
-	rh := protocol.RunnerHello{Version: 1, MaxTasks: 2}
+	// A hello without an identity is refused as NoIdentity, so this carries one.
+	rh := protocol.RunnerHello{Version: 1, MaxTasks: 2, RunnerId: testRunnerID("runner-host")}
 	rh.SetHostname([]byte("runner-host"))
 
 	req := buildRunnerHelloReq(psk, testTranscript, rh)
@@ -646,8 +644,7 @@ func TestPSKDispatchIdentity_BadTicketNoPrincipal(t *testing.T) {
 	}
 
 	var protoRID protocol.RunnerID
-	protoRID.SetTransport([]byte("ws"))
-	protoRID.SetIpAddr([]byte{127, 0, 0, 1})
+	protoRID.Id = [16]byte{1}
 	var protoTID protocol.TaskID
 	protoTID.Id = [16]byte{0xEE, 0xFF}
 	var badTicket [16]byte

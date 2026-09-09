@@ -110,10 +110,7 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{127, 0, 0, 1})
-	rid.Port = 9000
-	rid.UniqueNumber = 1
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 0xab
 	tid.Id[1] = 0xcd
@@ -141,14 +138,12 @@ func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
 	defer b.Close()
 
 	var rid1 protocol.RunnerID
-	rid1.SetTransport([]byte("ws"))
-	rid1.SetIpAddr([]byte{127, 0, 0, 1})
-	rid1.Port = 9001
-	rid1.UniqueNumber = 1
+	rid1.Id = [16]byte{1}
 
-	rid2 := rid1
-	rid2.Port = 9002
-	rid2.UniqueNumber = 2
+	// A DIFFERENT runner: two identities differ in their bytes, where they used
+	// to differ in port and connection number.
+	var rid2 protocol.RunnerID
+	rid2.Id = [16]byte{2}
 
 	var tid protocol.TaskID
 	tid.Id[0] = 0xca
@@ -188,10 +183,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{127, 0, 0, 1})
-	rid.Port = 9100
-	rid.UniqueNumber = 7
+	rid.Id = [16]byte{7}
 	var tid protocol.TaskID
 	tid.Id[0] = 0x5e
 	tid.Id[1] = 0xed
@@ -220,10 +212,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	// End-to-end: a receiver on the sender's self topic must see the real
 	// hostname in from_hostname, never the "" seed.
 	var rrid protocol.RunnerID
-	rrid.SetTransport([]byte("ws"))
-	rrid.SetIpAddr([]byte{127, 0, 0, 1})
-	rrid.Port = 9200
-	rrid.UniqueNumber = 8
+	rrid.Id = [16]byte{8}
 	var rtid protocol.TaskID
 	rtid.Id[0] = 0xcc
 	recv := b.Attach(toAgentboardRunnerID(rrid), toAgentboardTaskID(rtid), "recv-host", "")
@@ -283,9 +272,8 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	defer b.Close()
 
 	var rid1, rid2 RunnerID
-	rid1.SetTransport([]byte("ws"))
-	rid2.SetTransport([]byte("ws"))
-	rid2.Port = 2
+	rid1.Id = [16]byte{1}
+	rid2.Id = [16]byte{1}
 	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
 
 	c1 := b.Attach(rid1, tid1, "host1", "")
@@ -332,9 +320,8 @@ func TestBoard_SendReportsDeliveredTo(t *testing.T) {
 	defer b.Close()
 
 	var rid1, rid2 RunnerID
-	rid1.SetTransport([]byte("ws"))
-	rid2.SetTransport([]byte("ws"))
-	rid2.Port = 2
+	rid1.Id = [16]byte{1}
+	rid2.Id = [16]byte{1}
 	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
 	c1 := b.Attach(rid1, tid1, "host1", "")
 	c2 := b.Attach(rid2, tid2, "host2", "")
@@ -384,12 +371,8 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 	defer b.Close()
 
 	var pubRid, subRid RunnerID
-	pubRid.SetTransport([]byte("ws"))
-	pubRid.SetIpAddr([]byte{127, 0, 0, 1})
-	pubRid.UniqueNumber = 1
-	subRid.SetTransport([]byte("ws"))
-	subRid.SetIpAddr([]byte{127, 0, 0, 2})
-	subRid.UniqueNumber = 2
+	pubRid.Id = [16]byte{1}
+	subRid.Id = [16]byte{2}
 	var pubTid, subTid TaskID
 	pubTid.Id[0] = 0xaa
 	subTid.Id[0] = 0xbb
@@ -556,14 +539,7 @@ func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 // TaskID (server-dispatch side). The two have the same field shape; both
 // stringify identically via the runnerIDString*/hexTaskID* helpers.
 func protoRunnerIDFromBoard(r RunnerID) protocol.RunnerID {
-	var p protocol.RunnerID
-	p.SetTransport([]byte(r.Transport))
-	if len(r.IpAddr) > 0 {
-		p.SetIpAddr(r.IpAddr)
-	}
-	p.Port = r.Port
-	p.UniqueNumber = r.UniqueNumber
-	return p
+	return protocol.RunnerID{Id: r.Id}
 }
 
 func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
@@ -684,8 +660,7 @@ func TestBoard_Send_RetainsInReplyTo(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 
@@ -709,8 +684,7 @@ func TestBoard_LookupSeq_AcrossTopics(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 
@@ -750,8 +724,7 @@ func TestBoard_LookupSeq_GoneAfterEviction(t *testing.T) {
 	b := New(Config{RingN: 2, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 
@@ -773,8 +746,7 @@ func TestBoard_LookupSeq_GoneAfterPurge(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 

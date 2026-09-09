@@ -19,8 +19,7 @@ func TestResolveReplyTarget_Priority(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 0x5A
 

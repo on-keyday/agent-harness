@@ -1,13 +1,14 @@
 config.go.package = "agentboard"
 
+# The runner PROCESS a message came from. 16 opaque bytes, mirroring
+# runner/protocol's RunnerID -- the server stamps this from the connection's own
+# identity, so a sender never gets to claim it.
+#
+# It was an address until runner identity stopped being one. That older body
+# also refused ip_addr_len == 0, which is why converting a zero value into it
+# needed a guard on the server side; both the constraint and the guard are gone.
 format RunnerID:
-    transport_len :u8
-    transport :[transport_len]u8
-    ip_addr_len :u8
-    ip_addr_len == 4 || ip_addr_len == 16
-    ip_addr :[ip_addr_len]u8
-    port :u16
-    unique_number :u16
+    id :[16]u8
 
 format TaskID:
     id :[16]u8

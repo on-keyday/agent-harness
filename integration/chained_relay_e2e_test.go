@@ -86,6 +86,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	//    the legacy dial flow (no Phase A reverse-dial needed since the
 	//    runner reaches the server outbound).
 	proxyCfg := runner.Config{
+		RunnerID:     runner.NewRunnerID(),
 		ServerCID:    serverCID,
 		AllowedRoots: []string{t.TempDir()},
 		MaxTasks:     1,
@@ -103,6 +104,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	go func() {
 		targetDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
 			Config: runner.Config{
+				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
 				Hostname:     "chained-target",
@@ -114,10 +116,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 
 	// 4. Wait for proxy_runner to register, capture its CID for --via.
 	proxyEntry := waitForRunnerByHostname(t, srv, "chained-proxy", 5*time.Second)
-	proxyRegisteredCID, err := objproto.ParseConnectionID(proxyEntry.ID, 0)
-	if err != nil {
-		t.Fatalf("parse proxy registered CID %q: %v", proxyEntry.ID, err)
-	}
+	proxyRegisteredID := proxyEntry.Identity
 
 	// 5. Phase C: register target_runner through proxy_runner.
 	targetDialCID, err := objproto.ParseConnectionID("ws:"+targetListen+"-*",
@@ -126,7 +125,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 		t.Fatalf("parse target cid: %v", err)
 	}
 	dialCtx, dialCancel := context.WithTimeout(ctx, 15*time.Second)
-	resp, err := cli.ServerDialRunner(dialCtx, serverCID, targetDialCID, proxyRegisteredCID)
+	resp, err := cli.ServerDialRunner(dialCtx, serverCID, targetDialCID, proxyRegisteredID)
 	dialCancel()
 	if err != nil {
 		t.Fatalf("Phase C dial target via proxy: %v", err)

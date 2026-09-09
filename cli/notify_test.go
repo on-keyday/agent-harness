@@ -10,7 +10,7 @@ import (
 
 func TestNewNotifyRequestFromEnv_Worker(t *testing.T) {
 	t.Setenv("HARNESS_TASK_ID", "0f0d4dd6")
-	t.Setenv("HARNESS_RUNNER_ID", "ws:10.0.0.1:1-2")
+	t.Setenv("HARNESS_RUNNER_ID", "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")
 	t.Setenv("HARNESS_REPO_PATH", "/repo")
 	t.Setenv("HARNESS_HOSTNAME", "host1")
 
@@ -83,7 +83,7 @@ func tail(s string) string {
 func TestNotifyRequest_RoundTrip(t *testing.T) {
 	// worker origin: worker block must survive the round trip
 	t.Setenv("HARNESS_TASK_ID", "task42")
-	t.Setenv("HARNESS_RUNNER_ID", "ws:host:1-2")
+	t.Setenv("HARNESS_RUNNER_ID", "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2")
 	t.Setenv("HARNESS_REPO_PATH", "/repo")
 	t.Setenv("HARNESS_HOSTNAME", "gmkhost")
 	w := newNotifyRequestFromEnv(protocol.NotifyLevel_Warn, "t", "body")

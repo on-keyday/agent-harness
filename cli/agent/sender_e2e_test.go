@@ -17,10 +17,6 @@ func TestAgentCLI_E2E_Sender_RoundTrip(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9200-21"
-		ridStrB = "ws:5.6.7.8:9201-22"
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xF1
 	ticketB[0] = 0xF2
@@ -35,7 +31,7 @@ func TestAgentCLI_E2E_Sender_RoundTrip(t *testing.T) {
 	defer cancel()
 
 	// A sends with hostname host-A
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	t.Setenv("HARNESS_HOSTNAME", "host-A")
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/sender-test", "--data", `{"msg":"hello"}`},
@@ -46,7 +42,7 @@ func TestAgentCLI_E2E_Sender_RoundTrip(t *testing.T) {
 	restoreA()
 
 	// B reads via Wait
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB()
 	var waitOut bytes.Buffer
 	if err := agent.Wait(ctx,

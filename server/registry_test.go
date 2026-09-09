@@ -190,8 +190,8 @@ func TestRegistryStatusMethod(t *testing.T) {
 func TestRegistryCandidatesPrefixMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/home/kforfk/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 || cs[0].ID != "A" {
@@ -210,8 +210,8 @@ func TestRegistryCandidatesPrefixMatch(t *testing.T) {
 func TestRegistryCandidatesAmbiguous(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 	cs := r.Candidates("/shared/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candidates (ambiguous), got %d", len(cs))
@@ -221,7 +221,7 @@ func TestRegistryCandidatesAmbiguous(t *testing.T) {
 func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastSeen: now})
 	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 {
@@ -249,8 +249,8 @@ func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}
@@ -269,8 +269,8 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "broad", Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "focused", Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "broad", Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "focused", Identity: testRunnerID("focused"), Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 || cs[0].ID != "focused" {
@@ -288,9 +288,9 @@ func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixTieAmbiguous(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "broad", Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "broad", Identity: testRunnerID("broad"), Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 2 {
@@ -450,8 +450,8 @@ func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}

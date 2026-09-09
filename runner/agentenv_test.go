@@ -10,6 +10,13 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
+// mustRunnerID builds a runner identity from a hex seed. It replaces
+// mustParseCID for the RunnerID field: an identity is 16 opaque bytes now, not
+// an address, so there is no cid to parse.
+func mustRunnerID(seed byte) protocol.RunnerID {
+	return protocol.RunnerID{Id: [16]byte{seed, seed, seed, seed}}
+}
+
 func mustParseCID(t *testing.T, s string) objproto.ConnectionID {
 	t.Helper()
 	cid, err := objproto.ParseConnectionID(s, 0)
@@ -37,7 +44,7 @@ func TestBuildAgentEnv_AllFields(t *testing.T) {
 
 	spec := AgentEnvSpec{
 		ServerCID:  mustParseCID(t, "ws:127.0.0.1:8539-12345"),
-		RunnerID:   mustParseCID(t, "ws:1.2.3.4:9999-42"),
+		RunnerID:   mustRunnerID(0xB1),
 		TaskID:     taskID,
 		RepoPath:   "/home/u/repo",
 		Hostname:   "dev-pi-01",
@@ -47,7 +54,7 @@ func TestBuildAgentEnv_AllFields(t *testing.T) {
 	env := BuildAgentEnv(spec)
 	want := map[string]string{
 		"HARNESS_SERVER_CID":  spec.ServerCID.String(),
-		"HARNESS_RUNNER_ID":   spec.RunnerID.String(),
+		"HARNESS_RUNNER_ID":   spec.RunnerID.Hex(),
 		"HARNESS_TASK_ID":     hex.EncodeToString(taskID.Id[:]),
 		"HARNESS_REPO_PATH":   "/home/u/repo",
 		"HARNESS_HOSTNAME":    "dev-pi-01",
@@ -65,7 +72,7 @@ func TestBuildAgentEnv_AllFields(t *testing.T) {
 func TestBuildAgentEnv_OmitsEmptyHostname(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 	}
 	env := BuildAgentEnv(spec)
@@ -80,7 +87,7 @@ func TestBuildAgentEnv_BinDirPrependsPATH(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 		BinDir:    "/opt/harness/bin",
 	}
@@ -104,7 +111,7 @@ func TestBuildAgentEnv_BinDirDedupedInPATH(t *testing.T) {
 	}, sep))
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 		BinDir:    "/opt/harness/bin",
 	}
@@ -124,7 +131,7 @@ func TestBuildAgentEnv_BinDirOnlyEntryInParentPATH(t *testing.T) {
 	t.Setenv("PATH", "/opt/harness/bin"+sep+"/opt/harness/bin")
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 		BinDir:    "/opt/harness/bin",
 	}
@@ -138,7 +145,7 @@ func TestBuildAgentEnv_BinDirOnlyEntryInParentPATH(t *testing.T) {
 func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 	}
 	env := BuildAgentEnv(spec)
@@ -152,7 +159,7 @@ func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 func TestBuildAgentEnv_PSKForwarded(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 		PSK:       []byte("hunter2"),
 	}
@@ -165,7 +172,7 @@ func TestBuildAgentEnv_PSKForwarded(t *testing.T) {
 func TestBuildAgentEnv_PSKEmpty_NoEntry(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 	}
 	env := BuildAgentEnv(spec)
@@ -184,7 +191,7 @@ func TestBuildAgentEnv_PSKEmpty_NoEntry(t *testing.T) {
 func TestBuildAgentEnv_DisablesMingwPathConv(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 	}
 	got := envMap(BuildAgentEnv(spec))
@@ -200,7 +207,7 @@ func TestBuildAgentEnv_BinDirWithEmptyParentPATH(t *testing.T) {
 	t.Setenv("PATH", "")
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 		BinDir:    "/opt/harness/bin",
 	}
@@ -214,7 +221,7 @@ func TestBuildAgentEnv_BinDirWithEmptyParentPATH(t *testing.T) {
 func TestBuildAgentEnvIncludesProxyVia(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:127.0.0.1:8540-2"),
+		RunnerID:  mustRunnerID(0xB4),
 		ProxyVia:  "ws:127.0.0.1:8540-*",
 	}
 	env := BuildAgentEnv(spec)
@@ -234,7 +241,7 @@ func TestBuildAgentEnvIncludesProxyVia(t *testing.T) {
 func TestBuildAgentEnvOmitsProxyViaWhenEmpty(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:127.0.0.1:8540-2"),
+		RunnerID:  mustRunnerID(0xB4),
 		// ProxyVia intentionally empty
 	}
 	env := BuildAgentEnv(spec)
@@ -287,7 +294,7 @@ func TestRewriteProxyViaForLocalDial(t *testing.T) {
 func TestBuildAgentEnvAppliesRewrite(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:9001-1"),
-		RunnerID:  mustParseCID(t, "ws:127.0.0.1:9002-2"),
+		RunnerID:  mustRunnerID(0xB6),
 		TaskID:    protocol.TaskID{},
 		ProxyVia:  "ws:0.0.0.0:8540-*",
 	}
@@ -308,7 +315,7 @@ func TestBuildAgentEnvAppliesRewrite(t *testing.T) {
 func TestBuildAgentEnv_X11(t *testing.T) {
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:   mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:    mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:    mustRunnerID(0xB3),
 		X11Enabled:  true,
 		X11Display:  10,
 		X11AuthFile: "/tmp/harness-xauth-abc",
@@ -353,7 +360,7 @@ func TestBuildAgentEnv_X11NoAuth(t *testing.T) {
 func TestBuildAgentEnv_NoX11WhenUnset(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		RunnerID:  mustRunnerID(0xB3),
 	}
 	for _, e := range BuildAgentEnv(spec) {
 		if len(e) >= 8 && e[:8] == "DISPLAY=" {

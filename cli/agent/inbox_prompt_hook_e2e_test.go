@@ -17,7 +17,6 @@ func TestAgentCLI_E2E_Inbox_PromptHook_NoMessages(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9200-20"
 	var ticket [16]byte
 	ticket[0] = 0xF0
 	tid := mkTidE2E(0x20)
@@ -27,7 +26,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_NoMessages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -50,10 +49,6 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9201-21"
-		ridStrB = "ws:5.6.7.8:9202-22"
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xF1
 	ticketB[0] = 0xF2
@@ -67,7 +62,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", "topic/prompt-hook-e2e"}, &subOut); err != nil {
 		restoreB()
@@ -75,7 +70,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	}
 	restoreB()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/prompt-hook-e2e", "--data", `{"msg":"only-one"}`},
@@ -85,7 +80,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	}
 	restoreA()
 
-	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB2 := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB2()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 
@@ -137,10 +132,8 @@ func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
 	board, _ := startServerE2E(t, addr)
 
 	const (
-		ridStrA = "ws:1.2.3.4:9203-23"
-		ridStrB = "ws:5.6.7.8:9204-24"
-		prose   = "指示: X を実装して\nY は触らないこと"
-		topic   = "topic/prose-e2e"
+		prose = "指示: X を実装して\nY は触らないこと"
+		topic = "topic/prose-e2e"
 	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xF3
@@ -155,7 +148,7 @@ func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", topic}, &subOut); err != nil {
 		restoreB()
@@ -163,7 +156,7 @@ func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
 	}
 	restoreB()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx, []string{"--topic", topic, "--data", prose}, nil, &sendOut); err != nil {
 		restoreA()
@@ -171,7 +164,7 @@ func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
 	}
 	restoreA()
 
-	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB2 := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB2()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 

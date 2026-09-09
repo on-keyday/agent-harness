@@ -199,8 +199,27 @@ func (g *pskGate) Check(
 			return true, true, nil
 		}
 	case protocol.AuthRole_Runner:
-		if req.RunnerHello() == nil {
+		rh := req.RunnerHello()
+		if rh == nil {
 			slog.Warn("pskGate: runner role but RunnerHello is nil (identity required)")
+			sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+			return true, true, nil
+		}
+		// A zero runner_id is an ABSENT identity, not a valid one, and it has to
+		// be refused here rather than absorbed downstream. The board keys every
+		// task's ticket by (runner identity, task id) and RegisterTask
+		// overwrites, so two runners both claiming the zero identity would share
+		// one key namespace: dispatching to the second would invalidate the
+		// credential the first one's agent is already holding.
+		//
+		// NoIdentity is the right status because it is RETRYABLE
+		// (cli/persist.go, PskRejectedError.Retryable). The runner that sends a
+		// zero id is one built before the field existed, so it reconnects and
+		// self-heals once the pair is consistent instead of exiting — the
+		// behaviour d4f7a5a put in place after a wire skew killed twelve slots.
+		if rh.RunnerId.IsZero() {
+			slog.Warn("pskGate: runner hello carries a zero runner_id (identity required)",
+				"hostname", string(rh.Hostname))
 			sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}

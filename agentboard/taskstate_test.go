@@ -8,10 +8,7 @@ import (
 
 func TestTaskState_Identity(t *testing.T) {
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
-	rid.Port = 9001
-	rid.UniqueNumber = 7
+	rid.Id = [16]byte{7}
 	var tid protocol.TaskID
 	tid.Id[0] = 0xCC
 	ts := newTaskState()
@@ -27,8 +24,8 @@ func TestTaskState_Identity(t *testing.T) {
 	if gotTid.Id != tid.Id {
 		t.Errorf("task = %v", gotTid.Id)
 	}
-	if gotRid.UniqueNumber != 7 {
-		t.Errorf("rid.UniqueNumber = %d", gotRid.UniqueNumber)
+	if gotRid.Id != rid.Id {
+		t.Errorf("rid = %x, want %x", gotRid.Id, rid.Id)
 	}
 }
 

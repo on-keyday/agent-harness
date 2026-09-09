@@ -18,7 +18,7 @@ type portForward struct {
 	forwardID  uint64
 	direction  protocol.PortForwardDirection
 	taskIDHex  string
-	runnerID   string // = TaskEntry.AssignedTo; used to re-find the runner at teardown
+	runnerID   protocol.RunnerID // = TaskEntry.AssignedTo (an identity); re-finds the runner at teardown
 	control    trsf.BidirectionalStream
 	clientCxn  ConnHandle
 	clientCID  string
@@ -131,7 +131,7 @@ type remoteForwardInfo struct {
 	forwardID uint64
 	direction protocol.PortForwardDirection
 	taskIDHex string
-	runnerID  string
+	runnerID  protocol.RunnerID
 	clientCID string
 }
 

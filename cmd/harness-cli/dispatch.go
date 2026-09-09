@@ -497,15 +497,11 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	if err != nil {
 		return fmt.Errorf("parse runner-cid: %w", err)
 	}
-	var viaCID objproto.ConnectionID
-	if v := strings.TrimSpace(a.Via); v != "" {
-		viaCID, err = objproto.ParseConnectionID(v,
-			objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-		if err != nil {
-			return fmt.Errorf("parse --via: %w", err)
-		}
+	via, err := cli.ParseDialVia(a.Via)
+	if err != nil {
+		return err
 	}
-	resp, err := cli.ServerDialRunner(h.ctx, h.cid(), targetCID, viaCID)
+	resp, err := cli.ServerDialRunner(h.ctx, h.cid(), targetCID, via)
 	if err != nil {
 		return err
 	}

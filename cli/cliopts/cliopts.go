@@ -63,31 +63,23 @@ func ResolveTaskID(flagVal string) (protocol.TaskID, error) {
 	return t, nil
 }
 
-// ResolveRunnerID parses a runner ConnectionID from flag or HARNESS_RUNNER_ID
-// and converts to protocol.RunnerID (transport+ip+port+unique).
+// ResolveRunnerID parses the runner IDENTITY from flag or HARNESS_RUNNER_ID:
+// 32 hex characters naming a runner process. It used to parse a ConnectionID,
+// because the identity WAS one — the runner had to convert its canonical id to
+// an address just to put it in the env var, and this end parsed it back. Both
+// halves of that laundering are gone.
 func ResolveRunnerID(flagVal string) (protocol.RunnerID, error) {
-	var rid protocol.RunnerID
 	raw := flagVal
 	if raw == "" {
 		raw = os.Getenv("HARNESS_RUNNER_ID")
 	}
 	if raw == "" {
-		return rid, errors.New("--runner-id required (or set HARNESS_RUNNER_ID)")
+		return protocol.RunnerID{}, errors.New("--runner-id required (or set HARNESS_RUNNER_ID)")
 	}
-	cid, err := objproto.ParseConnectionID(raw, objproto.ParseOption_ResolveAddr)
+	rid, err := protocol.RunnerIDFromHex(raw)
 	if err != nil {
-		return rid, fmt.Errorf("runner-id: %w", err)
+		return protocol.RunnerID{}, fmt.Errorf("runner-id: %w", err)
 	}
-	rid.SetTransport([]byte(cid.Transport))
-	if cid.Addr.Addr().Is4() {
-		ip4 := cid.Addr.Addr().As4()
-		rid.SetIpAddr(ip4[:])
-	} else {
-		ip16 := cid.Addr.Addr().As16()
-		rid.SetIpAddr(ip16[:])
-	}
-	rid.Port = cid.Addr.Port()
-	rid.UniqueNumber = cid.ID
 	return rid, nil
 }
 

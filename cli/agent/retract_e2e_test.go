@@ -21,7 +21,6 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9600-71"
 	var ticket [16]byte
 	ticket[0] = 0x71
 	sender := mkTidE2E(0x71)
@@ -38,7 +37,7 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	restore := setAgentEnv(addr, ridStr, sender, ticket)
+	restore := setAgentEnv(addr, rid, sender, ticket)
 	defer restore()
 
 	// Subscribe so the sender's own since=0 read can see the topic — this is
@@ -104,7 +103,6 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9600-72"
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9600, 72)
 
 	var authorTicket, otherTicket [16]byte
@@ -123,7 +121,7 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restoreAuthor := setAgentEnv(addr, ridStr, author, authorTicket)
+	restoreAuthor := setAgentEnv(addr, rid, author, authorTicket)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx, []string{"--topic", "chat.shared", "--data", `{"mine":true}`}, nil, &sendOut); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -132,7 +130,7 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	restoreAuthor()
 
 	// A different task, holding EVERY capability, still cannot withdraw it.
-	restoreOther := setAgentEnv(addr, ridStr, other, otherTicket)
+	restoreOther := setAgentEnv(addr, rid, other, otherTicket)
 	var out bytes.Buffer
 	if err := agent.Retract(ctx, []string{seq}, &out); err != nil {
 		t.Fatalf("Retract by non-author: %v", err)
@@ -146,7 +144,7 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	}
 
 	// The author can.
-	restoreAuthor2 := setAgentEnv(addr, ridStr, author, authorTicket)
+	restoreAuthor2 := setAgentEnv(addr, rid, author, authorTicket)
 	defer restoreAuthor2()
 	var ok bytes.Buffer
 	if err := agent.Retract(ctx, []string{seq}, &ok); err != nil {

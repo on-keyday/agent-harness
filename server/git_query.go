@@ -36,7 +36,7 @@ func (h *TaskHandler) handleGitQuery(conn ConnHandle, req *protocol.GitQueryRequ
 	if !ok {
 		return errResp(protocol.GitQueryStatus_NoSuchTask)
 	}
-	runner, ok := h.Registry.Get(task.AssignedTo)
+	runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.GitQueryStatus_RunnerOffline)
 	}

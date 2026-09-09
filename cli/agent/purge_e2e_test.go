@@ -21,7 +21,6 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9600-61"
 	var ticket [16]byte
 	ticket[0] = 0x61
 	tid := mkTidE2E(0x61)
@@ -39,7 +38,7 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	for i := 0; i < 3; i++ {
@@ -74,7 +73,6 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:5.6.7.8:9601-62"
 	var ticket [16]byte
 	ticket[0] = 0x62
 	tid := mkTidE2E(0x62)
@@ -93,7 +91,7 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	if err := agent.Send(ctx, []string{"--topic", "chat.victim", "--data", `{"x":1}`}, nil, &bytes.Buffer{}); err != nil {
@@ -118,7 +116,6 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9602-63"
 	var ticket [16]byte
 	ticket[0] = 0x63
 	tid := mkTidE2E(0x63)
@@ -136,7 +133,7 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	for _, p := range []string{`{"i":1}`, `{"i":2}`, `{"i":3}`} {
@@ -179,7 +176,6 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStr = "ws:5.6.7.8:9603-64"
 	var ticket [16]byte
 	ticket[0] = 0x64
 	tid := mkTidE2E(0x64)
@@ -199,7 +195,7 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	for _, p := range []string{`{"i":1}`, `{"i":2}`} {

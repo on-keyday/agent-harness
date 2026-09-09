@@ -200,17 +200,13 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 	}
 }
 
-// TestDispatchRunnerHelloResponseStoresCanonicalID verifies the new dispatch
-// case: a RunnerRequest of kind RunnerHelloResponse populates Session.runnerCanonicalID,
-// and the converted ConnectionID surfaces through runnerCanonicalConnID.
+// TestDispatchRunnerHelloResponseStoresCanonicalID verifies the dispatch case:
+// a RunnerRequest of kind RunnerHelloResponse populates
+// Session.runnerCanonicalID, which is what HARNESS_RUNNER_ID is built from.
 func TestDispatchRunnerHelloResponseStoresCanonicalID(t *testing.T) {
 	s := &Session{Now: time.Now}
 
-	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{192, 168, 1, 42})
-	rid.Port = 8539
-	rid.UniqueNumber = 0x4242
+	rid := protocol.RunnerID{Id: [16]byte{0xC0, 0xA8, 1, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 0x42}}
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
 	req.SetRunnerHelloResponse(protocol.RunnerHelloResponse{YourRunnerId: rid})
@@ -221,25 +217,21 @@ func TestDispatchRunnerHelloResponseStoresCanonicalID(t *testing.T) {
 
 	dispatchRunnerRequest(context.Background(), s, nil, appwire.AppKind_RunnerControl, payload)
 
-	got := s.runnerCanonicalConnID().String()
-	want := "ws:192.168.1.42:8539-16962" // 0x4242 = 16962
-	if got != want {
-		t.Errorf("canonical ConnID = %q, want %q", got, want)
+	if got := s.runnerCanonicalRunnerID(); got != rid {
+		t.Errorf("canonical identity = %s, want %s", got.Hex(), rid.Hex())
 	}
 }
 
-// TestRunnerCanonicalConnIDZeroValueDoesNotPanic guards against the
-// IpAddrLen==0 panic path in protocol.RunnerID.Encode — runnerIDToConnID
-// must produce a malformed (but non-panicking) value when no
-// RunnerHelloResponse has been received yet.
-func TestRunnerCanonicalConnIDZeroValueDoesNotPanic(t *testing.T) {
+// A Session that has not heard a RunnerHelloResponse must report the ZERO
+// identity, not something plausible. The old version of this test guarded
+// against a panic, because encoding a zero RunnerID used to trip an
+// IpAddrLen assertion; what matters now is that absence stays absence — an
+// agent then fails Hello validation instead of authenticating as nobody.
+func TestRunnerCanonicalIdentityIsZeroBeforeHelloResponse(t *testing.T) {
 	s := &Session{}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("panicked on zero-value RunnerID: %v", r)
-		}
-	}()
-	_ = s.runnerCanonicalConnID().String()
+	if got := s.runnerCanonicalRunnerID(); !got.IsZero() {
+		t.Fatalf("identity before hello response = %s, want zero", got.Hex())
+	}
 }
 
 // runHooks is a test seam used by TestRun_RunCtxCancelsOnPeerDone to inject
@@ -335,24 +327,19 @@ func TestRunHandle_BufferedRunnerHelloResponse_SetsCanonicalID(t *testing.T) {
 
 	// A RunnerHelloResponse exactly as the server sends it (a RunnerRequest
 	// payload; the AppKind is the separate `kind` arg, not in the payload).
-	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{192, 168, 3, 14})
-	rid.Port = 36556
-	rid.UniqueNumber = 53625
+	rid := protocol.RunnerID{Id: [16]byte{0xC0, 0xA8, 3, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xD1, 0x79}}
 	req := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
 	req.SetRunnerHelloResponse(protocol.RunnerHelloResponse{YourRunnerId: rid})
 	payload, err := req.Append(nil)
 	if err != nil {
 		t.Fatalf("encode RunnerHelloResponse: %v", err)
 	}
-	want := protocol.RunnerIDToConnID(rid).String()
 
 	// Arrives during the handshake window (ctlDispatch == nil) → must be buffered,
 	// NOT yet applied to the session.
 	h.bufferOrDispatch(appwire.AppKind_RunnerControl, payload)
-	if got := sess.runnerCanonicalConnID().String(); got == want {
-		t.Fatalf("canonical id applied before activateDispatch — should have been buffered (got %q)", got)
+	if got := sess.runnerCanonicalRunnerID(); got == rid {
+		t.Fatalf("canonical id applied before activateDispatch — should have been buffered (got %s)", got.Hex())
 	}
 
 	// OnConnect activates the dispatcher and replays the buffer → SetRunnerCanonicalID.
@@ -360,8 +347,8 @@ func TestRunHandle_BufferedRunnerHelloResponse_SetsCanonicalID(t *testing.T) {
 		dispatchRunnerRequest(context.Background(), sess, h.cfg.Logger, kind, p)
 	})
 
-	if got := sess.runnerCanonicalConnID().String(); got != want {
-		t.Fatalf("buffered RunnerHelloResponse not applied on activate: got %q want %q", got, want)
+	if got := sess.runnerCanonicalRunnerID(); got != rid {
+		t.Fatalf("buffered RunnerHelloResponse not applied on activate: got %s want %s", got.Hex(), rid.Hex())
 	}
 
 	// A message arriving AFTER activation is dispatched live (not buffered).

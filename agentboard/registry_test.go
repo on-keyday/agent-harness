@@ -7,12 +7,7 @@ import (
 )
 
 func mkProtoRid(b byte) protocol.RunnerID {
-	return protocol.RunnerID{
-		Transport:    []byte("ws"),
-		IpAddr:       []byte{127, 0, 0, 1},
-		Port:         9000,
-		UniqueNumber: uint16(b),
-	}
+	return protocol.RunnerID{Id: [16]byte{b}}
 }
 
 func mkProtoTid(b byte) protocol.TaskID {
@@ -21,14 +16,9 @@ func mkProtoTid(b byte) protocol.TaskID {
 	return t
 }
 
-// Local agentboard.RunnerID with same shape — what Hello will actually carry.
+// Local agentboard.RunnerID over the same 16 bytes — what Hello actually carries.
 func mkBoardRid(b byte) RunnerID {
-	return RunnerID{
-		Transport:    []byte("ws"),
-		IpAddr:       []byte{127, 0, 0, 1},
-		Port:         9000,
-		UniqueNumber: uint16(b),
-	}
+	return RunnerID{Id: [16]byte{b}}
 }
 
 func mkBoardTid(b byte) TaskID {

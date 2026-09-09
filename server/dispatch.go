@@ -128,29 +128,6 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 	return data, bodyBytes, nil
 }
 
-// runnerIDFromConnID parses a runner's string ID (objproto.ConnectionID.String() format:
-// "transport:ip:port-unique") into a protocol.RunnerID suitable for agentboard registry calls.
-// Returns a placeholder RunnerID on parse error so callers can still proceed (the
-// ticket will simply not match on validation, which is safe — the agent will get
-// HelloStatusUnknownTask and reconnect).
-func runnerIDFromConnID(id string) protocol.RunnerID {
-	cid, err := objproto.ParseConnectionID(id, 0)
-	if err != nil {
-		// Fallback to loopback placeholder (safe: validation will fail, not panic).
-		var rid protocol.RunnerID
-		rid.SetTransport([]byte("ws"))
-		rid.SetIpAddr([]byte{127, 0, 0, 1})
-		return rid
-	}
-	var rid protocol.RunnerID
-	rid.SetTransport([]byte(cid.Transport))
-	ip := cid.Addr.Addr().AsSlice()
-	rid.SetIpAddr(ip)
-	rid.Port = uint16(cid.Addr.Port())
-	rid.UniqueNumber = cid.ID
-	return rid
-}
-
 // taskIDFromHex converts a hex task ID string to a protocol.TaskID.
 func taskIDFromHex(taskIDHex string) protocol.TaskID {
 	var tid protocol.TaskID
@@ -194,7 +171,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
-		boardRegisterTask(d.Board, runner.ID, task.ID, ticket, task.AgentProfile)
+		boardRegisterTask(d.Board, runner.Identity, task.ID, ticket, task.AgentProfile)
 
 		// Allocate the body stream up-front so the AssignTask envelope
 		// can carry its id. On stream-creation failure (e.g. test stub),
@@ -202,7 +179,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		stream := runner.Conn.CreateSendStream()
 		if stream == nil {
 			slog.Error("dispatcher: CreateSendStream returned nil", "runner", runner.ID, "task", task.ID)
-			boardRevokeTask(d.Board, runner.ID, task.ID)
+			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
@@ -210,7 +187,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
 		if err != nil {
 			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
-			boardRevokeTask(d.Board, runner.ID, task.ID)
+			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
@@ -221,26 +198,26 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		// already in memory.
 		if werr := stream.AppendData(false, body); werr != nil {
 			slog.Error("dispatcher: stream body write failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			boardRevokeTask(d.Board, runner.ID, task.ID)
+			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 		if werr := stream.AppendData(true); werr != nil {
 			slog.Error("dispatcher: stream EOF failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			boardRevokeTask(d.Board, runner.ID, task.ID)
+			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 
 		if _, _, err := runner.Conn.SendMessage(envelope); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
-			boardRevokeTask(d.Board, runner.ID, task.ID)
+			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 
 		// Send succeeded: transition task to Running.
-		d.Tasks.Assign(task.ID, runner.ID, "", runner.SkillsInjected)
+		d.Tasks.Assign(task.ID, runner.Identity, "", runner.SkillsInjected)
 		return true
 	}
 	return false
@@ -259,16 +236,23 @@ func (d *Dispatcher) OnCancel(taskID string) {
 		return
 	}
 	// AssignedTo is set by Assign() when TryDispatch succeeds; BoundRunnerID is
-	// the pinned runner from the submit-time selector. Prefer AssignedTo.
-	runnerID := task.AssignedTo
-	if runnerID == "" {
-		runnerID = task.BoundRunnerID
-	}
-	if runnerID == "" {
+	// the candidate resolved at submit time. Prefer AssignedTo.
+	//
+	// The two are looked up DIFFERENTLY, which is why they are separate blocks
+	// rather than one string: AssignedTo is the runner's identity and survives
+	// its reconnects, while BoundRunnerID is the registry's connection key and
+	// does not. Both were bare strings until identity stopped being an address,
+	// and reaching for the wrong index compiled fine.
+	var entry RunnerEntry
+	switch {
+	case !task.AssignedTo.IsZero():
+		entry, ok = d.Registry.GetByIdentity(task.AssignedTo)
+	case task.BoundRunnerID != "":
+		entry, ok = d.Registry.Get(task.BoundRunnerID)
+	default:
 		// Task was never dispatched to a runner; nothing to forward.
 		return
 	}
-	entry, ok := d.Registry.Get(runnerID)
 	if !ok || entry.Conn == nil {
 		return
 	}
@@ -286,6 +270,6 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	}
 	if _, _, err := entry.Conn.SendMessage(data); err != nil {
 		// Per spec: capacity is NOT released on send fail; TaskFinished path handles it.
-		slog.Error("dispatcher: OnCancel send failed", "runner", runnerID, "task", taskID, "err", err)
+		slog.Error("dispatcher: OnCancel send failed", "runner", entry.ID, "task", taskID, "err", err)
 	}
 }

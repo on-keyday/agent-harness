@@ -182,7 +182,7 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	// what `env VAR=x <cmd>` in the argv is for.
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:  s.ServerCID,
-		RunnerID:   s.runnerCanonicalConnID(),
+		RunnerID:   s.runnerCanonicalRunnerID(),
 		TaskID:     req.TaskId,
 		RepoPath:   repoPath,
 		Hostname:   s.Hostname,

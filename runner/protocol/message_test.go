@@ -76,10 +76,10 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 	wantID.Id[1] = 0xCD
 	wantID.Id[15] = 0xEF
 
-	// AssignedTo (RunnerID) requires IpAddrLen to be 4 (IPv4) or 16 (IPv6);
-	// the zero value triggers an assertion failure, so we populate it minimally.
-	assignedTo := RunnerID{}
-	assignedTo.SetIpAddr([]byte{127, 0, 0, 1})
+	// A runner identity, 16 opaque bytes. It used to need a populated IPv4
+	// address here because the zero value tripped an encoder assertion; a zero
+	// RunnerID encodes fine now, so this only needs to be recognisable.
+	assignedTo := RunnerID{Id: [16]byte{0xA5}}
 
 	orig := TaskInfo{
 		Id:         wantID,
@@ -152,7 +152,7 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 		t.Errorf("ExitCode: got %d, want %d", decoded.ExitCode, wantExitCode)
 	}
 
-	if !bytes.Equal(decoded.AssignedTo.IpAddr, []byte{127, 0, 0, 1}) {
-		t.Errorf("AssignedTo.IpAddr: got %v, want %v", decoded.AssignedTo.IpAddr, []byte{127, 0, 0, 1})
+	if decoded.AssignedTo != assignedTo {
+		t.Errorf("AssignedTo: got %s, want %s", decoded.AssignedTo.Hex(), assignedTo.Hex())
 	}
 }

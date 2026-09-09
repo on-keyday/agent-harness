@@ -57,10 +57,6 @@ func TestAgentCLI_E2E_ReplyToRoutesAwayFromTheAskersInbox(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9501-51" // asker
-		ridStrB = "ws:5.6.7.8:9502-52" // peer
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xC1
 	ticketB[0] = 0xC2
@@ -79,7 +75,7 @@ func TestAgentCLI_E2E_ReplyToRoutesAwayFromTheAskersInbox(t *testing.T) {
 	const replyTo = "rr.task-1"
 
 	// The asker subscribes to its declared destination and publishes, naming it.
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var subOut, sendOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", replyTo}, &subOut); err != nil {
 		restoreA()
@@ -95,7 +91,7 @@ func TestAgentCLI_E2E_ReplyToRoutesAwayFromTheAskersInbox(t *testing.T) {
 
 	// The peer replies with --in-reply-to ONLY. It never names replyTo.
 	parent := lastSeqOnTopic(t, board, selfB)
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var replyOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--in-reply-to", itoa(parent), "--data", `{"a":"answer-here"}`},
@@ -119,10 +115,6 @@ func TestAgentCLI_E2E_WithoutReplyToTheAnswerComesHome(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9503-53"
-		ridStrB = "ws:5.6.7.8:9504-54"
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xC3
 	ticketB[0] = 0xC4
@@ -139,7 +131,7 @@ func TestAgentCLI_E2E_WithoutReplyToTheAnswerComesHome(t *testing.T) {
 	selfA := agent.SelfTopic(tidA)
 	selfB := agent.SelfTopic(tidB)
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", selfB, "--data", `{"q":"question"}`}, nil, &sendOut); err != nil {
@@ -149,7 +141,7 @@ func TestAgentCLI_E2E_WithoutReplyToTheAnswerComesHome(t *testing.T) {
 	restoreA()
 
 	parent := lastSeqOnTopic(t, board, selfB)
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var replyOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--in-reply-to", itoa(parent), "--data", `{"a":"came-home"}`},
@@ -171,24 +163,22 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesReplyToTopic(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9505-55"
-		ridStrB = "ws:5.6.7.8:9506-56"
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xC5
 	ticketB[0] = 0xC6
 	tidA := mkTidE2E(0x55)
 	tidB := mkTidE2E(0x56)
-	board.Registry().Register(mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55), tidA, ticketA)
-	board.Registry().Register(mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56), tidB, ticketB)
+	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55)
+	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56)
+	board.Registry().Register(ridA, tidA, ticketA)
+	board.Registry().Register(ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	selfB := agent.SelfTopic(tidB)
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var out bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", selfB, "--reply-to", "rr.task-1", "--data", `{"q":"declared"}`}, nil, &out); err != nil {
@@ -206,7 +196,7 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesReplyToTopic(t *testing.T) {
 	// server creates at task assignment, and inbox reads only subscribed
 	// topics -- so without this the read comes back empty and the assertion
 	// below would pass vacuously if it were written as "no bad field".
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut, inbox bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--self"}, &subOut); err != nil {
 		restoreB()

@@ -9,10 +9,7 @@ import (
 func testRunnerID(t *testing.T) protocol.RunnerID {
 	t.Helper()
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{127, 0, 0, 1})
-	rid.Port = 8540
-	rid.UniqueNumber = 7
+	rid.Id = [16]byte{7}
 	return rid
 }
 

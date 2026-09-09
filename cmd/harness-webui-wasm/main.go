@@ -447,7 +447,10 @@ func capsFromOpts(opts js.Value) (protocol.Capability, error) {
 }
 
 // selectorFromOpts reads the runner/host/ip trio. ip had no reader at all, so
-// `submit --ip 10.0.0.4` from the command input parsed and selected nothing.
+// `submit --ip 10.0.0.4` from the command input parsed and selected nothing;
+// reading it here fixed half of that, and the other half was buildSelector's
+// wasm copy refusing --ip outright even once it arrived. Both are done now, so
+// the three behave the same on every surface.
 func selectorFromOpts(opts js.Value) (cli.SelectorOpts, error) {
 	str := func(k string) string {
 		if v := opts.Get(k); v.Type() == js.TypeString {
@@ -986,7 +989,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"kind":       t.Kind.String(),
 					"repoPath":   string(t.RepoPath),
 					"prompt":     string(t.Prompt),
-					"assignedTo": protocol.RunnerIDToConnID(t.AssignedTo).String(),
+					"assignedTo": t.AssignedTo.Hex(),
 					"exitCode":   float64(t.ExitCode),
 					"createdAt":  float64(t.CreatedAt),
 					"startedAt":  float64(t.StartedAt),
@@ -1812,20 +1815,17 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: parse runner CID: %w", err))
 				return
 			}
-			var viaCID objproto.ConnectionID
+			var viaStr string
 			if len(args) >= 2 && args[1].Type() == js.TypeString {
-				if v := strings.TrimSpace(args[1].String()); v != "" {
-					viaCID, err = objproto.ParseConnectionID(v,
-						objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-					if err != nil {
-						rejectErr(reject, fmt.Errorf("serverDialRunner: parse --via: %w", err))
-						return
-					}
-				}
+				viaStr = args[1].String()
+			}
+			via, err := cli.ParseDialVia(viaStr)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
+				return
 			}
 			resp, err := cli.ServerDialRunnerWith(rootCtx, c,
-				protocol.ConnIDToRunnerID(targetCID),
-				protocol.ConnIDToRunnerID(viaCID))
+				protocol.ConnIDFromObjproto(targetCID), via)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
 				return

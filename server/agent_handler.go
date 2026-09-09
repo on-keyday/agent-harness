@@ -484,21 +484,18 @@ func (s *Server) agentHandleUnsubscribe(conn ConnHandle, ac *agentConn, r *agent
 	s.sendAgent(conn, resp)
 }
 
-// protoToAgentboardRunnerID converts a protocol.RunnerID (stored in RetainedMessage)
-// to agentboard.RunnerID (the type carried in DeliveredMessage). The two types are
-// distinct Go types with identical field shapes. If IpAddr is empty (zero sender),
-// a placeholder IPv4 {0,0,0,0} is used to satisfy the hard IpAddrLen == 4|16 assertion
-// in the encoder.
+// protoToAgentboardRunnerID converts a protocol.RunnerID (stored in
+// RetainedMessage) to agentboard.RunnerID (the type carried in
+// DeliveredMessage) — two distinct Go types over the same 16 opaque bytes.
+//
+// It used to copy four address fields and substitute a placeholder IPv4 for a
+// zero sender, because the board's schema refused ip_addr_len == 0 and the
+// encoder asserted on it. Both the constraint and the placeholder are gone: a
+// zero identity now copies as a zero identity, which is what an absent sender
+// should look like.
 func protoToAgentboardRunnerID(r agentboard.RetainedMessage) agentboard.RunnerID {
 	var out agentboard.RunnerID
-	out.SetTransport(r.FromRunner.Transport)
-	ip := r.FromRunner.IpAddr
-	if len(ip) != 4 && len(ip) != 16 {
-		ip = []byte{0, 0, 0, 0}
-	}
-	out.SetIpAddr(ip)
-	out.Port = r.FromRunner.Port
-	out.UniqueNumber = r.FromRunner.UniqueNumber
+	out.Id = r.FromRunner.Id
 	return out
 }
 

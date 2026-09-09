@@ -11,9 +11,7 @@ import (
 )
 
 func TestEmitMessageLine_InReplyToAlwaysPresent(t *testing.T) {
-	var rid agentboard.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid := agentboard.RunnerID{Id: [16]byte{1, 2, 3, 4}}
 	var tid agentboard.TaskID
 
 	for _, tc := range []struct {
@@ -40,9 +38,7 @@ func TestEmitMessageLine_InReplyToAlwaysPresent(t *testing.T) {
 
 // mkTestRid builds a RunnerID for emit tests.
 func mkTestRid() agentboard.RunnerID {
-	var rid agentboard.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid := agentboard.RunnerID{Id: [16]byte{1, 2, 3, 4}}
 	return rid
 }
 

@@ -688,7 +688,7 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	// Give B a worktree + assigned runner so redaction has something to strip.
 	h.Tasks.mu.Lock()
 	h.Tasks.tasks[bHex].WorktreeDir = "/home/op/worktrees/b"
-	h.Tasks.tasks[bHex].AssignedTo = "ws:127.0.0.1:8539-7"
+	h.Tasks.tasks[bHex].AssignedTo = testRunnerID("ws:127.0.0.1:8539-7")
 	h.Tasks.tasks[bHex].ErrorMsg = []byte("boom in /home/op/worktrees/b")
 	h.Tasks.tasks[bHex].Status = protocol.TaskStatus_Running
 	h.Tasks.mu.Unlock()
@@ -755,8 +755,8 @@ func TestListIncludesRedactedParent(t *testing.T) {
 			t.Errorf("parent row must redact %s; got %q", f.name, f.got)
 		}
 	}
-	if parent.AssignedTo.IpAddrLen != 0 || len(parent.AssignedTo.IpAddr) != 0 {
-		t.Errorf("parent row must redact assigned_to; got %+v", parent.AssignedTo)
+	if !parent.AssignedTo.IsZero() {
+		t.Errorf("parent row must redact assigned_to; got %s", parent.AssignedTo.Hex())
 	}
 
 	// Kept on the parent row: identity + lifecycle + liveness.
@@ -985,10 +985,7 @@ func makeTestAgentConn(t *testing.T, caps protocol.Capability) (*Server, *agentC
 
 	// Build agentboard RunnerID/TaskID and Attach to get a ConnState.
 	var boardRID agentboard.RunnerID
-	boardRID.SetTransport([]byte("ws"))
-	boardRID.SetIpAddr([]byte{127, 0, 0, 1}) // IPv4 placeholder (IpAddrLen constraint)
-	boardRID.Port = 8539
-	boardRID.UniqueNumber = 1
+	boardRID.Id = [16]byte{1}
 
 	var boardTID agentboard.TaskID
 	copy(boardTID.Id[:], protoTID.Id[:])
@@ -1058,10 +1055,7 @@ func TestTopicsGated(t *testing.T) {
 	publishToBoard := func(t *testing.T, board *agentboard.Board) {
 		t.Helper()
 		var fromRID protocol.RunnerID
-		fromRID.SetTransport([]byte("ws"))
-		fromRID.SetIpAddr([]byte{127, 0, 0, 2})
-		fromRID.Port = 8540
-		fromRID.UniqueNumber = 2
+		fromRID.Id = [16]byte{2}
 		var fromTID protocol.TaskID
 		fromTID.Id[0] = 0xFF
 		_, _, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost", "", 0)
@@ -1109,7 +1103,7 @@ func TestTopicsGated(t *testing.T) {
 // assigning then finishing it. Mirrors the pattern used in resume_test.go.
 func markTerminalForTest(t *testing.T, h *TaskHandler, idHex string) {
 	t.Helper()
-	h.Tasks.Assign(idHex, "runner-x", "/wt/x", false)
+	h.Tasks.Assign(idHex, testRunnerID("runner-x"), "/wt/x", false)
 	h.Tasks.Finish(idHex, 0, nil)
 	e, ok := h.Tasks.Get(idHex)
 	if !ok {

@@ -202,7 +202,7 @@ func TestSendMergedHandshake_NoPSK(t *testing.T) {
 // AgentInfo. Uses dummy values that satisfy the env-resolution format.
 func TestSendMergedHandshake_AgentEnv(t *testing.T) {
 	// ResolveRunnerID parses a CID string like "ws:127.0.0.1:8540-1".
-	t.Setenv("HARNESS_RUNNER_ID", "ws:127.0.0.1:8540-1")
+	t.Setenv("HARNESS_RUNNER_ID", "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3")
 	// HARNESS_TASK_ID is a 32-hex (16-byte) task ID.
 	t.Setenv("HARNESS_TASK_ID", "00000000000000000000000000000001")
 	// HARNESS_AUTH_TICKET is a 32-hex (16-byte) ticket.

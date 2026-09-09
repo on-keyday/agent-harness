@@ -58,13 +58,18 @@ type TaskEntry struct {
 	// which means "no runner yet", not "bare agent".
 	SkillsInjected bool
 	Status         protocol.TaskStatus
-	AssignedTo     string
-	WorktreeDir    string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	EndedAt        *time.Time
-	ExitCode       *int32
-	ErrorMsg       []byte
+	// AssignedTo is the IDENTITY of the runner this task last ran on, so it
+	// still names that runner after it reconnects. Typed rather than a string
+	// because BoundRunnerID beside it holds a connection id: both used to be
+	// bare strings with different meanings, and passing one where the other was
+	// expected compiled fine.
+	AssignedTo  protocol.RunnerID
+	WorktreeDir string
+	CreatedAt   time.Time
+	StartedAt   *time.Time
+	EndedAt     *time.Time
+	ExitCode    *int32
+	ErrorMsg    []byte
 
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
@@ -403,7 +408,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	// parent link; SetParent/SwapWithParent (operator-only) are the only
 	// writers after Create.
 	e.Status = protocol.TaskStatus_Queued
-	e.AssignedTo = ""
+	e.AssignedTo = protocol.RunnerID{}
 	e.WorktreeDir = ""
 	e.StartedAt = nil
 	e.EndedAt = nil
@@ -496,7 +501,7 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 // parameter rather than a registry lookup inside the store so the compiler
 // names every dispatch site when the value's meaning changes; all three
 // (scheduler, dispatcher, handleOpenInteractive) already hold the RunnerEntry.
-func (s *TaskStore) Assign(id, runnerID, worktreeDir string, skillsInjected bool) {
+func (s *TaskStore) Assign(id string, runner protocol.RunnerID, worktreeDir string, skillsInjected bool) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
@@ -506,7 +511,7 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string, skillsInjected bool
 	}
 	wasDetached := e.Status == protocol.TaskStatus_Detached
 	e.Status = protocol.TaskStatus_Running
-	e.AssignedTo = runnerID
+	e.AssignedTo = runner
 	e.WorktreeDir = worktreeDir
 	// Re-stamped on re-attach too: a Detached task can come back on a
 	// different runner, and the stale value would then describe a worktree
@@ -527,7 +532,7 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string, skillsInjected bool
 		// task_assigned would overwrite StartedAt on WAL replay, and the
 		// OnAssign hook would publish a duplicate TaskAssigned pubsub event.
 		if s.wal != nil {
-			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, SkillsInjected: skillsInjected, Ts: now.UnixNano()}); err != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runner.Hex(), WorktreeDir: worktreeDir, SkillsInjected: skillsInjected, Ts: now.UnixNano()}); err != nil {
 				slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
 			}
 		}
@@ -535,7 +540,7 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string, skillsInjected bool
 	}
 	s.mu.Unlock()
 	if onAssign != nil {
-		onAssign(id, runnerID, worktreeDir)
+		onAssign(id, runner.Hex(), worktreeDir)
 	}
 }
 
@@ -830,7 +835,13 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Status = protocol.TaskStatus_Running
-				t.AssignedTo = ev.RunnerID
+				// A pre-identity WAL record holds a connection id here, which
+				// cannot parse as an identity and is not meant to: by replay
+				// time such a task is terminal, so a blank assigned_to on it is
+				// cosmetic. See the spec's rollout section.
+				if rid, err := protocol.RunnerIDFromHex(ev.RunnerID); err == nil {
+					t.AssignedTo = rid
+				}
 				t.WorktreeDir = ev.WorktreeDir
 				t.SkillsInjected = ev.SkillsInjected
 				ts := time.Unix(0, ev.Ts)
@@ -879,7 +890,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// profile change", which matches their actual behavior.
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Status = protocol.TaskStatus_Queued
-				t.AssignedTo = ""
+				t.AssignedTo = protocol.RunnerID{}
 				t.WorktreeDir = ""
 				t.StartedAt = nil
 				t.EndedAt = nil

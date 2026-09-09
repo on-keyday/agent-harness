@@ -87,6 +87,7 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 	// Pre-populate Registry with a Busy runner that has the task bound.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -170,6 +171,7 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 	// Pre-populate Registry.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -236,6 +238,7 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 	// Pre-populate registry with LastSeen at t0.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -290,6 +293,7 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -348,6 +352,7 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -411,6 +416,7 @@ func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
 
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,

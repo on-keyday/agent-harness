@@ -161,8 +161,12 @@ type Session struct {
 	// the runner's binary location).
 	ServerCID objproto.ConnectionID
 	Hostname  string
-	WSPath    string
-	BinDir    string
+	// MintedRunnerID is what this PROCESS generated at startup, kept only so
+	// SetRunnerCanonicalID can notice the server echoing something else back.
+	// The canonical value the server reports is what gets used.
+	MintedRunnerID protocol.RunnerID
+	WSPath         string
+	BinDir         string
 	// PSK, when non-nil, is forwarded to the agent subprocess via
 	// HARNESS_PSK so harness-cli invocations from inside the agent can
 	// authenticate against the PSK-protected server.
@@ -232,26 +236,38 @@ type Session struct {
 	chainedRelayPendingCh chan protocol.ChainedRelayResponse // nil when none pending
 }
 
-// SetRunnerCanonicalID stores the RunnerID the server reports for this
-// runner connection (via RunnerHelloResponse). Called from
-// dispatchRunnerRequest synchronously before any AssignTask is dispatched.
+// SetRunnerCanonicalID stores the RunnerID the server reports for this runner
+// connection (via RunnerHelloResponse). Called from dispatchRunnerRequest
+// synchronously before any AssignTask is dispatched.
+//
+// The response echoes back what this process minted, so a difference means the
+// server keyed us as something else — every ticket we hand an agent would then
+// validate against the wrong board key. Logged loudly rather than corrected:
+// what the server said is what its board actually uses, so that is what gets
+// stored and injected.
 func (s *Session) SetRunnerCanonicalID(rid protocol.RunnerID) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	minted := s.MintedRunnerID
 	s.runnerCanonicalID = rid
+	s.mu.Unlock()
+	if !minted.IsZero() && rid != minted {
+		s.logger().Error("runner identity echo mismatch",
+			"sent", minted.Hex(), "got", rid.Hex())
+	}
 }
 
-// runnerCanonicalConnID returns the runner's canonical RunnerID, converted to
-// objproto.ConnectionID format for embedding in HARNESS_RUNNER_ID. Returns the
-// zero ConnectionID (which stringifies as ":invalid AddrPort-0") if the server
-// has not yet sent RunnerHelloResponse — agent Hello validation will then fail
-// with UnknownTask, surfacing the missing handshake clearly rather than
-// silently sending the server's own CID.
-func (s *Session) runnerCanonicalConnID() objproto.ConnectionID {
+// runnerCanonicalRunnerID returns the identity the server keys this runner as,
+// for embedding in HARNESS_RUNNER_ID. Zero until RunnerHelloResponse has
+// arrived, and left that way on purpose: an agent then fails Hello validation
+// with UnknownTask, which surfaces the missing handshake instead of quietly
+// sending something that looks plausible.
+//
+// It used to convert to objproto.ConnectionID, because the identity WAS an
+// address and the env var needed a string. The identity has its own string now.
+func (s *Session) runnerCanonicalRunnerID() protocol.RunnerID {
 	s.mu.Lock()
-	rid := s.runnerCanonicalID
-	s.mu.Unlock()
-	return protocol.RunnerIDToConnID(rid)
+	defer s.mu.Unlock()
+	return s.runnerCanonicalID
 }
 
 // initMaps initialises the internal maps if they have not been set yet.
@@ -528,7 +544,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// is the server's own CID from the runner's vantage.
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:  s.ServerCID,
-		RunnerID:   s.runnerCanonicalConnID(),
+		RunnerID:   s.runnerCanonicalRunnerID(),
 		TaskID:     taskID,
 		RepoPath:   repoPath,
 		Hostname:   s.Hostname,
@@ -769,7 +785,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:   s.ServerCID,
-		RunnerID:    s.runnerCanonicalConnID(),
+		RunnerID:    s.runnerCanonicalRunnerID(),
 		TaskID:      oer.TaskId,
 		RepoPath:    repoPath,
 		Hostname:    s.Hostname,

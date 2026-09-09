@@ -16,9 +16,7 @@ func TestPskAuthRequestClientRoleRoundTrip(t *testing.T) {
 
 	// Build AgentInfo
 	var agentInfo AgentInfo
-	agentInfo.RunnerId.SetIpAddr([]byte{127, 0, 0, 1})
-	agentInfo.RunnerId.Port = 8540
-	agentInfo.RunnerId.UniqueNumber = 0x1234
+	agentInfo.RunnerId.Id = [16]byte{0x12, 0x34, 0x56, 0x78}
 	copy(agentInfo.TaskId.Id[:], []byte("task0123456789ab"))
 	copy(agentInfo.AuthTicket[:], []byte("ticketticketticke"))
 	agentInfo.SetHostname([]byte("myhost"))
@@ -72,8 +70,8 @@ func TestPskAuthRequestClientRoleRoundTrip(t *testing.T) {
 	if ai == nil {
 		t.Fatal("AgentInfo() returned nil")
 	}
-	if !bytes.Equal(ai.RunnerId.IpAddr, []byte{127, 0, 0, 1}) {
-		t.Errorf("RunnerId.IpAddr: got %v", ai.RunnerId.IpAddr)
+	if ai.RunnerId != agentInfo.RunnerId {
+		t.Errorf("RunnerId: got %s want %s", ai.RunnerId.Hex(), agentInfo.RunnerId.Hex())
 	}
 	if !bytes.Equal(ai.Hostname, []byte("myhost")) {
 		t.Errorf("Hostname: got %q, want %q", ai.Hostname, "myhost")

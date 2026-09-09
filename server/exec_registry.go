@@ -23,9 +23,10 @@ import (
 type execRun struct {
 	execID    uint64
 	taskIDHex string
-	// runnerID is TaskEntry.AssignedTo, kept so a kill can re-find the runner
+	// runnerID is TaskEntry.AssignedTo — an IDENTITY, so a kill can re-find the
+	// runner even after it has reconnected
 	// without re-reading the task — which may have been pruned meanwhile.
-	runnerID   string
+	runnerID   protocol.RunnerID
 	argv       []string
 	startedAt  time.Time
 	control    trsf.SendStream

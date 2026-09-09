@@ -127,10 +127,7 @@ func (b *Board) Attach(rid RunnerID, tid TaskID, hostname, agentProfile string) 
 	b.mu.Unlock()
 	// Convert agentboard.RunnerID / TaskID → protocol.RunnerID / TaskID for identity storage.
 	var protoRid protocol.RunnerID
-	protoRid.SetTransport(rid.Transport)
-	protoRid.SetIpAddr(rid.IpAddr)
-	protoRid.Port = rid.Port
-	protoRid.UniqueNumber = rid.UniqueNumber
+	protoRid.Id = rid.Id
 	var protoTid protocol.TaskID
 	copy(protoTid.Id[:], tid.Id[:])
 	ts.setIdentity(protoRid, protoTid, hostname, agentProfile)

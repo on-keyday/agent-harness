@@ -32,7 +32,7 @@ func TestSkillsInjectedIsFalseBeforeAssign(t *testing.T) {
 func TestAssignStampsSkillsInjected(t *testing.T) {
 	s := NewTaskStore()
 	id := newTaskForSkills(t, s)
-	s.Assign(id, "runner-x", "/wt", true)
+	s.Assign(id, testRunnerID("runner-x"), "/wt", true)
 	got, _ := s.Get(id)
 	if !got.SkillsInjected {
 		t.Error("Assign did not stamp the runner's skills_injected onto the task")
@@ -46,9 +46,9 @@ func TestAssignStampsSkillsInjected(t *testing.T) {
 func TestReattachRestampsSkillsInjected(t *testing.T) {
 	s := NewTaskStore()
 	id := newTaskForSkills(t, s)
-	s.Assign(id, "runner-injecting", "/wt", true)
+	s.Assign(id, testRunnerID("runner-injecting"), "/wt", true)
 	s.SetDetached(id)
-	s.Assign(id, "runner-bare", "/wt", false)
+	s.Assign(id, testRunnerID("runner-bare"), "/wt", false)
 	got, _ := s.Get(id)
 	if got.SkillsInjected {
 		t.Error("re-attach on a non-injecting runner left the old true in place")
@@ -68,7 +68,7 @@ func TestSkillsInjectedSurvivesWALReplay(t *testing.T) {
 	s := NewTaskStore()
 	s.SetWAL(wal)
 	id := newTaskForSkills(t, s)
-	s.Assign(id, "runner-x", "/wt", true)
+	s.Assign(id, testRunnerID("runner-x"), "/wt", true)
 	if err := wal.Close(); err != nil {
 		t.Fatalf("wal.Close: %v", err)
 	}

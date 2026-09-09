@@ -14,7 +14,6 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9400-41"
 	var ticket [16]byte
 	ticket[0] = 0xB1
 	tid := mkTidE2E(0x41)
@@ -24,7 +23,7 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	for _, topic := range []string{"alpha/x", "beta/y", "gamma/z"} {
@@ -52,7 +51,6 @@ func TestAgentCLI_E2E_SubscribeSelf(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9500-51"
 	var ticket [16]byte
 	ticket[0] = 0x5E
 	tid := mkTidE2E(0x5F)
@@ -65,7 +63,7 @@ func TestAgentCLI_E2E_SubscribeSelf(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	if err := agent.Subscribe(ctx, []string{"--self"}, &bytes.Buffer{}); err != nil {

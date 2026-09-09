@@ -72,10 +72,9 @@ func TestDialRunnerRequestWithViaRoundTrip(t *testing.T) {
 	req.Target.SetTransport([]byte("ws"))
 	req.Target.SetIpAddr([]byte{10, 0, 0, 9})
 	req.Target.Port = 8540
-	req.Via.SetTransport([]byte("ws"))
-	req.Via.SetIpAddr([]byte{192, 168, 3, 14})
-	req.Via.Port = 52036
-	req.Via.UniqueNumber = 51357
+	// Via is an IDENTITY, unlike Target beside it: it names a registered proxy
+	// runner the server resolves, not an address the server dials.
+	req.Via.Id = [16]byte{0xC0, 0xA8, 0x03, 0x0E, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0xCA, 0xFE}
 
 	buf, err := req.Append(nil)
 	if err != nil {
@@ -85,16 +84,18 @@ func TestDialRunnerRequestWithViaRoundTrip(t *testing.T) {
 	if _, err := got.Decode(buf); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if string(got.Via.Transport) != "ws" {
-		t.Errorf("via.transport: got %q", got.Via.Transport)
+	if got.Via != req.Via {
+		t.Errorf("via: got %s want %s", got.Via.Hex(), req.Via.Hex())
 	}
-	if got.Via.Port != 52036 || got.Via.UniqueNumber != 51357 {
-		t.Errorf("via fields: got port=%d uniq=%d", got.Via.Port, got.Via.UniqueNumber)
+	if got.Target.Port != 8540 || string(got.Target.Transport) != "ws" {
+		t.Errorf("target: got transport=%q port=%d", got.Target.Transport, got.Target.Port)
 	}
 }
 
 func TestDialRunnerRequestViaEmptyRoundTrip(t *testing.T) {
-	// transport_len == 0 means "no via" (direct dial backward compat)
+	// A zero Via means "no via" — the direct-dial path. It used to be spelled
+	// transport_len == 0, which was the same statement while an identity was an
+	// address; IsZero is what says it now.
 	var req DialRunnerRequest
 	req.Target.SetTransport([]byte("ws"))
 	req.Target.SetIpAddr([]byte{10, 0, 0, 9})
@@ -109,7 +110,7 @@ func TestDialRunnerRequestViaEmptyRoundTrip(t *testing.T) {
 	if _, err := got.Decode(buf); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if len(got.Via.Transport) != 0 {
-		t.Errorf("via.transport should be empty, got %q", got.Via.Transport)
+	if !got.Via.IsZero() {
+		t.Errorf("via should be absent, got %s", got.Via.Hex())
 	}
 }

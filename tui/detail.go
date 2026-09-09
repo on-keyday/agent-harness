@@ -115,7 +115,7 @@ func (d *DetailPopup) View() string {
 func formatRunnerDetail(r protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
-	fmt.Fprintf(&sb, "id:            %s\n", protocol.RunnerIDToConnID(r.Id).String())
+	fmt.Fprintf(&sb, "id:            %s\n", r.Id.Hex())
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
 	// Always printed. A runner has a platform whether or not it reported one,
 	// and it decides real things — which shell an `ssh host cmd` reaches, which
@@ -199,7 +199,7 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "created:       %s\n", formatNanoTs(t.CreatedAt))
 	if t.StartedAt > 0 {
 		fmt.Fprintf(&sb, "started:       %s\n", formatNanoTs(t.StartedAt))
-		fmt.Fprintf(&sb, "assigned to:   %s\n", protocol.RunnerIDToConnID(t.AssignedTo).String())
+		fmt.Fprintf(&sb, "assigned to:   %s\n", t.AssignedTo.Hex())
 	}
 	if t.EndedAt > 0 {
 		fmt.Fprintf(&sb, "ended:         %s\n", formatNanoTs(t.EndedAt))

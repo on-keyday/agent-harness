@@ -22,12 +22,13 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 	// Create two tasks and manually set them to Running (simulating dispatch).
 	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskA, runnerID, "", false)
-	tasks.Assign(taskB, runnerID, "", false)
+	tasks.Assign(taskA, testRunnerID(runnerID), "", false)
+	tasks.Assign(taskB, testRunnerID(runnerID), "", false)
 
 	// Register runner with both tasks active.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     2,
@@ -80,13 +81,14 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 
 	// Create a task and manually mark it Succeeded (terminal).
 	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskID, runnerID, "", false)
+	tasks.Assign(taskID, testRunnerID(runnerID), "", false)
 	tasks.Finish(taskID, 0, nil) // exit 0 → Succeeded
 
 	// Register runner with the already-finished task still in ActiveTasks
 	// (race condition snapshot).
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -122,6 +124,7 @@ func TestOnRemoveMarks_EmptyActiveTasks(t *testing.T) {
 
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -166,13 +169,14 @@ func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
 	runnerID := fc.id.String()
 
 	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, runnerID, "", false)
+	tasks.Assign(id, testRunnerID(runnerID), "", false)
 	if err := tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
 	}
 
 	reg.Add(&RunnerEntry{
 		ID:          runnerID,
+		Identity:    testRunnerID(runnerID),
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{id: {}},
 		ConnectedAt: time.Unix(1, 0),
@@ -221,10 +225,11 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	runnerID := fc.id.String()
 
 	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, runnerID, "", false)
+	tasks.Assign(id, testRunnerID(runnerID), "", false)
 
 	reg.Add(&RunnerEntry{
 		ID:          runnerID,
+		Identity:    testRunnerID(runnerID),
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{id: {}},
 		ConnectedAt: time.Unix(1, 0),
@@ -259,7 +264,10 @@ func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
 
 	runnerID := "ws:127.0.0.1:8539-77"
 	taskHex := "aabbccddeeff00112233445566778899"
-	rid := runnerIDFromConnID(runnerID)
+	// The identity comes from the SNAPSHOT the cleanup is handed, not from a
+	// lookup: by the time a disconnect is processed the identity may already
+	// belong to the connection that took it over.
+	rid := protocol.RunnerID{Id: [16]byte{0x77}}
 	tid := taskIDFromHex(taskHex)
 
 	// The task is on the board exactly as a dispatched task would be: a ticket
@@ -271,6 +279,7 @@ func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
 
 	s.failAndRevokeTasksOf(runnerID, RunnerEntry{
 		ID:          runnerID,
+		Identity:    rid,
 		ActiveTasks: map[string]struct{}{taskHex: {}},
 	})
 

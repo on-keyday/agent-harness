@@ -17,8 +17,7 @@ func replyTestBoard(t *testing.T) *agentboard.Board {
 
 func replyTestRunnerID() protocol.RunnerID {
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	return rid
 }
 

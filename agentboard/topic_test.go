@@ -53,10 +53,7 @@ func TestTopic_LastPublishedAtUpdates(t *testing.T) {
 func TestTopic_AppendCarriesSender(t *testing.T) {
 	tp := newTopic("chat/x", 4)
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
-	rid.Port = 9000
-	rid.UniqueNumber = 1
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 0x42
 
@@ -72,8 +69,8 @@ func TestTopic_AppendCarriesSender(t *testing.T) {
 	if got[0].FromTask.Id != tid.Id {
 		t.Errorf("FromTask.Id = %v, want %v", got[0].FromTask.Id, tid.Id)
 	}
-	if string(got[0].FromRunner.Transport) != "ws" {
-		t.Errorf("FromRunner.Transport = %q, want %q", string(got[0].FromRunner.Transport), "ws")
+	if got[0].FromRunner.Id != rid.Id {
+		t.Errorf("FromRunner = %x, want %x", got[0].FromRunner.Id, rid.Id)
 	}
 }
 

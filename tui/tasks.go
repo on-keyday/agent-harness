@@ -237,7 +237,7 @@ func (m *TasksModel) rebuild() {
 	// Index runners by ConnID string so each task can show its runner's agent.
 	runnerByID := make(map[string]protocol.RunnerInfo, len(m.runners))
 	for _, r := range m.runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+		runnerByID[r.Id.Hex()] = r
 	}
 
 	rows := make([]table.Row, 0, len(ordered))
@@ -259,7 +259,7 @@ func (m *TasksModel) rebuild() {
 		agent := "-"
 		if c := taskAgentCell(t); c != "" {
 			agent = c
-		} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+		} else if r, ok := runnerByID[t.AssignedTo.Hex()]; ok {
 			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 		}
 		// Busy/idle badge from the live session's server-computed idle age;

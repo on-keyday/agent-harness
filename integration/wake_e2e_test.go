@@ -126,6 +126,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fake),
@@ -187,10 +188,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	// server's onDeliver hook) ignores the RunnerID from the callback and
 	// resolves the runner exclusively via the TaskID.
 	var fakeRid agentboard.RunnerID
-	fakeRid.SetTransport([]byte("ws"))
-	fakeRid.SetIpAddr([]byte{127, 0, 0, 1})
-	fakeRid.Port = 9999
-	fakeRid.UniqueNumber = 0xBEEF
+	fakeRid.Id = [16]byte{1}
 
 	// Attach the synthetic identity to create a taskState in the board.
 	// board.Attach does NOT validate against the ticket registry — validation
@@ -210,10 +208,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	// Build a sender identity (for Send's from_* attribution; the values are
 	// only used for message provenance — they do not affect the wake path).
 	var fromRid protocol.RunnerID
-	fromRid.SetTransport([]byte("ws"))
-	fromRid.SetIpAddr([]byte{127, 0, 0, 1})
-	fromRid.Port = 9998
-	fromRid.UniqueNumber = 0xCAFE
+	fromRid.Id = [16]byte{1}
 	var fromTid protocol.TaskID
 	copy(fromTid.Id[:], rawTid) // use the same task as sender for simplicity
 

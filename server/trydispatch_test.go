@@ -36,6 +36,7 @@ func newTestDispatcher() (*Dispatcher, *Registry, *TaskStore) {
 func registerRunner(reg *Registry, id string, conn ConnHandle, roots []string, maxTasks int) {
 	reg.Add(&RunnerEntry{
 		ID:           id,
+		Identity:     testRunnerID(id),
 		Hostname:     "host",
 		AllowedRoots: roots,
 		MaxTasks:     maxTasks,
@@ -74,7 +75,7 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	if te.Status != protocol.TaskStatus_Running {
 		t.Errorf("expected task status Running, got %v", te.Status)
 	}
-	if te.AssignedTo != runnerID {
+	if te.AssignedTo != testRunnerID(runnerID) {
 		t.Errorf("expected AssignedTo=%q, got %q", runnerID, te.AssignedTo)
 	}
 
@@ -125,6 +126,7 @@ func TestTryDispatch_NoCapacity(t *testing.T) {
 	// Runner at full capacity (MaxTasks=1, 1 active task).
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
+		Identity:     testRunnerID(runnerID),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -188,20 +190,12 @@ func TestTryDispatch_SendError(t *testing.T) {
 
 // boardRunnerID builds an agentboard.RunnerID from a connection ID string so
 // tests can call board.Registry().Validate without going through the protocol
-// wire. The format mirrors runnerIDFromConnID (same underlying string).
+// wire. It derives the identity the same way makeProtoRunnerID does, so a test
+// that registers by connection-id string and validates by identity agrees with
+// itself — the server itself derives nothing from an address any more.
 func boardRunnerID(t *testing.T, connIDStr string) agentboard.RunnerID {
 	t.Helper()
-	cid, err := objproto.ParseConnectionID(connIDStr, 0)
-	if err != nil {
-		t.Fatalf("boardRunnerID: parse %q: %v", connIDStr, err)
-	}
-	var rid agentboard.RunnerID
-	rid.SetTransport([]byte(cid.Transport))
-	ip := cid.Addr.Addr().AsSlice()
-	rid.SetIpAddr(ip)
-	rid.Port = uint16(cid.Addr.Port())
-	rid.UniqueNumber = cid.ID
-	return rid
+	return boardRunnerIDFromProto(makeProtoRunnerID(t, connIDStr))
 }
 
 // boardTaskID converts a hex task ID string to agentboard.TaskID.

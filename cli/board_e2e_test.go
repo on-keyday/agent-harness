@@ -184,9 +184,7 @@ func TestClientBoard_ZeroLengthPayload(t *testing.T) {
 func TestClientBoard_Subscribers(t *testing.T) {
 	srv, peerCID := startOperatorServerE2E(t)
 
-	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{127, 0, 0, 1})
+	rid := protocol.RunnerID{Id: [16]byte{127, 0, 0, 1}}
 	// Task ids chosen so the map iteration order cannot accidentally match the
 	// expected sort order: "bb…" is attached first, "aa…" second.
 	var second protocol.TaskID
@@ -194,9 +192,7 @@ func TestClientBoard_Subscribers(t *testing.T) {
 	var first protocol.TaskID
 	first.Id[0] = 0xaa
 
-	var boardRid agentboard.RunnerID
-	boardRid.SetTransport(rid.Transport)
-	boardRid.SetIpAddr(rid.IpAddr)
+	boardRid := agentboard.RunnerID{Id: rid.Id}
 	var secondBoard, firstBoard agentboard.TaskID
 	secondBoard.Id = second.Id
 	firstBoard.Id = first.Id

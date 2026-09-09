@@ -25,7 +25,6 @@ func TestAgentCLI_E2E_DispatchIgnoresUnrelatedTraffic(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStrA = "ws:1.2.3.4:9401-41" // the dispatcher
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xD1
 	ticketB[0] = 0xD2
@@ -72,7 +71,7 @@ func TestAgentCLI_E2E_DispatchIgnoresUnrelatedTraffic(t *testing.T) {
 		}
 	}()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	defer restoreA()
 
 	var out bytes.Buffer
@@ -99,7 +98,6 @@ func TestAgentCLI_E2E_DispatchIgnoresReplyToAnotherSeq(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStrA = "ws:1.2.3.4:9403-43"
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xD3
 	ticketB[0] = 0xD4
@@ -134,7 +132,7 @@ func TestAgentCLI_E2E_DispatchIgnoresReplyToAnotherSeq(t *testing.T) {
 		}
 	}()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	defer restoreA()
 
 	var out bytes.Buffer
@@ -179,7 +177,6 @@ func TestAgentCLI_E2E_DispatchTimeoutBoundsTheWholeCall(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9405-45"
 	var ticket [16]byte
 	ticket[0] = 0xD5
 	tid := mkTidE2E(0x45)
@@ -188,7 +185,7 @@ func TestAgentCLI_E2E_DispatchTimeoutBoundsTheWholeCall(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	const budget = 3 * time.Second
@@ -223,7 +220,6 @@ func TestAgentCLI_E2E_DispatchReplyToWaitsWhereItDeclared(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStrA = "ws:1.2.3.4:9505-55"
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xC5
 	ticketB[0] = 0xC6
@@ -264,7 +260,7 @@ func TestAgentCLI_E2E_DispatchReplyToWaitsWhereItDeclared(t *testing.T) {
 		}
 	}()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	defer restoreA()
 
 	var out bytes.Buffer

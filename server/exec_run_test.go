@@ -69,7 +69,7 @@ func TestDropExecRunsForConnDropsOnlyThatConnection(t *testing.T) {
 // that nothing can still be running.
 func TestDropExecRunsForConnWithNoRunner(t *testing.T) {
 	h := &TaskHandler{Registry: NewRegistry()}
-	id := h.execs().add(&execRun{taskIDHex: "bbbb", runnerID: "gone", clientCID: "c"})
+	id := h.execs().add(&execRun{taskIDHex: "bbbb", runnerID: testRunnerID("gone"), clientCID: "c"})
 
 	h.DropExecRunsForConn("c")
 	h.DropExecRunsForConn("c")

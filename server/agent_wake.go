@@ -26,11 +26,10 @@ func (s *Server) runnerForTask(tid protocol.TaskID) (ConnHandle, string) {
 	if !ok {
 		return nil, "no such task"
 	}
-	runnerID := task.AssignedTo
-	if runnerID == "" {
+	if task.AssignedTo.IsZero() {
 		return nil, "task not assigned to a runner"
 	}
-	entry, ok := s.registry.Get(runnerID)
+	entry, ok := s.registry.GetByIdentity(task.AssignedTo)
 	if !ok {
 		return nil, "assigned runner not in the registry"
 	}

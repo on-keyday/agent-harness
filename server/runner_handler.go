@@ -122,6 +122,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		entry := &RunnerEntry{
 			ID:             runnerID,
+			Identity:       hello.RunnerId,
 			Hostname:       string(hello.Hostname),
 			GOOS:           string(hello.Goos),
 			AllowedRoots:   roots,
@@ -151,14 +152,16 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			h.OnConnIdentified(runnerID)
 		}
 
-		// Tell the runner what canonical RunnerID the server keys it as.
-		// The peer transport's ConnectionID is symmetric (surfaces the peer's
-		// ID), so the runner cannot derive this locally; without this the
-		// runner would inject the wrong HARNESS_RUNNER_ID and agent Hello
-		// validation would fail.
+		// Echo the identity the runner minted back at it. It is no longer an
+		// assignment — the runner already knows the value, and could not be
+		// told a stable one anyway (the server would have to recognise the
+		// runner before it could re-issue the same id, which requires the
+		// runner to name itself first). It stays on the wire so a value that
+		// comes back different is visible instead of silently disagreeing, and
+		// because the runner gates HARNESS_RUNNER_ID on having heard it.
 		rhResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
 		rhResp.SetRunnerHelloResponse(protocol.RunnerHelloResponse{
-			YourRunnerId: runnerIDFromConnID(runnerID),
+			YourRunnerId: hello.RunnerId,
 		})
 		if rhBytes, err := rhResp.Append([]byte{byte(appwire.AppKind_RunnerControl)}); err != nil {
 			slog.Error("RunnerHandler: encode RunnerHelloResponse failed", "runner", runnerID, "err", err)
@@ -216,7 +219,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		// Release the capacity slot so the dispatcher can re-use it.
 		h.Registry.UnbindTask(runnerID, taskID)
 		// Revoke the auth ticket so the agent can no longer authenticate for this task.
-		boardRevokeTask(h.Board, runnerID, taskID)
+		boardRevokeTask(h.Board, identityOfConn(h.Registry, runnerID), taskID)
 
 	case protocol.RunnerMessageType_Heartbeat:
 		if !h.Registry.SetLastSeen(runnerID, now) {

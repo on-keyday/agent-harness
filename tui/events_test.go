@@ -64,8 +64,7 @@ func TestDecodeRunnerStatusEvent(t *testing.T) {
 		RunnerStatus: protocol.RunnerStatus_Idle,
 	}
 	// RunnerID encoder requires IpAddrLen ∈ {4,16}; populate a placeholder.
-	orig.RunnerId.SetTransport([]byte("ws"))
-	orig.RunnerId.SetIpAddr([]byte{127, 0, 0, 1})
+	orig.RunnerId.Id = [16]byte{1}
 	encoded := orig.MustAppend(nil)
 
 	got, err := DecodeRunnerStatus(encoded)

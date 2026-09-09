@@ -65,7 +65,7 @@ func TestHandleOpenFileTransfer_DetachedTaskAccepted(t *testing.T) {
 		RepoPath:   "/repo",
 		Status:     protocol.TaskStatus_Detached,
 		Kind:       protocol.TaskKind_Interactive,
-		AssignedTo: "fake-runner-id",
+		AssignedTo: testRunnerID("fake-runner-id"),
 	}
 	h.Tasks.order = append(h.Tasks.order, idHex)
 	h.Tasks.mu.Unlock()
@@ -100,7 +100,7 @@ func TestHandleListFiles_DetachedTaskAccepted(t *testing.T) {
 		RepoPath:   "/repo",
 		Status:     protocol.TaskStatus_Detached,
 		Kind:       protocol.TaskKind_Interactive,
-		AssignedTo: "fake-runner-id",
+		AssignedTo: testRunnerID("fake-runner-id"),
 	}
 	h.Tasks.order = append(h.Tasks.order, idHex)
 	h.Tasks.mu.Unlock()

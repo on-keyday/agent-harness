@@ -146,7 +146,7 @@ func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortF
 	if pf.direction != protocol.PortForwardDirection_Remote {
 		return true
 	}
-	runner, ok := h.Registry.Get(pf.runnerID)
+	runner, ok := h.Registry.GetByIdentity(pf.runnerID)
 	if !ok || runner.Conn == nil {
 		return true
 	}

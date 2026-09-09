@@ -100,10 +100,10 @@ func pickerSelection(c *cli.RunnerCandidate) (cli.SelectorOpts, string) {
 // same repo's roots score. A zero-value assignedTo (task never assigned)
 // falls back to the Any selector.
 func resumeSelectorOpts(assignedTo protocol.RunnerID) cli.SelectorOpts {
-	if assignedTo.IpAddrLen == 0 {
+	if assignedTo.IsZero() {
 		return cli.SelectorOpts{}
 	}
-	return cli.SelectorOpts{Runner: protocol.RunnerIDToConnID(assignedTo).String()}
+	return cli.SelectorOpts{Runner: assignedTo.Hex()}
 }
 
 // DoResumeSession resumes a terminal task into a new detachable session,

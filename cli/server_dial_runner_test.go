@@ -44,9 +44,11 @@ func (f *fakeTaskControlClient) RoundTripTaskControl(_ context.Context, req *pro
 	return resp, nil
 }
 
-func makeTestTarget(t *testing.T) protocol.RunnerID {
+// The dial target is an address: the runner it names is not registered yet, so
+// there is no identity to resolve.
+func makeTestTarget(t *testing.T) protocol.ConnID {
 	t.Helper()
-	var target protocol.RunnerID
+	var target protocol.ConnID
 	target.SetTransport([]byte("ws"))
 	target.SetIpAddr([]byte{192, 168, 3, 10})
 	target.Port = 8540
@@ -126,16 +128,17 @@ func TestServerDialRunnerRejectsMissingVariant(t *testing.T) {
 // TestServerDialRunnerWithVia: verifies that a non-zero viaCID populates
 // DialRunnerRequest.Via in the wire payload.
 func TestServerDialRunnerWithVia(t *testing.T) {
-	fakeServerCID := objproto.NewConnectionID("ws",
+	targetCID := objproto.NewConnectionID("ws",
 		netip.MustParseAddrPort("192.168.1.10:8540"), 12345)
-	fakeViaCID := objproto.NewConnectionID("ws",
-		netip.MustParseAddrPort("192.168.1.20:8550"), 51357)
+	// via is the IDENTITY of an already-registered proxy runner, not its
+	// address: the server resolves it, which is what lets it keep working after
+	// that proxy reconnects.
+	viaID := protocol.RunnerID{Id: [16]byte{0xC0, 0xA8, 1, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xC8, 0xDD}}
 
 	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_Ok}
 
 	resp, err := ServerDialRunnerWith(context.Background(), fc,
-		protocol.ConnIDToRunnerID(fakeServerCID),
-		protocol.ConnIDToRunnerID(fakeViaCID))
+		protocol.ConnIDFromObjproto(targetCID), viaID)
 	if err != nil {
 		t.Fatalf("ServerDialRunnerWith: %v", err)
 	}
@@ -149,14 +152,11 @@ func TestServerDialRunnerWithVia(t *testing.T) {
 	if dr == nil {
 		t.Fatal("DialRunner variant nil")
 	}
-	if string(dr.Via.Transport) != "ws" {
-		t.Errorf("via.transport: got %q", dr.Via.Transport)
+	if dr.Via != viaID {
+		t.Errorf("via: got %s want %s", dr.Via.Hex(), viaID.Hex())
 	}
-	if dr.Via.Port != 8550 {
-		t.Errorf("via.port: got %d want 8550", dr.Via.Port)
-	}
-	if dr.Via.UniqueNumber != 51357 {
-		t.Errorf("via.unique_number: got %d want 51357", dr.Via.UniqueNumber)
+	if dr.Target.Port != 8540 {
+		t.Errorf("target.port: got %d want 8540", dr.Target.Port)
 	}
 }
 
@@ -169,7 +169,7 @@ func TestServerDialRunnerWithoutVia(t *testing.T) {
 	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_Ok}
 
 	_, err := ServerDialRunnerWith(context.Background(), fc,
-		protocol.ConnIDToRunnerID(fakeServerCID),
+		protocol.ConnIDFromObjproto(fakeServerCID),
 		protocol.RunnerID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunnerWith: %v", err)
@@ -181,7 +181,7 @@ func TestServerDialRunnerWithoutVia(t *testing.T) {
 	if dr == nil {
 		t.Fatal("DialRunner variant nil")
 	}
-	if len(dr.Via.Transport) != 0 {
-		t.Errorf("via.transport should be empty for direct dial, got %q", dr.Via.Transport)
+	if !dr.Via.IsZero() {
+		t.Errorf("via should be absent for direct dial, got %s", dr.Via.Hex())
 	}
 }

@@ -29,7 +29,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	if !ok {
 		return errResp(protocol.ExecRunStatus_NotFound)
 	}
-	runner, ok := h.Registry.Get(task.AssignedTo)
+	runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 	if !ok || runner.Conn == nil {
 		return errResp(protocol.ExecRunStatus_RunnerUnreachable)
 	}
@@ -81,7 +81,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	// still serves as long as the worktree is there — yields the zero value,
 	// and BuildAgentEnv omits the variable rather than advertising a
 	// credential that cannot work.
-	ticket, _ := boardTaskTicket(h.Board, runner.ID, req.TaskId)
+	ticket, _ := boardTaskTicket(h.Board, runner.Identity, req.TaskId)
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExecRun}
 	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))
@@ -321,7 +321,7 @@ func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKill
 // ends its input goroutine while the process runs on. Same reason
 // ClosePortForward exists.
 func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
-	runner, ok := h.Registry.Get(e.runnerID)
+	runner, ok := h.Registry.GetByIdentity(e.runnerID)
 	if !ok || runner.Conn == nil {
 		slog.Info("exec_run: runner gone, cannot stop the child", "exec_id", e.execID, "why", why)
 		return

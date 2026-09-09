@@ -25,10 +25,6 @@ func TestAgentCLI_E2E_Inbox_PromptHook_OmitsOversizeBody(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2EWithMaxPayload(t, addr, 256<<10)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9210-31"
-		ridStrB = "ws:5.6.7.8:9211-32"
-	)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9210, 31)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9211, 32)
 	tidA, tidB := mkTidE2E(0x31), mkTidE2E(0x32)
@@ -40,7 +36,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_OmitsOversizeBody(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx, []string{"--topic", "topic/guard"}, &subOut); err != nil {
 		restoreB()
@@ -48,7 +44,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_OmitsOversizeBody(t *testing.T) {
 	}
 	restoreB()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/guard", "--data", strings.Repeat("x", body)},
@@ -58,7 +54,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_OmitsOversizeBody(t *testing.T) {
 	}
 	restoreA()
 
-	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB2 := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB2()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 

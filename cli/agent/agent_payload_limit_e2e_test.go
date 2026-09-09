@@ -21,7 +21,6 @@ func TestAgentCLI_E2E_OversizePayloadRejectedAsTooLarge(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr) // MaxPayload: 4096
 
-	const ridStr = "ws:1.2.3.4:9020-1"
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9020, 1)
 	tid := mkTidE2E(0x5A)
 	var ticket [16]byte
@@ -31,7 +30,7 @@ func TestAgentCLI_E2E_OversizePayloadRejectedAsTooLarge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	var out bytes.Buffer
@@ -60,7 +59,6 @@ func TestAgentCLI_E2E_PayloadBeyondFlowWindowStillAnswers(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr) // MaxPayload: 4096
 
-	const ridStr = "ws:1.2.3.4:9021-1"
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9021, 1)
 	tid := mkTidE2E(0x5B)
 	var ticket [16]byte
@@ -70,7 +68,7 @@ func TestAgentCLI_E2E_PayloadBeyondFlowWindowStillAnswers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	// 20MB: comfortably past trsf.InitialFlowWindow (16MB).
@@ -112,10 +110,6 @@ func TestAgentCLI_E2E_DeliveryPastReceiveWindow(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2EWithMaxPayload(t, addr, big+1)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9030-1"
-		ridStrB = "ws:5.6.7.8:9031-2"
-	)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9030, 1)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9031, 2)
 	tidA, tidB := mkTidE2E(0x6A), mkTidE2E(0x6B)
@@ -127,7 +121,7 @@ func TestAgentCLI_E2E_DeliveryPastReceiveWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	sendErr := agent.Send(ctx,
 		[]string{"--topic", "topic/big", "--data", strings.Repeat("x", big)},
@@ -139,7 +133,7 @@ func TestAgentCLI_E2E_DeliveryPastReceiveWindow(t *testing.T) {
 		t.Fatalf("agent.Send of %d bytes: %v", big, sendErr)
 	}
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB()
 
 	done := make(chan error, 1)

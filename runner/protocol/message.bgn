@@ -74,6 +74,10 @@ format AgentProfileName:
 # allowed_roots lists every repo root the runner can serve.
 format RunnerHello:
     version :u8
+    # Minted per runner PROCESS, above the reconnect loop. The server records it
+    # and echoes it in RunnerHelloResponse.your_runner_id, so a value that comes
+    # back different is a bug worth seeing rather than one to absorb.
+    runner_id :RunnerID
     hostname_len :u8
     hostname :[hostname_len]u8
     # goos is runtime.GOOS on the runner's host — "linux", "windows", "darwin".
@@ -439,12 +443,12 @@ format ClientHelloResponse:
 # Used in environments where ACL blocks runner→server outbound; server initiates
 # the TCP/UDP connect instead.
 format DialRunnerRequest:
-    # Both still RunnerID, and unresolved rather than settled: the operator
-    # names a runner (identity) and the server dials it (address), so which
-    # side performs the identity -> address resolution decides whether these
-    # carry a ConnID or a RunnerID. Deciding it needs dial_runner_handler.go
-    # and upstream_walk.go read through, so they are left as they were.
-    target :RunnerID
+    # target is an ADDRESS: Handle dials it with ECDH on the spot and the runner
+    # is unregistered until afterwards, so no identity exists to resolve.
+    target :ConnID
+    # via is an IDENTITY: it names a REGISTERED proxy runner, matched today by
+    # exact ConnectionID, and an identity makes it survive that proxy's own
+    # reconnect.
     via    :RunnerID
 
 enum DialRunnerStatus:
@@ -538,39 +542,30 @@ format DialGreeting:
 format ListQuery:
     query :[..]u8 # currently opaque
 
-# RunnerID names WHICH RUNNER. Its body is an address only because identity was
-# never designed here — it was borrowed from the connection, and every field
-# below is part of one: runnerIDFromConnID fills them straight from the runner's
-# objproto.ConnectionID, Port and UniqueNumber included. So the value changes on
-# every reconnect, which is sound only while a task cannot outlive its runner's
-# connection (see server/boardkey.go for the premise and who still enforces it).
+# RunnerID names WHICH RUNNER PROCESS, and nothing else.
 #
-# The target state is a 16-byte opaque id like TaskID, minted per runner PROCESS
-# so that it survives a reconnect and differs after a restart. Getting there
-# needs every field that says "runner" to be sorted into identity or address
-# first, which is what ConnID below is for.
+# Minted by the runner at process start and held in memory only: it must survive
+# that process's reconnects and MUST differ after a restart, because the change
+# of value is what says "the children this runner had are gone, do not re-adopt".
+# Persisting it would make a restart look like a reconnect, and that failure
+# would only ever surface after a crash.
+#
+# Same shape as TaskID so the hex plumbing, selectors and display are shared.
+# WHERE a runner is reached is ConnID below — the two are separate questions
+# now, which is the whole point: this value no longer expires with a connection,
+# so a credential keyed on it does not either.
 format RunnerID:
-    transport_len :u8
-    transport :[transport_len]u8
-    ip_addr_len :u8
-    ip_addr_len == 0 || ip_addr_len == 4 || ip_addr_len == 16
-    ip_addr :[ip_addr_len]u8
-    port :u16
-    unique_number :u16
+    id :[16]u8
 
 # ConnID names WHERE TO DIAL: transport + ip:port + the per-connection id, i.e.
 # the wire form of objproto.ConnectionID.
 #
-# Byte-identical to RunnerID above, deliberately. A field carrying a dial
-# address can therefore be re-typed to ConnID without changing a single wire
-# byte, so this split records WHICH MEANING each field has — checked by the
-# compiler from here on — while old and new binaries still interoperate. It buys
-# no new capability by itself and is not meant to: it is the classification the
-# opaque-RunnerID change needs in place before it can be safe.
-#
-# A field still typed RunnerID that is in fact dialed is the remaining
-# conflation. The converters between these types and objproto.ConnectionID are
-# where to grep for it.
+# It exists because "which runner" and "where to reach it" are different
+# questions that one type used to answer. It was introduced byte-identical to
+# the address-shaped RunnerID it was carved out of, so that every field could be
+# sorted into identity or address while old and new binaries still interoperated;
+# that identity is gone as of RunnerID becoming opaque, and the two types now
+# differ in size as well as in meaning.
 format ConnID:
     transport_len :u8
     transport :[transport_len]u8
@@ -624,6 +619,10 @@ format ActiveTaskRef:
 # RunnerInfo replaces the old single-repo shape with multi-root and active-tasks.
 format RunnerInfo:
     id :RunnerID
+    # WHERE this runner is reached right now. Implicit while id was itself an
+    # address; without it `ls` loses transport, host and port, and hostname
+    # alone cannot separate two slots on one machine.
+    addr :ConnID
     hostname_len :u8
     hostname :[hostname_len]u8
     # Relayed from RunnerHello.goos, so an operator can see which runners are
@@ -757,6 +756,11 @@ enum RunnerSelectorKind:
     by_runner_id # pin to a specific RunnerID
     by_hostname  # pin to a runner with a matching hostname
     by_ip        # pin to a runner at a specific IP address
+    by_conn_id   # pin to whatever answers at one exact connection id. Exists
+                 # because `--runner` accepts a pasted transport:ip:port-id and
+                 # that string stopped being a RunnerID when identity became
+                 # opaque; it selects a CONNECTION, so it cannot survive that
+                 # runner's reconnect the way by_runner_id does.
 
 # Hostname selector: the hostname string the runner advertised in RunnerHello.
 format Hostname:
@@ -778,6 +782,7 @@ format RunnerSelector:
         RunnerSelectorKind.by_runner_id => runner_id :RunnerID
         RunnerSelectorKind.by_hostname  => hostname  :Hostname
         RunnerSelectorKind.by_ip        => ip_addr   :IPAddr
+        RunnerSelectorKind.by_conn_id   => conn_id   :ConnID
 
 format SubmitRequest:
     repo_path_len :u16
@@ -1793,6 +1798,11 @@ format ConnInfo:
     role :ConnRole
     principal_task :TaskID          # agent conn: its principal task id.
                                     # all-zero for cli/tui/webui/runner/unidentified.
+    # runner conn: which runner PROCESS it belongs to; all-zero for every other
+    # role, mirroring principal_task. Until now `cid` answered this by accident,
+    # because the runner's identity WAS its connection id. TrsfConnState does
+    # not repeat it -- its rows carry `cid`, which joins to this listing.
+    principal_runner :RunnerID
     connected_at :u64               # unix nano, stamped at activeConns register
     identified :u1                  # 1 once role is established (handshake done);
                                     # 0 = opened-but-never-authed (probe / failed)

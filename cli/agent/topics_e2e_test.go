@@ -17,10 +17,6 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9300-31"
-		ridStrB = "ws:5.6.7.8:9301-32"
-	)
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xA1
 	ticketB[0] = 0xA2
@@ -52,7 +48,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	defer cancel()
 
 	// A publishes 2 messages on alpha/x and 1 on beta/y
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	for _, args := range [][]string{
 		{"--topic", "alpha/x", "--data", `{"i":1}`},
 		{"--topic", "alpha/x", "--data", `{"i":2}`},
@@ -66,7 +62,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	restoreA()
 
 	// B lists topics — requires Capability_BoardObserve (now injected above).
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	defer restoreB()
 	var out bytes.Buffer
 	if err := agent.Topics(ctx, nil, &out); err != nil {
@@ -90,7 +86,6 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStrC = "ws:9.10.11.12:9302-33"
 	var ticketC [16]byte
 	ticketC[0] = 0xA3
 	tidC := mkTidE2E(0x33)
@@ -108,7 +103,6 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 
 	// Also publish a topic so there is something to list.
 	// Use a second agent (no TaskStore entry needed just to send).
-	const ridStrD = "ws:1.2.3.4:9303-34"
 	var ticketD [16]byte
 	ticketD[0] = 0xA4
 	tidD := mkTidE2E(0x34)
@@ -118,7 +112,7 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restoreD := setAgentEnv(addr, ridStrD, tidD, ticketD)
+	restoreD := setAgentEnv(addr, ridD, tidD, ticketD)
 	if err := agent.Send(ctx, []string{"--topic", "secret/topic", "--data", `{"x":1}`}, nil, &bytes.Buffer{}); err != nil {
 		restoreD()
 		t.Fatalf("Send: %v", err)
@@ -129,7 +123,7 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	// report an empty board. Both halves matter: the error is what tells a
 	// confined agent it asked a question it may not ask, and the empty stdout
 	// is what keeps the gate a gate.
-	restoreC := setAgentEnv(addr, ridStrC, tidC, ticketC)
+	restoreC := setAgentEnv(addr, ridC, tidC, ticketC)
 	defer restoreC()
 	var out bytes.Buffer
 	err := agent.Topics(ctx, nil, &out)

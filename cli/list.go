@@ -155,14 +155,14 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
-			protocol.RunnerIDToConnID(r.Id).String(),
+			r.Id.Hex(),
 		)
 	}
 
 	// Index runners by ConnID string so each task can show its runner's agent.
 	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
 	for _, r := range lr.Runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+		runnerByID[r.Id.Hex()] = r
 	}
 	fmt.Fprintln(out, "TASKS")
 	if len(lr.Tasks) == 0 {
@@ -192,7 +192,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	agent := ""
 	if len(t.AgentProfile) > 0 {
 		agent = "  " + agentStr(string(t.AgentProfile), t.SkillsInjected())
-	} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+	} else if r, ok := runnerByID[t.AssignedTo.Hex()]; ok {
 		agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
 	}
 	// exit= / err= render only when meaningful so the common rows stay
@@ -295,13 +295,13 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
-			protocol.RunnerIDToConnID(r.Id).String(),
+			r.Id.Hex(),
 		)
 	}
 
 	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
 	for _, r := range lr.Runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+		runnerByID[r.Id.Hex()] = r
 	}
 	fmt.Fprintln(out, "TASKS (by creator)")
 	if len(lr.Tasks) == 0 {
@@ -421,13 +421,13 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 
 	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
 	for _, r := range lr.Runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+		runnerByID[r.Id.Hex()] = r
 		roots := make([]string, len(r.AllowedRoots))
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
 		doc.Runners = append(doc.Runners, runnerJSON{
-			Id:             protocol.RunnerIDToConnID(r.Id).String(),
+			Id:             r.Id.Hex(),
 			Status:         runnerStatusJSON(r.Status),
 			Hostname:       string(r.Hostname),
 			GOOS:           RunnerGOOSStr(r.Goos),
@@ -458,7 +458,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 	agent := string(t.AgentProfile)
 	skills := t.SkillsInjected()
 	if agent == "" && runnerByID != nil {
-		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+		if r, ok := runnerByID[t.AssignedTo.Hex()]; ok {
 			agent = string(r.AgentBin)
 			skills = r.SkillsInjected()
 		}
@@ -517,7 +517,7 @@ type sessionJSON struct {
 func renderSessionsJSON(lr *protocol.ListResultBody, out io.Writer) {
 	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
 	for _, r := range lr.Runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+		runnerByID[r.Id.Hex()] = r
 	}
 	enc := json.NewEncoder(out)
 	for i := range lr.Tasks {

@@ -23,7 +23,6 @@ func TestAgentCLI_E2E_SendOkLineReportsBytesAndSource(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9040-1"
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9040, 1)
 	tid := mkTidE2E(0x7A)
 	var ticket [16]byte
@@ -33,7 +32,7 @@ func TestAgentCLI_E2E_SendOkLineReportsBytesAndSource(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	cases := []struct {
@@ -119,7 +118,6 @@ func TestAgentCLI_E2E_OversizeRejectionNamesTheSize(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr) // MaxPayload: 4096
 
-	const ridStr = "ws:1.2.3.4:9041-1"
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9041, 1)
 	tid := mkTidE2E(0x7B)
 	var ticket [16]byte
@@ -129,7 +127,7 @@ func TestAgentCLI_E2E_OversizeRejectionNamesTheSize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	restore := setAgentEnv(addr, rid, tid, ticket)
 	defer restore()
 
 	var out bytes.Buffer

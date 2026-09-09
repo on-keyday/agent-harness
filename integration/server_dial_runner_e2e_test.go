@@ -63,6 +63,7 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 	go func() {
 		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
 			Config: runner.Config{
+				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
 				Hostname:     hostname,
@@ -84,7 +85,7 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 		t.Fatalf("parse runner cid: %v", err)
 	}
 
-	resp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID, objproto.ConnectionID{})
+	resp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID, protocol.RunnerID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunner: %v", err)
 	}

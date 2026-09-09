@@ -135,8 +135,7 @@ func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
 	h, conn := newBoardTestHandler(t)
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var listener protocol.TaskID
 	listener.Id[0] = 1
 	var bystander protocol.TaskID

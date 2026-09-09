@@ -77,13 +77,14 @@ func freePortE2E(t *testing.T) string {
 	return addr
 }
 
-// mkRidE2E builds a synthetic protocol.RunnerID matching "ws:IP:PORT-UNIQUE".
+// mkRidE2E builds a synthetic runner identity. The parameters are kept so the
+// call sites still read as "a distinct runner", but they now seed 16 opaque
+// bytes rather than describing an address.
 func mkRidE2E(ip [4]byte, port uint16, unique uint16) protocol.RunnerID {
 	var r protocol.RunnerID
-	r.SetTransport([]byte("ws"))
-	r.SetIpAddr(ip[:])
-	r.Port = port
-	r.UniqueNumber = unique
+	copy(r.Id[:4], ip[:])
+	r.Id[4], r.Id[5] = byte(port), byte(port>>8)
+	r.Id[6], r.Id[7] = byte(unique), byte(unique>>8)
 	return r
 }
 
@@ -97,7 +98,7 @@ func mkTidE2E(b byte) protocol.TaskID {
 // setAgentEnv overwrites the HARNESS_* env vars used by cliopts to identify
 // this agent. It is the caller's responsibility to restore them (e.g., via
 // t.Cleanup or a subsequent call). Returns a restore function.
-func setAgentEnv(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]byte) func() {
+func setAgentEnv(serverAddr string, rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) func() {
 	prev := map[string]string{
 		"HARNESS_SERVER_CID":  os.Getenv("HARNESS_SERVER_CID"),
 		"HARNESS_RUNNER_ID":   os.Getenv("HARNESS_RUNNER_ID"),
@@ -105,7 +106,7 @@ func setAgentEnv(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]byte
 		"HARNESS_AUTH_TICKET": os.Getenv("HARNESS_AUTH_TICKET"),
 	}
 	os.Setenv("HARNESS_SERVER_CID", "ws:"+serverAddr+"-*")
-	os.Setenv("HARNESS_RUNNER_ID", ridStr)
+	os.Setenv("HARNESS_RUNNER_ID", rid.Hex())
 	os.Setenv("HARNESS_TASK_ID", hex.EncodeToString(tid.Id[:]))
 	os.Setenv("HARNESS_AUTH_TICKET", hex.EncodeToString(ticket[:]))
 	return func() {
@@ -130,12 +131,8 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	// Synthetic agent identities. The RunnerID string must be parseable by
-	// cliopts.ResolveRunnerID: "ws:IP:PORT-UNIQUE" with a numeric ID.
-	const (
-		ridStrA = "ws:1.2.3.4:9000-1"
-		ridStrB = "ws:5.6.7.8:9001-2"
-	)
+	// Synthetic agent identities. HARNESS_RUNNER_ID carries the identity's hex,
+	// derived from the same value the board registers, so the two cannot drift.
 
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xAA
@@ -154,7 +151,7 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	defer cancel()
 
 	// --- Agent A sends -------------------------------------------------------
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/test-e2e", "--data", `{"msg":"hello-from-A"}`},
@@ -171,7 +168,7 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	}
 
 	// --- Agent B waits -------------------------------------------------------
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var waitOut bytes.Buffer
 	if err := agent.Wait(ctx,
 		[]string{"--topic", "topic/test-e2e", "--timeout", "2s"},
@@ -200,13 +197,11 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
-	const ridStrA = "ws:1.2.3.4:9010-1"
-	const ridStrB = "ws:5.6.7.8:9011-2"
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9010, 1)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9011, 2)
 
 	taskHexA := srv.Tasks().Create("/repo", "p", protocol.TaskKind_Interactive,
-		protocol.ClientKind_Cli, protocol.TaskID{}, ridStrA, protocol.RunnerSelector{},
+		protocol.ClientKind_Cli, protocol.TaskID{}, ridA.Hex(), protocol.RunnerSelector{},
 		nil, protocol.Capability_All, server.Scope{}, "codex")
 	var tidA protocol.TaskID
 	raw, err := hex.DecodeString(taskHexA)
@@ -225,7 +220,7 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	// The payload deliberately lies about the sender: the attested field must
 	// not come from anything the agent wrote.
@@ -238,7 +233,7 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
 	}
 	restoreA()
 
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var waitOut bytes.Buffer
 	if err := agent.Wait(ctx,
 		[]string{"--topic", "topic/profile-e2e", "--timeout", "2s"},
@@ -274,11 +269,6 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const (
-		ridStrA = "ws:1.2.3.4:9002-3"
-		ridStrB = "ws:5.6.7.8:9003-4"
-	)
-
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xCA
 	ticketB[0] = 0xCB
@@ -296,7 +286,7 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	defer cancel()
 
 	// Agent B subscribes to "topic/sub-test".
-	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB := setAgentEnv(addr, ridB, tidB, ticketB)
 	var subOut bytes.Buffer
 	if err := agent.Subscribe(ctx,
 		[]string{"--topic", "topic/sub-test"},
@@ -312,7 +302,7 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	}
 
 	// Agent A sends to "topic/sub-test".
-	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	restoreA := setAgentEnv(addr, ridA, tidA, ticketA)
 	var sendOut bytes.Buffer
 	if err := agent.Send(ctx,
 		[]string{"--topic", "topic/sub-test", "--data", `{"msg":"hello-sub"}`},
@@ -325,7 +315,7 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	restoreA()
 
 	// Agent B waits (topic is in board ring, so returns immediately).
-	restoreB2 := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	restoreB2 := setAgentEnv(addr, ridB, tidB, ticketB)
 	var waitOut bytes.Buffer
 	if err := agent.Wait(ctx,
 		[]string{"--topic", "topic/sub-test", "--timeout", "2s"},
@@ -347,8 +337,6 @@ func TestAgentCLI_E2E_BadTicket(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
 
-	const ridStr = "ws:1.2.3.4:9004-5"
-
 	var goodTicket [16]byte
 	goodTicket[0] = 0xDE
 	var badTicket [16]byte
@@ -362,7 +350,7 @@ func TestAgentCLI_E2E_BadTicket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	restore := setAgentEnv(addr, ridStr, tid, badTicket)
+	restore := setAgentEnv(addr, rid, tid, badTicket)
 	var out bytes.Buffer
 	err := agent.Send(ctx,
 		[]string{"--topic", "topic/bad-ticket", "--data", "should-fail"},

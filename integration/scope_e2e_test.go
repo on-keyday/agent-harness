@@ -40,6 +40,7 @@ func scopeEnv(t *testing.T, addr string) (context.Context, objproto.ConnectionID
 	time.Sleep(300 * time.Millisecond)
 	go func() {
 		_ = runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fakeClaude),

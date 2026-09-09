@@ -19,11 +19,11 @@ func formatIP(b []byte) string {
 }
 
 func runnerIDStringProto(r protocol.RunnerID) string {
-	return fmt.Sprintf("%s:%s:%d-%d", string(r.Transport), formatIP(r.IpAddr), r.Port, r.UniqueNumber)
+	return r.Hex()
 }
 
 func runnerIDStringBoard(r RunnerID) string {
-	return fmt.Sprintf("%s:%s:%d-%d", string(r.Transport), formatIP(r.IpAddr), r.Port, r.UniqueNumber)
+	return hex.EncodeToString(r.Id[:])
 }
 
 func hexTaskIDProto(t protocol.TaskID) string {

@@ -7,45 +7,23 @@ import (
 )
 
 func TestBoardRunnerIDFromProto(t *testing.T) {
-	var p protocol.RunnerID
-	p.SetTransport([]byte("ws"))
-	p.SetIpAddr([]byte{127, 0, 0, 1})
-	p.Port = 8539
-	p.UniqueNumber = 42
+	p := protocol.RunnerID{Id: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}}
 
 	got := boardRunnerIDFromProto(p)
-	if string(got.Transport) != "ws" || len(got.IpAddr) != 4 || got.Port != 8539 || got.UniqueNumber != 42 {
-		t.Fatalf("runner id round-trip mismatch: %+v", got)
+	if got.Id != p.Id {
+		t.Fatalf("runner id round-trip mismatch: got %x want %x", got.Id, p.Id)
 	}
 }
 
-func TestBoardRunnerIDFromProto_ZeroLenIpAddrGuarded(t *testing.T) {
-	// Empty IpAddr must be substituted with the IPv4 placeholder {0,0,0,0} to
-	// satisfy the protocol encoder's hard IpAddrLen ∈ {4,16} assertion.
-	var p protocol.RunnerID
-	p.SetTransport([]byte("ws"))
-	// deliberately leave IpAddr empty (zero-length)
-	p.Port = 1234
-
-	got := boardRunnerIDFromProto(p)
-	if len(got.IpAddr) != 4 {
-		t.Fatalf("expected guarded IpAddr length 4, got %d (%v)", len(got.IpAddr), got.IpAddr)
-	}
-	for _, b := range got.IpAddr {
-		if b != 0 {
-			t.Fatalf("expected all-zero placeholder IP, got %v", got.IpAddr)
-		}
-	}
-}
-
-func TestBoardRunnerIDFromProto_GarbageLenIpAddrGuarded(t *testing.T) {
-	// A 7-byte IpAddr (neither 4 nor 16) must also be replaced by the placeholder.
-	var p protocol.RunnerID
-	p.SetIpAddr([]byte{1, 2, 3, 4, 5, 6, 7})
-
-	got := boardRunnerIDFromProto(p)
-	if len(got.IpAddr) != 4 {
-		t.Fatalf("expected guarded IpAddr length 4, got %d (%v)", len(got.IpAddr), got.IpAddr)
+// The zero identity must survive as the zero identity. This test used to assert
+// the OPPOSITE: an absent value was rewritten to a placeholder IPv4, because the
+// board's schema refused ip_addr_len == 0 and the encoder asserted on it. With
+// identities opaque there is nothing to substitute, and substituting anything
+// would make "no sender" indistinguishable from a real runner.
+func TestBoardRunnerIDFromProto_ZeroStaysZero(t *testing.T) {
+	got := boardRunnerIDFromProto(protocol.RunnerID{})
+	if got.Id != ([16]byte{}) {
+		t.Fatalf("zero identity did not stay zero: %x", got.Id)
 	}
 }
 

@@ -71,6 +71,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:     runner.NewRunnerID(),
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
 			Profiles:     singleAgentProfile(fake),

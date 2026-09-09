@@ -435,7 +435,11 @@ func main() {
 			"skills", agentSkillNames)
 	}
 
+	// Minted once, here, above PersistLoop: this names the PROCESS, so every
+	// reconnect must carry the same value and a restart must not.
+	runnerID := runner.NewRunnerID()
 	runCfg := runner.Config{
+		RunnerID:                   runnerID,
 		AllowedRoots:               abs,
 		MaxTasks:                   cfg.MaxTasks,
 		Hostname:                   hostname,

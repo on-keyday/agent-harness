@@ -9,12 +9,7 @@ import (
 )
 
 func toAgentboardRunnerID(r protocol.RunnerID) RunnerID {
-	var out RunnerID
-	out.SetTransport(r.Transport)
-	out.SetIpAddr(r.IpAddr)
-	out.Port = r.Port
-	out.UniqueNumber = r.UniqueNumber
-	return out
+	return RunnerID{Id: r.Id}
 }
 
 func toAgentboardTaskID(t protocol.TaskID) TaskID {
@@ -37,8 +32,7 @@ func TestBoard_ListTopics_AfterSends(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 
@@ -77,8 +71,7 @@ func TestBoard_ListSubscriptions(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
 	var rid RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid TaskID
 	tid.Id[0] = 1
 	c := b.Attach(rid, tid, "host", "")
@@ -124,9 +117,7 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 
 	mkRid := func(uniq uint16) protocol.RunnerID {
 		var r protocol.RunnerID
-		r.SetTransport([]byte("ws"))
-		r.SetIpAddr([]byte{1, 2, 3, 4})
-		r.UniqueNumber = uniq
+		r.Id = [16]byte{1}
 		return r
 	}
 	mkTid := func(b byte) protocol.TaskID {
@@ -174,8 +165,7 @@ func TestBoard_ListSubscribers_NoFilter(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var registered protocol.TaskID
 	registered.Id[0] = 1
 
@@ -214,8 +204,7 @@ func TestBoard_ListSubscribers_FilterMatchesDelivery(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var listener protocol.TaskID
 	listener.Id[0] = 1
 	var bystander protocol.TaskID
@@ -248,8 +237,7 @@ func TestBoard_ListSubscribers_GoneAfterRevoke(t *testing.T) {
 	defer b.Close()
 
 	var rid protocol.RunnerID
-	rid.SetTransport([]byte("ws"))
-	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	rid.Id = [16]byte{1}
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 

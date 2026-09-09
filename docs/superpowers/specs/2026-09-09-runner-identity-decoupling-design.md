@@ -85,6 +85,7 @@ with on its merits.
 | D8 | `Registry` stays keyed by connection id; an identity→connection index is added beside it | author |
 | D9 | `TaskEntry.AssignedTo` and `TaskInfo.assigned_to` become the identity | author |
 | D10 | No compatibility shim; deploy is server-first with a fleet restart | author — dogfood scope |
+| D11 | A zero `runner_id` in a hello is REJECTED at the identity gate as `NoIdentity` | author |
 
 **D3 is forced, not preferred.** Server assignment cannot produce an id that is
 stable across a reconnect: to re-issue the same id the server would have to
@@ -117,6 +118,20 @@ own reconnect, which exact-address matching does not.
 an operator copies. But `fa7f5108` exists because operators paste the
 `transport:ip:port-id` form, and that form no longer *is* a `RunnerID`. Keeping
 it working needs its own selector arm rather than a parse fallback.
+
+**D11**: a zero identity is an ABSENT one, and absorbing it is worse than
+refusing it. The board keys every ticket by (runner identity, task id) and
+`RegisterTask` overwrites, so two runners both claiming zero would share one key
+namespace: dispatching to the second invalidates the credential the first one's
+agent is holding. `NoIdentity` is the status because it is already classified
+RETRYABLE (`cli/persist.go`, `PskRejectedError.Retryable`), so the runner that
+sends a zero id — one built before the field existed — reconnects and self-heals
+once the pair is consistent, rather than exiting. That is the behaviour
+`d4f7a5a` established after a wire skew killed twelve slots, and it is the
+reason this change does not need its own compatibility story beyond restart
+order. `boardRegisterTask` refuses zero as well, so a path that ever bypasses
+the gate fails loudly instead of handing out a credential another dispatch will
+silently overwrite.
 
 **D8**: `runners map[string]*RunnerEntry` keyed by connection id is not the bug —
 it is the index of *live connections*, which is legitimately connection-scoped.
@@ -187,6 +202,32 @@ sites across five API methods for no gain.
 +    target :ConnID      # an UNREGISTERED runner: there is no identity yet (D4)
      via    :RunnerID    # a REGISTERED proxy runner, so identity (D5)
 ```
+
+### `agentboard/agentboard.bgn` — a second schema, easy to miss
+
+The board carries its OWN `RunnerID` format, address-shaped like the other one
+was, used by `from_runner_id` (the provenance the server stamps on every
+message) and `from_runner`:
+
+```diff
+-format RunnerID:
+-    transport_len :u8
+-    transport :[transport_len]u8
+-    ip_addr_len :u8
+-    ip_addr_len == 4 || ip_addr_len == 16
+-    ip_addr :[ip_addr_len]u8
+-    port :u16
+-    unique_number :u16
++format RunnerID:
++    id :[16]u8
+```
+
+Note its constraint excluded `ip_addr_len == 0`, unlike the protocol one, which
+is why `boardRunnerIDFromProto` needed a zero-length guard (`0fd8a79c`). Both
+the constraint and the guard go away here.
+
+`TrsfConnState` deliberately does NOT gain `principal_runner`: its rows already
+carry `cid`, which joins to the `ConnInfo` listing that has it.
 
 Unchanged and still `RunnerID`: `RunnerHelloResponse.your_runner_id`,
 `AgentInfo.runner_id`, `TaskInfo.assigned_to`, `RunnerSelector.by_runner_id`,

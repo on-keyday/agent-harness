@@ -118,7 +118,7 @@ func (s *Scheduler) Tick() {
 
 		// WorktreeDir is left empty here; it will be filled in by TaskStarted
 		// when the runner reports back that it has started the task.
-		s.store.Assign(task.ID, runner.ID, "", runner.SkillsInjected)
+		s.store.Assign(task.ID, runner.Identity, "", runner.SkillsInjected)
 		s.reg.BindTask(runner.ID, task.ID)
 	}
 }
