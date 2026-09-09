@@ -1,0 +1,530 @@
+# Holding a task across a DELIBERATE server restart — Design
+
+Status: design, not implemented.
+Prerequisite: `2026-09-09-runner-identity-decoupling-design.md`, landed
+(`0d02d851`…`7d312fd2`). That change is what makes this one possible; §1 of it
+states the dependency from the other side.
+
+Scope word used throughout: **hold**. A task is *held* when the server has told
+its runner, before going down on purpose, to keep the task's child process alive
+with no server to report to, and the runner has agreed. IN scope: the agent
+child process, its PTY or pipes, and the task's identity in the store. OUT of
+scope, stated here because the word could be read wider: exec runs, port
+forwards, file transfers, board tickets held by *clients*, and any client's seat
+in a session (§2).
+
+## 1. Problem
+
+A deliberate server restart kills every task in the fleet, and the adaptation
+has been to stop keeping sessions up at all.
+
+The mechanism, in the order it fires today:
+
+1. The operator stops the server (`SIGINT` / `SIGTERM` / the `--shutdown-file`
+   sentinel — `cmd/harness-server/main.go:46,116-125`). Connections come down.
+2. Each runner connection's teardown reaches `registry.OnRemove`, which calls
+   `failAndRevokeTasksOf` (`server/server.go:488-491`): every task active on
+   that runner is marked Failed and its agentboard registration revoked.
+3. On the runner, the per-connection `runCtx` is cancelled. Task contexts are
+   its children — `OnConnect` hands `runCtx` to `dispatchRunnerRequest`
+   (`runner/connect.go:480-491`), which reaches `handleAssign`, which derives
+   `taskCtx` from it (`runner/session.go:489-491`) — so every agent child gets
+   SIGTERM, then SIGKILL 5s later (`runner/process.go:150-182`).
+4. Independently of (3), an interactive session's child is reaped by
+   `exec.ExecuteCommand`'s own SIGHUP→SIGTERM→SIGKILL ladder when its stream
+   reaches EOF (`runner/session.go:611-624`). Two kill paths, not one.
+5. The runner process itself survives and re-dials (`--persist`,
+   `cmd/agent-runner/main.go:147-151`; backoff 500ms→30s, ±25% jitter,
+   `cli/persist.go:127-181`), and since the identity change it comes back under
+   the *same* `RunnerID`. It re-registers with nothing to do.
+6. On the next server start, replay rebuilds the store. A task that was assigned
+   and never finished replays as Running (`server/taskstore.go:835-848`), so
+   whether the operator sees a phantom Running row depends on (2)'s
+   `task_failed` having reached the log before `serve`'s deferred `wal.Close()`
+   ran (`server/server.go:681-685`) — an ordering this code does not currently
+   pin either way. Interactive survivors that were Detached are explicitly
+   Cancelled (`server/server.go:674-679`), because the `SessionMux` was in
+   memory.
+
+   That unpinned ordering is inherited, not introduced here, but the hold path
+   cannot leave it unpinned: §5 orders the hold writes ahead of any teardown
+   precisely because a `task_failed` racing a `task_held` decides the fate of a
+   live child.
+
+Everything in that list is correct for a *crash*. None of it distinguishes a
+crash from a restart the operator asked for, and the restart is the case worth
+money: it is planned, it is short, and the operator knows it is coming.
+
+## 2. Non-goals
+
+`Decided-by` in §3 says who chose; this section says what a later reader must
+not read into the change. These are v1 boundaries, not judgements that the ideas
+are wrong.
+
+- **Surviving a crash.** A server that dies without asking for a hold leaves
+  exactly today's behaviour: children killed, tasks Failed. This is the
+  load-bearing simplification (D1) and the reason the change has no fail-open
+  path.
+- **Restoring scrollback or terminal state.** The reattach byte ring and the
+  mode tracker are server-side (`server/mode_tracker.go:11-22`) and die with the
+  process. §6's resize nudge makes the child repaint; it does not reconstruct
+  history. Alt-screen residue after a reattach is already WONTFIX and stays so.
+- **Restoring client seats.** Cowrite/view seats, `--control` ownership and PTY
+  size ownership are rebuilt by the clients reconnecting and attaching again.
+  The server does not remember who was watching.
+- **Holding exec runs, port forwards or file transfers.** Each exists only for
+  the duration of a client's connection; their clients are gone too. They are
+  torn down at shutdown as they are today, and a held task comes back with none
+  of them.
+- **Holding across a runner restart.** Impossible by construction and
+  deliberately so: the identity is minted per process and never persisted, so a
+  restarted runner presents a different `RunnerID`, which IS the statement "my
+  children are gone" (identity spec D3).
+- **More than one server.** No handover to a *different* server process on
+  another host, no HA. The restarted server must find the same `--data-dir`.
+
+## 3. Decisions taken
+
+`Decided-by` is provenance, not emphasis. Only rows marked `operator` were
+settled by the operator; everything else is the author's call and can be argued
+with on its merits.
+
+| # | Decision | Decided-by |
+|---|---|---|
+| D1 | Only a DELIBERATE restart holds. A crash recovers nothing | operator |
+| D2 | The server explicitly asks the runner to hold, before it goes down | operator |
+| D3 | The runner hands the held state back on reconnect; the restarted server reconciles it against the WAL | operator |
+| D4 | The runner kills its children if it cannot reconnect within a window | operator |
+| D5 | The hold is a two-message exchange: the runner ACKs with the exact task set it will keep, and that ack is what the server persists | author |
+| D6 | Nothing in the runner's report grants authority. caps, scope, worktree, profile and args are re-derived from the WAL | author |
+| D7 | The report rides in `RunnerHello`, not in a message after the handshake | author |
+| D8 | One new WAL record, `task_held`, per held task. No runner-scoped record | author |
+| D9 | `TaskStatus` gains `held`, appended | author |
+| D10 | The window `T` is chosen by the SERVER and carried in the request | author |
+| D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
+| D12 | While held, the runner STOPS DRAINING the child's output. The kernel buffer is the gap buffer | author |
+| D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it | author — forced, see below |
+| D14 | After re-binding, the runner nudges the PTY size by one column to force a repaint | author |
+| D15 | A re-adopted interactive task lands in `Detached`; a oneshot lands in `Running` | author |
+| D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
+| D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
+
+**D1 is the whole design, not a scope cut.** An automatic hold — the runner
+noticing a drop and holding on its own — cannot distinguish a deliberate
+shutdown from a network partition to a server that is still running. In the
+partition case the live server has already failed those tasks via (2), so the
+runner would sit on children nobody will ever re-adopt. Requiring an explicit,
+authenticated instruction means the hold state is unreachable by accident, and
+the crash path keeps a behaviour that has been exercised for months.
+
+**D5 exists because the two ends know different halves.** The server knows which
+tasks it has recorded as assigned; only the runner knows whether each child is
+actually alive and whether it can keep it. Persisting the server's *intent*
+would record tasks the runner never held. Persisting the runner's *ack* records
+exactly the set that can come back. The cost is a round trip inside the
+shutdown path, bounded by D10's ack timeout.
+
+**D6 is the security half, and the WAL is what makes it free.** A runner holds
+the PSK, so a MAC over the token would prove nothing against the runner itself;
+the authority has to come from the server's own disk. It already does: a
+`task_assigned` record carries the assignee's identity hex
+(`server/taskstore.go:535`), and the WAL also holds `Capabilities`, `ScopeBase`,
+`ScopeIDs`, `ScopeOverrides`, `WorktreeDir`, `AgentProfile` and `ExtraArgs`
+(`server/wal.go:116-149`). So re-adoption needs nothing from the runner except
+"this task id, still alive", and a runner claiming a task assigned to another
+identity is refused by comparing against `task_held.runner_id`.
+
+**D7**: a report sent *after* the handshake would need the server to hold a
+window open before it may fail held tasks — a new timing dependency in exactly
+the code path where a missed window means a killed session. In the hello, the
+report arrives with the identity, at the identity gate, and registration and
+re-adoption are one decision. The cost is that `RunnerHello` changes shape,
+which is the wire-skew class that once killed twelve slots (Pitfall 10) — §8
+takes the same server-first rule as its prerequisite did.
+
+**D8**: `task_held` carries the task, the runner identity, the hold id and the
+deadline, so the server's intent, the runner's agreement and the expiry are one
+record. A separate runner-scoped record would have to be correlated back to the
+tasks on replay for no gain. Replay is order-sensitive, which resolves the
+awkward case by itself: if a shutdown writes `task_held` and the process then
+carries on and finishes the task, the later `task_finished` wins.
+
+**D11 answers the disagreement D4 creates.** If the server's re-adoption
+deadline outlives the runner's kill deadline, a re-adoption can name a child
+that is already dead. Making the report authoritative removes the ordering
+question entirely: the server never re-adopts a task the runner did not just
+say it was holding. The server's deadline stays as an upper bound for the case
+where the runner never comes back at all.
+
+**D12 is chosen against a ring buffer.** Options were: a bounded ring (drops
+oldest, needs a "N bytes dropped" marker on every surface, needs a size), a disk
+spill (needs a file, a cap and cleanup), or not reading. Not reading is the only
+one with nothing to size: the PTY or pipe buffer fills, the child blocks in
+`write`, and no byte is lost or invented. It is defensible *because* of D1 — a
+deliberate restart is seconds, and D4 kills the child if it turns out not to be.
+What it forbids is worth writing down: an agent that treats a stalled write as a
+fatal condition would die during the hold rather than block. This is measured
+per agent in §10, not assumed.
+
+**D13 is forced.** For an interactive task the SERVER creates the bidi stream
+and passes its id to the runner, which feeds it to `exec.ExecuteCommand`
+(`runner/session.go:611-624`). The stream is per-connection, so it cannot
+survive; the PTY behind it can. So re-adoption is necessarily "here is a new
+stream id, attach the thing you are already holding to it", which is a new
+server→runner request rather than anything the runner can initiate.
+
+**D14**: without the server-side ring there is nothing to replay into a
+reattaching client, so a re-adopted alt-screen TUI would show a blank or stale
+screen. A one-column resize makes the child redraw everything it knows about,
+which is the only mechanism that reaches a full-screen application. This
+project has repeatedly observed a resize repairing a session's appearance; the
+same lever is being pulled deliberately here.
+
+**D15**: a re-adopted interactive task has a live child and no client, which is
+what `Detached` means. It must not be re-adopted into `Running` — that would
+claim a client is attached — and the startup sweep that Cancels Detached
+survivors (`server/server.go:674-679`) must not see it before re-adoption,
+which it will not: replay puts it in `held`, a status that sweep does not match.
+
+## 4. Wire changes — all of them, in one place
+
+```diff
+ enum TaskStatus:
+     :u8
+     Queued
+     Running
+     Succeeded
+     Failed
+     Cancelled
+     Detached
++    # A deliberate server shutdown asked this task's runner to keep its child
++    # alive with no server to report to, and the runner agreed. Alive, no
++    # server-side session state. Ends as Running/Detached (re-adopted), Failed
++    # (the runner did not come back with it, or the deadline passed) or
++    # Cancelled (the operator said so while it was held).
++    Held
+
++# HoldID names ONE shutdown's hold. Echoed by the runner on reconnect and
++# recorded in the WAL beside every task it covers, so a report can be matched
++# against the shutdown that authorised it rather than against a task list alone.
++format HoldID:
++    id :[16]u8
+
++# HeldTask is one task id in a hold exchange. A format rather than a bare
++# TaskID list so a later field (a child pid, a byte count) has somewhere to go.
++format HeldTask:
++    task_id :TaskID
+
++# --- server → runner, RunnerRequestType.hold_tasks ---
++# Sent to every registered runner as the FIRST step of a deliberate shutdown,
++# before any connection is torn down. Not sent on a crash — there is nothing to
++# send it from, which is the point (D1).
++format HoldTasksRequest:
++    hold_id :HoldID
++    # How long the runner keeps its children alive with no server. The server
++    # owns this value so one operator setting governs the whole fleet; the
++    # runner enforces it on its own monotonic clock, so no clocks are compared.
++    hold_ms :u32
+
++# --- runner → server, RunnerMessageType.hold_tasks_ack ---
++# The exact set of tasks whose children this runner commits to keeping. The
++# server persists THIS, not what it asked for (D5). An empty list is a valid
++# ack: the runner had nothing to hold.
++format HoldTasksAck:
++    hold_id :HoldID
++    tasks_len :u16
++    tasks :[tasks_len]HeldTask
+
++# HeldTasksReport rides in RunnerHello: what this runner process is still
++# holding from the hold named by hold_id. tasks_len == 0 with a zero hold_id is
++# the normal case for every reconnect that follows no hold.
++format HeldTasksReport:
++    hold_id :HoldID
++    tasks_len :u16
++    tasks :[tasks_len]HeldTask
+
+ format RunnerHello:
+     version :u8
+     runner_id :RunnerID
+     ...
+     agent_profiles_len :u8
+     agent_profiles :[agent_profiles_len]AgentProfileName
++    # Appended at the END: what this process still holds (D7). The server reads
++    # it at the identity gate, so registration and re-adoption are one step.
++    held :HeldTasksReport
+
+ enum RunnerRequestType:
+     :u8
+     ...
+     trsf_state
++    hold_tasks        # keep your children alive, I am going down on purpose
++    rebind_session    # attach a held task's live PTY to a new stream (D13)
+
+ enum RunnerMessageType:
+     :u8
+     ...
+     trsf_state_response
++    hold_tasks_ack    # the exact set I will keep
+
++# --- server → runner, RunnerRequestType.rebind_session ---
++# Re-adoption of an INTERACTIVE task: the server has created a fresh bidi
++# stream and the runner must splice the PTY it is already holding onto it. The
++# oneshot path needs no rebind — its output goes to the log topic, which is
++# addressed by task id and not by a stream.
++format RebindSessionRequest:
++    task_id :TaskID
++    stream_id :u64
+```
+
+WAL — one new record type, written by the shutdown path and read by replay:
+
+```
+{"type":"task_held","task_id":<hex>,"runner_id":<identity hex>,
+ "hold_id":<hex>,"hold_deadline_ns":<int64>,"ts":<int64>}
+```
+
+`WALEvent` gains `HoldID string` and `HoldDeadlineNs int64`; the shadow struct
+`walEventJSON` gains both, or `TestWALEventJSONRoundTripCopiesEveryField` fails
+(`server/wal.go:129-131` says why that test exists). `RunnerID` on this record
+holds the identity hex, the same form `task_assigned` writes since
+`server/taskstore.go:535`.
+
+**The disk axis, stated deliberately.** The prerequisite change lost the whole
+task history by treating a persisted format as a wire format
+(`RunnerSelector` in the WAL), so this spec names what is being written to disk
+and what an older binary does with it. `task_held` is a new `type` string;
+replay switches on `ev.Type` with no default arm (`server/restore.go:86-101`,
+`server/taskstore.go:835-899`), so a rollback to a binary that predates it
+ignores the record and replays the task as Running from its `task_assigned` —
+a phantom Running row, not a corrupt file, and `prune` clears it. No field on an
+existing record changes meaning, and nothing wire-encoded is persisted, so the
+class of failure that cost the history here cannot recur through this change.
+`TestOnlySelectorEmbedsAWireFormatInTheWAL` keeps that true.
+
+## 5. Server
+
+**Shutdown, in order.** The hold is the first thing a deliberate shutdown does
+and it happens inside `serve`, before the deferred `wal.Close()`
+(`server/server.go:681-685`) can run:
+
+1. `--hold-window` is 0 → skip everything below and shut down as today. **The
+   flag's default is `90s`, i.e. the feature is ON with no argv change**, and
+   that default is load-bearing rather than a preference: the deployed restart
+   procedure is `scripts/restart.py harness-server`, which reads the running
+   process's argv and replays it, so a flag nobody has typed yet can only take
+   effect through its default. Enabling it by argv instead would mean every
+   restart until someone passed `scripts/restart.py harness-server
+   --hold-window 90s` behaved as though the change had not landed.
+2. Mint one `HoldID`. Send `HoldTasksRequest{hold_id, hold_ms}` to every
+   registered runner.
+3. Collect acks, bounded by `--hold-ack-timeout` (default `3s`). A runner that
+   does not ack in time holds nothing: its tasks take the normal path.
+4. For every task in an ack, write `task_held` and move the store to `Held`.
+5. **Suppress `failAndRevokeTasksOf` for held tasks** for the rest of the
+   process's life. This is the single most important line in the change: the
+   teardown in step 6 fires `registry.OnRemove` for every runner
+   (`server/server.go:488-491`), and without the suppression the WAL ends with
+   `task_failed` after `task_held` — replay is order-sensitive, so the hold
+   would be silently undone and the children left orphaned. The board
+   registration must NOT be revoked either: revoking it is what makes a
+   surviving agent's credential invalid, and keeping the agent's credential
+   valid across the restart is the reason the identity work was done.
+6. Tear down connections and exit as today.
+
+**Startup.** After `ReplayEvents`:
+
+- A task whose last record is `task_held` is `Held`, carrying its `hold_id`,
+  `runner_id` and `hold_deadline_ns` in memory.
+- If `now > hold_deadline_ns`, it is Failed immediately with
+  `reason="hold_expired"` — the restart took longer than the window the runner
+  was given, so its child is already dead by D4.
+- The Detached→Cancel sweep (`server/server.go:674-679`) is untouched: a held
+  task is not Detached.
+- A sweeper fails any task still `Held` when its deadline passes.
+
+**Re-adoption**, at the identity gate, in the same step as registration:
+
+- For each `HeldTask` in the hello's report, re-adopt iff a `Held` task exists
+  with that id AND `hold_id` matches AND `runner_id` equals the identity in the
+  hello. Otherwise refuse that entry.
+- Every `Held` task belonging to that identity and NOT in the report is Failed
+  with `reason="not_held_by_runner"` (D11).
+- Re-adopted tasks: `Registry.BindTask` for capacity (D16), board
+  `RegisterTask` under (identity, task id) so the agent's existing ticket
+  validates, status → `Detached` for interactive / `Running` for oneshot (D15),
+  and a `task_readopted` WAL record for the audit trail.
+- Refused entries are reported back so the runner can kill those children
+  (§6). The refusal is per task, not per hello: a runner reporting one stale
+  task still registers and keeps the rest.
+- A task the operator Cancelled while it was held is not `Held` any more, so it
+  is refused by the same rule — no special case.
+
+## 6. Runner
+
+- **Task contexts move above the connection.** `handleAssign` currently derives
+  `taskCtx` from the dispatch ctx, which is the per-connection `runCtx`
+  (`runner/connect.go:480-491`, `runner/session.go:489-491`). It must derive
+  from a process-level ctx instead, and the runner must cancel every task ctx
+  explicitly on disconnect **unless a hold is armed**. Today's behaviour becomes
+  the else branch of one visible decision rather than a side effect of context
+  parentage.
+- **The second kill path must be suppressed too.** An interactive child is also
+  reaped by `exec.ExecuteCommand`'s SIGHUP→SIGTERM→SIGKILL ladder when its
+  stream hits EOF (`runner/session.go:611-624`). Fixing only the ctx leaves the
+  child dying anyway, from a mechanism whose comment describes it as detach
+  handling. While a hold is armed, stream EOF must detach the splice and leave
+  the PTY open.
+- **Stop draining (D12).** For an interactive task, stop copying from the PTY
+  master and do not close it. For a oneshot, the sink that receives decoded
+  stdout lines blocks instead of dropping them, which pushes back through
+  `os/exec`'s copier into the pipe. Neither path may close its fd: closing the
+  PTY master delivers SIGHUP and kills exactly the child being preserved.
+- **The window is the server's (D10).** Arm a monotonic timer for `hold_ms` on
+  receipt. On expiry, kill every held child by the normal ladder and forget the
+  hold. Also kill immediately when the server refuses a reported task, and when
+  the reconnect ends in a non-retryable PSK rejection (there is no server that
+  will ever adopt them).
+- **Report on every reconnect.** The report is in `RunnerHello`, so it goes out
+  with the identity. Nothing held → zero-length list and a zero `hold_id`.
+- **Re-bind and repaint.** On `RebindSessionRequest`, splice the held PTY onto
+  the new stream, then resize the PTY by one column and back (D14) so a
+  full-screen agent repaints. Resume draining in the same step.
+- The identity must NOT change across any of this — it is minted once per
+  process above `PersistLoop` (`cmd/agent-runner/main.go:438-439`), and a
+  held-task report from a new identity is refused by §5's rule, correctly.
+
+## 7. Surface matrix
+
+Walked against the `surface-parity-checklist` numbering; the numbers are what
+the implementation's own walk must return a verdict for.
+
+| # | Surface | Change |
+|---|---|---|
+| 11 | `ls` text rows | `status=held` renders; no new column |
+| 12 | `ls --json` | `status` carries `held`; `held_until` (RFC3339) and `hold_id` added, never elided |
+| 16 | TUI task table | `held` in the status cell, with its own colour — not the Failed colour |
+| 17 | TUI task detail (`d`) | `held until …` line, plus the runner identity it is held by |
+| 19 | TUI picker rows | `held` is a status a picker row can show |
+| 20 | WebUI task row meta | `held` in the status chip |
+| 21 | WebUI task detail sheet | `held until …` |
+| 23 | wasm snapshot | `held` label AND the raw deadline, per item 22's raw-value rule |
+| 24 | `cancel` on a held task | Cancels in the store; the child dies when the runner is refused at re-adoption. Written down because "cancel" on a task with no live runner connection is a path with its own meaning |
+| 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence |
+| 35 | `README.md` | the two server flags, and one paragraph stating that a CRASH recovers nothing |
+| 37 | This spec | an Amendment section if the shipped behaviour differs |
+| — | Server flags | `--hold-window`, `--hold-ack-timeout`. Not verb-table surfaces (item 1 does not reach server flags), so they need the README and the runner-up preset docs instead |
+
+Deliberate omissions, recorded as omissions rather than left silent:
+
+- `ls` text rows get no `held_until` column (item 11) — the row is
+  over-subscribed and the status word plus `--json`/detail carry it. Item 31's
+  rule is about hiding a value because of what it IS; this is a column that does
+  not exist on any row, which is a different axis.
+- No new `RunnerInfo` field (items 18/18a): a runner is not registered during
+  the interesting interval, so there is nothing for a runner row to show.
+- Live screen panes (item 38) are unchanged: a held task has no live screen, and
+  after re-adoption it has an ordinary one.
+
+## 8. Rollout
+
+`RunnerHello` gains a field, so this is the same class of change as
+`d4f7a5a`/Pitfall 10. Appending at the END of the hello means an old server hits
+a decode failure and answers `NoIdentity`, which is retryable — a skew costs
+reconnects, not a wipe — but the order still matters.
+
+The deployed procedure, in order:
+
+1. On the server host: `make build`, **then** `scripts/restart.py
+   harness-server`. Build before restart, not after — this is the existing
+   operation and it is what makes the new binary the one that comes up.
+2. Then the runner fleet: `scripts/build_and_restart_all.py`.
+
+Two consequences of `restart.py` replaying the running process's argv:
+
+- Any flag this change adds must work from its default (§5 step 1), because the
+  restart inherits an argv typed before the flag existed. A flag that must be
+  set explicitly needs `scripts/restart.py harness-server --hold-window …`, and
+  that is a manual step the procedure does not currently include.
+- The old process performs its own shutdown. So **the restart that lands this
+  change holds nothing**: the binary executing the shutdown path predates the
+  hold request, and the runners in the fleet at that moment do too. Expect
+  exactly today's behaviour on that one restart, and do not read it as the
+  feature failing. The first restart that can hold anything is the one after the
+  fleet is back on the new binary.
+
+Also:
+
+- `scripts/wire-skew-check.sh` must be run and must show reject-then-heal in
+  both directions.
+- Rollback: a binary that predates `task_held` ignores the record and shows
+  phantom Running rows for whatever was held (§4). `prune` clears them.
+
+## 9. What could go wrong
+
+1. **Only the ctx path is fixed.** `exec.ExecuteCommand`'s EOF ladder kills the
+   child anyway (§6). Presents as: the hold exchange works, the WAL says
+   `task_held`, the runner reports the task on reconnect — and the child is gone.
+   This is the single easiest way to ship a change that looks correct.
+2. **A pump closes the PTY master on write error.** Same symptom as (1) via
+   SIGHUP, from the drain side rather than the reap side.
+3. **`failAndRevokeTasksOf` not suppressed** (§5 step 5) → `task_failed` after
+   `task_held` → replay undoes the hold and the children are orphaned for the
+   full window with nobody to adopt them. Worse than a plain failure, because
+   the runner still believes it is holding.
+4. **The runner process dies during the hold.** Nothing then reaps its children:
+   they were setsid'd out of the runner's control group deliberately
+   (`3ce441c`), and whether a claude child exits when its PTY master closes is
+   agent- and OS-dependent — this project has seen an agent survive a stdin EOF
+   on Windows. This hole is NOT closed by this design; the window it opens is
+   `hold_ms` wide. Closing it needs the held child's pid recorded where the next
+   runner process in the same slot can reap it, which is deliberately left out
+   of v1 and named here so it is not discovered as a surprise.
+5. **An agent that dies on a stalled write** (D12's forbidden case). Measured
+   per agent in §10; if one turns out to behave this way, the answer is a disk
+   spill for that agent, not a ring for everyone.
+6. **A held task re-adopted onto a dead child.** Prevented by D11, and the
+   failure mode if D11 is implemented as "trust the WAL" instead is a phantom
+   Running task nobody can attach to.
+7. **The shutdown does not actually exit** after writing `task_held`. Replay is
+   order-sensitive, so whatever the still-live server writes afterwards wins;
+   the hold records are then stale rather than wrong. Accepted.
+8. **Board registration revoked at shutdown despite the hold.** The agent
+   survives with a credential that no longer validates, which presents as
+   `UnknownTask` from a live agent — the exact symptom the identity work was
+   done to remove, arriving from the other end.
+
+## 10. Testing
+
+- Unit: the ack→`task_held` write; replay of `task_held` into `Held`; deadline
+  already passed at startup → Failed; re-adoption accept/refuse across the three
+  match conditions (id, `hold_id`, identity); a `Held` task absent from the
+  report → Failed; capacity re-bound after re-adoption; the suppression in §5
+  step 5 (a teardown after a hold must not write `task_failed`); an unknown WAL
+  `type` is ignored, pinned so the rollback claim in §4 is measured rather than
+  asserted.
+- `scripts/wire-skew-check.sh` — reject-then-heal, both directions.
+- Live, on `scripts/dummy-harness.sh`, because nothing above crosses a process
+  boundary. The parser and key-dispatch layers are also only reachable this way
+  (Pitfall 13), so the status must be read through the real command lines:
+  1. An interactive session with a live child. Restart the server deliberately.
+     The child must still be the same process (compare pids), the task must
+     report `held` between the two servers and `detached` after, and the screen
+     must come back on reattach — which is D14's only proof.
+  2. A oneshot mid-run across the same restart: its exit code must arrive, and
+     the log must have no hole where the gap was (D12 claims no loss, so a
+     missing chunk falsifies it).
+  3. **The negative control: `kill -9` the server.** Children must die and tasks
+     must be Failed, exactly as today. A hold that survives a crash means the
+     instruction is not what armed it.
+  4. `hold_ms` elapsing with no server: the children must be gone, and the next
+     server start must Fail those tasks rather than offer them.
+  5. A task Cancelled while held: refused at re-adoption, child killed.
+  6. A runner PROCESS restart during the hold: the new identity must be refused
+     and nothing re-adopted (and note (4) above — its children are the orphans
+     §9.4 describes).
+- Per-agent: D12's stall behaviour for claude, codex and agy. An agent that
+  cannot block on write is a fact about that agent, and it belongs in the table
+  before the design leans on it.
+- Windows is a separate pass: the ConPTY path, the resize nudge and the two kill
+  paths are all platform-specific there, and the runner's own handshake
+  (`sendRunnerMergedHandshake`) is a distinct code path from the client's.
