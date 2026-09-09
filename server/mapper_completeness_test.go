@@ -80,6 +80,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		IsAttached:      true,
 		SkillsInjected:  true,
 		RingBufferBytes: 4096,
+		HoldDeadline:    now.UnixNano(),
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{

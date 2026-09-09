@@ -294,6 +294,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
 		reg:            cfg.Tasks,
+		processCtx:     cfg.ProcessCtx,
 		AllowedRoots:   cfg.AllowedRoots,
 		Profiles:       cfg.Profiles,
 		ServerCID:      serverCID,
@@ -608,11 +609,21 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		// that reaches a task cancelled while it was held, since CancelTask
 		// can never be delivered to one.
 		if session.reg.holdArmed() {
-			accepted := make(map[string]bool, len(rhr.Accepted))
-			for _, t := range rhr.Accepted {
-				accepted[hex.EncodeToString(t.Id[:])] = true
+			// Declined means the server did not look at the report at all —
+			// it is shutting down and its answer says nothing about what to
+			// keep. Treating that empty list as a refusal would kill the
+			// children this hold exists to preserve, which is what happened
+			// on a dummy instance before this branch existed: the runner
+			// reconnected to the DYING server inside its first backoff.
+			if rhr.Declined() {
+				session.logger().Info("hold: the server declined to reconcile (it is going down); keeping the children and waiting for the next one")
+			} else {
+				accepted := make(map[string]bool, len(rhr.Accepted))
+				for _, t := range rhr.Accepted {
+					accepted[hex.EncodeToString(t.Id[:])] = true
+				}
+				session.reg.killHeldExcept(accepted, session.logger())
 			}
-			session.reg.killHeldExcept(accepted, session.logger())
 		}
 	case protocol.RunnerRequestType_HoldTasks:
 		ht := req.HoldTasks()

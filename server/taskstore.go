@@ -733,6 +733,20 @@ func (s *TaskStore) SetDetached(id string) error {
 	return nil
 }
 
+// CountByStatus is how many tasks are in one status right now. Used by the
+// shutdown path to tell "the hold already ran" from "nobody has run one".
+func (s *TaskStore) CountByStatus(st protocol.TaskStatus) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, t := range s.tasks {
+		if t.Status == st {
+			n++
+		}
+	}
+	return n
+}
+
 // FailHeld ends a hold by failing the task, and is the only path that may.
 // MarkFailed refuses a Held task on purpose (see its switch), so this exists to
 // be the small, greppable set of callers entitled to do it:

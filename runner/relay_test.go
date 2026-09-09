@@ -221,3 +221,39 @@ func TestRelayParksOnlyWhileHeld(t *testing.T) {
 		t.Error("Write never unparked after the rebind")
 	}
 }
+
+// A dying trsf stream can return buffered bytes TOGETHER with the error. While
+// held, the error must be swallowed and the bytes delivered: the caller is a
+// frame decoder, and an error mid-header ends its loop, closes agentexec's
+// stdin pipe and fires the reaper ladder at the child. This is the bug that
+// killed every held session, and it was invisible — the exec call stays parked
+// in its other goroutines, so nothing is ever reported.
+func TestRelaySwallowsAnErrorThatArrivesWithBytesWhileHeld(t *testing.T) {
+	far := &partialFar{data: []byte("hdr")}
+	r := newSessionRelay(far, func() bool { return true })
+
+	buf := make([]byte, 8)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("Read returned %v with bytes in hand — the frame decoder would abort", err)
+	}
+	if string(buf[:n]) != "hdr" {
+		t.Errorf("read %q, want the buffered bytes", buf[:n])
+	}
+}
+
+// partialFar returns its bytes and an error in the SAME call, once.
+type partialFar struct {
+	trsfStub
+	data []byte
+	done bool
+}
+
+func (f *partialFar) Read(p []byte) (int, error) {
+	if f.done {
+		return 0, io.EOF
+	}
+	f.done = true
+	return copy(p, f.data), io.ErrUnexpectedEOF
+}
+func (f *partialFar) Write(p []byte) (int, error) { return len(p), nil }

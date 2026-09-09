@@ -322,6 +322,14 @@ format RunnerHelloResponse:
     # not registered, which is every moment a task spends in Held.
     accepted_len :u16
     accepted :[accepted_len]TaskID   # ids only -- the ticket is not echoed
+    # declined says this server did not RECONCILE the report at all, because it
+    # is itself shutting down. Without it an empty accepted list is ambiguous
+    # between "nothing of yours survives" and "nobody looked", and the runner
+    # acts on that list by killing children: a runner whose link drops during a
+    # shutdown reconnects inside its first backoff, and the dying server would
+    # otherwise answer with an empty list it never computed.
+    declined :u1
+    reserved2 :u7
 
 format TaskAccepted:
     task_id :TaskID

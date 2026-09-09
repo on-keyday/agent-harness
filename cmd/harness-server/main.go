@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -121,10 +123,42 @@ func main() {
 	// Go default handler. SIGTERM is a no-op on Windows; daemon.py uses
 	// TerminateProcess there, which is unsignalable from user space —
 	// the sentinel-file watcher started below covers that gap.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// The shutdown is TWO steps, and the order is the whole reason this is not
+	// signal.NotifyContext any more.
+	//
+	// Cancelling the root context tears down the WebSocket/UDP endpoint with
+	// everything else, so a hold exchange started after the cancel has no
+	// sockets left to talk over: measured on a dummy instance, the runner
+	// received the request, armed correctly, and its ack reached a server whose
+	// transport was already gone ("hold: no ack in time"). The runner then
+	// reconnected, was told its report was refused, and killed the child —
+	// every downstream piece behaving correctly on a failed exchange.
+	//
+	// So: run the hold FIRST, with the fleet still connected, and cancel
+	// afterwards. holdThenCancel is what both triggers go through.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var holdOnce sync.Once
+	holdRef := &atomic.Pointer[server.Server]{}
+	holdThenCancel := func() {
+		holdOnce.Do(func() {
+			if srv := holdRef.Load(); srv != nil {
+				if held := srv.RunHoldSequence(); held > 0 {
+					slog.Info("shutdown: tasks held for the next server", "count", held)
+				}
+			}
+		})
+		cancel()
+	}
 
-	cli.WatchShutdownFile(ctx, *shutdownFile, cancel, 250*time.Millisecond, slog.Default())
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		holdThenCancel()
+	}()
+
+	cli.WatchShutdownFile(ctx, *shutdownFile, holdThenCancel, 250*time.Millisecond, slog.Default())
 
 	resolvedPSKVal := *psk
 	if resolvedPSKVal == "" {
@@ -200,6 +234,11 @@ func main() {
 	})
 	defer board.Close()
 	s.SetBoard(board)
+
+	// Publish the server to the shutdown path now that it exists. A signal
+	// arriving before this point finds nil and simply cancels, which is the
+	// right answer: there is nothing running to hold.
+	holdRef.Store(s)
 
 	// Debug: SIGUSR1 (Unix) dumps every connection's trsf internal state.
 	installTrsfDump(s)

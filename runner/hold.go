@@ -303,19 +303,31 @@ func (s *Session) handleHoldTasks(req *protocol.HoldTasksRequest) {
 	// the server writing task_held for children that do not exist.
 	ids := s.reg.liveHeldTasks()
 
-	// Stop draining before the ack. Each relay parks its reads and retains
-	// what it cannot forward, so the PTY buffer fills behind it and nothing is
-	// dropped; the kernel is the gap buffer.
+	// ARM FIRST, THEN DETACH. This order is not cosmetic and the other one is
+	// not merely racy — it fails every time.
+	//
+	// detach() wakes whatever is parked in the relay, and the relay decides
+	// between "gap" and "end" by asking whether a hold is armed. Detaching
+	// before arming therefore wakes the frame reader into a window where
+	// far == nil and holdArmed() is still false, so it takes the END branch
+	// and returns io.EOF. That return closes agentexec's stdin pipe, which
+	// ends io.Copy(pty, pipeOut), which fires its SIGHUP -> SIGTERM -> SIGKILL
+	// ladder at the child. Measured on a dummy instance: the server armed, the
+	// runner logged "leaving children alive", and the child was dead before
+	// the next sample.
+	s.reg.arm(req.HoldId, window, ids, func() {
+		// The window passed with no server coming back.
+		s.reg.killAllHeld(s.logger())
+	})
+
+	// Now stop draining. Each relay parks its reads and retains what it cannot
+	// forward, so the PTY buffer fills behind it and nothing is dropped; the
+	// kernel is the gap buffer.
 	for _, id := range ids {
 		if e, ok := s.reg.get(id); ok && e != nil && e.relay != nil {
 			e.relay.detach()
 		}
 	}
-
-	s.reg.arm(req.HoldId, window, ids, func() {
-		// The window passed with no server coming back.
-		s.reg.killAllHeld(s.logger())
-	})
 
 	var m protocol.RunnerMessage
 	m.Kind = protocol.RunnerMessageType_HoldTasksAck

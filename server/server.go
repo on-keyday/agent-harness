@@ -134,6 +134,22 @@ type Server struct {
 	holdRespMu sync.Mutex
 	holdRespCh map[string]chan protocol.HoldTasksAck
 
+	// stopAccepting closes the listeners without touching live connections.
+	// The hold sequence calls it the moment it has its acks, and that timing
+	// is load-bearing: a runner whose link drops mid-sequence reconnects
+	// within its first backoff (500ms), and if this server is still listening
+	// it will register that runner, run re-adoption against a store it is
+	// about to abandon, and answer with an accepted list the runner then acts
+	// on — killing exactly the children it just promised to keep. Closing the
+	// door first makes the reconnect fail and retry until the NEXT server is
+	// up, which is the only server that can honour the report.
+	stopAcceptingMu   sync.Mutex
+	stopAcceptingFn   func()
+	stopAcceptingOnce sync.Once
+	// shuttingDown is set once the hold has run. A runner that still gets in
+	// must not have its held tasks reconciled by this server.
+	shuttingDown atomic.Bool
+
 	// trsfRespCh correlates a runner's trsf_state answer with the caller
 	// waiting for it, keyed by the request_id that went out.
 	trsfRespMu sync.Mutex
@@ -333,6 +349,16 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnTrsfStateResponse = s.deliverRunnerTrsfStateResponse
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
+		if s.shuttingDown.Load() {
+			// This server is on its way out and has already handed its held
+			// tasks to the log. Reconciling them here would fail tasks the
+			// NEXT server is supposed to re-adopt, and the accepted list this
+			// would return is what the runner uses to decide which children
+			// to kill. Say nothing at all.
+			s.cfg.Logger.Info("readopt: declining, this server is shutting down",
+				"runner", identity.Hex(), "reported", len(report.Tasks))
+			return ReadoptResult{Declined: true}
+		}
 		res := s.readoptHeldTasks(identity, report)
 		// Rebinding needs a fresh session stream per task, which is the
 		// server's move to make, not the runner's — see rebindHeldSessions.
@@ -899,6 +925,11 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		shutdownCancel()
 		<-serverDone
 	}
+	// The hold sequence shuts the door mid-flight: once it has its acks, a
+	// runner reconnecting to THIS server would be reconciled against a store
+	// it is about to abandon. Registered rather than only deferred so
+	// closeListeners can reach it.
+	s.SetStopAccepting(shutdownHTTP)
 
 	// waitConns blocks (with a bound) for in-flight handleConnection goroutines
 	// to finish their deferred trsf.SendClose+50ms-drain+Close so peers learn
@@ -923,13 +954,20 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	for {
 		select {
 		case <-ctx.Done():
-			// A DELIBERATE shutdown: ask every runner to keep its children,
-			// record what it agreed to, and only then let the sessions and the
-			// connections go. RunHoldSequence uses its own context because
-			// this one is already cancelled — both triggers (SIGTERM and the
-			// --shutdown-file watcher) cancel exactly this.
-			if held := s.RunHoldSequence(); held > 0 {
-				s.cfg.Logger.Info("shutdown: tasks held for the next server", "count", held)
+			// The hold has already run, BEFORE this cancellation, in the
+			// signal path (cmd/harness-server/main.go). It has to: cancelling
+			// this context tears down the endpoint, so an exchange started
+			// here talks over sockets that are already gone — measured, and it
+			// looked exactly like a working hold on the runner side right up
+			// to "no ack in time" on this one.
+			//
+			// RunHoldSequence is idempotent enough for a caller that arrives
+			// here without one having run (an embedded server, a test), so it
+			// stays reachable as the fallback rather than being removed.
+			if s.tasks.CountByStatus(protocol.TaskStatus_Held) == 0 {
+				if held := s.RunHoldSequence(); held > 0 {
+					s.cfg.Logger.Info("shutdown: tasks held for the next server", "count", held)
+				}
 			}
 			sessionsCancel()
 			shutdownHTTP()

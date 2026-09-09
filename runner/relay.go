@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/on-keyday/objtrsf/trsf"
@@ -55,6 +56,20 @@ type sessionRelay struct {
 	// end of the session otherwise. Parking unconditionally hung every
 	// ordinary session teardown.
 	held func() bool
+
+	// log names which branch a gap took. The failure this instruments is
+	// silent by construction: agentexec stays parked in its other goroutines,
+	// so a relay that ends a session reports nothing anywhere.
+	log *slog.Logger
+	// task identifies the session in those lines.
+	task string
+}
+
+func (r *sessionRelay) logf(msg string, args ...any) {
+	if r.log == nil {
+		return
+	}
+	r.log.Info("relay: "+msg, append([]any{"task", r.task}, args...)...)
 }
 
 func (r *sessionRelay) isHeld() bool { return r.held != nil && r.held() }
@@ -66,6 +81,13 @@ var _ trsf.BidirectionalStream = (*sessionRelay)(nil)
 
 func newSessionRelay(far trsf.BidirectionalStream, held func() bool) *sessionRelay {
 	return &sessionRelay{far: far, wake: make(chan struct{}), held: held}
+}
+
+// withLog attaches the observability the silent-failure mode demands.
+func (r *sessionRelay) withLog(log *slog.Logger, task string) *sessionRelay {
+	r.log = log
+	r.task = task
+	return r
 }
 
 // rebind points the relay at a new far stream and wakes anything parked.
@@ -108,18 +130,35 @@ func (r *sessionRelay) Read(p []byte) (int, error) {
 				// No hold: there is nothing to wait for and the session is
 				// over. Surfacing EOF is what lets agentexec's ladder reap
 				// the child, which is the correct end of an ordinary session.
+				r.logf("read: ENDING the session (no far stream, no hold)")
 				return 0, io.EOF
 			}
+			r.logf("read: parking (no far stream, hold armed)")
 			<-wake
 			continue
 		}
 		n, err := far.Read(p)
-		if err == nil || n > 0 {
+		if err == nil {
 			return n, err
 		}
 		if !r.isHeld() {
+			r.logf("read: ENDING the session (far error, no hold)", "err", err, "n", n)
 			return n, err // an ordinary end: pass it through unchanged
 		}
+		// Held, and the far side errored. A dying trsf stream can hand back
+		// buffered bytes TOGETHER with the error, and the caller here is a
+		// frame decoder: give it the bytes and swallow the error, or its
+		// io.ReadFull fails mid-header, handleInput returns, agentexec's stdin
+		// pipe closes, and its SIGHUP -> SIGTERM -> SIGKILL ladder reaps the
+		// child. That is what killed every held session before this branch
+		// existed — and it never showed up as an error anywhere, because
+		// ExecuteCommandWithOption stays parked in the other goroutines and so
+		// no TaskFinished is ever sent.
+		if n > 0 {
+			r.logf("read: swallowed an error that came with bytes", "err", err, "n", n)
+			return n, nil
+		}
+		r.logf("read: far stream errored while held; dropping it", "err", err)
 		// A hold is armed, so the far side dying is a GAP. Drop it and park
 		// for the rebind rather than surfacing an error the reaper watches.
 		r.mu.Lock()
@@ -150,8 +189,10 @@ func (r *sessionRelay) Write(p []byte) (int, error) {
 	if far == nil {
 		if !r.isHeld() {
 			r.mu.Unlock()
+			r.logf("write: ENDING the session (no far stream, no hold)")
 			return 0, io.ErrClosedPipe // an ordinary end, reported as one
 		}
+		r.logf("write: parking, retaining the chunk", "bytes", len(p))
 		// Bounded by one chunk per gap: the drain stops after this, because
 		// agentexec's copier blocks on the next Write until a rebind.
 		if r.pending == nil {

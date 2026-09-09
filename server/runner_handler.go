@@ -186,6 +186,11 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		// kills children (loud, recoverable) instead of stranding them
 		// (silent). It is also the only channel that reaches a task cancelled
 		// while it was held.
+		// Declined: this server did not reconcile the report (it is shutting
+		// down), so the empty accepted list below must not be read as "none
+		// of yours survives". The runner keeps its children and waits for the
+		// next server.
+		resp.SetDeclined(readopted.Declined)
 		if !resp.SetAccepted(readopted.Accepted) {
 			slog.Error("RunnerHandler: accepted list too long for the response",
 				"runner", runnerID, "count", len(readopted.Accepted))

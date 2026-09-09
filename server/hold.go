@@ -96,6 +96,15 @@ func (s *Server) RunHoldSequence() int {
 		return 0
 	}
 	log := s.cfg.Logger
+	// Set BEFORE anything goes out, not after the acks come back.
+	//
+	// The window that matters is between a runner arming its hold and this
+	// server writing task_held: in it the tasks are still Running, so a
+	// reconnecting runner's report is refused as "not held" and the empty
+	// accepted list it gets back reads as "none of yours survives" — and it
+	// kills the children. Marking the whole sequence is what makes the answer
+	// "nobody looked" for its entire duration.
+	s.shuttingDown.Store(true)
 	ackTimeout := s.cfg.HoldAckTimeout
 	if ackTimeout <= 0 {
 		ackTimeout = defaultHoldAckTimeout
@@ -249,7 +258,38 @@ func (s *Server) RunHoldSequence() int {
 	}
 	log.Info("hold: armed", "hold_id", holdHex, "tasks", held,
 		"window", s.cfg.HoldWindow, "deadline_ns", deadline)
+
+	// LAST, not earlier. Closing the door goes through httpServer.Shutdown,
+	// which waits out the connection grace period and then blocks on the serve
+	// loop — so calling it mid-sequence swallowed the rest of the shutdown
+	// budget and the process exited before a single task_held was written.
+	// Measured: a WAL holding only task_created and task_assigned, a task that
+	// replayed as an ordinary interrupted one, and a child the runner had
+	// faithfully kept alive with nobody left to claim it.
+	//
+	// A runner that reconnects during the writes above is covered by the
+	// declined bit instead, which is the case that field exists for.
+	s.closeListeners()
 	return held
+}
+
+// closeListeners stops accepting new connections without touching live ones.
+// Idempotent: the shutdown path may also reach it.
+func (s *Server) closeListeners() {
+	s.stopAcceptingMu.Lock()
+	fn := s.stopAcceptingFn
+	s.stopAcceptingMu.Unlock()
+	if fn == nil {
+		return
+	}
+	s.stopAcceptingOnce.Do(fn)
+}
+
+// SetStopAccepting registers the listener-closing hook. serve() supplies it.
+func (s *Server) SetStopAccepting(fn func()) {
+	s.stopAcceptingMu.Lock()
+	s.stopAcceptingFn = fn
+	s.stopAcceptingMu.Unlock()
 }
 
 // drainHeldSessions waits for each held session's inbound frames to stop

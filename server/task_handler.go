@@ -1719,11 +1719,6 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		// live session: a task that ended dirty keeps its worktree and can be
 		// exec'd into long after its mux is gone.
 		taskInfos[i].ExecCount = h.execs().countForTask(t.ID)
-		// The hold deadline is STORED state, not a live read: it belongs to
-		// the server that arranged the hold and survived a restart in the WAL,
-		// which is exactly why the operator cannot derive it client-side.
-		// Zero for every task that is not Held.
-		taskInfos[i].HoldDeadlineNs = uint64(t.HoldDeadline)
 	}
 	var body protocol.ListResultBody
 	body.SetRunners(runnerInfos)
@@ -1974,17 +1969,22 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	copy(tid.Id[:], raw)
 
 	info := protocol.TaskInfo{
-		Id:            tid,
-		Status:        t.Status,
-		Kind:          t.Kind,
-		OriginKind:    t.OriginKind,
-		ResumedByKind: t.ResumedByKind,
-		CreatorTaskId: t.CreatorTaskID,
-		Capabilities:  t.Capabilities,
-		Scope:         t.Scope.toWire(),
-		Overrides:     t.Scope.overridesToWire(),
-		OverridesLen:  uint8(len(t.Scope.Overrides)),
-		CreatedAt:     uint64(t.CreatedAt.UnixNano()),
+		Id: tid,
+		// Stored, not live: the hold deadline belongs to the server that
+		// arranged the hold and reached this one through the WAL, which is
+		// exactly why a client cannot derive it. Zero for any task that is
+		// not Held.
+		HoldDeadlineNs: uint64(t.HoldDeadline),
+		Status:         t.Status,
+		Kind:           t.Kind,
+		OriginKind:     t.OriginKind,
+		ResumedByKind:  t.ResumedByKind,
+		CreatorTaskId:  t.CreatorTaskID,
+		Capabilities:   t.Capabilities,
+		Scope:          t.Scope.toWire(),
+		Overrides:      t.Scope.overridesToWire(),
+		OverridesLen:   uint8(len(t.Scope.Overrides)),
+		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))

@@ -970,7 +970,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// object rather than scattered through this function: stop draining while
 	// held, never close the PTY master, and keep the EOF that drives its
 	// reaper ladder from firing because a server went away.
-	relay := newSessionRelay(stream, s.reg.holdArmed)
+	relay := newSessionRelay(stream, s.reg.holdArmed).withLog(log, taskIDHex)
 	entry.relay = relay
 	defer relay.close()
 
@@ -986,14 +986,25 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// only promise tasks that have one.
 			entry.started.Store(true)
 		},
-		OnProcessExit: func(st *os.ProcessState, _ error) {
+		OnProcessExit: func(st *os.ProcessState, werr error) {
 			entry.exited.Store(true)
+			// How the child ended, always: for a held task this is the only
+			// place the answer exists, and "it died during the hold" is
+			// otherwise indistinguishable from "the relay ended the session".
+			// taskCtx.Err() separates the two ladders that both take ~2s:
+			// non-nil means OUR cancel ran and procTree signalled the group;
+			// nil means agentexec's own EOF ladder did it.
+			log.Info("agent child exited", "task_id", taskIDHex,
+				"state", fmt.Sprint(st), "wait_err", werr,
+				"held", s.reg.holdArmed(), "task_ctx_err", taskCtx.Err())
 			if st != nil {
 				exitCode.Store(int32(st.ExitCode()))
 			}
 		},
 	})
 
+	log.Info("ExecuteCommandWithOption RETURNED — the session is over",
+		"task_id", taskIDHex, "err", runErr)
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)
 	}

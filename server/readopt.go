@@ -22,6 +22,10 @@ import (
 // runner kills every held child not named here.
 type ReadoptResult struct {
 	Accepted []protocol.TaskID
+	// Declined says this server did not reconcile the report at all (it is
+	// shutting down). The runner must NOT read the empty accepted list as a
+	// refusal — nobody looked.
+	Declined bool
 	// Rebind lists the accepted tasks that need a fresh session stream, i.e.
 	// the interactive ones. The server knows each task's kind, so the runner
 	// never reports it.
