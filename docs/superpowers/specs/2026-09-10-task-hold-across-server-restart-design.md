@@ -583,7 +583,41 @@ present is the normal case.
   was given, so its child is already dead by D4.
 - The Detached→Cancel sweep (`server/server.go:674-679`) is untouched: a held
   task is not Detached.
-- A sweeper fails any task still `Held` when its deadline passes.
+- **Expiry is one timer, not a sweeper.** Every task held by a given shutdown
+  shares that shutdown's deadline, so replay knows the whole schedule: arm a
+  single timer for the earliest `hold_deadline_ns` still outstanding and fail
+  what is still `Held` when it fires. The auto-prune block is the shape to copy
+  for *where* this lives — a startup pass followed by a background loop, inside
+  the `DataDir` block, cancelled by the server context
+  (`server/server.go:725-751`) — but not for its cadence: its interval defaults
+  to an hour, which is useless against a 90-second window. One timer needs no
+  interval at all.
+- **The orphan sweep for `held/`.** A `<data-dir>/held/<task-id>.screen` whose
+  task is not `Held` after replay is deleted in the same startup pass. That is
+  what makes D19's speculative captures free: a snapshot for a task that was
+  never held, or that has since been re-adopted and fed, has no reader.
+- **No race with a reconnecting runner, and nothing needs a lock for it.**
+  Replay runs inside the `DataDir` block (`server/server.go:654-752`) and the
+  accept loop is the `for`/`select` at the end of `serve`
+  (`server/server.go:869-876`), so the store is fully rebuilt before any hello
+  can arrive. Written down because the opposite assumption invites a lock
+  around re-adoption that would serialise every registration.
+- **The two clocks are never compared, and they disagree.** The server writes
+  an absolute `hold_deadline_ns` from its own clock at shutdown; the runner arms
+  a monotonic timer when the request *arrives* (§6). The runner's window
+  therefore ends later, by the flight time plus skew, so the server can expire
+  a task whose child is still alive. That resolves itself through the channel
+  that already resolves cancel: the task is no longer `Held`, so it is absent
+  from the accepted list and the runner kills the child (D18). No third rule,
+  and no clock arithmetic across hosts.
+- **A hold needs a data dir.** The entire WAL block is gated on
+  `s.cfg.DataDir != ""` (`server/server.go:654`), so with it empty there is
+  nowhere to write `task_held` and `--hold-window` must be treated as 0 —
+  holding children whose records cannot be persisted would kill them at
+  re-adoption after a pointless window. The flag defaults to `./harness-data`
+  (`cmd/harness-server/main.go:31`) and the dummy harness passes one
+  (`scripts/dummy-harness.py:436`), so this is a deliberate configuration
+  rather than a common one.
 
 **Re-adoption**, at the identity gate, in the same step as registration:
 
