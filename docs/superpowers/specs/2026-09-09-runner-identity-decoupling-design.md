@@ -429,3 +429,53 @@ Two declaration gaps turned up that §7's matrix could not have listed, because
 the matrix was built from `PathsForSurface(WebUI)` and they were missing from it:
 `help` and `refresh` were declared `TUI`-only while the WebUI accepted both, and
 `preview` had no `VerbSpec` at all. All three are declared now.
+
+### The one this spec got wrong: skew across the DISK, not the wire
+
+§8's WAL bullet is the near-miss, and it is worth reading against what happened.
+It names `runner_id` and `bound_runner_id`, observes they hold connection-id
+strings that will not resolve, and concludes the damage is cosmetic. Both claims
+are true. The field that broke is neither of them.
+
+`RunnerSelector` is persisted in the WAL as **raw wire bytes**
+(`walEventJSON.SelectorB64`), so `by_runner_id`'s payload going from
+address-shaped to a fixed 16 bytes made every legacy `--runner`-pinned record
+undecodable — and `ReadWAL` failed the whole FILE on one bad line, so one such
+record erased the entire task history. The next server start came up with an
+empty store and `restore` answered `Unreadable`, with every byte still on disk.
+Fixed in `45396e77`; measured before and after on the same bytes: the binary at
+`20d13b5c` lists 0 tasks, the next one lists all of them.
+
+The reasoning error is specific and repeatable: §8 enumerated the WAL fields
+that *hold a runner id* and judged each one's content. The field that mattered
+was the one that holds a *wire-encoded struct*, and it does not have "runner" in
+its name. Classifying persisted state by what it is NAMED finds the fields whose
+meaning changed; classifying it by how it is ENCODED finds the fields whose
+schema is frozen into records already written. §4 is the complete list of wire
+changes and was correct — nobody asked which of those formats was on a disk
+somewhere.
+
+`scripts/wire-skew-check.sh` could not have caught it either. It restarts
+processes against each other, so it measures skew across the WIRE between two
+live ends. A WAL record is skew across TIME between one end and its own past,
+and no amount of process pairing exercises it. That axis is now covered by
+`TestLegacyByRunnerIdSelectorMigratesToByConnId` (a hand-built legacy record,
+since the encoder that produced it is gone from the tree) and by
+`TestOnlySelectorEmbedsAWireFormatInTheWAL`, which fails if a second generated
+format is ever persisted without a legacy-decode path beside it.
+
+Two things came out better than a shim would have. The legacy payload is not
+lost data — it is byte-identical to `ConnID`, and a connection id is what that
+field held — so it is re-typed to `by_conn_id` rather than discarded, which is
+exactly the classification the `ConnID` split (§ prerequisite) was done to make
+possible. And the shapes are distinguishable by length, measured on real
+records: `--runner <identity>` writes kind=1 payload=16B, `--runner <cid>` writes
+kind=4 payload=12B, and a legacy kind=1 is one of 8/9/12/13/24/25 bytes over
+transport in {udp, ws, wss} — never 16.
+
+Separately, `ReadWAL`'s all-or-nothing failure was a standing defect this change
+merely triggered. The same shape had already cost the file once, when a long
+prompt overran the scanner's 1 MiB token cap; that fix raised the cap and left
+the blast radius intact. A `kill -9` mid-append reaches it too. `err` from
+`ReadWAL` now means the read did not complete, never "discard the events", and
+every caller replays what survived.
