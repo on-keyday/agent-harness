@@ -76,18 +76,12 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	execID := h.execs().add(e)
 
 	// The child runs in the task's worktree AS that task, so it carries the
-	// task's own ticket. Looked up, never reissued: Register overwrites, so a
-	// fresh ticket here would invalidate the credential the running agent is
-	// holding. A task with no registered ticket — one whose agent has ended,
-	// which exec still serves as long as the worktree is there — yields the
-	// zero value, and BuildAgentEnv omits the variable rather than advertising
-	// a credential that cannot work.
-	var ticket [16]byte
-	if h.Board != nil {
-		if t, ok := h.Board.Registry().Ticket(runnerIDFromConnID(runner.ID), req.TaskId); ok {
-			ticket = t
-		}
-	}
+	// task's own ticket — looked up, never reissued, see boardTaskTicket. A
+	// task with no registered ticket — one whose agent has ended, which exec
+	// still serves as long as the worktree is there — yields the zero value,
+	// and BuildAgentEnv omits the variable rather than advertising a
+	// credential that cannot work.
+	ticket, _ := boardTaskTicket(h.Board, runner.ID, req.TaskId)
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExecRun}
 	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))

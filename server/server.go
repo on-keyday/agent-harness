@@ -1290,9 +1290,7 @@ func (s *Server) Tasks() *TaskStore {
 func (s *Server) failAndRevokeTasksOf(runnerID string, snap RunnerEntry) {
 	for taskID := range snap.ActiveTasks {
 		s.tasks.MarkFailed(taskID, "runner_disconnected")
-		if s.Board != nil {
-			s.Board.Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
-		}
+		boardRevokeTask(s.Board, runnerID, taskID)
 	}
 }
 
@@ -1321,9 +1319,7 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if _, err := rand.Read(ticket[:]); err != nil {
 		return fmt.Errorf("ticket gen: %w", err)
 	}
-	if s.Board != nil {
-		s.Board.RegisterTask(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket, task.AgentProfile)
-	}
+	boardRegisterTask(s.Board, runnerID, taskID, ticket, task.AgentProfile)
 	stream := entry.Conn.CreateSendStream()
 	if stream == nil {
 		return fmt.Errorf("CreateSendStream returned nil")

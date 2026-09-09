@@ -1308,9 +1308,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		slog.Error("handleOpenInteractive: "+reason, "task", taskIDHex, "runner", runner.Hostname)
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
 		h.Registry.UnbindTask(runner.ID, taskIDHex)
-		if h.Board != nil {
-			h.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex))
-		}
+		boardRevokeTask(h.Board, runner.ID, taskIDHex)
 	}
 
 	// Generate a fresh ticket for the agent Hello handshake.
@@ -1320,9 +1318,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		finishWithError("ticket gen failed: " + err.Error())
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
-	if h.Board != nil {
-		h.Board.RegisterTask(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex), ticket, resolved)
-	}
+	boardRegisterTask(h.Board, runner.ID, taskIDHex, ticket, resolved)
 
 	tuiStream := tuiConn.CreateBidirectionalStream()
 	if tuiStream == nil {

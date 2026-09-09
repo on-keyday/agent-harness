@@ -216,9 +216,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		// Release the capacity slot so the dispatcher can re-use it.
 		h.Registry.UnbindTask(runnerID, taskID)
 		// Revoke the auth ticket so the agent can no longer authenticate for this task.
-		if h.Board != nil {
-			h.Board.Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
-		}
+		boardRevokeTask(h.Board, runnerID, taskID)
 
 	case protocol.RunnerMessageType_Heartbeat:
 		if !h.Registry.SetLastSeen(runnerID, now) {

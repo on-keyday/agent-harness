@@ -194,9 +194,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
-		if d.Board != nil {
-			d.Board.RegisterTask(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID), ticket, task.AgentProfile)
-		}
+		boardRegisterTask(d.Board, runner.ID, task.ID, ticket, task.AgentProfile)
 
 		// Allocate the body stream up-front so the AssignTask envelope
 		// can carry its id. On stream-creation failure (e.g. test stub),
@@ -204,9 +202,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		stream := runner.Conn.CreateSendStream()
 		if stream == nil {
 			slog.Error("dispatcher: CreateSendStream returned nil", "runner", runner.ID, "task", task.ID)
-			if d.Board != nil {
-				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
-			}
+			boardRevokeTask(d.Board, runner.ID, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
@@ -214,9 +210,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
 		if err != nil {
 			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
-			if d.Board != nil {
-				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
-			}
+			boardRevokeTask(d.Board, runner.ID, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
@@ -227,26 +221,20 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		// already in memory.
 		if werr := stream.AppendData(false, body); werr != nil {
 			slog.Error("dispatcher: stream body write failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			if d.Board != nil {
-				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
-			}
+			boardRevokeTask(d.Board, runner.ID, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 		if werr := stream.AppendData(true); werr != nil {
 			slog.Error("dispatcher: stream EOF failed", "runner", runner.ID, "task", task.ID, "err", werr)
-			if d.Board != nil {
-				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
-			}
+			boardRevokeTask(d.Board, runner.ID, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 
 		if _, _, err := runner.Conn.SendMessage(envelope); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
-			if d.Board != nil {
-				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
-			}
+			boardRevokeTask(d.Board, runner.ID, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
