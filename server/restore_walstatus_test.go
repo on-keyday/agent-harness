@@ -51,26 +51,51 @@ func TestRestorableSaysWhyWhenTheWALIsMissing(t *testing.T) {
 	// The control: ReadWAL itself still answers the way the status exists to
 	// compensate for. If this ever starts erroring, the os.Stat above is
 	// redundant rather than load-bearing, and the comment saying so is wrong.
-	if events, err := ReadWAL(missing); err != nil || len(events) != 0 {
+	if events, _, err := ReadWAL(missing); err != nil || len(events) != 0 {
 		t.Errorf("ReadWAL on a missing file = (%d events, %v); "+
 			"the Missing status exists because this returns (0, nil)", len(events), err)
 	}
 }
 
-func TestRestorableSaysWhyWhenTheWALWillNotParse(t *testing.T) {
-	// One bad line makes the WHOLE file unreadable, so this says nothing
-	// about what was pruned -- which is exactly why it must not be reported
-	// as "nothing was".
-	path := filepath.Join(t.TempDir(), "events.log")
-	if err := os.WriteFile(path, []byte("{\"type\":\"task_created\"}\nnot json at all\n"), 0o600); err != nil {
+func TestRestorableSaysWhyWhenTheWALWillNotOpen(t *testing.T) {
+	// Unreadable is now what it says: the read produced nothing. A directory
+	// where events.log belongs passes os.Stat and opens, and fails on the first
+	// Read -- so it reaches restorableFromPath exactly as an I/O failure does,
+	// without depending on a permission bit that root ignores.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.log")
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	rows, status := restorableFromPath(path, func(string) bool { return true }, nil)
 	if len(rows) != 0 {
-		t.Fatalf("got %d rows from an unparseable WAL", len(rows))
+		t.Fatalf("got %d rows from a WAL that never opened", len(rows))
 	}
 	if status != protocol.RestoreWALStatus_Unreadable {
 		t.Errorf("status = %v, want Unreadable", status)
+	}
+}
+
+// The inverse, and the reason the status moved: a WAL with one bad line among
+// good ones is not an unreadable file. Reporting it Unreadable sent the
+// operator to repair a file that was almost entirely fine AND hid the prunes it
+// still recorded -- which is how a single legacy `--runner` record erased every
+// restorable row on a server that had written all of them correctly.
+func TestRestorableReportsTheRowsAroundABadLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.log")
+	body := `{"type":"task_created","task_id":"aa","repo_path":"/r","prompt":"kept","ts":1}
+not json at all
+{"type":"task_pruned","task_id":"aa","ts":2}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, status := restorableFromPath(path, func(string) bool { return false }, nil)
+	if status != protocol.RestoreWALStatus_Ok {
+		t.Fatalf("status = %v, want Ok", status)
+	}
+	if len(rows) != 1 || rows[0].TaskID != "aa" || rows[0].Prompt != "kept" {
+		t.Fatalf("rows = %+v; the create and the prune both read fine and must be reported", rows)
 	}
 }
 
@@ -118,7 +143,7 @@ func TestReadWALSurvivesALongPromptLine(t *testing.T) {
 	if werr := os.WriteFile(path, append(rec, '\n'), 0o600); werr != nil {
 		t.Fatal(werr)
 	}
-	events, rerr := ReadWAL(path)
+	events, _, rerr := ReadWAL(path)
 	if rerr != nil {
 		t.Fatalf("ReadWAL: %v\nA prompt longer than the scanner's cap must not cost the whole WAL", rerr)
 	}
@@ -128,24 +153,40 @@ func TestReadWALSurvivesALongPromptLine(t *testing.T) {
 	}
 }
 
-// A parse error names the line. Without it the operator is told "invalid
-// character" about a file with a hundred thousand of them.
-func TestReadWALErrorNamesTheLine(t *testing.T) {
+// A defect names its line, and costs only that line. Without the line number
+// the operator is told "invalid character" about a file with a hundred thousand
+// of them; without the locality, that one line is the whole history.
+func TestReadWALDefectNamesItsLineAndKeepsTheRest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.log")
-	good, _ := json.Marshal(WALEvent{Type: "task_created", TaskID: "a"})
-	body := append(append(good, '\n'), append(append([]byte{}, good...), '\n')...)
-	body = append(body, []byte("{ broken\n")...)
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	body := `{"type":"task_created","task_id":"a","ts":1}
+{ broken
+{"type":"task_created","task_id":"c","ts":3}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadWAL(path)
-	if err == nil {
-		t.Fatal("a broken line parsed")
+	events, report, err := ReadWAL(path)
+	if err != nil {
+		t.Fatalf("a broken LINE is not a broken FILE: %v", err)
 	}
-	if !strings.Contains(err.Error(), ":3:") {
-		t.Errorf("error does not name line 3: %v", err)
+	if len(report.Defects) != 1 {
+		t.Fatalf("report.Defects = %+v, want exactly the one bad line", report.Defects)
 	}
-	if !strings.Contains(err.Error(), path) {
-		t.Errorf("error does not name the file: %v", err)
+	if report.Defects[0].Line != 2 {
+		t.Errorf("defect line = %d, want 2", report.Defects[0].Line)
+	}
+	if !strings.Contains(report.Defects[0].Err.Error(), ":2:") {
+		t.Errorf("defect error does not name line 2: %v", report.Defects[0].Err)
+	}
+	if !strings.Contains(report.Defects[0].Err.Error(), path) {
+		t.Errorf("defect error does not name the file: %v", report.Defects[0].Err)
+	}
+	// The half that did not hold before: the records on either side of the
+	// damage are still history and are still returned.
+	if len(events) != 2 || events[0].TaskID != "a" || events[1].TaskID != "c" {
+		t.Fatalf("events = %+v, want the records before AND after the bad line", events)
+	}
+	if report.Empty() {
+		t.Error("a read with a skipped line reported itself as clean")
 	}
 }

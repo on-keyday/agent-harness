@@ -23,7 +23,7 @@ func walStore(t *testing.T) (*TaskStore, func() []WALEvent, string) {
 	s := NewTaskStore()
 	s.SetWAL(w)
 	return s, func() []WALEvent {
-		events, rerr := ReadWAL(path)
+		events, _, rerr := ReadWAL(path)
 		if rerr != nil {
 			t.Fatalf("ReadWAL: %v", rerr)
 		}
@@ -232,7 +232,7 @@ func TestRestoreScopeSeesThroughTheHoleAPruneLeft(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	events, err := ReadWAL(filepath.Join(dir, "events.log"))
+	events, _, err := ReadWAL(filepath.Join(dir, "events.log"))
 	if err != nil {
 		t.Fatal(err)
 	}

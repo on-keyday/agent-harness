@@ -73,7 +73,7 @@ func TestSkillsInjectedSurvivesWALReplay(t *testing.T) {
 		t.Fatalf("wal.Close: %v", err)
 	}
 
-	events, err := ReadWAL(walPath)
+	events, _, err := ReadWAL(walPath)
 	if err != nil {
 		t.Fatalf("ReadWAL: %v", err)
 	}

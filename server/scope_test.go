@@ -131,7 +131,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 	}
 
 	wal.Close() //nolint:errcheck
-	events, readErr := ReadWAL(walPath)
+	events, _, readErr := ReadWAL(walPath)
 	if readErr != nil {
 		t.Fatalf("ReadWAL: %v", readErr)
 	}

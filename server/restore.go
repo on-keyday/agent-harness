@@ -204,11 +204,18 @@ func restorableFromPath(walPath string, live func(string) bool, log *slog.Logger
 	if _, err := os.Stat(walPath); err != nil {
 		return nil, protocol.RestoreWALStatus_Missing
 	}
-	events, err := ReadWAL(walPath)
-	if err != nil {
-		if log != nil {
-			log.Error("restorable: WAL read failed", "path", walPath, "err", err)
-		}
+	events, report, err := ReadWAL(walPath)
+	if err != nil && log != nil {
+		log.Error("restorable: WAL read did not complete", "path", walPath, "err", err)
+	}
+	report.LogTo(log, "restorable", walPath)
+	// Unreadable answers "why is the list empty", so it is reserved for a read
+	// that produced nothing at all. Skipped or truncated records are damage to
+	// the ANSWER rather than to the file, and a list built from the records that
+	// did read is a real list -- reporting it Unreadable would tell the operator
+	// to go fix a file that is largely fine, and hide the rows it does have.
+	// The shortfall goes to the log instead.
+	if len(events) == 0 && err != nil {
 		return nil, protocol.RestoreWALStatus_Unreadable
 	}
 	return RestorableFromWAL(events, live), protocol.RestoreWALStatus_Ok

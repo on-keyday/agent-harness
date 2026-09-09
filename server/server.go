@@ -243,22 +243,28 @@ func New(cfg Config) *Server {
 			if restoreWALPath == "" {
 				return nil, nil, ids // no DataDir: nothing was ever persisted
 			}
-			events, rerr := ReadWAL(restoreWALPath)
+			events, report, rerr := ReadWAL(restoreWALPath)
 			if rerr != nil {
-				s.cfg.Logger.Error("restore: WAL read failed", "path", restoreWALPath, "err", rerr)
+				s.cfg.Logger.Error("restore: WAL read did not complete", "path", restoreWALPath, "err", rerr)
+			}
+			report.LogTo(s.cfg.Logger, "restore", restoreWALPath)
+			if len(events) == 0 {
 				return nil, nil, ids
 			}
+			// Restored from what survived: an id whose own records were among
+			// the skipped ones comes back as not_in_wal, which is the honest
+			// answer, and every other id is unaffected by that damage.
 			return s.tasks.RestoreFromWAL(events, ids)
 		},
 		RestoreEventsFn: func() []WALEvent {
 			if restoreWALPath == "" {
 				return nil
 			}
-			events, rerr := ReadWAL(restoreWALPath)
+			events, report, rerr := ReadWAL(restoreWALPath)
 			if rerr != nil {
-				s.cfg.Logger.Error("restore scope: WAL read failed", "path", restoreWALPath, "err", rerr)
-				return nil
+				s.cfg.Logger.Error("restore scope: WAL read did not complete", "path", restoreWALPath, "err", rerr)
 			}
+			report.LogTo(s.cfg.Logger, "restore scope", restoreWALPath)
 			return events
 		},
 		RestorableFn: func() ([]Restorable, protocol.RestoreWALStatus) {
@@ -651,12 +657,18 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			return fmt.Errorf("create data dir: %w", err)
 		}
 		walPath := filepath.Join(s.cfg.DataDir, "events.log") // == restoreWALPath
-		// Replay WAL if present. A corrupted WAL is logged but does not prevent
-		// server startup — an empty store is recoverable.
-		events, rerr := ReadWAL(walPath)
+		// Replay WAL if present. A file that cannot be opened is logged but does
+		// not prevent server startup — an empty store is recoverable. Records
+		// that cannot be READ cost only themselves (see ReadWAL), so whatever
+		// came back is replayed even when some of it was skipped: booting with
+		// an empty store while the history sits on disk is the failure this
+		// arrangement exists to avoid.
+		events, report, rerr := ReadWAL(walPath)
 		if rerr != nil {
-			s.cfg.Logger.Error("WAL replay failed", "path", walPath, "err", rerr)
-		} else if events != nil {
+			s.cfg.Logger.Error("WAL read did not complete", "path", walPath, "err", rerr)
+		}
+		report.LogTo(s.cfg.Logger, "replay", walPath)
+		if events != nil {
 			s.tasks.ReplayEvents(events)
 		}
 		// Detached survivors cannot be restored: SessionMux state was in-memory.

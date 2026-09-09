@@ -30,7 +30,7 @@ func TestWALAppendAndReadBack(t *testing.T) {
 	must(t, w.Write(WALEvent{Type: "task_assigned", TaskID: "abc", RunnerID: "r1", WorktreeDir: "/wt"}))
 	must(t, w.Close())
 
-	events, err := ReadWAL(path)
+	events, _, err := ReadWAL(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestWALAppendAndReadBack(t *testing.T) {
 }
 
 func TestReadWALMissingFile(t *testing.T) {
-	events, err := ReadWAL(filepath.Join(t.TempDir(), "nope.log"))
+	events, _, err := ReadWAL(filepath.Join(t.TempDir(), "nope.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWALReplayRestoresSelectorAndBoundRunner(t *testing.T) {
 	}
 	wal.Close() //nolint:errcheck
 
-	events, err := ReadWAL(walPath)
+	events, _, err := ReadWAL(walPath)
 	if err != nil {
 		t.Fatalf("ReadWAL: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestWALConcurrentWrite(t *testing.T) {
 	}
 	wg.Wait()
 	w.Close() //nolint:errcheck
-	events, err := ReadWAL(path)
+	events, _, err := ReadWAL(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,20 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 	}
 	rv := reflect.ValueOf(got)
 	rt := rv.Type()
+	// SelectorMigrated is DERIVED from the record rather than stored in it, so
+	// a faithful round trip is exactly what leaves it false: this event's
+	// selector is a current-schema by_hostname and needed no legacy path. It is
+	// the only exemption, it is by name rather than by tag (Selector also
+	// carries `json:"-"` and IS persisted, via SelectorB64), and the positive
+	// half is pinned separately by
+	// TestLegacyByRunnerIdSelectorMigratesToByConnId.
 	for i := 0; i < rv.NumField(); i++ {
+		if rt.Field(i).Name == "SelectorMigrated" {
+			if got.SelectorMigrated {
+				t.Error("a current-schema selector was reported as migrated")
+			}
+			continue
+		}
 		if rv.Field(i).IsZero() {
 			t.Errorf("WALEvent.%s is ZERO after a JSON round trip — a copy was "+
 				"forgotten in walEventJSON, MarshalJSON or UnmarshalJSON", rt.Field(i).Name)

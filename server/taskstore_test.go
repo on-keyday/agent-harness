@@ -78,7 +78,7 @@ func TestTaskStoreWALReplayRestoresAgentProfile(t *testing.T) {
 		t.Fatalf("wal.Close: %v", err)
 	}
 
-	events, err := ReadWAL(walPath)
+	events, _, err := ReadWAL(walPath)
 	if err != nil {
 		t.Fatalf("ReadWAL: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 	wal.Close() //nolint:errcheck
 
 	// Re-open and replay
-	events, _ := ReadWAL(walPath)
+	events, _, _ := ReadWAL(walPath)
 	s2 := NewTaskStore()
 	s2.ReplayEvents(events)
 	got, ok := s2.Get(id)
@@ -937,7 +937,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	wal.Close() //nolint:errcheck
 
 	// Read and replay into a fresh store.
-	events, readErr := ReadWAL(walPath)
+	events, _, readErr := ReadWAL(walPath)
 	if readErr != nil {
 		t.Fatalf("ReadWAL: %v", readErr)
 	}
@@ -1066,7 +1066,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 
 	wal.Close() //nolint:errcheck
 
-	events, readErr := ReadWAL(walPath)
+	events, _, readErr := ReadWAL(walPath)
 	if readErr != nil {
 		t.Fatalf("ReadWAL: %v", readErr)
 	}
@@ -1155,7 +1155,7 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 
 	wal.Close() //nolint:errcheck
 
-	events, readErr := ReadWAL(walPath)
+	events, _, readErr := ReadWAL(walPath)
 	if readErr != nil {
 		t.Fatalf("ReadWAL: %v", readErr)
 	}
@@ -1270,7 +1270,7 @@ func TestWALReplayRestoresParentChange(t *testing.T) {
 	}
 	wal.Close() //nolint:errcheck
 
-	events, readErr := ReadWAL(walPath)
+	events, _, readErr := ReadWAL(walPath)
 	if readErr != nil {
 		t.Fatalf("ReadWAL: %v", readErr)
 	}
