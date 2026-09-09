@@ -94,6 +94,14 @@ are wrong.
   cannot re-establish the link itself and the reverse-dial set is not
   persisted, so its held tasks expire unless an operator dials it back inside
   the window (§6a.3).
+- **Restoring an agent's own board subscriptions.** Re-adoption seeds the task's
+  self-topic, because `Board.RegisterTask` does (§5). Any pattern the agent
+  added at runtime with `agent subscribe` lived in the in-memory `taskState`
+  and is gone, and nothing re-issues it: the runner never saw those calls, so
+  it cannot report them, and they are not on the log. A held agent therefore
+  comes back reachable on its own topic and no longer subscribed to whatever
+  else it had asked for. Persisting the pattern list would fix it and is a
+  separate change; the failure is silent, so it is also §9.10.
 
 ## 3. Decisions taken
 
@@ -499,12 +507,28 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   hello. Otherwise refuse that entry.
 - Every `Held` task belonging to that identity and NOT in the report is Failed
   with `reason="not_held_by_runner"` (D11).
-- Re-adopted tasks: `Registry.BindTask` for capacity (D16), board
-  `Register(identity, task id, ticket)` with **the ticket the runner reported**
-  — not a fresh one, or the surviving agent gets `BadTicket` (D6) — status →
-  `Detached` for interactive / `Running` for oneshot (D15), and a
-  `task_readopted` WAL record for the audit trail. The ticket is not written to
-  that record.
+- Re-adopted tasks: `Registry.BindTask` for capacity (D16); then
+  `boardRegisterTask(Board, identity, taskIDHex, ticket, task.AgentProfile)`
+  with **the ticket the runner reported** — not a fresh one, or the surviving
+  agent gets `BadTicket` (D6); then status → `Detached` for interactive /
+  `Running` for oneshot (D15), and a `task_readopted` WAL record for the audit
+  trail. The ticket is not written to that record.
+- **Through the funnel, and not through `registry.Register`.** The ticket map is
+  only half of what a registration is. `Board.RegisterTask` also creates the
+  `taskState` and **seeds the task's inbound topic** —
+  `ts.addPattern(SelfTopic(tid))`, which its doc calls the server-side
+  equivalent of the old `agent subscribe --self` hook
+  (`agentboard/board.go:85-100`). Register the ticket alone and the credential
+  validates while `agent send` to that task matches no subscriber, which is a
+  worse failure than `BadTicket` because it looks like a working agent that
+  nobody can reach. `boardRegisterTask` is the funnel every other call site
+  uses (`server/dispatch.go:174`, `server/server.go:1342`,
+  `server/task_handler.go:1321`) and it carries the nil-Board guard and the
+  zero-identity refusal (`server/boardkey.go:31-49`) that the prerequisite
+  spec's D11 put there. `agentProfile` is its fourth argument and comes from
+  the store's `task.AgentProfile`, which replay restores from the WAL
+  (`server/wal.go:137`) — consistent with D6: everything but the ticket comes
+  off the log.
 - An interactive re-adoption rebuilds the `SessionMux` and, before the runner
   resumes draining, feeds it the persisted screen bytes so the model and the
   ring both start from the screen as it was at hold time (D14). The ordering is
@@ -813,7 +837,15 @@ Also:
    undeleted it can repaint a later session with a screen from before the
    restart. Both look correct in a test where the child is idle across the
    restart, which is the test anyone writes first (§10.1a exists for this).
-10. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
+10. **The board registration goes through `registry.Register` instead of the
+   funnel** (§5). The ticket validates, so every credential check passes and
+   the agent looks healthy; `agent send` to that task returns `delivered_to=0`
+   because no subscriber matches its own topic, and the inbox hook stops waking
+   it. Distinguishable from §9.8 only by which number `delivered_to` shows,
+   which is why §10.1b asserts the 1 rather than the absence of an error.
+   The subscription patterns an agent added at runtime are lost either way
+   (§2) — this item is about losing the self-topic too.
+11. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
    registers over WebSocket and, over UDP, loops on the handshake with no error
    logged at either end. Nothing in the stack reports it, so it will not be
    found by reading logs — only by noticing that the transport is the variable.
