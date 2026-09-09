@@ -1,6 +1,8 @@
 # Runner identity, decoupled from the connection — Design
 
-Status: draft, pending operator review
+Status: implemented and landed 2026-09-10 — see the addendum at the end for
+where the implementation diverged from this text. The Decided-by column below
+is unchanged: it records who settled each decision, not who approved the land.
 Date: 2026-09-09
 
 Prerequisite, already landed: `6b6aafe7` (every agentboard key goes through
@@ -345,3 +347,85 @@ instead of an address.
      must NOT re-adopt anything.
 - Windows is a separate pass: the identity lives across `PersistLoop`, and the
   runner's own handshake is a distinct code path (`sendRunnerMergedHandshake`).
+
+## Addendum, 2026-09-10 — what landed, and where it differs
+
+The text above is left as designed. Five things came out differently, and one
+planned check could not be run at all; recording the difference here rather than
+editing the body, so the design and the outcome can both be read.
+
+**The field is `cid`, not `addr`** (§4, §7). `RunnerInfo.cid :ConnID`, the `ls`
+column is `cid=`, the JSON key is `cid`. This codebase calls a connection id
+`cid` everywhere — `ConnInfo.cid`, `runner_cid`, `--server-cid`,
+`HARNESS_SERVER_CID` — so `addr` would have been the only place it was spelled
+differently.
+
+**boardkey.go's helpers take the IDENTITY, not a connection id plus a
+`*Registry`** (§5). The design had them resolving internally so the twelve call
+sites would change by one argument. In fact eleven of the twelve already hold a
+`RunnerEntry` and can name `entry.Identity`; only `TaskFinished` arrives with a
+connection and nothing else, and it goes through `identityOfConn`. Passing the
+registry everywhere would also have created an ordering hazard the design did
+not see: `failAndRevokeTasksOf` runs after a takeover may have repointed the
+identity, so it takes the value from its SNAPSHOT instead of looking it up.
+
+**The fence is one check in `Registry.Remove`**, not a per-cleanup owner test on
+every runner-scoped path (§5, §9.2). Remove releases the identity index entry
+only when it still points at the connection being torn down. That covers the
+race the design named, and the snapshot rule above covers the revoke path.
+
+**`Registry` exposes two identity lookups**, not one (§5):
+`GetByIdentity` returns a value snapshot for the callers that read fields, and
+`GetLiveByIdentity` returns the live pointer for `ResolveVia`, which stores the
+entry as `entry.Via`. That mirrors the existing `Get` / `GetByConnectionID`
+split, which the design had overlooked.
+
+**`TaskEntry.AssignedTo` is typed `protocol.RunnerID`**, not left a string
+holding the identity hex (D9 said "become the identity" without saying how).
+That was not cosmetic. Seven read sites had been switched to the identity index
+while the writers still wrote a connection id — both were `string`, so nothing
+complained — and typing the field surfaced four MORE readers immediately:
+`OnCancel`, exec's kill path, the port-forward teardown, and `agent_wake`.
+`OnCancel` turned out to need both indexes, because `BoundRunnerID` beside it is
+still a connection key; they are now separate branches that cannot be confused.
+
+**§10's first live check could not be run as written.** "Kill the runner's
+connection without killing the runner process, and confirm the agent's
+credential still validates" is not observable in this spec's scope: the board's
+tickets live in the server's memory, so the only way to drop that connection
+from outside is to restart the server — which takes the tickets with it. What
+was measured instead, on `scripts/dummy-harness.sh`:
+
+- across a server restart, with the runner process surviving and re-dialing, the
+  identity is UNCHANGED (`3f22c0a9…`) while the cid moves
+  (`:52510-18535` → `:41838-18535`). Before this change the identity WAS the
+  cid, so both moved and every credential keyed on it died. This is the property
+  the change exists for, and it is what the unit test
+  `TestBoardKeyIsIdentityNotConnection` asserts through an actual takeover.
+- across a runner PROCESS restart the identity CHANGES
+  (`3f22c0a9…` → `026253fd…`), which is what says "its children are gone".
+- the credential path end to end while connected: `HARNESS_RUNNER_ID` is the
+  32-hex identity, `agent send` returns `delivered_to=1`, and `agent inbox`
+  reads it back with `from.runner_id` equal to that identity.
+
+Proving the credential survives the reconnect itself needs the held-task change
+(§2), which keeps the server's board across it. Until then the property is
+asserted at the unit level and the live check is one layer below it.
+
+`wire-skew-check.sh` PASSes with the reject-then-heal the rollout section
+predicted (`NoIdentity`). Both directions were measured, not just the one the
+script runs: the script's own reason for skipping OLD runner × NEW server —
+"pre-fix runners exit fatally by construction" — stopped applying once OLD_REF
+moved past `d4f7a5a`, and by hand that direction is also rejected `NoIdentity`,
+stays alive and keeps retrying. So the skew is recoverable whichever end is
+restarted first, which weakens §8's ordering advice into a preference rather
+than a requirement. Worth knowing which guard fires: a NEW server refuses an OLD
+hello on a DECODE failure (`not enough data to read for field
+AllowedRoot::Path` — inserting `runner_id` after `version` shifts every later
+field), not on D11's zero-identity check, which is there for a hello that decodes
+and leaves the field empty.
+
+Two declaration gaps turned up that §7's matrix could not have listed, because
+the matrix was built from `PathsForSurface(WebUI)` and they were missing from it:
+`help` and `refresh` were declared `TUI`-only while the WebUI accepted both, and
+`preview` had no `VerbSpec` at all. All three are declared now.
