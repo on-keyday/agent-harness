@@ -1096,6 +1096,11 @@ adding `Held` is a decision at each. Enumerated, with the verdict:
 | `webui/static/main.js` ×6 | the same predicate in the browser | **stays out**, same reason |
 | `tui/taskaction.go:69` | `Running && Kind == Oneshot` — a per-row action gate | **stays out**: the action needs a live runner leg |
 | `server/task_handler.go:1460` | `afterMuxStopped` cancels a still-`Running` task | **stays out**, and the ordering that makes it safe is a race today — see §5 step 7 |
+| `tui/workspace.go:39` | may this task be resumed? (terminal statuses) | **stays out** — a held task is not terminal, its child is running; offering resume would spawn a second agent for a live task |
+| `tui/taskaction.go:56` | what `r` does (terminal → Resume) | **stays out**, same reason |
+| `tui/app.go:1780` | clears the activity badge on a terminal status | **stays out** and harmlessly so: a held task has no mux, so `LastOutputAt` is already 0 and the second arm of that condition covers it |
+| `server/taskstore.go` `MarkFailed` | the disconnect path | **stays out**, enforced INSIDE the function — the guard is there rather than at the one call site so the next caller inherits it, and `FailHeld` is the only sanctioned exit |
+| `server/taskstore.go` `Cancel` | the operator path | **goes in** (stays permissive): cancelling a held task is required, and since `CancelTask` can never be delivered to one, the store transition IS the cancel |
 
 **Corrected while implementing: `Held` stays out of EVERY liveness predicate,
 not just the refusals.** The first draft of this table had the two render
@@ -1127,12 +1132,12 @@ the implementation's own walk must return a verdict for.
 | # | Surface | Change |
 |---|---|---|
 | 11 | `ls` text rows | `status=held` renders — needs an arm in `cli/list.go:745-751` or it prints `?` (§6c); no new column |
-| 12 | `ls --json` | `status` carries `held`; `held_until` (RFC3339) and `hold_id` added, never elided |
-| 16 | TUI task table | `held` in the status cell, with its own colour — not the Failed colour; needs an arm in `tui/tasks.go:425-432` or it prints `?` (§6c) |
+| 12 | `ls --json` | `status` carries `held`; `held_until` (RFC3339) added, never elided. ~~`hold_id`~~ **omitted**: it names a server-internal shutdown generation no consumer can act on, and the operator's question — how long is left — is `held_until`. Adding it would be a field whose only reader is a debugging session that has the WAL anyway |
+| 16 | TUI task table | `held` in the status cell (`tui/tasks.go`'s label switch, or it prints `?`). ~~its own colour, not the Failed colour~~ **omitted**: the table does not colour by status at all — no status-keyed style exists in `tui/` — so the row was promising a distinction against something that is not there. Colouring statuses is its own change, for all seven of them |
 | 17 | TUI task detail (`d`) | `held until …` line, plus the runner identity it is held by |
 | 19 | TUI picker rows | `held` is a status a picker row can show |
 | 20 | WebUI task row meta | `held` in the status chip |
-| 21 | WebUI task detail sheet | `held until …` |
+| 21 | WebUI task detail sheet | ~~`held until …`~~ **omitted**: the sheet is an ACTION list (`addItem`), not a field display, so a countdown has no place in it. The countdown lives in the row meta instead (item 20), which is where the WebUI shows a task's fields |
 | 23 | wasm snapshot | `held` label AND the raw deadline, per item 22's raw-value rule |
 | 24 | `cancel` on a held task | Cancels in the store; the child dies when the runner is refused at re-adoption. Written down because "cancel" on a task with no live runner connection is a path with its own meaning |
 | — | Liveness branches | §6c: five refusal sites keep `Held` OUT, two render predicates take it IN. Not reachable from items 11-23 |
