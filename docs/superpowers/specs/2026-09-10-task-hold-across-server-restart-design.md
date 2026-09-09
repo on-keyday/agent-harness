@@ -82,6 +82,10 @@ are wrong.
   children are gone" (identity spec D3).
 - **More than one server.** No handover to a *different* server process on
   another host, no HA. The restarted server must find the same `--data-dir`.
+- **Reconnecting a listen-mode runner.** A runner the server reverse-dialed
+  cannot re-establish the link itself and the reverse-dial set is not
+  persisted, so its held tasks expire unless an operator dials it back inside
+  the window (§6a.3).
 
 ## 3. Decisions taken
 
@@ -393,6 +397,48 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   process above `PersistLoop` (`cmd/agent-runner/main.go:438-439`), and a
   held-task report from a new identity is refused by §5's rule, correctly.
 
+## 6a. Transport — a WS shutdown and a UDP shutdown are not the same event
+
+The link is objtrsf over **either** WebSocket **or** UDP
+(`transport.UDPWebsocketDualStackEndpoint`, and the live fleet runs both), and
+four things in §5/§6 depend on which one it is. Numbered 6a rather than folded
+into §6 because three of the four are server-side obligations.
+
+1. **The hold instruction is reliable; the disconnect notice is not.**
+   `HoldTasksRequest` and its ack ride trsf streams, so they retransmit. The
+   disconnect that follows is a single `trsf.Close` (which is why
+   `peer.Conn.Close`'s send drain is load-bearing); over UDP, a lost Close
+   leaves the runner unaware until `trsf.AutoPing` misses — bounded by
+   `PingInterval`, 15s by default (`peer/conn.go:109-114,197`).
+   **Therefore the window starts when the hold is ARMED, not when the
+   disconnect is detected** (§6). Starting it at detection would let a runner
+   that missed the Close begin its window up to a ping interval late and
+   outlive the server's own deadline, which is the one disagreement D11 cannot
+   repair — the runner would still be reporting a task the server has already
+   failed.
+2. **`--hold-ack-timeout` is sized for a retransmit, not a LAN RTT.** 3s is
+   chosen for that reason. A runner whose ack does not arrive in time holds
+   nothing and its tasks take the normal path, so loss here fails safe.
+3. **A listen-mode runner cannot reconnect at all.**
+   `runner.ListenAndServe` only listens (`runner/listen.go:46-64`); its link is
+   established by the server, or by an operator's `server dial-runner`. Nothing
+   on disk records which runners the server had reverse-dialed, so after a
+   restart it does not know to dial them back. A held task on such a runner
+   therefore expires: the child is killed by D4 and the task Fails, unless an
+   operator re-dials inside the window. Persisting the reverse-dial set would
+   fix it and is out of scope (§2) — dialing runners are the fleet's common
+   case, and a reverse-dialed one is set up by hand today anyway.
+4. **An in-task agent's connection dies even though its credential lives.**
+   Phase B proxies an agent's link through its runner
+   (`HARNESS_PROXY_VIA_RUNNER`), and that link rides the runner's conn; the
+   reconnect builds a fresh `Session`, so it does not survive. A `harness-cli`
+   one-shot re-dials per invocation and notices nothing beyond a failure during
+   the gap; an agent holding a long-lived `*cli.Client` across the gap must
+   re-dial. What makes that re-dial succeed is precisely the ticket surviving
+   (identity-keyed, §5 step 5), so this is the intended shape rather than a
+   shortfall — but "the credential survives" must not be read as "the
+   connection survives".
+
 ## 7. Surface matrix
 
 Walked against the `surface-parity-checklist` numbering; the numbers are what
@@ -522,6 +568,13 @@ Also:
   6. A runner PROCESS restart during the hold: the new identity must be refused
      and nothing re-adopted (and note (4) above — its children are the orphans
      §9.4 describes).
+- **Both transports, not just the one the dummy defaults to.** §6a.1's timing
+  differs by transport, so the live list above is run twice: once over
+  WebSocket and once with the runner on UDP (`dummy-harness.py up --udp`, whose
+  env emits `UDP_CID` beside `CID` — `scripts/dummy-harness.py:358-363,531`).
+  The UDP pass is where a lost Close can be simulated by killing the server
+  with the datagram dropped, which is the only way to exercise "the runner
+  learns via ping, not via Close".
 - Per-agent: D12's stall behaviour for claude, codex and agy. An agent that
   cannot block on write is a fact about that agent, and it belongs in the table
   before the design leans on it.
