@@ -209,7 +209,13 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	slotID := target.UniqueNumber
 
 	relayReq := protocol.EstablishRelayRequest{
-		Target: target,
+		// The one place an identity is laundered into an address: `target`
+		// names WHICH runner the operator asked for, and EstablishRelay wants
+		// WHERE the proxy dials. They are the same value today, which is why
+		// DialRunnerRequest's own fields are still undecided (see the schema).
+		// Written out rather than hidden so this conversion is what a grep for
+		// the remaining conflation finds.
+		Target: protocol.ConnIDFromObjproto(protocol.RunnerIDToConnID(target)),
 		SlotId: slotID,
 	}
 

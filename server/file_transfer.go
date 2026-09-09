@@ -175,7 +175,7 @@ type dataPlaneOutcome struct {
 	// DialAt is zero for forwarded -- the client dials the server's own address
 	// at Slot and the server relays. It names the runner for direct, which is
 	// legal only because the runner has been punched toward this client.
-	DialAt protocol.RunnerID
+	DialAt protocol.ConnID
 	MTU    uint16
 }
 
@@ -239,7 +239,7 @@ func (h *TaskHandler) openDataPlane(
 		MTU:     negotiatedMTU(clientCID.Transport, rc.Transport),
 	}
 	if direct {
-		out.DialAt = protocol.ConnIDToRunnerID(rc)
+		out.DialAt = protocol.ConnIDFromObjproto(rc)
 	}
 	return out, nil
 }

@@ -138,7 +138,7 @@ type TaskHandler struct {
 	// counter on a row is read as a rate, and timing the interval at the caller
 	// instead divides one host's delta by another's elapsed.
 	TrsfStateFn       func(allowed map[string]bool, globalView bool) ([]protocol.TrsfConnState, int64)
-	RunnerTrsfStateFn func(ctx context.Context, runner protocol.RunnerID) ([]protocol.TrsfConnState, int64, error)
+	RunnerTrsfStateFn func(ctx context.Context, runner protocol.ConnID) ([]protocol.TrsfConnState, int64, error)
 
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).

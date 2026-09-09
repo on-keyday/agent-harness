@@ -167,7 +167,7 @@ func (s *Server) setupDataPlane(
 	// is not told to dial until that answer arrives, so the path is opening
 	// before the first dial packet leaves.
 	if direct {
-		req.PunchTarget = protocol.ConnIDToRunnerID(
+		req.PunchTarget = protocol.ConnIDFromObjproto(
 			objproto.NewConnectionID(clientCID.Transport, clientCID.Addr, slot))
 	}
 	resp, err := s.sendAuthorizeDataPlaneRequest(ctx, entry, req)

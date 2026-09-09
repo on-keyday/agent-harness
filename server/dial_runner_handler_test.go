@@ -416,7 +416,7 @@ func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
 
 	type callRecord struct {
 		entry  *RunnerEntry
-		target protocol.RunnerID
+		target protocol.ConnID
 		slotID uint16
 	}
 	var (

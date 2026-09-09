@@ -38,7 +38,7 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 			return nil, 0, fmt.Errorf("trsf: parse runner cid %q: %w", runnerCID, err)
 		}
 		body.Target = protocol.TrsfTarget_Runner
-		body.RunnerCid = protocol.ConnIDToRunnerID(cid)
+		body.RunnerCid = protocol.ConnIDFromObjproto(cid)
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_TrsfState}
 	req.SetTrsfState(body)

@@ -66,7 +66,7 @@ func handleEstablishRelay(
 	_ = ctx // reserved for future cancellation hooks
 	resp := st.validate(req)
 	if resp.Status == protocol.EstablishRelayStatus_Ok {
-		targetCID := protocol.RunnerIDToConnID(req.Target)
+		targetCID := req.Target.ToObjproto()
 		ownedCID := objproto.NewConnectionID(st.serverCID.Transport, st.serverCID.Addr, req.SlotId)
 		allocCID := objproto.NewConnectionID(targetCID.Transport, targetCID.Addr, req.SlotId)
 		if err := ep.SetProxy(ownedCID, allocCID); err != nil {

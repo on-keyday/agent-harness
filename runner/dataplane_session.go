@@ -100,7 +100,7 @@ func handleAuthorizeDataPlane(
 		n := punchToward(punchCtx, ep, req.PunchTarget, punchInterval)
 		if logger != nil {
 			logger.Info("data plane: punch finished", "probes", n,
-				"target", protocol.RunnerIDToConnID(req.PunchTarget).String())
+				"target", req.PunchTarget.ToObjproto().String())
 		}
 	}()
 }

@@ -22,8 +22,8 @@ func (f *fakeProbeSender) SendProbe(cid objproto.ConnectionID, _ [6]byte, _ neti
 	return nil
 }
 
-func punchTestTarget() protocol.RunnerID {
-	return protocol.ConnIDToRunnerID(objproto.NewConnectionID("udp",
+func punchTestTarget() protocol.ConnID {
+	return protocol.ConnIDFromObjproto(objproto.NewConnectionID("udp",
 		netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 45999), 0x7777))
 }
 
@@ -33,7 +33,7 @@ func TestPunchTowardSendsNothingWhenTargetAbsent(t *testing.T) {
 	f := &fakeProbeSender{}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if n := punchToward(ctx, f, protocol.RunnerID{}, 5*time.Millisecond); n != 0 {
+	if n := punchToward(ctx, f, protocol.ConnID{}, 5*time.Millisecond); n != 0 {
 		t.Fatalf("absent target should send nothing, sent %d", n)
 	}
 	if got := f.n.Load(); got != 0 {

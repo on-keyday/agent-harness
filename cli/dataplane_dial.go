@@ -32,7 +32,7 @@ type dataPlaneTarget struct {
 	// this client. The client does not choose between them -- the server
 	// answers with one or the other, because only the server knows whether the
 	// punch was asked for.
-	RunnerCID protocol.RunnerID
+	RunnerCID protocol.ConnID
 }
 
 // use reports whether the server routed this request end to end.
@@ -76,7 +76,7 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	serverCID := c.conn.Connection().ConnectionID()
 	slotCID := objproto.NewConnectionID(serverCID.Transport, serverCID.Addr, t.SlotID)
 	if t.RunnerCID.TransportLen != 0 {
-		rc := protocol.RunnerIDToConnID(t.RunnerCID)
+		rc := t.RunnerCID.ToObjproto()
 		slotCID = objproto.NewConnectionID(rc.Transport, rc.Addr, t.SlotID)
 	}
 

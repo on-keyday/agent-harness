@@ -276,8 +276,8 @@ func New(cfg Config) *Server {
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
 	s.taskHandler.TrsfStateFn = s.trsfConnStates
-	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, rid protocol.RunnerID) ([]protocol.TrsfConnState, int64, error) {
-		entry, ok := s.registry.Get(protocol.RunnerIDToConnID(rid).String())
+	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, cid protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
+		entry, ok := s.registry.Get(cid.ToObjproto().String())
 		if !ok {
 			return nil, 0, errRunnerOffline
 		}

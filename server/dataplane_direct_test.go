@@ -26,9 +26,9 @@ func TestDataPlaneDirectNeedsBothEndsOnUDP(t *testing.T) {
 // the client at an address a firewall drops -- the failure the punch exists to
 // prevent, arrived at by saying too much.
 func TestRelayedRouteNamesNoRunnerAddress(t *testing.T) {
-	var zero protocol.RunnerID
+	var zero protocol.ConnID
 	if zero.TransportLen != 0 {
-		t.Fatal("the zero RunnerID is supposed to encode as absent")
+		t.Fatal("the zero ConnID is supposed to encode as absent")
 	}
 	// The client's branch is keyed on exactly this, so pin the encoding both
 	// ways round: absent stays absent across the wire.
@@ -36,7 +36,7 @@ func TestRelayedRouteNamesNoRunnerAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	var back protocol.RunnerID
+	var back protocol.ConnID
 	if _, err := back.Decode(b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

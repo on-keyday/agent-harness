@@ -34,11 +34,11 @@ type probeSender interface {
 // is how that bill is paid once instead of twice.
 //
 // Returns how many probes were sent.
-func punchToward(ctx context.Context, ep probeSender, target protocol.RunnerID, interval time.Duration) int {
+func punchToward(ctx context.Context, ep probeSender, target protocol.ConnID, interval time.Duration) int {
 	if target.TransportLen == 0 {
 		return 0
 	}
-	cid := protocol.RunnerIDToConnID(target)
+	cid := target.ToObjproto()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	sent := 0

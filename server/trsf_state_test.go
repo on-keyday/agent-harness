@@ -12,7 +12,7 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-func trsfRequest(t *testing.T, target protocol.TrsfTarget, runner protocol.RunnerID) []byte {
+func trsfRequest(t *testing.T, target protocol.TrsfTarget, runner protocol.ConnID) []byte {
 	t.Helper()
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_TrsfState, RequestId: 21}
 	req.SetTrsfState(protocol.TrsfStateRequest{Target: target, RunnerCid: runner})
@@ -41,13 +41,13 @@ func trsfCaller(t *testing.T, h *TaskHandler, port string) *fakeConn {
 func TestRunnerTrsfStateNeedsTheGlobalViewNotACapability(t *testing.T) {
 	h := newTestHandler(t)
 	asked := false
-	h.RunnerTrsfStateFn = func(context.Context, protocol.RunnerID) ([]protocol.TrsfConnState, int64, error) {
+	h.RunnerTrsfStateFn = func(context.Context, protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
 		asked = true
 		return nil, 0, nil
 	}
 	conn := trsfCaller(t, h, "9801") // Capability_All, but a confined scope
 
-	h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Runner, protocol.RunnerID{}))
+	h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Runner, protocol.ConnID{}))
 
 	if asked {
 		t.Fatal("a confined caller reached a runner's transport state")
@@ -77,7 +77,7 @@ func TestServerTrsfStateReadsNoCapabilityAndPassesTheVisibility(t *testing.T) {
 	conn := trsfCaller(t, h, "9802")
 	conn.nextSendStreamID = 7 // the rows travel on a stream, so one must exist
 
-	h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Server, protocol.RunnerID{}))
+	h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Server, protocol.ConnID{}))
 
 	if sawGlobal {
 		t.Error("a confined caller was handed the global view")
@@ -120,12 +120,12 @@ func TestRunnerTrsfStateSeparatesOfflineFromSilent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTestHandler(t)
-			h.RunnerTrsfStateFn = func(context.Context, protocol.RunnerID) ([]protocol.TrsfConnState, int64, error) {
+			h.RunnerTrsfStateFn = func(context.Context, protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
 				return nil, 0, tc.err
 			}
 			// Operator: no principal, so the global view is granted.
 			conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9803-1")}
-			h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Runner, protocol.RunnerID{}))
+			h.Handle(conn, trsfRequest(t, protocol.TrsfTarget_Runner, protocol.ConnID{}))
 			resp := lastTaskControlResponse(t, conn)
 			got := resp.TrsfState()
 			if got == nil || got.Status != tc.want {

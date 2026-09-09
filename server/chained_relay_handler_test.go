@@ -88,7 +88,7 @@ func TestChainedRelay_2Hop(t *testing.T) {
 		callCount    int32
 		calledEntry  *RunnerEntry
 		calledSlot   uint16
-		calledTarget protocol.RunnerID
+		calledTarget protocol.ConnID
 		mu           sync.Mutex
 	)
 
@@ -121,8 +121,8 @@ func TestChainedRelay_2Hop(t *testing.T) {
 	if calledSlot != 42 {
 		t.Errorf("expected SlotId=42, got %d", calledSlot)
 	}
-	expectedTarget := protocol.ConnIDToRunnerID(lDialAddr)
-	// RunnerID contains slices — compare by encoded form.
+	expectedTarget := protocol.ConnIDFromObjproto(lDialAddr)
+	// ConnID contains slices — compare by encoded form.
 	expectedBytes, _ := expectedTarget.Append(nil)
 	calledBytes, _ := calledTarget.Append(nil)
 	if !bytes.Equal(expectedBytes, calledBytes) {

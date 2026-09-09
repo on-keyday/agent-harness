@@ -439,6 +439,11 @@ format ClientHelloResponse:
 # Used in environments where ACL blocks runner→server outbound; server initiates
 # the TCP/UDP connect instead.
 format DialRunnerRequest:
+    # Both still RunnerID, and unresolved rather than settled: the operator
+    # names a runner (identity) and the server dials it (address), so which
+    # side performs the identity -> address resolution decides whether these
+    # carry a ConnID or a RunnerID. Deciding it needs dial_runner_handler.go
+    # and upstream_walk.go read through, so they are left as they were.
     target :RunnerID
     via    :RunnerID
 
@@ -458,7 +463,9 @@ format DialRunnerResponse:
 # server → proxy_runner: please prepare to relay between me and target at slot_id.
 # Sent on the existing PSK-validated server↔proxy_runner registered conn.
 format EstablishRelayRequest:
-    target  :RunnerID
+    # A HOP's dial address, not a runner identity: upstream_walk fills it from
+    # the downstream entry's ViaDialAddr, an objproto.ConnectionID.
+    target  :ConnID
     slot_id :u16
 
 enum EstablishRelayStatus:
@@ -1741,7 +1748,7 @@ enum TrsfStateStatus:
 
 format TrsfStateRequest:
     target :TrsfTarget
-    runner_cid :RunnerID        # target == runner only; ignored otherwise
+    runner_cid :ConnID          # target == runner only; ignored otherwise
 
 # The rows travel on a STREAM, not in this response, and that is not a style
 # choice. A TaskControlResponse is one application message and objproto does not
@@ -2055,7 +2062,7 @@ format OpenFileTransferResponse:
     # path is open by the time this answer arrives, and the bytes cross ONE hop
     # instead of two. Only ever set when both ends are on the same dialable
     # transport -- a browser on WebSocket cannot dial a runner at all.
-    runner_cid :RunnerID
+    runner_cid :ConnID
 
 format ListFilesRequest:
     task_id      :TaskID
@@ -2099,7 +2106,7 @@ format ListFilesResponse:
     # path is open by the time this answer arrives, and the bytes cross ONE hop
     # instead of two. Only ever set when both ends are on the same dialable
     # transport -- a browser on WebSocket cannot dial a runner at all.
-    runner_cid :RunnerID
+    runner_cid :ConnID
 
 # A grant is one request on one task, for a bounded time. It is NOT the task's
 # auth_ticket: that names the task's agent, this names a request.
@@ -2142,7 +2149,7 @@ format AuthorizeDataPlaneRequest:
     # two. 0 means "use your own default", which is what a same-transport pair
     # needs and what an older server sends.
     mtu :u16
-    punch_target :RunnerID
+    punch_target :ConnID
     grant :DataPlaneGrant
 
 enum AuthorizeDataPlaneStatus:

@@ -51,7 +51,7 @@ func walkAndDispatchUpstreamHops(
 
 	type hopSetup struct {
 		hop             *RunnerEntry
-		downViaDialAddr protocol.RunnerID
+		downViaDialAddr protocol.ConnID
 	}
 
 	var hops []hopSetup
@@ -64,7 +64,7 @@ func walkAndDispatchUpstreamHops(
 		}
 		hops = append(hops, hopSetup{
 			hop:             cur.Via,
-			downViaDialAddr: protocol.ConnIDToRunnerID(cur.ViaDialAddr),
+			downViaDialAddr: protocol.ConnIDFromObjproto(cur.ViaDialAddr),
 		})
 		seen[cur.Via.ID] = struct{}{}
 		cur = cur.Via
