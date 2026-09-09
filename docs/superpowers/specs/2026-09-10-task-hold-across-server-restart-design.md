@@ -242,9 +242,18 @@ about the harness's own mode tracker).
 `trsf.BidirectionalStream`, an interface (`trsf/api.go:62-66`: SendStream +
 ReceiveStream + CloseBoth). The runner passes its OWN implementation from the
 start of every interactive session — a relay whose far end it can swap — and
-`agentexec` never learns that anything changed. That keeps the work inside this
-repo; changing objtrsf instead would mean a publish plus a `go.mod` bump for a
-facility only the harness needs.
+`agentexec` never learns that anything changed.
+
+The reason is not that objtrsf is hard to change. It is a repo like this one
+with its own landing policy, and a stream-swap entry point would be a small
+addition there. The reason is **where the invariant belongs**: "do not close
+the PTY when the stream goes away" and "stop draining while a hold is armed"
+are statements about a HOLD, and `exec` cannot know when either is right — it
+runs a command against a stream and has no notion of a server that will come
+back. Teaching it one would put harness policy inside a general-purpose
+package; the relay puts it in the process that owns the policy, and every
+other piece the hold needs (D12, the non-close, the disarmed ladder) lands in
+that same object rather than being spread across a module boundary.
 
 Everything else the hold needs turns out to live in that one object, which is
 why it is the right shape rather than a workaround:
@@ -681,6 +690,37 @@ present is the normal case.
   explicitly on disconnect **unless a hold is armed**. Today's behaviour becomes
   the else branch of one visible decision rather than a side effect of context
   parentage.
+- **And so does the task REGISTRY, which is the bigger half.** `Session` is
+  created once per connection — its own doc says so (`runner/session.go:120-122`)
+  and `connect.go:279` is the single construction site — and `s.tasks` lives in
+  it. Re-parenting the context while leaving the map where it is produces held
+  children whose `cancel`, whose `wakeWrite`, and whose relay are unreachable
+  the moment the connection drops. So the map of live tasks becomes
+  process-level state that each `Session` points at, the same move the identity
+  change made for `RunnerID` (minted above `PersistLoop`, not per connection).
+  `Session` keeps what is genuinely per-connection: its `Sender`, its streams.
+- **`taskEntry` gains the fields the hold needs and nothing more.** Today it is
+  `{cancel, repoPath, wakeWrite, lastWakeAt}` (`runner/session.go:104-118`). It
+  gains the ticket (D6) and the relay handle (D13). It does **not** gain the
+  task kind: the server knows whether a task is interactive
+  (`TaskInfo.Kind`) and therefore decides on its own who gets a
+  `RebindSessionRequest`, so reporting the kind would duplicate authoritative
+  state on the wire for nothing.
+- **`wakeWrite` is a consumer of that survival, not a bystander.** It is the
+  closure `task_wake` writes through (`runner/session.go:108-112`,
+  `WakeStdin` at `:971`), so an agent that survives a restart keeps its wake
+  path exactly when the entries outlive the connection — and loses it silently
+  if they do not. Worth checking by hand after re-adoption: a task whose board
+  message arrives but whose agent never notices is this, not the board.
+- **The ack names only tasks with a LIVE child.** An entry exists from
+  registration, which is before the worktree is created and before anything is
+  spawned (`runner/session.go:489-491` precedes the spawn by ~60 lines), so
+  acking every entry would promise children that do not exist and the server
+  would write `task_held` for them. The condition is per path: interactive —
+  `OnStdinWriter` has fired and `OnProcessExit` has not; oneshot — the command
+  was started and has not returned. Both hooks already exist
+  (`objtrsf/exec.ExecuteOption`), so this needs bookkeeping rather than new
+  plumbing.
 - **Interpose a relay on every interactive session (D13).** The runner passes
   its own `trsf.BidirectionalStream` to `agentexec` instead of the server's
   stream, and copies between the two itself. This is the load-bearing piece:
@@ -955,8 +995,14 @@ Two consequences of `restart.py` replaying the running process's argv:
 
 Also:
 
-- `scripts/wire-skew-check.sh` must be run and must show reject-then-heal in
-  both directions.
+- `scripts/wire-skew-check.sh` must be run and must show reject-then-heal.
+  Note what it does and does not cover: it asserts **NEW runner × OLD server**
+  and states in its own header that OLD runner × NEW server is *not* asserted
+  ("pre-fix runners exit fatally by construction",
+  `scripts/wire-skew-check.sh:25-26`). The prerequisite change found that skip
+  no longer applies once `OLD_REF` is past `d4f7a5a` and verified the other
+  direction BY HAND. Do the same here rather than reading the script's PASS as
+  covering both.
 - Rollback: a binary that predates `task_held` ignores the record and shows
   phantom Running rows for whatever was held (§4). `prune` clears them.
 
@@ -980,9 +1026,28 @@ Also:
    (`3ce441c`), and whether a claude child exits when its PTY master closes is
    agent- and OS-dependent — this project has seen an agent survive a stdin EOF
    on Windows. This hole is NOT closed by this design; the window it opens is
-   `hold_ms` wide. Closing it needs the held child's pid recorded where the next
-   runner process in the same slot can reap it, which is deliberately left out
-   of v1 and named here so it is not discovered as a surprise.
+   `hold_ms` wide.
+   **And the obvious fix is not available.** "Record the held child's pid so the
+   next runner in the same slot can reap it" is what an earlier draft of this
+   item proposed, and for the case that matters it cannot be written: the
+   interactive child is spawned inside
+   `agentexec.ExecuteCommandWithOption`, whose entire hook surface is
+   `OnStdinWriter`, `Audit`, `OnProcessExit` and `StdinDevNull`, with
+   `Auditor.Start(command, args, ptyEnabled)` carrying no pid and `grep -i pid`
+   over the package's `exec.go` returning nothing. The process-tree helpers
+   there are unexported. So the pid is available on the ONESHOT path only,
+   where the runner owns `cmd` itself (`runner/process.go:170`).
+   Two routes, and the cheaper one is upstream. Adding a pid to
+   `Auditor.Start` — or an `OnStart(pid)` beside `OnProcessExit` — is a few
+   lines in objtrsf, which is this operator's own module with its own landing
+   policy; the propagation cost is a publish and a `go.mod` bump, not a
+   negotiation. The alternative is the runner enumerating its own children from
+   the OS at startup, which works (it is the parent) but needs a per-platform
+   implementation and can only guess which child belongs to which task.
+   **So this hole is cheap to close, and whether it closes in v1 is an operator
+   call rather than a technical boundary.** An earlier draft of this item
+   presented the upstream change as prohibitive, which was wrong and is why the
+   hole read as unavoidable.
 5. **An agent that dies on a stalled write** (D12's forbidden case). Measured
    per agent in §10; if one turns out to behave this way, the answer is a disk
    spill for that agent, not a ring for everyone.
@@ -1054,7 +1119,11 @@ Also:
      missing chunk falsifies it).
   3. **The negative control: `kill -9` the server.** Children must die and tasks
      must be Failed, exactly as today. A hold that survives a crash means the
-     instruction is not what armed it.
+     instruction is not what armed it. Runnable as written: the dummy's env
+     exports `SERVER_PID` (`scripts/dummy-harness.py:363-365`), so this is
+     `kill -9 $SERVER_PID` and not a `pgrep` that could match the real fleet —
+     which the dummy deliberately protects against by killing only pids it
+     recorded (`scripts/dummy-harness.py:320-332`).
   4. `hold_ms` elapsing with no server: the children must be gone, and the next
      server start must Fail those tasks rather than offer them.
   5. A task Cancelled while held: absent from the accepted list, child killed,
