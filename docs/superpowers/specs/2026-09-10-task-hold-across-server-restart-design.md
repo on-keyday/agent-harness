@@ -101,7 +101,7 @@ are wrong.
   it cannot report them, and they are not on the log. A held agent therefore
   comes back reachable on its own topic and no longer subscribed to whatever
   else it had asked for. Persisting the pattern list would fix it and is a
-  separate change; the failure is silent, so it is also §9.10.
+  separate change; the failure is silent, so it is also §9.11.
 
 ## 3. Decisions taken
 
@@ -551,7 +551,24 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    (`server/server.go:488-491`), and without the suppression the WAL ends with
    `task_failed` after `task_held` — replay is order-sensitive, so the hold
    would be silently undone and the children left orphaned.
-   Note what this does *not* buy. The `Revoke` half of that function is
+   **And it is not the only path that undoes a hold.** When a `SessionMux`
+   stops, `afterMuxStopped` cancels any task still `Running`
+   (`server/task_handler.go:1459-1461`). Every mux is a child of the server
+   ROOT context — `s.taskHandler.Ctx = ctx` (`server/server.go:650-652`),
+   consumed as `parentCtx` at `server/task_handler.go:1413-1418` — which is the
+   same context whose cancellation triggers this whole sequence. So the mux
+   teardown does not happen *after* the hold; it races it, and it races it for
+   exactly the interactive tasks the hold exists to preserve. If the mux wins,
+   the WAL gets `task_cancelled` after `task_held`, replay says Cancelled, and
+   the child is killed at re-adoption: the feature silently does nothing for
+   the majority case.
+   The fix is to stop hanging the muxes off the root context. The server takes
+   a separate sessions context (a child of the root, with its own cancel) and
+   the shutdown path cancels it *after* the hold sequence returns, which makes
+   the ordering a statement instead of a race. `afterMuxStopped` also gains
+   `Held` to its skip condition — one extra comparison, and cheap insurance
+   against a future path that stops a mux for its own reasons.
+   Note what step 6 does *not* buy. The `Revoke` half of that function is
    irrelevant here: the ticket registry is in memory
    (`agentboard/registry.go:23-29`) and dies with the process whether or not
    the shutdown revokes. Skipping the revoke is worth doing only for tidiness
@@ -910,6 +927,8 @@ adding `Held` is a decision at each. Enumerated, with the verdict:
 | `server/file_transfer.go:32`, `:112` | push / pull into a worktree | **stays out** — the transfer needs the runner leg |
 | `cli/list.go:229` | renders a task as live | **goes in** — the child is running; this is the one class where a held task is alive |
 | `tui/tasks.go:414` | same predicate, TUI side | **goes in**, same reason |
+| `tui/taskaction.go:69` | `Running && Kind == Oneshot` — a per-row action gate | **stays out**: the action needs a live runner leg |
+| `server/task_handler.go:1460` | `afterMuxStopped` cancels a still-`Running` task | **stays out**, and the ordering that makes it safe is a race today — see §5 step 6 |
 
 The refusals are the interesting half. Leaving `Held` out of them is correct —
 but it is correct *by accident*, because the disjunction happens not to name it,
@@ -995,14 +1014,24 @@ Two consequences of `restart.py` replaying the running process's argv:
 
 Also:
 
-- `scripts/wire-skew-check.sh` must be run and must show reject-then-heal.
-  Note what it does and does not cover: it asserts **NEW runner × OLD server**
-  and states in its own header that OLD runner × NEW server is *not* asserted
-  ("pre-fix runners exit fatally by construction",
-  `scripts/wire-skew-check.sh:25-26`). The prerequisite change found that skip
-  no longer applies once `OLD_REF` is past `d4f7a5a` and verified the other
-  direction BY HAND. Do the same here rather than reading the script's PASS as
-  covering both.
+- `scripts/wire-skew-check.sh` must be run and must show reject-then-heal —
+  **and it gains the direction it is currently missing, as part of this
+  change.** Today it asserts NEW runner × OLD server in two phases and its
+  header declares OLD runner × NEW server "NOT asserted: pre-fix runners exit
+  fatally by construction" (`scripts/wire-skew-check.sh:25-26`). That reason
+  expired: it describes runners built before `d4f7a5a` made `NoIdentity`
+  retryable, and the prerequisite change already found the direction behaves
+  correctly — by hand, which is the part to fix rather than repeat.
+  The addition is small and mechanical: build `old-runner` in the detached
+  worktree beside the existing `old-server` (`wire-skew-check.sh:108-126`
+  builds only the server there), then a third phase mirroring phase 1's two
+  assertions — rejected, retrying, still alive — with the old runner against
+  the new server. Gate it on `git merge-base --is-ancestor d4f7a5a "$OLD_REF"`
+  and, when that fails, SKIP WITH THE REASON PRINTED: a pre-`d4f7a5a` runner
+  legitimately exits fatally, and a silent skip is how this direction went
+  unchecked in the first place.
+  A manual verification step in a spec is a defect in the spec. It survives
+  exactly one landing and then nobody runs it.
 - Rollback: a binary that predates `task_held` ignores the record and shows
   phantom Running rows for whatever was held (§4). `prune` clears them.
 
@@ -1017,7 +1046,7 @@ Also:
    of interposing.
 2. **A pump closes the PTY master on write error.** Same symptom as (1) via
    SIGHUP, from the drain side rather than the reap side.
-3. **`failAndRevokeTasksOf` not suppressed** (§5 step 5) → `task_failed` after
+3. **`failAndRevokeTasksOf` not suppressed** (§5 step 6) → `task_failed` after
    `task_held` → replay undoes the hold and the children are orphaned for the
    full window with nobody to adopt them. Worse than a plain failure, because
    the runner still believes it is holding.
@@ -1063,12 +1092,17 @@ Also:
    nobody. A session you can watch but that cannot report is the worst of the
    available failures, because nothing about the screen says so. `UnknownTask`
    is the same defect one step earlier — the task never re-registered at all.
-9. **The screen snapshot fed in the wrong order, or left on disk.** Fed after
+9. **The mux teardown wins the race against the hold** (§5 step 6). The WAL
+   ends `task_held` then `task_cancelled`, so every held INTERACTIVE task comes
+   back Cancelled and its child is killed at re-adoption. Presents as "the hold
+   works for oneshots and does nothing for sessions", which reads like a
+   feature limitation rather than a race, and would be reported that way.
+10. **The screen snapshot fed in the wrong order, or left on disk.** Fed after
    the gap's buffered bytes it overwrites newer output with older; left
    undeleted it can repaint a later session with a screen from before the
    restart. Both look correct in a test where the child is idle across the
    restart, which is the test anyone writes first (§10.1a exists for this).
-10. **The board registration goes through `registry.Register` instead of the
+11. **The board registration goes through `registry.Register` instead of the
    funnel** (§5). The ticket validates, so every credential check passes and
    the agent looks healthy; `agent send` to that task returns `delivered_to=0`
    because no subscriber matches its own topic, and the inbox hook stops waking
@@ -1076,7 +1110,7 @@ Also:
    which is why §10.1b asserts the 1 rather than the absence of an error.
    The subscription patterns an agent added at runtime are lost either way
    (§2) — this item is about losing the self-topic too.
-11. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
+12. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
    registers over WebSocket and, over UDP, loops on the handshake with no error
    logged at either end. Nothing in the stack reports it, so it will not be
    found by reading logs — only by noticing that the transport is the variable.
