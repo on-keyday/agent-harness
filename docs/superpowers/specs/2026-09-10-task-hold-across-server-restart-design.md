@@ -1180,6 +1180,34 @@ the server slot — 15 s — in the same commit as the flag defaults. §5 still 
 inside 5 s so a stale `restart.py` degrades rather than breaks, and §6a.2's
 ack window stops being squeezed against a ceiling nobody chose for it.
 
+**The symptom to expect between the two steps, and why it names a field
+nothing touched.** A client built from the new tree talking to the not-yet-
+restarted server reports:
+
+```
+decode ListResultBody (8735 bytes): not enough data to read for field "TaskInfo::RepoPath"
+```
+
+`TaskInfo.hold_deadline_ns` was appended at the END of the record, and
+`ListResultBody` holds `tasks :[tasks_len]TaskInfo` with **no per-element
+length prefix** — the elements self-delimit only while both sides agree on the
+layout. So the client decodes task #1, then reads 8 bytes of
+`hold_deadline_ns` off the FRONT of task #2, and every record after that is
+shifted. The head of a shifted record decodes "fine" into garbage (a
+misaligned 16-byte id is not detectable), and the first thing that cannot
+absorb it is `repo_path_len :u16`, ~40 bytes in: a nonsense length, and a
+demand for more data than remains.
+
+So the reported field is where a wrong offset stops being SILENT, never where
+the change was. Which field it names even depends on the reply: with a single
+task there is no next record to steal from, the shortfall hits end-of-buffer,
+and it reports `TaskInfo::HoldDeadlineNs` instead. The prerequisite change
+produced the same shape — `AllowedRoot::Path`, also a length-prefixed field,
+also nowhere near the `runner_id` that caused it.
+
+Scoped to `TaskInfo` readers: `ls` fails, `conns` / `whoami` / sessions are
+unaffected.
+
 Two consequences of `restart.py` replaying the running process's argv:
 
 - Any flag this change adds must work from its default (§5 step 1), because the
