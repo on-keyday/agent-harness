@@ -438,8 +438,15 @@ func main() {
 	// Minted once, here, above PersistLoop: this names the PROCESS, so every
 	// reconnect must carry the same value and a restart must not.
 	runnerID := runner.NewRunnerID()
+	// Minted here for the same reason as the identity, and it is the same
+	// mistake to make per connection: the task registry has to outlive any one
+	// link, or a held child's cancel func dies with the connection whose loss
+	// the hold exists to survive. ctx is the process's, for the same reason.
+	tasks := runner.NewTaskRegistry()
 	runCfg := runner.Config{
 		RunnerID:                   runnerID,
+		Tasks:                      tasks,
+		ProcessCtx:                 ctx,
 		AllowedRoots:               abs,
 		MaxTasks:                   cfg.MaxTasks,
 		Hostname:                   hostname,

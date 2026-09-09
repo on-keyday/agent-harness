@@ -48,15 +48,24 @@ type sessionRelay struct {
 	// nowhere else.
 	pending []byte
 	closed  bool
+
+	// held reports whether a hold is armed. It is what separates a GAP from an
+	// END, and without it the relay cannot tell them apart: an error from the
+	// far stream is a gap to wait out while a hold is in force, and the real
+	// end of the session otherwise. Parking unconditionally hung every
+	// ordinary session teardown.
+	held func() bool
 }
+
+func (r *sessionRelay) isHeld() bool { return r.held != nil && r.held() }
 
 // Compile-time proof that the relay can stand in for the server's stream.
 // Without this the file builds happily until the first assignment, and the
 // whole design rests on this substitution being legal.
 var _ trsf.BidirectionalStream = (*sessionRelay)(nil)
 
-func newSessionRelay(far trsf.BidirectionalStream) *sessionRelay {
-	return &sessionRelay{far: far, wake: make(chan struct{})}
+func newSessionRelay(far trsf.BidirectionalStream, held func() bool) *sessionRelay {
+	return &sessionRelay{far: far, wake: make(chan struct{}), held: held}
 }
 
 // rebind points the relay at a new far stream and wakes anything parked.
@@ -95,6 +104,12 @@ func (r *sessionRelay) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		}
 		if far == nil {
+			if !r.isHeld() {
+				// No hold: there is nothing to wait for and the session is
+				// over. Surfacing EOF is what lets agentexec's ladder reap
+				// the child, which is the correct end of an ordinary session.
+				return 0, io.EOF
+			}
 			<-wake
 			continue
 		}
@@ -102,8 +117,11 @@ func (r *sessionRelay) Read(p []byte) (int, error) {
 		if err == nil || n > 0 {
 			return n, err
 		}
-		// The far side died. Park for a rebind instead of surfacing the error:
-		// while a hold is armed this is a gap, not an end.
+		if !r.isHeld() {
+			return n, err // an ordinary end: pass it through unchanged
+		}
+		// A hold is armed, so the far side dying is a GAP. Drop it and park
+		// for the rebind rather than surfacing an error the reaper watches.
 		r.mu.Lock()
 		if r.far == far {
 			r.far = nil
@@ -130,6 +148,10 @@ func (r *sessionRelay) Write(p []byte) (int, error) {
 		return 0, io.ErrClosedPipe
 	}
 	if far == nil {
+		if !r.isHeld() {
+			r.mu.Unlock()
+			return 0, io.ErrClosedPipe // an ordinary end, reported as one
+		}
 		// Bounded by one chunk per gap: the drain stops after this, because
 		// agentexec's copier blocks on the next Write until a rebind.
 		if r.pending == nil {

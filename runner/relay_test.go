@@ -44,7 +44,7 @@ func (f *fakeFar) Write(p []byte) (int, error) {
 // after a rebind carries them.
 func TestRelayRetainsTheChunkItCouldNotForward(t *testing.T) {
 	far := newFakeFar()
-	r := newSessionRelay(far)
+	r := newSessionRelay(far, func() bool { return true })
 	r.detach()
 
 	done := make(chan struct{})
@@ -85,7 +85,7 @@ func TestRelayRetainsTheChunkItCouldNotForward(t *testing.T) {
 // detached it must NOT report EOF, or the child is killed because a server
 // went away — the exact failure the relay exists to prevent.
 func TestRelayDoesNotReportEOFWhileMerelyDetached(t *testing.T) {
-	r := newSessionRelay(newFakeFar())
+	r := newSessionRelay(newFakeFar(), func() bool { return true })
 	r.detach()
 	if r.EOF() {
 		t.Error("EOF() is true with no far stream — the reaper ladder would fire")
@@ -103,7 +103,7 @@ func TestRelayDoesNotReportEOFWhileMerelyDetached(t *testing.T) {
 // reason.
 func TestRelayReadParksInsteadOfEndingTheSession(t *testing.T) {
 	far := newFakeFar()
-	r := newSessionRelay(far)
+	r := newSessionRelay(far, func() bool { return true })
 	r.detach()
 
 	type res struct {
@@ -140,7 +140,7 @@ func TestRelayReadParksInsteadOfEndingTheSession(t *testing.T) {
 // child is a session leader with that PTY as its controlling terminal.
 func TestRelayDoesNotForwardCloseBoth(t *testing.T) {
 	far := newFakeFar()
-	r := newSessionRelay(far)
+	r := newSessionRelay(far, func() bool { return true })
 	if err := r.CloseBoth(); err != nil {
 		t.Fatalf("CloseBoth: %v", err)
 	}
@@ -177,3 +177,47 @@ func (s *trsfStub) ReadDirectContext(context.Context, uint64) ([]byte, bool, err
 func (s *trsfStub) HasRecvData() bool { return false }
 func (s *trsfStub) EOF() bool         { return false }
 func (s *trsfStub) Cancel()           {}
+
+// The distinction the relay exists to make, and the one it got wrong first:
+// with NO hold armed, a dead far stream is the ordinary end of a session and
+// must propagate, or agentexec's reaper never runs and the task hangs forever.
+// Parking unconditionally hung every teardown in the suite.
+func TestRelayPassesTheEndThroughWhenNoHoldIsArmed(t *testing.T) {
+	far := newFakeFar()
+	r := newSessionRelay(far, func() bool { return false })
+	far.fail = true
+
+	if _, err := r.Read(make([]byte, 4)); err == nil {
+		t.Error("Read swallowed the end of the session with no hold armed")
+	}
+	r.detach()
+	if _, err := r.Write([]byte("x")); err == nil {
+		t.Error("Write parked with no hold armed — the session can never end")
+	}
+}
+
+// And the same relay parks once a hold IS armed, so the pair proves the
+// behaviour is conditional rather than absent.
+func TestRelayParksOnlyWhileHeld(t *testing.T) {
+	held := false
+	r := newSessionRelay(newFakeFar(), func() bool { return held })
+	r.detach()
+
+	if _, err := r.Write([]byte("x")); err == nil {
+		t.Fatal("Write should report an end while not held")
+	}
+	held = true
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = r.Write([]byte("y")) }()
+	select {
+	case <-done:
+		t.Error("Write returned while held — the bytes were dropped")
+	case <-time.After(50 * time.Millisecond):
+	}
+	r.rebind(newFakeFar())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("Write never unparked after the rebind")
+	}
+}

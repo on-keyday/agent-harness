@@ -141,6 +141,20 @@ type taskEntry struct {
 	relay *sessionRelay
 }
 
+// taskRootCtx is the context a spawned task descends from: the process's when
+// one was supplied, otherwise the caller's (which is the connection's, i.e.
+// the pre-hold behaviour).
+//
+// This is the single line that decides whether a disconnect can kill a child
+// by parentage. With it, nothing ends a task on disconnect unless
+// cancelTasksUnlessHeld says so.
+func (s *Session) taskRootCtx(connCtx context.Context) context.Context {
+	if s.processCtx != nil && s.reg != nil {
+		return s.processCtx
+	}
+	return connCtx
+}
+
 // childLive reports that this task's child process has started and not yet
 // exited — the only condition under which a hold may promise it.
 func (e *taskEntry) childLive() bool {
@@ -257,7 +271,13 @@ type Session struct {
 	// makes its own when Config supplies none, which is what keeps tests and
 	// the single-shot Run path unchanged.
 	reg *TaskRegistry
-	wms map[string]*WorktreeManager // repoPath → WorktreeManager
+
+	// processCtx is what a TASK's context descends from when a hold-capable
+	// registry is wired. Only the two spawn paths use it: file transfers, git
+	// queries and execs stay rooted at the CONNECTION, because they exist for
+	// a client that is gone the moment the link is.
+	processCtx context.Context
+	wms        map[string]*WorktreeManager // repoPath → WorktreeManager
 
 	// testHookHandleAssign is called at the start of handleAssign in tests to
 	// inject faults (e.g. panics). It is nil in production.
@@ -528,7 +548,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// the connection's, so a disconnect no longer cancels this by parentage.
 	// What ends a task on a disconnect is now an explicit decision:
 	// Session.cancelTasksUnlessHeld.
-	taskCtx, cancel := context.WithCancel(ctx)
+	taskCtx, cancel := context.WithCancel(s.taskRootCtx(ctx))
 	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: body.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
@@ -615,7 +635,12 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
 	}
+	// The oneshot path's child brackets: Run starts the process and returns
+	// when it has exited, so the pair is exact here without a hook. A hold may
+	// only promise a task with a live child, and an entry alone is not one.
+	entry.started.Store(true)
 	exit, runErr := proc.Run(taskCtx, string(body.Prompt), logSink)
+	entry.exited.Store(true)
 
 	// Step 5: Send TaskFinished.
 	{
@@ -757,7 +782,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// the connection's, so a disconnect no longer cancels this by parentage.
 	// What ends a task on a disconnect is now an explicit decision:
 	// Session.cancelTasksUnlessHeld.
-	taskCtx, cancel := context.WithCancel(ctx)
+	taskCtx, cancel := context.WithCancel(s.taskRootCtx(ctx))
 	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: oer.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
@@ -937,15 +962,32 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// "read /dev/ptmx: input/output error"; ProcessState cannot lose that race.
 	var exitCode atomic.Int32
 	exitCode.Store(0)
-	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
+	// Interpose the relay between agentexec and the server's stream.
+	//
+	// agentexec takes its stream once, blocks for the whole session and defers
+	// CloseBoth, so a rebind is impossible unless the stream it holds is one we
+	// own. Handing it the relay also puts three other obligations in the same
+	// object rather than scattered through this function: stop draining while
+	// held, never close the PTY master, and keep the EOF that drives its
+	// reaper ladder from firing because a server went away.
+	relay := newSessionRelay(stream, s.reg.holdArmed)
+	entry.relay = relay
+	defer relay.close()
+
+	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e, ok := s.reg.get(taskIDHex); ok && e != nil {
 				e.wakeWrite = write
 			}
 			s.mu.Unlock()
+			// The child's stdin is wired, so there IS a child now. This is
+			// the earliest observable "started" on this path, and a hold may
+			// only promise tasks that have one.
+			entry.started.Store(true)
 		},
 		OnProcessExit: func(st *os.ProcessState, _ error) {
+			entry.exited.Store(true)
 			if st != nil {
 				exitCode.Store(int32(st.ExitCode()))
 			}

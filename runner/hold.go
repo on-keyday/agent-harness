@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // Holding tasks across a DELIBERATE server restart — the runner's half.
@@ -270,4 +273,142 @@ func (r *TaskRegistry) rootCtx(processCtx context.Context) context.Context {
 		return context.Background()
 	}
 	return processCtx
+}
+
+// --- Session side of the hold ------------------------------------------------
+
+// handleHoldTasks answers a shutting-down server's request to keep this
+// runner's children alive.
+//
+// Order matters: stop draining FIRST, then ack. The ack means "I have stopped
+// reading these tasks' output", which is what lets the server treat the drain
+// boundary as a statement instead of a guess — after it, no new frame can
+// follow for a held session, so whatever is still in flight is bounded and the
+// server can capture a screen that is actually current.
+func (s *Session) handleHoldTasks(req *protocol.HoldTasksRequest) {
+	log := s.logger()
+	if s.reg == nil {
+		// No process-level registry: this runner cannot hold anything, and
+		// acking would promise what it will not keep.
+		log.Info("hold: requested but this runner has no task registry")
+		return
+	}
+	window := time.Duration(req.HoldMs) * time.Millisecond
+	if window <= 0 {
+		return
+	}
+
+	// Only tasks with a LIVE child. An entry exists from registration, which
+	// precedes the worktree and the spawn, so acking every entry would have
+	// the server writing task_held for children that do not exist.
+	ids := s.reg.liveHeldTasks()
+
+	// Stop draining before the ack. Each relay parks its reads and retains
+	// what it cannot forward, so the PTY buffer fills behind it and nothing is
+	// dropped; the kernel is the gap buffer.
+	for _, id := range ids {
+		if e, ok := s.reg.get(id); ok && e != nil && e.relay != nil {
+			e.relay.detach()
+		}
+	}
+
+	s.reg.arm(req.HoldId, window, ids, func() {
+		// The window passed with no server coming back.
+		s.reg.killAllHeld(s.logger())
+	})
+
+	var m protocol.RunnerMessage
+	m.Kind = protocol.RunnerMessageType_HoldTasksAck
+	ack := protocol.HoldTasksAck{HoldId: req.HoldId}
+	tasks := make([]protocol.TaskID, 0, len(ids))
+	for _, id := range ids {
+		var tid protocol.TaskID
+		raw, err := hex.DecodeString(id)
+		if err != nil || len(raw) != len(tid.Id) {
+			continue
+		}
+		copy(tid.Id[:], raw)
+		tasks = append(tasks, tid)
+	}
+	if !ack.SetTasks(tasks) {
+		log.Error("hold: too many tasks for one ack", "count", len(tasks))
+		return
+	}
+	m.SetHoldTasksAck(ack)
+	if err := s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})); err != nil {
+		log.Warn("hold: ack send failed", "err", err)
+		return
+	}
+	log.Info("hold: armed", "tasks", len(tasks), "window", window)
+}
+
+// handleRebindSession points a held task's relay at a fresh server stream.
+//
+// The PTY, the child and everything spliced to it are untouched: only the far
+// end of the relay changes, which is why agentexec — holding the relay as its
+// stream for the whole session — never learns that anything happened.
+func (s *Session) handleRebindSession(req *protocol.RebindSessionRequest) {
+	log := s.logger()
+	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+	e, ok := s.reg.get(taskIDHex)
+	if !ok || e == nil || e.relay == nil {
+		s.reportRebindFailed(req.TaskId, "no held session for this task")
+		return
+	}
+	if !e.childLive() {
+		// The child died between the report and this request. Answered with
+		// the existing lifecycle vocabulary rather than a new message: the
+		// server already handles TaskFinished as Finish + UnbindTask + Revoke.
+		s.reportRebindFailed(req.TaskId, "child exited during the gap")
+		return
+	}
+	// The same wait handleOpenExec uses: the server creates the stream and we
+	// look it up by id, which can take a moment to arrive.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
+	if stream == nil {
+		s.reportRebindFailed(req.TaskId, "stream lookup failed")
+		return
+	}
+	e.relay.rebind(stream)
+	log.Info("hold: session rebound", "task", taskIDHex, "stream", req.StreamId)
+}
+
+// reportRebindFailed tells the server a rebind cannot be honoured, using
+// TaskFinished so no new message type is needed for a case the existing
+// lifecycle already describes: the task is over.
+func (s *Session) reportRebindFailed(tid protocol.TaskID, why string) {
+	s.logger().Warn("hold: rebind failed", "task", hex.EncodeToString(tid.Id[:]), "reason", why)
+	var m protocol.RunnerMessage
+	m.Kind = protocol.RunnerMessageType_TaskFinished
+	m.SetTaskFinished(protocol.TaskFinished{
+		TaskId:       tid,
+		ExitCode:     -1,
+		ErrorMessage: []byte("rebind_failed: " + why),
+	})
+	_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+}
+
+// cancelTasksUnlessHeld is the disconnect decision, and it is the whole reason
+// task contexts were moved off the connection.
+//
+// With a hold armed the children stay and their relays park. Without one every
+// task is cancelled, which is what used to happen implicitly through context
+// parentage — the same outcome, now written down where it can be read.
+func (s *Session) cancelTasksUnlessHeld() {
+	if s.reg == nil {
+		return
+	}
+	if s.reg.holdArmed() {
+		s.logger().Info("disconnect: a hold is armed, leaving children alive")
+		return
+	}
+	for id, e := range s.reg.snapshot() {
+		if e == nil {
+			continue
+		}
+		e.cancel()
+		s.reg.remove(id)
+	}
 }

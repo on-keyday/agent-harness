@@ -89,6 +89,22 @@ type Config struct {
 	// PingInterval overrides peer.DialConfig.PingInterval (default 15s).
 	PingInterval time.Duration
 
+	// Tasks is this runner PROCESS's task registry, and supplying it is what
+	// enables holding tasks across a deliberate server restart. Like RunnerID
+	// it must be minted ONCE by the caller, before PersistLoop starts: a
+	// registry made per connection would take every held child's cancel func
+	// with it when the link drops, which is the exact thing a hold prevents.
+	// nil is fine and means "no holds" — Session then makes its own per
+	// connection and everything behaves as it did before.
+	Tasks *TaskRegistry
+
+	// ProcessCtx is the context task goroutines are rooted at when Tasks is
+	// supplied. It must OUTLIVE any single connection, or a disconnect
+	// cancels every held child by parentage and the hold is inert. The
+	// disconnect decision becomes explicit instead: see
+	// Session.cancelTasksUnlessHeld.
+	ProcessCtx context.Context
+
 	// ProxyVia, when non-empty, is propagated into spawned agent env as
 	// HARNESS_PROXY_VIA_RUNNER (Phase B). ListenAndServe sets this from its
 	// listen addr; dial mode leaves it empty.
@@ -277,6 +293,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
+		reg:            cfg.Tasks,
 		AllowedRoots:   cfg.AllowedRoots,
 		Profiles:       cfg.Profiles,
 		ServerCID:      serverCID,
@@ -378,6 +395,11 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 // PskAuthRequest so the server can register the runner in one round-trip.
 func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	hh := protocol.RunnerHello{Version: 1, RunnerId: cfg.RunnerID}
+	// What this process is still holding from a previous server's shutdown.
+	// Empty for every ordinary reconnect. It rides the hello so the server can
+	// register and re-adopt in one step, rather than holding a window open
+	// before it may fail held tasks.
+	hh.Held = cfg.Tasks.heldReport()
 	// The harness had no idea what OS a runner ran on, and the ssh gateway was
 	// guessing (`sh -c` for every command, on every platform). Reported once at
 	// hello time; it cannot change without a reconnect.
@@ -490,13 +512,19 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
 	})
 
-	// Block until either the connection dies or the run is cancelled.
+	// Block until either the connection dies or the run is cancelled, then
+	// make the ONE decision this design turns from a side effect into a
+	// statement: with a hold armed the children stay, otherwise they go.
+	//
+	// Task contexts used to descend from runCtx, so a dropped link cancelled
+	// them by parentage. They now descend from the process, which means
+	// nothing happens here unless it is written here.
 	select {
 	case <-pc.Done():
-		return nil
 	case <-runCtx.Done():
-		return nil
 	}
+	session.cancelTasksUnlessHeld()
+	return nil
 }
 
 // Run is the single-shot entry point: sequential Connect → OnConnect. The
@@ -572,6 +600,32 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		session.SetRunnerCanonicalID(rhr.YourRunnerId)
+		// The ACCEPTED ids. Anything this runner is holding and the server did
+		// not name is over: it refused the task, or never had it. Absence is
+		// the signal on purpose — a list the server forgot to fill kills
+		// children, which is loud and recoverable, where a refused-list it
+		// forgot to fill would strand them silently. It is also the only path
+		// that reaches a task cancelled while it was held, since CancelTask
+		// can never be delivered to one.
+		if session.reg.holdArmed() {
+			accepted := make(map[string]bool, len(rhr.Accepted))
+			for _, t := range rhr.Accepted {
+				accepted[hex.EncodeToString(t.Id[:])] = true
+			}
+			session.reg.killHeldExcept(accepted, session.logger())
+		}
+	case protocol.RunnerRequestType_HoldTasks:
+		ht := req.HoldTasks()
+		if ht == nil {
+			return
+		}
+		session.handleHoldTasks(ht)
+	case protocol.RunnerRequestType_RebindSession:
+		rb := req.RebindSession()
+		if rb == nil {
+			return
+		}
+		session.handleRebindSession(rb)
 	case protocol.RunnerRequestType_TaskWake:
 		tw := req.TaskWake()
 		if tw == nil {
