@@ -1577,6 +1577,15 @@ func (a *App) quit() tea.Cmd {
 // border-inclusive 7, cmdline 1, footer 1 = 28 fixed non-log rows, plus the
 // log panel's own 2 border rows = 30 reserved. Log content gets the rest
 // (min 5); logHeight refers to the inner content height of the log panel.
+//
+// The two top tables keep a FIXED height while the log panel absorbs every
+// extra terminal row, and that is not a row limit to go fix: bubbles' tables
+// scroll with the cursor, so 9 visible rows of 32 tasks is a window, not a
+// truncation. Stated because the fixed height reads like a defect next to a
+// tall empty log panel, and `673fd332`'s message calls it one — wrongly, and
+// that message cannot be amended. Confirmed by the operator 2026-09-10:
+// 「あれは普通にスクロールが効くから困ってないですが」. What DID need fixing was a
+// row the table held and did not draw (see setTableRows).
 func (a *App) layout() {
 	if a.width < 80 || a.height < 24 {
 		return
