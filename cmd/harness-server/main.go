@@ -41,7 +41,6 @@ var (
 	operatorPSKFile      = flag.String("operator-psk-file", "", "path to operator-psk file; auto-generated on first run if absent")
 	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces are then validated against --psk (or nothing, when that is empty too), which every in-task agent also holds, so an agent can drop its ticket, reconnect as kind=Client and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
-	idleTimeout          = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
 
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
@@ -182,7 +181,6 @@ func main() {
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,
-		DetachIdleTimeout:    *idleTimeout,
 		NotifyHook:           nh,
 	})
 	board := agentboard.New(agentboard.Config{

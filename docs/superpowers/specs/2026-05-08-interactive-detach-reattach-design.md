@@ -465,3 +465,41 @@ yes "loud line: $(date -u +%s.%N)" | head -c 5000000
 4. やり取りが続けられること、ring buffer の内容が見えていることを確認。
 
 これが本 spec の駆動目的そのもの。
+
+## Addendum, 2026-09-09 — `--detach-idle-timeout` を削除
+
+この spec が定めた 2 つの記述を **撤回**する。§5.1 の遷移表の
+`idle TTL 経過 (timeout > 0) | n/a | → Cancelled` の行と、§8.1 の
+`--detach-idle-timeout=DUR` (default `0` = 無制限)。実装 (`c511f51c` の
+`Config.DetachIdleTimeout` / `runDetachIdleSweeper` / `sweepIdleDetached` と
+その 2 テスト) は本 addendum と同じ commit で削除した。ring buffer 側の
+`--detach-ring-buffer-size` は残る。
+
+**撤回させた事実**: この spec の後に cowrite / viewer attach が入り、
+`Running` / `Detached` は **control attach だけ**を追う状態になった。read-only
+viewer も input-forwarding cowriter も writer slot を取らないので、人が実際に
+打っている session が `Detached` のまま存在する (README の
+"Detached ≠ abandoned")。`sweepIdleDetached` の述語は
+`Status == Detached && DetachedAt < cutoff` だけで observer 数を見ていない
+ので、**有効化すれば cowrite 中の session を Cancel していた**。書いた時点の
+「Detached = 放置」という前提が、後から入った機能で成立しなくなった。
+
+この spec が §5.1 を書いた時点では前提は正しかった。誤りは前提の方が変わった
+ときに遷移表を再監査しなかったことで、述語のバグではない。
+
+**実害はゼロ**: default `0` = 無効で、`scripts/` にも systemd preset にも
+このフラグを渡す箇所は一度も無かった。稼働中の server で走ったことがない。
+
+**修正ではなく削除を選んだ理由**: 述語は
+`cowriters == 0 && viewers == 0` を足せば直る (`SessionMux.ObserverCounts()`
+が既にある) が、直しても 2026-05-08 以来一度も有効化されていない事実は変わら
+ない。加えてフラグのヘルプ文が `idle duration` と書いていたのに実測値は
+control detach からの経過時間で、バイトの静止ではない — 孤児対策を探した人が
+ヘルプ文だけを根拠に有効化する経路が最も自然な誤用だった。**未使用のまま残す
+方が危険**という判断。
+
+**置き換えは無い**。task 寿命に上限を持たせる機構を将来入れる場合、鍵になるのは
+detach ではなく **runner ↔ server の切断**である。detach は正常な定常状態
+(観測者がいることの方が多い) で、切断は agent の出力先と agentboard が同時に
+失われる状態 — 意味が違うので、同じ軸に載せてはならない。名前に `detach` を
+含めないこと。

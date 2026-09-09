@@ -78,11 +78,6 @@ type Config struct {
 	// (1 MiB).
 	DetachRingBufferSize int64
 
-	// DetachIdleTimeout, when > 0, causes Detached sessions that have been
-	// idle for longer than this duration to be automatically cancelled. 0
-	// disables idle cancellation (default).
-	DetachIdleTimeout time.Duration
-
 	// NotifyHook, when non-empty, is an executable invoked once per notify
 	// request: stdin receives a JSON payload, env carries HARNESS_NOTIFY_*.
 	// Empty disables the egress leg (notify still records to the ring + topic).
@@ -743,11 +738,6 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 				}
 			}()
 		}
-	}
-
-	// Start idle-detach sweeper when a timeout is configured.
-	if s.cfg.DetachIdleTimeout > 0 {
-		go s.runDetachIdleSweeper(ctx)
 	}
 
 	// Coalesces the port-forward counters into forwards.status. One goroutine
@@ -1456,43 +1446,6 @@ func (s *Server) sendEstablishRelayRequest(ctx context.Context, entry *RunnerEnt
 			return protocol.EstablishRelayResponse{}, fmt.Errorf("relay waiter superseded")
 		}
 		return resp, nil
-	}
-}
-
-// runDetachIdleSweeper cancels any session that has been Detached longer than
-// DetachIdleTimeout. Runs until ctx is canceled. The sweep interval is set
-// to a fraction of the timeout, with a sensible floor.
-func (s *Server) runDetachIdleSweeper(ctx context.Context) {
-	interval := s.cfg.DetachIdleTimeout / 4
-	if interval < 30*time.Second {
-		interval = 30 * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-t.C:
-			s.sweepIdleDetached(now)
-		}
-	}
-}
-
-// sweepIdleDetached cancels Detached tasks whose DetachedAt timestamp is older
-// than cfg.DetachIdleTimeout relative to now.
-func (s *Server) sweepIdleDetached(now time.Time) {
-	cutoff := uint64(now.Add(-s.cfg.DetachIdleTimeout).UnixNano())
-	for _, info := range s.tasks.List(0) {
-		if info.Status != protocol.TaskStatus_Detached {
-			continue
-		}
-		if info.DetachedAt > 0 && info.DetachedAt < cutoff {
-			if mux := s.sessions.Get(info.ID); mux != nil {
-				mux.Stop()
-			}
-			s.tasks.Cancel(info.ID)
-		}
 	}
 }
 
