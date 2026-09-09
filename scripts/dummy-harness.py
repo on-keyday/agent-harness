@@ -350,7 +350,13 @@ def cmd_env(name: str) -> int:
     # harness-cli prefers a ticket over the PSK, so every call would fail
     # BadTicket while looking like a PSK problem. Emit the unsets too.
     print(f"unset {_UNSET_IN_CONSUMER}")
-    for key in ("HARNESS_PSK", "CID", "TMP", "BIN", "REPO", "SERVER_PID", "RUNNER_PID", "SERVER_PORT"):
+    # UDP_CID / RUNNER_CID are emitted too: `up --udp` puts the runner on the
+    # UDP leg, and a client that must join it there — the direct data-plane
+    # route refuses unless BOTH ends are on udp — has no other way to learn
+    # the port, which is picked fresh per instance. Omitting them made --udp
+    # reachable only by reading the state file by hand.
+    for key in ("HARNESS_PSK", "CID", "UDP_CID", "RUNNER_CID", "TMP", "BIN", "REPO",
+                "SERVER_PID", "RUNNER_PID", "SERVER_PORT"):
         print(f"export {key}='{st[key]}'")
     return 0
 
