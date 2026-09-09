@@ -261,7 +261,7 @@ func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	case focusTasks:
 		if t := a.tasks.SelectedTask(); t != nil {
-			a.detail.Open("Task detail", formatTaskDetail(*t))
+			a.detail.Open("Task detail", formatTaskDetail(*t, runnerIndex(a.runnersSnapshot)))
 		} else {
 			a.cmdresult.Append(WarnStyle.Render("no task selected"))
 		}

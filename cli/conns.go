@@ -100,26 +100,45 @@ func ConnInfoLines(conns []protocol.ConnInfo) []string {
 		lines = append(lines, "  (none)")
 		return lines
 	}
-	lines = append(lines, fmt.Sprintf("  %-30s  %-11s  %-8s  %s", "CID", "ROLE", "PRINCIPAL", "AGE"))
+	lines = append(lines, "  "+connHeaderLine())
 	for i := range conns {
 		lines = append(lines, "  "+connInfoTextLine(&conns[i]))
 	}
 	return lines
 }
 
+// connHeaderLine is the column header, defined once so the two callers cannot
+// drift from each other or from connInfoTextLine's format.
+func connHeaderLine() string {
+	return fmt.Sprintf(connRowFormat, "CID", "ROLE", "PRINCIPAL", "RUNNER", "AGE")
+}
+
+// connRowFormat is shared by the header and the rows so a column can only be
+// widened in both at once. 9, not 8, because "PRINCIPAL" is nine characters:
+// at 8 the header overflowed its own field and every following column sat one
+// place right of the values beneath it.
+const connRowFormat = "%-30s  %-11s  %-9s  %-9s  %s"
+
 // connInfoTextLine renders one human-readable line for a ConnInfo.
-// Format: cid  role  principal(short)  age  [unident]
+// Format: cid  role  principal(short)  runner(short)  age  [unident]
 // The cid is "transport:ip:port-id" — it already carries the remote ip:port.
+//
+// PRINCIPAL and RUNNER are separate columns rather than one "whose is it"
+// column, because they are ids in different namespaces: a task and a runner
+// PROCESS. Collapsing them would make an 8-hex prefix ambiguous exactly where
+// an operator is trying to correlate rows. Each is "-" when the row's role has
+// no such link — absence, not a hidden value.
 func connInfoTextLine(ci *protocol.ConnInfo) string {
 	cid := string(ci.Cid)
 	role := strings.ToLower(ci.Role.String())
-	principal := principalShort(ci.PrincipalTask.Id[:])
-	age := connAge(ci.ConnectedAt)
+	principal := PrincipalShort(ci.PrincipalTask.Id[:])
+	runner := PrincipalShort(ci.PrincipalRunner.Id[:])
+	age := ConnAge(ci.ConnectedAt)
 	unident := ""
 	if !ci.Identified() {
 		unident = "  unident"
 	}
-	return fmt.Sprintf("%-30s  %-11s  %s  %s%s", cid, role, principal, age, unident)
+	return fmt.Sprintf(connRowFormat+"%s", cid, role, principal, runner, age, unident)
 }
 
 // connInfoJSON is the single source of truth for the JSON shape of a ConnInfo.
@@ -130,20 +149,25 @@ type connInfoJSON struct {
 	Cid           string `json:"cid"`
 	Role          string `json:"role"`
 	PrincipalTask string `json:"principal_task"`
-	AgeSec        int64  `json:"age_sec"`
-	ConnectedAt   uint64 `json:"connected_at"`
-	Identified    bool   `json:"identified"`
+	// PrincipalRunner is the runner PROCESS a runner conn belongs to, "-" for
+	// every other role. Always present, like every other key here: the JSON
+	// form elides nothing (surface-parity item 12).
+	PrincipalRunner string `json:"principal_runner"`
+	AgeSec          int64  `json:"age_sec"`
+	ConnectedAt     uint64 `json:"connected_at"`
+	Identified      bool   `json:"identified"`
 }
 
 // newConnInfoJSON builds the JSON view of a ConnInfo.
 func newConnInfoJSON(ci *protocol.ConnInfo) connInfoJSON {
 	return connInfoJSON{
-		Cid:           string(ci.Cid),
-		Role:          strings.ToLower(ci.Role.String()),
-		PrincipalTask: taskIDStr(ci.PrincipalTask.Id[:]),
-		AgeSec:        connAgeSec(ci.ConnectedAt),
-		ConnectedAt:   ci.ConnectedAt,
-		Identified:    ci.Identified(),
+		Cid:             string(ci.Cid),
+		Role:            strings.ToLower(ci.Role.String()),
+		PrincipalTask:   taskIDStr(ci.PrincipalTask.Id[:]),
+		PrincipalRunner: taskIDStr(ci.PrincipalRunner.Id[:]),
+		AgeSec:          connAgeSec(ci.ConnectedAt),
+		ConnectedAt:     ci.ConnectedAt,
+		Identified:      ci.Identified(),
 	}
 }
 
@@ -155,11 +179,16 @@ func connInfoJSONLine(ci *protocol.ConnInfo) string {
 	return string(b)
 }
 
-// principalShort returns the first 8 hex characters of a task id, or "-" if
-// all bytes are zero (i.e. no principal task, e.g. cli/tui/webui/runner conns).
+// PrincipalShort returns the first 8 hex characters of a task or runner id, or
+// "-" if all bytes are zero (i.e. the row's role has no such link).
 // Reuses taskIDStr (cli/list.go) for the all-zero "-" check rather than
 // re-implementing it, then truncates the full hex to 8 chars.
-func principalShort(b []byte) string {
+//
+// Exported because the TUI carried a hand-written copy of it (and of ConnAge)
+// whose comment said "mirrors cli.principalShort but lives in the tui package".
+// There is no runtime boundary between them -- tui imports cli -- so the copy
+// bought nothing and could only drift. Surface-parity item 32.
+func PrincipalShort(b []byte) string {
 	full := taskIDStr(b)
 	if full == "-" {
 		return "-"
@@ -183,8 +212,9 @@ func connAgeSec(connectedAtNano uint64) int64 {
 	return int64(since.Seconds())
 }
 
-// connAge returns a human-readable age string, e.g. "90s" or "3m45s".
-func connAge(connectedAtNano uint64) string {
+// ConnAge returns a human-readable age string, e.g. "90s" or "3m45s".
+// Exported for the TUI; see PrincipalShort's note.
+func ConnAge(connectedAtNano uint64) string {
 	secs := connAgeSec(connectedAtNano)
 	if secs < 60 {
 		return fmt.Sprintf("%ds", secs)
@@ -212,7 +242,7 @@ func renderConns(conns []protocol.ConnInfo, out io.Writer) {
 		fmt.Fprintln(out, "  (none)")
 		return
 	}
-	fmt.Fprintf(out, "  %-30s  %-11s  %-8s  %s\n", "CID", "ROLE", "PRINCIPAL", "AGE")
+	fmt.Fprintln(out, " ", connHeaderLine())
 	for i := range conns {
 		fmt.Fprintln(out, " ", connInfoTextLine(&conns[i]))
 	}

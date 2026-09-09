@@ -180,3 +180,48 @@ func TestConnStatusEventLine(t *testing.T) {
 		t.Errorf("closed event line missing 'closed': %q", closedLine)
 	}
 }
+
+// Both conns renderers must carry the runner identity, and carry it separately
+// from the task principal: they are ids in different namespaces and both render
+// as bare 8-hex prefixes, so one column for "whose is it" would be ambiguous
+// exactly where an operator is correlating rows.
+func TestConnRenderersCarryTheRunnerIdentity(t *testing.T) {
+	runner := &protocol.ConnInfo{
+		Role:            protocol.ConnRole_Runner,
+		PrincipalRunner: protocol.RunnerID{Id: [16]byte{0xAB, 0xCD, 0xEF, 0x01}},
+	}
+	runner.SetCid([]byte("ws:127.0.0.1:8539-7"))
+	runner.SetIdentified(true)
+
+	line := ConnInfoTextLine(runner)
+	if !strings.Contains(line, "abcdef01") {
+		t.Errorf("text line does not name the runner identity: %q", line)
+	}
+	if !strings.Contains(ConnInfoLines([]protocol.ConnInfo{*runner})[1], "RUNNER") {
+		t.Errorf("header has no RUNNER column: %q", ConnInfoLines([]protocol.ConnInfo{*runner})[1])
+	}
+
+	var got connInfoJSON
+	if err := json.Unmarshal([]byte(ConnInfoJSONLine(runner)), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.PrincipalRunner != "abcdef01000000000000000000000000" {
+		t.Errorf("principal_runner = %q, want the full 32-hex identity", got.PrincipalRunner)
+	}
+
+	// A non-runner conn reports absence, not a value. "-" is the same answer
+	// principal_task already gives, so the two columns read alike.
+	cliConn := &protocol.ConnInfo{Role: protocol.ConnRole_Cli}
+	cliConn.SetCid([]byte("ws:127.0.0.1:8539-8"))
+	cliConn.SetIdentified(true)
+	if l := ConnInfoTextLine(cliConn); !strings.Contains(l, "-") {
+		t.Errorf("a cli conn should report - for both principals: %q", l)
+	}
+	var cliJSON connInfoJSON
+	if err := json.Unmarshal([]byte(ConnInfoJSONLine(cliConn)), &cliJSON); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cliJSON.PrincipalRunner != "-" {
+		t.Errorf("cli principal_runner = %q, want \"-\"", cliJSON.PrincipalRunner)
+	}
+}

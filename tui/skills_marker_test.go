@@ -72,20 +72,20 @@ func TestTasksTableAgentColumnWithoutRunners(t *testing.T) {
 func TestTaskDetailSpellsOutSkills(t *testing.T) {
 	injected := taskWithSkills("claude", true)
 	injected.StartedAt = 1
-	if body := formatTaskDetail(injected); !strings.Contains(body, "skills:        injected") {
+	if body := formatTaskDetail(injected, nil); !strings.Contains(body, "skills:        injected") {
 		t.Errorf("detail popup omits the injected state:\n%s", body)
 	}
 
 	assignedBare := taskWithSkills("bash", false)
 	assignedBare.StartedAt = 1
-	if body := formatTaskDetail(assignedBare); !strings.Contains(body, "not declared by the assigned runner") {
+	if body := formatTaskDetail(assignedBare, nil); !strings.Contains(body, "not declared by the assigned runner") {
 		t.Errorf("detail popup omits the not-declared state:\n%s", body)
 	}
 
 	// Never started: there is no runner to describe, so "not declared" would be
 	// a claim about a runner that was never chosen.
 	queued := taskWithSkills("claude", false)
-	if body := formatTaskDetail(queued); !strings.Contains(body, "unknown (not assigned to a runner yet)") {
+	if body := formatTaskDetail(queued, nil); !strings.Contains(body, "unknown (not assigned to a runner yet)") {
 		t.Errorf("detail popup reports an unassigned task as if a runner had answered:\n%s", body)
 	}
 }
@@ -101,7 +101,7 @@ func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
 	watched.Status = protocol.TaskStatus_Detached
 	watched.Viewers = 2
 	watched.Cowriters = 1
-	body := formatTaskDetail(watched)
+	body := formatTaskDetail(watched, nil)
 	if !strings.Contains(body, "attached:      no control, 1 cowrite, 2 viewer") {
 		t.Errorf("detail popup does not say who is on a Detached session:\n%s", body)
 	}
@@ -110,7 +110,7 @@ func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
 	solo := taskWithSkills("claude", true)
 	solo.Status = protocol.TaskStatus_Running
 	solo.SetIsAttached(true)
-	if body := formatTaskDetail(solo); !strings.Contains(body, "attached:      control, 0 cowrite, 0 viewer\n") {
+	if body := formatTaskDetail(solo, nil); !strings.Contains(body, "attached:      control, 0 cowrite, 0 viewer\n") {
 		t.Errorf("detail popup mis-words a plain control attach:\n%s", body)
 	}
 
@@ -118,7 +118,7 @@ func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
 	// hollow "no control" about a session that does not exist.
 	done := taskWithSkills("claude", true)
 	done.Status = protocol.TaskStatus_Succeeded
-	if body := formatTaskDetail(done); strings.Contains(body, "attached:") {
+	if body := formatTaskDetail(done, nil); strings.Contains(body, "attached:") {
 		t.Errorf("detail popup describes attachment on a finished task:\n%s", body)
 	}
 }

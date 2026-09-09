@@ -312,3 +312,37 @@ test("--scope-for without --scope is refused: a narrowing needs a base", async (
   const { err } = await run("caps set-defaults --scope-for spawn=none");
   assert.ok(err, "a lone --scope-for parsed");
 });
+
+// tasksOnRunner is the task↔runner join both conn views hang their task rows
+// off. Tested directly because it is the exact shape that broke silently: the
+// join used to compare assignedTo against the conn's cid, which was one value
+// with the runner's identity until identity was decoupled from the connection.
+// After that it matched nothing in BOTH renderers and each still drew a
+// perfectly good runner row with no tasks under it.
+test("tasksOnRunner joins on the runner identity, not the cid", () => {
+  const RID = "b".repeat(32);
+  const runner = { role: "runner", cid: "ws:127.0.0.1:8539-7", principalRunner: RID };
+  const tasks = [
+    { id: "t2", status: "Running", assignedTo: RID },
+    { id: "t1", status: "Running", assignedTo: RID },
+    { id: "t3", status: "Running", assignedTo: "c".repeat(32) }, // another runner
+    { id: "t4", status: "Succeeded", assignedTo: RID },          // not active
+  ];
+  eq(page.tasksOnRunner(tasks, runner).map(t => t.id), ["t1", "t2"],
+    "active tasks whose assignedTo is this runner's identity, sorted by id");
+
+  // The regression itself: matching on the cid must find nothing, so a test
+  // that passed by accident on the old field cannot pass here.
+  eq(page.tasksOnRunner(tasks, { role: "runner", cid: runner.cid, principalRunner: "" }), [],
+    "a runner conn with no identity joins nothing rather than falling back to the cid");
+});
+
+// Two absences must not compare equal. The bridge sends "" for a task with no
+// runner and for every non-runner conn; without the emptiness checks every
+// unassigned task would attach to every client row at once.
+test("tasksOnRunner never joins two absences", () => {
+  const tasks = [{ id: "t1", status: "Queued", assignedTo: "" }];
+  eq(page.tasksOnRunner(tasks, { role: "runner", principalRunner: "" }), [], "runner with no identity");
+  eq(page.tasksOnRunner(tasks, { role: "cli", principalRunner: "" }), [], "non-runner role");
+  eq(page.tasksOnRunner(tasks, null), [], "no conn at all");
+});

@@ -1220,12 +1220,19 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 	// Derive role + principal from identity map and runner registry.
 	var role protocol.ConnRole
 	var principal protocol.TaskID
+	var principalRunner protocol.RunnerID
 	var identified bool
 
 	// Check runner registry first (runner conns may not have a ClientHello).
-	if _, ok := s.registry.GetByConnectionID(cid); ok {
+	if entry, ok := s.registry.GetByConnectionID(cid); ok {
 		role = protocol.ConnRole_Runner
 		identified = true
+		// Which runner PROCESS this connection belongs to. The registry entry
+		// was already in hand here and discarded; before the identity split the
+		// cid answered this by accident, because a runner's identity WAS its
+		// connection id. Now nothing else can join a conn row to the runner
+		// that owns it -- including TaskInfo.assigned_to, which is an identity.
+		principalRunner = entry.Identity
 	} else if s.taskHandler != nil {
 		kind := s.taskHandler.lookupClientKind(cidStr)
 		switch kind {
@@ -1261,9 +1268,10 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 	}
 
 	info := &protocol.ConnInfo{
-		Role:          role,
-		ConnectedAt:   uint64(sc.connectedSince.UnixNano()),
-		PrincipalTask: principal,
+		Role:            role,
+		ConnectedAt:     uint64(sc.connectedSince.UnixNano()),
+		PrincipalTask:   principal,
+		PrincipalRunner: principalRunner,
 	}
 	info.SetIdentified(identified)
 	info.SetCid([]byte(cidStr))

@@ -902,6 +902,22 @@ func harnessList(this js.Value, args []js.Value) any {
 }
 
 // connRoleLower maps a ConnRole to its lowercase string representation for the
+// runnerIdentityOrEmpty renders a RunnerID as hex, or "" when it is absent.
+//
+// "" rather than 32 zeros, because the page tests these values for TRUTH —
+// `t.assignedTo && …` gates a pinned resume, and the conn rows join on
+// equality. An all-zero hex string is truthy and compares equal to another
+// absent one, so exporting it made "no runner" read as a runner that every
+// unassigned task shares. The old address-shaped hex started with the
+// transport, which is why the page's guard tested `startsWith(":")`; that
+// guard cannot see an identity, so the emptiness has to be decided here.
+func runnerIdentityOrEmpty(id protocol.RunnerID) string {
+	if id.IsZero() {
+		return ""
+	}
+	return id.Hex()
+}
+
 // JS side (mirrors clientKindLower for ClientKind but covers the ConnRole enum
 // which additionally has "runner" and "unspecified").
 func connRoleLower(r protocol.ConnRole) string {
@@ -934,7 +950,8 @@ func connRemoteAddr(cid string) string {
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
 //	              viewers, cowriters, execCount, errorMsg}],
-//	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
+//	  conns:    [{cid, role, remoteAddr, principalTask, principalRunner,
+//	             connectedAt, identified}],
 //	  forwards: [{forward_id, dir, task, spec, origin}],
 //	  execs:    [{exec_id, task, started_unix_ms, origin, command}]
 //	}>
@@ -996,7 +1013,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"kind":       t.Kind.String(),
 					"repoPath":   string(t.RepoPath),
 					"prompt":     string(t.Prompt),
-					"assignedTo": t.AssignedTo.Hex(),
+					"assignedTo": runnerIdentityOrEmpty(t.AssignedTo),
 					"exitCode":   float64(t.ExitCode),
 					"createdAt":  float64(t.CreatedAt),
 					"startedAt":  float64(t.StartedAt),
@@ -1102,8 +1119,15 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"role":          connRoleLower(ci.Role),
 					"remoteAddr":    connRemoteAddr(cidStr),
 					"principalTask": hex.EncodeToString(ci.PrincipalTask.Id[:]),
-					"connectedAt":   float64(ci.ConnectedAt),
-					"identified":    ci.Identified(),
+					// Which runner PROCESS a runner conn belongs to, and the
+					// only thing that still joins a conn row to a task: the
+					// page used to compare task.assignedTo against cid, which
+					// held when a runner's identity WAS its connection id.
+					// Empty for every non-runner role, so the page can test it
+					// for truth the way it tests assignedTo.
+					"principalRunner": runnerIdentityOrEmpty(ci.PrincipalRunner),
+					"connectedAt":     float64(ci.ConnectedAt),
+					"identified":      ci.Identified(),
 				})
 			}
 			// Fetch the live port-forward registry using the same long-lived

@@ -391,6 +391,15 @@ type taskJSON struct {
 	Repo   string `json:"repo"`
 	From   string `json:"from"`
 	Agent  string `json:"agent,omitempty"`
+	// AssignedTo is the IDENTITY of the runner process this task ran on, "-"
+	// when it has not been assigned. The TUI's detail popup has printed it as
+	// "assigned to:" all along, so this is the scriptable form of a value the
+	// operator surfaces already treat as theirs -- and since identity stopped
+	// being the runner's cid, it is the ONLY thing that joins a task row to a
+	// runner row (`ls --json` runners carry `id`, and conns carry
+	// `principal_runner`). Not omitempty: taskIDStr already words absence as
+	// "-", and an absent key would read as "not reported" (item 31).
+	AssignedTo string `json:"assigned_to"`
 	// SkillsInjected is the display marker's scriptable form: the agent field
 	// stays the bare profile name (no "+skills" suffix to re-parse), exactly
 	// as runnerJSON splits Agents from SkillsInjected. Not omitempty — false
@@ -497,6 +506,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Repo:           string(t.RepoPath),
 		From:           originStr(t.OriginKind),
 		Agent:          agent,
+		AssignedTo:     taskIDStr(t.AssignedTo.Id[:]),
 		SkillsInjected: skills,
 		ResumedBy:      resumedBy,
 		Activity:       activity,

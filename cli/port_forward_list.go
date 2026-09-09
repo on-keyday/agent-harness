@@ -141,7 +141,7 @@ func PortForwardInfoLines(fs []protocol.PortForwardInfo) []string {
 	for i := range fs {
 		fi := &fs[i]
 		lines = append(lines, fmt.Sprintf("  %-6d  %-3s  %-12s  %-40s  %s",
-			fi.ForwardId, PortForwardDirFlag(fi.Direction), principalShort(fi.TaskId.Id[:]),
+			fi.ForwardId, PortForwardDirFlag(fi.Direction), PrincipalShort(fi.TaskId.Id[:]),
 			PortForwardSpecString(fi), PortForwardOrigin(fi)))
 		// A second line rather than five more columns: the spec and origin
 		// columns are already 40 and open-ended, and a row that wraps in a

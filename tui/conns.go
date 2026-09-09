@@ -51,6 +51,7 @@ func NewConnsModal() ConnsModal {
 		{Title: "CID", Width: 30},
 		{Title: "Role", Width: 11},
 		{Title: "Principal", Width: 9},
+		{Title: "Runner", Width: 9},
 		{Title: "Age", Width: 8},
 		{Title: "State", Width: 7},
 	}
@@ -136,62 +137,27 @@ func (m *ConnsModal) rebuildRows() {
 	m.table.SetRows(rows)
 }
 
-// connInfoToRow maps a ConnInfo to a table.Row (5 columns).
+// connInfoToRow maps a ConnInfo to a table.Row (6 columns).
 // The cid is "transport:ip:port-id" — it already carries the remote ip:port.
+// Runner is the runner PROCESS a runner conn belongs to; see
+// cli.connInfoTextLine for why it is a column of its own and not folded into
+// Principal.
 func connInfoToRow(ci *protocol.ConnInfo) table.Row {
 	cid := string(ci.Cid)
 	role := strings.ToLower(ci.Role.String())
-	principal := principalShortTUI(ci.PrincipalTask.Id[:])
-	age := connAgeTUI(ci.ConnectedAt)
+	principal := cli.PrincipalShort(ci.PrincipalTask.Id[:])
+	runner := cli.PrincipalShort(ci.PrincipalRunner.Id[:])
+	age := cli.ConnAge(ci.ConnectedAt)
 	state := "ok"
 	if !ci.Identified() {
 		state = "unident"
 	}
-	return table.Row{cid, role, principal, age, state}
+	return table.Row{cid, role, principal, runner, age, state}
 }
 
 // connCIDKey returns the CID as a string for use as a map key.
 func connCIDKey(ci *protocol.ConnInfo) string {
 	return string(ci.Cid)
-}
-
-// principalShortTUI returns the first 8 hex characters of a task id, or "-".
-// Mirrors cli.principalShort but lives in the tui package.
-func principalShortTUI(b []byte) string {
-	allZ := true
-	for _, v := range b {
-		if v != 0 {
-			allZ = false
-			break
-		}
-	}
-	if allZ {
-		return "-"
-	}
-	hex := fmt.Sprintf("%x", b)
-	if len(hex) > 8 {
-		return hex[:8]
-	}
-	return hex
-}
-
-// connAgeTUI returns a human-readable age string for a ConnInfo.
-// Mirrors cli.connAge but lives in the tui package.
-func connAgeTUI(connectedAtNano uint64) string {
-	if connectedAtNano == 0 {
-		return "0s"
-	}
-	since := time.Since(time.Unix(0, int64(connectedAtNano)))
-	if since < 0 {
-		since = 0
-	}
-	secs := int64(since.Seconds())
-	if secs < 60 {
-		return fmt.Sprintf("%ds", secs)
-	}
-	m := secs / 60
-	s := secs % 60
-	return fmt.Sprintf("%dm%ds", m, s)
 }
 
 func (m ConnsModal) Update(msg tea.Msg) (ConnsModal, tea.Cmd) {

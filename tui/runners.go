@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -14,14 +15,38 @@ type RunnersModel struct {
 	// baseCols is the natural sizing; SetSize re-derives the rendered widths
 	// from it so a resize never compounds the previous one (see fitColumns).
 	baseCols []table.Column
-	focused  bool
+	// width decides the column SET as well as the widths (see idColumnMinWidth),
+	// so the row builder has to ask the same question the columns did.
+	width   int
+	focused bool
 	// rowRunners[i] is the full RunnerInfo for table row i; mirrored alongside
 	// the bubbles/table rows so the detail popup can show fields the row
 	// truncates (full repo path, full current task id, timestamps).
 	rowRunners []protocol.RunnerInfo
 }
 
-func NewRunners() RunnersModel {
+// idColumnMinWidth is the PANEL width at which the runners table can afford the
+// identity column. Set from measurement, not arithmetic: fitColumns shrinks
+// every column proportionally against a per-column floor of its header width,
+// and this table is already over-subscribed (79 natural cells before the ID
+// column), so the id got 3 cells at an 80-column terminal — two hex digits and
+// an ellipsis, which identifies nothing while taking 5 cells from the columns
+// that are most starved at exactly that width. At a 70-cell panel it keeps 6,
+// which does distinguish the slots on one host. Below that the table keeps the
+// five columns it had, and the full identity is still one `d` away in the
+// detail popup.
+//
+// 72 is where fitColumns first hands the column 6 cells — measured, and pinned
+// by TestIDColumnIsWideEnoughToIdentifyWhenShown so a later width change to any
+// NEIGHBOURING column cannot quietly push it back under.
+const idColumnMinWidth = 72
+
+// runnerColsFor is the column set for a panel of the given width. One function
+// so NewRunners, SetSize and the row builder cannot disagree about how many
+// cells a row has: bubbles indexes row[i] per COLUMN and panics on a mismatch,
+// and the ID column is not last — a stale extra cell would render every
+// following value under the wrong header, silently.
+func runnerColsFor(width int) []table.Column {
 	cols := []table.Column{
 		{Title: "Status", Width: 8},
 		{Title: "Host", Width: 20},
@@ -29,6 +54,24 @@ func NewRunners() RunnersModel {
 		{Title: "Agent", Width: 14},
 		{Title: "Roots", Width: 30},
 	}
+	if width < idColumnMinWidth {
+		return cols
+	}
+	// Second, right after Status: it is the row's identity, and Host is not a
+	// key — two slots on one machine share a hostname by design (the eBPF guest
+	// runs exactly that pair), so without it the rows differ only by Agent. It
+	// is also the value TaskInfo.assigned_to carries, so it is what joins a
+	// task row to the runner running it.
+	out := make([]table.Column, 0, len(cols)+1)
+	out = append(out, cols[0], table.Column{Title: "ID", Width: 9})
+	return append(out, cols[1:]...)
+}
+
+// showsID reports whether the current column set includes ID.
+func (m *RunnersModel) showsID() bool { return m.width >= idColumnMinWidth }
+
+func NewRunners() RunnersModel {
+	cols := runnerColsFor(0)
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
 	return RunnersModel{table: t, baseCols: cols}
 }
@@ -51,22 +94,57 @@ func (m *RunnersModel) IsFocused() bool { return m.focused }
 func (m *RunnersModel) SetSize(w, h int) {
 	m.table.SetWidth(w)
 	m.table.SetHeight(h)
-	m.table.SetColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Roots")))
+	m.width = w
+	m.baseCols = runnerColsFor(w)
+	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Roots"))
+	// A width-only change keeps the column SET, and must not disturb the rows:
+	// bubbles keeps the scroll offset unexported and SetCursor does not restore
+	// it, so rebuilding on every resize leaves the selection highlighted
+	// off-screen. Same split, and same reason, as TasksModel.SetSize.
+	if len(cols) == len(m.table.Columns()) {
+		m.table.SetColumns(cols)
+		return
+	}
+	m.swapColumnsAndRebuild(cols)
+}
+
+// swapColumnsAndRebuild swaps columns and rows together. The order is
+// load-bearing: bubbles re-renders on each of SetRows and SetColumns and
+// indexes row[i] per column, so a moment holding N columns against
+// N-1-cell rows panics. Empty first, then the columns, then rebuild.
+func (m *RunnersModel) swapColumnsAndRebuild(cols []table.Column) {
+	cursor := m.table.Cursor()
+	m.table.SetRows(nil)
+	m.table.SetColumns(cols)
+	m.rebuild()
+	if cursor >= 0 && cursor < len(m.rowRunners) {
+		m.table.SetCursor(cursor)
+	}
 }
 
 // SetRows updates the runner rows from a snapshot.
 func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
-	rows := make([]table.Row, 0, len(rs))
-	for _, r := range rs {
-		rows = append(rows, table.Row{
-			runnerStatusStr(r.Status),
+	m.rowRunners = rs
+	m.rebuild()
+}
+
+// rebuild is the ONLY place runner cells are produced, so the cell count cannot
+// disagree with runnerColsFor's column count.
+func (m *RunnersModel) rebuild() {
+	rows := make([]table.Row, 0, len(m.rowRunners))
+	for _, r := range m.rowRunners {
+		row := table.Row{runnerStatusStr(r.Status)}
+		if m.showsID() {
+			row = append(row, cli.PrincipalShort(r.Id.Id[:]))
+		}
+		row = append(row,
 			string(r.Hostname),
 			runnerTasksCell(r),
 			runnerAgentCell(r),
 			runnerRootsCell(r),
-		})
+		)
+		rows = append(rows, row)
 	}
-	m.rowRunners = rs
 	m.table.SetRows(rows)
 }
 

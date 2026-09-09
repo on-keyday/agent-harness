@@ -146,7 +146,43 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 // TaskInfo for the detail popup. The prompt is shown in full at the bottom
 // (it can be multi-line and is the most likely thing the user wants to
 // inspect after the row's truncation).
-func formatTaskDetail(t protocol.TaskInfo) string {
+// runnerIndex keys a runner snapshot by identity hex, the form
+// TaskInfo.assigned_to carries. One helper because the task table builds the
+// same map to resolve a task's agent, and a second hand-built one would be
+// free to key it differently.
+func runnerIndex(rs []protocol.RunnerInfo) map[string]protocol.RunnerInfo {
+	byID := make(map[string]protocol.RunnerInfo, len(rs))
+	for _, r := range rs {
+		byID[r.Id.Hex()] = r
+	}
+	return byID
+}
+
+// assignedToDetail words a task's assignment: WHICH runner process, and where
+// that process is reached right now.
+//
+// Both, because this line used to be a dial address —
+// protocol.RunnerIDToConnID(t.AssignedTo).String(), back when a runner's
+// identity WAS its connection id — and printing only the opaque identity took
+// the address away with nothing in its place. The design said the address would
+// "come from the join"; on `ls` that is fair, because the runner rows are on
+// screen beside the task rows and carry `cid=`. This popup REPLACES the view,
+// so here the join has to actually be performed.
+//
+// A runner that is no longer connected is not in the snapshot, and that is
+// worth saying rather than leaving the line looking truncated: the identity is
+// still the right answer to "what ran this", and "not connected" is the answer
+// to "where".
+func assignedToDetail(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) string {
+	id := t.AssignedTo.Hex()
+	r, ok := runnerByID[id]
+	if !ok {
+		return id + "  (runner not connected)"
+	}
+	return fmt.Sprintf("%s  at %s (%s)", id, cli.RunnerCIDStr(r.Cid), string(r.Hostname))
+}
+
+func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "id:            %s\n", hex.EncodeToString(t.Id.Id[:]))
 	fmt.Fprintf(&sb, "kind:          %s\n", taskKindStr(t.Kind))
@@ -203,7 +239,7 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "created:       %s\n", formatNanoTs(t.CreatedAt))
 	if t.StartedAt > 0 {
 		fmt.Fprintf(&sb, "started:       %s\n", formatNanoTs(t.StartedAt))
-		fmt.Fprintf(&sb, "assigned to:   %s\n", t.AssignedTo.Hex())
+		fmt.Fprintf(&sb, "assigned to:   %s\n", assignedToDetail(t, runnerByID))
 	}
 	if t.EndedAt > 0 {
 		fmt.Fprintf(&sb, "ended:         %s\n", formatNanoTs(t.EndedAt))

@@ -234,11 +234,12 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 // shift every cell after the missing one into the wrong column.
 func (m *TasksModel) rebuild() {
 	ordered, gutter := m.rowTasks, m.gutter
-	// Index runners by ConnID string so each task can show its runner's agent.
-	runnerByID := make(map[string]protocol.RunnerInfo, len(m.runners))
-	for _, r := range m.runners {
-		runnerByID[r.Id.Hex()] = r
-	}
+	// Index runners by identity, the form TaskInfo.assigned_to carries, so each
+	// task can resolve the runner it was assigned to. Shared with the detail
+	// popup (runnerIndex) rather than built here: the comment on this line said
+	// "by ConnID string" while the code keyed it by identity hex, which is the
+	// drift two hand-built maps invite.
+	runnerByID := runnerIndex(m.runners)
 
 	rows := make([]table.Row, 0, len(ordered))
 	ids := make([]string, 0, len(ordered))

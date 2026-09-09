@@ -1428,6 +1428,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   white-space: nowrap;
   max-width: 10rem;
 }
+/* A runner identity sits next to a task principal on the same row, so it is
+   tinted apart from it: both are bare 8-hex prefixes, and telling them by
+   position alone fails on a row that carries only one of them. */
+.conn-runner-id {
+  color: #6a9955;
+  font-family: monospace;
+}
 .conn-list-empty {
   color: #555;
   font-family: monospace;

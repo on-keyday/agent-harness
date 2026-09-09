@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -21,7 +22,7 @@ func TestFormatTaskDetailCapsLine(t *testing.T) {
 	task.SetRepoPath([]byte("/home/user/repo"))
 	task.SetPrompt([]byte("fix the bug"))
 
-	got := formatTaskDetail(task)
+	got := formatTaskDetail(task, nil)
 
 	if !strings.Contains(got, "caps:") {
 		t.Errorf("expected caps: label in detail output:\n%s", got)
@@ -46,7 +47,7 @@ func TestFormatTaskDetailActLine(t *testing.T) {
 	}
 	task.SetRepoPath([]byte("/repo"))
 
-	got := formatTaskDetail(task)
+	got := formatTaskDetail(task, nil)
 
 	if !strings.Contains(got, "act:") {
 		t.Errorf("expected act: label in detail output:\n%s", got)
@@ -59,7 +60,7 @@ func TestFormatTaskDetailActLine(t *testing.T) {
 	}
 
 	task.OutputIdleMs = 10_000
-	got = formatTaskDetail(task)
+	got = formatTaskDetail(task, nil)
 	if !strings.Contains(got, "idle:10s") {
 		t.Errorf("expected idle:10s badge in detail output:\n%s", got)
 	}
@@ -78,7 +79,7 @@ func TestFormatTaskDetailNoActWithoutLiveSession(t *testing.T) {
 	}
 	task.SetRepoPath([]byte("/repo"))
 
-	got := formatTaskDetail(task)
+	got := formatTaskDetail(task, nil)
 
 	if strings.Contains(got, "act:") {
 		t.Errorf("did not expect act: label for a task without live session:\n%s", got)
@@ -100,12 +101,50 @@ func TestFormatTaskDetailCapsNone(t *testing.T) {
 	}
 	task.SetRepoPath([]byte("/repo"))
 
-	got := formatTaskDetail(task)
+	got := formatTaskDetail(task, nil)
 
 	if !strings.Contains(got, "caps:") {
 		t.Errorf("expected caps: label in detail output:\n%s", got)
 	}
 	if !strings.Contains(got, "none") {
 		t.Errorf("expected none in caps line of detail output:\n%s", got)
+	}
+}
+
+// The task detail popup says WHERE the assigned runner is, not only which one.
+//
+// This line was a dial address until identity was decoupled from the
+// connection — RunnerIDToConnID(t.AssignedTo).String() — and replacing it with
+// the bare opaque identity took the address away with nothing in its place, on
+// the one surface that has no runner listing beside it to join against by eye.
+func TestTaskDetailAssignedToNamesTheRunnerAndWhereItIs(t *testing.T) {
+	identity := protocol.RunnerID{Id: [16]byte{0xA2, 0xE7, 0xFB, 0x5A}}
+	task := protocol.TaskInfo{
+		Status:     protocol.TaskStatus_Running,
+		StartedAt:  uint64(time.Now().UnixNano()),
+		AssignedTo: identity,
+	}
+	runner := protocol.RunnerInfo{Id: identity}
+	runner.SetHostname([]byte("kvm-ebpf"))
+	var cid protocol.ConnID
+	cid.SetTransport([]byte("ws"))
+	cid.SetIpAddr([]byte{192, 0, 2, 1})
+	cid.Port = 8539
+	cid.UniqueNumber = 7
+	runner.Cid = cid
+
+	body := formatTaskDetail(task, runnerIndex([]protocol.RunnerInfo{runner}))
+	for _, want := range []string{identity.Hex(), "ws:192.0.2.1:8539-7", "kvm-ebpf"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail body does not carry %q:\n%s", want, body)
+		}
+	}
+
+	// A runner that has since disconnected is not in the snapshot. The identity
+	// is still the right answer to "what ran this"; saying so beats a line that
+	// looks truncated.
+	gone := formatTaskDetail(task, runnerIndex(nil))
+	if !strings.Contains(gone, identity.Hex()) || !strings.Contains(gone, "not connected") {
+		t.Errorf("an offline runner should still be named, and said to be offline:\n%s", gone)
 	}
 }

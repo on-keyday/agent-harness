@@ -4734,7 +4734,12 @@ const POLL_INTERVAL_MS = 5000;
     // Assigned variants mirror the TUI's r/R; any-runner variants mirror u/U and
     // intentionally skip t.assignedTo so the ambiguous runner picker can reopen.
     if (isTerminal) {
-      const assignedRunner = typeof t.assignedTo === "string" && t.assignedTo && !t.assignedTo.startsWith(":") ? t.assignedTo : "";
+      // assignedTo is the runner's 32-hex IDENTITY and the bridge sends "" when
+      // there is none, so presence is the whole test. The old guard read
+      // `!startsWith(":")` because an absent ADDRESS-shaped id rendered as
+      // ":0:0-0"; an absent identity rendered as 32 zeros instead, which that
+      // guard passes — a pinned resume would then ask for runner 000…0.
+      const assignedRunner = typeof t.assignedTo === "string" ? t.assignedTo : "";
 
       // Agent dropdown — defaults to this task's own last-run profile (§4b:
       // pinned resume resolves to the resumed task's own agent_profile unless
@@ -7130,6 +7135,47 @@ function connIpPart(remoteAddr) {
   return lastColon > 0 ? remoteAddr.slice(0, lastColon) : remoteAddr;
 }
 
+// tasksOnRunner returns the active tasks assigned to one runner CONNECTION,
+// sorted by id, for both places that hang tasks off a runner row.
+//
+// One function because the join broke in both of them at once and neither
+// noticed: they compared task.assignedTo against conn.cid, which was correct
+// only while a runner's identity WAS its connection id. After identity was
+// decoupled, both silently matched nothing and every runner rendered with no
+// tasks however many it was running -- the pure-render kind of defect that a
+// screenshot shows and no assertion did. `principalRunner` is the field that
+// answers "which runner process is this connection", and assignedTo is that
+// same identity, so this is the only pair that joins.
+//
+// The empty check is not decoration: the bridge sends "" for a task with no
+// runner and for every non-runner conn, and without it two absences would
+// compare equal and every unassigned task would attach to every client row.
+function tasksOnRunner(tasks, conn) {
+  if (!conn || conn.role !== "runner" || !conn.principalRunner) return [];
+  return (tasks || [])
+    .filter(tk => isActiveTask(tk) && tk.assignedTo && tk.assignedTo === conn.principalRunner)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+// connTooltip words a connection for the topology's native SVG tooltip: what
+// it is, where it is, and — for a runner — WHICH RUNNER PROCESS.
+//
+// The topology's leaf labels are three characters ("run", "web"), so the
+// identity cannot go in one. Without a tooltip the desktop view of this tab
+// named no runner at all: the identity was added to the conn LIST, which the
+// >=601px media query hides, so the half of the tab a desktop operator
+// actually sees still could not answer "which slot is that". Surface-parity
+// item 34a — carry it to the sibling in the same walk.
+function connTooltip(conn) {
+  const lines = [`${conn.role || "unspecified"}  ${conn.cid || "?"}`];
+  if (conn.principalRunner) lines.push(`runner: ${conn.principalRunner}`);
+  if (conn.principalTask && conn.principalTask !== "0".repeat(32)) {
+    lines.push(`task: ${conn.principalTask}`);
+  }
+  if (!conn.identified) lines.push("handshake not completed");
+  return lines.join("\n");
+}
+
 // groupConnsByIP groups the conns array into a Map<ip, connInfo[]>.
 // isActiveTask: a task currently alive on its runner. Running = actively
 // executing; Detached = interactive session alive with no client attached.
@@ -7439,6 +7485,10 @@ function renderConnTopology(conns, tasks, forwards) {
         class: `ct-conn-node ${roleClass}${unidentCls}`,
         "data-cid": conn.cid,
       });
+      // First child, which is what a browser shows as the node's tooltip.
+      const leafTitle = svgEl("title", {});
+      leafTitle.textContent = connTooltip(conn);
+      leafG.appendChild(leafTitle);
       const leafCircle = svgEl("circle", { cx: lx, cy: ly, r: LEAF_R });
       // Age shade (spec: opacity/shade encodes age). Newer = brighter, older =
       // dimmer, flooring at ~0.45 for conns older than ~1h. Applied ONLY to
@@ -7475,12 +7525,9 @@ function renderConnTopology(conns, tasks, forwards) {
 
       // Hang this runner's currently-active tasks off its leaf. This is an
       // ASSIGNMENT relationship (distinct from the connection lines), so tasks
-      // render as squares on dashed branches. Pure client-side join: a runner
-      // conn's cid equals the runner's registry id equals task.assignedTo.
-      if (conn.role === "runner") {
-        const myTasks = tasks
-          .filter(tk => isActiveTask(tk) && tk.assignedTo === conn.cid)
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      // render as squares on dashed branches rather than on the solid ones.
+      {
+        const myTasks = tasksOnRunner(tasks, conn);
         const nT = myTasks.length;
         const tFanHalf = Math.min(fanHalf, 0.12 * Math.max(1, nT - 1));
         myTasks.forEach((tk, ti) => {
@@ -7737,6 +7784,19 @@ function renderConnList(conns, tasks) {
         row.appendChild(pEl);
       }
 
+      // Runner identity (runner conns only). Its own element rather than a
+      // second use of conn-principal: a task id and a runner id are different
+      // namespaces, and an 8-hex prefix with no label is exactly where an
+      // operator correlating rows would confuse them. Empty for every other
+      // role — the wasm bridge decides that, so no all-zero check here.
+      if (conn.principalRunner) {
+        const rEl = document.createElement("span");
+        rEl.className = "conn-principal conn-runner-id";
+        rEl.title = `runner: ${conn.principalRunner}`;
+        rEl.textContent = "⚙" + conn.principalRunner.slice(0, 8);
+        row.appendChild(rEl);
+      }
+
       // Age (right-aligned)
       const ageEl = document.createElement("span");
       ageEl.className = "conn-age";
@@ -7745,11 +7805,9 @@ function renderConnList(conns, tasks) {
 
       card.appendChild(row);
 
-      // Active tasks running on this runner (assignment join: cid == assignedTo).
-      if (conn.role === "runner") {
-        const myTasks = tasks
-          .filter(tk => isActiveTask(tk) && tk.assignedTo === conn.cid)
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      // Active tasks running on this runner.
+      {
+        const myTasks = tasksOnRunner(tasks, conn);
         for (const tk of myTasks) {
           const trow = document.createElement("div");
           trow.className = "conn-task-row";

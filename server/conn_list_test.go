@@ -370,3 +370,75 @@ func recordAgent(s *Server, cidStr string, principal protocol.TaskID) {
 	}
 	s.taskHandler.principals[cidStr] = principal
 }
+
+// A runner conn names WHICH RUNNER PROCESS it belongs to, and that value is the
+// same one TaskStore.Assign writes to a task — so a conn row can be joined to
+// the tasks running on it.
+//
+// The field existed in ConnInfo, generated and encoded, while nothing set it and
+// nothing read it: `conns` showed "-" for every runner and the WebUI joined
+// tasks to runner rows on the CID instead, which stopped being the identity when
+// identity was decoupled from the connection. The join half is asserted here
+// rather than only the field, because the field being non-zero was never the
+// property anyone wanted.
+func TestConnList_RunnerConnCarriesItsIdentityAndJoinsToAssignedTasks(t *testing.T) {
+	s := makeTestServer(t)
+	now := time.Now()
+	identity := protocol.RunnerID{Id: [16]byte{0xA1, 0xB2, 0xC3}}
+
+	runnerCID := addActiveConn(s, "ws:127.0.0.1:9200-1", now)
+	s.registry.Add(&RunnerEntry{
+		ID:           runnerCID.String(),
+		Identity:     identity,
+		Hostname:     "runner-host",
+		AllowedRoots: []string{"/"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  now,
+		LastSeen:     now,
+		Conn:         stubConn{},
+	})
+	// A non-runner conn, to pin that the field is absent rather than defaulted
+	// to whatever runner happens to be registered.
+	cliCID := addActiveConn(s, "ws:127.0.0.1:9200-2", now)
+	s.taskHandler.clientKinds = map[string]protocol.ClientKind{
+		cliCID.String(): protocol.ClientKind_Cli,
+	}
+
+	taskID := s.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	s.tasks.Assign(taskID, identity, "/wt", false)
+
+	infos := s.ConnList(protocol.TaskID{}, true)
+	var runnerInfo, cliInfo *protocol.ConnInfo
+	for i := range infos {
+		switch infos[i].Role {
+		case protocol.ConnRole_Runner:
+			runnerInfo = &infos[i]
+		case protocol.ConnRole_Cli:
+			cliInfo = &infos[i]
+		}
+	}
+	if runnerInfo == nil || cliInfo == nil {
+		t.Fatalf("expected one runner and one cli conn; got runner=%v cli=%v", runnerInfo, cliInfo)
+	}
+	if runnerInfo.PrincipalRunner != identity {
+		t.Errorf("runner conn PrincipalRunner = %s, want %s",
+			runnerInfo.PrincipalRunner.Hex(), identity.Hex())
+	}
+	if !cliInfo.PrincipalRunner.IsZero() {
+		t.Errorf("cli conn PrincipalRunner = %s, want zero — the field is per-role",
+			cliInfo.PrincipalRunner.Hex())
+	}
+
+	// The join, which is the whole point: what the conn row reports is what the
+	// task row was assigned to.
+	entry, ok := s.tasks.Get(taskID)
+	if !ok {
+		t.Fatal("assigned task vanished from the store")
+	}
+	if entry.AssignedTo != runnerInfo.PrincipalRunner {
+		t.Errorf("task.AssignedTo = %s but the runner conn reports %s — nothing can join them",
+			entry.AssignedTo.Hex(), runnerInfo.PrincipalRunner.Hex())
+	}
+}
