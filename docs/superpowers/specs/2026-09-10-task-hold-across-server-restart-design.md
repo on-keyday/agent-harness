@@ -1377,7 +1377,31 @@ showed up only here.
   understood as a consequence of a missing teardown rather than a property of
   UDP.
 
-Still to run: D12's per-agent stall behaviour for claude, codex and agy.
+**D12's stall behaviour, probed 2026-09-10 — and what the probe does NOT
+settle.** Tested outside the harness, on a bare pty whose master is simply not
+read, which is exactly what the relay produces and isolates the agent from
+every other moving part.
+
+- **The mechanism holds.** A real blocked writer (`yes`) filled the pty buffer
+  (19,636 bytes pending — the limit here is ~20 KB, not the 64 KB one might
+  assume), stopped, survived the full 20-second block, and resumed when the
+  buffer was drained. That is D12's claim, measured: no loss, no death, no
+  size to choose.
+- **claude, codex and agy all survived**, but each had **0–44 bytes** buffered,
+  which means none of them actually blocked: an agent sitting at its prompt
+  with no input produces nothing, so the write never stopped. "It did not die"
+  is compatible with "it was never asked to wait", and conflating the two is
+  how this probe was invalid on its first two attempts — including a `bash`
+  control that finished writing during the read window and reported a blocked
+  buffer of zero.
+- **So the residue is a CHATTY agent, and it is unmeasured.** The risk scales
+  with output rate: agy repaints its whole screen at 15–57 fps, so it fills
+  ~20 KB in well under a second, where claude and codex emit bursts. Measuring
+  it properly needs each agent driven to produce >20 KB while blocked — a real
+  model call for two of them. Worth doing before a fleet leans on holds for
+  long windows; the idle case, which is the common one for a held session, is
+  covered.
+
 
 ### The plan, as written before any of that
 
