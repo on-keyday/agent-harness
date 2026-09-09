@@ -492,6 +492,110 @@ existing record changes meaning, and nothing wire-encoded is persisted, so the
 class of failure that cost the history here cannot recur through this change.
 `TestOnlySelectorEmbedsAWireFormatInTheWAL` keeps that true.
 
+## 4a. The exchange, in order
+
+Three processes and a disk. Every arrow is a message from §4; every `disk:`
+line is a record or file that must exist before the step below it runs.
+
+```
+PHASE 1 — SHUTDOWN.  Everything here is inside a 5 s hard-kill window
+                     owned by daemon.py, not by this design.
+
+ daemon.py ─── touch <slot>.shutdown ───┐   both land at once on Linux;
+ daemon.py ─── SIGTERM ─────────────────┴─▶ the 5 s clock starts HERE
+
+ server: root ctx CANCELLED
+   │
+   ├─(a) screenRepaint() for every LIVE interactive session
+   │        └─▶ disk: <data-dir>/held/<task-id>.screen
+   │            ahead of the exchange on purpose (D19): the only step whose
+   │            cost grows with the fleet, and it needs nothing from the acks
+   │
+   ├─(b) holdCtx = WithTimeout(context.Background(), --hold-ack-timeout)
+   │        ▲ NOT the root ctx. Sending on the cancelled one holds nothing,
+   │          silently, and passes every test that calls shutdown directly
+   │
+   │     server ══ HoldTasksRequest{hold_id, hold_ms} ═══▶ runner   (fan-out,
+   │                                                                parallel)
+   │                                              runner: arm monotonic timer
+   │                                                      at ARRIVAL, so its
+   │                                                      window ends later
+   │                                                      than the server's
+   │     server ◀═ HoldTasksAck{hold_id, [task_id …]} ════ runner
+   │                        only tasks whose child is ALIVE: OnStdinWriter
+   │                        fired / command started, OnProcessExit not fired
+   │
+   ├─(c) merge = ack ∩ { t : t.AssignedTo == that identity }   ← intersection
+   │        └─▶ disk: task_held{task_id, runner_id, hold_id, deadline_ns}
+   │            written BY the store transition, which refuses anything not
+   │            Running/Detached — that refusal is what closes the race with
+   │            a TaskFinished landing during (b)
+   │
+   ├─(d) suppress failAndRevokeTasksOf AND afterMuxStopped for held tasks
+   │
+   ├─(e) cancel the SESSIONS ctx   ← after (c) and (d). Today the muxes hang
+   │        off the ROOT ctx, so this step does not exist and their teardown
+   │        RACES (c), cancelling held interactive tasks. §5 step 6.
+   │
+   └─(f) tear down connections, exit
+
+PHASE 2 — THE GAP.  No server exists.
+
+ runner:  keeps the child; STOPS DRAINING (D12) — the PTY/pipe buffer fills
+          and the child blocks in write(), so nothing is dropped and there
+          is no ring to size
+          does NOT close the PTY master (SIGHUP would kill what it is keeping)
+          the relay makes exec's EOF→SIGHUP ladder unreachable (D13)
+          timer fires ⇒ kill every held child, forget the hold (D4)
+
+PHASE 3 — RESTART AND RE-ADOPTION.
+
+ server: replay
+   ├─ last record task_held ⇒ status Held, carrying hold_id + deadline
+   ├─ now > deadline        ⇒ Failed("hold_expired") immediately
+   ├─ arm ONE timer for the earliest outstanding deadline
+   └─ delete <data-dir>/held/*.screen whose task is not Held
+      ▲ all of this completes before the accept loop starts, so no hello can
+        arrive mid-replay and nothing needs a lock
+
+ runner ══ RunnerHello{runner_id, held: HeldTasksReport{hold_id,
+           [HeldTask{task_id, ticket} …]}} ══▶ server        (at the PSK gate)
+   │
+   │  server, per reported task — accept iff ALL THREE:
+   │     task exists and is Held  ∧  hold_id matches  ∧  runner_id == identity
+   │
+   │     accepted:  Registry.BindTask                       (capacity, D16)
+   │                boardRegisterTask(Board, identity, task,
+   │                                  ticket, task.AgentProfile)
+   │                  ▲ the funnel, NOT registry.Register: it also seeds
+   │                    SelfTopic, without which the credential validates
+   │                    and `agent send` reaches nobody
+   │                Held → Running → SetDetached (interactive), else Running
+   │                disk: task_readopted{task_id, runner_id, hold_id}
+   │                  ▲ without this, a SECOND restart re-offers the task
+   │                    against the previous hold's id
+   │     otherwise:  Failed("not_held_by_runner")
+   │
+ runner ◀══ RunnerHelloResponse{your_runner_id, accepted:[task_id …]} ══ server
+   │
+   └─ runner: kill every held child whose id is ABSENT from `accepted`
+              ▲ accepted-list, not refused-list (D18): a forgotten entry
+                kills a child (loud) instead of stranding one (silent).
+                This is also the ONLY path that reaches a task cancelled
+                while it was held — CancelTask can never be delivered to one
+
+ per re-adopted INTERACTIVE task:
+   server: rebuild SessionMux, feed it the persisted screen bytes
+ server ══ RebindSessionRequest{task_id, stream_id} ═══════▶ runner
+   runner: splice the held PTY onto the new stream, resume draining
+           ── on failure (child died since the report) ──▶
+ server ◀══ TaskFinished{-1, "rebind_failed: …"} ══════════ runner
+
+   ordering that matters: snapshot FIRST, then the gap bytes the kernel
+   buffered during PHASE 2. Reversed, the snapshot overwrites newer output —
+   and a test with an idle child cannot tell the difference (§10.1a)
+```
+
 ## 5. Server
 
 **Shutdown, in order.** The hold is the first thing a deliberate shutdown does
@@ -963,6 +1067,7 @@ the implementation's own walk must return a verdict for.
 | 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence. Plus `<data-dir>/held/<task-id>.screen`, which is state on disk that is NOT in the WAL — deleted after it is fed, and orphans swept at startup |
 | 35 | `README.md` | the two server flags, and one paragraph stating that a CRASH recovers nothing |
 | 37 | This spec | an Amendment section if the shipped behaviour differs |
+| — | §4a sequence | The exchange in order, as one picture. Item 39's rule applies to it too: a step drawn there and not built is an `omitted` in the diagram, struck through with its reason |
 | — | Server flags | `--hold-window`, `--hold-ack-timeout`. Not verb-table surfaces (item 1 does not reach server flags), so they need the README and the runner-up preset docs instead |
 
 Deliberate omissions, recorded as omissions rather than left silent:
@@ -1122,11 +1227,14 @@ Also:
 - Unit: the ack→`task_held` write; replay of `task_held` into `Held`; deadline
   already passed at startup → Failed; re-adoption accept/refuse across the three
   match conditions (id, `hold_id`, identity); a `Held` task absent from the
-  report → Failed; capacity re-bound after re-adoption; the suppression in §5
-  step 5 (a teardown after a hold must not write `task_failed`); an unknown WAL
+  report → Failed; capacity re-bound after re-adoption; both suppressions in §5
+  step 6 (a teardown after a hold must not write `task_failed`, and a stopping
+  mux must not write `task_cancelled`); an unknown WAL
   `type` is ignored, pinned so the rollback claim in §4 is measured rather than
   asserted.
-- `scripts/wire-skew-check.sh` — reject-then-heal, both directions.
+- `scripts/wire-skew-check.sh` — reject-then-heal in BOTH directions, which
+  means the script's new third phase (§8) has to exist before this line can be
+  ticked.
 - Live, on `scripts/dummy-harness.sh`, because nothing above crosses a process
   boundary. The parser and key-dispatch layers are also only reachable this way
   (Pitfall 13), so the status must be read through the real command lines:
