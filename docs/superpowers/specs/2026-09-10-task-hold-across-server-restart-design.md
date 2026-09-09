@@ -1332,6 +1332,27 @@ Also:
 
 ## 10. Testing
 
+**Measured 2026-09-10 on `scripts/dummy-harness.sh`.** Recorded here rather
+than left as a plan, because six of the defects this change went through were
+reachable only this way and none of them could have failed a unit test.
+
+| Case | Result |
+|---|---|
+| 1. interactive across a deliberate restart | child alive, **same pid**; task `held` between the servers, `detached` after; `readopt: accepted kind=Interactive` → `rebind: sent` → `session rebound` |
+| 1a. continuity | a counter in the session read `tick 6` before and `tick 19` after — the screen shows content produced DURING the gap, not the snapshot |
+| 1b. the credential | the agent's pre-restart ticket answered `status:"ok"` against the NEW server, and its own topic came back `msgs=1 subs=1` — the subscriber only `boardRegisterTask`'s funnel creates |
+| 2. oneshot mid-run | `succeeded`, log lines **1..25 with no gap** and `DONE` present |
+| 3. negative control (`kill -9`) | child dead in 200 ms, nothing held — a crash recovers nothing, as designed |
+| 4. deadline with no runner | `Failed err="hold_expired"` at the deadline, from the single timer |
+| 5. cancel while held | refused at re-adoption (`status=Cancelled`), child reaped in ~500 ms rather than at the deadline |
+| 6. runner PROCESS restart | unit-level (`TestReadoptRefusesAnotherRunnersTask`); the live run was blocked by the test harness's own argv quoting, not by the product |
+
+Still to run: the UDP pass (§6a.1's timing differs by transport) and D12's
+per-agent stall behaviour for claude, codex and agy.
+
+### The plan, as written before any of that
+
+
 - Unit: the ack→`task_held` write; replay of `task_held` into `Held`; deadline
   already passed at startup → Failed; re-adoption accept/refuse across the three
   match conditions (id, `hold_id`, identity); a `Held` task absent from the

@@ -67,12 +67,26 @@ simply never runs, and `logs` returns nothing. `ls` shows `tasks=1/1` and
 `Busy`; check that before debugging anything else. The script passes
 `--max-tasks 4`.
 
-**4. A server restart marks in-flight tasks `Failed` with
-`err="runner_disconnected"`.** So output stopping after a restart is the task
-dying, not the client freezing. Confirm with `ls` before concluding you have
-found a client bug — and note that a task which dies on restart cannot be used
-to test "does the pane keep updating"; submit a fresh task after the reconnect
-for that.
+**4. A restart's effect on in-flight tasks depends on HOW you stopped the
+server.** A *deliberate* stop — SIGTERM, or the `--shutdown-file` sentinel, as
+`scripts/restart.py` and the dummy's own `down` use — holds them: the runner
+keeps the children alive, the tasks read `held` between the two servers, and the
+next server re-adopts them (interactive comes back `detached`, oneshot
+`running`). A *crash* — `kill -9` — recovers nothing and leaves the old
+behaviour: `Failed` with `err="runner_disconnected"`, or
+`err="server_restart"` from the replay's own sweep.
+
+So output stopping after a restart is no longer self-explanatory. Check `ls`
+first: `held` means the mechanism is working and you are inside the window;
+`Failed err="hold_expired"` means the window passed before a server came back;
+`Failed err="not_held_by_runner"` means the runner reported nothing for it.
+`--hold-window=0` on the server restores the old kill-everything behaviour if
+that is what a test needs.
+
+Two traps specific to testing the hold itself: the window is 90s by default, so
+a debugging pause between the stop and the restart will expire it and look like
+a bug; and a held task's log resumes only after re-adoption, so a log that
+stops at the restart is expected until the runner reconnects.
 
 ## Testing a client across a server restart
 
