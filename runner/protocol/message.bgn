@@ -16,6 +16,8 @@ enum RunnerMessageType:
     revoke_data_plane_response     # answer to RevokeDataPlaneRequest
     data_plane_finished            # a data-plane transfer ended; drop its state
     trsf_state_response            # this runner's own transport state, as asked
+    hold_tasks_ack                 # the exact task set this runner will keep
+                                   # alive across a deliberate server restart
 
 enum RunnerRequestType:
     :u8
@@ -39,6 +41,8 @@ enum RunnerRequestType:
     authorize_data_plane  # expect a connection redeeming this grant
     revoke_data_plane     # drop a grant and close whatever redeems it
     trsf_state            # report this runner's own transport state
+    hold_tasks            # keep your children alive, I am going down on purpose
+    rebind_session        # attach a held task's live PTY to a new stream
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -108,6 +112,11 @@ format RunnerHello:
     # runner has no profile concept beyond its single --claude-bin).
     agent_profiles_len :u8
     agent_profiles :[agent_profiles_len]AgentProfileName
+    # Appended at the END: what this process is still holding. The server reads
+    # it at the identity gate, so registration and re-adoption are one step
+    # rather than a window the server must hold open before it may fail held
+    # tasks.
+    held :HeldTasksReport
 
 # AuthRole discriminates which identity type is carried in a PskAuthRequest.
 enum AuthRole:
@@ -146,6 +155,81 @@ format PskAuthResponse:
 
 format TaskID:
     id :[16]u8
+
+# --- holding a task across a deliberate server restart -----------------------
+# See docs/superpowers/specs/2026-09-10-task-hold-across-server-restart-design.md
+
+# HoldID names ONE shutdown's hold. The runner echoes it on reconnect and the
+# server records it in the WAL beside every task it covers, so a report can be
+# matched against the shutdown that authorised it rather than against a task
+# list alone.
+format HoldID:
+    id :[16]u8
+
+# HeldTask is one entry of the RECONNECT report -- the only message that needs
+# the ticket. The ack at shutdown carries bare TaskIDs instead: the server's
+# registry is still alive at that moment and already holds every ticket, so
+# sending them back would put a credential on the wire for no reason.
+format HeldTask:
+    task_id :TaskID
+    # The agentboard ticket this task's agent is HOLDING, in the env it froze
+    # at spawn (HARNESS_AUTH_TICKET). The board's ticket registry is an
+    # in-memory map, so a restart forgets every ticket while the surviving
+    # agent keeps presenting its own; re-registering a freshly minted one
+    # answers BadTicket. The runner is the right carrier because it already
+    # knows this value -- it received it in AssignTaskBody.AuthTicket (oneshot)
+    # or OpenExecRunnerRequest.AuthTicket (interactive) and wrote the env
+    # itself.
+    ticket :[16]u8
+
+# HeldTask is fixed-size; expose its on-the-wire byte length so the runner's
+# budget arithmetic divides by a value the SCHEMA owns. Same facility and same
+# reason as FileTransferAckSize below. A control message is ONE datagram and an
+# oversized one is dropped silently over UDP, so a stale divisor is a silent
+# failure rather than a compile error.
+HeldTaskSize ::= sizeof(HeldTask)
+
+# Server -> runner, RunnerRequestType.hold_tasks. Sent to every registered
+# runner as the FIRST step of a deliberate shutdown, before any connection is
+# torn down. Not sent on a crash -- there is nothing to send it from, which is
+# the point.
+format HoldTasksRequest:
+    hold_id :HoldID
+    # How long the runner keeps its children alive with no server. The server
+    # owns this value so one operator setting governs the whole fleet; the
+    # runner enforces it on its own monotonic clock from the moment the request
+    # ARRIVES, so no clocks are compared across hosts.
+    hold_ms :u32
+
+# Runner -> server, RunnerMessageType.hold_tasks_ack. The exact set of tasks
+# whose children this runner commits to keeping. The server persists THIS, not
+# what it asked for. An empty list is a valid ack: the runner had nothing to
+# hold. Sending it also means "I have stopped reading these tasks' output".
+format HoldTasksAck:
+    hold_id :HoldID
+    tasks_len :u16
+    tasks :[tasks_len]TaskID   # ids only -- see HeldTask on why not the ticket
+
+# HeldTasksReport rides in RunnerHello: what this runner process is still
+# holding from the hold named by hold_id, each entry carrying the ticket its
+# agent is still presenting. tasks_len == 0 with a zero hold_id is the normal
+# case for every reconnect that follows no hold.
+format HeldTasksReport:
+    hold_id :HoldID
+    tasks_len :u16
+    tasks :[tasks_len]HeldTask
+
+# Server -> runner, RunnerRequestType.rebind_session. Re-adoption of an
+# INTERACTIVE task: the server has created a fresh bidi stream and the runner
+# must splice the PTY it is already holding onto it. The oneshot path needs no
+# rebind -- its output goes to the log topic, addressed by task id rather than
+# by a stream. A rebind that cannot be honoured (the child died since the
+# report) is answered with the existing
+# TaskFinished{exit_code:-1, error_message:"rebind_failed: ..."}, which the
+# server already handles as Finish + UnbindTask + Revoke.
+format RebindSessionRequest:
+    task_id :TaskID
+    stream_id :u64   # u64 to match OpenExecRunnerRequest.stream_id
 
 format AssignTask:
     # Server-initiated send-stream id; runner reads AssignTaskBody bytes
@@ -228,6 +312,16 @@ format TaskWakeRequest:
 # value locally.
 format RunnerHelloResponse:
     your_runner_id :RunnerID
+    # Which reported held tasks the server ACCEPTED. The polarity is
+    # deliberate: a refused-list the server forgets to fill leaves the runner
+    # holding a child nobody will adopt, while an accepted-list that is
+    # forgotten kills children -- loud and recoverable instead of silent. So
+    # the runner kills every held child whose id is absent here, and this is
+    # also the ONLY channel that reaches a task cancelled while it was held:
+    # CancelTask is best-effort and its send site returns when the runner is
+    # not registered, which is every moment a task spends in Held.
+    accepted_len :u16
+    accepted :[accepted_len]TaskID   # ids only -- the ticket is not echoed
 
 format TaskAccepted:
     task_id :TaskID
@@ -259,6 +353,7 @@ format RunnerMessage:
         RunnerMessageType.revoke_data_plane_response => revoke_data_plane_response :RevokeDataPlaneResponse
         RunnerMessageType.data_plane_finished => data_plane_finished :DataPlaneFinished
         RunnerMessageType.trsf_state_response => trsf_state_response :RunnerTrsfStateResponse
+        RunnerMessageType.hold_tasks_ack => hold_tasks_ack :HoldTasksAck
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -281,6 +376,8 @@ format RunnerRequest:
         RunnerRequestType.authorize_data_plane => authorize_data_plane :AuthorizeDataPlaneRequest
         RunnerRequestType.revoke_data_plane => revoke_data_plane :RevokeDataPlaneRequest
         RunnerRequestType.trsf_state => trsf_state :RunnerTrsfStateRequest
+        RunnerRequestType.hold_tasks => hold_tasks :HoldTasksRequest
+        RunnerRequestType.rebind_session => rebind_session :RebindSessionRequest
 
 enum TaskControlKind:
     :u8
@@ -583,6 +680,13 @@ enum TaskStatus:
     Failed
     Cancelled
     Detached
+    # A deliberate server shutdown asked this task's runner to keep its child
+    # alive with no server to report to, and the runner agreed. Alive, but no
+    # server-side session state exists for it. Ends as Running/Detached
+    # (re-adopted), Failed (the runner did not come back with it, or the
+    # deadline passed) or Cancelled (the operator said so while it was held).
+    # Appended, so every existing value keeps its number.
+    Held
 
 # TaskKind distinguishes how the task was requested.
 #  - oneshot:     submitted via SubmitRequest, claude runs with -p prompt and exits
