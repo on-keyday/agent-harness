@@ -261,7 +261,10 @@ why it is the right shape rather than a workaround:
 
 - D12's "stop draining" is the relay declining to copy, with no code in the
   session path.
-- "Never close the PTY master" is the relay not forwarding `CloseBoth`.
+- "Never close the PTY master" is the relay not forwarding `CloseBoth` — and
+  the consequence is not speculative: the child is a session leader with that
+  PTY as its controlling terminal (go-pty sets `Setsid`+`Setctty`,
+  `cmd_unix.go:44-47`), so closing the master hangs up its session. §9.4.
 - **The EOF→SIGHUP ladder becomes unreachable instead of suppressed.** That
   ladder fires when the stream `agentexec` holds reaches EOF; after
   interposition, the stream it holds is the relay, and the relay does not EOF
@@ -906,7 +909,8 @@ present is the normal case.
   this needs a hold-aware exception inside a third-party package's control
   flow, which is the reason the relay is not optional.
 - **Stop draining (D12).** For an interactive task, stop copying from the PTY
-  master and do not close it. For a oneshot, the sink that receives decoded
+  master and do not close it — closing it SIGHUPs the session (§9.4). For a
+  oneshot, the sink that receives decoded
   stdout lines blocks instead of dropping them, which pushes back through
   `os/exec`'s copier into the pipe. Neither path may close its fd: closing the
   PTY master delivers SIGHUP and kills exactly the child being preserved.
@@ -1204,54 +1208,46 @@ Also:
    `task_held` → replay undoes the hold and the children are orphaned for the
    full window with nobody to adopt them. Worse than a plain failure, because
    the runner still believes it is holding.
-4. **The runner process dies during the hold — the orphan hole, mechanism
-   first.** Exactly three things can kill an agent child, and during the hold
-   the first is the only one in play:
-   - the runner itself: `procTree.kill` sends `SIGTERM` then `SIGKILL` to the
-     child's process GROUP (`objtrsf/exec/proctree_unix.go:44-56`), which is
-     why the child is spawned `Setpgid`;
-   - systemd, when the slot is a registered unit: the children inherit the
-     runner's unit cgroup — `setsid` does not re-parent a cgroup, which is the
-     whole point of `adopt_into_unit_cgroup` (`scripts/cgroup_adopt.py:82-110`,
-     fix `3ce441c`) — so a `systemctl stop/restart` of that unit takes them
-     with it under the default `KillMode=control-group`;
-   - nothing else.
-   **And the terminal does NOT do it.** The child is `Setpgid` only: a grep for
-   `Setsid|Setctty|Ctty` across the whole `objtrsf/exec` package and all of
-   `runner/` returns nothing, so the PTY is not the child's controlling
-   terminal and closing the master delivers **no SIGHUP**. What the child gets
-   is EIO on its next read or write of the slave, and whether that ends the
-   process is the program's choice — this project has already watched an agent
-   survive a stdin EOF on Windows.
-   So the hole is: the runner is SIGKILLed *alone* — OOM killer, `kill -9`, a
-   crash — while a hold is armed. No `procTree.kill` runs, no cgroup is torn
-   down, no signal arrives from the terminal, and the children keep running,
-   reparented, holding worktrees. On this host that is not hypothetical: 16 GB
-   with swap 0 and heavy agent processes.
-   The mechanism is **not new**; a runner SIGKILLed today orphans its children
-   the same way. What the hold adds is a deliberate window, `hold_ms` wide, in
-   which children are alive with no supervisor by design — so a runner death
-   during it is ordinary operations rather than a coincidence of two failures.
-   Three ways to close it, in increasing attractiveness:
-   - **a pid recorded for the next runner in the slot to reap.** Needs the
-     upstream hook §9.4 used to call prohibitive (it is not — see
-     `landing-policy-objtrsf`), plus a file and a startup pass.
-   - **the cgroup as the record.** A registered slot has a stable unit name, so
-     a starting runner can kill whatever is already in its own unit cgroup
-     before registering. No pid bookkeeping at all — but it does nothing for a
-     slot spawned without a unit, which `cgroup_adopt` warns about rather than
-     prevents.
-   - **`Setsid` + `Setctty` on the PTY child**, i.e. make the pty its
-     controlling terminal. Then the KERNEL is the reaper of last resort:
-     while the runner lives it holds the master open and nothing fires, and the
-     moment the runner dies the master closes and the child's session gets
-     SIGHUP. The hole closes itself with no bookkeeping, and it is a few lines
-     in objtrsf. It is not free: it changes signal and job-control semantics
-     for every interactive session (a session leader with a controlling
-     terminal is what a terminal app expects, but this repo has a history of
-     Ctrl-C behaviour differing by platform), and it does nothing on Windows,
-     where ConPTY has its own rules and the hole stays open.
-   Which of the three, and whether in v1, is an operator call.
+4. **The runner process dies during the hold.** Smaller than the previous two
+   drafts of this item claimed, and the reason is worth getting right because
+   the spec asserted both P and not-P about it.
+   Who can kill an agent child:
+   - **the kernel, via the controlling terminal — and this is the case that
+     matters.** The interactive child is started through go-pty
+     (`p.CommandContext`, `objtrsf/exec/exec.go:350`), whose unix `Start` sets
+     `Setsid` AND `Setctty` with the slave on all three fds
+     (`aymanbagabas/go-pty@v0.2.2/cmd_unix.go:44-47`). So the child is a
+     session leader and the PTY *is* its controlling terminal. When the runner
+     dies, the master closes and the kernel hangs up that session: SIGHUP,
+     default action, child gone. Nothing in the harness has to do anything.
+     (A grep for `Setsid|Setctty` across `objtrsf/exec` and `runner/` returns
+     nothing, which is how an earlier draft concluded the opposite — the flags
+     are set by the library that starts the process, one call below the range
+     that was searched.)
+   - the runner itself: `procTree.kill` to the process GROUP
+     (`objtrsf/exec/proctree_unix.go:44-56`), which is what reaches descendants
+     the SIGHUP does not.
+   - systemd, when the slot is a registered unit: children inherit the runner's
+     unit cgroup (`setsid` does not re-parent one — `scripts/cgroup_adopt.py:82-110`,
+     fix `3ce441c`), so a unit stop/restart takes them under the default
+     `KillMode=control-group`.
+   What is left, then, is narrower than "the children survive":
+   - **descendants that left the session** — anything the agent itself
+     `setsid`'d. The SIGHUP does not reach them and neither does the group
+     kill once the runner is gone. This is the real residue.
+   - **the oneshot path**, which has no terminal at all: `hostcmd` only wraps
+     `exec.CommandContext` (`runner/hostcmd/hostcmd.go:44-51`) and sets none of
+     these flags, so a oneshot child gets no SIGHUP. It gets EPIPE on its next
+     write to the dead sink and lingers if it never writes.
+   - **a program that handles SIGHUP** and chooses to continue.
+   - **Windows**, where ConPTY has its own teardown rules and none of the above
+     reasoning transfers.
+   So: no v1 work is required for the interactive case, which is the case this
+   design exists for. The residue above is the same on the day before this
+   change lands as on the day after — the hold widens the window, it does not
+   create the mechanism — and closing it is a separate decision (the cgroup
+   route from the previous draft is still the cheapest: a starting runner kills
+   what is already in its own unit cgroup).
 5. **An agent that dies on a stalled write** (D12's forbidden case). Measured
    per agent in §10; if one turns out to behave this way, the answer is a disk
    spill for that agent, not a ring for everyone.
