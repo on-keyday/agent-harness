@@ -439,6 +439,70 @@ into §6 because three of the four are server-side obligations.
    shortfall — but "the credential survives" must not be read as "the
    connection survives".
 
+## 6b. Every control message is ONE datagram, and an oversized one vanishes
+
+This is a property of the existing transport that the change has to be sized
+against, not something the change introduces.
+
+**The mechanism.** Every control message on both sides goes through
+`Connection().SendMessage` — the runner's sender is
+`pc.Connection().SendMessage` (`runner/connect.go:695-698`) and the server's
+handlers call it directly (`server/agent_wake.go:77`,
+`server/board_handler.go:43`, …). That is one objproto *application message*,
+which becomes one datagram: objproto does not fragment, it only refuses a packet
+whose total exceeds `0xffff` (`objproto/objproto.go:1455-1457`). The PSK
+handshake, and therefore `RunnerHello`, takes the same path
+(`runner/connect.go:353-356`).
+
+**Why the failure is invisible.** Over UDP a datagram above the path MTU is
+dropped and nothing is told: `transport/udp.go` routes EMSGSIZE past
+`CannotSend` deliberately, because reporting it would tear the connection down,
+and objproto's own interface doc states the consequence — *"Nothing carries
+'this one datagram did not fit' up to trsf"* (`objproto/session.go:136-146`).
+Over WebSocket the identical message is fine, because there it rides a TCP
+stream. So an oversized hello presents as a runner that registers over WS and,
+over UDP, retries forever with no error on either end. On Windows this is
+additionally the `WSAEMSGSIZE ≠ syscall.EMSGSIZE` case
+(`transport/udp_msgsize_windows.go`).
+
+**The budget.** trsf's PLPMTUD floor is `DefaultInitialMTU = 1200` UDP payload
+bytes (`trsf/conn.go:979-986`), and that floor is the right number to design
+against here for a second reason: the MTU tracker belongs to trsf, and these
+messages do not go through trsf, so nothing clamps them to the discovered path
+MTU at all. Subtracting objproto's 8-byte header and its AEAD tag
+(`connectionSecret.Overhead()`) leaves roughly 1170 bytes for a control
+message's encoded body.
+
+**Where this change spends it.**
+
+- `HoldTasksRequest` is 20 bytes, fixed. `RebindSessionRequest` is 24.
+- `RunnerHello` is the one to watch. It already carries two `u8`-counted
+  variable lists — `allowed_roots` (paths at `u16` each) and `agent_profiles` —
+  and `HeldTasksReport` is a third. Measured on the current fleet, the widest
+  hello is a runner with three roots totalling ~160 bytes of path, so a real
+  hello today is ~300 bytes and the headroom is genuine. It does not stay
+  genuine by itself: the standing guidance is to bundle repositories into one
+  runner's `--roots` rather than add slots, so the first list grows over time.
+- **The report is bounded when the runner ACKs, not truncated when it sends.**
+  The runner already builds its hello every connect, so it can compute
+  `K = (budget − len(hello without the report)) / 16` and ack at most `K` tasks.
+  Tasks beyond `K` are simply not held and take today's path — killed, Failed.
+  A runner with many roots therefore holds *fewer tasks*, which is legible; the
+  alternative shapes are a hello that cannot be sent (silent, and it takes the
+  whole runner down, not one task) or a report truncated at send time (the
+  server would then Fail tasks whose children are alive, per D11).
+  At current settings `K` is not binding and should be recognised as a guard
+  rather than a live limit: with a ~300-byte hello it is about 54, against a
+  fleet running `--max-tasks 8`. It becomes binding for a runner configured
+  with a large `--max-tasks` or a long root list, which is exactly the
+  configuration that would otherwise fail silently.
+- **A guard that goes red.** One test encodes a worst-case hello — roots at
+  their real path lengths, profiles, `K` held tasks — and fails above the
+  budget. It has to be *demonstrated* red by inflating the input before it is
+  believed, because a size guard that cannot fail is worse than none, and this
+  one is guarding a limit that the WS transport hides. The same test covers the
+  pre-existing exposure, which nothing checks today.
+
 ## 7. Surface matrix
 
 Walked against the `surface-parity-checklist` numbering; the numbers are what
@@ -538,6 +602,12 @@ Also:
    survives with a credential that no longer validates, which presents as
    `UnknownTask` from a live agent — the exact symptom the identity work was
    done to remove, arriving from the other end.
+9. **A hello that outgrows its datagram** (§6b). Symptom to recognise: a runner
+   registers over WebSocket and, over UDP, loops on the handshake with no error
+   logged at either end. Nothing in the stack reports it, so it will not be
+   found by reading logs — only by noticing that the transport is the variable.
+   The `K` bound and its test are what keep this unreachable; a report that is
+   truncated instead would trade it for D11 failing tasks whose children live.
 
 ## 10. Testing
 
