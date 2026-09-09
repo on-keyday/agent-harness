@@ -471,6 +471,24 @@ type VerbSpec struct {
 	// without anyone editing prose.
 	Notes []string
 
+	// SurfaceNotes are notes for ONE surface: what this verb does when typed
+	// there, when that differs. `file pull` writes a local path on the CLI and
+	// opens a browser download in the WebUI; `forward kill` has to say, in the
+	// WebUI only, that STARTING a socket-bound forward is CLI/TUI-only.
+	//
+	// It exists so that prose does not have to leave the table to be
+	// surface-specific. It did leave: the TUI kept a tuiVerbHelp map of exactly
+	// these sentences, and the WebUI kept the whole command list by hand in two
+	// files — where `--via <cid>` outlived the flag taking a runner identity.
+	// Both then needed a completeness test to check the restatement still
+	// covered every verb, and a test that checks agreement between a
+	// declaration and a copy of it is the tell that there is a copy.
+	//
+	// Mirrors how Flag and Arg already carry CmdlineSurfaces: For(s) merges the
+	// matching entries into Notes, so every surface's help generator sees one
+	// list and cannot pick the wrong one.
+	SurfaceNotes map[Surface][]string
+
 	Examples []string
 
 	// narrowedFor records which surface For() produced this spec for, so

@@ -2343,7 +2343,9 @@ const POLL_INTERVAL_MS = 5000;
     // describes failed at typing time.
     // openChatFor is this page's own function, not a bridge export: `session
     // stream attach` opens the chat panel rather than calling the server.
-    const local = { openChatFor: true };
+    // Page-local handlers: the page does the work itself, so no bridge
+    // function of that name exists.
+    const local = { openChatFor: true, refreshSnapshot: true, openSessionPreview: true };
     for (const [p, how] of Object.entries(RUNCMD_DISPATCH)) {
       if (!how.fn && !(how.cache && how.stale)) {
         throw new Error(`webui dispatch ${p}: needs {fn} or {cache, stale}`);
@@ -5969,6 +5971,14 @@ async function runGitAction(taskID, g) {
 // assertion on the strength of the word `session`.
 const RUNCMD_DISPATCH = {
   "submit": { fn: "submit" },
+  // Page-local, and declared here so the coverage test can see them: these
+  // three are handled entirely in this page's switch. They were reachable all
+  // along but absent from the DECLARATION, so PathsForSurface(webui) did not
+  // name them and the help could not either — `preview` had no VerbSpec at
+  // all, `help` and `refresh` were declared TUI-only.
+  "help": { fn: "help" },
+  "refresh": { fn: "refreshSnapshot" },
+  "preview": { fn: "openSessionPreview" },
   "cancel": { fn: "cancel" },
   "prune": { fn: "prune" },
   "restore": { fn: "restore" },
@@ -6422,64 +6432,14 @@ async function runVerbCommand(tokens, ctx) {
     }
 
     case "help":
-      out = [
-        "commands:",
-        "  submit [--resume-conversation] [--agent <name>] <prompt...>",
-        "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
-        "  ls                        refresh the snapshot and echo task rows",
-        "  ls --filtered             only the rows the task-list filter admits",
-        "  session stream turn [<id>] <text...>       send a user turn (id defaults to the open chat)",
-        "  session stream approve [<id>] <req-id> (--allow | --deny [--message M])",
-        "  session stream interrupt|finish|attach [<id>]",
-        "  refresh (alias: sync)     force a snapshot re-sync",
-        "  session await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
-        "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
-        "  cancel <task-id>          cancel a task",
-        "  caps set-parent <task-id> (--parent <id> | --none | --swap)",
-        "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
-        "  preview <task-id>         live screen preview of a session — click it to type (⏸/▶ pause-resume)",
-        "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
-        "  grid --under <task-id> [--descendants]",
-        "                            that task's working set: its subtree PLUS the tasks its own scope names (ids:);",
-        "                            --descendants leaves the task itself out (watching that one elsewhere)",
-        "  prune [--before=DUR]      forget terminal tasks older than DUR",
-        "  prune [--force] <task-id>...",
-        "                            forget specific tasks by id (--force: also active tasks)",
-        "  git log <task> [--max N] [-- <path>]",
-        "                            the task's commits (also: the Git tab)",
-        "  git diff <task> [--staged] [<base>] [<target>] [-- <path>]",
-        "                            revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
-        "  git show <task> [<rev>] [-- <path>]",
-        "                            one commit and its diff",
-        "  git status <task> [-- <path>]",
-        "                            uncommitted and untracked paths (untracked appear in no diff)",
-        "  git subrepos <task>       list git repos nested inside the worktree",
-        "  git file <task> [--staged | --rev REV] <path>",
-        "                            one file's whole content (also: click a file header in a diff)",
-        "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
-        "  file ls <task> [rel]      list a worktree directory",
-        "  file delete [-r] [-f] <task> <rel>",
-        "                            remove a file (no -r) or directory (-r [-f])",
-        "  file push <task> <rel>    upload a local file (file picker opens)",
-        "  file new <task> <rel>     write a new text file in a browser editor and upload it",
-        "  file edit <task> <rel>    pull a text file into the browser editor and push it back",
-        "  file mkdir [-p] <task> <rel>",
-        "                            create a worktree directory (-p: parents, idempotent)",
-        "  file pull [-r] <task> <rel>",
-        "                            download a remote file, or -r for a directory as a .tar",
-        "  server dial-runner <cid> [--via <runner-id>]",
-        "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
-        "  exec <task-id> [--] <cmd> [args...]",
-        "                            run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
-        "  exec ls [-task <id>] | exec kill <exec-id>",
-        "                            list the running execs / stop one (the task row shows execs=N)",
-        "                            --shell: one line for the runner's own shell, so pipes and redirects mean something",
-        "                            --sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)",
-        "  forward ls                list registered port forwards (from the last snapshot poll)",
-        "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
-        "  forward tap <forward-id>  show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)",
-        "  help                      this list",
-      ].join("\n");
+      // Generated from the verb declarations, via the wasm bridge. This was
+      // ~56 literal strings here plus a shortened copy in index.html's
+      // placeholder, and nothing pinned either: `--via <cid>` survived here
+      // after the flag started taking a runner identity, while the CLI and TUI
+      // stayed right because their usage comes from the table. The per-verb
+      // sentences moved into the table as SurfaceNotes[WebUI], so they sit
+      // beside the verb they describe.
+      out = ["commands:"].concat(ctx.harness.help()).join("\n");
       break;
     default:
       out = `unknown command: ${cmd} (type 'help' for the list)`;

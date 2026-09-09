@@ -129,7 +129,7 @@ func TestEveryVerbReachesSomeSurface(t *testing.T) {
 		// generated, and reading the field directly is how a caller finds nil
 		// for a verb that is perfectly well wired.
 		if v.BuildFunc() == nil {
-			t.Errorf("%s: has neither a Build nor a generated one (declare Action, or write Build)", v.FlagSetName())
+			t.Errorf("%s: no generated build — declare Action. (This used to say \"or write Build\"; that hatch was removed on purpose, see BuildFunc.)", v.FlagSetName())
 		}
 	}
 }

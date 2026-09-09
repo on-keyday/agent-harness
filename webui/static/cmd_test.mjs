@@ -71,7 +71,9 @@ test("RUNCMD_DISPATCH covers exactly the declared paths", () => {
 
 // The map the startup assertion checks must name real bridge functions.
 test("RUNCMD_DISPATCH names bridge functions that exist", () => {
-  const local = new Set(["openChatFor"]);
+  // Page-local handlers: no bridge function of that name exists, because the
+  // page does the work itself.
+  const local = new Set(["openChatFor", "refreshSnapshot", "openSessionPreview"]);
   for (const [p, how] of Object.entries(page.RUNCMD_DISPATCH)) {
     assert.ok(how.fn || (how.cache && how.stale), `${p}: needs {fn} or {cache, stale}`);
     if (how.fn && !local.has(how.fn)) {

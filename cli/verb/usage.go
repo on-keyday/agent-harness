@@ -91,6 +91,37 @@ func (v VerbSpec) UsageLines() []string {
 	return out
 }
 
+// HelpLines renders every verb declared for one surface: the generated
+// synopsis, then that verb's declared Notes indented under it.
+//
+// It exists because a surface that cannot loop over the table itself has to
+// restate it, and a restatement rots. The WebUI held the whole command list
+// twice by hand — index.html's placeholder and main.js — and `--via <cid>`
+// survived there after the flag started taking a runner identity, while the CLI
+// and TUI were already correct because their usage is generated. The wasm
+// bridge calls this and hands the lines to JS, so the browser reads the same
+// declaration the parser does.
+//
+// Deliberately plainer than the CLI's usage() and the TUI's cmdlineHelpLines:
+// those interleave family prose and key bindings that only they have. What is
+// shared is the part that must not disagree — which verbs exist, how they are
+// spelled, and what their flags are called.
+func HelpLines(s Surface) []string {
+	var out []string
+	for _, path := range PathsForSurface(s) {
+		sp, ok := Lookup(strings.Fields(path)...)
+		if !ok {
+			continue
+		}
+		lines := sp.For(s).UsageLines()
+		out = append(out, "  "+lines[0])
+		for _, n := range lines[1:] {
+			out = append(out, "      "+n)
+		}
+	}
+	return out
+}
+
 // ConstName is the name of the generated constant for one declared
 // discriminator value: ConstName("Sub", "stream-turn") is "SubStreamTurn".
 //

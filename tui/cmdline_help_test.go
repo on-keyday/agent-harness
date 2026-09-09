@@ -196,27 +196,36 @@ func TestPlaceholderNamesNothingUnreachable(t *testing.T) {
 // because a generated synopsis always mentions the verb. The completeness
 // that used to be interesting (is it listed?) became free the moment the list
 // was generated; what is left to check is whether the line SAYS anything.
+//
+// It reads the DECLARATION now. The descriptions used to live in a tuiVerbHelp
+// map in tui/app.go, and this test existed to keep that map in step with the
+// table — which is what a test does when there are two copies. There is one
+// now, so this checks only that the copy which remains is non-empty.
 func TestEveryTuiVerbHasADescription(t *testing.T) {
 	for _, path := range verb.PathsForSurface(verb.TUI) {
-		if strings.TrimSpace(tuiVerbHelp[path]) == "" {
-			t.Errorf("`%s` is declared for the TUI and tuiVerbHelp says nothing about it.\n"+
+		sp, ok := verb.Lookup(strings.Fields(path)...)
+		if !ok {
+			t.Errorf("`%s` is declared for the TUI but Lookup does not find it", path)
+			continue
+		}
+		notes := sp.For(verb.TUI).Notes
+		if len(notes) == 0 || strings.TrimSpace(notes[0]) == "" {
+			t.Errorf("`%s` is declared for the TUI and its Notes say nothing about it.\n"+
 				"The synopsis is generated, so the line appears either way -- and an "+
-				"operator reading a bare synopsis learns the flags and not the point.", path)
+				"operator reading a bare synopsis learns the flags and not the point.\n"+
+				"Add it to that verb's Notes, or to SurfaceNotes[TUI] when it only "+
+				"applies here.", path)
 		}
 	}
 }
 
-// The other direction: an entry for a path this surface does not declare is a
-// description of something nobody can type. It survived in the hand-written
-// list as `ssh-gateway [start|stop|status]` long after the paths were split.
-func TestTuiVerbHelpNamesNothingUndeclared(t *testing.T) {
-	declared := map[string]bool{}
-	for _, p := range verb.PathsForSurface(verb.TUI) {
-		declared[p] = true
-	}
-	for path := range tuiVerbHelp {
-		if !declared[path] {
-			t.Errorf("tuiVerbHelp describes %q, which the TUI does not declare", path)
-		}
-	}
-}
+// The other direction is GONE, and its absence is the point: an entry for a
+// path nobody can type used to be possible because the descriptions were a
+// separate map keyed by path — it survived in the hand-written list as
+// `ssh-gateway [start|stop|status]` long after the paths were split. A note
+// inside the VerbSpec cannot name a path that does not exist.
+//
+// What replaced it is verb.TestSurfaceNotesOnlyForReachableSurfaces: the new
+// way to write a note nobody can read is to scope it to a surface the verb is
+// not reachable on, and that is a property of the table, so it is checked
+// there for every surface at once.

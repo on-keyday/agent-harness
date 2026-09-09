@@ -129,6 +129,7 @@ func main() {
 		"execRunKill":        js.FuncOf(harnessExecRunKill),
 		"execArgvText":       js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
+		"help":               js.FuncOf(harnessHelp),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
@@ -3956,4 +3957,23 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 		"staged": g.Staged, "submodule": g.Submodule,
 		"max": float64(g.Max), "maxBytes": float64(g.MaxBytes),
 	})
+}
+
+// harnessHelp hands the WebUI its command list, generated from the same verb
+// declarations the parser reads.
+//
+// main.js used to hold that list as ~56 literal strings, and index.html a
+// second shortened copy in a placeholder. Nothing pinned either, so `--via
+// <cid>` outlived the flag taking a runner identity — while the CLI and TUI
+// were already correct, because their usage is generated. This is the WebUI
+// getting the same treatment rather than a third test that checks a copy.
+//
+//	harness.help() -> [string]
+func harnessHelp(this js.Value, args []js.Value) any {
+	lines := verb.HelpLines(verb.WebUI)
+	out := make([]any, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, l)
+	}
+	return js.ValueOf(out)
 }

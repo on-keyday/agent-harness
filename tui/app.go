@@ -2080,83 +2080,6 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 // first thing an operator reads, and a verb listed there is a promise.
 const cmdlinePlaceholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 
-// tuiVerbHelp is what each declared verb DOES, on this surface. The synopsis
-// -- which flags, which positionals, in what order -- is not written here:
-// cmdlineHelpLines generates it from the same declaration the parser reads,
-// so a flag this surface accepts cannot be missing from the line describing
-// it, and one it does not accept cannot appear.
-//
-// That split is the point. The hand-written half was 50 lines carrying BOTH,
-// and the synopsis half is the one that drifts silently: the CLI's copy
-// documented `--caps ... default all` for as long as the declaration has said
-// none.
-//
-// A path with no entry is a build-time gap, not a silent omission: the
-// completeness test names it.
-var tuiVerbHelp = map[string]string{
-	"cancel":                   "cancel a queued/running task",
-	"caps set":                 "OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants",
-	"caps set-defaults":        "the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`",
-	"caps set-parent":          "OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent",
-	"caps":                     "the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar",
-	"clear":                    "empty this result panel",
-	"diag":                     "grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)",
-	"exec kill":                "stop one running exec",
-	"exec ls":                  "list the running execs (Obs column shows Nx while any run)",
-	"exec":                     "run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)",
-	"exit":                     "leave the TUI",
-	"file delete":              "remove a file (no -r) or directory (-r empty / -r -f recursive)",
-	"file edit":                "open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)",
-	"file ls":                  "list a directory in the task's worktree (root if rel omitted)",
-	"file mkdir":               "create a directory in the worktree (-p: mkdir -p)",
-	"file new":                 "write a new text file in the editor popup and push it",
-	"file pull":                "copy from the worktree to a local path",
-	"file push":                "copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)",
-	"forward kill":             "close one registered forward by id (also: tasks-pane P/B on the owning task)",
-	"forward ls":               "list every port forward visible to this operator (also: f key, kill: x then y/n)",
-	"forward tap":              "stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens",
-	"git diff":                 "revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
-	"git file":                 "one file's whole content (also: o in the modal, from the diff you are reading)",
-	"git log":                  "the task's commits (also: tasks-pane G)",
-	"git show":                 "one commit and its diff",
-	"git status":               "uncommitted and untracked paths (untracked appear in no diff)",
-	"git subrepos":             "git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)",
-	"grid":                     "live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree); --under <id> takes that task's working set \u2014 its subtree PLUS the tasks its own scope names (ids:) \u2014 and --descendants leaves the task itself out",
-	"help":                     "this list",
-	"interactive":              "open/resume interactive session (detachable)",
-	"notify":                   "send a notification (shows in this feed + --notify-hook egress; keep it one line)",
-	"prune":                    "ask the server to forget tasks (ids, or --before; active tasks need --force)",
-	"quit":                     "leave the TUI (alias: exit); the sessions it opened keep running",
-	"reconnect":                "force the client↔server link to re-dial NOW, instead of waiting out a dead path's idle timeout (e.g. after the UDP route drops)",
-	"refresh":                  "force a full runners+tasks snapshot re-sync now (alias: sync)",
-	"repo":                     "the default repo a spawn uses when its own line names none",
-	"restore":                  "with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the task log does not)",
-	"scope":                    "the shorter spelling of `caps set-defaults`",
-	"server dial-runner":       "ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)",
-	"session attach":           "reattach to a session",
-	"session await-idle":       "fire when the session's output goes idle (default: result line here; --notify: operator notification)",
-	"session kill":             "terminate a session",
-	"session ls":               "list detachable sessions",
-	"session new":              "open/resume detachable interactive; --detach backgrounds it and prints the id",
-	"session stream approve":   "answer a tool-approval request the agent is blocked on",
-	"session stream attach":    "follow an event-stream session's events (the counterpart of attaching to a PTY)",
-	"session stream finish":    "close the agent's stdin so it ends the turn in flight and exits cleanly",
-	"session stream interrupt": "abandon the running turn; the agent survives to take the next one",
-	"session stream turn":      "send one user turn to an event-stream session",
-	"ssh-gateway start":        "serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches",
-	"ssh-gateway status":       "whether it is running, and on what address",
-	"ssh-gateway stop":         "stop the gateway and every session it serves",
-	"submit":                   "submit/resume a task",
-	"sync":                     "the shorter spelling of refresh",
-	"trsf":                     "dump the client\u2194server transport's internal state (debug)",
-	"workspace apply":          "re-apply a workspace now (also runs on start and on every reconnect)",
-	"workspace detach":         "stop re-applying on reconnect; --stop also stops its forwards and gateway",
-	"workspace ls":             "list the workspaces in .harness/config",
-	"workspace rm":             "delete one workspace from .harness/config",
-	"workspace save":           "pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)",
-	"workspace show":           "print one workspace",
-}
-
 // tuiKeyHelp is the part no table holds: what a KEY does, and how a verb
 // pairs with one. It stays hand-written because a keybinding is not a verb --
 // nothing parses it -- and pretending otherwise would put screen state in the
@@ -2183,9 +2106,15 @@ func cmdlineHelpLines() []string {
 		// flags run past 300 characters, and this panel is narrower than a
 		// terminal -- one line carrying both put the description where a
 		// reader never reaches it.
-		out = append(out, strings.TrimPrefix(sp.For(verb.TUI).Usage(), "usage: "))
-		if d := tuiVerbHelp[path]; d != "" {
-			out = append(out, "    - "+d)
+		// Synopsis and notes both come from the declaration now. The notes
+		// used to live here in a tuiVerbHelp map, which is the shape that
+		// needed a completeness test to stay in step with the table; a
+		// TUI-scoped note in the table cannot fall behind the verb it
+		// describes, because it IS the verb's declaration.
+		lines := sp.For(verb.TUI).UsageLines()
+		out = append(out, lines[0])
+		for _, n := range lines[1:] {
+			out = append(out, "    - "+n)
 		}
 	}
 	return append(out, tuiKeyHelp...)

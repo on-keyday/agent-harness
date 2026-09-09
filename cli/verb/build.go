@@ -1,6 +1,7 @@
 package verb
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -101,6 +102,14 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 	} else {
 		err = fs.Parse(args)
 		positionals = fs.Args()
+	}
+	if errors.Is(err, flag.ErrHelp) {
+		// -h is a REQUEST, not a mistake, and it reached the line below: the
+		// FlagSet's own output is discarded (see NewFlagSet) so `flag` printed
+		// no defaults, and the wrap turned the sentinel into the whole answer —
+		// `session new -h` said "session new: flag: help requested" and nothing
+		// else. The usage is generated from this very spec, so carry it.
+		return Bound{}, &HelpRequested{Usage: strings.Join(v.UsageLines(), "\n      ")}
 	}
 	if err != nil {
 		// Named HERE, once. `flag`'s own message is "flag provided but not
@@ -301,6 +310,18 @@ func (v VerbSpec) For(s Surface) VerbSpec {
 			out.Args = append(out.Args, a)
 		}
 	}
+	// Surface-specific notes are merged INTO Notes, so a help generator reads
+	// one list and cannot render another surface's sentence. Copied rather than
+	// appended in place: out.Notes still aliases v.Notes at this point, and
+	// appending to it would grow the shared backing array and leak this
+	// surface's notes into the next caller's projection.
+	if len(v.SurfaceNotes[s]) > 0 {
+		merged := make([]string, 0, len(v.Notes)+len(v.SurfaceNotes[s]))
+		merged = append(merged, v.Notes...)
+		merged = append(merged, v.SurfaceNotes[s]...)
+		out.Notes = merged
+	}
+	out.SurfaceNotes = nil
 	return out
 }
 
@@ -365,3 +386,15 @@ var (
 	EnvLookup       func(string) string
 	WorkspaceLookup func(string) string
 )
+
+// HelpRequested is what a verb returns for -h / --help: the generated usage as
+// the error's own text, so a caller that only prints the error prints the help.
+//
+// It unwraps to flag.ErrHelp, so a caller that wants the conventional exit 0
+// tests errors.Is(err, flag.ErrHelp) — asking for help is not a failure, and
+// harness-cli's dispatch treats it that way.
+type HelpRequested struct{ Usage string }
+
+func (h *HelpRequested) Error() string { return h.Usage }
+
+func (h *HelpRequested) Unwrap() error { return flag.ErrHelp }

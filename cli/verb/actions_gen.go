@@ -322,6 +322,12 @@ type NotifyAction struct {
 	Text string
 }
 
+// PreviewAction is built by: preview.
+type PreviewAction struct {
+	ActionMarker
+	TaskID string
+}
+
 // PruneAction is built by: prune.
 type PruneAction struct {
 	ActionMarker
@@ -1979,6 +1985,13 @@ func init() {
 			a.Positional = b.Trail
 			return a, nil
 		},
+		"preview\x00webui": func(b Bound) (Action, error) {
+			a := PreviewAction{}
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
 		"grid\x00tui": func(b Bound) (Action, error) {
 			a := GridAction{}
 			a.Anchor = b.Str("under")
@@ -2164,7 +2177,17 @@ func init() {
 			a.Sub = "help"
 			return a, nil
 		},
+		"help\x00webui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "help"
+			return a, nil
+		},
 		"refresh\x00tui": func(b Bound) (Action, error) {
+			a := ScreenAction{}
+			a.Sub = "refresh"
+			return a, nil
+		},
+		"refresh\x00webui": func(b Bound) (Action, error) {
 			a := ScreenAction{}
 			a.Sub = "refresh"
 			return a, nil
@@ -2772,6 +2795,7 @@ const (
 	CmdNotify                 = "notify"
 	CmdAgentSend              = "agent send"
 	CmdAgentDispatch          = "agent dispatch"
+	CmdPreview                = "preview"
 	CmdGrid                   = "grid"
 	CmdCancel                 = "cancel"
 	CmdLs                     = "ls"
@@ -3863,6 +3887,27 @@ func ParseCmdAgentDispatch(sf Surface, args []string, ctx map[string]string) (Ag
 		return zero, err
 	}
 	a := act.(AgentSendAction)
+	return a, nil
+}
+
+func ParseCmdPreview(sf Surface, args []string, ctx map[string]string) (PreviewAction, error) {
+	var zero PreviewAction
+	sp, ok := Lookup("preview")
+	if !ok {
+		return zero, fmt.Errorf("preview: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(PreviewAction)
 	return a, nil
 }
 

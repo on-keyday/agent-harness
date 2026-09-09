@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -302,6 +303,14 @@ func printFamilyNotes(w io.Writer, family string) {
 }
 
 func die(err error) {
+	// -h is a request that was answered, not a failure. verb.HelpRequested
+	// carries the generated usage as its message, so this prints the help to
+	// STDOUT and exits 0 — `harness-cli session new -h | less` works, and a
+	// script that checks the status does not see a false error.
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Println(err)
+		os.Exit(0)
+	}
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
 }

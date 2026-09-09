@@ -21,6 +21,7 @@ import (
 var Verbs = []VerbSpec{
 	{
 		Path:           []string{"prune"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"forget terminal tasks older than DUR"}, TUI: {"ask the server to forget tasks (ids, or --before; active tasks need --force)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"ask the server to forget tasks",
@@ -71,7 +72,8 @@ var Verbs = []VerbSpec{
 	// and three everywhere else. Declared with Arg.CmdlineSurfaces rather than as a
 	// separate verb, because it is one operation reached from three places.
 	{
-		Path: []string{"file", "push"},
+		Path:         []string{"file", "push"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"upload a local file (file picker opens)"}, TUI: {"copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
@@ -107,7 +109,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"file", "pull"},
+		Path:         []string{"file", "pull"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"download a remote file, or -r for a directory as a .tar"}, TUI: {"copy from the worktree to a local path"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
@@ -152,7 +155,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"file", "ls"},
+		Path:         []string{"file", "ls"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"list a worktree directory"}, TUI: {"list a directory in the task's worktree (root if rel omitted)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
@@ -179,7 +183,8 @@ var Verbs = []VerbSpec{
 		Validate: validateRoute,
 	},
 	{
-		Path: []string{"file", "mkdir"},
+		Path:         []string{"file", "mkdir"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"create a worktree directory (-p: parents, idempotent)"}, TUI: {"create a directory in the worktree (-p: mkdir -p)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
@@ -202,7 +207,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file mkdir -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/sub"},
 	},
 	{
-		Path: []string{"file", "delete"},
+		Path:         []string{"file", "delete"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"remove a file (no -r) or directory (-r [-f])"}, TUI: {"remove a file (no -r) or directory (-r empty / -r -f recursive)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/filepicker.go:FilePickerModel"},
 		},
@@ -232,7 +238,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"file", "edit"},
+		Path:         []string{"file", "edit"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"pull a text file into the browser editor and push it back"}, TUI: {"open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/fileedit.go:FileEditModel"},
 			{Surface: WebUI, At: "webui/index.html#file-editor-modal"},
@@ -254,7 +261,8 @@ var Verbs = []VerbSpec{
 		Validate: validateRoute,
 	},
 	{
-		Path: []string{"file", "new"},
+		Path:         []string{"file", "new"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"write a new text file in a browser editor and upload it"}, TUI: {"write a new text file in the editor popup and push it"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/fileedit.go:FileEditModel"},
 		},
@@ -293,7 +301,9 @@ var Verbs = []VerbSpec{
 	// surface. The WebUI accepted it and threw it away, which was worse than
 	// refusing it.
 	{
-		Path: []string{"git", "log"},
+		Path:         []string{"git", "log"},
+		Notes:        []string{"the task's commits"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"also reachable from the Git tab"}, TUI: {"the task's commits (also: tasks-pane G)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
@@ -311,7 +321,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git log aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --max 20"},
 	},
 	{
-		Path: []string{"git", "diff"},
+		Path:         []string{"git", "diff"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit"}, TUI: {"revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
@@ -363,7 +374,8 @@ var Verbs = []VerbSpec{
 		},
 	},
 	{
-		Path: []string{"git", "show"},
+		Path:         []string{"git", "show"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"one commit and its diff"}, TUI: {"one commit and its diff"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
@@ -385,7 +397,9 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "git show aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD"},
 	},
 	{
-		Path: []string{"git", "status"},
+		Path:         []string{"git", "status"},
+		Notes:        []string{"uncommitted and untracked paths (untracked appear in no diff)"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"also reachable from the Git tab"}, TUI: {"uncommitted and untracked paths (untracked appear in no diff)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
@@ -402,7 +416,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"git", "subrepos"},
+		Path:         []string{"git", "subrepos"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"list git repos nested inside the worktree"}, TUI: {"git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)"}},
 		ModalSurfaces: []ModalSurface{
 			// Enter on a [REPO] row re-roots the git modal into that repository.
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
@@ -423,7 +438,9 @@ var Verbs = []VerbSpec{
 		Examples: []string{"git subrepos aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
-		Path: []string{"git", "file"},
+		Path:         []string{"git", "file"},
+		Notes:        []string{"one file's whole content"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"also: click a file header in a diff"}, TUI: {"one file's whole content (also: o in the modal, from the diff you are reading)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
@@ -467,6 +484,7 @@ var Verbs = []VerbSpec{
 	// --- exec (exec_run) ---
 	{
 		Path:           []string{"exec"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)"}, TUI: {"run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|). --shell hands it to the runner's own shell so pipes and redirects mean something; --sshd-parent gives the line a parent named sshd for a client that checks its ancestry (Windows only; needs --shell)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"run a command in the task's WORKTREE as its own process:",
@@ -509,7 +527,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"exec aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -- ls -la"},
 	},
 	{
-		Path: []string{"exec", "ls"},
+		Path:         []string{"exec", "ls"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"list the running execs / stop one (the task row shows execs=N)", "--shell: one line for the runner's own shell, so pipes and redirects mean something", "--sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)"}, TUI: {"list the running execs (Obs column shows Nx while any run)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
 			{Surface: WebUI, At: "webui/index.html#exec-list"},
@@ -532,7 +551,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"exec ls", "exec ls --json"},
 	},
 	{
-		Path: []string{"exec", "kill"},
+		Path:         []string{"exec", "kill"},
+		SurfaceNotes: map[Surface][]string{TUI: {"stop one running exec"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
 			// Each row of the exec list carries its own kill button.
@@ -614,7 +634,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
 	},
 	{
-		Path: []string{"forward", "ls"},
+		Path:         []string{"forward", "ls"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"list registered port forwards (from the last snapshot poll)"}, TUI: {"list every port forward visible to this operator (also: f key, kill: x then y/n)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
 			{Surface: WebUI, At: "webui/index.html#forward-list"},
@@ -634,7 +655,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward ls", "forward ls --json"},
 	},
 	{
-		Path: []string{"forward", "kill"},
+		Path:         []string{"forward", "kill"},
+		SurfaceNotes: map[Surface][]string{TUI: {"close one registered forward by id (also: tasks-pane P/B on the owning task)"}},
 		ModalSurfaces: []ModalSurface{
 			// The f pane: x on a row, then y/n.
 			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
@@ -657,7 +679,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"forward kill 7"},
 	},
 	{
-		Path: []string{"forward", "tap"},
+		Path:         []string{"forward", "tap"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)"}, TUI: {"stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/forwardtap.go:ForwardTapView"},
 		},
@@ -717,14 +740,16 @@ var Verbs = []VerbSpec{
 	// --- server ---
 	{
 		Path:           []string{"server", "dial-runner"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner"}, TUI: {"ask the server to reverse-dial a runner that is listening instead of dialing out — for a runner an outbound ACL blocks"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
-			"ask the server to reverse-dial RUNNER_CID (Phase A/B)",
+			"ask the server to reverse-dial RUNNER_CID",
 			"RUNNER_CID is an ADDRESS: the target is not registered yet, so there",
 			"is no identity to resolve — copy the cid= column of `harness-cli ls`",
-			"--via relays through an already-connected runner (Phase B), and takes",
-			"that runner's IDENTITY (the id= column): the server resolves it, so it",
-			"keeps working after that proxy reconnects",
+			"without --via the server dials the target itself; with it, the named",
+			"runner relays and the target never has to be reachable from here",
+			"--via takes that runner's IDENTITY (the id= column): the server",
+			"resolves it, so it keeps working after that proxy reconnects",
 			"(the runner must be running in --listen / --udp-listen mode)",
 			"prints the DialRunnerStatus and exits non-zero on non-Ok",
 		},
@@ -777,7 +802,8 @@ var Verbs = []VerbSpec{
 	// design says -- and declared here rather than hand-parsed, which is what
 	// they were: the last verb-shaped token walk in tui/cmdline.go.
 	{
-		Path: []string{"ssh-gateway", "start"},
+		Path:         []string{"ssh-gateway", "start"},
+		SurfaceNotes: map[Surface][]string{TUI: {"serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches; bare user = cowrite, .control takes the seat, .view watches"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/sshgateway.go:DoStartSSHGateway"},
 		},
@@ -799,6 +825,7 @@ var Verbs = []VerbSpec{
 		// exactly: two types with the same name, both satisfying Action, and a
 		// `case SSHGatewayAction:` written by habit never matches.
 		Path:            []string{"ssh-gateway", "status"},
+		SurfaceNotes:    map[Surface][]string{TUI: {"whether it is running, and on what address"}},
 		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "status"},
@@ -807,6 +834,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:            []string{"ssh-gateway", "stop"},
+		SurfaceNotes:    map[Surface][]string{TUI: {"stop the gateway and every session it serves"}},
 		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "SSHGatewayAction",
 		Const:           map[string]string{"Sub": "stop"},
@@ -817,6 +845,7 @@ var Verbs = []VerbSpec{
 	// --- workspace ---
 	{
 		Path:           []string{"workspace", "save"},
+		SurfaceNotes:   map[Surface][]string{TUI: {"pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"records every task the registry reports a forward for; --task narrows it to one,",
@@ -863,6 +892,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"workspace", "rm"},
+		SurfaceNotes:   map[Surface][]string{TUI: {"delete one workspace from .harness/config"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"delete one workspace from .harness/config (other workspaces and comments kept)",
@@ -876,7 +906,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"workspace rm dev"},
 	},
 	{
-		Path: []string{"workspace", "ls"},
+		Path:         []string{"workspace", "ls"},
+		SurfaceNotes: map[Surface][]string{TUI: {"list the workspaces in .harness/config"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePickerModel"},
 		},
@@ -890,6 +921,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"workspace", "show"},
+		SurfaceNotes:   map[Surface][]string{TUI: {"print one workspace"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print one workspace, or all of them when no name is given",
@@ -901,7 +933,8 @@ var Verbs = []VerbSpec{
 		Examples:        []string{"workspace show", "workspace show dev"},
 	},
 	{
-		Path: []string{"workspace", "apply"},
+		Path:         []string{"workspace", "apply"},
+		SurfaceNotes: map[Surface][]string{TUI: {"re-apply a workspace now (also runs on start and on every reconnect)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/workspacepicker.go:WorkspacePickerModel"},
 		},
@@ -916,6 +949,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:            []string{"workspace", "detach"},
+		SurfaceNotes:    map[Surface][]string{TUI: {"stop re-applying on reconnect; --stop also stops its forwards and gateway"}},
 		NoModalSurface:  "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:          "WorkspaceAction",
 		Const:           map[string]string{"Sub": "detach"},
@@ -1058,7 +1092,8 @@ var Verbs = []VerbSpec{
 	// before the rename and its comment still says so. Declaring the family
 	// once gives every surface the same set.
 	{
-		Path: []string{"submit"},
+		Path:         []string{"submit"},
+		SurfaceNotes: map[Surface][]string{WebUI: {"submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)"}, TUI: {"submit/resume a task"}},
 		ModalSurfaces: []ModalSurface{
 			// The s popup; DoSubmitWithOpts is what it runs, not where it is.
 			{Surface: TUI, At: "tui/popup.go:PopupModel"},
@@ -1096,7 +1131,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
 	},
 	{
-		Path: []string{"interactive"},
+		Path:         []string{"interactive"},
+		SurfaceNotes: map[Surface][]string{TUI: {"open/resume interactive session (detachable)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onInteractive"},
 			{Surface: WebUI, At: "webui/index.html#interactive"},
@@ -1121,7 +1157,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"interactive --repo /r"},
 	},
 	{
-		Path: []string{"session", "new"},
+		Path:         []string{"session", "new"},
+		SurfaceNotes: map[Surface][]string{TUI: {"open/resume detachable interactive; --detach backgrounds it and prints the id"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onSession"},
 			{Surface: WebUI, At: "webui/index.html#open-detachable"},
@@ -1241,6 +1278,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"session", "stream", "turn"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"send a user turn (id defaults to the open chat)"}, TUI: {"send one user turn to an event-stream session"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"send one user turn to an event-stream session",
@@ -1260,7 +1298,8 @@ var Verbs = []VerbSpec{
 		Examples: []string{"session stream turn aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa please continue"},
 	},
 	{
-		Path: []string{"notify"},
+		Path:         []string{"notify"},
+		SurfaceNotes: map[Surface][]string{TUI: {"send a notification (shows in this feed + --notify-hook egress; keep it one line)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/notify.go:NotifyModel"},
 		},
@@ -1314,12 +1353,22 @@ var Verbs = []VerbSpec{
 	},
 	// --- listings and catalogs ---
 	{
+		Path: []string{"preview"}, CmdlineSurfaces: WebUI,
+		SurfaceNotes: map[Surface][]string{
+			WebUI: {"live screen preview of a session — click it to type (⏸/▶ pause-resume)"},
+		},
+		NoModalSurface: "the preview IS a WebUI panel; typing the verb is one way to open it and the task row's own control is the other, both reaching openSessionPreview",
+		Action:         "PreviewAction",
+		Args:           []Arg{{Name: "task-id", Type: ArgString, Field: "TaskID"}},
+	},
+	{
 		// The grid grammar was ALREADY shared before this migration --
 		// cli.ParseGridArgs, which the workspace config validates against so a
 		// saved selection cannot name a spelling the command rejects. This
 		// entry routes the command inputs through the same table as the rest;
 		// the parse itself still delegates to that function.
 		Path: []string{"grid"}, CmdlineSurfaces: TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"live monitor grid of sessions (default: all live interactive, cap 9)"}, TUI: {"live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree); --under <id> takes that task's working set \u2014 its subtree PLUS the tasks its own scope names (ids:) \u2014 and --descendants leaves the task itself out"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/grid.go:GridModel"},
 			{Surface: WebUI, At: "webui/index.html#session-grid-modal"},
@@ -1338,6 +1387,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"cancel"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"cancel a task"}, TUI: {"cancel a queued/running task"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onCancel"},
 			// The task sheet's "✕ Cancel" item, built in JS with no id of its own.
@@ -1352,6 +1402,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"ls"}, CmdlineSurfaces: CLI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"refresh the snapshot and echo task rows"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/tasks.go:TasksModel"},
 			{Surface: TUI, At: "tui/runners.go:RunnersModel"},
@@ -1413,6 +1464,7 @@ var Verbs = []VerbSpec{
 		// used to be reachable from the CLI alone -- so a TUI or WebUI
 		// operator picking chips had the names and not the sentences.
 		Path: []string{"caps"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"the capability catalog: every grantable capability and the sentence saying what it gates, plus the scope grammar"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"list the grantable --caps capability names and --scope forms",
@@ -1552,6 +1604,7 @@ var Verbs = []VerbSpec{
 		// the server has ever seen, and a sweep back would resurrect years of
 		// them. The asymmetry with prune is deliberate.
 		Path: []string{"restore"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"with no ids (or --list): what a prune forgot and could still be put back \u2014 the ids live only in the server's WAL. With ids: put those back (needs `prune` and the same scope; the record returns, the task log does not)"}},
 		NoModalSurface: "the TUI has an action for this (Do…) but dispatch.go is its only caller, so it IS the command line running the verb — already CmdlineSurfaces",
 		Notes: []string{
 			"with no ids (or --list): list what a prune forgot and could still be put back \u2014 ids, when they were pruned, and the repo/prompt that identify them. The ids live only in the server's WAL, so this is the only way to learn them",
@@ -1587,12 +1640,14 @@ var Verbs = []VerbSpec{
 	// the table can hold.
 	{
 		Path: []string{"clear"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"empty this result panel"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "clear"},
 		Examples: []string{"clear"},
 	},
 	{
 		Path: []string{"quit"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"leave the TUI (alias: exit); the sessions it opened keep running"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"quit"},
@@ -1603,24 +1658,28 @@ var Verbs = []VerbSpec{
 		// verb, and two declared paths sharing an Action say the same thing
 		// without the mechanism.
 		Path: []string{"exit"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"leave the TUI"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "quit"},
 		Examples: []string{"exit"},
 	},
 	{
-		Path: []string{"help"}, CmdlineSurfaces: TUI,
+		Path: []string{"help"}, CmdlineSurfaces: TUI | WebUI,
+		SurfaceNotes:   map[Surface][]string{WebUI: {"this list"}, TUI: {"this list"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "help"},
 		Examples: []string{"help"},
 	},
 	{
-		Path: []string{"refresh"}, CmdlineSurfaces: TUI,
+		Path: []string{"refresh"}, CmdlineSurfaces: TUI | WebUI,
+		SurfaceNotes:   map[Surface][]string{WebUI: {"force a snapshot re-sync"}, TUI: {"force a full runners+tasks snapshot re-sync now (alias: sync)"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"refresh"},
 	},
 	{
 		Path: []string{"sync"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"the shorter spelling of refresh"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "refresh"},
 		Examples: []string{"sync"},
@@ -1631,12 +1690,14 @@ var Verbs = []VerbSpec{
 		// on THIS client's own connection, not on server state, so there is
 		// nothing for the CLI or WebUI to reach here.
 		Path: []string{"reconnect"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"force the client↔server link to re-dial NOW, instead of waiting out a dead path's idle timeout (e.g. after the UDP route drops)"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "reconnect"},
 		Examples: []string{"reconnect"},
 	},
 	{
 		Path: []string{"trsf"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"dump the client\u2194server transport's internal state (debug)"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "trsf"},
 		Examples: []string{"trsf"},
@@ -1647,6 +1708,7 @@ var Verbs = []VerbSpec{
 		// because someone already did, which is why the positional carries the
 		// word rather than the action carrying a bool.
 		Path: []string{"diag"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "diag"},
 		Args: []Arg{{Name: "on-off", Type: ArgString, Variadic: true, MaxCount: 1,
@@ -1655,6 +1717,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"repo"}, CmdlineSurfaces: TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"the default repo a spawn uses when its own line names none"}},
 		NoModalSurface: "a command of the TUI's own line (there is no separate surface to reach: this IS the cmdline)",
 		Action:         "ScreenAction", Const: map[string]string{"Sub": "repo"},
 		Args:     []Arg{{Name: "path", Type: ArgString, Field: "Arg"}},
@@ -1664,6 +1727,7 @@ var Verbs = []VerbSpec{
 	// --- caps set / set-parent ---
 	{
 		Path: []string{"caps", "set"}, CmdlineSurfaces: CLI | TUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
 			{Surface: WebUI, At: "webui/index.html#regrant-apply"},
@@ -1719,6 +1783,7 @@ var Verbs = []VerbSpec{
 		// (spawnCaps / spawnScope), so this is a second door onto one value,
 		// not a second value.
 		Path: []string{"caps", "set-defaults"}, CmdlineSurfaces: TUI | WebUI,
+		SurfaceNotes:   map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a submit names neither; no flags opens the compose panel's own controls"}, TUI: {"the defaults a spawn from THIS session carries when its own line names neither; no flags opens the picker. Also spelled `scope`"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Action:         "SetDefaultsAction",
 		// No AtLeastOne, unlike `caps set`: naming nothing is a question --
@@ -1746,6 +1811,7 @@ var Verbs = []VerbSpec{
 		// them onto ONE handler method rather than minting a second one
 		// nothing calls.
 		Path: []string{"scope"}, CmdlineSurfaces: TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"the spawn defaults THIS page carries when a submit names neither; the same verb as `caps set-defaults`"}, TUI: {"the shorter spelling of `caps set-defaults`"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
 			{Surface: WebUI, At: "webui/index.html#spawn-scope-details"},
@@ -1768,6 +1834,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"caps", "set-parent"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only"}, TUI: {"OPERATOR: re-point a live task's parent, the edge subtree scopes walk; --swap inverts it with its current parent"}},
 		ModalSurfaces: []ModalSurface{
 			// A on the tasks pane opens the picker in parent mode.
 			{Surface: TUI, At: "tui/authoritypicker.go:AuthorityPickerModel"},
@@ -1810,6 +1877,7 @@ var Verbs = []VerbSpec{
 	// --- single-task session verbs ---
 	{
 		Path: []string{"session", "attach"}, CmdlineSurfaces: CLI | TUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"reattach to a session"}},
 		ModalSurfaces: []ModalSurface{
 			// r / R take a live session over; v attaches view-only.
 			{Surface: TUI, At: "tui/actions.go:onResume"},
@@ -1843,6 +1911,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "ls"}, CmdlineSurfaces: CLI | TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"list detachable sessions"}},
 		NoModalSurface: "DoSessionList has no caller but dispatch.go, so it is the command line running the verb. The grid was considered and is NOT this: it tiles live sessions selected from the TASK list (gridLiveTasks over []TaskInfo), where this verb enumerates the server's session registry",
 		Notes: []string{
 			"JSON Lines: interactive sessions only. The rows share `ls --json`'s task",
@@ -1867,6 +1936,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "kill"}, CmdlineSurfaces: CLI | TUI,
+		SurfaceNotes:   map[Surface][]string{TUI: {"terminate a session"}},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"cancel a session (alias of cancel)",
@@ -1878,6 +1948,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "await-idle"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{WebUI: {"fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)"}, TUI: {"fire when the session's output goes idle (default: result line here; --notify: operator notification)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/actions.go:onAwaitIdle"},
 			{Surface: WebUI, At: "webui/index.html#await-idle-btn"},
@@ -1966,6 +2037,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "attach"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"follow an event-stream session's events (the counterpart of attaching to a PTY)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/chat.go:ChatModel"},
 			{Surface: WebUI, At: "webui/index.html#chat-log"},
@@ -1980,6 +2052,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "interrupt"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"abandon the running turn; the agent survives to take the next one"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: WebUI, At: "webui/index.html#chat-interrupt"},
 		},
@@ -1994,6 +2067,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "finish"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"close the agent's stdin so it ends the turn in flight and exits cleanly"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: WebUI, At: "webui/index.html#chat-finish"},
 		},
@@ -2008,6 +2082,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"session", "stream", "approve"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		SurfaceNotes: map[Surface][]string{TUI: {"answer a tool-approval request the agent is blocked on"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: WebUI, At: "webui/index.html#chat-approval"},
 		},
