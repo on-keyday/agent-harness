@@ -1231,23 +1231,34 @@ Also:
      unit cgroup (`setsid` does not re-parent one — `scripts/cgroup_adopt.py:82-110`,
      fix `3ce441c`), so a unit stop/restart takes them under the default
      `KillMode=control-group`.
-   What is left, then, is narrower than "the children survive":
-   - **descendants that left the session** — anything the agent itself
-     `setsid`'d. The SIGHUP does not reach them and neither does the group
-     kill once the runner is gone. This is the real residue.
-   - **the oneshot path**, which has no terminal at all: `hostcmd` only wraps
-     `exec.CommandContext` (`runner/hostcmd/hostcmd.go:44-51`) and sets none of
-     these flags, so a oneshot child gets no SIGHUP. It gets EPIPE on its next
-     write to the dead sink and lingers if it never writes.
-   - **a program that handles SIGHUP** and chooses to continue.
+   What is left is narrower still, and most of it is not a defect.
+   **Descendants that left the session are SUPPORTED, not leaked** (operator,
+   2026-09-10). The common survivor is a process the agent deliberately
+   `nohup`'d or `setsid`'d — a server it started, a build it left running — and
+   an agent that CANNOT leave one behind is worse than one that sometimes
+   leaves too much. The harness does not reap those and should not learn to:
+   they are out of its scope by intent, not by omission.
+   **That withdraws the cgroup sweep this item proposed a draft ago.** "A
+   starting runner kills whatever is already in its own unit cgroup" cannot
+   tell an orphan from a deliberate one — `setsid` does not change cgroup
+   membership (the whole point of `3ce441c`), so the process the agent meant to
+   keep is sitting in exactly the same cgroup as the one nobody wants. The
+   sweep would kill the capability along with the garbage.
+   **Forward guard, since it is easy to break by "improving" it:** D4's expiry
+   kill uses the process GROUP (`kill(-pgid)`), which a deliberately detached
+   grandchild has already left. That is not an accident of the implementation,
+   it is what keeps the capability intact — so the expiry kill must never be
+   widened into a cgroup-wide or session-wide kill.
+   The genuinely accidental residue is two narrow cases:
+   - **the oneshot path**, which has no controlling terminal at all: `hostcmd`
+     only wraps `exec.CommandContext` (`runner/hostcmd/hostcmd.go:44-51`), so a
+     oneshot child gets no SIGHUP. It gets EPIPE on its next write to the dead
+     sink and lingers if it never writes again.
    - **Windows**, where ConPTY has its own teardown rules and none of the above
-     reasoning transfers.
-   So: no v1 work is required for the interactive case, which is the case this
-   design exists for. The residue above is the same on the day before this
-   change lands as on the day after — the hold widens the window, it does not
-   create the mechanism — and closing it is a separate decision (the cgroup
-   route from the previous draft is still the cheapest: a starting runner kills
-   what is already in its own unit cgroup).
+     transfers.
+   Both are the same before and after this change; the hold widens a window it
+   did not create. No v1 work, and — the operator's read — not much observed
+   pain either.
 5. **An agent that dies on a stalled write** (D12's forbidden case). Measured
    per agent in §10; if one turns out to behave this way, the answer is a disk
    spill for that agent, not a ring for everyone.
