@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -188,5 +190,128 @@ func TestReplaySweepDoesNotFailAHeldTask(t *testing.T) {
 	// an exemption rather than the absence of a sweep.
 	if got, _ := fresh.Get(interrupted); got.Status != protocol.TaskStatus_Failed {
 		t.Errorf("un-held task status = %v, want Failed — the sweep did not run at all", got.Status)
+	}
+}
+
+// MarkFailed must refuse a Held task. The guard is inside MarkFailed rather
+// than at its one current call site precisely so the NEXT caller inherits it:
+// a runner-disconnected failure written over a live hold leaves the WAL saying
+// Failed while the child runs on, and the disconnect is the CAUSE of a hold,
+// never a reason to end one.
+func TestMarkFailedRefusesAHeldTask(t *testing.T) {
+	s, path := storeWithWAL(t)
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xab
+	id := runningTask(t, s, rid)
+	deadline := time.Now().Add(time.Minute).UnixNano()
+	if err := s.MarkHold(id, rid.Hex(), "cafe", deadline); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+
+	s.MarkFailed(id, "runner_disconnected")
+
+	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Held {
+		t.Errorf("in-memory status = %v, want Held", got.Status)
+	}
+	fresh := replayInto(t, path)
+	if got, _ := fresh.Get(id); got.Status != protocol.TaskStatus_Held {
+		t.Errorf("replayed status = %v, want Held — a task_failed was written over the hold", got.Status)
+	}
+}
+
+// FailHeld is the one sanctioned exit from Held, and it must be reachable —
+// the pair with the test above is what makes "refused" a guard rather than a
+// dead end.
+func TestFailHeldIsTheDoorOutOfHeld(t *testing.T) {
+	s, path := storeWithWAL(t)
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xab
+	id := runningTask(t, s, rid)
+	if err := s.MarkHold(id, rid.Hex(), "cafe", time.Now().Add(time.Minute).UnixNano()); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+
+	s.FailHeld(id, "hold_expired")
+
+	got, _ := s.Get(id)
+	if got.Status != protocol.TaskStatus_Failed {
+		t.Fatalf("status = %v, want Failed", got.Status)
+	}
+	if string(got.ErrorMsg) != "hold_expired" {
+		t.Errorf("reason = %q, want hold_expired", got.ErrorMsg)
+	}
+	if got.HoldID != "" || got.HoldDeadline != 0 {
+		t.Errorf("hold fields not cleared: %q/%d", got.HoldID, got.HoldDeadline)
+	}
+	fresh := replayInto(t, path)
+	if g, _ := fresh.Get(id); g.Status != protocol.TaskStatus_Failed {
+		t.Errorf("replayed status = %v, want Failed", g.Status)
+	}
+}
+
+// expireHeldTasks fails what is past its deadline and reports the earliest
+// deadline still outstanding, which is what the single timer arms on. A
+// sweeper's interval would be re-deriving a schedule the replay already knows.
+func TestExpireHeldTasksFailsThePastAndReportsTheNext(t *testing.T) {
+	s, _ := storeWithWAL(t)
+	srv := &Server{tasks: s, cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xab
+
+	past := runningTask(t, s, rid)
+	future := runningTask(t, s, rid)
+	futureDeadline := time.Now().Add(time.Hour).UnixNano()
+	if err := s.MarkHold(past, rid.Hex(), "cafe", time.Now().Add(-time.Second).UnixNano()); err != nil {
+		t.Fatalf("MarkHold past: %v", err)
+	}
+	if err := s.MarkHold(future, rid.Hex(), "cafe", futureDeadline); err != nil {
+		t.Fatalf("MarkHold future: %v", err)
+	}
+
+	next := srv.expireHeldTasks(time.Now().UnixNano())
+
+	if got, _ := s.Get(past); got.Status != protocol.TaskStatus_Failed || string(got.ErrorMsg) != "hold_expired" {
+		t.Errorf("expired task = %v/%q, want Failed/hold_expired", got.Status, got.ErrorMsg)
+	}
+	if got, _ := s.Get(future); got.Status != protocol.TaskStatus_Held {
+		t.Errorf("unexpired task = %v, want Held", got.Status)
+	}
+	if next != futureDeadline {
+		t.Errorf("next deadline = %d, want %d", next, futureDeadline)
+	}
+}
+
+// A capture is deleted on read, and one whose task is no longer Held is swept.
+// Together they are what keeps a stale snapshot from repainting a LATER
+// session with a screen from before the restart.
+func TestHeldScreenIsConsumedOnceAndSweptWhenOrphaned(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := storeWithWAL(t)
+	srv := &Server{tasks: s, cfg: Config{Logger: slog.Default(), DataDir: dir}}
+	if err := os.MkdirAll(holdScreenDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xab
+	held := runningTask(t, s, rid)
+	orphan := runningTask(t, s, rid)
+	if err := s.MarkHold(held, rid.Hex(), "cafe", time.Now().Add(time.Hour).UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{held, orphan} {
+		if err := os.WriteFile(holdScreenPath(dir, id), []byte("\x1b[H"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv.sweepHeldScreens()
+	if _, err := os.Stat(holdScreenPath(dir, orphan)); err == nil {
+		t.Error("a capture whose task is not Held survived the sweep")
+	}
+	if got := srv.readHeldScreen(held); string(got) != "\x1b[H" {
+		t.Errorf("read = %q, want the capture", got)
+	}
+	if got := srv.readHeldScreen(held); got != nil {
+		t.Errorf("second read = %q, want nil — the capture must be consumed once", got)
 	}
 }

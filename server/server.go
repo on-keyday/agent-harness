@@ -41,6 +41,22 @@ type Config struct {
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
 	Logger        *slog.Logger
 
+	// HoldWindow is how long a runner keeps a held task's child alive with no
+	// server, i.e. how long this server's successor has to come back and
+	// re-adopt it. Zero disables holding entirely and leaves the pre-change
+	// behaviour: a deliberate shutdown kills every task like a crash does.
+	//
+	// Non-zero by DEFAULT (see defaultHoldWindow), and that default is
+	// load-bearing rather than a preference: the deployed restart procedure
+	// replays the running process's argv, so a flag nobody has typed yet can
+	// only take effect through its default.
+	HoldWindow time.Duration
+	// HoldAckTimeout bounds the wait for every runner's ack. It is squeezed
+	// from both sides — a UDP ack may need a retransmit, and the whole
+	// sequence sits inside daemon_down's hard-kill window — so it is short
+	// and a runner that misses it simply holds nothing.
+	HoldAckTimeout time.Duration
+
 	// PSK, when non-nil, requires every connecting client to present
 	// a matching PskAuthRequest before any other message is accepted.
 	// nil = no PSK enforcement (backward compatible). This is the shared
@@ -110,6 +126,13 @@ type Server struct {
 	// internal state. Debug aid only.
 	activeConnsMu sync.Mutex
 	activeConns   map[objproto.ConnectionID]streamingConn
+
+	// holdRespCh correlates a runner's hold ack with the shutdown sequence
+	// waiting for it, keyed by the runner IDENTITY: one hold goes to every
+	// registered runner and each answers exactly once, so the identity already
+	// is the correlation key and no request id is needed.
+	holdRespMu sync.Mutex
+	holdRespCh map[string]chan protocol.HoldTasksAck
 
 	// trsfRespCh correlates a runner's trsf_state answer with the caller
 	// waiting for it, keyed by the request_id that went out.
@@ -308,6 +331,7 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnExecRunFinished = s.taskHandler.onExecRunFinished
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.runnerHandler.OnTrsfStateResponse = s.deliverRunnerTrsfStateResponse
+	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl:      s.runnerHandler.Handle,
 		OnTaskControl:        s.taskHandler.Handle,
@@ -648,9 +672,20 @@ func parseListenPort(addr string) (uint16, error) {
 // Mux + httpAddr drive the webui+HTTP listener; both nil/empty for
 // UDP-only setups.
 func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.ServeMux, httpAddr string) error {
-	// Wire the server root context into the task handler so that SessionMux
-	// instances created for detachable sessions are cancelled when the server shuts down.
-	s.taskHandler.Ctx = ctx
+	// SessionMux instances hang off a SESSIONS context, not the root one.
+	//
+	// They used to take the root context directly, which made the mux teardown
+	// race the hold sequence: both are triggered by the same cancellation, and
+	// a stopping mux runs afterMuxStopped, which cancels a task still Running.
+	// If the mux won, the WAL ended task_held then task_cancelled, replay said
+	// Cancelled, and the child was killed at re-adoption — the hold silently
+	// doing nothing for exactly the interactive sessions it exists for.
+	//
+	// With its own cancel the ordering is a statement: the shutdown path runs
+	// the hold, THEN cancels this.
+	sessionsCtx, sessionsCancel := context.WithCancel(ctx)
+	defer sessionsCancel()
+	s.taskHandler.Ctx = sessionsCtx
 
 	if s.cfg.DataDir != "" {
 		if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
@@ -750,6 +785,15 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 				}
 			}()
 		}
+	}
+
+	// Held tasks: drop captures nothing will read any more, then arm ONE timer
+	// for the earliest outstanding deadline. Every task held by a given
+	// shutdown shares that shutdown's deadline, so the replay already knows
+	// the whole schedule — a ticker would be re-deriving it.
+	if s.cfg.DataDir != "" {
+		s.sweepHeldScreens()
+		go s.watchHeldDeadlines(ctx)
 	}
 
 	// Coalesces the port-forward counters into forwards.status. One goroutine
@@ -870,6 +914,15 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	for {
 		select {
 		case <-ctx.Done():
+			// A DELIBERATE shutdown: ask every runner to keep its children,
+			// record what it agreed to, and only then let the sessions and the
+			// connections go. RunHoldSequence uses its own context because
+			// this one is already cancelled — both triggers (SIGTERM and the
+			// --shutdown-file watcher) cancel exactly this.
+			if held := s.RunHoldSequence(); held > 0 {
+				s.cfg.Logger.Info("shutdown: tasks held for the next server", "count", held)
+			}
+			sessionsCancel()
 			shutdownHTTP()
 			waitConns()
 			return ctx.Err()

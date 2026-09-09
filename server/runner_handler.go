@@ -43,6 +43,12 @@ type RunnerHandler struct {
 	// grant go now rather than on a timer.
 	OnDataPlaneFinished func(grantID [16]byte)
 
+	// OnHoldTasksAck routes a runner's hold ack to the shutdown sequence
+	// waiting for it. The first argument is the runner's IDENTITY hex, which
+	// is the correlation key: one hold goes to every registered runner and
+	// each answers once.
+	OnHoldTasksAck func(identityHex string, ack protocol.HoldTasksAck)
+
 	// OnTrsfStateResponse routes a runner's answer to whoever asked for it.
 	OnTrsfStateResponse func(protocol.RunnerTrsfStateResponse)
 
@@ -256,6 +262,21 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				"runnerID", runnerID, "status", ad.Status)
 		}
 		// Mutates nothing schedulable, same as the relay response above.
+		return
+
+	case protocol.RunnerMessageType_HoldTasksAck:
+		ha := msg.HoldTasksAck()
+		if ha == nil {
+			slog.Error("RunnerHandler: HoldTasksAck variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnHoldTasksAck != nil {
+			// Keyed by identity, not by this connection's id: the ack is
+			// answering a request addressed to the runner PROCESS.
+			h.OnHoldTasksAck(identityOfConn(h.Registry, runnerID).Hex(), *ha)
+		}
+		// The ack changes nothing schedulable by itself; the shutdown sequence
+		// it unblocks is what writes anything.
 		return
 
 	case protocol.RunnerMessageType_TrsfStateResponse:

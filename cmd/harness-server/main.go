@@ -30,6 +30,8 @@ var (
 	udpListen            = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
 	dataDir              = flag.String("data-dir", "./harness-data", "persistent data dir")
 	taskRetain           = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
+	holdWindow           = flag.Duration("hold-window", 90*time.Second, "after a DELIBERATE shutdown, how long a runner keeps its tasks' children alive with no server so this server's successor can re-adopt them; 0 disables holding (a deliberate shutdown then kills every task, as a crash does)")
+	holdAckTimeout       = flag.Duration("hold-ack-timeout", 1500*time.Millisecond, "how long a shutdown waits for each runner to say which tasks it will keep; short because the sequence sits inside daemon_down's hard-kill window, and a runner that misses it holds nothing")
 	wsPath               = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 	agentboardRing       = flag.Int("agentboard-ring", 64, "agentboard ring buffer entries per topic")
 	agentboardTTL        = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
@@ -175,6 +177,8 @@ func main() {
 		UDPAddr:              strings.TrimSpace(*udpListen),
 		DataDir:              *dataDir,
 		TaskRetention:        *taskRetain,
+		HoldWindow:           *holdWindow,
+		HoldAckTimeout:       *holdAckTimeout,
 		Logger:               slog.Default(),
 		PSK:                  pskBytes,
 		OperatorPSK:          operatorPSKBytes,

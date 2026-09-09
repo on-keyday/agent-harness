@@ -612,7 +612,11 @@ func (s *TaskStore) Cancel(id string) {
 		s.mu.Unlock()
 		return
 	}
-	// Idempotent: skip if already terminal.
+	// Idempotent: skip if already terminal. Held is deliberately NOT here:
+	// cancelling a held task is an operator action the hold design requires,
+	// and since CancelTask can never be delivered to a held task's runner, the
+	// store transition IS the cancel — what kills the child is its absence
+	// from the accepted list when that runner reconnects.
 	switch e.Status {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
 		s.mu.Unlock()
@@ -648,8 +652,19 @@ func (s *TaskStore) MarkFailed(id, reason string) {
 		return
 	}
 	// Idempotent: skip if already terminal.
+	//
+	// Held is in this set for a different reason, and it is the reason the
+	// guard lives HERE rather than at the one current call site. A held task's
+	// child is alive on a runner that agreed to keep it, so the ONLY things
+	// entitled to end that hold are the hold's own paths: the runner coming
+	// back without the task, the deadline passing, or the operator cancelling
+	// it. The disconnect path must not, and neither must the next caller
+	// somebody adds — a runner-disconnected failure written over a live hold
+	// leaves the WAL saying Failed while the child runs on.
+	// FailHeld is the door out of Held to Failed; it is the only one.
 	switch e.Status {
-	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed,
+		protocol.TaskStatus_Cancelled, protocol.TaskStatus_Held:
 		s.mu.Unlock()
 		return
 	}
@@ -716,6 +731,47 @@ func (s *TaskStore) SetDetached(id string) error {
 	t.DetachedAt = uint64(now.UnixNano())
 	s.mu.Unlock()
 	return nil
+}
+
+// FailHeld ends a hold by failing the task, and is the only path that may.
+// MarkFailed refuses a Held task on purpose (see its switch), so this exists to
+// be the small, greppable set of callers entitled to do it:
+//
+//   - the deadline passed with no runner coming back ("hold_expired")
+//   - the runner reconnected and did NOT report this task
+//     ("not_held_by_runner")
+//
+// Both mean the child is gone or unreachable, which is what separates them from
+// a disconnect: a disconnect is the CAUSE of a hold, not a reason to end one.
+func (s *TaskStore) FailHeld(id, reason string) {
+	now := time.Now()
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	if e.Status != protocol.TaskStatus_Held {
+		s.mu.Unlock()
+		return
+	}
+	e.Status = protocol.TaskStatus_Failed
+	e.IsAttached = false
+	e.EndedAt = &now
+	e.ErrorMsg = []byte(reason)
+	e.HoldID = ""
+	e.HoldDeadline = 0
+	wal := s.wal
+	onFinish := s.OnFinish
+	s.mu.Unlock()
+	if wal != nil {
+		if err := wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
+			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
+		}
+	}
+	if onFinish != nil {
+		onFinish(id, -1, protocol.TaskStatus_Failed)
+	}
 }
 
 // MarkHold moves a task to Held: a deliberate shutdown asked its runner to keep
