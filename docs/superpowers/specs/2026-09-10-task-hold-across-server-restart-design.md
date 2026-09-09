@@ -106,7 +106,7 @@ with on its merits.
 | D10 | The window `T` is chosen by the SERVER and carried in the request | author |
 | D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
 | D12 | While held, the runner STOPS DRAINING the child's output. The kernel buffer is the gap buffer | author |
-| D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it | author — forced, see below |
+| D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it — via a runner-owned relay interposed on every interactive session, not a rebind inside `agentexec` | author — forced, see below |
 | D14 | The server captures each held session's screen as a repaint program at hold time and persists it; re-adoption replays it. A resize nudge is the fallback when no snapshot exists | author — corrected, see below |
 | D15 | A re-adopted interactive task lands in `Detached`; a oneshot lands in `Running` | author |
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
@@ -191,12 +191,43 @@ What it forbids is worth writing down: an agent that treats a stalled write as a
 fatal condition would die during the hold rather than block. This is measured
 per agent in §10, not assumed.
 
-**D13 is forced.** For an interactive task the SERVER creates the bidi stream
-and passes its id to the runner, which feeds it to `exec.ExecuteCommand`
-(`runner/session.go:611-624`). The stream is per-connection, so it cannot
-survive; the PTY behind it can. So re-adoption is necessarily "here is a new
-stream id, attach the thing you are already holding to it", which is a new
-server→runner request rather than anything the runner can initiate.
+**D13 is forced, and its cost is not the message.** For an interactive task the
+SERVER creates the bidi stream and passes its id to the runner
+(`OpenExecRunnerRequest.StreamId`), which looks it up and hands it to
+`agentexec.ExecuteCommandWithOption` (`runner/session.go:611-624,892-905`). The
+stream is per-connection and cannot survive; the PTY behind it can. So
+re-adoption is necessarily "here is a new stream id, attach the thing you are
+already holding to it" — a new server→runner request, since the runner cannot
+initiate it.
+
+The message is trivial. **What is not trivial is that the stream is a
+constructor argument to a call that blocks for the whole session and defers
+`stream.CloseBoth()`** (`runner/session.go:803`). There is no rebind point in
+that API: `exec.ExecuteCommandWithOption(ctx, stream, …)` takes the stream once
+and owns the PTY, both copy loops and the process lifetime until it returns
+(searched the package for a stream-swap entry point — `setstream|rebind|
+reattach|swapstream|replacestream` over `exec/*.go` returns only two comments
+about the harness's own mode tracker).
+
+**So the deliverable is an interposition, not a rebind.** `stream` is typed
+`trsf.BidirectionalStream`, an interface (`trsf/api.go:62-66`: SendStream +
+ReceiveStream + CloseBoth). The runner passes its OWN implementation from the
+start of every interactive session — a relay whose far end it can swap — and
+`agentexec` never learns that anything changed. That keeps the work inside this
+repo; changing objtrsf instead would mean a publish plus a `go.mod` bump for a
+facility only the harness needs.
+
+Everything else the hold needs turns out to live in that one object, which is
+why it is the right shape rather than a workaround:
+
+- D12's "stop draining" is the relay declining to copy, with no code in the
+  session path.
+- "Never close the PTY master" is the relay not forwarding `CloseBoth`.
+- **The EOF→SIGHUP ladder becomes unreachable instead of suppressed.** That
+  ladder fires when the stream `agentexec` holds reaches EOF; after
+  interposition, the stream it holds is the relay, and the relay does not EOF
+  because a server went away. §6 no longer needs a hold-aware exception there,
+  and §9.1 is about failing to interpose rather than failing to suppress.
 
 **D14 is a correction, and the first draft of this spec had it wrong.** That
 draft said a resize nudge was "the only mechanism that reaches a full-screen
@@ -446,12 +477,19 @@ and it happens inside `serve`, before the deferred `wal.Close()`
   explicitly on disconnect **unless a hold is armed**. Today's behaviour becomes
   the else branch of one visible decision rather than a side effect of context
   parentage.
-- **The second kill path must be suppressed too.** An interactive child is also
-  reaped by `exec.ExecuteCommand`'s SIGHUP→SIGTERM→SIGKILL ladder when its
-  stream hits EOF (`runner/session.go:611-624`). Fixing only the ctx leaves the
-  child dying anyway, from a mechanism whose comment describes it as detach
-  handling. While a hold is armed, stream EOF must detach the splice and leave
-  the PTY open.
+- **Interpose a relay on every interactive session (D13).** The runner passes
+  its own `trsf.BidirectionalStream` to `agentexec` instead of the server's
+  stream, and copies between the two itself. This is the load-bearing piece:
+  the rebind, D12's stop-draining, "do not close the PTY master", and the
+  disarming of the second kill path are all properties of that one object.
+- **The second kill path, for the record.** An interactive child is also reaped
+  by `exec.ExecuteCommand`'s SIGHUP→SIGTERM→SIGKILL ladder when the stream it
+  holds reaches EOF (`runner/session.go:611-624`) — a mechanism whose comment
+  describes it as detach handling, so fixing only the ctx leaves the child
+  dying anyway. With the relay in place the ladder cannot fire on a server
+  disconnect, because the stream `agentexec` holds is the relay. Without it,
+  this needs a hold-aware exception inside a third-party package's control
+  flow, which is the reason the relay is not optional.
 - **Stop draining (D12).** For an interactive task, stop copying from the PTY
   master and do not close it. For a oneshot, the sink that receives decoded
   stdout lines blocks instead of dropping them, which pushes back through
@@ -654,10 +692,13 @@ Also:
 
 ## 9. What could go wrong
 
-1. **Only the ctx path is fixed.** `exec.ExecuteCommand`'s EOF ladder kills the
-   child anyway (§6). Presents as: the hold exchange works, the WAL says
-   `task_held`, the runner reports the task on reconnect — and the child is gone.
-   This is the single easiest way to ship a change that looks correct.
+1. **The relay is skipped and the ctx alone is fixed** (D13, §6).
+   `exec.ExecuteCommand`'s EOF ladder then kills the child anyway. Presents as:
+   the hold exchange works, the WAL says `task_held`, the runner reports the
+   task on reconnect — and the child is gone. This is the single easiest way to
+   ship a change that looks correct, and the tell during implementation is
+   anyone proposing to make a third-party package's ladder hold-aware instead
+   of interposing.
 2. **A pump closes the PTY master on write error.** Same symptom as (1) via
    SIGHUP, from the drain side rather than the reap side.
 3. **`failAndRevokeTasksOf` not suppressed** (§5 step 5) → `task_failed` after
