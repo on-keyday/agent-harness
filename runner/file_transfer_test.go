@@ -58,7 +58,7 @@ func TestHandleOpenFileTransfer_PushOK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true} // worktree dir == repoPath
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -108,7 +108,7 @@ func TestHandleOpenFileTransfer_PullOK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -145,7 +145,7 @@ func TestHandleOpenFileTransfer_PullNotFound(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -174,7 +174,7 @@ func TestHandleOpenFileTransfer_PushAlreadyExists(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -209,7 +209,7 @@ func TestHandleListFiles_OK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -258,7 +258,7 @@ func TestHandleOpenFileTransfer_PullRejectSymlink(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -291,7 +291,7 @@ func TestHandleOpenFileTransfer_PushRejectSymlinkParent(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -481,7 +481,7 @@ func TestHandleOpenFileTransfer_DeleteOK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -511,7 +511,7 @@ func TestHandleOpenFileTransfer_DeleteNotFound(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -541,7 +541,7 @@ func TestHandleOpenFileTransfer_PushForceOverwrites(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -581,7 +581,7 @@ func TestHandleOpenFileTransfer_DeleteRejectDirectory(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -666,7 +666,7 @@ func TestHandleOpenFileTransfer_DirPushOK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -715,7 +715,7 @@ func TestHandleOpenFileTransfer_DirPushRejectExisting(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -750,7 +750,7 @@ func TestHandleOpenFileTransfer_DirPushForceOverwrites(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -785,7 +785,7 @@ func TestHandleOpenFileTransfer_DirPushRejectSymlinkEntry(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -826,7 +826,7 @@ func TestHandleOpenFileTransfer_DirPullOK(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -881,7 +881,7 @@ func TestHandleOpenFileTransfer_DirPullNotADirectory(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -907,7 +907,7 @@ func TestHandleOpenFileTransfer_DirPushRejectPathTraversal(t *testing.T) {
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -937,7 +937,7 @@ func dirDeleteRequest(t *testing.T, tmp, taskIDHex, rel string, force bool) *mem
 	taskID := mustParseTaskID(t, taskIDHex)
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
@@ -1056,7 +1056,7 @@ func newFileSession(t *testing.T, tmp, taskIDHex string) (*Session, trsf.Bidirec
 	t.Helper()
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}
 	return sess, clientEnd
@@ -1282,7 +1282,7 @@ func pullRangeCase(t *testing.T, dir protocol.FileTransferDirection, offset, len
 
 	sess := &Session{NoWorktree: true}
 	sess.initMaps()
-	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	sess.reg.put(taskIDHex, &taskEntry{repoPath: tmp})
 
 	clientEnd, runnerEnd := newMemoryBidiPair()
 	sess.Streams = staticStreamLookup{1: runnerEnd}

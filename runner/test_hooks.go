@@ -24,14 +24,14 @@ func AddFakeTaskForListenServer(ctx context.Context, taskID protocol.TaskID) err
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	if sess.tasks == nil {
-		sess.tasks = make(map[string]*taskEntry)
+	if sess.reg == nil {
+		sess.reg = NewTaskRegistry()
 	}
 	// Minimum fields to satisfy HasTask + safe map deletion. The fake entry
 	// will never actually run an agent process; cancel is a no-op so a
 	// future delete() doesn't trip a nil-func call from any cleanup path.
-	sess.tasks[hex.EncodeToString(taskID.Id[:])] = &taskEntry{
+	sess.reg.put(hex.EncodeToString(taskID.Id[:]), &taskEntry{
 		cancel: func() {},
-	}
+	})
 	return nil
 }

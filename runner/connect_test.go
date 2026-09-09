@@ -47,14 +47,14 @@ func TestRunnerHandlesCancelTaskCallsCancelFunc(t *testing.T) {
 	var cancelMu sync.Mutex
 	s.mu.Lock()
 	s.initMaps()
-	s.tasks[taskIDHex] = &taskEntry{
+	s.reg.put(taskIDHex, &taskEntry{
 		cancel: func() {
 			cancelMu.Lock()
 			cancelCalled = true
 			cancelMu.Unlock()
 		},
 		repoPath: "/repo",
-	}
+	})
 	s.mu.Unlock()
 
 	// Build a CancelTask RunnerRequest.

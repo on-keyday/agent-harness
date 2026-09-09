@@ -51,7 +51,14 @@ func NewTaskRegistry() *TaskRegistry {
 	return &TaskRegistry{tasks: make(map[string]*taskEntry)}
 }
 
+// Every method tolerates a nil receiver. Reading a nil MAP is legal in Go and
+// several call sites relied on that before the map became this type, so a nil
+// registry has to keep meaning "no tasks" rather than panicking — which is
+// what it did the moment the map moved behind a mutex.
 func (r *TaskRegistry) get(taskIDHex string) (*taskEntry, bool) {
+	if r == nil {
+		return nil, false
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.tasks[taskIDHex]
@@ -59,6 +66,10 @@ func (r *TaskRegistry) get(taskIDHex string) (*taskEntry, bool) {
 }
 
 func (r *TaskRegistry) put(taskIDHex string, e *taskEntry) {
+	if r == nil {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.tasks == nil {
@@ -71,6 +82,10 @@ func (r *TaskRegistry) put(taskIDHex string, e *taskEntry) {
 // outlives the goroutine that ran it, because that goroutine's deferred
 // cleanup fires on the disconnect this hold exists to survive.
 func (r *TaskRegistry) remove(taskIDHex string) {
+	if r == nil {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.hold != nil && r.hold.tasks[taskIDHex] {
@@ -80,6 +95,10 @@ func (r *TaskRegistry) remove(taskIDHex string) {
 }
 
 func (r *TaskRegistry) snapshot() map[string]*taskEntry {
+	if r == nil {
+		return nil
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make(map[string]*taskEntry, len(r.tasks))
@@ -94,6 +113,10 @@ func (r *TaskRegistry) snapshot() map[string]*taskEntry {
 // children running — which is the difference between today's behaviour and a
 // hold, made into one visible decision.
 func (r *TaskRegistry) holdArmed() bool {
+	if r == nil {
+		return false
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.hold != nil
@@ -104,6 +127,10 @@ func (r *TaskRegistry) holdArmed() bool {
 // created and before anything is spawned, so acking every entry would promise
 // children that do not exist and the server would write task_held for them.
 func (r *TaskRegistry) liveHeldTasks() []string {
+	if r == nil {
+		return nil
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]string, 0, len(r.tasks))
@@ -117,6 +144,10 @@ func (r *TaskRegistry) liveHeldTasks() []string {
 
 // arm records a hold and starts its timer. Returns the task ids it covers.
 func (r *TaskRegistry) arm(id protocol.HoldID, window time.Duration, ids []string, onExpire func()) {
+	if r == nil {
+		return
+	}
+
 	r.mu.Lock()
 	if r.hold != nil && r.hold.timer != nil {
 		r.hold.timer.Stop()
@@ -136,6 +167,10 @@ func (r *TaskRegistry) arm(id protocol.HoldID, window time.Duration, ids []strin
 
 // disarm forgets the hold and returns it, stopping its timer.
 func (r *TaskRegistry) disarm() *armedHold {
+	if r == nil {
+		return nil
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	h := r.hold
@@ -149,6 +184,10 @@ func (r *TaskRegistry) disarm() *armedHold {
 // heldReport is what rides in RunnerHello: everything this process is still
 // holding, each entry carrying the ticket its agent is still presenting.
 func (r *TaskRegistry) heldReport() protocol.HeldTasksReport {
+	if r == nil {
+		return protocol.HeldTasksReport{}
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var rep protocol.HeldTasksReport

@@ -53,11 +53,8 @@ func TestSession_WakeStdin_SplitWrite(t *testing.T) {
 	// (trailing Enter becomes literal newline) — see session.go comments.
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
-	s.mu.Lock()
-	s.tasks = map[string]*taskEntry{
-		"abc": {wakeWrite: cw.write},
-	}
-	s.mu.Unlock()
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
 
 	s.WakeStdin("abc")
 
@@ -75,11 +72,8 @@ func TestSession_WakeStdin_SplitWrite(t *testing.T) {
 func TestSession_WakeStdin_Debounce(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
-	s.mu.Lock()
-	s.tasks = map[string]*taskEntry{
-		"abc": {wakeWrite: cw.write},
-	}
-	s.mu.Unlock()
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
 
 	s.WakeStdin("abc")
 	s.WakeStdin("abc")
@@ -96,11 +90,8 @@ func TestSession_WakeStdin_AfterWindow(t *testing.T) {
 	cur := now
 	s := &Session{Now: func() time.Time { return cur }}
 	cw := &captureWriter{}
-	s.mu.Lock()
-	s.tasks = map[string]*taskEntry{
-		"abc": {wakeWrite: cw.write},
-	}
-	s.mu.Unlock()
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
 
 	s.WakeStdin("abc")
 	cur = now.Add(wakeDebounceWindow + 100*time.Millisecond)
@@ -114,9 +105,7 @@ func TestSession_WakeStdin_AfterWindow(t *testing.T) {
 
 func TestSession_WakeStdin_UnknownTask(t *testing.T) {
 	s := &Session{Now: time.Now}
-	s.mu.Lock()
-	s.tasks = map[string]*taskEntry{}
-	s.mu.Unlock()
+	s.reg = NewTaskRegistry()
 	// Should not panic on unknown task.
 	s.WakeStdin("missing")
 }
@@ -127,11 +116,8 @@ func TestSession_WakeStdin_TextWriteError_DoesNotAdvanceCursor(t *testing.T) {
 	// debounce window can still try.
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{failNext: errors.New("pipe closed")}
-	s.mu.Lock()
-	s.tasks = map[string]*taskEntry{
-		"abc": {wakeWrite: cw.write},
-	}
-	s.mu.Unlock()
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
 
 	s.WakeStdin("abc") // text write fails — writeCount stays 0
 	if cw.writeCount() != 0 {
@@ -161,14 +147,15 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 	}{
 		{
 			name:  "unknown task",
-			setup: func(s *Session, _ *captureWriter) { s.tasks = map[string]*taskEntry{} },
+			setup: func(s *Session, _ *captureWriter) { s.reg = NewTaskRegistry() },
 			task:  "missing",
 			want:  "task not known to this runner",
 		},
 		{
 			name: "no stdin writer",
 			setup: func(s *Session, _ *captureWriter) {
-				s.tasks = map[string]*taskEntry{"abc": {}}
+				s.reg = NewTaskRegistry()
+				s.reg.put("abc", &taskEntry{})
 			},
 			task: "abc",
 			want: "no stdin writer",
@@ -176,10 +163,9 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 		{
 			name: "debounced",
 			setup: func(s *Session, cw *captureWriter) {
-				s.tasks = map[string]*taskEntry{
-					// Inside wakeDebounceWindow, so the second fire is dropped.
-					"abc": {wakeWrite: cw.write, lastWakeAt: s.Now()},
-				}
+				s.reg = NewTaskRegistry()
+				// Inside wakeDebounceWindow, so the second fire is dropped.
+				s.reg.put("abc", &taskEntry{wakeWrite: cw.write, lastWakeAt: s.Now()})
 			},
 			task: "abc",
 			want: "debounced",
@@ -187,7 +173,8 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 		{
 			name: "written",
 			setup: func(s *Session, cw *captureWriter) {
-				s.tasks = map[string]*taskEntry{"abc": {wakeWrite: cw.write}}
+				s.reg = NewTaskRegistry()
+				s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
 			},
 			task: "abc",
 			want: "wake written",

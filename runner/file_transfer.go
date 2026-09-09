@@ -109,7 +109,7 @@ func rejectIfSymlinkInPath(worktreeRoot, fullPath string) error {
 // may safely perform I/O on the result.
 func (s *Session) worktreeDirFor(taskIDHex string) string {
 	s.mu.Lock()
-	te, ok := s.tasks[taskIDHex]
+	te, ok := s.reg.get(taskIDHex)
 	noWorktree := s.NoWorktree
 	s.mu.Unlock()
 	if !ok || te == nil {

@@ -249,9 +249,15 @@ type Session struct {
 	// task without restarting this runner.
 	AgentSkillsFS fs.FS
 
-	mu    sync.Mutex
-	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
-	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
+	mu sync.Mutex
+	// reg holds this runner PROCESS's live tasks. It is supplied by Config so
+	// it OUTLIVES this Session: a task map owned per connection takes every
+	// child's cancel func, wake writer and relay with it when the link drops,
+	// which is the difference between today's behaviour and a hold. Session
+	// makes its own when Config supplies none, which is what keeps tests and
+	// the single-shot Run path unchanged.
+	reg *TaskRegistry
+	wms map[string]*WorktreeManager // repoPath → WorktreeManager
 
 	// testHookHandleAssign is called at the start of handleAssign in tests to
 	// inject faults (e.g. panics). It is nil in production.
@@ -303,8 +309,8 @@ func (s *Session) runnerCanonicalRunnerID() protocol.RunnerID {
 // initMaps initialises the internal maps if they have not been set yet.
 // Must be called with s.mu held.
 func (s *Session) initMaps() {
-	if s.tasks == nil {
-		s.tasks = make(map[string]*taskEntry)
+	if s.reg == nil {
+		s.reg = NewTaskRegistry()
 	}
 	if s.wms == nil {
 		s.wms = make(map[string]*WorktreeManager)
@@ -355,7 +361,7 @@ func (s *Session) ServerCIDForProxyAllocate() objproto.ConnectionID {
 func (s *Session) HasTask(t protocol.TaskID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.tasks[hex.EncodeToString(t.Id[:])]
+	_, ok := s.reg.get(hex.EncodeToString(t.Id[:]))
 	return ok
 }
 
@@ -517,15 +523,21 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	}
 
 	// Register per-task cancellable context.
+	//
+	// ctx is the PROCESS's context when a hold-capable registry is wired, not
+	// the connection's, so a disconnect no longer cancels this by parentage.
+	// What ends a task on a disconnect is now an explicit decision:
+	// Session.cancelTasksUnlessHeld.
 	taskCtx, cancel := context.WithCancel(ctx)
+	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: body.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
-	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath}
+	s.reg.put(taskIDHex, entry)
 	s.mu.Unlock()
 	defer func() {
 		cancel()
 		s.mu.Lock()
-		delete(s.tasks, taskIDHex)
+		s.reg.remove(taskIDHex)
 		s.mu.Unlock()
 	}()
 
@@ -740,15 +752,21 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 
 	// Register per-task cancellable context.
+	//
+	// ctx is the PROCESS's context when a hold-capable registry is wired, not
+	// the connection's, so a disconnect no longer cancels this by parentage.
+	// What ends a task on a disconnect is now an explicit decision:
+	// Session.cancelTasksUnlessHeld.
 	taskCtx, cancel := context.WithCancel(ctx)
+	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: oer.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
-	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath}
+	s.reg.put(taskIDHex, entry)
 	s.mu.Unlock()
 	defer func() {
 		cancel()
 		s.mu.Lock()
-		delete(s.tasks, taskIDHex)
+		s.reg.remove(taskIDHex)
 		s.mu.Unlock()
 	}()
 
@@ -922,7 +940,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
-			if e := s.tasks[taskIDHex]; e != nil {
+			if e, ok := s.reg.get(taskIDHex); ok && e != nil {
 				e.wakeWrite = write
 			}
 			s.mu.Unlock()
@@ -1000,7 +1018,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 // --since-last`, which uses a persisted cursor.
 func (s *Session) WakeStdin(taskIDHex string) {
 	s.mu.Lock()
-	e, ok := s.tasks[taskIDHex]
+	e, ok := s.reg.get(taskIDHex)
 	if !ok || e == nil {
 		s.mu.Unlock()
 		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task not known to this runner")
@@ -1039,7 +1057,7 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	}
 
 	s.mu.Lock()
-	if e2, ok := s.tasks[taskIDHex]; ok && e2 != nil {
+	if e2, ok := s.reg.get(taskIDHex); ok && e2 != nil {
 		e2.lastWakeAt = now
 	}
 	s.mu.Unlock()

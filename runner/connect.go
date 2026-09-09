@@ -552,9 +552,7 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		taskIDHex := hex.EncodeToString(ct.TaskId.Id[:])
-		session.mu.Lock()
-		te, ok := session.tasks[taskIDHex]
-		session.mu.Unlock()
+		te, ok := session.reg.get(taskIDHex)
 		if ok {
 			te.cancel()
 		} else {
