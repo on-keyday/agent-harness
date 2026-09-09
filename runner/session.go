@@ -115,6 +115,36 @@ type taskEntry struct {
 	// stdin. Wakes within wakeDebounceWindow are dropped (the agent's
 	// next inbox call will pick up everything via --since-last cursor).
 	lastWakeAt time.Time
+
+	// ticket is the agentboard ticket this task's agent holds, frozen into its
+	// env at spawn. Kept here because the reconnect report has to carry it: a
+	// restart forgets every ticket (the board's registry is an in-memory map)
+	// while the surviving agent keeps presenting this value, so a freshly
+	// minted one would answer BadTicket. It arrives on BOTH spawn paths —
+	// AssignTaskBody.AuthTicket for a oneshot and OpenExecRunnerRequest for an
+	// interactive session — and the interactive one is the case holds exist
+	// for, so capturing only the first would look like it worked.
+	ticket [16]byte
+
+	// started / exited bracket the child's life. A registry entry exists from
+	// registration, which is before the worktree is created and before
+	// anything is spawned, so "there is an entry" is not "there is a child" —
+	// and a hold that promised the difference would have the server writing
+	// task_held for children that do not exist.
+	started atomic.Bool
+	exited  atomic.Bool
+
+	// relay is the interposed stream for an interactive session, present only
+	// on that path. It owns the splice between the PTY and whatever stream is
+	// currently pointed at the server, which is what makes a rebind possible
+	// and what keeps the PTY open across the gap.
+	relay *sessionRelay
+}
+
+// childLive reports that this task's child process has started and not yet
+// exited — the only condition under which a hold may promise it.
+func (e *taskEntry) childLive() bool {
+	return e != nil && e.started.Load() && !e.exited.Load()
 }
 
 // Session manages the runner's task lifecycle. It is created once per connection
