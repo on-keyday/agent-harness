@@ -1,6 +1,9 @@
 # Holding a task across a DELIBERATE server restart — Design
 
-Status: design, not implemented.
+Status: implemented and live-verified (§10). Corrections made while building it
+are marked in place — D14, D15 and D19 each say what the first draft had wrong —
+rather than collected in an amendment, so a reader of any one section is not
+reading a superseded claim.
 Prerequisite: `2026-09-09-runner-identity-decoupling-design.md`, landed
 (`0d02d851`…`7d312fd2`). That change is what makes this one possible; §1 of it
 states the dependency from the other side.
@@ -130,13 +133,14 @@ with on its merits.
 | D11 | The runner's report is authoritative for liveness: a held task it does not report is Failed | author |
 | D12 | While held, the runner STOPS DRAINING the child's output. The kernel buffer is the gap buffer | author |
 | D13 | On re-adoption the server opens a fresh stream and the runner re-binds the live PTY to it — via a runner-owned relay interposed on every interactive session, not a rebind inside `agentexec` | author — forced, see below |
-| D14 | The server captures each held session's screen as a repaint program at hold time and persists it; re-adoption replays it. A resize nudge is the fallback when no snapshot exists | author — corrected, see below |
-| D15 | A re-adopted interactive task lands in `Detached`; a oneshot lands in `Running` | author |
+| D14 | The server captures each held session's PTY size and screen at hold time as wire FRAMES and persists them; re-adoption loads them into the rebuilt mux's screen model. A resize nudge is the fallback when no capture exists | author — corrected twice, see below |
+| D15 | A re-adopted interactive task lands in `Detached` in ONE store transition; a oneshot lands in `Running` | author — corrected, see below |
 | D16 | Re-adoption re-binds capacity (`Registry.BindTask`), closing the gap the identity spec's §2 deferred | author |
 | D17 | No shim, no compat window: server-first restart with a fleet restart, as always | author — dogfood scope |
 | D18 | `RunnerHelloResponse` answers with the ACCEPTED ids, not the refused ones, and the runner kills every held child not named | author |
 | D19 | Screen captures happen LAST — after the ack and after the session streams are drained. Capturing early loses everything the child wrote in between | author — corrected |
 | D20 | `daemon_down`'s timeout is raised for the server slot, so the hold is not racing a 5 s hard kill | operator |
+| D21 | The two hold edges publish status events of their own — `task_held` and `task_readopted`, named after the WAL records they accompany. `task_readopted` carries the SETTLED status | author — added after the fact, see below |
 
 **D1 is the whole design, not a scope cut.** An automatic hold — the runner
 noticing a drop and holding on its own — cannot distinguish a deliberate
@@ -294,10 +298,68 @@ today, not deferred.
 What a restart destroys is that model, because it lives in the mux's memory —
 not the ability to reconstruct a screen. And the server is still running at hold
 time, which is exactly when it can call `screenRepaint()` for every session it
-is about to hold and write those bytes beside the WAL. Re-adoption replays the
-snapshot into the rebuilt mux, the runner resumes draining, and the bytes the
+is about to hold and write those bytes beside the WAL. Re-adoption loads the
+capture into the rebuilt mux, the runner resumes draining, and the bytes the
 child produced during the gap — which D12 left sitting in the kernel buffer
 rather than dropping — land on top.
+
+**D14's second correction, and it shipped broken first: the capture goes into
+the screen MODEL, not into the ring.** The first implementation injected the
+repaint as a synthesised frame through the mux's ordinary record path
+(`injectServerBytes` → `recordFrame`), on the reasoning that a re-adopted
+session should look exactly like one that had received those bytes. Two things
+were wrong with that, and the second one is the reported bug.
+
+- The ring is what the RUNNER sent this server. A repaint program the previous
+  server's grid emitted is not history, and putting it there makes
+  `snapshot --raw`'s PTY-only view answer with bytes no process produced.
+- `recordFrame` feeds the grid only for `Stdout`/`Stderr`, so a `Synth` frame
+  landed in the ring and left the model blank — while `attachObserver` ends
+  every replay with a repaint built FROM that model. The blank one therefore
+  went out LAST and erased the screen it was meant to complete. **Measured on a
+  re-adopted session: 829 replayed bytes, 460 of them the restored screen and
+  369 the blank repaint that wiped it**, with the window title as the only
+  survivor (an OSC the blank repaint does not undo). `last_output_at: 0` was the
+  tell that the model had never been fed.
+
+Feeding the model instead needs no delivery path at all: the closing repaint
+every attach already sends becomes correct — for the control client, for a
+viewer, and for a grid pane that asked for no history. The ring stays empty,
+which is the truth about what this server received.
+
+**And a screen has dimensions, so the capture is FRAMES.** The grid a repaint
+was painted at has a size, an attach replays a size ahead of the ring, and
+`SessionMux.lastWinSize` is filled only by a client's `TerminalWindowSize`
+frame — so a freshly built mux has none, and the first implementation's
+`lastWinSizeBytes()` was unconditionally nil at the one moment it was read. The
+re-adopted session came back with no size at all: clients fell back to their own
+default (`reported no terminal size; rendering at 120x40`) and a full-screen app
+would have mis-rendered.
+
+The PTY itself never lost its size — the runner holds it and nobody resized it —
+so what has to be restored is the SERVER's mirror. Two options: persist the
+mirror, or have the runner report its pty size on rebind. Persisting wins on
+cost (no protocol work) and the value is identical; the runner-reports shape is
+the more authoritative one if this ever needs to survive something the server
+did not write.
+
+So the capture is a sequence of wire frames — the `TerminalWindowSize` control
+frame, then the repaint as a `Synth` frame — read back with the same
+`readOneFrame` the ring uses and dispatched per type. No new on-disk format, no
+second file, and one reader. Applying the size frame does three jobs in one
+call, each of which was a separate need: it records `lastWinSize` (so every
+later attach replays a size), it resizes the grid (so the repaint lands on the
+geometry it was written for), and it writes the frame to the runner stream —
+which is also what makes that stream findable for the peer, the rebind's own
+precondition (§9.14).
+
+Pinned by `TestHeldCaptureRoundTripsScreenAndSize`,
+`TestHeldCaptureDoesNotEnterTheRing` and
+`TestAttachAfterCaptureShowsTheRestoredScreen`. The third one renders the replay
+through a VT emulator rather than searching it for the marker, because searching
+is exactly the trap this bug sat in: the broken version DELIVERED the content
+and then erased it, so the bytes contained the marker and the screen did not.
+All three were confirmed red against the old behaviour before being kept.
 
 **"Continuous by construction" holds only if three windows are closed, and
 naming them is the whole of D19.** A byte the child writes in this shutdown can
@@ -323,7 +385,7 @@ the application. Without them the screen is stale by however much the child
 wrote during the shutdown, and a full-screen app hides that (its next repaint
 covers it) while a line-oriented one does not (those lines are simply gone).
 
-The resize nudge survives only as the fallback for a session with no snapshot
+The resize nudge survives only as the fallback for a session with no capture
 (the hold was armed but the capture did not land) and for a plain shell, which
 repaints nothing on SIGWINCH anyway and has no screen worth restoring. Keeping
 it is cheap; leading with it would have been choosing a hack over a facility
@@ -340,16 +402,59 @@ claim a client is attached — and the startup sweep that Cancels Detached
 survivors (`server/server.go:674-679`) must not see it before re-adoption,
 which it will not: replay puts it in `held`, a status that sweep does not match.
 
-**But `SetDetached` will refuse it.** That method rejects anything whose status
-is not `Running` — `SetDetached: task %q status is %v, want Running`
-(`server/taskstore.go:700-709`) — and it is also what stamps `DetachedAt` and
-clears `IsAttached`, so bypassing it with a field assignment silently produces a
-Detached task with a zero `DetachedAt`. Re-adoption therefore goes `Held →
-Running` through the assign path (which already handles a `wasDetached` task
-coming back, `server/taskstore.go:505-520`) and then calls `SetDetached`, or
-`SetDetached` learns `Held` as a second accepted precondition. The first is
-preferable: it reuses a transition that already exists and keeps the "want
-Running" invariant true, and D16's `BindTask` belongs on that same assign step.
+**`SetDetached` refuses it, and the way out is NOT the two-step this section
+first chose.** That method rejects anything whose status is not `Running`
+(`SetDetached: task %q status is %v, want Running`), and it is also what stamps
+`DetachedAt` and clears `IsAttached`, so a field assignment silently produces a
+Detached task with a zero `DetachedAt`. The draft therefore had re-adoption go
+`Held → Running` and then call `SetDetached`, reusing a transition that already
+existed.
+
+D21 is what settles it the other way. Once the store publishes an event per
+transition, a two-step re-adoption announces a `Running` the session was never
+in — the intermediate existed only because `SetDetached` demanded it, and the
+code comment describing it said as much. So `MarkReadopted` takes a `detached`
+argument and lands the task where it belongs under ONE hold of the lock: one
+status write, one WAL record, one event carrying the settled value. `DetachedAt`
+is stamped there for the same reason. The two are not variants of one
+transition — they are what re-adoption MEANS for the two kinds — which is why
+the argument is a bool at the call site and not a status the caller composes.
+
+**D21 was found by using the thing.** With the feature working, a held task's
+row stayed `Running` in an open client until something unrelated arrived, and
+the transition back was equally invisible. The cause is that the hold is the one
+state with NO live `SessionMux`: every other non-terminal transition without a
+hook of its own is repaired incidentally, because the next busy/idle edge
+publishes a `task_activity` event carrying the task's CURRENT status, and that
+is how `Running → Detached` has always corrected itself without a kind of its
+own. A held task has no mux, therefore no activity watcher, therefore nothing at
+all is published for it between the hold and the re-adoption.
+
+Two arms, not one, and named after the WAL records they accompany rather than
+invented: `task_held` and `task_readopted` already exist as record types on the
+disk axis, and borrowing them makes the event vocabulary and the log agree. A
+generic "the status changed" arm was the first attempt and was worse on both
+counts — it collided with `TaskStatusEvent`'s own `task_status` FIELD, and it
+carried less than the words already in the system.
+
+Reusing an existing kind was considered and is not available: the WebUI
+deliberately DISCARDS `task_activity` (banner and snapshot refresh both,
+`webui/static/main.js`) because it fires on every busy/idle edge of every live
+session, so a status change wearing that label would be silent there; and the
+TUI writes `ExitCode`/`EndedAt` only for `task_ended`, so borrowing that one
+would put false termination data on the row. Every remaining arm means something
+specific enough that a reader would be misled.
+
+The wire cost is one enum value each, and no format changes. The generated
+decoder casts the enum rather than validating it, so an older client shows
+`kind=StatusEventKind(17)` and still applies the status — measured, with the
+previous build's `harness-cli` — which is why this arm needs no server-first
+rule of its own.
+
+`task_held` is best-effort by nature: the server publishing it is the one about
+to exit. It goes out before the listeners close, so a subscriber that is still
+attached usually gets it (measured: it does), but nothing retries and no client
+may treat its absence as meaning a task was not held.
 
 ## 4. Wire changes — all of them, in one place
 
@@ -479,6 +584,18 @@ Running" invariant true, and D16's `BindTask` belongs on that same assign step.
 +    task_id :TaskID
 +    stream_id :u64   # u64 to match OpenExecRunnerRequest.stream_id (line 199)
 +
++ enum StatusEventKind:
++     :u8
++     ...
++     exec_ended
++    # D21. Both are appended, both carry only what TaskStatusEvent already has,
++    # and both are named after the WAL record for the same transition.
++    task_held         # the store recorded a hold. Best-effort: the server
++                      # publishing it is on its way out.
++    task_readopted    # the hold closed. task_status is the SETTLED status —
++                      # Detached for a session, Running for a oneshot — not
++                      # the Running the store passed through on the way.
++
 +# No new response format. A rebind that CANNOT be honoured — the child died
 +# between the report and this request — is answered with the existing
 +# TaskFinished{exit_code:-1, error_message:"rebind_failed: …"}, which the
@@ -557,7 +674,8 @@ PHASE 1 — SHUTDOWN.  Everything here is inside a 5 s hard-kill window
    │                        so no NEW frame can follow it for a held session
    │
    ├─(b) drain each held session's stream until quiet, THEN capture
-   │        └─▶ disk: <data-dir>/held/<task-id>.screen
+   │        └─▶ disk: <data-dir>/held/<task-id>.frames
+   │                  = TerminalWindowSize frame ++ Synth(screen repaint)
    │            LAST, not first (D19). runnerPump is a synchronous
    │            read→model→ring loop that abandons what is unread when its
    │            ctx dies, so a snapshot taken before the drain misses every
@@ -594,7 +712,7 @@ PHASE 3 — RESTART AND RE-ADOPTION.
    ├─ last record task_held ⇒ status Held, carrying hold_id + deadline
    ├─ now > deadline        ⇒ Failed("hold_expired") immediately
    ├─ arm ONE timer for the earliest outstanding deadline
-   └─ delete <data-dir>/held/*.screen whose task is not Held
+   └─ delete <data-dir>/held/*.frames whose task is not Held
       ▲ all of this completes before the accept loop starts, so no hello can
         arrive mid-replay and nothing needs a lock
 
@@ -610,10 +728,12 @@ PHASE 3 — RESTART AND RE-ADOPTION.
    │                  ▲ the funnel, NOT registry.Register: it also seeds
    │                    SelfTopic, without which the credential validates
    │                    and `agent send` reaches nobody
-   │                Held → Running → SetDetached (interactive), else Running
+   │                Held → Detached (session) / Running (oneshot), in ONE
+   │                  store transition — no Running to observe (D15/D21)
    │                disk: task_readopted{task_id, runner_id, hold_id}
    │                  ▲ without this, a SECOND restart re-offers the task
    │                    against the previous hold's id
+   │                event: task_readopted{status = the settled one}
    │     otherwise:  Failed("not_held_by_runner")
    │
  runner ◀══ RunnerHelloResponse{your_runner_id, accepted:[task_id …]} ══ server
@@ -625,13 +745,20 @@ PHASE 3 — RESTART AND RE-ADOPTION.
                 while it was held — CancelTask can never be delivered to one
 
  per re-adopted INTERACTIVE task:
-   server: rebuild SessionMux, feed it the persisted screen bytes
+   server: build SessionMux on a fresh stream
+           ├─ apply the capture's size frame  → lastWinSize, grid resize,
+           │                                    AND the write that makes the
+           │                                    stream findable for the peer
+           ├─ load the capture's screen into the MODEL (not the ring)
+           └─ THEN insert into the session registry
+              ▲ registry last, or an observer attaches against an empty model
+                and is sent a blank repaint
  server ══ RebindSessionRequest{task_id, stream_id} ═══════▶ runner
    runner: splice the held PTY onto the new stream, resume draining
            ── on failure (child died since the report) ──▶
  server ◀══ TaskFinished{-1, "rebind_failed: …"} ══════════ runner
 
-   ordering that matters: snapshot FIRST, then the gap bytes the kernel
+   ordering that matters: capture FIRST, then the gap bytes the kernel
    buffered during PHASE 2. Reversed, the snapshot overwrites newer output —
    and a test with an idle child cannot tell the difference (§10.1a)
 ```
@@ -673,8 +800,9 @@ and it happens inside `serve`, before the deferred `wal.Close()`
    frames. Read each held session's stream until it goes quiet (a short
    bounded window; there is no EOF to wait for, because nobody is closing
    anything), which lets `runnerPump` apply the last frames to the mux's
-   `vtgrid` model. THEN call `SessionMux.screenRepaint()` per held interactive
-   task and write the bytes to `<data-dir>/held/<task-id>.screen`.
+   `vtgrid` model. THEN call `SessionMux.heldCapture()` per held interactive
+   task — the PTY size frame followed by the repaint as a `Synth` frame — and
+   write those bytes to `<data-dir>/held/<task-id>.frames`.
    Order matters here and the first draft had it backwards: `runnerPump` is a
    synchronous read→model→ring loop that abandons whatever is unread when its
    context is cancelled (`server/session_mux.go:328-360`), so a snapshot taken
@@ -777,7 +905,7 @@ present is the normal case.
   (`server/server.go:725-751`) — but not for its cadence: its interval defaults
   to an hour, which is useless against a 90-second window. One timer needs no
   interval at all.
-- **The orphan sweep for `held/`.** A `<data-dir>/held/<task-id>.screen` whose
+- **The orphan sweep for `held/`.** A `<data-dir>/held/<task-id>.frames` whose
   task is not `Held` after replay is deleted in the same startup pass. That is
   what makes D19's speculative captures free: a snapshot for a task that was
   never held, or that has since been re-adopted and fed, has no reader.
@@ -833,14 +961,17 @@ present is the normal case.
   the store's `task.AgentProfile`, which replay restores from the WAL
   (`server/wal.go:137`) — consistent with D6: everything but the ticket comes
   off the log.
-- An interactive re-adoption rebuilds the `SessionMux` and, before the runner
-  resumes draining, feeds it the persisted screen bytes so the model and the
-  ring both start from the screen as it was at hold time (D14). The ordering is
-  the whole point: bytes buffered during the gap arrive after the snapshot and
-  paint on top of it. Feed them in the other order and the snapshot overwrites
-  the newer output. Delete the file once it has been fed — a stale snapshot
-  replayed into a later session would show an operator a screen from before the
-  restart with no sign that it is old.
+- An interactive re-adoption rebuilds the `SessionMux` and loads the capture
+  into its screen MODEL — not its ring (D14's second correction) — before the
+  runner resumes draining and before the mux joins the session registry. Three
+  orderings, each load-bearing: the gap's buffered bytes must arrive after the
+  capture so they paint on top of it (reversed, the snapshot overwrites newer
+  output); the registry insert must come last or an observer can attach against
+  a model that is still empty and be sent a blank repaint; and the size frame
+  must be applied before the screen, because a repaint lands on whatever
+  geometry the grid currently has. Delete the file once it has been fed — a
+  stale capture replayed into a later session would show an operator a screen
+  from before the restart with no sign that it is old.
 - The answer is the ACCEPTED id list on `RunnerHelloResponse` (D18); the runner
   kills every held child not named there. Per task, not per hello: a runner
   reporting one stale task still registers and keeps the rest.
@@ -1141,7 +1272,8 @@ the implementation's own walk must return a verdict for.
 | 23 | wasm snapshot | `held` label AND the raw deadline, per item 22's raw-value rule |
 | 24 | `cancel` on a held task | Cancels in the store; the child dies when the runner is refused at re-adoption. Written down because "cancel" on a task with no live runner connection is a path with its own meaning |
 | — | Liveness branches | §6c: five refusal sites keep `Held` OUT, two render predicates take it IN. Not reachable from items 11-23 |
-| 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence. Plus `<data-dir>/held/<task-id>.screen`, which is state on disk that is NOT in the WAL — deleted after it is fed, and orphans swept at startup |
+| 28 | Persistence | `task_held` + `task_readopted`; replay meaning for both, and for their absence. Plus `<data-dir>/held/<task-id>.frames`, which is state on disk that is NOT in the WAL — deleted after it is fed, and orphans swept at startup. The extension is deliberately not the `.screen` of the first implementation: that file held a bare repaint program, this one holds wire frames, and a rollback that read the new content as raw bytes would paint frame headers into a terminal. A new name makes a rollback find no capture, which is the fallback that already exists |
+| — | Status events | D21: `task_held` and `task_readopted` on `tasks.status` / `task.<id>.status`. No client change is needed for the ROW to be right — the TUI applies `task_status` from any kind and the WebUI refreshes on any event — which is also why the two arms cost nothing to add and would have cost a wrong label to fake |
 | 35 | `README.md` | the two server flags, and one paragraph stating that a CRASH recovers nothing |
 | 37 | This spec | an Amendment section if the shipped behaviour differs |
 | — | §4a sequence | The exchange in order, as one picture. Item 39's rule applies to it too: a step drawn there and not built is an `omitted` in the diagram, struck through with its reason |
@@ -1362,6 +1494,23 @@ Also:
    its own subscription is absent — it is listed here because that combination
    is what makes an accepted limitation dangerous rather than merely
    incomplete.
+14. **The capture reaches the ring instead of the screen model.** SHIPPED, found
+   by using it, fixed: the session comes back with a live child, correct
+   ordering, correct everything — and a BLACK screen, because the attach's
+   closing repaint is built from the model and a blank one is appended after the
+   restored content. What makes it nasty is that every byte-level check passes:
+   the marker IS in the replay, and only a rendered assertion can see that it
+   was then erased. `last_output_at: 0` on a session whose screen was just
+   restored is the tell. (§10 case 8.)
+15. **The rebind stream is never made findable.** The runner's side of a rebind
+   is a stream LOOKUP that waits, and a trsf stream the server created is not
+   findable until something crosses it. The first implementation primed it from
+   `mux.lastWinSizeBytes()`, which is filled only by a client's resize frame and
+   is therefore always nil on a mux built seconds earlier — so nothing was
+   written, and over WebSocket it happened to work anyway while over UDP it
+   failed every time with `stream lookup failed`. The capture's size frame is
+   what crosses it now, which makes the priming a consequence of restoring the
+   size rather than a separate step someone can drop.
 
 ## 10. Testing
 
@@ -1380,6 +1529,8 @@ reachable only this way and none of them could have failed a unit test.
 | 5. cancel while held | refused at re-adoption (`status=Cancelled`), child reaped in ~500 ms rather than at the deadline |
 | 6. runner PROCESS restart | unit-level (`TestReadoptRefusesAnotherRunnersTask`); the live run was blocked by the test harness's own argv quoting, not by the product |
 | 7. the same suite over UDP | passes, at ~40 s instead of ~2 s — see below, and the one defect it alone exposed |
+| 8. the screen, compared byte-for-byte | `session snapshot` before and after re-adoption **`IDENTICAL`**; size back to `24x80` (it read `no terminal size; rendering at 120x40` before the fix), cursor, window title and alt-screen state all carried. Then a command run after the restart appended BELOW the restored screen, which is the §5 ordering claim in its cheapest form |
+| 9. the two status events | `harness-cli watch` across the restart: `kind=17 status=Held` at shutdown, then exactly one `kind=18 status=Detached` at re-adoption. Read with the PREVIOUS build's client, so the numeric fallback and the correct status are the same observation (D21's skew claim) |
 
 **The UDP pass, run 2026-09-10.** Everything above holds — child alive on the
 same pid, capture written, rebind honoured, `session snapshot` showing `tick 70`
@@ -1404,6 +1555,16 @@ showed up only here.
   ~2 s. Worth doing, out of scope here, and named so the 45 s floor is
   understood as a consequence of a missing teardown rather than a property of
   UDP.
+
+**What case 1 could not catch, and why case 8 exists.** Case 1 asserted the same
+thing in the plan below — "`session snapshot` after the reattach must match what
+it reported before" — and the first implementation was declared to pass it. It
+did not: what was compared was that output CONTINUED (case 1a's counter), never
+that the pre-restart screen was still there. A live child writes something
+immediately, and one line of new output is enough to make a blank screen look
+like a working one. So case 8 pins the comparison the plan actually asked for —
+a diff of the two snapshots, with the session deliberately QUIET across the
+restart so nothing can paint over the answer.
 
 **D12's stall behaviour, probed 2026-09-10 — and what the probe does NOT
 settle.** Tested outside the harness, on a bare pty whose master is simply not

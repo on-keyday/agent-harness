@@ -365,18 +365,89 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	}
 }
 
-// injectServerBytes feeds bytes the SERVER produced into the session as if the
-// runner had sent them, through the same recordFrame path so the screen model,
-// the ring and the mode tracker all see them.
+// loadScreen seeds a freshly built mux with a screen the PREVIOUS server
+// captured, by feeding those bytes to the grid and the mode tracker — and to
+// nothing else.
 //
-// Used by re-adoption to replay a held session's captured screen before the
-// runner resumes draining, so the gap's buffered output paints on top of it
-// rather than under it.
-func (m *SessionMux) injectServerBytes(b []byte) {
+// Not the ring, and that is the whole design. The ring is what the runner sent
+// THIS server; a repaint program the previous one wrote is not history, and
+// putting it there made two things wrong at once. It showed up in
+// `snapshot --raw`'s replay as though it had crossed the wire, and — the bug
+// that sent me looking — the model stayed blank, because recordFrame feeds the
+// grid only for Stdout/Stderr. attachObserver ends every replay with a repaint
+// built FROM that model, so the blank one went out LAST and erased the screen it
+// was supposed to complete. Measured on a re-adopted session: 829 replayed
+// bytes, 460 of them the restored screen and 369 the blank repaint that wiped
+// it, and a client showing nothing but the window title.
+//
+// Feeding the model instead needs no new delivery path at all: the repaint every
+// attach already sends becomes correct, for the control client, for a viewer,
+// and for a grid pane that asked for no history.
+//
+// Callers must load BEFORE the runner is told to resume (see rebindHeldSessions)
+// so the gap's buffered output paints on top of this rather than under it, and
+// before the mux joins the session registry, so no observer can attach against a
+// model that is still empty.
+func (m *SessionMux) loadScreen(b []byte) {
 	if len(b) == 0 {
 		return
 	}
-	m.recordFrame(encodeSynthFrame(b))
+	m.modes.feed(b)
+	m.screenMu.Lock()
+	_, _ = m.screen.Write(b)
+	m.screenMu.Unlock()
+}
+
+// loadHeldCapture applies a capture the previous server wrote for this session:
+// wire frames, in order, each through the path its own type already has.
+//
+// The capture is FRAMES rather than a bare repaint program because a screen is
+// not the only thing that has to survive the gap. The PTY size does too — the
+// grid a repaint was painted at has dimensions, and an attach replays a size
+// ahead of the ring — and a size is already a frame. Storing frames means no new
+// on-disk format, no second file, and one reader: whatever the capture carries
+// is applied by the code that would have applied it live.
+//
+// Applying the size frame does three jobs in one call, all of them needed here:
+// it records lastWinSize (so every later attach replays a size), it resizes the
+// grid (so the repaint lands on the geometry it was written for), and it writes
+// the frame to the runner stream — which is also what makes that stream exist
+// for the peer at all, the rebind's own precondition.
+//
+// Reports what was found so the caller can say which half is missing.
+func (m *SessionMux) loadHeldCapture(b []byte) (gotSize, gotScreen bool, err error) {
+	r := bytes.NewReader(b)
+	for {
+		fb, rerr := readOneFrame(r)
+		if rerr != nil {
+			return gotSize, gotScreen, nil // EOF, or a truncated tail we stop at
+		}
+		switch {
+		case frameIsWinSize(fb):
+			if aerr := m.applyWinSizeFrame(fb); aerr != nil {
+				return gotSize, gotScreen, aerr
+			}
+			gotSize = true
+		case len(fb) > frameHeaderSize && frame.FrameType(fb[0]) == frame.FrameType_Synth:
+			m.loadScreen(fb[frameHeaderSize:])
+			gotScreen = true
+		}
+	}
+}
+
+// heldCapture is what loadHeldCapture reads back: this session's PTY size and
+// its screen, as frames. Empty when there is nothing worth keeping (a session
+// nobody ever attached to has no size, and a blank grid still repaints, so the
+// size alone can be the whole capture).
+func (m *SessionMux) heldCapture() []byte {
+	var out []byte
+	if wz := m.lastWinSizeBytes(); len(wz) > 0 {
+		out = append(out, wz...)
+	}
+	if rp := m.screenRepaint(); len(rp) > 0 {
+		out = append(out, encodeSynthFrame(rp)...)
+	}
+	return out
 }
 
 func (m *SessionMux) runnerPump() {

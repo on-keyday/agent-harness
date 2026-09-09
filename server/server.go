@@ -539,6 +539,15 @@ func New(cfg Config) *Server {
 		// the row. task_status is left unset for the same reason.
 		publishTaskEvent(id, protocol.StatusEventKind_TaskPruned, 0, 0)
 	}
+	// The hold axis. Unlike the other non-terminal transitions these cannot wait
+	// to be repaired by the next task_activity, because a held task has no mux
+	// to produce one (see the hooks' own comment in taskstore.go).
+	s.tasks.OnHold = func(id string) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskHeld, protocol.TaskStatus_Held, 0)
+	}
+	s.tasks.OnReadopt = func(id string, status protocol.TaskStatus) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskReadopted, status, 0)
+	}
 
 	// Wire registry hooks.
 	s.registry.OnAdd = func(entry RunnerEntry) {

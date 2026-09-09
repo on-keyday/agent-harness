@@ -100,7 +100,7 @@ func TestMarkReadoptedClosesTheHoldForASecondRestart(t *testing.T) {
 	if err := s.MarkHold(id, rid.Hex(), "cafe", time.Now().Add(time.Minute).UnixNano()); err != nil {
 		t.Fatalf("MarkHold: %v", err)
 	}
-	if err := s.MarkReadopted(id, rid.Hex(), "cafe"); err != nil {
+	if err := s.MarkReadopted(id, rid.Hex(), "cafe", false); err != nil {
 		t.Fatalf("MarkReadopted: %v", err)
 	}
 
@@ -437,5 +437,107 @@ func TestReadoptFailsHeldTasksTheReportOmits(t *testing.T) {
 	}
 	if st, _ := store.Get(kept); st.Status == protocol.TaskStatus_Failed {
 		t.Error("the reported task was failed too")
+	}
+}
+
+// The hold's two edges must PUBLISH. Nothing else does it for them: every other
+// non-terminal transition is repaired incidentally by the next task_activity,
+// and a held task has no mux to produce one — so between the hold and the
+// re-adoption an event-driven client would be told nothing at all.
+//
+// What the readopt event carries is the other half of the claim. A session's
+// settled status is Detached (a live child, no client), and the store used to
+// reach it through Running via a second call; publishing that intermediate
+// would announce a state the session was never in.
+func TestHoldAndReadoptPublishTheSettledStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind protocol.TaskKind
+		want protocol.TaskStatus
+	}{
+		{"a session lands detached", protocol.TaskKind_Interactive, protocol.TaskStatus_Detached},
+		{"a oneshot lands running", protocol.TaskKind_Oneshot, protocol.TaskStatus_Running},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := storeWithWAL(t)
+			var rid protocol.RunnerID
+			rid.Id[0] = 0xab
+			id := s.Create("/repo", "p", tc.kind, protocol.ClientKind_Unspecified,
+				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+			s.Assign(id, rid, "/wt", false)
+
+			var holds []string
+			var readopts []protocol.TaskStatus
+			s.OnHold = func(gotID string) { holds = append(holds, gotID) }
+			s.OnReadopt = func(_ string, st protocol.TaskStatus) { readopts = append(readopts, st) }
+
+			if err := s.MarkHold(id, rid.Hex(), "cafe", time.Now().Add(time.Hour).UnixNano()); err != nil {
+				t.Fatalf("MarkHold: %v", err)
+			}
+			if len(holds) != 1 || holds[0] != id {
+				t.Fatalf("OnHold fired %v, want exactly [%s]", holds, id)
+			}
+
+			session := tc.kind != protocol.TaskKind_Oneshot
+			if err := s.MarkReadopted(id, rid.Hex(), "cafe", session); err != nil {
+				t.Fatalf("MarkReadopted: %v", err)
+			}
+			// Exactly one, and it is the settled status — not a Running flash
+			// followed by a correction.
+			if len(readopts) != 1 || readopts[0] != tc.want {
+				t.Fatalf("OnReadopt fired %v, want exactly [%v]", readopts, tc.want)
+			}
+			got, _ := s.Get(id)
+			if got.Status != tc.want {
+				t.Errorf("stored status = %v, want %v", got.Status, tc.want)
+			}
+			if tc.want == protocol.TaskStatus_Detached {
+				if got.IsAttached {
+					t.Error("a re-adopted session reads as attached; no client is on it")
+				}
+				if got.DetachedAt == 0 {
+					t.Error("DetachedAt not stamped — the fused transition dropped what SetDetached did")
+				}
+			}
+		})
+	}
+}
+
+// The re-adoption path's own end of the same claim: what readoptHeldTasks leaves
+// behind for a session is Detached, in one event.
+func TestReadoptLeavesASessionDetached(t *testing.T) {
+	store, _ := storeWithWAL(t)
+	srv := &Server{tasks: store, registry: NewRegistry(), cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xaa
+	id := store.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	store.Assign(id, rid, "/wt", false)
+	var hold protocol.HoldID
+	hold.Id[0] = 0xc0
+	if err := store.MarkHold(id, rid.Hex(), hex.EncodeToString(hold.Id[:]), time.Now().Add(time.Hour).UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	var published []protocol.TaskStatus
+	store.OnReadopt = func(_ string, st protocol.TaskStatus) { published = append(published, st) }
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(id)
+	copy(tid.Id[:], raw)
+	report := protocol.HeldTasksReport{HoldId: hold}
+	report.SetTasks([]protocol.HeldTask{{TaskId: tid, Ticket: [16]byte{1}}})
+
+	res := srv.readoptHeldTasks(rid, report)
+
+	if len(res.Accepted) != 1 {
+		t.Fatalf("accepted %d, want 1", len(res.Accepted))
+	}
+	if len(res.Rebind) != 1 || res.Rebind[0] != id {
+		t.Errorf("rebind = %v, want [%s] — a session needs a fresh stream", res.Rebind, id)
+	}
+	if got, _ := store.Get(id); got.Status != protocol.TaskStatus_Detached {
+		t.Errorf("status = %v, want Detached", got.Status)
+	}
+	if len(published) != 1 || published[0] != protocol.TaskStatus_Detached {
+		t.Errorf("published %v, want exactly [Detached]", published)
 	}
 }

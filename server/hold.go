@@ -43,13 +43,21 @@ const (
 // inside a hard-kill window this design does not own (see §5's ceiling).
 const holdDrainMax = 400 * time.Millisecond
 
-// holdScreenDir is where a held interactive session's repaint program is kept
+// holdScreenDir is where a held interactive session's captured state is kept
 // between the two servers. Beside the WAL, since it is restart state with the
 // same lifetime.
 func holdScreenDir(dataDir string) string { return filepath.Join(dataDir, "held") }
 
+// holdCaptureExt is deliberately not the ".screen" the first version of this
+// used. That file held a bare repaint program; this one holds wire FRAMES (a
+// PTY size and a screen — see SessionMux.heldCapture). A server old enough to
+// read the file as raw bytes would paint the frame headers into the terminal, so
+// the new content gets a new name and a rollback finds no capture at all, which
+// is the fallback that already exists.
+const holdCaptureExt = ".frames"
+
 func holdScreenPath(dataDir, taskIDHex string) string {
-	return filepath.Join(holdScreenDir(dataDir), taskIDHex+".screen")
+	return filepath.Join(holdScreenDir(dataDir), taskIDHex+holdCaptureExt)
 }
 
 // deliverHoldTasksAck routes a runner's ack to the shutdown sequence waiting
@@ -320,10 +328,11 @@ func (s *Server) drainHeldSessions(taskIDs []string) {
 	}
 }
 
-// captureHeldScreen writes the task's screen as a repaint program, which is
-// what re-adoption replays into the rebuilt mux. Best effort: a held task with
-// no snapshot falls back to the runner's resize nudge, which is worse than a
-// snapshot and much better than not holding.
+// captureHeldScreen writes the task's session state — its PTY size and its
+// screen, as wire frames — which is what re-adoption loads into the rebuilt mux.
+// Best effort: a held task with no capture comes back with a live child, no
+// screen and no size, which is worse than a capture and much better than not
+// holding.
 func (s *Server) captureHeldScreen(taskIDHex string) {
 	if s.taskHandler == nil || s.taskHandler.Sessions == nil {
 		return
@@ -336,22 +345,24 @@ func (s *Server) captureHeldScreen(taskIDHex string) {
 		s.cfg.Logger.Info("hold: no session mux to capture", "task", taskIDHex)
 		return
 	}
-	rp := mux.screenRepaint()
-	if len(rp) == 0 {
-		s.cfg.Logger.Warn("hold: screen repaint was empty", "task", taskIDHex)
+	cap := mux.heldCapture()
+	if len(cap) == 0 {
+		s.cfg.Logger.Warn("hold: nothing to capture", "task", taskIDHex)
 		return
 	}
 	path := holdScreenPath(s.cfg.DataDir, taskIDHex)
-	if err := os.WriteFile(path, rp, 0o644); err != nil {
-		s.cfg.Logger.Warn("hold: screen capture failed", "task", taskIDHex, "err", err)
+	if err := os.WriteFile(path, cap, 0o644); err != nil {
+		s.cfg.Logger.Warn("hold: capture failed", "task", taskIDHex, "err", err)
 		return
 	}
-	s.cfg.Logger.Info("hold: screen captured", "task", taskIDHex, "bytes", len(rp))
+	cols, rows := mux.screenSize()
+	s.cfg.Logger.Info("hold: session captured", "task", taskIDHex,
+		"bytes", len(cap), "cols", cols, "rows", rows)
 }
 
-// readHeldScreen returns a held task's captured screen and removes the file.
-// Removing it on read is what keeps a stale snapshot from repainting a LATER
-// session with a screen from before the restart.
+// readHeldScreen returns a held task's capture and removes the file. Removing it
+// on read is what keeps a stale one from repainting a LATER session with a
+// screen from before the restart.
 func (s *Server) readHeldScreen(taskIDHex string) []byte {
 	if s.cfg.DataDir == "" {
 		return nil
@@ -379,10 +390,10 @@ func (s *Server) sweepHeldScreens() {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if filepath.Ext(name) != ".screen" {
+		if filepath.Ext(name) != holdCaptureExt {
 			continue
 		}
-		id := name[:len(name)-len(".screen")]
+		id := name[:len(name)-len(holdCaptureExt)]
 		if t, ok := s.tasks.Get(id); ok && t.Status == protocol.TaskStatus_Held {
 			continue
 		}

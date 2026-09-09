@@ -91,17 +91,16 @@ func (s *Server) readoptHeldTasks(identity protocol.RunnerID, report protocol.He
 		// nobody can reach, which is worse than BadTicket.
 		boardRegisterTask(s.Board, identity, taskID, ht.Ticket, t.AgentProfile)
 
-		if err := s.tasks.MarkReadopted(taskID, identity.Hex(), reportHold); err != nil {
+		// A live child and no client is what Detached means, so that is where a
+		// session lands — in one transition, which is also the one this task's
+		// task_readopted event carries. A oneshot has no client to be missing
+		// and lands Running.
+		session := t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream
+		if err := s.tasks.MarkReadopted(taskID, identity.Hex(), reportHold, session); err != nil {
 			log.Error("readopt: MarkReadopted failed", "task", taskID, "err", err)
 			continue
 		}
-		if t.Kind == protocol.TaskKind_Interactive || t.Kind == protocol.TaskKind_Stream {
-			// A live child and no client is what Detached means. SetDetached
-			// refuses anything but Running, which is why MarkReadopted lands
-			// on Running first, and it is also what stamps DetachedAt.
-			if err := s.tasks.SetDetached(taskID); err != nil {
-				log.Error("readopt: SetDetached failed", "task", taskID, "err", err)
-			}
+		if session {
 			out.Rebind = append(out.Rebind, taskID)
 		}
 		acceptedIDs[taskID] = true
@@ -178,32 +177,36 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 		}
 		hooks := s.taskHandler.sessionHooks()
 		mux := NewSessionMux(parentCtx, taskID, runnerStream, NewRingBuffer(ringSize), hooks)
-		s.taskHandler.Sessions.Add(taskID, mux)
 
-		// The screen, before the runner resumes draining.
-		if screen := s.readHeldScreen(taskID); len(screen) > 0 {
-			mux.injectServerBytes(screen)
-		}
-
-		// Make the stream REAL before asking the runner to find it.
+		// The capture goes in BEFORE the registry insert and before the runner
+		// is told to resume, and both orderings are load-bearing. Registry
+		// first would let an observer attach against an empty screen model and
+		// be sent a blank repaint; telling the runner first would let the gap's
+		// buffered output paint UNDER the restored screen instead of on top.
 		//
-		// A trsf stream the server creates does not exist for the peer until
+		// Applying the size frame is also what makes the runner stream exist
+		// for the peer. A trsf stream the server creates is not findable until
 		// something crosses it, and the runner's side of a rebind is a lookup
-		// that waits — so with nothing written this deadlocks: the runner
-		// waits for a stream the server will only populate once the child
-		// produces output, and the child cannot, because its relay is still
-		// parked. Over WebSocket it happened to work; over UDP it failed every
-		// time with "stream lookup failed", and the session came back with a
-		// live child and a blank screen.
-		//
-		// The winsize is the right thing to send: the runner needs the PTY
-		// dimensions anyway, the mux already holds the last one as wire bytes,
-		// and a rebound session with a stale size renders wrong.
-		if wz := mux.lastWinSizeBytes(); len(wz) > 0 {
-			if err := runnerStream.AppendData(false, wz); err != nil {
-				log.Warn("rebind: could not prime the stream", "task", taskID, "err", err)
-			}
+		// that waits — with nothing written this deadlocks: the runner waits
+		// for a stream the server will only populate once the child produces
+		// output, and the child cannot, because its relay is still parked. Over
+		// WebSocket it happened to work; over UDP it failed every time with
+		// "stream lookup failed", and the session came back with a live child
+		// and a blank screen.
+		gotSize, gotScreen, err := mux.loadHeldCapture(s.readHeldScreen(taskID))
+		if err != nil {
+			log.Error("rebind: applying the capture failed", "task", taskID, "err", err)
 		}
+		// Logged either way: this is the boundary where a re-adopted session
+		// comes back blank, so what the capture carried is answered in the log
+		// rather than by re-deriving it from a snapshot afterwards.
+		if gotSize && gotScreen {
+			log.Info("rebind: capture applied", "task", taskID)
+		} else {
+			log.Warn("rebind: incomplete capture", "task", taskID,
+				"size", gotSize, "screen", gotScreen)
+		}
+		s.taskHandler.Sessions.Add(taskID, mux)
 
 		var rr protocol.RunnerRequest
 		rr.Kind = protocol.RunnerRequestType_RebindSession

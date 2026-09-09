@@ -1135,7 +1135,11 @@ Run WS+UDP dualstack if you want both.
   every runner to keep its children alive, records what each one agreed to,
   and re-adopts them when the runners reconnect — so `scripts/restart.py
   harness-server` no longer kills every live session. A held task reads
-  `held` in `ls`, with `held_until` in `--json`.
+  `held` in `ls`, with `held_until` in `--json`, and an interactive one comes
+  back `detached` with its SCREEN and PTY size intact — the server captures
+  both at hold time and restores them into the rebuilt session, so a reattach
+  shows what was on the terminal before the restart with the output produced
+  during the gap painted on top.
   The window is `--hold-window` (default `90s`) and the wait for each runner's
   answer is `--hold-ack-timeout` (default `1.5s`); `--hold-window=0` restores
   the old behaviour. **A crash recovers nothing**, on purpose: the hold is

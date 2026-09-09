@@ -131,6 +131,20 @@ type TaskStore struct {
 	OnFinish func(id string, exit int32, status protocol.TaskStatus) // optional; called after Finish marks a task terminal.
 	OnCancel func(id string)                                         // optional; called after Cancel marks a task Cancelled.
 	OnPrune  func(id string)                                         // optional; called (after the store lock is released) for each task removed by PruneByIDs/PruneTerminal.
+
+	// OnHold / OnReadopt are the hold axis's two edges, and they exist because
+	// a held task publishes NOTHING otherwise. Every other non-terminal
+	// transition without a hook of its own is repaired incidentally — the next
+	// busy/idle edge publishes task_activity carrying the task's CURRENT
+	// status, which is how Running→Detached has always corrected itself — and
+	// that repair needs a live SessionMux to come from. A hold is precisely the
+	// state with no mux, so between MarkHold and MarkReadopted nothing at all
+	// would be published for the task.
+	//
+	// OnReadopt is handed the settled status rather than looking it up, so what
+	// gets published is the value this call wrote under the lock.
+	OnHold    func(id string)
+	OnReadopt func(id string, status protocol.TaskStatus)
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -818,6 +832,7 @@ func (s *TaskStore) MarkHold(id, runnerIdentityHex, holdIDHex string, deadlineNs
 	t.HoldID = holdIDHex
 	t.HoldDeadline = deadlineNs
 	wal := s.wal
+	onHold := s.OnHold
 	s.mu.Unlock()
 	if wal != nil {
 		if err := wal.Write(WALEvent{
@@ -828,19 +843,37 @@ func (s *TaskStore) MarkHold(id, runnerIdentityHex, holdIDHex string, deadlineNs
 			slog.Error("WAL write failed", "op", "task_held", "task_id", id, "err", err)
 		}
 	}
+	// After the WAL write, so a subscriber that reacts to the event cannot
+	// observe a hold the log does not yet carry. The event is best-effort by
+	// nature — the server publishing it is on its way out — and the ordering
+	// costs nothing.
+	if onHold != nil {
+		onHold(id)
+	}
 	return nil
 }
 
 // MarkReadopted closes a hold: the runner came back still holding this task and
-// the server accepted it. Status goes Held → Running; an interactive task is
-// then moved on to Detached by the caller through SetDetached, which is why
-// this stops at Running (SetDetached refuses any other status, and it is also
-// what stamps DetachedAt).
+// the server accepted it.
+//
+// detached picks the status this lands on, and the two are not variants of one
+// transition — they are what re-adoption MEANS for the two kinds. A session
+// (interactive/stream) comes back with a live child and no client, which is
+// Detached; a oneshot has no client to be missing and comes back Running.
+//
+// It lands there in ONE hold of the lock rather than passing through Running
+// and being moved on by SetDetached. The intermediate had no reader — it
+// existed only because SetDetached refuses any source but Running — and
+// publishing it would have made every re-adopted session announce a Running it
+// was never in. DetachedAt is stamped here for the same reason.
 //
 // The task_readopted record is not an audit trail. Without it task_held stays
 // the last word about the task, so a SECOND restart would offer it for
-// re-adoption again against the previous hold's id.
-func (s *TaskStore) MarkReadopted(id, runnerIdentityHex, holdIDHex string) error {
+// re-adoption again against the previous hold's id. It carries no status:
+// replay lands on Running for both kinds, because Detached is ephemeral by
+// design (see SetDetached) and a replay has no session to be detached from.
+func (s *TaskStore) MarkReadopted(id, runnerIdentityHex, holdIDHex string, detached bool) error {
+	now := time.Now()
 	s.mu.Lock()
 	t, ok := s.tasks[id]
 	if !ok {
@@ -853,17 +886,27 @@ func (s *TaskStore) MarkReadopted(id, runnerIdentityHex, holdIDHex string) error
 		return fmt.Errorf("MarkReadopted: task %q status is %v, want Held", id, status)
 	}
 	t.Status = protocol.TaskStatus_Running
+	if detached {
+		t.Status = protocol.TaskStatus_Detached
+		t.IsAttached = false
+		t.DetachedAt = uint64(now.UnixNano())
+	}
 	t.HoldID = ""
 	t.HoldDeadline = 0
+	settled := t.Status
 	wal := s.wal
+	onReadopt := s.OnReadopt
 	s.mu.Unlock()
 	if wal != nil {
 		if err := wal.Write(WALEvent{
 			Type: "task_readopted", TaskID: id, RunnerID: runnerIdentityHex,
-			HoldID: holdIDHex, Ts: time.Now().UnixNano(),
+			HoldID: holdIDHex, Ts: now.UnixNano(),
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_readopted", "task_id", id, "err", err)
 		}
+	}
+	if onReadopt != nil {
+		onReadopt(id, settled)
 	}
 	return nil
 }

@@ -1722,6 +1722,35 @@ enum StatusEventKind:
     exec_ended          # appended: it left. Execs have no counters, so they
                         # need no stats kind — their listing is discrete, which
                         # is why these two are enough where a forward needs three.
+    task_held           # appended: a deliberate server restart asked the runner
+                        # to keep this task's child alive and the store recorded
+                        # the hold. Named after the WAL record it accompanies
+                        # (`task_held`), which is the same transition on the
+                        # disk axis.
+                        #
+                        # Best-effort by nature: the server publishing it is the
+                        # one about to exit. It is emitted before the listeners
+                        # close, so a subscriber still attached usually gets it,
+                        # but nothing retries and no client may assume it.
+    task_readopted      # appended: the runner came back inside the window still
+                        # holding the task, and the server took it back. Also
+                        # named after its WAL record.
+                        #
+                        # This is the one a client cannot do without. Every
+                        # other status a task reaches while a session lives gets
+                        # repaired incidentally — the next busy/idle edge
+                        # publishes task_activity carrying the CURRENT status,
+                        # which is how Running→Detached has always corrected
+                        # itself without a kind of its own. A held task has no
+                        # mux and therefore no activity watcher, so between the
+                        # hold and this event nothing at all is published for
+                        # it: without this the row stays Held in every open
+                        # client until something unrelated arrives.
+                        #
+                        # task_status carries the SETTLED status — Detached for
+                        # a session (a live child with no client), Running for a
+                        # oneshot — not the Running the store passes through on
+                        # its way there.
 
 format TaskStatusEvent:
     kind :StatusEventKind
