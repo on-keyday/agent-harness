@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
@@ -312,7 +311,7 @@ func (s *Session) runDirDelete(stream trsf.BidirectionalStream, full string, for
 			switch {
 			case os.IsNotExist(err):
 				_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
-			case errors.Is(err, syscall.ENOTEMPTY):
+			case isDirNotEmpty(err):
 				_ = writeAck(stream, protocol.FileTransferStatus_NotEmpty, 0)
 			default:
 				_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
