@@ -30,9 +30,19 @@ LDFLAGS ?=
 #
 # All three or none: a stamped revision beside a vcs time or a vcs dirty bit
 # would describe two different trees in one line.
+#
+# The time is UTC, matching what Go's own vcs.time carries BYTE FOR BYTE
+# (measured: both 2026-09-10T05:53:59Z for cc43c934). %cI alone would emit the
+# committer's local offset, so a stamped and an unstamped build would print the
+# same instant in two shapes and an operator comparing two hosts would have to
+# normalise them.
+#
+# STAMP_DIRTY is 0/1 rather than empty/1: an empty -X assignment is accepted
+# (measured) but says "nothing stamped" in a command line where the opposite is
+# true, and only stampedRevision is allowed to mean that.
 STAMP_REV   := $(shell git rev-parse HEAD 2>/dev/null)
-STAMP_TIME  := $(shell git show -s --format=%cI HEAD 2>/dev/null)
-STAMP_DIRTY := $(shell test -n "$$(git status --porcelain --untracked-files=no 2>/dev/null)" && echo 1)
+STAMP_TIME  := $(shell TZ=UTC git show -s --format=%cd --date=iso-strict-local HEAD 2>/dev/null)
+STAMP_DIRTY := $(shell test -n "$$(git status --porcelain --untracked-files=no 2>/dev/null)" && echo 1 || echo 0)
 STAMP_PKG   := github.com/on-keyday/agent-harness/buildinfo
 STAMP_LDFLAGS := -X $(STAMP_PKG).stampedRevision=$(STAMP_REV) -X $(STAMP_PKG).stampedTime=$(STAMP_TIME) -X $(STAMP_PKG).stampedDirty=$(STAMP_DIRTY)
 
@@ -52,7 +62,7 @@ build: webui-build $(BIN_TARGETS)
 
 $(BIN_TARGETS): bin/%$(GOEXE):
 	@mkdir -p bin
-	go build $(BUILD_FLAGS) -ldflags="$(LDFLAGS) $(STAMP_LDFLAGS)" -o $@ ./cmd/$*
+	go build $(BUILD_FLAGS) -ldflags="$(strip $(LDFLAGS) $(STAMP_LDFLAGS))" -o $@ ./cmd/$*
 
 # Release-style build: -trimpath (strip local paths from binaries for
 # reproducibility) + -ldflags="-s -w" (strip symbol/DWARF tables, ~5MB
