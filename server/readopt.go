@@ -82,7 +82,31 @@ func (s *Server) readoptHeldTasks(identity protocol.RunnerID, report protocol.He
 		// Capacity first: a re-adopted task occupies a slot on the new
 		// connection, which the identity change deliberately left as this
 		// change's problem.
-		s.registry.BindTask(identity.Hex(), taskID)
+		//
+		// By CONNECTION id, which is what Registry keys `runners` by — every
+		// other BindTask call site passes `runner.ID` (dispatch, scheduler,
+		// handleOpenExec). This one passed `identity.Hex()`, so the lookup
+		// missed, BindTask returned false, and the discarded return said
+		// nothing. It compiled because the registry API takes a bare string;
+		// TaskEntry's own comment warns about this exact pair, where
+		// AssignedTo is an identity and BoundRunnerID a connection id.
+		//
+		// The capacity was the smaller half. A task absent from ActiveTasks is
+		// invisible to failAndRevokeTasksOf, so when that connection later
+		// drops nothing fails the task and its row stays non-terminal for
+		// good — a `Detached` session whose runner identity is registered
+		// nowhere, which is how this was found on the live fleet.
+		if e, ok := s.registry.GetByIdentity(identity); !ok {
+			// Add() precedes this call in the hello handler, so a miss means
+			// the connection went away mid-handshake. Said out loud, because
+			// silence is what let the wrong key survive.
+			log.Warn("readopt: no live connection for this identity; capacity not bound",
+				"task", taskID, "runner", identity.Hex())
+		} else if !s.registry.BindTask(e.ID, taskID) {
+			log.Warn("readopt: could not bind capacity",
+				"task", taskID, "runner", identity.Hex(), "cid", e.ID,
+				"active", len(e.ActiveTasks), "max", e.MaxTasks)
+		}
 
 		// Then the board, through the FUNNEL. registry.Register alone would
 		// write the ticket and stop: RegisterTask also creates the taskState
