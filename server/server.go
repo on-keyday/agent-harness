@@ -948,10 +948,46 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	// closeListeners can reach it.
 	s.SetStopAccepting(shutdownHTTP)
 
-	// waitConns blocks (with a bound) for in-flight handleConnection goroutines
-	// to finish their deferred trsf.SendClose+50ms-drain+Close so peers learn
-	// of our exit promptly instead of waiting out AutoGarbageCollect.
+	// waitConns tells every live peer we are going, then blocks (with a bound)
+	// for the in-flight handleConnection goroutines to finish.
+	//
+	// It announces the close ITSELF rather than leaving it to each goroutine's
+	// defer, because waiting for those to notice is not a plan on UDP. A
+	// goroutine sits in trsf.AutoReceive, and what wakes it is the underlying
+	// connection dying: on the WebSocket leg httpServer.Shutdown closes the
+	// socket and every runner learns instantly, while on the UDP leg nothing
+	// closes anything — so the goroutine never returns, its deferred SendClose
+	// never runs, and the process exits having told the peer nothing.
+	//
+	// Measured 2026-09-10 on a UDP runner across a deliberate restart: the
+	// server logged its own "connection drain timed out … may need to wait for
+	// AutoGarbageCollect" warning, and the runner learned 68 SECONDS later —
+	// not from a Close and not from a ping, but from objproto's inactivity GC
+	// (`deleting inactive connection`). It then reconnected in 500 ms and was
+	// re-adopted immediately, so the entire cost was DETECTION: a 90 s hold
+	// window spent 77% of itself waiting for the runner to find out.
+	//
+	// Order is the point. SendClose only queues the packet, so every conn is
+	// announced first, then one drain (the same 50 ms peer.Conn.Close relies on
+	// — without scheduling slack the async packet queue can exit before the
+	// packet leaves), and only then are the connections closed, which is what
+	// releases the goroutines so the wait below can actually complete.
 	waitConns := func() {
+		s.activeConnsMu.Lock()
+		conns := make([]streamingConn, 0, len(s.activeConns))
+		for _, sc := range s.activeConns {
+			conns = append(conns, sc)
+		}
+		s.activeConnsMu.Unlock()
+		if len(conns) > 0 {
+			for _, sc := range conns {
+				_ = trsf.SendClose(sc)
+			}
+			time.Sleep(50 * time.Millisecond)
+			for _, sc := range conns {
+				_ = sc.Close()
+			}
+		}
 		done := make(chan struct{})
 		go func() {
 			s.connWG.Wait()

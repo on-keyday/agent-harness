@@ -1088,8 +1088,13 @@ into §6 because three of the four are server-side obligations.
    `HoldTasksRequest` and its ack ride trsf streams, so they retransmit. The
    disconnect that follows is a single `trsf.Close` (which is why
    `peer.Conn.Close`'s send drain is load-bearing); over UDP, a lost Close
-   leaves the runner unaware until `trsf.AutoPing` misses — bounded by
-   `PingInterval`, 15s by default (`peer/conn.go:109-114,197`).
+   leaves the runner unaware until something else notices — and MEASURED, that
+   something is objproto's inactivity GC at ~68 s, not `trsf.AutoPing`'s 15 s
+   `PingInterval` (`peer/conn.go:109-114,197`). Worth knowing which, because
+   the 15 s figure is the one a reader reaches for and it is not the bound that
+   applies. The Close is now sent deliberately at shutdown rather than left to
+   a per-connection defer that the UDP leg never reaches (§10), so the lost-
+   Close case is the exception; when it happens, this is its cost.
    **Therefore the window starts when the hold is ARMED, not when the
    disconnect is detected** (§6). Starting it at detection would let a runner
    that missed the Close begin its window up to a ping interval late and
@@ -1537,24 +1542,52 @@ same pid, capture written, rebind honoured, `session snapshot` showing `tick 70`
 after a `tick 6` before — but the TIMING is a different animal, and one defect
 showed up only here.
 
-- **Re-adoption took ~40 s of the 90 s window**, against ~2 s over WebSocket.
-  The runner did not see a `trsf.Close` at all: its relay logged the far-side
-  error 40 s after the shutdown, where the WS run logs it at the instant. So
-  §6a.1's fallback is not a rare case on this leg, it is the normal one — and
-  the reason is that the shutdown closes the HTTP/WS listener
-  (`closeListeners` is `shutdownHTTP`) while nothing tears down UDP
-  connections before the process exits, so no Close is ever sent there. That
-  asymmetry predates this change; the hold is what turned it into a cost.
-- **Therefore the window has a floor, and it is not arbitrary**: ping interval
-  (15 s) + max reconnect backoff (30 s) = 45 s before a UDP runner can even
-  present its report. The 90 s default clears it twice over. Lowering it to
-  "30 s, because restarts are fast" would silently strand every UDP runner
-  while WS runners kept their children — the worst shape of partial failure,
-  since it looks like a flaky subset of the fleet.
-- Sending a Close on the UDP leg during shutdown would collapse that 40 s to
-  ~2 s. Worth doing, out of scope here, and named so the 45 s floor is
-  understood as a consequence of a missing teardown rather than a property of
-  UDP.
+- **Re-adoption took ~40 s of the 90 s window**, against ~2 s over WebSocket,
+  and the whole cost was DETECTION. FIXED — see the paragraph below, which is
+  the second half of this measurement and contradicts the first draft's
+  explanation of it.
+- **The window's floor was set by that, and it is not arbitrary**: without a
+  Close, a UDP runner learns from objproto's inactivity GC and cannot present
+  its report for the better part of a minute. The 90 s default clears that.
+  Lowering it to "30 s, because restarts are fast" would silently strand every
+  UDP runner while WS runners kept their children — the worst shape of partial
+  failure, since it looks like a flaky subset of the fleet. That reasoning
+  survives the fix, because a Close is one unreliable datagram: when it is
+  lost, the slow path is what happens.
+
+**Where the 40 s actually went, measured 2026-09-10 — and it was not a missing
+Close.** The first draft of the paragraph above said "nothing tears down UDP
+connections before the process exits, so no Close is ever sent there". A Close
+IS coded, in `handleConnection`'s own defer (`trsf.SendClose` → 50 ms drain →
+`Close`), for every connection on either leg. What does not happen is that
+defer RUNNING: the goroutine sits in `trsf.AutoReceive`, and what wakes it is
+the underlying connection dying — on the WS leg `httpServer.Shutdown` closes
+the socket, which is the whole reason WS looked instant, while on the UDP leg
+nothing closes anything, so the goroutine never returns and the process exits
+having told the peer nothing. The server logs its own evidence for this and did
+so throughout: `connection drain timed out; some peers may need to wait for
+AutoGarbageCollect after=2s`.
+
+The numbers, one UDP runner across a deliberate restart:
+
+| | before | after |
+|---|---|---|
+| runner learns the server is gone | **68 s**, via `deleting inactive connection` (objproto's GC — not a Close, not the ping) | **same second**, via `active connection closed` |
+| total time the task spent `Held` | **69 s** of a 90 s window (77%) | **~1 s** |
+| reconnect after learning | 500 ms, then re-adopted immediately | unchanged |
+
+So the fix is not transport-specific and not in the hold path at all: the
+shutdown announces the close ITSELF over every live connection it is already
+tracking in `activeConns`, then drains once, then closes them — which also
+releases the goroutines, so the bounded wait that used to time out now
+completes. Ordering matters (`SendClose` only queues the packet), and the 50 ms
+drain is the same one `peer.Conn.Close` relies on.
+
+Not done, and not needed at the measured numbers: a runner-side belt for a LOST
+Close — the hold request already tells the runner the server is going, so it
+could stop waiting to be told twice. The reason to leave it is that the slow
+path is now the exceptional one and it still lands inside the 90 s window, so
+the belt would add a second mechanism for a case the window already covers.
 
 **What case 1 could not catch, and why case 8 exists.** Case 1 asserted the same
 thing in the plan below — "`session snapshot` after the reattach must match what
