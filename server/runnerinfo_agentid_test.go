@@ -8,7 +8,7 @@ import (
 
 func TestToRunnerInfoCarriesAgentIdentity(t *testing.T) {
 	e := RunnerEntry{
-		ID:             "ws:127.0.0.1:1-2",
+		ID:             tcid("ws:127.0.0.1:1-2"),
 		Hostname:       "h",
 		AgentBin:       "gemini",
 		SkillsInjected: true,

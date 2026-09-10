@@ -5,6 +5,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The agentboard keys a task's auth ticket AND its taskState (subscriptions,
@@ -81,7 +82,7 @@ func boardTaskTicket(b *agentboard.Board, runner protocol.RunnerID, tid protocol
 // A miss yields the zero identity rather than an error. That is deliberate: the
 // entry is gone, so there is nothing left to revoke, and a zero key matches
 // nothing in the board.
-func identityOfConn(reg *Registry, runnerConnID string) protocol.RunnerID {
+func identityOfConn(reg *Registry, runnerConnID objproto.ConnectionID) protocol.RunnerID {
 	if reg == nil {
 		return protocol.RunnerID{}
 	}

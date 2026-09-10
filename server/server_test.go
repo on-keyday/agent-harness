@@ -18,7 +18,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 	fc.nextSendStreamID = 7 // sendAssign opens a body stream; allow it.
 	s := New(Config{Addr: "localhost:0"})
 	s.registry.Add(&RunnerEntry{
-		ID:           fc.id.String(),
+		ID:           fc.id,
 		Hostname:     "testhost",
 		AllowedRoots: []string{"/r"},
 		MaxTasks:     1,
@@ -26,7 +26,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		Conn:         fc,
 	})
 	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	if err := s.sendAssign(fc.id.String(), taskID); err != nil {
+	if err := s.sendAssign(fc.id, taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if len(fc.sent) != 1 {
@@ -65,7 +65,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 
 func TestSendAssignDisconnected(t *testing.T) {
 	s := New(Config{})
-	err := s.sendAssign("nonexistent-runner", "00000000")
+	err := s.sendAssign(tcid("nonexistent-runner"), "00000000")
 	if err == nil {
 		t.Fatal("expected error")
 	}

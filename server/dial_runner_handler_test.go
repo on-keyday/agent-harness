@@ -85,7 +85,7 @@ func TestDialRunnerViaNotFound(t *testing.T) {
 func TestDialRunnerViaRelayFailed(t *testing.T) {
 	fakeEntry := &RunnerEntry{
 		ID: objproto.NewConnectionID("ws",
-			netip.MustParseAddrPort("192.168.1.10:8540"), 12345).String(),
+			netip.MustParseAddrPort("192.168.1.10:8540"), 12345),
 	}
 	h := &DialRunnerHandler{
 		Logger:   slog.Default(),
@@ -383,12 +383,12 @@ func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
 
 	// Q: directly registered (no Via).
 	qCID := buildTestCID("ws:127.0.0.1:9100-1")
-	qEntry := addEntry(reg, qCID.String(), nil, objproto.ConnectionID{})
+	qEntry := addEntry(reg, qCID, nil, objproto.ConnectionID{})
 
 	// P: registered via Q. P.ViaDialAddr is the addr Q uses for SetProxy.allocate → P.
 	pViaDialAddr := buildTestCID("ws:10.0.0.20:8540-0")
 	pCID := buildTestCID("ws:127.0.0.1:9100-2")
-	pEntry := addEntry(reg, pCID.String(), qEntry, pViaDialAddr)
+	pEntry := addEntry(reg, pCID, qEntry, pViaDialAddr)
 
 	// via names P by IDENTITY; the stub resolves it the same way.
 	pRunnerID := makeProtoRunnerID(t, pCID.String())
@@ -499,12 +499,12 @@ func TestDialRunnerViaLoopDetected(t *testing.T) {
 	qCID := buildTestCID("ws:127.0.0.1:9101-2")
 
 	pEntry := &RunnerEntry{
-		ID:          pCID.String(),
+		ID:          pCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: buildTestCID("ws:10.0.0.30:8550-0"),
 	}
 	qEntry := &RunnerEntry{
-		ID:          qCID.String(),
+		ID:          qCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: buildTestCID("ws:10.0.0.31:8551-0"),
 	}

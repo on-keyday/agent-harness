@@ -49,14 +49,14 @@ func TestBoardKeyIsIdentityNotConnection(t *testing.T) {
 	want := [16]byte{9, 8, 7}
 
 	// The runner registers on one connection and the task is dispatched to it.
-	reg.Add(&RunnerEntry{ID: "ws:127.0.0.1:8539-7", Identity: identity})
+	reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-7"), Identity: identity})
 	boardRegisterTask(b, identity, taskIDHex, want, "claude")
 
 	// It reconnects: a NEW connection id, the SAME identity. The old code
 	// derived the board key from the connection, so this is exactly where an
 	// agent's credential used to stop validating.
-	displaced := reg.Add(&RunnerEntry{ID: "ws:127.0.0.1:8539-8", Identity: identity})
-	if displaced != "ws:127.0.0.1:8539-7" {
+	displaced := reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-8"), Identity: identity})
+	if displaced != tcid("ws:127.0.0.1:8539-7") {
 		t.Fatalf("takeover did not report the displaced connection: %q", displaced)
 	}
 	if got, ok := boardTaskTicket(b, identity, tid); !ok || got != want {
@@ -81,15 +81,15 @@ func TestBoardKeyIsIdentityNotConnection(t *testing.T) {
 func TestIdentityOfConn(t *testing.T) {
 	reg := NewRegistry()
 	identity := protocol.RunnerID{Id: [16]byte{3}}
-	reg.Add(&RunnerEntry{ID: "ws:127.0.0.1:8539-3", Identity: identity})
+	reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-3"), Identity: identity})
 
-	if got := identityOfConn(reg, "ws:127.0.0.1:8539-3"); got != identity {
+	if got := identityOfConn(reg, tcid("ws:127.0.0.1:8539-3")); got != identity {
 		t.Fatalf("identityOfConn = %s, want %s", got.Hex(), identity.Hex())
 	}
-	if got := identityOfConn(reg, "ws:127.0.0.1:8539-4"); !got.IsZero() {
+	if got := identityOfConn(reg, tcid("ws:127.0.0.1:8539-4")); !got.IsZero() {
 		t.Fatalf("unknown connection yielded %s, want zero", got.Hex())
 	}
-	if got := identityOfConn(nil, "ws:127.0.0.1:8539-3"); !got.IsZero() {
+	if got := identityOfConn(nil, tcid("ws:127.0.0.1:8539-3")); !got.IsZero() {
 		t.Fatalf("nil registry yielded %s, want zero", got.Hex())
 	}
 }

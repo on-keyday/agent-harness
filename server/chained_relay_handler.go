@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ChainedRelayHandler handles RunnerMessage{RequestChainedRelay} from a runner.
@@ -31,7 +32,7 @@ type ChainedRelayHandler struct {
 
 	// inFlight is the set of runner conn CID strings that have an in-progress
 	// RequestChainedRelay. Keyed by conn.ConnectionID().String().
-	inFlight   map[string]struct{}
+	inFlight   map[objproto.ConnectionID]struct{}
 	inFlightMu sync.Mutex
 }
 
@@ -43,7 +44,7 @@ func NewChainedRelayHandler(logger *slog.Logger, registry *Registry, sendEstabli
 		Logger:             logger,
 		Registry:           registry,
 		SendEstablishRelay: sendEstablishRelay,
-		inFlight:           make(map[string]struct{}),
+		inFlight:           make(map[objproto.ConnectionID]struct{}),
 	}
 }
 
@@ -58,7 +59,7 @@ func (h *ChainedRelayHandler) Handle(
 	conn ConnHandle,
 	req protocol.RequestChainedRelay,
 ) protocol.ChainedRelayResponse {
-	runnerID := conn.ConnectionID().String()
+	runnerID := conn.ConnectionID()
 
 	// --- In-flight guard ---
 	h.inFlightMu.Lock()

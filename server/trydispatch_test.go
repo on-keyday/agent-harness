@@ -33,10 +33,10 @@ func newTestDispatcher() (*Dispatcher, *Registry, *TaskStore) {
 }
 
 // registerRunner adds a runner entry with the given conn to the registry.
-func registerRunner(reg *Registry, id string, conn ConnHandle, roots []string, maxTasks int) {
+func registerRunner(reg *Registry, id objproto.ConnectionID, conn ConnHandle, roots []string, maxTasks int) {
 	reg.Add(&RunnerEntry{
 		ID:           id,
-		Identity:     testRunnerID(id),
+		Identity:     testRunnerID(id.String()),
 		Hostname:     "host",
 		AllowedRoots: roots,
 		MaxTasks:     maxTasks,
@@ -53,7 +53,7 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	d, reg, tasks := newTestDispatcher()
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-10")}
 	fc.nextSendStreamID = 11 // dispatcher opens body stream
-	runnerID := fc.id.String()
+	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
 	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
@@ -75,7 +75,7 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	if te.Status != protocol.TaskStatus_Running {
 		t.Errorf("expected task status Running, got %v", te.Status)
 	}
-	if te.AssignedTo != testRunnerID(runnerID) {
+	if te.AssignedTo != testRunnerID(runnerID.String()) {
 		t.Errorf("expected AssignedTo=%q, got %q", runnerID, te.AssignedTo)
 	}
 
@@ -121,12 +121,12 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 func TestTryDispatch_NoCapacity(t *testing.T) {
 	d, reg, tasks := newTestDispatcher()
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-11")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
 	// Runner at full capacity (MaxTasks=1, 1 active task).
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -164,7 +164,7 @@ func TestTryDispatch_SendError(t *testing.T) {
 			nextSendStreamID: 13, // dispatcher allocates body stream before SendMessage
 		},
 	}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
@@ -230,7 +230,7 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-20")}
 	fc.nextSendStreamID = 21 // dispatcher opens body stream
-	runnerID := fc.id.String()
+	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
 	taskIDHex := tasks.Create("/repo", "ticket-test", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
@@ -268,7 +268,7 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 	}
 
 	// 3. board.Registry().Validate must return HelloStatusOk for the registered ticket.
-	brid := boardRunnerID(t, runnerID)
+	brid := boardRunnerID(t, runnerID.String())
 	btid := boardTaskID(taskIDHex)
 	status := board.Registry().Validate(brid, btid, body.AuthTicket)
 	if status != agentboard.HelloStatusOk {

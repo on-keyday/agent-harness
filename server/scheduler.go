@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // AssignFunc dispatches an AssignTask message to a runner.
@@ -15,7 +16,7 @@ import (
 // it enqueues one bgn-encoded message into a buffered channel or socket write,
 // and returns quickly). If AssignFunc is slow, Tick will block for that duration.
 // Callers should ensure AssignFunc does not block indefinitely.
-type AssignFunc func(runnerID, taskID string) error
+type AssignFunc func(runnerID objproto.ConnectionID, taskID string) error
 
 // Scheduler matches Queued tasks to available runners sharing a compatible repo root.
 // It is the orchestration glue between Registry and TaskStore.

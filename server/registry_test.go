@@ -15,7 +15,7 @@ func TestRegistryAddFindRemove(t *testing.T) {
 	now := time.Now()
 
 	r.Add(&RunnerEntry{
-		ID:           "A",
+		ID:           tcid("A"),
 		Hostname:     "hostA",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -24,7 +24,7 @@ func TestRegistryAddFindRemove(t *testing.T) {
 		LastSeen:     now,
 	})
 
-	entry, ok := r.Get("A")
+	entry, ok := r.Get(tcid("A"))
 	if !ok {
 		t.Fatal("expected Get(\"A\") ok=true, got false")
 	}
@@ -32,9 +32,9 @@ func TestRegistryAddFindRemove(t *testing.T) {
 		t.Fatalf("expected AllowedRoots[\"/x\"], got %v", entry.AllowedRoots)
 	}
 
-	r.Remove("A")
+	r.Remove(tcid("A"))
 
-	_, ok = r.Get("A")
+	_, ok = r.Get(tcid("A"))
 	if ok {
 		t.Fatal("expected Get(\"A\") ok=false after Remove, got true")
 	}
@@ -46,7 +46,7 @@ func TestRegistrySetLastSeen(t *testing.T) {
 	t1 := time.Unix(2000, 0)
 
 	r.Add(&RunnerEntry{
-		ID:           "A",
+		ID:           tcid("A"),
 		Hostname:     "hostA",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -55,18 +55,18 @@ func TestRegistrySetLastSeen(t *testing.T) {
 		LastSeen:     t0,
 	})
 
-	ok := r.SetLastSeen("A", t1)
+	ok := r.SetLastSeen(tcid("A"), t1)
 	if !ok {
 		t.Fatal("expected SetLastSeen to return true for registered runner, got false")
 	}
 
-	entry, _ := r.Get("A")
+	entry, _ := r.Get(tcid("A"))
 	if !entry.LastSeen.Equal(t1) {
 		t.Fatalf("expected LastSeen=%v after SetLastSeen, got %v", t1, entry.LastSeen)
 	}
 
 	// Returns false for unknown runner.
-	if r.SetLastSeen("nonexistent", t1) {
+	if r.SetLastSeen(tcid("nonexistent"), t1) {
 		t.Fatal("expected SetLastSeen to return false for unknown runner, got true")
 	}
 }
@@ -74,7 +74,7 @@ func TestRegistrySetLastSeen(t *testing.T) {
 func TestRegistryReadIsSnapshot(t *testing.T) {
 	r := NewRegistry()
 	r.Add(&RunnerEntry{
-		ID:           "A",
+		ID:           tcid("A"),
 		Hostname:     "hostA",
 		AllowedRoots: []string{"/original"},
 		MaxTasks:     1,
@@ -82,7 +82,7 @@ func TestRegistryReadIsSnapshot(t *testing.T) {
 		ConnectedAt:  time.Now(),
 	})
 
-	got, ok := r.Get("A")
+	got, ok := r.Get(tcid("A"))
 	if !ok {
 		t.Fatal("expected Get ok=true")
 	}
@@ -90,7 +90,7 @@ func TestRegistryReadIsSnapshot(t *testing.T) {
 	// Mutate the returned value snapshot; the registry must not be affected.
 	got.Hostname = "poison"
 
-	second, _ := r.Get("A")
+	second, _ := r.Get(tcid("A"))
 	if second.Hostname != "hostA" {
 		t.Fatalf("registry was poisoned by mutating returned snapshot: got Hostname=%q, want \"hostA\"", second.Hostname)
 	}
@@ -100,17 +100,17 @@ func TestRegistryBindTaskAtCapacity(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 	})
-	if !r.BindTask("A", "t1") {
+	if !r.BindTask(tcid("A"), "t1") {
 		t.Fatal("expected first BindTask to succeed")
 	}
-	if r.BindTask("A", "t2") {
+	if r.BindTask(tcid("A"), "t2") {
 		t.Fatal("expected second BindTask to fail at capacity")
 	}
-	r.UnbindTask("A", "t1")
-	if !r.BindTask("A", "t2") {
+	r.UnbindTask(tcid("A"), "t1")
+	if !r.BindTask(tcid("A"), "t2") {
 		t.Fatal("expected BindTask to succeed after UnbindTask")
 	}
 }
@@ -119,20 +119,20 @@ func TestRegistryUnbindTaskIdempotent(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 	})
-	r.UnbindTask("A", "absent") // double-release safe
-	r.BindTask("A", "t1")
-	r.UnbindTask("A", "t1")
-	r.UnbindTask("A", "t1") // idempotent on already-unbound
+	r.UnbindTask(tcid("A"), "absent") // double-release safe
+	r.BindTask(tcid("A"), "t1")
+	r.UnbindTask(tcid("A"), "t1")
+	r.UnbindTask(tcid("A"), "t1") // idempotent on already-unbound
 }
 
 func TestRegistryBindTaskRace(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 4,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 4,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 	})
 	const N = 64
@@ -142,7 +142,7 @@ func TestRegistryBindTaskRace(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results <- r.BindTask("A", fmt.Sprintf("t%d", i))
+			results <- r.BindTask(tcid("A"), fmt.Sprintf("t%d", i))
 		}(i)
 	}
 	wg.Wait()
@@ -164,7 +164,7 @@ func TestRegistryStatusMethod(t *testing.T) {
 
 	// No conn = Offline
 	e := &RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 		Conn: nil,
 	}
@@ -190,15 +190,15 @@ func TestRegistryStatusMethod(t *testing.T) {
 func TestRegistryCandidatesPrefixMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/home/kforfk/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != "A" {
+	if len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A, got %v", cs)
 	}
 	cs = r.Candidates("/home/pi/workspace/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != "B" {
+	if len(cs) != 1 || cs[0].ID != tcid("B") {
 		t.Fatalf("expected only B, got %v", cs)
 	}
 	cs = r.Candidates("/etc/passwd", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
@@ -210,8 +210,8 @@ func TestRegistryCandidatesPrefixMatch(t *testing.T) {
 func TestRegistryCandidatesAmbiguous(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 	cs := r.Candidates("/shared/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candidates (ambiguous), got %d", len(cs))
@@ -221,7 +221,7 @@ func TestRegistryCandidatesAmbiguous(t *testing.T) {
 func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastSeen: now})
 	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 {
@@ -232,16 +232,16 @@ func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
 	r := NewRegistry()
 	var got RunnerEntry
-	r.OnRemove = func(id string, snap RunnerEntry) {
+	r.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		got = snap
 	}
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
+		ID: tcid("A"), Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
 		ActiveTasks: map[string]struct{}{"t1": {}, "t2": {}}, ConnectedAt: now, LastSeen: now,
 	})
-	r.Remove("A")
-	if got.ID != "A" || len(got.ActiveTasks) != 2 {
+	r.Remove(tcid("A"))
+	if got.ID != tcid("A") || len(got.ActiveTasks) != 2 {
 		t.Fatalf("snapshot lost ActiveTasks: %+v", got)
 	}
 }
@@ -249,8 +249,8 @@ func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}
@@ -258,7 +258,7 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	sel.SetHostname(h)
 
 	cs := r.Candidates("/x/repo", sel)
-	if len(cs) != 1 || cs[0].ID != "A" {
+	if len(cs) != 1 || cs[0].ID != tcid("A") {
 		t.Fatalf("expected only A (gmkhost), got %v", cs)
 	}
 }
@@ -269,17 +269,17 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "broad", Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "focused", Identity: testRunnerID("focused"), Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("focused"), Identity: testRunnerID("focused"), Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != "focused" {
+	if len(cs) != 1 || cs[0].ID != tcid("focused") {
 		t.Fatalf("expected only focused runner via longest-prefix-match, got %v", cs)
 	}
 
 	// A repo that only the broad runner covers still resolves to it.
 	cs = r.Candidates("/a/other", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != "broad" {
+	if len(cs) != 1 || cs[0].ID != tcid("broad") {
 		t.Fatalf("expected only broad runner for non-overlapping repo, got %v", cs)
 	}
 }
@@ -288,16 +288,16 @@ func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixTieAmbiguous(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "broad", Identity: testRunnerID("broad"), Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("broad"), Identity: testRunnerID("broad"), Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candidates at the most-specific tier (A,B); broad must drop, got %v", cs)
 	}
-	gotIDs := map[string]bool{cs[0].ID: true, cs[1].ID: true}
-	if !gotIDs["A"] || !gotIDs["B"] {
+	gotIDs := map[objproto.ConnectionID]bool{cs[0].ID: true, cs[1].ID: true}
+	if !gotIDs[tcid("A")] || !gotIDs[tcid("B")] {
 		t.Fatalf("expected A and B at the most-specific tier, got %v", cs)
 	}
 }
@@ -309,18 +309,18 @@ func TestRegistryCandidatesLongestPrefixPerRunnerMaxRoot(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID: "multi", Hostname: "h1",
+		ID: tcid("multi"), Hostname: "h1",
 		AllowedRoots: []string{"/a", "/a/b/c"},
 		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 	})
 	r.Add(&RunnerEntry{
-		ID: "broad", Hostname: "h2",
+		ID: tcid("broad"), Hostname: "h2",
 		AllowedRoots: []string{"/a/b"},
 		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
 	})
 
 	cs := r.Candidates("/a/b/c/x", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
-	if len(cs) != 1 || cs[0].ID != "multi" {
+	if len(cs) != 1 || cs[0].ID != tcid("multi") {
 		t.Fatalf("expected multi (its longest matching root wins over broad), got %v", cs)
 	}
 }
@@ -331,7 +331,7 @@ func TestRegistry_PhaseAEntry_NoVia(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID:           "ws:127.0.0.1:8540-1",
+		ID:           tcid("ws:127.0.0.1:8540-1"),
 		Hostname:     "direct-runner",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -340,7 +340,7 @@ func TestRegistry_PhaseAEntry_NoVia(t *testing.T) {
 		LastSeen:     now,
 		// Via and ViaDialAddr intentionally left zero (Phase A direct).
 	})
-	entry, ok := r.Get("ws:127.0.0.1:8540-1")
+	entry, ok := r.Get(tcid("ws:127.0.0.1:8540-1"))
 	if !ok {
 		t.Fatal("expected Get ok=true")
 	}
@@ -360,7 +360,7 @@ func TestRegistry_PhaseCEntry_ViaPopulated(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	proxyEntry := &RunnerEntry{
-		ID:           "ws:127.0.0.1:8541-1",
+		ID:           tcid("ws:127.0.0.1:8541-1"),
 		Hostname:     "proxy-runner",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -377,7 +377,7 @@ func TestRegistry_PhaseCEntry_ViaPopulated(t *testing.T) {
 	}
 
 	childEntry := &RunnerEntry{
-		ID:           "ws:10.0.0.1:9000-42",
+		ID:           tcid("ws:10.0.0.1:9000-42"),
 		Hostname:     "child-runner",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -389,14 +389,14 @@ func TestRegistry_PhaseCEntry_ViaPopulated(t *testing.T) {
 	}
 	r.Add(childEntry)
 
-	got, ok := r.Get("ws:10.0.0.1:9000-42")
+	got, ok := r.Get(tcid("ws:10.0.0.1:9000-42"))
 	if !ok {
 		t.Fatal("expected Get ok=true for child entry")
 	}
 	if got.Via == nil {
 		t.Fatal("expected Via non-nil for Phase C entry")
 	}
-	if got.Via.ID != "ws:127.0.0.1:8541-1" {
+	if got.Via.ID != tcid("ws:127.0.0.1:8541-1") {
 		t.Errorf("Via.ID: got %q, want %q", got.Via.ID, "ws:127.0.0.1:8541-1")
 	}
 	if got.ViaDialAddr != parsedViaAddr {
@@ -414,7 +414,7 @@ func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
 	now := time.Now()
 	makeEntry := func(id string) *RunnerEntry {
 		return &RunnerEntry{
-			ID: id, Hostname: id, AllowedRoots: []string{"/x"},
+			ID: tcid(id), Hostname: id, AllowedRoots: []string{"/x"},
 			MaxTasks: 1, ActiveTasks: map[string]struct{}{},
 			ConnectedAt: now, LastSeen: now,
 		}
@@ -426,20 +426,20 @@ func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
 	l.Via = p
 
 	// Walk from L following Via pointers; collect visited IDs.
-	var visited []string
+	var visited []objproto.ConnectionID
 	cur := l
 	for cur != nil {
 		visited = append(visited, cur.ID)
 		cur = cur.Via
 	}
 
-	want := []string{"L", "P", "Q"}
+	want := []objproto.ConnectionID{tcid("L"), tcid("P"), tcid("Q")}
 	if len(visited) != len(want) {
 		t.Fatalf("walk length: got %d (%v), want %d (%v)", len(visited), visited, len(want), want)
 	}
 	for i, id := range want {
 		if visited[i] != id {
-			t.Errorf("walk[%d]: got %q, want %q", i, visited[i], id)
+			t.Errorf("walk[%d]: got %v, want %v", i, visited[i], id)
 		}
 	}
 }
@@ -450,8 +450,8 @@ func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
 func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
-	r.Add(&RunnerEntry{ID: "A", Identity: testRunnerID("A"), Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
-	r.Add(&RunnerEntry{ID: "B", Identity: testRunnerID("B"), Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: tcid("B"), Identity: testRunnerID("B"), Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	h := protocol.Hostname{}
@@ -459,7 +459,7 @@ func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
 	sel.SetHostname(h)
 
 	cs := r.Candidates("/a/b/c", sel)
-	if len(cs) != 1 || cs[0].ID != "B" {
+	if len(cs) != 1 || cs[0].ID != tcid("B") {
 		t.Fatalf("selector pin to broad-host must return B even though A has a more specific root, got %v", cs)
 	}
 }

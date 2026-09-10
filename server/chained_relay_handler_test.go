@@ -20,7 +20,7 @@ func buildTestCID(s string) objproto.ConnectionID {
 }
 
 // addEntry adds a RunnerEntry directly to the registry for test setup.
-func addEntry(reg *Registry, id string, via *RunnerEntry, viaDialAddr objproto.ConnectionID) *RunnerEntry {
+func addEntry(reg *Registry, id objproto.ConnectionID, via *RunnerEntry, viaDialAddr objproto.ConnectionID) *RunnerEntry {
 	e := &RunnerEntry{
 		ID:          id,
 		Via:         via,
@@ -29,7 +29,7 @@ func addEntry(reg *Registry, id string, via *RunnerEntry, viaDialAddr objproto.C
 	}
 	reg.Add(e)
 	// Return the live pointer that was stored (not a copy).
-	livePtr, _ := reg.GetByConnectionID(buildTestCID(id))
+	livePtr, _ := reg.GetByConnectionID(id)
 	return livePtr
 }
 
@@ -54,13 +54,13 @@ func TestChainedRelay_Direct(t *testing.T) {
 	reg := NewRegistry()
 	// L has no Via.
 	lCID := buildTestCID("ws:127.0.0.1:9001-1")
-	addEntry(reg, lCID.String(), nil, objproto.ConnectionID{})
+	addEntry(reg, lCID, nil, objproto.ConnectionID{})
 
 	h := &ChainedRelayHandler{
 		Logger:             slog.Default(),
 		Registry:           reg,
 		SendEstablishRelay: noopSendEstablishRelay(t),
-		inFlight:           make(map[string]struct{}),
+		inFlight:           make(map[objproto.ConnectionID]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -77,12 +77,12 @@ func TestChainedRelay_2Hop(t *testing.T) {
 
 	// P: directly registered (no Via).
 	pCID := buildTestCID("ws:127.0.0.1:9002-1")
-	pEntry := addEntry(reg, pCID.String(), nil, objproto.ConnectionID{})
+	pEntry := addEntry(reg, pCID, nil, objproto.ConnectionID{})
 
 	// L.ViaDialAddr is the address P uses to forward to L.
 	lDialAddr := buildTestCID("ws:10.0.0.1:8540-0")
 	lCID := buildTestCID("ws:127.0.0.1:9002-2")
-	addEntry(reg, lCID.String(), pEntry, lDialAddr)
+	addEntry(reg, lCID, pEntry, lDialAddr)
 
 	var (
 		callCount    int32
@@ -104,7 +104,7 @@ func TestChainedRelay_2Hop(t *testing.T) {
 			mu.Unlock()
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
-		inFlight: make(map[string]struct{}),
+		inFlight: make(map[objproto.ConnectionID]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -138,17 +138,17 @@ func TestChainedRelay_3Hop_Parallel(t *testing.T) {
 
 	// Q: directly registered.
 	qCID := buildTestCID("ws:127.0.0.1:9003-1")
-	qEntry := addEntry(reg, qCID.String(), nil, objproto.ConnectionID{})
+	qEntry := addEntry(reg, qCID, nil, objproto.ConnectionID{})
 
 	// P via Q. P.ViaDialAddr is what Q uses for SetProxy.allocate → P's addr.
 	pDialAddr := buildTestCID("ws:10.0.0.2:8541-0")
 	pCID := buildTestCID("ws:127.0.0.1:9003-2")
-	pEntry := addEntry(reg, pCID.String(), qEntry, pDialAddr)
+	pEntry := addEntry(reg, pCID, qEntry, pDialAddr)
 
 	// L via P. L.ViaDialAddr is what P uses for SetProxy.allocate → L's addr.
 	lDialAddr := buildTestCID("ws:10.0.0.3:8542-0")
 	lCID := buildTestCID("ws:127.0.0.1:9003-3")
-	addEntry(reg, lCID.String(), pEntry, lDialAddr)
+	addEntry(reg, lCID, pEntry, lDialAddr)
 
 	var callCount int32
 
@@ -161,7 +161,7 @@ func TestChainedRelay_3Hop_Parallel(t *testing.T) {
 			atomic.AddInt32(&callCount, 1)
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
-		inFlight: make(map[string]struct{}),
+		inFlight: make(map[objproto.ConnectionID]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -187,11 +187,11 @@ func TestChainedRelay_HopFailure(t *testing.T) {
 	reg := NewRegistry()
 
 	pCID := buildTestCID("ws:127.0.0.1:9004-1")
-	pEntry := addEntry(reg, pCID.String(), nil, objproto.ConnectionID{})
+	pEntry := addEntry(reg, pCID, nil, objproto.ConnectionID{})
 
 	lDialAddr := buildTestCID("ws:10.0.0.1:8543-0")
 	lCID := buildTestCID("ws:127.0.0.1:9004-2")
-	addEntry(reg, lCID.String(), pEntry, lDialAddr)
+	addEntry(reg, lCID, pEntry, lDialAddr)
 
 	h := &ChainedRelayHandler{
 		Logger:   slog.Default(),
@@ -199,7 +199,7 @@ func TestChainedRelay_HopFailure(t *testing.T) {
 		SendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_SlotCollision}, nil
 		},
-		inFlight: make(map[string]struct{}),
+		inFlight: make(map[objproto.ConnectionID]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -223,12 +223,12 @@ func TestChainedRelay_LoopDetection(t *testing.T) {
 	bCID := buildTestCID("ws:127.0.0.1:9005-2")
 
 	entryA := &RunnerEntry{
-		ID:          aCID.String(),
+		ID:          aCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: dialAddrA,
 	}
 	entryB := &RunnerEntry{
-		ID:          bCID.String(),
+		ID:          bCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: dialAddrB,
 	}
@@ -243,7 +243,7 @@ func TestChainedRelay_LoopDetection(t *testing.T) {
 		Logger:             slog.Default(),
 		Registry:           reg,
 		SendEstablishRelay: noopSendEstablishRelay(t),
-		inFlight:           make(map[string]struct{}),
+		inFlight:           make(map[objproto.ConnectionID]struct{}),
 	}
 
 	// Request from A — its Via chain loops through B → A → ...
@@ -268,17 +268,17 @@ func TestChainedRelay_3NodeCycle(t *testing.T) {
 	cCID := buildTestCID("ws:127.0.0.1:9007-3")
 
 	entryA := &RunnerEntry{
-		ID:          aCID.String(),
+		ID:          aCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: dialAddrA,
 	}
 	entryB := &RunnerEntry{
-		ID:          bCID.String(),
+		ID:          bCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: dialAddrB,
 	}
 	entryC := &RunnerEntry{
-		ID:          cCID.String(),
+		ID:          cCID,
 		ActiveTasks: make(map[string]struct{}),
 		ViaDialAddr: dialAddrC,
 	}
@@ -295,7 +295,7 @@ func TestChainedRelay_3NodeCycle(t *testing.T) {
 		Logger:             slog.Default(),
 		Registry:           reg,
 		SendEstablishRelay: noopSendEstablishRelay(t),
-		inFlight:           make(map[string]struct{}),
+		inFlight:           make(map[objproto.ConnectionID]struct{}),
 	}
 
 	// Request from A — its Via chain loops B → C → A → ...
@@ -313,11 +313,11 @@ func TestChainedRelay_AnotherInFlight(t *testing.T) {
 	reg := NewRegistry()
 
 	pCID := buildTestCID("ws:127.0.0.1:9006-1")
-	pEntry := addEntry(reg, pCID.String(), nil, objproto.ConnectionID{})
+	pEntry := addEntry(reg, pCID, nil, objproto.ConnectionID{})
 
 	lDialAddr := buildTestCID("ws:10.0.0.1:8560-0")
 	lCID := buildTestCID("ws:127.0.0.1:9006-2")
-	addEntry(reg, lCID.String(), pEntry, lDialAddr)
+	addEntry(reg, lCID, pEntry, lDialAddr)
 
 	// blockCh holds the first Handle call until the test releases it.
 	blockCh := make(chan struct{})
@@ -330,7 +330,7 @@ func TestChainedRelay_AnotherInFlight(t *testing.T) {
 			<-blockCh // block until test releases
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
-		inFlight: make(map[string]struct{}),
+		inFlight: make(map[objproto.ConnectionID]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}

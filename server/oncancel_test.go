@@ -42,10 +42,10 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 	d := &Dispatcher{Registry: reg, Tasks: tasks}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-20")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     2,
@@ -57,7 +57,7 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 
 	// Create a task and manually assign it (simulating TryDispatch success).
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskID, testRunnerID(runnerID), "", false)
+	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	// Also bind it in the registry (as TryDispatch would have done).
 	reg.BindTask(runnerID, taskID)
 
@@ -102,10 +102,10 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 	d := &Dispatcher{Registry: reg, Tasks: tasks}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-21")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     2,
@@ -116,7 +116,7 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 	})
 
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskID, testRunnerID(runnerID), "", false)
+	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	reg.BindTask(runnerID, taskID)
 
 	// Wire the OnCancel callback as server.go should (chain with existing publish).

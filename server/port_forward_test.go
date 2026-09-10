@@ -89,7 +89,7 @@ func TestHandleOpenPortForward_LocalDialsRunner(t *testing.T) {
 	h.Tasks.mu.Unlock()
 
 	runnerConn := &fakeConn{nextStreamID: 900}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 
 	clientConn := &fakeConn{nextStreamID: 501}
 	// The data stream names the registration it belongs to, so the bytes it
@@ -167,7 +167,7 @@ func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	h.Tasks.mu.Unlock()
 
 	runnerConn := &fakeConn{}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 
 	ctrl := newRecordingBidiStream(555)
 	defer ctrl.CloseBoth() // let the watchRemoteForwardControl goroutine exit
@@ -259,7 +259,7 @@ func TestHandleRegisterPortForward_LocalRegisters(t *testing.T) {
 	h.Tasks.mu.Unlock()
 
 	runnerConn := &fakeConn{}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 
 	ctrl := newRecordingBidiStream(777)
 	defer ctrl.CloseBoth() // let the watchRemoteForwardControl goroutine exit
@@ -636,7 +636,7 @@ func registerRemoteForwardForTest(t *testing.T, ctrl trsf.BidirectionalStream, b
 	h.Tasks.order = append(h.Tasks.order, idHex)
 	h.Tasks.mu.Unlock()
 	runnerConn := &fakeConn{}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 	clientConn := &fakeConn{nextBidi: ctrl}
 	req := &protocol.RegisterPortForwardRequest{
 		TaskId:     protocol.TaskID{Id: rawID},
@@ -821,7 +821,7 @@ func TestHandleRegisterPortForward_LocalInProcess(t *testing.T) {
 	copy(rawID[:], raw)
 
 	runnerConn := &fakeConn{}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 
 	ctrl := newRecordingBidiStream(881)
 	defer ctrl.CloseBoth()
@@ -869,7 +869,7 @@ func TestHandleRegisterPortForward_RemoteInProcessRejected(t *testing.T) {
 	copy(rawID[:], raw)
 
 	runnerConn := &fakeConn{}
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: runnerConn})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: runnerConn})
 	clientConn := &fakeConn{nextBidi: newRecordingBidiStream(882)}
 	req := &protocol.RegisterPortForwardRequest{
 		TaskId:         protocol.TaskID{Id: rawID},
@@ -911,7 +911,7 @@ func TestOpenPortForwardRefusesUnattributedStream(t *testing.T) {
 	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: testRunnerID("runner-1")}
 	h.Tasks.order = append(h.Tasks.order, idHex)
 	h.Tasks.mu.Unlock()
-	h.Registry.Add(&RunnerEntry{ID: "runner-1", Identity: testRunnerID("runner-1"), Conn: &fakeConn{nextStreamID: 900}})
+	h.Registry.Add(&RunnerEntry{ID: tcid("runner-1"), Identity: testRunnerID("runner-1"), Conn: &fakeConn{nextStreamID: 900}})
 
 	for _, id := range []uint64{0, 4242} {
 		clientConn := &fakeConn{nextStreamID: 501}

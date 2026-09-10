@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net/netip"
 	"sort"
 	"sync"
 	"time"
@@ -24,7 +23,22 @@ import (
 // ActiveTasks is a set of task IDs (hex strings) currently bound to this
 // runner. len(ActiveTasks) is the current load; capacity is MaxTasks.
 type RunnerEntry struct {
-	ID string // = objproto.ConnectionID.String()
+	// ID is the CONNECTION this entry describes, and it is the registry's key.
+	//
+	// A typed ConnectionID rather than its String(), which is what this field
+	// held while its own comment read `// = objproto.ConnectionID.String()`.
+	// Beside it sits Identity, a protocol.RunnerID — a different thing whose
+	// hex is also a string — and the two were interchangeable to the compiler.
+	// readopt.go duly passed an identity hex to BindTask, which keys on THIS,
+	// so the lookup missed, the bool was discarded, and a re-adopted task was
+	// bound to nothing: invisible to failAndRevokeTasksOf, its row stuck
+	// non-terminal for good. TaskEntry.AssignedTo was typed for this exact
+	// confusion one change earlier; the registry is where it came back.
+	//
+	// Typed, an identity cannot be passed here at all — there is no conversion
+	// from a hex string to a ConnectionID that does not go through a parse
+	// that would fail.
+	ID objproto.ConnectionID
 	// Identity is the runner PROCESS behind this connection, from
 	// RunnerHello.runner_id. Unlike ID it survives that process's reconnects,
 	// which is the whole reason it exists: a credential keyed on it then
@@ -105,37 +119,43 @@ func (e RunnerEntry) DefaultProfile() string {
 }
 
 // Registry tracks connected runners. All public methods are concurrency-safe.
+//
+// Both maps are keyed by the TYPE of the thing they index — a connection by
+// its ConnectionID, an identity by its RunnerID. Both are comparable structs,
+// so this costs nothing at runtime and buys the one guarantee a pair of
+// same-shaped strings cannot give: the compiler refuses the mix-up.
 type Registry struct {
 	mu      sync.RWMutex
-	runners map[string]*RunnerEntry
-	// byIdentity maps a runner identity's hex to the connection id currently
-	// holding it. At most one live connection per identity, and a second Add
-	// under the same identity TAKES OVER rather than being refused: that is the
-	// reconnect path, the runner re-dialled so the old path is dead by
-	// hypothesis, and the runner is the authority on its own liveness. Making
-	// the new connection wait for the old to be reaped would cost a full
+	runners map[objproto.ConnectionID]*RunnerEntry
+	// byIdentity maps a runner identity to the connection currently holding
+	// it. At most one live connection per identity, and a second Add under the
+	// same identity TAKES OVER rather than being refused: that is the reconnect
+	// path, the runner re-dialled so the old path is dead by hypothesis, and
+	// the runner is the authority on its own liveness. Making the new
+	// connection wait for the old to be reaped would cost a full
 	// --ping-interval, which is the latency this whole change exists to remove.
-	byIdentity map[string]string
+	byIdentity map[protocol.RunnerID]objproto.ConnectionID
 
-	OnAdd    func(RunnerEntry)                 // optional; called after Add inserts an entry.
-	OnRemove func(id string, snap RunnerEntry) // optional; called after Remove deletes an entry.
+	OnAdd    func(RunnerEntry)                                // optional; called after Add inserts an entry.
+	OnRemove func(id objproto.ConnectionID, snap RunnerEntry) // optional; called after Remove deletes an entry.
 }
 
 // NewRegistry creates an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		runners:    make(map[string]*RunnerEntry),
-		byIdentity: make(map[string]string),
+		runners:    make(map[objproto.ConnectionID]*RunnerEntry),
+		byIdentity: make(map[protocol.RunnerID]objproto.ConnectionID),
 	}
 }
 
 // Add inserts or replaces the entry keyed by e.ID and claims e.Identity for it.
 //
-// Returns the connection id that previously held that identity, when there was
-// one and it was a different connection. The caller must tear that connection
-// down: two connections claiming one runner would both be dispatched to, and
-// the agents of one of them hold tickets the board now keys to the other.
-func (r *Registry) Add(e *RunnerEntry) (displaced string) {
+// Returns the connection that previously held that identity, when there was
+// one and it was a different connection; the zero ConnectionID when there was
+// not. The caller must tear that connection down: two connections claiming one
+// runner would both be dispatched to, and the agents of one of them hold
+// tickets the board now keys to the other.
+func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID) {
 	r.mu.Lock()
 	// Ensure ActiveTasks is initialized.
 	if e.ActiveTasks == nil {
@@ -143,11 +163,10 @@ func (r *Registry) Add(e *RunnerEntry) (displaced string) {
 	}
 	r.runners[e.ID] = e
 	if !e.Identity.IsZero() {
-		key := e.Identity.Hex()
-		if prev, ok := r.byIdentity[key]; ok && prev != e.ID {
+		if prev, ok := r.byIdentity[e.Identity]; ok && prev != e.ID {
 			displaced = prev
 		}
-		r.byIdentity[key] = e.ID
+		r.byIdentity[e.Identity] = e.ID
 	}
 	snapshot := *e
 	onAdd := r.OnAdd
@@ -161,7 +180,7 @@ func (r *Registry) Add(e *RunnerEntry) (displaced string) {
 // Remove deletes the entry with the given id. No-op if absent.
 // The snapshot of the entry at removal time is passed to OnRemove so the
 // callback can inspect which tasks were stranded.
-func (r *Registry) Remove(id string) {
+func (r *Registry) Remove(id objproto.ConnectionID) {
 	r.mu.Lock()
 	e, existed := r.runners[id]
 	var snap RunnerEntry
@@ -176,8 +195,8 @@ func (r *Registry) Remove(id string) {
 	// strip the identity from the connection now legitimately holding it, and
 	// the symptom would be a runner that reconnects and then cannot be found by
 	// identity, intermittently.
-	if existed && !e.Identity.IsZero() && r.byIdentity[e.Identity.Hex()] == id {
-		delete(r.byIdentity, e.Identity.Hex())
+	if existed && !e.Identity.IsZero() && r.byIdentity[e.Identity] == id {
+		delete(r.byIdentity, e.Identity)
 	}
 	onRemove := r.OnRemove
 	r.mu.Unlock()
@@ -210,7 +229,7 @@ func (r *Registry) GetLiveByIdentity(rid protocol.RunnerID) (*RunnerEntry, bool)
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	id, ok := r.byIdentity[rid.Hex()]
+	id, ok := r.byIdentity[rid]
 	if !ok {
 		return nil, false
 	}
@@ -220,7 +239,7 @@ func (r *Registry) GetLiveByIdentity(rid protocol.RunnerID) (*RunnerEntry, bool)
 
 // Get returns a value snapshot of the entry for id. The returned value is
 // independent of the internal map; callers may read or copy it freely.
-func (r *Registry) Get(id string) (RunnerEntry, bool) {
+func (r *Registry) Get(id objproto.ConnectionID) (RunnerEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.runners[id]
@@ -232,7 +251,7 @@ func (r *Registry) Get(id string) (RunnerEntry, bool) {
 
 // SetLastSeen updates the runner's LastSeen timestamp to ts.
 // Returns false if the runner is not registered.
-func (r *Registry) SetLastSeen(id string, ts time.Time) bool {
+func (r *Registry) SetLastSeen(id objproto.ConnectionID, ts time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.runners[id]
@@ -246,7 +265,7 @@ func (r *Registry) SetLastSeen(id string, ts time.Time) bool {
 // BindTask atomically reserves a task slot on the runner. Returns false if
 // the runner is unknown or already at capacity. Caller (dispatcher) must
 // call UnbindTask on send failure to roll back the reservation.
-func (r *Registry) BindTask(id, taskID string) bool {
+func (r *Registry) BindTask(id objproto.ConnectionID, taskID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.runners[id]
@@ -268,7 +287,7 @@ func (r *Registry) BindTask(id, taskID string) bool {
 // runner is unknown or did not hold the task. This makes it safe to call
 // from both the dispatcher's rollback path and the runner_handler's
 // TaskFinished path even if they race.
-func (r *Registry) UnbindTask(id, taskID string) {
+func (r *Registry) UnbindTask(id objproto.ConnectionID, taskID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.runners[id]
@@ -324,7 +343,10 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ConnectedAt.Equal(out[j].ConnectedAt) {
-			return out[i].ID < out[j].ID
+			// A ConnectionID has no order of its own; the canonical string is
+			// what "ID asc" has always meant here, and the tie-break only has
+			// to be STABLE.
+			return out[i].ID.String() < out[j].ID.String()
 		}
 		return out[i].ConnectedAt.Before(out[j].ConnectedAt)
 	})
@@ -356,27 +378,27 @@ func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {
 	case protocol.RunnerSelectorKind_ByConnId:
 		// Pins a CONNECTION, so unlike ByRunnerId it stops matching once that
 		// runner reconnects. Exists because an operator can still paste the
-		// addr= column.
+		// addr= column. Struct equality now that both sides are the type —
+		// this compared two rendered strings while the entry's key was one.
 		want := sel.ConnId()
-		return want != nil && want.ToObjproto().String() == e.ID
+		return want != nil && want.ToObjproto() == e.ID
 	case protocol.RunnerSelectorKind_ByHostname:
 		h := sel.Hostname()
 		return h != nil && string(h.Name) == e.Hostname
 	case protocol.RunnerSelectorKind_ByIp:
 		ip := sel.IpAddr()
-		return ip != nil && runnerIDIPMatches(e.ID, ip.Addr)
+		// Straight off the typed key. This used to re-PARSE the entry's id
+		// string back into a ConnectionID to reach the same field
+		// (parseConnIDForIP / runnerIDIPMatches, both deleted): work that
+		// existed only because the key had been flattened to text.
+		return ip != nil && addrBytesEqual(e.ID.Addr.Addr().AsSlice(), ip.Addr)
 	}
 	return false
 }
 
-// runnerIDIPMatches extracts the IP bytes from a ConnectionID-encoded ID string
-// and compares to want. Format: "transport:ip:port-id", e.g. "ws:127.0.0.1:8539-1".
-func runnerIDIPMatches(id string, want []byte) bool {
-	addr, err := parseConnIDForIP(id)
-	if err != nil {
-		return false
-	}
-	got := addr.AsSlice()
+// addrBytesEqual compares an IP's bytes against the selector's, length
+// included — a v4 and a v6 address are not equal because one embeds the other.
+func addrBytesEqual(got, want []byte) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -388,30 +410,20 @@ func runnerIDIPMatches(id string, want []byte) bool {
 	return true
 }
 
-// parseConnIDForIP parses the IP address component from a ConnectionID string.
-func parseConnIDForIP(id string) (netip.Addr, error) {
-	cid, err := objproto.ParseConnectionID(id, 0)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-	return cid.Addr.Addr(), nil
-}
-
-// GetByConnectionID returns a pointer to the registered RunnerEntry whose
-// stringified ConnectionID matches cid, or nil/false on no match.
+// GetByConnectionID returns a pointer to the registered RunnerEntry for cid,
+// or nil/false on no match.
 //
-// Unlike Get (which keys by the same canonical string but returns a value
-// snapshot), this accessor returns the live pointer so the via-relay path
-// can read the live ConnHandle and Addr without an extra lookup. The map
-// stores *RunnerEntry, so the returned pointer is the same one mutations
-// race against — callers must treat it as read-only.
+// Unlike Get (same key, value snapshot) this accessor returns the live pointer
+// so the via-relay path can read the live ConnHandle and Addr without an extra
+// lookup. The map stores *RunnerEntry, so the returned pointer is the same one
+// mutations race against — callers must treat it as read-only.
 //
 // Used by the dial-runner via-relay path (DialRunnerHandler.ResolveVia) to
 // resolve a CLI-supplied via=<cid> against the live registered runners.
 func (r *Registry) GetByConnectionID(cid objproto.ConnectionID) (*RunnerEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	entry, ok := r.runners[cid.String()]
+	entry, ok := r.runners[cid]
 	if !ok {
 		return nil, false
 	}

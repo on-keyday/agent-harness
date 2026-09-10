@@ -92,7 +92,7 @@ type App struct {
 	connsModal ConnsModal
 	// Which run of the conns modal's trsf poll is current; a tick from an
 	// older one is dropped rather than allowed to reschedule. See trsfTickMsg.
-	trsfGen int
+	trsfGen       int
 	forwardsModal ForwardsModal
 	// forwardTap is the live traffic view for one forward. Its pump is stopped
 	// through forwardTapStop, which is nil whenever no tap is running.

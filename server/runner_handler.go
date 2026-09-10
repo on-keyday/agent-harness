@@ -94,7 +94,7 @@ type RunnerHandler struct {
 	// registered via RunnerHello so the server can emit a conn_identified event
 	// on conns.status. Called with the runner's connection ID string.
 	// Nil-safe; tests that do not exercise the event path leave it unwired.
-	OnConnIdentified func(cidStr string)
+	OnConnIdentified func(cid objproto.ConnectionID)
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -107,7 +107,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		return
 	}
 
-	runnerID := conn.ConnectionID().String()
+	runnerID := conn.ConnectionID()
 	now := h.Now()
 
 	switch msg.Kind {

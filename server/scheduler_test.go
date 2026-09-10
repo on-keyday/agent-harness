@@ -2,19 +2,29 @@ package server
 
 import (
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestSchedulerAssignsOnePair verifies that Tick assigns a single available runner
 // to a Queued task on a compatible root.
+
+// assignPair is what a captured assignment IS: a connection and a task. It
+// used to be `runner + ":" + task`, which was fine while a fixture runner was
+// called "r1" and stopped being fine the moment RunnerEntry.ID became a real
+// ConnectionID — whose canonical text contains the separator the split used.
+type assignPair struct {
+	runner objproto.ConnectionID
+	task   string
+}
+
 func TestSchedulerAssignsOnePair(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           "r1",
+		ID:           tcid("r1"),
 		Hostname:     "h1",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -27,9 +37,9 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	store := NewTaskStore()
 	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
-	var captured []string
-	assignFn := func(runnerID, tID string) error {
-		captured = append(captured, runnerID+":"+tID)
+	var captured []assignPair
+	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
 		return nil
 	}
 
@@ -39,12 +49,12 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("expected assignFn called once, got %d times: %v", len(captured), captured)
 	}
-	if !strings.HasPrefix(captured[0], "r1:") {
-		t.Fatalf("expected pair starting with \"r1:\", got %q", captured[0])
+	if captured[0].runner != tcid("r1") {
+		t.Fatalf("expected the pair to name r1, got %v", captured[0])
 	}
 
 	// Runner must now have the task in ActiveTasks.
-	entry, ok := reg.Get("r1")
+	entry, ok := reg.Get(tcid("r1"))
 	if !ok {
 		t.Fatal("runner r1 not found after Tick")
 	}
@@ -70,7 +80,7 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 func TestSchedulerNoMatch(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           "r1",
+		ID:           tcid("r1"),
 		Hostname:     "h1",
 		AllowedRoots: []string{"/y"},
 		MaxTasks:     1,
@@ -83,7 +93,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	store := NewTaskStore()
 	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
-	assignFn := func(runnerID, tID string) error {
+	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
 		t.Fatal("assignFn must not be called when there is no repo match")
 		return nil
 	}
@@ -92,7 +102,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	s.Tick()
 
 	// Runner must remain Idle (no active tasks).
-	entry, _ := reg.Get("r1")
+	entry, _ := reg.Get(tcid("r1"))
 	if entry.Status() != protocol.RunnerStatus_Idle {
 		t.Fatalf("expected runner to remain Idle, got %v", entry.Status())
 	}
@@ -109,7 +119,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 func TestSchedulerSkipsBusy(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           "r1",
+		ID:           tcid("r1"),
 		Hostname:     "h1",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -120,7 +130,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	})
 	// r2 starts at capacity (1/1).
 	reg.Add(&RunnerEntry{
-		ID:           "r2",
+		ID:           tcid("r2"),
 		Hostname:     "h2",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -134,8 +144,8 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
 	var assigned []string
-	assignFn := func(runnerID, tID string) error {
-		assigned = append(assigned, runnerID)
+	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
+		assigned = append(assigned, runnerID.String())
 		return nil
 	}
 
@@ -145,12 +155,12 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	if len(assigned) != 1 {
 		t.Fatalf("expected 1 assignment, got %d: %v", len(assigned), assigned)
 	}
-	if assigned[0] != "r1" {
+	if assigned[0] != tcid("r1").String() {
 		t.Fatalf("expected assignment to r1 (Idle), got %q", assigned[0])
 	}
 
 	// r1 must be Busy (task bound).
-	r1, _ := reg.Get("r1")
+	r1, _ := reg.Get(tcid("r1"))
 	if _, bound := r1.ActiveTasks[taskID]; !bound {
 		t.Fatalf("expected task %q bound to r1, got ActiveTasks=%v", taskID, r1.ActiveTasks)
 	}
@@ -161,7 +171,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           "r1",
+		ID:           tcid("r1"),
 		Hostname:     "h1",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -174,7 +184,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	store := NewTaskStore()
 	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
-	assignFn := func(runnerID, tID string) error {
+	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
 		return errors.New("boom")
 	}
 
@@ -182,7 +192,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	s.Tick() // must not panic; error is logged, not propagated
 
 	// Runner must remain Idle (no active tasks added due to error).
-	entry, ok := reg.Get("r1")
+	entry, ok := reg.Get(tcid("r1"))
 	if !ok {
 		t.Fatal("runner r1 not found")
 	}
@@ -209,7 +219,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           "r1",
+		ID:           tcid("r1"),
 		Hostname:     "h1",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -219,7 +229,7 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 		Conn:         &fakeConn{},
 	})
 	reg.Add(&RunnerEntry{
-		ID:           "r2",
+		ID:           tcid("r2"),
 		Hostname:     "h2",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     1,
@@ -234,9 +244,9 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
-	var assigned []string
-	assignFn := func(runnerID, tID string) error {
-		assigned = append(assigned, runnerID+":"+tID)
+	var assigned []assignPair
+	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
+		assigned = append(assigned, assignPair{runnerID, tID})
 		return nil
 	}
 
@@ -250,11 +260,7 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 
 	assignedTasks := make(map[string]bool)
 	for _, pair := range assigned {
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			t.Fatalf("unexpected pair format %q", pair)
-		}
-		assignedTasks[parts[1]] = true
+		assignedTasks[pair.task] = true
 	}
 
 	if !assignedTasks[taskA] {
@@ -274,11 +280,11 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	}
 
 	// Both runners must be at capacity (Busy).
-	r1, _ := reg.Get("r1")
+	r1, _ := reg.Get(tcid("r1"))
 	if r1.Status() != protocol.RunnerStatus_Busy {
 		t.Fatalf("expected r1 Status=Busy, got %v", r1.Status())
 	}
-	r2, _ := reg.Get("r2")
+	r2, _ := reg.Get(tcid("r2"))
 	if r2.Status() != protocol.RunnerStatus_Busy {
 		t.Fatalf("expected r2 Status=Busy, got %v", r2.Status())
 	}
@@ -299,7 +305,7 @@ func hostnameSelector(t *testing.T, name string) protocol.RunnerSelector {
 
 func idleRunner(id, hostname string, profiles []string) *RunnerEntry {
 	return &RunnerEntry{
-		ID:            id,
+		ID:            tcid(id),
 		Hostname:      hostname,
 		AllowedRoots:  []string{"/x"},
 		AgentProfiles: profiles,
@@ -326,9 +332,9 @@ func TestSchedulerHonorsSelector(t *testing.T) {
 	taskID := store.Create("/x", "pinned", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "r2", hostnameSelector(t, "h2"), nil, protocol.Capability_All, Scope{}, "")
 
-	var captured []string
-	s := NewScheduler(reg, store, func(runnerID, tID string) error {
-		captured = append(captured, runnerID+":"+tID)
+	var captured []assignPair
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
 		return nil
 	})
 	s.Tick()
@@ -336,8 +342,8 @@ func TestSchedulerHonorsSelector(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("expected exactly one assignment, got %v", captured)
 	}
-	if captured[0] != "r2:"+taskID {
-		t.Fatalf("task pinned to h2 was assigned to %q, want r2:%s", captured[0], taskID)
+	if captured[0] != (assignPair{tcid("r2"), taskID}) {
+		t.Fatalf("task pinned to h2 was assigned to %v, want r2/%s", captured[0], taskID)
 	}
 }
 
@@ -354,15 +360,15 @@ func TestSchedulerHonorsAgentProfile(t *testing.T) {
 	taskID := store.Create("/x", "codex task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "r2", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "codex")
 
-	var captured []string
-	s := NewScheduler(reg, store, func(runnerID, tID string) error {
-		captured = append(captured, runnerID+":"+tID)
+	var captured []assignPair
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
 		return nil
 	})
 	s.Tick()
 
-	if len(captured) != 1 || captured[0] != "r2:"+taskID {
-		t.Fatalf("task requesting profile codex assigned to %v, want r2:%s", captured, taskID)
+	if len(captured) != 1 || captured[0] != (assignPair{tcid("r2"), taskID}) {
+		t.Fatalf("task requesting profile codex assigned to %v, want r2/%s", captured, taskID)
 	}
 }
 
@@ -379,14 +385,14 @@ func TestSchedulerPinnedTaskDoesNotBlockQueue(t *testing.T) {
 	runnable := store.Create("/x", "any runner", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
-	var captured []string
-	s := NewScheduler(reg, store, func(runnerID, tID string) error {
-		captured = append(captured, runnerID+":"+tID)
+	var captured []assignPair
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
 		return nil
 	})
 	s.Tick()
 
-	if len(captured) != 1 || captured[0] != "r1:"+runnable {
+	if len(captured) != 1 || captured[0] != (assignPair{tcid("r1"), runnable}) {
 		t.Fatalf("expected r1 to skip the pinned task and take %s, got %v", runnable, captured)
 	}
 	if got, _ := store.Get(blocked); got.Status != protocol.TaskStatus_Queued {

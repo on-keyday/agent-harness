@@ -350,7 +350,7 @@ func TestConnEvents_SameCIDAllThree(t *testing.T) {
 	// Manually trigger OnConnIdentified (RecordClientIdentity already records via clientKinds,
 	// but in this test we bypassed the hello path so call the hook directly).
 	if s.taskHandler.OnConnIdentified != nil {
-		s.taskHandler.OnConnIdentified(cidStr)
+		s.taskHandler.OnConnIdentified(cid)
 	}
 
 	if s.onConnEvent != nil {

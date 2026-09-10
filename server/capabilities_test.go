@@ -94,7 +94,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	now := time.Now()
 	// Register a runner so handleSubmit can resolve a candidate.
 	h.Registry.Add(&RunnerEntry{
-		ID:           "A",
+		ID:           tcid("A"),
 		Hostname:     "runner-a",
 		AllowedRoots: []string{"/x"},
 		MaxTasks:     4,
@@ -811,14 +811,14 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 	runnerA := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-91")}
 	runnerB := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-92")}
 	h.Registry.Add(&RunnerEntry{
-		ID:          runnerA.id.String(),
+		ID:          runnerA.id,
 		Hostname:    "host-a",
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{},
 		Conn:        runnerA,
 	})
 	h.Registry.Add(&RunnerEntry{
-		ID:          runnerB.id.String(),
+		ID:          runnerB.id,
 		Hostname:    "host-b",
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{},

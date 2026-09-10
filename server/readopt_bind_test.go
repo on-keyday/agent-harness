@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // D16 says re-adoption re-binds capacity. It did not: the call passed the
@@ -27,13 +28,13 @@ import (
 // Nothing caught it because no readopt test ever put a runner in the registry:
 // they all build `NewRegistry()` empty, so BindTask missed there too and the
 // assertions were about the store.
-func readoptFixture(t *testing.T) (srv *Server, reg *Registry, store *TaskStore, identity protocol.RunnerID, cid, taskID string) {
+func readoptFixture(t *testing.T) (srv *Server, reg *Registry, store *TaskStore, identity protocol.RunnerID, cid objproto.ConnectionID, taskID string) {
 	t.Helper()
 	store, _ = storeWithWAL(t)
 	reg = NewRegistry()
 	srv = &Server{tasks: store, registry: reg, cfg: Config{Logger: slog.Default(), DataDir: t.TempDir()}}
 	identity.Id[0] = 0xaa
-	cid = "ws:127.0.0.1:8539-77"
+	cid = buildTestCID("ws:127.0.0.1:8539-77")
 	reg.Add(&RunnerEntry{
 		ID: cid, Identity: identity, Hostname: "h", MaxTasks: 4,
 		ActiveTasks: map[string]struct{}{},

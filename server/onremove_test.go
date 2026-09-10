@@ -17,18 +17,18 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 	tasks := NewTaskStore()
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-30")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
 	// Create two tasks and manually set them to Running (simulating dispatch).
 	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskA, testRunnerID(runnerID), "", false)
-	tasks.Assign(taskB, testRunnerID(runnerID), "", false)
+	tasks.Assign(taskA, testRunnerID(runnerID.String()), "", false)
+	tasks.Assign(taskB, testRunnerID(runnerID.String()), "", false)
 
 	// Register runner with both tasks active.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     2,
@@ -40,7 +40,7 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 
 	offlineEvents := 0
 	// Wire OnRemove as server.go should: mark tasks failed, then publish event.
-	reg.OnRemove = func(id string, snap RunnerEntry) {
+	reg.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		for taskID := range snap.ActiveTasks {
 			tasks.MarkFailed(taskID, "runner_disconnected")
 		}
@@ -77,18 +77,18 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 	tasks := NewTaskStore()
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-31")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
 	// Create a task and manually mark it Succeeded (terminal).
 	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskID, testRunnerID(runnerID), "", false)
+	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	tasks.Finish(taskID, 0, nil) // exit 0 → Succeeded
 
 	// Register runner with the already-finished task still in ActiveTasks
 	// (race condition snapshot).
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -98,7 +98,7 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 		Conn:         fc,
 	})
 
-	reg.OnRemove = func(id string, snap RunnerEntry) {
+	reg.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		for tid := range snap.ActiveTasks {
 			tasks.MarkFailed(tid, "runner_disconnected")
 		}
@@ -120,11 +120,11 @@ func TestOnRemoveMarks_EmptyActiveTasks(t *testing.T) {
 	tasks := NewTaskStore()
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-32")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -135,7 +135,7 @@ func TestOnRemoveMarks_EmptyActiveTasks(t *testing.T) {
 	})
 
 	markFailedCalled := 0
-	reg.OnRemove = func(id string, snap RunnerEntry) {
+	reg.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		for tid := range snap.ActiveTasks {
 			tasks.MarkFailed(tid, "runner_disconnected")
 			markFailedCalled++
@@ -166,24 +166,24 @@ func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
 	h := &TaskHandler{Tasks: tasks, Registry: reg, Sessions: NewSessionRegistry()}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-31")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
-	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, testRunnerID(runnerID), "", false)
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	tasks.Assign(id, testRunnerID(runnerID.String()), "", false)
 	if err := tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
 	}
 
 	reg.Add(&RunnerEntry{
 		ID:          runnerID,
-		Identity:    testRunnerID(runnerID),
+		Identity:    testRunnerID(runnerID.String()),
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{id: {}},
 		ConnectedAt: time.Unix(1, 0),
 		LastSeen:    time.Unix(1, 0),
 		Conn:        fc,
 	})
-	reg.OnRemove = func(_ string, snap RunnerEntry) {
+	reg.OnRemove = func(_ objproto.ConnectionID, snap RunnerEntry) {
 		for taskID := range snap.ActiveTasks {
 			tasks.MarkFailed(taskID, "runner_disconnected")
 		}
@@ -222,14 +222,14 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	h := &TaskHandler{Tasks: tasks, Registry: reg, Sessions: NewSessionRegistry()}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-32")}
-	runnerID := fc.id.String()
+	runnerID := fc.id
 
-	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, testRunnerID(runnerID), "", false)
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	tasks.Assign(id, testRunnerID(runnerID.String()), "", false)
 
 	reg.Add(&RunnerEntry{
 		ID:          runnerID,
-		Identity:    testRunnerID(runnerID),
+		Identity:    testRunnerID(runnerID.String()),
 		MaxTasks:    2,
 		ActiveTasks: map[string]struct{}{id: {}},
 		ConnectedAt: time.Unix(1, 0),
@@ -262,7 +262,7 @@ func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
 	board := newTestBoard(t)
 	s := &Server{tasks: NewTaskStore(), registry: NewRegistry(), Board: board}
 
-	runnerID := "ws:127.0.0.1:8539-77"
+	runnerID := buildTestCID("ws:127.0.0.1:8539-77")
 	taskHex := "aabbccddeeff00112233445566778899"
 	// The identity comes from the SNAPSHOT the cleanup is handed, not from a
 	// lookup: by the time a disconnect is processed the identity may already

@@ -703,7 +703,7 @@ func TestPSKDispatchIdentity_RunnerRegistered(t *testing.T) {
 	pskDispatchIdentity(d, conn, req)
 
 	// Registry must have the runner registered.
-	entry, ok := reg.Get(connIDStr)
+	entry, ok := reg.Get(objproto.MustParseConnectionID(connIDStr))
 	if !ok {
 		t.Fatal("runner must be registered in Registry after RunnerHello dispatch")
 	}
@@ -798,7 +798,7 @@ func TestPSKDispatchIdentity_RunnerReceivesRunnerHelloResponse(t *testing.T) {
 	}
 
 	// Registry must be populated.
-	entry, ok := reg.Get(connIDStr)
+	entry, ok := reg.Get(objproto.MustParseConnectionID(connIDStr))
 	if !ok {
 		t.Fatal("runner must be registered in Registry after dispatch")
 	}

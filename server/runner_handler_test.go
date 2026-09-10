@@ -43,7 +43,7 @@ func TestHelloRegistersRunner(t *testing.T) {
 	payload := encodeRunnerMessage(t, msg)
 	h.Handle(fc, payload)
 
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 	entry, ok := reg.Get(runnerID)
 	if !ok {
 		t.Fatalf("expected runner entry for ID %q, not found", runnerID)
@@ -77,7 +77,7 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-2")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	// Use a known 16-byte task ID.
 	var rawID [16]byte
@@ -87,7 +87,7 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 	// Pre-populate Registry with a Busy runner that has the task bound.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -162,7 +162,7 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-3")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	var rawID [16]byte
 	rawID[0] = 0xAB
@@ -171,7 +171,7 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 	// Pre-populate Registry.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -233,12 +233,12 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-4")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	// Pre-populate registry with LastSeen at t0.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -284,7 +284,7 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-6")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	var rawID [16]byte
 	rawID[0] = 0x99
@@ -293,7 +293,7 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -343,7 +343,7 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-7")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	var expectedRawID [16]byte
 	expectedRawID[0] = 0xAA
@@ -352,7 +352,7 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "h",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,
@@ -406,7 +406,7 @@ func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-10")}
-	runnerID := fc.ConnectionID().String()
+	runnerID := fc.ConnectionID()
 
 	// Step 1: a runner with MaxTasks=1 and ActiveTasks={"t1"}.
 	// Use a fixed 16-byte raw ID to represent task "t1".
@@ -416,7 +416,7 @@ func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
 
 	reg.Add(&RunnerEntry{
 		ID:           runnerID,
-		Identity:     testRunnerID(runnerID),
+		Identity:     testRunnerID(runnerID.String()),
 		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
 		MaxTasks:     1,

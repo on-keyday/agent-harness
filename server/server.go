@@ -332,7 +332,7 @@ func New(cfg Config) *Server {
 	s.taskHandler.ConnListFn = s.ConnList
 	s.taskHandler.TrsfStateFn = s.trsfConnStates
 	s.taskHandler.RunnerTrsfStateFn = func(ctx context.Context, cid protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
-		entry, ok := s.registry.Get(cid.ToObjproto().String())
+		entry, ok := s.registry.Get(cid.ToObjproto())
 		if !ok {
 			return nil, 0, errRunnerOffline
 		}
@@ -458,7 +458,7 @@ func New(cfg Config) *Server {
 
 	// publishRunnerEvent constructs and publishes a RunnerStatusEvent to
 	// the global runners.status topic.
-	publishRunnerEvent := func(_ string, kind protocol.StatusEventKind, status protocol.RunnerStatus) {
+	publishRunnerEvent := func(_ objproto.ConnectionID, kind protocol.StatusEventKind, status protocol.RunnerStatus) {
 		ev := protocol.RunnerStatusEvent{
 			Kind:         kind,
 			Ts:           uint64(time.Now().UnixNano()),
@@ -509,18 +509,18 @@ func New(cfg Config) *Server {
 	}
 
 	// Wire conn_opened / conn_identified / conn_closed hooks.
-	s.taskHandler.OnConnIdentified = func(cidStr string) {
+	s.taskHandler.OnConnIdentified = func(cid objproto.ConnectionID) {
 		s.activeConnsMu.Lock()
-		sc, ok := s.activeConns[objproto.MustParseConnectionID(cidStr)]
+		sc, ok := s.activeConns[cid]
 		s.activeConnsMu.Unlock()
 		if !ok {
 			return
 		}
 		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
 	}
-	s.runnerHandler.OnConnIdentified = func(cidStr string) {
+	s.runnerHandler.OnConnIdentified = func(cid objproto.ConnectionID) {
 		s.activeConnsMu.Lock()
-		sc, ok := s.activeConns[objproto.MustParseConnectionID(cidStr)]
+		sc, ok := s.activeConns[cid]
 		s.activeConnsMu.Unlock()
 		if !ok {
 			return
@@ -563,7 +563,7 @@ func New(cfg Config) *Server {
 	s.registry.OnAdd = func(entry RunnerEntry) {
 		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
-	s.registry.OnRemove = func(id string, snap RunnerEntry) {
+	s.registry.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		s.failAndRevokeTasksOf(id, snap)
 		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
@@ -1288,7 +1288,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// consumed by the Hello handler (connection closed before Hello arrived).
 	s.takePendingViaInfo(session.ConnectionID())
 	s.removeAgentConn(session.ConnectionID())
-	s.registry.Remove(cid)
+	s.registry.Remove(session.ConnectionID())
 	s.scheduler.Tick()
 }
 
@@ -1470,7 +1470,7 @@ func (s *Server) Tasks() *TaskStore {
 //
 // UnbindTask is deliberately absent: the runner entry itself is being removed,
 // so its ActiveTasks set goes with it.
-func (s *Server) failAndRevokeTasksOf(runnerID string, snap RunnerEntry) {
+func (s *Server) failAndRevokeTasksOf(runnerID objproto.ConnectionID, snap RunnerEntry) {
 	for taskID := range snap.ActiveTasks {
 		s.tasks.MarkFailed(taskID, "runner_disconnected")
 		boardRevokeTask(s.Board, snap.Identity, taskID)
@@ -1489,7 +1489,7 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 // It is used as the AssignFunc supplied to the Scheduler. A fresh agentboard
 // auth ticket is generated and registered before send so that the spawned
 // claude can authenticate its agent_message Hello against the same Board.
-func (s *Server) sendAssign(runnerID, taskID string) error {
+func (s *Server) sendAssign(runnerID objproto.ConnectionID, taskID string) error {
 	entry, ok := s.registry.Get(runnerID)
 	if !ok || entry.Conn == nil {
 		return fmt.Errorf("runner %s not connected", runnerID)

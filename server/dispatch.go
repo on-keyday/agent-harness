@@ -248,7 +248,14 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	case !task.AssignedTo.IsZero():
 		entry, ok = d.Registry.GetByIdentity(task.AssignedTo)
 	case task.BoundRunnerID != "":
-		entry, ok = d.Registry.Get(task.BoundRunnerID)
+		// The WAL boundary: BoundRunnerID is PERSISTED, so it is text on disk
+		// and becomes the type again here. A parse failure is an unusable
+		// record rather than a runner to forward to.
+		cid, err := objproto.ParseConnectionID(task.BoundRunnerID, 0)
+		if err != nil {
+			return
+		}
+		entry, ok = d.Registry.Get(cid)
 	default:
 		// Task was never dispatched to a runner; nothing to forward.
 		return

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // hopErr holds per-hop failure details returned by walkAndDispatchUpstreamHops.
@@ -56,7 +57,7 @@ func walkAndDispatchUpstreamHops(
 
 	var hops []hopSetup
 	cur := entry
-	seen := map[string]struct{}{entry.ID: {}}
+	seen := map[objproto.ConnectionID]struct{}{entry.ID: {}}
 
 	for cur.Via != nil {
 		if _, dup := seen[cur.Via.ID]; dup {
@@ -94,7 +95,7 @@ func walkAndDispatchUpstreamHops(
 			results <- result{
 				ok:        err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
 				err:       err,
-				hopID:     hp.hop.ID,
+				hopID:     hp.hop.ID.String(),
 				hopStatus: resp.Status,
 			}
 		}()

@@ -114,7 +114,7 @@ func TestConnList_JoinAndRoles(t *testing.T) {
 	// (iii) Runner conn — register in the runner registry
 	runnerCID := addActiveConn(s, "ws:127.0.0.1:9100-3", now)
 	s.registry.Add(&RunnerEntry{
-		ID:           runnerCID.String(),
+		ID:           runnerCID,
 		Hostname:     "runner-host",
 		AllowedRoots: []string{"/"},
 		MaxTasks:     1,
@@ -388,7 +388,7 @@ func TestConnList_RunnerConnCarriesItsIdentityAndJoinsToAssignedTasks(t *testing
 
 	runnerCID := addActiveConn(s, "ws:127.0.0.1:9200-1", now)
 	s.registry.Add(&RunnerEntry{
-		ID:           runnerCID.String(),
+		ID:           runnerCID,
 		Identity:     identity,
 		Hostname:     "runner-host",
 		AllowedRoots: []string{"/"},

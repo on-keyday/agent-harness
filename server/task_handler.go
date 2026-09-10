@@ -202,7 +202,7 @@ type TaskHandler struct {
 	// identity is successfully recorded (ClientHello accepted). It fires with
 	// the connection ID string so the server can emit a conn_identified event.
 	// Called outside the clientKindsMu lock. Safe to leave nil in tests.
-	OnConnIdentified func(cidStr string)
+	OnConnIdentified func(cid objproto.ConnectionID)
 
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
@@ -275,7 +275,7 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 		// Notify the server that identity is now established so it can
 		// emit a conn_identified event on conns.status.
 		if h.OnConnIdentified != nil {
-			h.OnConnIdentified(cid)
+			h.OnConnIdentified(conn.ConnectionID())
 		}
 	}
 	return status
@@ -891,7 +891,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 		resolved = bound.DefaultProfile()
 	}
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, scope, resolved)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), caps, scope, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1017,7 +1017,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -1253,7 +1253,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		for _, combo := range combos {
 			c := combo.Entry
 			var rc protocol.RunnerCandidate
-			rc.SetCid([]byte(c.ID))
+			rc.SetCid([]byte(c.ID.String()))
 			rc.SetHostname([]byte(c.Hostname))
 			rc.SetMatchedRoot([]byte(matchedRoot(c.AllowedRoots, repo)))
 			rc.ActiveTasks = uint16(len(c.ActiveTasks))
@@ -1289,7 +1289,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1308,7 +1308,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
+		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID
@@ -1482,7 +1482,7 @@ func (h *TaskHandler) sessionHooks() SessionHooks {
 	}
 }
 
-func (h *TaskHandler) afterMuxStopped(taskIDHex, runnerID string) {
+func (h *TaskHandler) afterMuxStopped(taskIDHex string, runnerID objproto.ConnectionID) {
 	h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
 	if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
 		h.Tasks.Cancel(taskIDHex)

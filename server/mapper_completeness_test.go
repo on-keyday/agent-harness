@@ -114,7 +114,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 func TestToRunnerInfoMapsEveryField(t *testing.T) {
 	now := time.Now()
 	e := RunnerEntry{
-		ID:             "ws:127.0.0.1:8539-1",
+		ID:             tcid("ws:127.0.0.1:8539-1"),
 		Identity:       testRunnerID("ws:127.0.0.1:8539-1"),
 		Hostname:       "gmkhost",
 		GOOS:           "linux",
