@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -40,7 +41,22 @@ type TaskRegistry struct {
 	// re-adoption it published into a dead connection forever and the task's
 	// log simply stopped — the child running on, its output discarded, and
 	// `logs` showing a truncation rather than a gap.
+	//
+	// nil means one of two DIFFERENT things, which senderGone separates.
 	sender TaskSender
+
+	// senderGone says a sender was installed and has since been retired at a
+	// disconnect, as opposed to never having been installed at all (a
+	// single-shot Run, or a test driving a bare Session, both of which still
+	// have to fall back to the caller's own sender).
+	//
+	// It exists because the SEND cannot tell us. peerSender.Send is
+	// objproto SendMessage, and over UDP a datagram to a peer whose death has
+	// not been noticed yet returns no error — measured at ~68s to notice, so
+	// for a whole minute "no error" and "arrived" are unrelated. Retiring the
+	// sender at the disconnect is the only signal available that does not
+	// depend on the transport agreeing that the peer is gone.
+	senderGone bool
 
 	// hold is the hold currently armed, if any. Set by a HoldTasksRequest and
 	// cleared when it expires, when the children are killed, or when the
@@ -68,10 +84,26 @@ type TaskSender interface {
 	Send(data []byte) error
 }
 
+// ErrNoConnection says a task message could not leave this runner: the
+// connection it would have used has been retired and no hold is armed, so
+// there is nothing left to wait for.
+//
+// Returned rather than swallowed. The alternative — writing into the dead
+// sender and returning whatever the transport felt like returning — is
+// indistinguishable from success over UDP, which is how a finished task's own
+// TaskFinished went missing with nothing in any log to say so.
+var ErrNoConnection = errors.New("runner: no live connection for a task message")
+
 // sendWhenConnected is Send's counterpart to publishWhenConnected, and it
 // exists for the same reason found the same way: a re-adopted oneshot's
 // TaskFinished went to the connection the task STARTED on, so the server never
 // learned the task had ended and the row stayed Running forever.
+//
+// A hold is waited out. A RETIRED connection is not: waiting would be waiting
+// for a delivery that cannot land anyway, because the disconnect that retired
+// it also made the server fail the task, and TaskStore.Finish will not
+// overwrite a row that is already Failed. So the message is reported lost
+// instead — which is the part that was missing, not the delivery.
 func (r *TaskRegistry) sendWhenConnected(data []byte, fallback TaskSender) error {
 	if r == nil {
 		if fallback != nil {
@@ -81,19 +113,24 @@ func (r *TaskRegistry) sendWhenConnected(data []byte, fallback TaskSender) error
 	}
 	for {
 		r.mu.Lock()
-		sender, held := r.sender, r.hold != nil
+		sender, gone, held := r.sender, r.senderGone, r.hold != nil
 		r.mu.Unlock()
 		if held {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		if sender == nil {
-			sender = fallback
+		if sender != nil {
+			return sender.Send(data)
 		}
-		if sender == nil {
+		if gone {
+			return ErrNoConnection
+		}
+		// Nobody ever installed one: a single-shot Run, or a test driving a
+		// bare Session. Use what the caller has and behave as before.
+		if fallback == nil {
 			return nil
 		}
-		return sender.Send(data)
+		return fallback.Send(data)
 	}
 }
 
@@ -103,7 +140,24 @@ func (r *TaskRegistry) setSender(s TaskSender) {
 		return
 	}
 	r.mu.Lock()
-	r.sender = s
+	r.sender, r.senderGone = s, false
+	r.mu.Unlock()
+}
+
+// clearSender retires a connection's sender when that connection ends.
+//
+// Compare-and-clear on purpose: a reconnect installs its sender from a new
+// Session while the previous one is still unwinding, and an unconditional
+// clear there would retire the LIVE connection because the dead one's
+// teardown ran second.
+func (r *TaskRegistry) clearSender(s TaskSender) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.sender == s {
+		r.sender, r.senderGone = nil, true
+	}
 	r.mu.Unlock()
 }
 
@@ -544,6 +598,21 @@ func (s *Session) reportRebindFailed(tid protocol.TaskID, why string) {
 		ErrorMessage: []byte("rebind_failed: " + why),
 	})
 	_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+}
+
+// retireSender withdraws this connection's sender from the registry that
+// outlives it, so a task finishing after the link is gone is told the message
+// cannot leave rather than writing it into a dead socket.
+//
+// Paired with cancelTasksUnlessHeld at the one disconnect point, and separate
+// from it because it applies whether or not a hold is armed: a held task waits
+// for the next connection, and it is the NEXT Session's setSender that ends
+// that wait.
+func (s *Session) retireSender() {
+	if s.reg == nil || s.Sender == nil {
+		return
+	}
+	s.reg.clearSender(s.Sender)
 }
 
 // cancelTasksUnlessHeld is the disconnect decision, and it is the whole reason

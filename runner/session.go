@@ -164,8 +164,22 @@ func (s *Session) taskRootCtx(connCtx context.Context) context.Context {
 // the task STARTED on it went into a dead socket, so the server never learned
 // the task had ended and the row stayed Running forever. Found on a
 // re-adopted oneshot that had actually run to completion.
-func (s *Session) sendTaskMsg(data []byte) error {
-	return s.reg.sendWhenConnected(data, s.Sender)
+//
+// It reports its own failures, which is the only reason every call site may
+// discard the return with `_ =`. The send happens on a task's way out, so
+// there is nowhere else the loss could surface: a task that ran to completion
+// ended up recorded by the server as Failed with a disconnect reason and no
+// exit code of its own, and neither side said a TaskFinished had been written
+// and dropped.
+func (s *Session) sendTaskMsg(taskIDHex string, data []byte) error {
+	err := s.reg.sendWhenConnected(data, s.Sender)
+	if err != nil {
+		s.logger().Warn("task message not delivered; the server ends this task on its own "+
+			"(runner_disconnected, or not_held_by_runner once a hold lapses), so its recorded "+
+			"reason and exit code are not the agent's",
+			"task_id", taskIDHex, "err", err)
+	}
+	return err
 }
 
 // childLive reports that this task's child process has started and not yet
@@ -514,7 +528,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.sendTaskMsg(data)
+		_ = s.sendTaskMsg(taskIDHex, data)
 	}
 
 	// Panic recovery: report as TaskFinished so the server doesn't wait forever.
@@ -672,7 +686,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-		_ = s.sendTaskMsg(data)
+		_ = s.sendTaskMsg(taskIDHex, data)
 	}
 
 	// Step 6: Conditionally clean up the worktree directory. The branch ref
@@ -727,7 +741,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
 		tf.ErrorMessage = []byte(reason)
 		m.SetTaskFinished(tf)
-		_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+		_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	if s.Streams == nil {
@@ -958,7 +972,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 				tf.ErrorMessage = []byte("stream_adapter: " + runErr.Error())
 			}
 			m.SetTaskFinished(tf)
-			_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+			_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 		}
 
 		if !s.NoWorktree {
@@ -1059,7 +1073,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
-		_ = s.sendTaskMsg(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+		_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	// Step 6: Conditionally clean up the worktree directory. See handleAssign

@@ -527,6 +527,14 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	case <-pc.Done():
 	case <-runCtx.Done():
 	}
+	// Retire this connection's sender FIRST. The registry outlives the
+	// Session, so without this it keeps handing tasks a sender pointing at a
+	// socket nobody reads — and a task reporting its finish on the way out
+	// (cancelTasksUnlessHeld is about to cause exactly that) writes into it and
+	// is told nothing went wrong, because over UDP nothing does for another
+	// minute. Both modes end here: listen mode's handleServerConn calls
+	// OnConnect too.
+	session.retireSender()
 	session.cancelTasksUnlessHeld()
 	return nil
 }
