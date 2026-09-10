@@ -341,6 +341,33 @@ func (r *TaskRegistry) killHeldExcept(accepted map[string]bool, log *slog.Logger
 	}
 }
 
+// killHeldTask ends ONE held child and stops the hold promising it, leaving
+// every other held task alone.
+//
+// The rebind path needs a per-task form: the server rebinds them one at a
+// time, so a failure on one says nothing about the others — which is why this
+// does not disarm the way killHeldExcept and killAllHeld do.
+//
+// It drops the id from the covered set BEFORE removing the entry, because
+// remove() deliberately refuses to drop a task the hold still names.
+func (r *TaskRegistry) killHeldTask(taskIDHex, why string, log *slog.Logger) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.hold != nil {
+		delete(r.hold.tasks, taskIDHex)
+	}
+	e := r.tasks[taskIDHex]
+	r.mu.Unlock()
+	if e == nil {
+		return
+	}
+	log.Warn("hold: killing the child of a rebind that failed", "task", taskIDHex, "reason", why)
+	e.cancel()
+	r.remove(taskIDHex)
+}
+
 // killAllHeld ends every held child. The expiry path: the window passed with
 // no server coming back.
 func (r *TaskRegistry) killAllHeld(log *slog.Logger) {
@@ -487,9 +514,28 @@ func (s *Session) handleRebindSession(req *protocol.RebindSessionRequest) {
 
 // reportRebindFailed tells the server a rebind cannot be honoured, using
 // TaskFinished so no new message type is needed for a case the existing
-// lifecycle already describes: the task is over.
+// lifecycle already describes: the task is over — AND ends the child, because
+// saying the task is over while it runs on is what left one behind.
+//
+// A held child survives the gap on purpose, and three things could end that:
+// a rebind, the server refusing it (killHeldExcept), or the window passing
+// (killAllHeld). This was the fourth outcome and it had no branch — the server
+// came back, asked for a rebind, the rebind failed, and the child stayed alive
+// with nothing able to reach it while handleOpenExec spawned a fresh one in
+// its place. Measured on the live fleet: one failure in 24 rebinds left a
+// claude holding ~440MB plus an MCP child of its own, in no task row, with the
+// runner still holding its PTY.
+//
+// Every reason reaches this one funnel and all three are safe here: "no held
+// session" has no entry to kill, "child exited during the gap" is already
+// dead and only its registry entry goes, and "stream lookup failed" is the
+// one that was leaking. The child's own exit will report a second
+// TaskFinished; the store's Finish is a no-op on an already-terminal task, so
+// the first — this one, with the reason — is what the operator sees.
 func (s *Session) reportRebindFailed(tid protocol.TaskID, why string) {
-	s.logger().Warn("hold: rebind failed", "task", hex.EncodeToString(tid.Id[:]), "reason", why)
+	taskIDHex := hex.EncodeToString(tid.Id[:])
+	s.logger().Warn("hold: rebind failed", "task", taskIDHex, "reason", why)
+	s.reg.killHeldTask(taskIDHex, why, s.logger())
 	var m protocol.RunnerMessage
 	m.Kind = protocol.RunnerMessageType_TaskFinished
 	m.SetTaskFinished(protocol.TaskFinished{

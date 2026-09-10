@@ -596,12 +596,17 @@ may treat its absence as meaning a task was not held.
 +                      # Detached for a session, Running for a oneshot — not
 +                      # the Running the store passed through on the way.
 +
-+# No new response format. A rebind that CANNOT be honoured — the child died
-+# between the report and this request — is answered with the existing
-+# TaskFinished{exit_code:-1, error_message:"rebind_failed: …"}, which the
-+# server already handles as Finish + UnbindTask + Revoke. A rebind with no
++# No new response format. A rebind that CANNOT be honoured is answered with the
++# existing TaskFinished{exit_code:-1, error_message:"rebind_failed: …"}, which
++# the server already handles as Finish + UnbindTask + Revoke. A rebind with no
 +# failure path at all would leave the server holding a task it believes is
 +# alive on a stream nothing will ever write to.
++#
++# THREE reasons reach it, not one. This comment said "the child died between
++# the report and this request", and that single premise is what left a live
++# child behind: the runner must also KILL the child on this path, because for
++# the other two reasons it is still running and nothing can reach it again
++# (§9.16).
 ```
 
 WAL — two new record types, written by the shutdown path and by re-adoption,
@@ -755,7 +760,9 @@ PHASE 3 — RESTART AND RE-ADOPTION.
                 and is sent a blank repaint
  server ══ RebindSessionRequest{task_id, stream_id} ═══════▶ runner
    runner: splice the held PTY onto the new stream, resume draining
-           ── on failure (child died since the report) ──▶
+           ── on failure (no held session / child died / stream lookup) ──▶
+           kill the child FIRST — after this there is no route to it and
+           handleOpenExec spawns a fresh one in its place (§9.16)
  server ◀══ TaskFinished{-1, "rebind_failed: …"} ══════════ runner
 
    ordering that matters: capture FIRST, then the gap bytes the kernel
@@ -1516,6 +1523,32 @@ Also:
    failed every time with `stream lookup failed`. The capture's size frame is
    what crosses it now, which makes the priming a consequence of restoring the
    size rather than a separate step someone can drop.
+16. **A rebind that fails leaves its child alive forever.** SHIPPED, found by
+   the operator noticing a process, fixed 2026-09-10. A held child survives the
+   gap on purpose and three things could end that — a rebind, the server
+   refusing it (D18), the window passing (D4) — so the fourth outcome had no
+   branch at all: the server came back, asked for a rebind, the rebind FAILED,
+   and `reportRebindFailed` told the server the task was over while the child
+   ran on. `handleOpenExec` then spawned a second one in its place.
+   The premise that hid it is written above in §4: that comment said a rebind
+   cannot be honoured because "the child died between the report and this
+   request", so there appeared to be nothing to kill. Two of the three reasons
+   that reach that function leave the child RUNNING, and `stream lookup failed`
+   — item 15's symptom, which the size-frame priming made rare rather than
+   impossible — is one of them.
+   Measured on the live fleet: **one failure against 24 successful rebinds in a
+   day**, leaving a claude holding ~440 MB plus an MCP child of its own, on a
+   16 GB swapless host. Nothing surfaces it — the task row is the NEW child's,
+   `ls` shows one task, and the only trace is a `WARN hold: rebind failed` line
+   and a process whose PTY the runner still holds. Rare, silent, and it
+   accumulates across restarts, which is the combination that makes a leak hard
+   to attribute later.
+   Fixed by killing the child in that one funnel (`killHeldTask`), which is
+   safe for all three reasons: "no held session" has no entry, "child exited"
+   is already dead and only its registry entry goes, and the third is the leak.
+   It does NOT disarm the hold — the server rebinds tasks one at a time, so a
+   failure on one says nothing about the others — which is what separates it
+   from `killHeldExcept` and `killAllHeld`.
 
 ## 10. Testing
 
