@@ -410,7 +410,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cli.WatchShutdownFile(ctx, cfg.ShutdownFile, cancel, 250*time.Millisecond, slog.Default())
+	// The marker is the SERVER's vocabulary (hold or not); a runner shuts down
+	// the same way either way, so it is ignored here.
+	cli.WatchShutdownFile(ctx, cfg.ShutdownFile, func(string) { cancel() }, 250*time.Millisecond, slog.Default())
 
 	pskVal := cfg.PSK
 	if pskVal == "" {

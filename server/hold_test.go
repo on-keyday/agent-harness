@@ -440,6 +440,39 @@ func TestReadoptFailsHeldTasksTheReportOmits(t *testing.T) {
 	}
 }
 
+// SkipHold makes the shutdown hold nothing, for the case the feature does not
+// serve: a full stop with no successor coming, where every held child would
+// wait out the whole window and then be killed anyway.
+//
+// Asserted through RunHoldSequence rather than at the trigger, because the
+// trigger is not the only caller — serve() runs it as a fallback for a caller
+// that arrives with nothing held, so a skip honoured only in main is a skip
+// that does not happen.
+func TestSkipHoldMakesTheSequenceANoOp(t *testing.T) {
+	s, path := storeWithWAL(t)
+	srv := &Server{
+		tasks: s, registry: NewRegistry(),
+		cfg: Config{Logger: slog.Default(), DataDir: t.TempDir(), HoldWindow: time.Minute},
+	}
+	var rid protocol.RunnerID
+	rid.Id[0] = 0xab
+	id := runningTask(t, s, rid)
+
+	srv.SkipHold()
+	if held := srv.RunHoldSequence(); held != 0 {
+		t.Errorf("held %d tasks after SkipHold", held)
+	}
+	if got, _ := s.Get(id); got.Status == protocol.TaskStatus_Held {
+		t.Error("a task was moved to Held despite SkipHold")
+	}
+	// And nothing reached the log, or the next server would offer a task whose
+	// child this shutdown never asked anyone to keep.
+	fresh := replayInto(t, path)
+	if got, _ := fresh.Get(id); got.Status == protocol.TaskStatus_Held {
+		t.Error("task_held was written despite SkipHold — the next server would offer a dead child")
+	}
+}
+
 // The hold's two edges must PUBLISH. Nothing else does it for them: every other
 // non-terminal transition is repaired incidentally by the next task_activity,
 // and a held task has no mux to produce one — so between the hold and the

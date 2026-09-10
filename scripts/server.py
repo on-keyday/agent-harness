@@ -7,7 +7,7 @@ slot naming are interchangeable with the Bash version.
 Usage::
 
     python scripts/server.py up [--as TAG] [harness-server flags...]
-    python scripts/server.py down [--as TAG]
+    python scripts/server.py down [--as TAG] [--no-hold]
 
 ``--as`` is supported for symmetry with ``runner.py``, in case you want
 to run multiple servers on the same host (e.g. listening on different
@@ -21,6 +21,13 @@ Examples::
     python scripts/server.py up --as alt --listen :8540 --data-dir ./harness-data-alt
     python scripts/server.py down
     python scripts/server.py down --as alt
+    python scripts/server.py down --no-hold   # a FULL stop: hold nothing
+
+``--no-hold`` is for taking the fleet down rather than restarting it. An
+ordinary ``down`` asks every runner to keep its tasks' children alive for
+``--hold-window`` (90s) so the next server re-adopts them; with no next
+server those children sit out the whole window and are then killed anyway,
+so this says up front that nobody is coming.
 
 State: ``bin/.run/<slot>.{pid,log}``. Build with ``make build`` before
 first ``up``.
@@ -54,7 +61,7 @@ def _parse_tag(args: list[str]) -> tuple[str, list[str]]:
 
 def _usage_and_exit() -> None:
     sys.stderr.write(
-        "usage: server.py {up [--as TAG] [flags...]|down [--as TAG]}\n"
+        "usage: server.py {up [--as TAG] [flags...]|down [--as TAG] [--no-hold]}\n"
     )
     sys.exit(2)
 
@@ -71,8 +78,15 @@ def main(argv: list[str]) -> int:
             return 1
         return 0
     if cmd == "down":
+        hold = True
+        if "--no-hold" in rest:
+            rest = [a for a in rest if a != "--no-hold"]
+            hold = False
+        if rest:
+            sys.stderr.write(f"server.py down: unexpected argument(s): {' '.join(rest)}\n")
+            _usage_and_exit()
         try:
-            daemon_down(slot, _BIN)
+            daemon_down(slot, _BIN, hold=hold)
         except RuntimeError:
             return 1
         return 0

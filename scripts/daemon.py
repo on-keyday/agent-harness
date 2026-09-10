@@ -317,8 +317,24 @@ def _graceful_terminate(p: psutil.Process) -> None:
         return
 
 
-def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0) -> None:
-    """Send graceful terminate to *slot*; escalate to hard kill after *timeout*."""
+# The sentinel marker that tells harness-server to hold NOTHING on the way out.
+# Must match cli.ShutdownNoHold (cli/shutdownwatch.go); the Go side lowercases
+# and trims, so the wire form is forgiving but the word has to agree.
+SHUTDOWN_NO_HOLD = "nohold"
+
+
+def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0, hold: bool = True) -> None:
+    """Send graceful terminate to *slot*; escalate to hard kill after *timeout*.
+
+    ``hold=False`` writes the no-hold marker into the sentinel instead of
+    touching it empty, which is how you say "this is a full stop, not a
+    restart". It only means anything to harness-server: on an ordinary
+    shutdown it asks every runner to keep its children alive for
+    ``--hold-window`` (90s) so its successor can re-adopt them, and with no
+    successor coming those children wait out the whole window before being
+    killed anyway. A runner ignores the marker -- it shuts down the same way
+    either way.
+    """
     pf = pid_file(slot)
     if not pf.exists():
         print(f"[{slot}] not running (no pid file)")
@@ -359,7 +375,14 @@ def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0) -> None:
     # arrives first and the watcher just races with it, harmless
     # either way (cancel is idempotent on the runner side).
     try:
-        shutdown_file(slot).touch()
+        if hold:
+            shutdown_file(slot).touch()
+        else:
+            # Written, not touched. The server reads the CONTENT, and it reads
+            # it from BOTH triggers: on Linux the SIGTERM below normally beats
+            # the 250ms poll, so the marker has to be on disk before the signal
+            # rather than merely before the watcher notices.
+            shutdown_file(slot).write_text(SHUTDOWN_NO_HOLD, encoding="utf-8")
     except OSError:
         pass
 

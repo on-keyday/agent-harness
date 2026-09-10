@@ -140,12 +140,30 @@ func main() {
 	defer cancel()
 	var holdOnce sync.Once
 	holdRef := &atomic.Pointer[server.Server]{}
-	holdThenCancel := func() {
+	// marker is the shutdown sentinel's content, which says WHICH kind of
+	// deliberate shutdown this is: empty for the ordinary one (hold, so the
+	// next server re-adopts), cli.ShutdownNoHold for a full stop with no
+	// successor coming, where asking runners to keep children alive for 90 s
+	// buys nothing and leaves live agents behind.
+	holdThenCancel := func(marker string) {
 		holdOnce.Do(func() {
-			if srv := holdRef.Load(); srv != nil {
-				if held := srv.RunHoldSequence(); held > 0 {
-					slog.Info("shutdown: tasks held for the next server", "count", held)
-				}
+			srv := holdRef.Load()
+			if srv == nil {
+				return
+			}
+			if cli.ShutdownRequestsNoHold(marker) {
+				// Told to the SERVER rather than acted on here, because this is
+				// not the only entry to the hold: serve() runs it as a fallback
+				// for a caller that arrives with nothing held (an embedded
+				// server, a test). Skipping it in this closure alone would let
+				// that fallback hold everything anyway.
+				srv.SkipHold()
+				slog.Info("shutdown: full stop requested, holding nothing",
+					"marker", marker)
+				return
+			}
+			if held := srv.RunHoldSequence(); held > 0 {
+				slog.Info("shutdown: tasks held for the next server", "count", held)
 			}
 		})
 		cancel()
@@ -155,7 +173,10 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		holdThenCancel()
+		// Read the sentinel HERE too. daemon.py writes it before signalling and
+		// on Linux the signal wins that race every time, so a handler that
+		// ignored the file would hold for a shutdown that asked not to.
+		holdThenCancel(cli.ShutdownFileMarker(*shutdownFile))
 	}()
 
 	cli.WatchShutdownFile(ctx, *shutdownFile, holdThenCancel, 250*time.Millisecond, slog.Default())

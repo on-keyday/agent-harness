@@ -97,6 +97,14 @@ func (s *Server) RunHoldSequence() int {
 	if s.cfg.HoldWindow <= 0 {
 		return 0
 	}
+	if s.skipHold.Load() {
+		// A full stop was requested (see SkipHold). Holding here would leave
+		// every agent alive for the window with no successor coming to adopt
+		// it, which is the one shape of this feature that costs without
+		// buying: the children die anyway, just later.
+		s.cfg.Logger.Info("hold: skipped, a full stop was requested")
+		return 0
+	}
 	if s.cfg.DataDir == "" {
 		// Nowhere to write task_held. Holding children whose records cannot be
 		// persisted would kill them at re-adoption after a pointless window.
@@ -292,6 +300,16 @@ func (s *Server) closeListeners() {
 	}
 	s.stopAcceptingOnce.Do(fn)
 }
+
+// SkipHold makes this process's shutdown hold nothing: the operator asked for a
+// full stop, not a restart, so there is no successor to re-adopt anything.
+//
+// A method on the server rather than a decision at the trigger, because the
+// hold has two entry points — the signal/sentinel path in main and serve()'s
+// fallback for a caller that arrives with nothing held — and a skip honoured by
+// only one of them is a skip that does not happen. Set once, before either
+// runs; never unset.
+func (s *Server) SkipHold() { s.skipHold.Store(true) }
 
 // SetStopAccepting registers the listener-closing hook. serve() supplies it.
 func (s *Server) SetStopAccepting(fn func()) {

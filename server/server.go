@@ -150,6 +150,9 @@ type Server struct {
 	// shuttingDown is set once the hold has run. A runner that still gets in
 	// must not have its held tasks reconciled by this server.
 	shuttingDown atomic.Bool
+	// skipHold is set when the operator asked for a full stop rather than a
+	// restart (SkipHold). Read by both entries to the hold.
+	skipHold atomic.Bool
 
 	// trsfRespCh correlates a runner's trsf_state answer with the caller
 	// waiting for it, keyed by the request_id that went out.

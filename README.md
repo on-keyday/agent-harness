@@ -1142,7 +1142,12 @@ Run WS+UDP dualstack if you want both.
   during the gap painted on top.
   The window is `--hold-window` (default `90s`) and the wait for each runner's
   answer is `--hold-ack-timeout` (default `1.5s`); `--hold-window=0` restores
-  the old behaviour. **A crash recovers nothing**, on purpose: the hold is
+  the old behaviour. For a FULL stop rather than a restart, `scripts/server.py
+  down --no-hold` holds nothing — otherwise the children sit out the whole
+  window waiting for a successor that is not coming, and are then killed
+  anyway. It works by writing a marker into the shutdown sentinel rather than
+  by a flag, because the hold is run by the process being stopped: a value
+  typed at stop time cannot reach it through argv. **A crash recovers nothing**, on purpose: the hold is
   entered only by an explicit instruction, so there is no path by which a
   server that died can leave children believing somebody is coming back.
   Runners kill any child the restarted server does not re-adopt, and kill
