@@ -1395,6 +1395,45 @@ format WhoAmIResponse:
     scope             :TaskScope
     overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
     overrides     :[overrides_len]ScopeOverride
+    # Which commit the SERVER is running, appended. Nothing else on any wire
+    # carries it, so "restart the server FIRST" — the fleet's standing deploy
+    # rule for every schema change — was a rule with no way to check whether it
+    # had been followed. `harness-cli version` answers for the local binary
+    # only, which is the wrong process for that question.
+    #
+    # The full 40-hex revision as go stamps it (vcs.revision), not a short
+    # prefix: it is compared against a repo the reader can see, and truncating
+    # is the reader's choice. EMPTY is a real answer and means "built without
+    # VCS stamping" — scripts/wire-skew-check.sh does that deliberately so it
+    # can build inside a detached worktree — so a renderer must print an
+    # explicit unknown rather than eliding the field.
+    #
+    # One consequence, and it is worth expecting rather than papering over: a
+    # NEW client asking an OLD server decodes the shorter arm and fails with
+    # `not enough data to read for field "WhoAmIResponse::ServerRevisionLen"`,
+    # which names this field and therefore IS the answer — that server predates
+    # it. Same server-first rule as every other appended field.
+    server_revision_len :u8
+    server_revision :[server_revision_len]u8
+    # Whether the server's tree had MODIFIED TRACKED files when it was built,
+    # i.e. whether the binary differs from the commit above.
+    #
+    # Both halves of that sentence were wrong in the first attempt and the
+    # measurements are worth keeping. Go's own `vcs.modified` counts UNTRACKED
+    # files, so a deploy checkout carrying leftovers from work done on that
+    # host reports modified forever — one stray file is enough — while a build
+    # made in a linked git worktree reports NOT modified even with seven
+    # modified tracked files, because the toolchain stamps the parent checkout
+    # instead (buildinfo/buildinfo.go says why). Permanently on in one place
+    # and permanently off in the other, which is no signal at all.
+    #
+    # Both are fixed at the source rather than papered over here: `make build`
+    # stamps the tree it is actually building, and asks git for tracked changes
+    # only. So this bit now moves, and when it is set the honest reading is
+    # "the revision is not evidence about this binary" — check the BEHAVIOUR.
+    # It is NOT a reason to widen the suspect list for a defect.
+    server_dirty :u1
+    reserved3 :u7
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),

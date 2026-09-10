@@ -144,6 +144,16 @@ type TaskHandler struct {
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
 
+	// ServerRevision / ServerDirty are this server binary's build, answered to
+	// whoami. Fields rather than a buildinfo.Read() inside the handler: the
+	// value cannot change while the process lives, so reading it per request
+	// would be work for nothing — and a handler that reaches for process
+	// globals mid-request cannot be tested for having copied them, which is
+	// exactly what TestWhoamiResponseMapsEveryField exists to check.
+	// Server.New wires both; a test can set them.
+	ServerRevision string
+	ServerDirty    bool
+
 	// Endpoint is the server's objproto Endpoint, used by the DialRunner
 	// handler to initiate outbound ECDH handshakes. Required only when
 	// handling TaskControlKind_DialRunner; safe to leave nil in tests that
@@ -718,14 +728,21 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.RequestId}
-		resp.SetWhoami(protocol.WhoAmIResponse{
+		w := protocol.WhoAmIResponse{
 			PrincipalTaskId: pid,
 			CreatorTaskId:   creator,
 			Capabilities:    caps,
 			Scope:           scope.toWire(),
 			Overrides:       scope.overridesToWire(),
 			OverridesLen:    uint8(len(scope.Overrides)),
-		})
+		}
+		// Which commit THIS server is running. Ungated with the rest of the
+		// answer: a build id is not authority, and the caller who most needs it
+		// is whoever is diagnosing a version skew — including a confined agent
+		// whose own binary is bind-mounted and frozen.
+		w.SetServerRevision([]byte(h.ServerRevision))
+		w.SetServerDirty(h.ServerDirty)
+		resp.SetWhoami(w)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 

@@ -53,14 +53,39 @@ func WhoAmI(ctx context.Context, serverCID objproto.ConnectionID) (protocol.WhoA
 // sentinel used throughout the protocol).
 func isZeroTaskID(t protocol.TaskID) bool { return t.Id == ([16]byte{}) }
 
-// WriteWhoAmI renders a WhoAmIResponse to out. Human form is a single line:
+// ServerRevisionLabel renders the server's build for a human: the full commit,
+// or an explicit unknown.
+//
+// Never elided, and that is the point rather than a style choice. An empty
+// revision is a REAL answer — a server built with -buildvcs=false carries none
+// — and a line that simply omits the field cannot be told from a server too old
+// to send one. The two demand opposite actions (rebuild it properly vs restart
+// it), so they must not look the same.
+func ServerRevisionLabel(resp protocol.WhoAmIResponse) string {
+	rev := string(resp.ServerRevision)
+	if rev == "" {
+		return "unknown (server built without VCS stamping)"
+	}
+	if resp.ServerDirty() {
+		return rev + " DIRTY"
+	}
+	return rev
+}
+
+// WriteWhoAmI renders a WhoAmIResponse to out. Human form is two lines:
 //
 //	operator                                  caps=all
+//	server=<full-hex>
 //	task=<full-hex>  by=<creator8>            caps=spawn,file_read
+//	server=<full-hex> DIRTY
 //
 // An all-zero principal means an operator connection (no confined principal →
-// full authority). JSON form emits the same fields with hex task ids ("" when
-// zero) for scripting.
+// full authority). The server line is its own line rather than a suffix because
+// it is about a different subject — the process answering, not the caller — and
+// it is the one field here somebody greps for during a deploy.
+//
+// JSON form emits the same fields with hex task ids ("" when zero) for
+// scripting.
 func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error {
 	operator := isZeroTaskID(resp.PrincipalTaskId)
 	if asJSON {
@@ -79,9 +104,14 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		if err != nil {
 			return err
 		}
+		// server_revision is the RAW value, empty string included: item 22's
+		// rule (a machine surface reports the value, a human surface labels
+		// it), so a script can compare it against a sha without parsing the
+		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s}\n",
-			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap)
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"server_revision\":%q,\"server_dirty\":%t}\n",
+			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap,
+			string(resp.ServerRevision), resp.ServerDirty())
 		return err
 	}
 	caps := "caps=" + CapsLabel(resp.Capabilities)
@@ -94,14 +124,14 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		caps += " +" + ov
 	}
 	if operator {
-		_, err := fmt.Fprintf(out, "operator  %s\n", caps)
+		_, err := fmt.Fprintf(out, "operator  %s\nserver=%s\n", caps, ServerRevisionLabel(resp))
 		return err
 	}
 	by := ""
 	if !isZeroTaskID(resp.CreatorTaskId) {
 		by = "  by=" + hex.EncodeToString(resp.CreatorTaskId.Id[:])[:8]
 	}
-	_, err := fmt.Fprintf(out, "task=%s%s  %s\n",
-		hex.EncodeToString(resp.PrincipalTaskId.Id[:]), by, caps)
+	_, err := fmt.Fprintf(out, "task=%s%s  %s\nserver=%s\n",
+		hex.EncodeToString(resp.PrincipalTaskId.Id[:]), by, caps, ServerRevisionLabel(resp))
 	return err
 }

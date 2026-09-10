@@ -195,6 +195,13 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		h.principals = make(map[string]protocol.TaskID)
 	}
 	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, child)
+	// The server's build, which a test binary does not carry: `go test` stamps
+	// no vcs info and passes no -ldflags, so reading it from the process would
+	// make this guard vacuous for those two fields. Set here so the assertion
+	// below is about the handler having COPIED them, which is the exposure this
+	// test is for.
+	h.ServerRevision = "ad55e3f52700aaad9b8b441657df90dce7cb6614"
+	h.ServerDirty = true
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami, RequestId: 1}
 	req.SetWhoami(protocol.WhoAmIRequest{})

@@ -22,6 +22,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/buildinfo"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -248,6 +249,7 @@ func New(cfg Config) *Server {
 		// RestoreFn re-reads it per call, and both must be the one WAL.
 		restoreWALPath = filepath.Join(s.cfg.DataDir, "events.log")
 	}
+	stamp := buildinfo.Read()
 	s.taskHandler = &TaskHandler{
 		Tasks:          s.tasks,
 		Registry:       s.registry,
@@ -255,6 +257,11 @@ func New(cfg Config) *Server {
 		OnChange:       s.scheduler.Tick,
 		LogsDir:        logsDir,
 		RingBufferSize: int(cfg.DetachRingBufferSize),
+		// Read once here rather than per whoami: it cannot change while this
+		// process lives, and "which commit is the server running" is the check
+		// the fleet's server-first deploy rule needs to be answerable at all.
+		ServerRevision: stamp.Revision,
+		ServerDirty:    stamp.Modified,
 		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
 			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
 		},

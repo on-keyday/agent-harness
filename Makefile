@@ -9,6 +9,33 @@ BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 # `make release` sets release-style flags (see below).
 BUILD_FLAGS ?=
 
+# Extra linker flags, kept apart from BUILD_FLAGS because the stamp below is
+# ALSO -ldflags: two -ldflags on one command line means the last one wins, so
+# `release` adding its own would silently drop the stamp.
+LDFLAGS ?=
+
+# The commit these binaries report (`harness-cli version`, and the server's
+# answer to `whoami`). Stamped explicitly because Go's own vcs.* stamping
+# describes the wrong tree here: git's root marker must be a DIRECTORY, a linked
+# worktree's .git is a FILE, so the toolchain walks past the worktree, lands on
+# the parent checkout and stamps ITS head. Measured -- a binary built from
+# 24379936 inside a worktree reported the parent's ad55e3f5 and called it clean.
+# git run HERE has no such confusion, and almost everything in this repo is
+# built in a worktree. See buildinfo/buildinfo.go.
+#
+# --untracked-files=no on the dirty check: Go's own bit counts untracked files,
+# so a checkout with any leftover in it is permanently "modified" and the flag
+# stops meaning anything. Tracked changes only answer the real question -- does
+# this binary differ from the commit it claims.
+#
+# All three or none: a stamped revision beside a vcs time or a vcs dirty bit
+# would describe two different trees in one line.
+STAMP_REV   := $(shell git rev-parse HEAD 2>/dev/null)
+STAMP_TIME  := $(shell git show -s --format=%cI HEAD 2>/dev/null)
+STAMP_DIRTY := $(shell test -n "$$(git status --porcelain --untracked-files=no 2>/dev/null)" && echo 1)
+STAMP_PKG   := github.com/on-keyday/agent-harness/buildinfo
+STAMP_LDFLAGS := -X $(STAMP_PKG).stampedRevision=$(STAMP_REV) -X $(STAMP_PKG).stampedTime=$(STAMP_TIME) -X $(STAMP_PKG).stampedDirty=$(STAMP_DIRTY)
+
 GOROOT := $(shell go env GOROOT)
 WASM_EXEC := $(GOROOT)/lib/wasm/wasm_exec.js
 
@@ -25,13 +52,14 @@ build: webui-build $(BIN_TARGETS)
 
 $(BIN_TARGETS): bin/%$(GOEXE):
 	@mkdir -p bin
-	go build $(BUILD_FLAGS) -o $@ ./cmd/$*
+	go build $(BUILD_FLAGS) -ldflags="$(LDFLAGS) $(STAMP_LDFLAGS)" -o $@ ./cmd/$*
 
 # Release-style build: -trimpath (strip local paths from binaries for
 # reproducibility) + -ldflags="-s -w" (strip symbol/DWARF tables, ~5MB
 # smaller per binary). Used by CI's matrix build; honors GOOS / GOARCH in
 # the env for cross-compile.
-release: BUILD_FLAGS := -trimpath -ldflags="-s -w"
+release: BUILD_FLAGS := -trimpath
+release: LDFLAGS := -s -w
 release: build
 
 # Compile-check every package without producing binaries (faster than `build`).

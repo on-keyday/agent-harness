@@ -1526,6 +1526,7 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"show THIS connection's own principal + server-enforced caps and scope (no cap required)",
+			"also reports which commit the SERVER is running -- the one thing nothing else on any wire carries, and the check the fleet's server-first deploy rule needs. `version` answers for the LOCAL binary, which is a different process",
 		},
 		Action:   "CatalogAction",
 		Const:    map[string]string{"Sub": "whoami"},
