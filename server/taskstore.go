@@ -657,6 +657,25 @@ func (s *TaskStore) Cancel(id string) {
 // This is the preferred path for server-internal failures (e.g. runner disconnected)
 // where there is no meaningful exit code.
 // Allowed source states: Queued, Running, and Detached (non-terminal states).
+//
+// It fires OnFinish, which is what puts the transition on tasks.status. Every
+// other terminal edge announced itself — Finish through OnFinish, Cancel
+// through OnCancel, FailHeld below through OnFinish — and this one wrote the
+// store and the WAL and told nobody, so a runner disconnect (failAndRevokeTasksOf
+// runs every task it held through here) moved a Detached session to Failed in
+// silence and an event-driven client kept the row on Detached.
+//
+// Two neighbours hid that: OnRemove publishes runner_offline right after, and
+// the TUI re-snapshots on any runner event, while the WebUI polls anyway.
+// Neither reaches rebindHeldSessions, which fails a task from its own goroutine
+// after the runner event has already gone out.
+//
+// OnFinish rather than a hook of its own, because FailHeld answers this same
+// question (a Failed with no exit code) that way, and a second hook would let
+// the server wiring grow a publisher for one and not the other. -1 is
+// FailHeld's sentinel too, and reaches the EVENT only: e.ExitCode stays nil
+// here as it does there, so a listing still reports no exit code for a task
+// that never produced one.
 func (s *TaskStore) MarkFailed(id, reason string) {
 	now := time.Now()
 	s.mu.Lock()
@@ -691,7 +710,16 @@ func (s *TaskStore) MarkFailed(id, reason string) {
 			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
 		}
 	}
+	onFinish := s.OnFinish
 	s.mu.Unlock()
+	// Outside the lock, like every other hook here: the publisher reads the
+	// store back (publishTaskEvent looks up TaskKind) and would deadlock on
+	// s.mu otherwise. Past the terminal check, so the second call on an
+	// already-failed task stays the no-op it advertises and cannot make a
+	// subscriber's row flap.
+	if onFinish != nil {
+		onFinish(id, -1, protocol.TaskStatus_Failed)
+	}
 }
 
 // SetWorktreeDir updates the worktree path for a task (called when the runner reports TaskStarted).
