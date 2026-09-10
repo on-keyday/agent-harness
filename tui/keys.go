@@ -126,6 +126,9 @@ type modalKeyMap struct {
 	GitSubmodule     string
 	GitUp            string
 	GitOpenFile      string
+	ConnsTrsf        string
+	ConnsReadRunner  string
+	ConnsReadServer  string
 }
 
 var modalKeys = modalKeyMap{
@@ -156,6 +159,16 @@ var modalKeys = modalKeyMap{
 	GitSubmodule:     "m",
 	GitUp:            "backspace",
 	GitOpenFile:      "o",
+	// Same letter and the same reasoning as ForwardTap: the trsf columns are a
+	// READING of the rows already on screen, not a stronger form of anything
+	// beside it.
+	ConnsTrsf: "t",
+	// enter reads the selected RUNNER's own transport, `s` goes back to the
+	// server's. enter because the row is the subject — the same "act on the
+	// highlighted row" the tasks pane's enter means — and `s` because the
+	// alternative subject has no row to point at.
+	ConnsReadRunner: "enter",
+	ConnsReadServer: "s",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. These
@@ -374,6 +387,7 @@ func keyHelpBody() string {
 			sb.WriteString("\n")
 		}
 	}
-	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message, w retract message")
+	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message, w retract message" +
+		" · conns: t trsf reading (cwnd/srtt/loss and where the run loop's time goes), then enter reads the selected runner's own transport and s the server's")
 	return sb.String()
 }

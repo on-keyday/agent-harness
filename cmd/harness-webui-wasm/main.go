@@ -151,6 +151,8 @@ func main() {
 		"pathsForSurface":    js.FuncOf(harnessPathsForSurface),
 		"parseGit":           js.FuncOf(harnessParseGit),
 		"forwardTap":         js.FuncOf(harnessForwardTap),
+		"trsfState":          js.FuncOf(harnessTrsfState),
+		"parseDurationMs":    js.FuncOf(harnessParseDurationMs),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
 		"rawSendHTTP":        js.FuncOf(harnessRawSendHTTP),
@@ -163,6 +165,106 @@ func main() {
 
 	slog.Info("harness-webui-wasm started")
 	select {} // keep runtime alive
+}
+
+// trsfPanel is the page's transport reading, held here rather than in JS
+// because the reading is a SERIES: several of its counters mean nothing as a
+// single sample, and the derivation that turns two of them into BLOCK% / WAIT
+// / the delta columns is cli.TrsfSampler, shared with the CLI table and the
+// TUI modal. The page gets rendered strings and does no arithmetic on a
+// counter — the alternative is a third implementation of the absent-vs-zero
+// rule in JavaScript, which is the shape scopeSpecFor/scopeSpecJS took.
+//
+// target is the answerer the series belongs to. Reading a different one starts
+// a fresh series: its counters are not the previous one's, and the elapsed
+// across the switch measures nothing that happened on it.
+var trsfPanel struct {
+	mu      sync.Mutex
+	sampler cli.TrsfSampler
+	target  string
+}
+
+// harnessTrsfState reads congestion state and returns it as already-rendered
+// rows. runner empty asks the SERVER about its own connections.
+//
+// reset starts a fresh series — the page passes it when the panel is opened,
+// so a reading taken minutes after the last one is not presented as a delta
+// over an interval nobody watched.
+//
+//	harness.trsfState({runner, reset}) -> Promise<[{cid, role, task, cwnd, …}]>
+func harnessTrsfState(this js.Value, args []js.Value) any {
+	runner, reset := "", false
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		if v := args[0].Get("runner"); v.Type() == js.TypeString {
+			runner = v.String()
+		}
+		reset = args[0].Get("reset").Truthy()
+	}
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			// Held across the read so two overlapping polls cannot interleave
+			// their samples and compute a delta against the wrong reading.
+			// The page also skips a tick while one is in flight; this is the
+			// half that does not depend on the page being careful.
+			trsfPanel.mu.Lock()
+			defer trsfPanel.mu.Unlock()
+			if reset || trsfPanel.target != runner {
+				trsfPanel.sampler = cli.TrsfSampler{}
+				trsfPanel.target = runner
+			}
+			conns, sampledAt, err := c.TrsfStateOn(rootCtx, runner)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows := trsfPanel.sampler.Observe(conns, sampledAt)
+			out := make([]any, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, map[string]any{
+					"cid": r.CID, "role": strings.ToLower(r.Role), "task": r.Task,
+					"cwnd": r.Cwnd, "inflight": r.InFlight, "srtt": r.SRTT,
+					"queue": r.Queue, "loss": r.LossD, "spur": r.SpurD,
+					"loop": r.LoopD, "block": r.BlockPct, "wait": r.Wait,
+				})
+			}
+			resolve.Invoke(js.ValueOf(out))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessParseDurationMs parses a Go duration string ("200ms", "1s") to
+// milliseconds, so `conns --trsf --watch 200ms` means the same thing typed
+// into the page as typed at the CLI.
+//
+// Here rather than in JS for the reason the scope grammar is: a second parser
+// in another language is a copy that cannot fail loudly when the first one
+// grows. Returns {error} for anything ParseDuration refuses, and for a
+// non-positive value — which would spin the poll rather than pace it.
+//
+//	harness.parseDurationMs("200ms") -> {ms: 200} | {error: "..."}
+func harnessParseDurationMs(this js.Value, args []js.Value) any {
+	if len(args) == 0 || args[0].Type() != js.TypeString {
+		return js.ValueOf(map[string]any{"error": "parseDurationMs: want a string"})
+	}
+	s := args[0].String()
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return js.ValueOf(map[string]any{"error": err.Error()})
+	}
+	if d <= 0 {
+		return js.ValueOf(map[string]any{"error": fmt.Sprintf("%q: want a positive duration", s)})
+	}
+	return js.ValueOf(map[string]any{"ms": float64(d / time.Millisecond)})
 }
 
 // rejectErr wraps a Go error as a JS Error and rejects the Promise with it.

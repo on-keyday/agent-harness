@@ -91,6 +91,15 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       so `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session
       from any ssh client — an `~/.ssh/config` alias, tmux, mosh, a script
       — with no harness binary on that host. See **SSH gateway** below.
+    - Connections: `conns` snapshots the live connections (`-f` streams
+      `conns.status` events, `--json` emits JSON lines). `conns --trsf`
+      answers a different question about the same rows — what each
+      connection's transport is doing (cwnd, srtt, in-flight, loss) and
+      where its run loop's time goes (`BLOCK%`, `WAIT`) — with
+      `--runner <cid>` asking a runner about its OWN transport and
+      `--watch 200ms` re-reading to report the DELTA. Several of those
+      counters mean nothing as a single sample, so all three surfaces
+      carry the reading: see **Reading a connection's transport state**.
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
       | topics | subscriptions}`. See `runner/agentskills/harness-cli/
@@ -421,6 +430,60 @@ the Connections tab, beside the port-forward list it is modelled on, each row
 with its own kill button. Both show every exec visible to you on the server,
 not just ones that surface started — including, now, the long-lived bootstrap a
 VS Code Remote-SSH session holds open.
+
+### Reading a connection's transport state
+
+`conns` answers "which connections exist"; `conns --trsf` answers "what is each
+one's transport doing", from the same rows. It is the reading to take when a
+transfer has stalled and the question is WHERE — a congestion window that is
+not opening, a round trip that is all queue, or a run loop that is not running
+at all.
+
+```bash
+bin/harness-cli conns                                  # who is connected
+bin/harness-cli conns --trsf --watch 1s                # the server's own conns
+bin/harness-cli conns --trsf --runner 'udp:HOST:41233-a1' --watch 200ms
+```
+
+```
+CID                     ROLE     TASK       CWND  INFLIGHT   SRTT  QUEUE  LOSS+  LOOP+  BLOCK%  WAIT
+udp:10.0.0.3:41233-a1   Runner   8bd0e412 131072     64240   18ms    4ms      2    412     87%  send/app
+```
+
+- `QUEUE` is `srtt - min_rtt`: how much of the round trip is a queue rather
+  than the path, which is what says whether a big `CWND` is bandwidth or
+  bufferbloat.
+- `BLOCK%` is the share of the interval the run loop spent parked, and `WAIT`
+  names what ended those parks — `timer/pacer`, `timer/loss`, `peer`, or
+  `send/<reason>`. The send channel is many-to-one, so its label carries the
+  dominant PUSH reason: `app` (the transport was waiting on its caller), `ack`
+  (the window was the constraint), `self` (cycling, not waiting), `cwnd`
+  (congestion-blocked and revived), `loss` (retransmission pressure).
+- **The delta columns need two readings.** `LOSS+` / `LOOP+` / `BLOCK%` /
+  `WAIT` read `-` until the second one arrives, and `-` means ABSENT
+  throughout — a counter the answerer does not report, or a rate with nothing
+  to compare against. A counter that did not move prints `0`.
+- `--runner` needs the global visibility rank. No capability gates the rest:
+  you see the connections whose principal task you can see, which is why a
+  confined caller sees none of the runner ones.
+- `--json` carries EVERY counter the answerer sent, by name, with deltas.
+  Nothing enumerates them, so a counter added to the transport appears with no
+  client change — and one this build does not know still appears, under a
+  numeric fallback name, rather than being dropped.
+
+The same reading is on all three surfaces, derived by one shared sampler
+(`cli.TrsfSampler`), so none of them can disagree about a column:
+
+| surface | how |
+| --- | --- |
+| CLI | `conns --trsf`, once or `--watch`ed |
+| TUI | the connections modal (`C`), then `t`. In it, `enter` reads the selected RUNNER's own transport and `s` goes back to the server's; the cmdline's `conns --trsf --runner … --watch …` opens it the same way |
+| WebUI | the 接続 tab's **trsf — transport state** panel, under the topology. Collapsed by default and read only while expanded, with its own target and interval pickers |
+
+The TUI's separate `trsf` command is a different subject: it dumps THIS
+client's own link to the server out of the transport object in the process,
+where `conns --trsf` is every connection the answerer can see — and the
+answerer can be a runner on another host.
 
 ### SSH gateway
 
@@ -914,7 +977,7 @@ stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
 / session stream attach / file {ls,push,pull,delete} / git / exec
-/ forward {ls,kill,tap}
+/ forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
@@ -926,6 +989,11 @@ itself (see **SSH gateway**); with no argument it reports the address it is
 listening on, or that it is not running. It dies with the TUI, and with the
 server connection — a reconnect does not bring it back, `ssh-gateway start`
 does.
+`conns` opens the connections modal — the same overlay `C` opens — and
+`conns --trsf [--runner CID] [--watch DUR]` opens it on the transport reading
+instead (see **Reading a connection's transport state**); `t` toggles between
+the two inside it. `--json` is CLI-only there: this surface answers with a
+live view and has nothing to pipe a dump into.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
 follows its events in the logs pane, which is where this kind's events
@@ -1117,6 +1185,13 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
   *View source* toggle to flip between the rendered page and its text.
 - **Notifications** — the live notification feed (ring backlog + live),
   plus a form to post one by hand (level / title / body).
+- **Connections** — the radial topology (desktop) or grouped list
+  (mobile), the port-forward and running-exec lists, Raw connect, and a
+  collapsed **trsf — transport state** panel: the same connections'
+  cwnd / srtt / loss and where each run loop's time goes, with its own
+  target and interval pickers. It is read only while expanded, so a
+  collapsed one costs the server nothing. See **Reading a connection's
+  transport state**.
 - **Terminal** — the interactive PTY view with on-screen key helpers.
 
 UDP-only servers (when `--listen` is empty and only `--udp-listen` is

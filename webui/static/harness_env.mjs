@@ -102,7 +102,7 @@ export async function loadPage(dir) {
   // for every name, so checking the wrapped one made the question meaningless
   // -- a dispatch entry naming `streamFinsh` passed.
   ctx.bridge = ctx.harness;
-  for (const name of ["RUNCMD_DISPATCH"]) {
+  for (const name of ["RUNCMD_DISPATCH", "TRSF_COLUMNS"]) {
     ctx[name] = vm.runInContext(`typeof ${name} !== "undefined" ? ${name} : undefined`, ctx);
   }
   return ctx;
@@ -121,8 +121,12 @@ export function recordingCtx(page, overrides = {}) {
   // the page CALLS the grammar rather than that the grammar answers, and the
   // whole point of routing `caps set-defaults` through the bridge is that the
   // page does not own a second copy of it.
+  // parseDurationMs joins them for the same reason: it is time.ParseDuration
+  // and nothing else, and it exists so the page does NOT own a second
+  // duration parser -- recording it would test that the page calls the
+  // grammar rather than that the grammar answers.
   const pure = new Set(["parseCommand", "parseGit", "pathsForSurface",
-    "capsCatalog", "parseAuthority"]);
+    "capsCatalog", "parseAuthority", "parseDurationMs"]);
   const harness = new Proxy({}, {
     get: (_, name) => {
       if (pure.has(name)) return page.bridge[name];
@@ -165,6 +169,7 @@ export function recordingCtx(page, overrides = {}) {
       return overrides.spawnDefaults ?? { caps: 0, capsLabel: "none", scope: "" };
     },
     setSpawnDefaults: (d) => { calls.push(["setSpawnDefaults", d]); },
+    connsView: (o) => { calls.push(["connsView", o]); },
   };
   return ctx;
 }

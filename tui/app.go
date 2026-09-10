@@ -89,7 +89,10 @@ type App struct {
 	runnersSnapshot []protocol.RunnerInfo
 
 	// connections view
-	connsModal    ConnsModal
+	connsModal ConnsModal
+	// Which run of the conns modal's trsf poll is current; a tick from an
+	// older one is dropped rather than allowed to reschedule. See trsfTickMsg.
+	trsfGen int
 	forwardsModal ForwardsModal
 	// forwardTap is the live traffic view for one forward. Its pump is stopped
 	// through forwardTapStop, which is nil whenever no tap is running.
@@ -557,6 +560,30 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.connsModal.ApplySnapshot(msg.Conns)
 		return a, nil
+
+	case TrsfStateMsg:
+		// A reading that lands after the operator left the mode describes a
+		// view that is gone. Dropping it also keeps the sampler's previous
+		// reading from being set by something nobody saw.
+		if !a.connsModal.IsOpen() || !a.connsModal.IsTrsf() {
+			return a, nil
+		}
+		if msg.Err != nil {
+			// The rows already on screen stay under it: a refused or failed
+			// read says nothing about whether they were true when taken.
+			a.connsModal.SetTrsfError(msg.Err)
+			return a, nil
+		}
+		a.connsModal.ApplyTrsf(msg.Conns, msg.SampledAt)
+		return a, nil
+
+	case trsfTickMsg:
+		// The tick IS the loop: it stops by not being rescheduled, which is
+		// what closing the modal, leaving the mode, or a newer generation do.
+		if msg.gen != a.trsfGen || !a.connsModal.IsOpen() || !a.connsModal.IsTrsf() {
+			return a, nil
+		}
+		return a, tea.Batch(a.readTrsfOnce(), trsfTick(a.connsModal.TrsfEvery(), msg.gen))
 
 	case ForwardsSnapshotMsg:
 		if msg.Err != nil {
@@ -2087,7 +2114,7 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 // name one the cmdline cannot parse, which is what
 // TestPlaceholderNamesNothingUnreachable checks -- the placeholder is the
 // first thing an operator reads, and a verb listed there is a promise.
-const cmdlinePlaceholder = "submit / interactive / session / file / forward / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+const cmdlinePlaceholder = "submit / interactive / session / file / forward / conns / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 
 // tuiKeyHelp is the part no table holds: what a KEY does, and how a verb
 // pairs with one. It stays hand-written because a keybinding is not a verb --
@@ -2103,7 +2130,7 @@ var tuiKeyHelp = []string{
 // synopsis generated and its description declared, then the key bindings.
 func cmdlineHelpLines() []string {
 	out := []string{
-		"commands: submit / interactive / session / file / git / forward / exec / grid / workspace / " +
+		"commands: submit / interactive / session / file / git / forward / exec / conns / grid / workspace / " +
 			"cancel / notify / prune / restore / repo / caps / caps set-defaults / refresh / clear / help / quit",
 	}
 	for _, path := range verb.PathsForSurface(verb.TUI) {

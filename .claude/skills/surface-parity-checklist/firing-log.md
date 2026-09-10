@@ -1709,3 +1709,52 @@ came off it by MISSING, which is still a firing.)
 (33 was on this list until `aa4a1dd`. Keeping the two halves consistent is
 manual, so check the tallies against the entries when adding one — a log that
 contradicts itself is worse than no log.)
+
+### 2026-09-10 (pending) — `conns --trsf` reaches the TUI and the WebUI
+
+The verb's own Notes had carried "only the --trsf reading is CLI-only so far"
+since the reading was built, which is the rare case of a declared gap closing
+on request rather than a defect being found.
+
+done:    **1** (CmdlineSurfaces CLI → CLI|TUI|WebUI, WebUIDispatch{connsView,
+         Local}, SurfaceNotes per surface, the stale note deleted),
+         **2** (the walk's find: `--runner` / `--watch` without `--trsf` were
+         answered by each surface — the CLI dropped them silently, the TUI and
+         WebUI warned in their own handlers, which is three answers to one
+         cross-flag question. Moved to `Requires` on the VerbSpec, so it is one
+         refusal everywhere and both handler branches became unreachable),
+         3, **4** (modalKeys.ConnsTrsf/ConnsReadRunner/ConnsReadServer + the
+         `?` popup's modal line; no new MAIN key — `C` already opens it),
+         **6** (`<details id="trsf-panel">` + two `<select>`), **7**, **8**
+         (new bridge exports `trsfState` and `parseDurationMs`), **10**,
+         **24** (each flag's meaning written per surface in SurfaceNotes:
+         --watch loops a printer on the CLI and paces a view on the other two;
+         -f is what those two already ARE), **29** (the reading names its
+         answerer — `trsf (server)` or the cid — in the TUI header and the
+         WebUI picker), **30** (TUI errors go to the modal's own header, not
+         cmdresult: a full-screen overlay covers that pane), **31** (the whole
+         point — absent `-` vs measured `0`, pinned in cli/trsf_render_test.go
+         and dimmed rather than dropped in the WebUI), **32** (the derivation
+         moved out of `cmd/harness-cli` into `cli.TrsfSampler`; the CLI's
+         `delta`/`parkSummary`/`dominantPush`/`queueDelay`/`trsfJSON` deleted;
+         JS does no arithmetic and `parseDurationMs` is exported rather than a
+         JS duration parser), **34** (12 columns swapped for 6 on a keystroke —
+         `swapColumnsAndRebuild` copied from RunnersModel, tested at 4 widths ×
+         3 row counts), **34a** (target and interval are `<select>`s, and the
+         target list is built on `toggle` as well as from the snapshot),
+         **35** (README: a `conns` bullet, a "Reading a connection's transport
+         state" section with the per-surface table, the TUI cmdline verb list,
+         the WebUI tab list — **and the two hand-written verb lists in
+         `tui/app.go`**, `cmdlinePlaceholder` and `cmdlineHelpLines`, which the
+         E2E caught: the placeholder is the first thing an operator reads and
+         it did not name the verb), **37** (an Amendment on the conn-visibility
+         spec, whose Non-goal was routing readers to the TUI `trsf` command as
+         the place to see cwnd), **39** (that Amendment's own surface table,
+         each row built)
+omitted: **33** for `--json` on the TUI and WebUI — declared `CmdlineSurfaces:
+         CLI` with a SurfaceReason instead of implemented. Those two answer
+         with a live view and have nothing downstream to pipe a dump into. It
+         is a refusal, not a silent drop: `conns --json` typed there is
+         rejected by the declaration, and cmd_test.mjs pins that.
+         **36**: no agent-facing skill mentions conns or the reading (grepped),
+         so nothing to mirror.

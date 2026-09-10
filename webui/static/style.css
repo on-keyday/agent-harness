@@ -1346,6 +1346,68 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   .conn-list-mobile { display: block; }
 }
 
+/* --- trsf reading (the same connections' transport state) ---
+ * Deliberately NOT hidden on mobile the way the topology is: a table scrolls
+ * sideways in a container, where a 640x560 radial diagram cannot be read at
+ * 390px at all. */
+.trsf-panel {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin: 0.75rem 0;
+  padding: 0.4rem 0.7rem;
+}
+.trsf-panel > summary {
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #d4d4d4;
+}
+.trsf-controls {
+  display: flex;
+  flex-wrap: wrap;              /* the row folds rather than overflowing at 390px */
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+  color: #9a9a9a;
+}
+.trsf-controls select {
+  background: #252526;
+  color: #d4d4d4;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 0.15rem 0.3rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+.trsf-note { color: #9a9a9a; }
+.trsf-note.is-error { color: #f48771; }
+/* The one element on the page allowed to scroll sideways: twelve columns do
+ * not fold, and the alternative is dropping columns the CLI shows. */
+.trsf-table-wrap { overflow-x: auto; }
+#trsf-table {
+  border-collapse: collapse;
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #d4d4d4;
+  white-space: nowrap;
+}
+#trsf-table th,
+#trsf-table td {
+  padding: 0.15rem 0.5rem 0.15rem 0;
+  text-align: left;
+}
+#trsf-table th {
+  color: #9a9a9a;
+  font-weight: normal;
+  border-bottom: 1px solid #333;
+}
+#trsf-table td.trsf-num { text-align: right; }
+/* Absent, not zero. Dimmed so a screen of them reads as "not measured yet"
+ * rather than as a row of readings that all happen to be nothing. */
+#trsf-table td.trsf-absent { color: #6a6a6a; }
+
 .conn-ip-card {
   background: #1a1a1a;
   border: 1px solid #333;

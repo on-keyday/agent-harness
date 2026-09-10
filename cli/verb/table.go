@@ -1456,12 +1456,30 @@ var Verbs = []VerbSpec{
 		Examples: []string{"ls", "ls --json", "ls --tree"},
 	},
 	{
-		Path: []string{"conns"}, CmdlineSurfaces: CLI,
+		Path: []string{"conns"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "connsView", Local: true},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/conns.go:ConnsModal"},
 			// The one that started this: the verb was declared CLI and the
 			// capability was on two other surfaces.
 			{Surface: WebUI, At: "webui/index.html#conn-topology"},
+			// The trsf reading's own surfaces. Separate rows because they are
+			// separate things an operator opens: the TUI's is a mode of the
+			// modal above, the WebUI's is a panel beside the topology.
+			{Surface: TUI, At: "tui/conns.go:trsfColumns"},
+			{Surface: WebUI, At: "webui/index.html#trsf-panel"},
+		},
+		SurfaceNotes: map[Surface][]string{
+			TUI: {
+				"`conns` opens the connections modal (the 'C' key does the same); `conns --trsf` opens it in trsf mode, which 't' toggles",
+				"--watch sets the POLL interval of that mode rather than looping a printer; the modal reads while it is open and stops when it closes",
+				"-f is what the modal already is -- it is populated from a snapshot and kept current by conns.status events -- so the flag opens it and adds nothing",
+			},
+			WebUI: {
+				"`conns` shows the connections tab; `conns --trsf` also expands the trsf panel under the topology",
+				"--watch sets that panel's poll interval. The panel reads only while it is expanded, so a collapsed one costs the server nothing",
+				"-f is what the tab already is: the topology and the mobile list are redrawn from every snapshot poll",
+			},
 		},
 		Notes: []string{
 			"snapshot live connections; -f streams live events; --json emits JSON lines",
@@ -1469,21 +1487,35 @@ var Verbs = []VerbSpec{
 			"--trsf reads each connection's congestion state instead (cwnd, srtt, in-flight, loss) AND the run loop's account of its own waiting (BLOCK%, WAIT); --runner asks a runner about its own, which needs the global view",
 			"BLOCK% is the share of the interval the loop spent parked and WAIT names what ended those parks -- timer/pacer, timer/loss, peer, or send/<reason>. The send channel is many-to-one, so its label carries the dominant PUSH reason: app (the transport was waiting on its caller), ack (the window was the constraint), self (cycling, not waiting), cwnd (congestion-blocked and revived), loss (retransmission pressure, one per lost PACKET). QUEUE is srtt-min_rtt: how much of the round trip is a queue rather than the path, which is what says whether a big cwnd is bandwidth or bufferbloat",
 			"--json carries EVERY counter the answerer sent, by name, with deltas -- nothing enumerates them, so a counter added to the transport appears with no client change. A key this build does not know still appears, under a numeric fallback name, rather than being dropped. The push counts are EVENTS and do not partition the wakes",
-			"the TUI shows the same connections in its own modal (see ModalSurfaces); only the --trsf reading is CLI-only so far",
+			"every surface derives the reading through cli.TrsfSampler, so BLOCK%/WAIT/QUEUE and the absent-vs-zero rule are decided once. A surface renders the strings it is handed and does no arithmetic on a counter",
+			"the delta columns need TWO readings, so all of them read '-' until the second one arrives -- immediately on the CLI's one-shot form, and for one poll interval on the TUI and the WebUI",
 		},
 		Action: "ConnsAction",
+		// Both describe the reading, and all three surfaces used to answer a
+		// `conns --runner X` with the plain connection list — the CLI by
+		// silently dropping it, the other two by warning in their own
+		// handlers. A cross-flag rule belongs to the verb, not to a surface:
+		// stated here it is one refusal everywhere instead of three answers.
+		Requires: []Requirement{{
+			Flags: []string{"runner", "watch"}, Needs: "trsf",
+			Reason: "the connection list has no answerer to aim at and nothing to re-read",
+		}},
 		Flags: []Flag{
 			{Name: "trsf", Type: FlagBool, Default: false, Field: "Trsf",
 				Help: "report congestion state (cwnd/srtt/in-flight/loss) and where the run loop's time goes, instead of the connection list"},
 			{Name: "runner", Type: FlagString, Default: "", Field: "Runner",
 				Help: "with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the global view"},
 			{Name: "watch", Type: FlagString, Default: "", Field: "Watch",
-				Help: "with --trsf: re-read at this interval (e.g. 200ms) and print the DELTA. Several counters mean nothing as a single sample -- loop_iterations separates a blocked run loop from a busy-spinning one only across two reads, and BLOCK%/WAIT exist only as a delta"},
-			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "output JSON lines instead of a table"},
+				Help: "with --trsf: re-read at this interval (e.g. 200ms) and report the DELTA. Several counters mean nothing as a single sample -- loop_iterations separates a blocked run loop from a busy-spinning one only across two reads, and BLOCK%/WAIT exist only as a delta. The CLI loops a printer; the TUI and WebUI poll their view for as long as it is open"},
+			{
+				Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI,
+				SurfaceReason: "the other two answer with a live view, and a JSON dump is the CLI's answer shape -- stdout, to be piped or saved. Their result panes are scrolling line logs with nothing downstream of them, so the same flag there would print a wall of objects that scrolls past and cannot be piped anywhere",
+				Help:          "output JSON lines instead of a table",
+			},
 			{Name: "follow", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Follow",
-				Help: "stream live connection events (conns.status)"},
+				Help: "stream live connection events (conns.status). The TUI modal and the WebUI tab already are that stream, so there the flag only opens them"},
 		},
-		Examples: []string{"conns", "conns -f --json"},
+		Examples: []string{"conns", "conns -f --json", "conns --trsf --watch 1s"},
 	},
 	{
 		// All three surfaces. The catalog is the only place the granular

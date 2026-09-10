@@ -50,6 +50,7 @@ never finish the handshake**, across **all three client surfaces**
   rate). Already observable via the TUI `trsf` debug command
   (`tui/app.go`) and `SIGUSR1` `DumpTrsfState`. This design is the
   **objproto connection layer**, not the trsf stream layer.
+  **Superseded — see Amendment 2026-09-10 below.**
 
 ## Architecture
 
@@ -279,3 +280,43 @@ Files: `cmd/harness-webui-wasm/main.go` (new export), `webui/static/main.js`
    mirroring `ListResult` / `ListResultBody`, not inline — same MTU rationale.
 7. All surfaces (CLI + TUI + WebUI) ship together — no CLI-only first cut
    (user: "ui対応は後回しとかしないで全部やれ").
+
+## Amendment 2026-09-10 — the trsf gauges are in scope after all, on the same rows
+
+The Out-of-scope entry above stands as a statement about what THIS design
+built, and is wrong as a statement about where a reader should now look.
+
+**What changed.** `conns --trsf` reads each connection's transport state —
+cwnd, in-flight, srtt, srtt-min_rtt, loss, and the run loop's own account of
+its waiting (BLOCK% / WAIT) — over `TaskControlKind.trsf_state`, from the
+server about its connections or from a runner about its own
+(`TrsfStateRequest.target`). It shares the `conns` verb rather than taking one
+of its own, because it is a different question about the same rows.
+
+**Where the Out-of-scope entry misleads.** It routes a reader to the TUI
+`trsf` command as the place to see cwnd. That command is a different subject:
+it dumps the CLIENT's own link to the server out of the transport object in
+the process, so it can say nothing about a runner's transport or about any
+connection but its own. It is also in `tui/dispatch.go` now, not `tui/app.go`.
+
+**Surfaces.** All three, as decision 7 requires, and derived once:
+
+| surface | entry point |
+| --- | --- |
+| CLI | `conns --trsf [--runner CID] [--watch DUR]` |
+| TUI | the connections modal's second column set (`t`); `enter` retargets to the selected runner, `s` back to the server |
+| WebUI | the 接続 tab's collapsed `#trsf-panel`, read only while expanded |
+
+`cli.TrsfSampler` holds the previous reading and renders every cell, so the
+delta columns, BLOCK%/WAIT, and the absent-vs-zero rule are decided in one
+place and no surface does arithmetic on a counter. That is the same
+one-serializer discipline decision 5 applies to the visibility rule, applied
+to the reading.
+
+**Unchanged by this.** The gating (decision 5) — the reading is not
+capability-gated beyond what `conns` already is; you see the connections whose
+principal task you can see, and `--runner` needs the global visibility rank
+because a confined caller sees no runner connections at all. The WebUI's
+snapshot-poll liveness (decision 3) is also unchanged: the panel runs its own
+timer while expanded rather than riding the 5s poll, because it is a live call
+rather than part of the snapshot.

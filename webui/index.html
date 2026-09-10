@@ -169,6 +169,29 @@
       <div id="conn-topology" class="conn-topology" aria-label="Connection topology diagram"></div>
       <!-- Mobile (<=600px): grouped list view. Hidden on desktop via CSS. -->
       <div id="conn-list" class="conn-list-mobile" aria-label="Connection list"></div>
+      <!-- The same connections, answering what each one's transport is doing
+           rather than which exist. Collapsed by default and read only while
+           open: this is a live call to the server (or to a runner), not part
+           of the snapshot poll, so a closed panel costs nothing. Unlike the
+           topology above it stays usable at phone width — the table scrolls
+           sideways in its own container. -->
+      <details id="trsf-panel" class="trsf-panel">
+        <summary>trsf — transport state</summary>
+        <div class="trsf-controls">
+          <label for="trsf-target">読む対象</label>
+          <select id="trsf-target"><option value="">server</option></select>
+          <label for="trsf-every">間隔</label>
+          <select id="trsf-every">
+            <option value="200">200ms</option>
+            <option value="1000" selected>1s</option>
+            <option value="5000">5s</option>
+          </select>
+          <span id="trsf-note" class="trsf-note"></span>
+        </div>
+        <div class="trsf-table-wrap">
+          <table id="trsf-table" aria-label="Per-connection transport state"></table>
+        </div>
+      </details>
       <h3>ポートフォワード</h3>
       <div id="forward-list"></div>
       <h3>実行中の exec</h3>

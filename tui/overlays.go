@@ -55,16 +55,58 @@ func (a *App) inDetail(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-// Connections modal: Esc closes; arrow keys scroll the table; all
-// other keys (q, s, etc.) are swallowed so they don't leak through.
+// Connections modal: Esc closes; `t` switches between the two questions about
+// the same rows — which connections exist, and what each one's transport is
+// doing. In the reading, enter aims it at the selected runner and `s` back at
+// the server. Arrow keys scroll the table; all other keys (q, etc.) are
+// swallowed so they don't leak through.
 func (a *App) inConnsModal(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc {
 		a.connsModal.Close()
 		return nil
 	}
+	switch msg.String() {
+	case modalKeys.ConnsTrsf:
+		if !a.connsModal.ToggleTrsf() {
+			// Back to the identity rows. The poll stops with the mode — the
+			// tick handler drops any that is still in flight.
+			return nil
+		}
+		return a.startTrsfPoll()
+	case modalKeys.ConnsReadRunner:
+		// Only in the reading, and only on a runner row: any other role has no
+		// separate transport to ask about. Elsewhere it falls through to the
+		// table rather than looking like it did something.
+		if a.connsModal.IsTrsf() && a.connsModal.TargetSelectedRunner() {
+			return a.readTrsfOnce()
+		}
+	case modalKeys.ConnsReadServer:
+		if a.connsModal.IsTrsf() {
+			a.connsModal.TargetServer()
+			return a.readTrsfOnce()
+		}
+	}
 	var cmd tea.Cmd
 	a.connsModal, cmd = a.connsModal.Update(msg)
 	return cmd
+}
+
+// startTrsfPoll takes the first reading and arms the ticker for the rest,
+// under a fresh generation so any chain from an earlier visit to this mode
+// stops rescheduling. readTrsfOnce is the first half alone, for a retarget:
+// the chain in flight keeps the cadence, so arming a second one would double
+// it.
+func (a *App) startTrsfPoll() tea.Cmd {
+	a.trsfGen++
+	return tea.Batch(a.readTrsfOnce(), trsfTick(a.connsModal.TrsfEvery(), a.trsfGen))
+}
+
+func (a *App) readTrsfOnce() tea.Cmd {
+	if a.client == nil {
+		a.connsModal.SetTrsfError(errNotConnected)
+		return nil
+	}
+	return DoTrsfState(a.client, a.connsModal.TrsfTarget())
 }
 
 // Running-exec list: Esc closes; `x` arms a y/n kill confirmation for the

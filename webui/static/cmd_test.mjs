@@ -346,3 +346,75 @@ test("tasksOnRunner never joins two absences", () => {
   eq(page.tasksOnRunner(tasks, { role: "cli", principalRunner: "" }), [], "non-runner role");
   eq(page.tasksOnRunner(tasks, null), [], "no conn at all");
 });
+
+// --- conns / the trsf reading ------------------------------------------
+//
+// The verb was CLI-only until the reading reached all three surfaces. What is
+// checked here is the half a Go test cannot execute: the page's own dispatch
+// of an argv line, including which flags survive it.
+
+test("conns shows the tab; --trsf carries runner and watch into the panel", async () => {
+  const bare = await run("conns");
+  eq(named(bare.calls, "connsView"), [["connsView", { trsf: false, runner: "", watch: "" }]],
+    "the bare form asks for the tab and nothing else");
+
+  const RCID = "udp:127.0.0.1:41233-a1";
+  const full = await run(`conns --trsf --runner ${RCID} --watch 200ms`);
+  eq(named(full.calls, "connsView"),
+    [["connsView", { trsf: true, runner: RCID, watch: "200ms" }]],
+    "--runner and --watch reach the panel rather than being parsed and dropped");
+});
+
+// The flag-order footgun this repo has hit before (Pitfall 13): Go's flag
+// package stops at the first non-flag token, so a verb that reads positionals
+// AND flags must parse permuted. conns has no positionals, but the declaration
+// is shared and the check is one line.
+test("conns --trsf --watch parses regardless of flag order", async () => {
+  const a = await run("conns --watch 1s --trsf");
+  eq(named(a.calls, "connsView"), [["connsView", { trsf: true, runner: "", watch: "1s" }]]);
+});
+
+// --json is declared CLI-only, with a SurfaceReason: the other two answer with
+// a live view and have nothing to pipe it to. The declaration is what enforces
+// it, so typing it here must be REFUSED rather than accepted and ignored --
+// the silent-drop failure this file exists to catch.
+test("conns --json is refused on this surface rather than ignored", async () => {
+  const { out, err } = await run("conns --json");
+  const said = String(err ?? out ?? "");
+  assert.match(said, /json/, `--json should be reported as not available here, got: ${said}`);
+});
+
+// The duration grammar lives in Go so the page cannot drift from what the CLI
+// accepts. These go through the REAL bridge (parseDurationMs is in the pure
+// set), not a recorder.
+test("parseDurationMs is time.ParseDuration, and refuses a non-positive one", () => {
+  eq(page.bridge.parseDurationMs("200ms").ms, 200);
+  eq(page.bridge.parseDurationMs("1s").ms, 1000);
+  eq(page.bridge.parseDurationMs("1m30s").ms, 90000);
+  assert.ok(page.bridge.parseDurationMs("0s").error, "zero would spin the poll");
+  assert.ok(page.bridge.parseDurationMs("-1s").error, "negative");
+  assert.ok(page.bridge.parseDurationMs("soon").error, "not a duration");
+});
+
+// The reading's cells arrive already rendered, and "-" means ABSENT: a counter
+// the answerer does not report, or a delta with no previous reading. The page
+// must not turn that into a zero, and must not compute one either.
+test("renderTrsfTable draws every declared column and marks absences", () => {
+  const cols = page.TRSF_COLUMNS.map((c) => c.key);
+  eq(cols, ["cid", "role", "task", "cwnd", "inflight", "srtt", "queue",
+    "loss", "spur", "loop", "block", "wait"],
+    "the same twelve the CLI table and the TUI modal print");
+});
+
+// --runner / --watch describe the reading. All three surfaces used to answer
+// `conns --runner X` with the plain connection list — the CLI by dropping the
+// flag, the other two by warning in their own handler. It is a cross-flag rule,
+// so it belongs to the verb: one refusal everywhere.
+test("conns refuses --runner / --watch without --trsf", async () => {
+  for (const line of ["conns --runner udp:h:1-a", "conns --watch 1s"]) {
+    const { out, err, calls } = await run(line);
+    const said = String(err ?? out ?? "");
+    assert.match(said, /trsf/, `${line} should name the flag it needs, got: ${said}`);
+    eq(named(calls, "connsView"), [], `${line} must not open the view`);
+  }
+});

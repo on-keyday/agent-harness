@@ -146,6 +146,41 @@ func (h tuiVerbs) ServerDialRunner(v verb.ServerDialRunnerAction) tea.Cmd {
 	return DoServerDialRunner(a.client, v.RunnerCID, v.Via)
 }
 
+// Conns opens the connections modal — the same overlay `C` opens, because the
+// key and the verb ask the same question. --trsf opens it on the transport
+// reading instead, --runner aims that at a runner's own transport and --watch
+// sets how often it re-reads.
+//
+// Not the `trsf` verb further down: that one dumps THIS client's own link to
+// the server, out of the transport object in this process. This one is every
+// connection the answerer can see, and the answerer can be a runner.
+func (h tuiVerbs) Conns(v verb.ConnsAction) tea.Cmd {
+	a := h.a
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("conns: not connected"))
+		return nil
+	}
+	a.connsModal.Open()
+	a.connsModal.SetSize(a.width, a.height)
+	if !v.Trsf {
+		// --runner / --watch cannot reach here: the declaration's Requires
+		// refuses them without --trsf, on every surface at once.
+		return DoConnSnapshot(a.client)
+	}
+	if v.Watch != "" {
+		every, err := time.ParseDuration(v.Watch)
+		if err != nil || every <= 0 {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("conns --watch %q: want a positive duration, e.g. 200ms", v.Watch)))
+			return nil
+		}
+		a.connsModal.SetTrsfEvery(every)
+	}
+	a.connsModal.EnterTrsf(v.Runner)
+	// The identity rows are fetched too: 't' switches back to them, and they
+	// are what the conns.status subscription keeps current.
+	return tea.Batch(DoConnSnapshot(a.client), a.startTrsfPoll())
+}
+
 func (h tuiVerbs) ForwardLs(v verb.ForwardLsAction) tea.Cmd {
 	a := h.a
 	// true: this IS `forward ls` — the text dump is the whole point.

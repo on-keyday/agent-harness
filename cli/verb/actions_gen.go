@@ -103,11 +103,11 @@ type ConnsAction struct {
 	Trsf bool
 	// with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the gl…
 	Runner string
-	// with --trsf: re-read at this interval (e.g. 200ms) and print the DELTA. Several counters mean nothin…
+	// with --trsf: re-read at this interval (e.g. 200ms) and report the DELTA. Several counters mean nothi…
 	Watch string
 	// output JSON lines instead of a table
 	JSON bool
-	// stream live connection events (conns.status)
+	// stream live connection events (conns.status). The TUI modal and the WebUI tab already are that strea…
 	Follow bool
 }
 
@@ -2058,6 +2058,22 @@ func init() {
 			a.Runner = b.Str("runner")
 			a.Watch = b.Str("watch")
 			a.JSON = b.Bool("json")
+			a.Follow = b.Bool("follow")
+			return a, nil
+		},
+		"conns\x00tui": func(b Bound) (Action, error) {
+			a := ConnsAction{}
+			a.Trsf = b.Bool("trsf")
+			a.Runner = b.Str("runner")
+			a.Watch = b.Str("watch")
+			a.Follow = b.Bool("follow")
+			return a, nil
+		},
+		"conns\x00webui": func(b Bound) (Action, error) {
+			a := ConnsAction{}
+			a.Trsf = b.Bool("trsf")
+			a.Runner = b.Str("runner")
+			a.Watch = b.Str("watch")
 			a.Follow = b.Bool("follow")
 			return a, nil
 		},
@@ -6353,6 +6369,8 @@ type TUIDispatch[R any] interface {
 	Grid(GridAction) R
 	// cancel
 	Cancel(CancelAction) R
+	// conns
+	Conns(ConnsAction) R
 	// caps
 	Caps(CatalogAction) R
 	// restore
@@ -6628,6 +6646,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Cancel(a), true, nil
+	case CmdConns:
+		a, perr := ParseCmdConns(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Conns(a), true, nil
 	case CmdCaps:
 		a, perr := ParseCmdCaps(TUI, args, ctx)
 		if perr != nil {
@@ -6908,6 +6932,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.Grid(a), true
 	case CancelAction:
 		return h.Cancel(a), true
+	case ConnsAction:
+		return h.Conns(a), true
 	case CatalogAction:
 		switch a.Sub {
 		case "caps":
@@ -7180,6 +7206,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCancel:
 			a, perr := ParseCmdCancel(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdConns:
+			a, perr := ParseCmdConns(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

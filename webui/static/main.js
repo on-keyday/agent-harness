@@ -380,6 +380,7 @@ const POLL_INTERVAL_MS = 5000;
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
+  let lastConns = [];              // same, for the trsf panel's answerer picker
   for (const [key, btn] of Object.entries(taskChips)) {
     btn.addEventListener("click", () => {
       taskStatusFilter = key;
@@ -613,8 +614,11 @@ const POLL_INTERVAL_MS = 5000;
     // the server doesn't have the list_conns capability yet; guard with [].
     const conns = snap.conns || [];
     const allTasks = snap.tasks || [];
+    lastConns = conns; // mirrors lastForwards: the trsf panel builds its
+                       // answerer picker from this without a second RPC
     renderConnTopology(conns, allTasks, snap.forwards || []);
     renderConnList(conns, allTasks);
+    renderTrsfTargets(conns);
     renderForwardList(snap.forwards || []);
     renderExecList(snap.execs || []);
   };
@@ -2343,6 +2347,120 @@ const POLL_INTERVAL_MS = 5000;
   }
 
 
+  // --- the trsf reading ---------------------------------------------------
+  //
+  // Read only while the panel is expanded. It is a live call to the server (or
+  // to a runner), not part of the 5s snapshot, so a collapsed panel — the
+  // default — costs nothing, and "open" means the same thing here as it does
+  // for the TUI's modal: the poll runs exactly as long as somebody is looking.
+  const trsfPanelEl = document.getElementById("trsf-panel");
+  const trsfTargetSel = document.getElementById("trsf-target");
+  const trsfEverySel = document.getElementById("trsf-every");
+  const trsfNoteEl = document.getElementById("trsf-note");
+  let trsfTimer = 0;
+  let trsfInFlight = false;
+
+  const setTrsfNote = (text, isError) => {
+    if (!trsfNoteEl) return;
+    trsfNoteEl.textContent = text || "";
+    trsfNoteEl.classList.toggle("is-error", !!isError);
+  };
+
+  // reset starts a fresh series: a reading taken long after the last one is
+  // not a delta over an interval anybody watched.
+  const readTrsf = async (reset) => {
+    // A read slower than the interval must not stack ticks — each would open
+    // its own round trip and they would land out of order.
+    if (trsfInFlight) return;
+    trsfInFlight = true;
+    try {
+      const rows = await window.harness.trsfState({
+        runner: trsfTargetSel ? trsfTargetSel.value : "",
+        reset: !!reset,
+      });
+      renderTrsfTable(rows);
+      // Say why the right-hand columns are empty on the first reading, rather
+      // than letting a screen of "-" read as "this end reports nothing".
+      if (!rows.length) setTrsfNote("(no connections visible to you)");
+      else if (reset) setTrsfNote("deltas appear on the next reading — they need two");
+      else setTrsfNote("");
+    } catch (e) {
+      // The rows already drawn stay: a failed read says nothing about whether
+      // they were true when they were taken.
+      setTrsfNote(e.message, true);
+    } finally {
+      trsfInFlight = false;
+    }
+  };
+
+  const stopTrsfPoll = () => {
+    if (trsfTimer) clearInterval(trsfTimer);
+    trsfTimer = 0;
+  };
+  const startTrsfPoll = (reset) => {
+    stopTrsfPoll();
+    readTrsf(reset);
+    trsfTimer = setInterval(() => readTrsf(false), Number(trsfEverySel.value) || 1000);
+  };
+
+  if (trsfPanelEl && trsfTargetSel && trsfEverySel) {
+    trsfPanelEl.addEventListener("toggle", () => {
+      if (!trsfPanelEl.open) {
+        stopTrsfPoll();
+        return;
+      }
+      // Built on open as well as from the snapshot: opening the panel before
+      // the first poll has landed would otherwise find an empty picker.
+      renderTrsfTargets(lastConns);
+      startTrsfPoll(true);
+    });
+    // A different answerer is a different series, so its reading restarts.
+    trsfTargetSel.addEventListener("change", () => {
+      if (trsfPanelEl.open) startTrsfPoll(true);
+    });
+    // A different cadence is the same series measured differently: the next
+    // delta is simply over a new interval, so this does not reset.
+    trsfEverySel.addEventListener("change", () => {
+      if (trsfPanelEl.open) startTrsfPoll(false);
+    });
+  }
+
+  // connsView is what the `conns` verb does here — the WebUIDispatch the
+  // declaration names. The bare form shows the tab; --trsf also expands the
+  // panel, with --runner and --watch applied to it first so the poll it starts
+  // is already aimed and paced.
+  const connsView = (o) => {
+    const opts = o || {};
+    setActiveTab("conns");
+    if (!trsfPanelEl || !trsfTargetSel || !trsfEverySel) return;
+    // --runner / --watch cannot arrive without --trsf: the declaration's
+    // Requires refuses that combination before it reaches any surface.
+    if (!opts.trsf) return;
+    if (opts.watch) {
+      // Parsed in Go, by the same time.ParseDuration the CLI uses: a second
+      // duration parser in JS is a copy that cannot fail loudly when the
+      // first one grows.
+      const p = window.harness.parseDurationMs(opts.watch);
+      if (p.error) throw new Error(`conns --watch ${opts.watch}: ${p.error}`);
+      // The presets are a convenience, not the range: a typed interval the
+      // list does not carry becomes an option of its own rather than being
+      // rounded to one that IS listed.
+      if (!Array.from(trsfEverySel.options).some((x) => x.value === String(p.ms))) {
+        const opt = document.createElement("option");
+        opt.value = String(p.ms);
+        opt.textContent = opts.watch;
+        trsfEverySel.appendChild(opt);
+      }
+      trsfEverySel.value = String(p.ms);
+    }
+    renderTrsfTargets(lastConns, opts.runner || "");
+    const wasOpen = trsfPanelEl.open;
+    trsfPanelEl.open = true;
+    // Setting .open fires `toggle` only when it CHANGES, so an already-open
+    // panel has to be restarted here or a retarget would not take effect.
+    if (wasOpen) startTrsfPoll(true);
+  };
+
   // What the page owns and runVerbCommand does not: the compose dropdowns,
   // the snapshot cache, the panels. Built once; every entry is a function so
   // the Node test can record the call instead of mimicking the widget.
@@ -2363,6 +2481,7 @@ const POLL_INTERVAL_MS = 5000;
     openGridSet: (o) => openGridSet(o),
     execRunToOutput: (id, argv, opts) => execRunToOutput(id, argv, opts),
     forwards: () => lastForwards || [],
+    connsView: (o) => connsView(o),
     findForwardEntry: (id) => findForwardEntry(id),
     toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
     tapOpen: (id) => openTaps.has(id),
@@ -6038,6 +6157,20 @@ async function runVerbCommand(tokens, ctx) {
       }));
       break;
     }
+    case "conns": {
+      // The tab and, with --trsf, the reading panel inside it. Nothing is
+      // fetched here: the tab is already fed by the snapshot poll, and the
+      // panel starts its own read when it expands.
+      const b = ctx.harness.parseCommand(tokens, {});
+      if (b.error) throw new Error(b.error);
+      ctx.connsView({
+        trsf: !!b.flags.trsf,
+        runner: b.flags.runner || "",
+        watch: b.flags.watch || "",
+      });
+      out = b.flags.trsf ? "conns: trsf reading open" : "conns: showing the connections tab";
+      break;
+    }
     case "scope":
     case "caps": {
       // Which of the three, by the SUB-VERB word rather than by counting
@@ -7346,6 +7479,84 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
     svg.appendChild(g);
   }
   host.appendChild(svg);
+}
+
+// The trsf reading's columns, in the order the CLI table and the TUI modal
+// print them — the same twelve, because it is the same reading from the same
+// cli.TrsfSampler. num marks the ones that read as quantities and are
+// right-aligned.
+const TRSF_COLUMNS = [
+  { key: "cid", title: "CID" },
+  { key: "role", title: "ROLE" },
+  { key: "task", title: "TASK" },
+  { key: "cwnd", title: "CWND", num: true },
+  { key: "inflight", title: "INFLIGHT", num: true },
+  { key: "srtt", title: "SRTT", num: true },
+  { key: "queue", title: "QUEUE", num: true },
+  { key: "loss", title: "LOSS+", num: true },
+  { key: "spur", title: "SPUR+", num: true },
+  { key: "loop", title: "LOOP+", num: true },
+  { key: "block", title: "BLOCK%", num: true },
+  { key: "wait", title: "WAIT" },
+];
+
+// renderTrsfTable draws one reading into #trsf-table.
+//
+// Every cell arrives already rendered from cli.TrsfSampler over the bridge, so
+// nothing here decides what "-" means — it only dims it, because a screen of
+// absences should not read as a screen of zero measurements.
+function renderTrsfTable(rows) {
+  const table = document.getElementById("trsf-table");
+  if (!table) return;
+  table.textContent = "";
+  const head = document.createElement("tr");
+  for (const c of TRSF_COLUMNS) {
+    const th = document.createElement("th");
+    th.textContent = c.title;
+    if (c.num) th.classList.add("trsf-num");
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  for (const r of rows || []) {
+    const tr = document.createElement("tr");
+    for (const c of TRSF_COLUMNS) {
+      const td = document.createElement("td");
+      const v = r[c.key] ?? "-";
+      td.textContent = v;
+      if (c.num) td.classList.add("trsf-num");
+      if (v === "-") td.classList.add("trsf-absent");
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+}
+
+// renderTrsfTargets fills the answerer picker: the server, plus every RUNNER
+// connection in the snapshot. Any other role is one end of a connection the
+// server already reports, so there is nothing separate to ask it.
+//
+// keep is a cid to preserve even when the snapshot does not carry it — a
+// `conns --trsf --runner <cid>` naming a runner this page has not polled yet,
+// or one that has just gone. It is shown rather than silently dropped, so the
+// picker cannot disagree with what the reading is actually aimed at.
+function renderTrsfTargets(conns, keep) {
+  const sel = document.getElementById("trsf-target");
+  if (!sel) return;
+  const want = keep !== undefined ? keep : sel.value;
+  const cids = (conns || []).filter((c) => c.role === "runner").map((c) => c.cid).sort();
+  if (want && !cids.includes(want)) cids.push(want);
+  sel.textContent = "";
+  const server = document.createElement("option");
+  server.value = "";
+  server.textContent = "server";
+  sel.appendChild(server);
+  for (const cid of cids) {
+    const o = document.createElement("option");
+    o.value = cid;
+    o.textContent = cid;
+    sel.appendChild(o);
+  }
+  sel.value = want || "";
 }
 
 // renderConnTopology renders the radial hub-and-spoke SVG topology into
