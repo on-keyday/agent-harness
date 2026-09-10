@@ -467,9 +467,13 @@ on every subscribed topic, so subscribe once at the start of the workflow.
 harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
 harness-cli agent subscriptions   # JSON Lines: this agent's patterns
-harness-cli agent topics          # JSON Lines: every topic on the board
-                                  # (needs board_observe; without it: an error,
-                                  #  not an empty board)
+harness-cli agent topics          # JSON Lines: topics that have been PUBLISHED
+                                  # to — not every topic. A subscribed name with
+                                  # nothing published yet is absent, which is the
+                                  # state a freshly seeded chat.<short-id> is in.
+                                  # Carries no subscriber count either; that is
+                                  # `board topics`. Both need board_observe, and
+                                  # without it: an error, not an empty board.
 
 # Shorthand for "subscribe to my own inbound topic" — derives
 # chat.<first-8-hex-of-HARNESS_TASK_ID>. The server normally seeds this
@@ -527,6 +531,11 @@ harness-cli ls
 #     [act=busy|idle:Nm] [cowrite=N viewer=N]  caps=<...>  prompt="..."
 harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...]}
                         # jq-friendly; e.g. `harness-cli ls --json | jq -r '.tasks[].id'`
+#
+# TASKS is filtered by your visibility rank too, not just RUNNERS: a confined
+# caller sees its own row and nothing else. So an id you cannot find here is
+# not an id that does not exist, and `ls` is not a directory a script can rely
+# on enumerating — for those, the id has to be passed in.
 
 # Agentboard view: every active topic (JSON Lines). Reveals who is listening —
 # e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
@@ -879,6 +888,14 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
 
 ## Other conventions
 
+- **stderr is not the error channel; the exit code is.** `harness-cli` writes
+  connection INFO lines to stderr on completely successful calls, so a
+  non-empty stderr is not a failure — and `2>/dev/null` throws the real
+  diagnosis away, because a capability denial arrives on that same stream
+  mixed in with the INFO. The denial text is not uniform either
+  (`topics denied: requires capability "board_observe"` from the agent
+  surface, `permission denied: BoardTopics requires capability board_observe`
+  from the board one), so matching on the string breaks on one of them.
 - Long-lived subscriptions: register once with `subscribe`, then rely on the
   inbox hook to deliver. Don't `wait` in a loop. (See also "Async by default".)
 - If `harness-cli` is missing or the auth ticket is unset, you are running
