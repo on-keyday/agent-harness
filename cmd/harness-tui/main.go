@@ -110,11 +110,21 @@ func main() {
 	app.BindContext(ctx)
 	slogHandler.BindProgram(program)
 
+	// ONE endpoint for the life of the TUI. A *cli.Client cannot survive a
+	// reconnect (Dial binds the handshake and the handlers to one conn), so a
+	// new Client per attempt is correct — the endpoint under it is the thing
+	// that must NOT be rebuilt. See peer.StartEndpointMaintenance.
+	endpoint, err := cli.NewProcessEndpoint(peerCID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-tui: %v\n", err)
+		os.Exit(1)
+	}
+
 	go func() {
 		enabled := *persist && !*noPersist
 		err := cli.PersistLoop(ctx,
 			func(dialCtx context.Context) (cli.PersistHandle, error) {
-				c, err := cli.Dial(dialCtx, peerCID, protocol.ClientKind_Tui)
+				c, err := cli.DialWith(dialCtx, endpoint, peerCID, protocol.ClientKind_Tui)
 				if err != nil {
 					return nil, err
 				}

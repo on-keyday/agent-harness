@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
@@ -70,11 +69,33 @@ var ErrResponseUndecodable = errors.New("task control response undecodable (vers
 // task-binding check; if proxy_via is set but task_id is missing/invalid,
 // Dial returns an error (no silent fall-back). Admin invocations from a
 // laptop without HARNESS_PROXY_VIA_RUNNER keep dialing directly.
+// A process that dials more than once — anything under PersistLoop — must use
+// DialWith and keep ONE endpoint across reconnects. See
+// peer.StartEndpointMaintenance for why that is the rule and not an
+// optimisation.
 func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
 	pc, err := DialPeerConn(ctx, peerCID)
 	if err != nil {
 		return nil, err
 	}
+	return dialOn(ctx, pc, kind)
+}
+
+// DialWith is Dial on an endpoint the caller owns and keeps. Every reconnect
+// opens a new Connection on that ONE endpoint, which is what an endpoint is
+// for; the caller builds it once with NewProcessEndpoint.
+func DialWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
+	pc, err := DialPeerConnWith(ctx, ep, peerCID)
+	if err != nil {
+		return nil, err
+	}
+	return dialOn(ctx, pc, kind)
+}
+
+// dialOn is everything Dial does AFTER the connection exists: the merged
+// PSK+identity handshake and the control-handler wiring. Both entry points
+// share it, so the two cannot drift in what they authenticate.
+func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Client, error) {
 	c := &Client{
 		conn:    pc,
 		pending: map[uint32]chan taskControlResult{},
@@ -134,6 +155,18 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 	// Merged handshake complete — switch to the pure app handler.
 	pc.SetOnControl(c.dispatchControl)
 	return c, nil
+}
+
+// NewProcessEndpoint builds the endpoint a long-lived client keeps for its
+// whole life and starts its sweepers. Call it ONCE, outside any reconnect
+// loop, and pass the result to DialWith on every attempt.
+func NewProcessEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, error) {
+	ep, err := BuildClientEndpoint(peerCID)
+	if err != nil {
+		return nil, err
+	}
+	peer.StartEndpointMaintenance(ep)
+	return ep, nil
 }
 
 // dispatchControl is the peer ControlHandler. We only care about TaskControl
@@ -244,11 +277,18 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 }
 
 // Close tears down the underlying peer.Conn (best-effort wire-level Close
-// + objproto connection shutdown). The objproto.Endpoint constructed by
-// Dial is intentionally not torn down here — it has no Close API and is
-// leaked until process exit. cli subcommands are short-lived processes,
-// so this is acceptable; long-running embedders (e.g. the tui) reuse the
-// same *Client for the lifetime of the program.
+// + objproto connection shutdown). It does NOT touch the objproto.Endpoint,
+// and that is the ownership rule rather than a gap: the Endpoint is
+// process-scoped and bundles every connection made on it, so what a Close
+// ends is the Connection. peer.StartEndpointMaintenance carries the full
+// statement.
+//
+// A *Client does not survive a reconnect — Dial binds the PSK handshake, the
+// pending map and the control handler to one conn — so a reconnecting process
+// builds a new Client each time and keeps the SAME endpoint: NewProcessEndpoint
+// once, DialWith per attempt. (An earlier version of this comment said
+// long-running embedders "reuse the same *Client for the lifetime of the
+// program", which stopped being true the day PersistLoop landed.)
 func (c *Client) Close() {
 	c.conn.Close()
 }
@@ -267,19 +307,36 @@ func (c *Client) Close() {
 // proxy_request to a task running on the proxy_runner). The env always sets
 // it inside runner-spawned processes; missing it surfaces as a loud error
 // rather than a silent direct-dial fall-back.
+// It builds an endpoint of its own, which is right for a one-shot process and
+// wrong for one that dials again: DialPeerConnWith is that caller's entry.
 func DialPeerConn(ctx context.Context, peerCID objproto.ConnectionID) (*peer.Conn, error) {
-	proxyVia := strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER"))
-	if proxyVia == "" {
-		ep, err := BuildClientEndpoint(peerCID)
+	if strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER")) == "" {
+		ep, err := NewProcessEndpoint(peerCID)
 		if err != nil {
 			return nil, err
 		}
-		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-		go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
-		return peer.Dial(ctx, ep, peerCID, peer.DialConfig{
-			Logger: slog.Default(),
-		})
+		return DialPeerConnWith(ctx, ep, peerCID)
 	}
+	return dialViaProxyFromEnv(ctx, peerCID)
+}
+
+// DialPeerConnWith dials on an endpoint the caller owns.
+//
+// The proxy branch is deliberately NOT given the endpoint: it dials a runner's
+// listen address, which may be another transport entirely, and DialViaProxy
+// builds what that leg needs. In practice no reconnecting process takes it —
+// HARNESS_PROXY_VIA_RUNNER marks an in-task agent, and those are one-shot.
+func DialPeerConnWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.ConnectionID) (*peer.Conn, error) {
+	if strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER")) != "" {
+		return dialViaProxyFromEnv(ctx, peerCID)
+	}
+	return peer.Dial(ctx, ep, peerCID, peer.DialConfig{
+		Logger: slog.Default(),
+	})
+}
+
+func dialViaProxyFromEnv(ctx context.Context, peerCID objproto.ConnectionID) (*peer.Conn, error) {
+	proxyVia := strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER"))
 
 	proxyCID, err := cliopts.ResolveServerCID(proxyVia)
 	if err != nil {

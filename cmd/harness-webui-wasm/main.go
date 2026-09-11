@@ -355,10 +355,19 @@ func harnessConnect(this js.Value, args []js.Value) any {
 			var startedOnce sync.Once
 			peerCIDLocal := cid
 
+			// ONE endpoint for this page's life. Each reconnect builds a fresh
+			// *cli.Client (Dial binds the handshake and handlers to one conn)
+			// on the SAME endpoint — see peer.StartEndpointMaintenance.
+			endpoint, epErr := cli.NewProcessEndpoint(peerCIDLocal)
+			if epErr != nil {
+				rejectErr(reject, fmt.Errorf("endpoint: %w", epErr))
+				return
+			}
+
 			go func() {
 				err := cli.PersistLoop(rootCtx,
 					func(dialCtx context.Context) (cli.PersistHandle, error) {
-						c, derr := cli.Dial(dialCtx, peerCIDLocal, protocol.ClientKind_Webui)
+						c, derr := cli.DialWith(dialCtx, endpoint, peerCIDLocal, protocol.ClientKind_Webui)
 						if derr != nil {
 							return nil, derr
 						}

@@ -200,34 +200,27 @@ func (h *RunHandle) Close() {
 //
 // Returns *cli.PSKAuthError when the server rejects the PSK so PersistLoop
 // can treat it as fatal.
-func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
-	clearInheritedCtrlCIgnore()
+// NewDialEndpoint builds the endpoint a dial-mode runner keeps for its whole
+// life, and starts its sweepers. Call it ONCE, above PersistLoop, and pass the
+// result to ConnectWith on every attempt — peer.StartEndpointMaintenance says
+// why that is the rule.
+//
+// ONE endpoint carries a leg per transport the candidate list names. A list may
+// legitimately span ws and udp (that is what a dualstack server is for), and
+// the construct for "one runner process, both transports" already exists in
+// this package: ListenAndServe builds a single UDPWebsocketDualStackEndpoint
+// rather than one endpoint per leg.
+//
+// The legs are decided from the list's TEXT, which is why this can happen
+// before any candidate is resolved — and therefore before any DNS lookup that
+// may be failing right now.
+func NewDialEndpoint(cfg Config) (objproto.Endpoint, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	cfg.Logger.Info("runner config",
-		"no_worktree", cfg.NoWorktree,
-		"force_inject_harness_settings", cfg.ForceInjectHarnessSettings)
-
 	if cfg.ServerCandidates.Len() == 0 {
 		return nil, errors.New("runner: no --server-cid candidate to dial")
 	}
-
-	// ONE endpoint for the whole walk, carrying a leg per transport the list
-	// names. A list may legitimately span ws and udp — that is what a dualstack
-	// server is for — and the construct for "one runner process, both
-	// transports" already exists in this package: ListenAndServe builds a
-	// single UDPWebsocketDualStackEndpoint rather than one endpoint per leg.
-	//
-	// Building one per candidate (or per transport) instead would leave
-	// whichever endpoint loses the walk holding a bound socket, a GC goroutine
-	// pair and an accept channel nobody reads — nothing closes an
-	// objproto.Endpoint, the interface has no Close and AutoGarbageCollect /
-	// AutoKeyUpdate tick with no stop. PersistLoop already pays for one per
-	// reconnect; it must not pay for more.
-	//
-	// The legs are decided from the list's TEXT, which is why this can happen
-	// before any candidate is resolved: a transport prefix needs no DNS.
 	legs, err := endpointLegsFor(cfg.ServerCandidates.Schemes())
 	if err != nil {
 		return nil, err
@@ -236,8 +229,32 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
+	peer.StartEndpointMaintenance(ep)
+	return ep, nil
+}
+
+// Connect builds an endpoint of its own and dials on it: the single-shot entry,
+// for runner.Run and the integration suite. A process that RECONNECTS must not
+// use it — see ConnectWith.
+func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
+	ep, err := NewDialEndpoint(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return ConnectWith(ctx, ep, cfg)
+}
+
+// ConnectWith is Connect on an endpoint the caller owns and keeps across
+// reconnects. PersistLoop calls it again on every attempt, so the candidate
+// walk starts from the top each time while the socket underneath stays put.
+func ConnectWith(ctx context.Context, ep objproto.Endpoint, cfg Config) (*RunHandle, error) {
+	clearInheritedCtrlCIgnore()
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	cfg.Logger.Info("runner config",
+		"no_worktree", cfg.NoWorktree,
+		"force_inject_harness_settings", cfg.ForceInjectHarnessSettings)
 
 	var lastErr error
 	all := cfg.ServerCandidates.All()

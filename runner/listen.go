@@ -61,8 +61,7 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	if err != nil {
 		return err
 	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
+	peer.StartEndpointMaintenance(ep)
 
 	// Mirror server.go: shut the HTTP server down with a short grace
 	// period when ctx ends so the listening port is released promptly

@@ -514,11 +514,21 @@ func main() {
 		slog.Info("server candidates", "order", candidates.All())
 	}
 
+	// ONE endpoint for this process, built above the loop. Every reconnect
+	// opens a new Connection on it; the socket, its connection map and its
+	// sweepers stay put. Building one per attempt is what this used to do, and
+	// peer.StartEndpointMaintenance records what that cost.
+	endpoint, err := runner.NewDialEndpoint(runCfg)
+	if err != nil {
+		slog.Error("server-cid", "err", err)
+		os.Exit(1)
+	}
+
 	enabled := cfg.Persist && !cfg.NoPersist
 
 	err = cli.PersistLoop(ctx,
 		func(dialCtx context.Context) (cli.PersistHandle, error) {
-			return runner.Connect(dialCtx, runCfg)
+			return runner.ConnectWith(dialCtx, endpoint, runCfg)
 		},
 		func(runCtx context.Context, h cli.PersistHandle) error {
 			rh := h.(*runner.RunHandle)

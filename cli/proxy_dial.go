@@ -36,11 +36,21 @@ var (
 // Other non-Ok statuses are returned as typed errors so the caller can
 // distinguish (e.g. surface to the user).
 func DialViaProxy(ctx context.Context, proxyCID objproto.ConnectionID, taskID protocol.TaskID) (*peer.Conn, error) {
+	// ONE endpoint for every attempt. The retry re-randomises the CID's id, not
+	// the socket, and BuildClientEndpoint only ever reads the transport — so a
+	// per-attempt endpoint was three sockets and twelve goroutines for one
+	// collision, and identical in every other respect. peer.StartEndpointMaintenance
+	// has the general statement.
+	ep, err := NewProcessEndpoint(proxyCID)
+	if err != nil {
+		return nil, fmt.Errorf("build client endpoint: %w", err)
+	}
+
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		proxyCID.ID = uint16(rand.Uint32() & 0xFFFF) // #nosec G404 — collision retry, not crypto
 
-		pc, err := dialViaProxyAttempt(ctx, proxyCID, taskID)
+		pc, err := dialViaProxyAttempt(ctx, ep, proxyCID, taskID)
 		if err == nil {
 			return pc, nil
 		}
@@ -52,14 +62,7 @@ func DialViaProxy(ctx context.Context, proxyCID objproto.ConnectionID, taskID pr
 	return nil, ErrProxyIdCollision
 }
 
-func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, taskID protocol.TaskID) (*peer.Conn, error) {
-	ep, err := BuildClientEndpoint(proxyCID)
-	if err != nil {
-		return nil, fmt.Errorf("build client endpoint: %w", err)
-	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
-
+func dialViaProxyAttempt(ctx context.Context, ep objproto.Endpoint, proxyCID objproto.ConnectionID, taskID protocol.TaskID) (*peer.Conn, error) {
 	localConn, err := peer.Dial(ctx, ep, proxyCID, peer.DialConfig{
 		Logger:       slog.Default(),
 		PingInterval: 15 * time.Second,
