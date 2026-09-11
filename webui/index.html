@@ -20,6 +20,11 @@
       <!-- Keep-awake toggle: the session/terminal view is static (no playing
            media), so nothing holds the phone screen awake and it hits the OS
            screen-timeout fast. ☕ = off, lit = on. See keepAwake in main.js. -->
+      <!-- Mobile mode toggle: the task list poll refetches the whole snapshot
+           every tick (~12KB), which is ~8MB/h on a metered connection with
+           nothing happening. Lit = on, and the poll drops to one minute. See
+           mobileMode in main.js. -->
+      <button id="mobile-btn" type="button" aria-pressed="false" title="モバイルモード：一覧の自動更新を間引いてデータ通信を節約" aria-label="モバイルモード">📱</button>
       <button id="keepawake-btn" type="button" aria-pressed="false" title="画面の自動消灯を抑止" aria-label="画面の自動消灯を抑止">☕</button>
       <button id="reload-btn" type="button" title="再読み込み" aria-label="再読み込み">↻</button>
       <div id="status">disconnected</div>

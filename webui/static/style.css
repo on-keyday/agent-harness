@@ -33,7 +33,8 @@ header h1 { margin: 0; font-size: 1.2rem; }
   cursor: pointer;
 }
 #reload-btn:hover { background: #555; }
-#keepawake-btn {
+#keepawake-btn,
+#mobile-btn {
   background: #444;
   color: #d4d4d4;
   border: 1px solid #555;
@@ -43,7 +44,12 @@ header h1 { margin: 0; font-size: 1.2rem; }
   line-height: 1;
   cursor: pointer;
 }
-#keepawake-btn:hover { background: #555; }
+#keepawake-btn:hover,
+#mobile-btn:hover { background: #555; }
+/* Mobile mode engaged. Blue, not the keep-awake green: the two toggles sit
+   side by side and are unrelated, so lit-means-on must not read as the same
+   thing being on. */
+#mobile-btn.is-active { background: #9cdcfe; color: #000; border-color: #9cdcfe; }
 /* Engaged: lit green (matches #status.connected). Pending: armed-but-waiting
    for the gesture that iOS autoplay needs — amber so it reads as "tap me". */
 #keepawake-btn.is-active { background: #2d5; color: #000; border-color: #2d5; }
@@ -166,7 +172,8 @@ button:hover { background: #555; }
     }
     /* Comfortable tap target for the header reload button. */
     #reload-btn,
-    #keepawake-btn {
+    #keepawake-btn,
+    #mobile-btn {
         min-width: 2.6rem;
         min-height: 2.4rem;
         font-size: 1.2rem;

@@ -5,6 +5,11 @@ const SERVER_CID = location.protocol.startsWith("https")
   : `ws:${location.hostname}:${location.port || 80}-*`;
 
 const POLL_INTERVAL_MS = 5000;
+// Mobile mode's period. refreshSnapshot refetches the WHOLE list every tick —
+// runners, tasks, conns, forwards, execs in one ListResultBody — which measured
+// ~12KB on a fleet of 46 tasks, i.e. ~8MB/h with nothing happening at all. Fine
+// on wifi, expensive on a phone's data plan.
+const POLL_INTERVAL_MOBILE_MS = 60000;
 
 (async () => {
   const status = document.getElementById("status");
@@ -162,6 +167,54 @@ const POLL_INTERVAL_MS = 5000;
     return { toggle, turnOn, turnOff, isEngaged: () => engaged, wants: () => wantOn };
   })();
   void keepAwake; // referenced for debugging / future programmatic control
+
+  // Mobile mode toggle (header). Opt-in rather than a navigator.connection
+  // sniff: whether the bytes are worth spending is the user's call, not the
+  // link type's, and this page runs in a non-secure context (plain ws) where
+  // that API's availability is not something to lean on.
+  //
+  // What it does NOT delay: task and runner changes still land immediately —
+  // harness_onTaskEvent kicks a refresh per event. What it does delay is the
+  // conns / forwards / execs panels, which have no event subscription in wasm
+  // and so are only as current as the last poll.
+  //
+  // Wired here, before the wasm load, so the persisted state is on the button
+  // from the first paint. The poll it governs is armed much further down and
+  // subscribes via onChange.
+  const MOBILE_KEY = "harness.mobileMode";
+  const mobileBtn = document.getElementById("mobile-btn");
+  const mobileMode = (() => {
+    let on = localStorage.getItem(MOBILE_KEY) === "on";
+    const listeners = [];
+
+    function reflect() {
+      if (!mobileBtn) return;
+      mobileBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      mobileBtn.classList.toggle("is-active", on);
+      const sec = Math.round((on ? POLL_INTERVAL_MOBILE_MS : POLL_INTERVAL_MS) / 1000);
+      mobileBtn.title = on
+        ? `モバイルモード中：一覧の自動更新は${sec}秒ごと（タップで解除）`
+        : "モバイルモード：一覧の自動更新を間引いてデータ通信を節約";
+    }
+
+    function toggle() {
+      on = !on;
+      localStorage.setItem(MOBILE_KEY, on ? "on" : "off");
+      reflect();
+      for (const fn of listeners) {
+        try { fn(); } catch (e) { console.error("mobileMode listener", e); }
+      }
+    }
+
+    if (mobileBtn) mobileBtn.addEventListener("click", toggle);
+    reflect();
+    return {
+      isOn: () => on,
+      intervalMs: () => (on ? POLL_INTERVAL_MOBILE_MS : POLL_INTERVAL_MS),
+      onChange: (fn) => listeners.push(fn),
+      toggle,
+    };
+  })();
 
   // 1. Load and start the wasm module.
   const go = new Go();
@@ -1167,7 +1220,27 @@ const POLL_INTERVAL_MS = 5000;
   }
 
   await refreshSnapshot();
-  setInterval(refreshSnapshot, POLL_INTERVAL_MS);
+
+  // The interval handle is held because the period is not a constant: mobile
+  // mode changes it and a hidden tab drops it. setInterval bakes its period in
+  // at arm time, so "change the interval" is clear + set, not assignment.
+  let pollTimer = null;
+  function armPoll() {
+    if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+    // A hidden tab paints nothing, so every poll it runs spends bytes on a
+    // frame nobody sees. Browsers already throttle background timers to about
+    // one tick a minute; this removes the traffic rather than slowing it.
+    if (document.hidden) return;
+    pollTimer = setInterval(refreshSnapshot, mobileMode.intervalMs());
+  }
+  armPoll();
+  mobileMode.onChange(armPoll);
+  document.addEventListener("visibilitychange", () => {
+    armPoll();
+    // Coming back from an unbounded hide: repaint once now instead of showing
+    // rows up to a whole period stale while the first tick is pending.
+    if (!document.hidden) refreshSnapshot();
+  });
 
   function renderFileTaskSelect(tasks) {
     const prev = fileTaskSelect.value;
