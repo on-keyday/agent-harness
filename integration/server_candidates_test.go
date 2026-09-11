@@ -87,3 +87,45 @@ func TestServerCandidateRotationExhausted(t *testing.T) {
 		t.Fatal("connect succeeded with every candidate dead")
 	}
 }
+
+// TestServerCandidateMixedTransports is why the endpoint is chosen from the
+// WHOLE list rather than per candidate: `--server-cid` may legitimately span
+// ws and udp, because a dualstack server serves both and a moving runner may
+// want the fast leg at home and the one that traverses anything outside. Both
+// legs must dial from ONE endpoint — the construct runner/listen.go already
+// uses for the same job.
+//
+// Each direction is asserted, because a single endpoint that quietly carried
+// only its first leg would still pass the other order.
+func TestServerCandidateMixedTransports(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	const wsAddr = "127.0.0.1:18864"
+	const udpAddr = "127.0.0.1:18865"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := server.New(server.Config{Addr: wsAddr, UDPAddr: udpAddr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	for _, spec := range []string{
+		"udp:" + udpAddr + "-*,ws:" + wsAddr + "-*",
+		"ws:" + wsAddr + "-*,udp:" + udpAddr + "-*",
+	} {
+		cands, err := runner.ParseServerCandidates(spec)
+		if err != nil {
+			t.Fatalf("candidates %q: %v", spec, err)
+		}
+		h, err := runner.Connect(ctx, candidateRunnerConfig(t, cands))
+		if err != nil {
+			t.Fatalf("connect with %q: %v", spec, err)
+		}
+		h.Close()
+	}
+}

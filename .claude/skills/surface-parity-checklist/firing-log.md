@@ -1876,9 +1876,30 @@ two places this change could have gone wrong:
 1. **Nothing closes an `objproto.Endpoint`** — no `Close` on the interface, and
    `AutoGarbageCollect` / `AutoKeyUpdate` tick forever. `PersistLoop` already
    leaks one per reconnect; building one per CANDIDATE would have multiplied
-   that by the list length on a runner that reconnects all day. Answered by
-   memoising per transport inside one `Connect` call, so the LAN/tailnet `ws`
-   pair costs exactly what today costs.
+   that by the list length on a runner that reconnects all day.
+
+   **First answered wrong, and the correction is the entry worth reading.** I
+   memoised per TRANSPORT inside one `Connect` call and wrote off the remaining
+   case — a list spanning ws and udp, where the losing leg's endpoint is left
+   unserviced — as theoretical, on the sentence "混在リストを書く理由は今のところ
+   無い". The operator answered 「dual stackとかあるのに...?」. That is not a corner:
+   `harness-server` serves ws+udp together, the README documents it, and
+   **`runner/listen.go:326` already builds a single
+   `transport.UDPWebsocketDualStackEndpoint` for exactly this job — one runner
+   process, two transports — in the same package as the file I was editing.**
+   Replaced with one endpoint whose legs are decided from the list's text
+   (`ServerCandidates.Schemes`, no DNS needed to read a transport prefix).
+
+   **No item on this list asks the question that would have caught it**, and the
+   one that does is `implementation-pitfalls` Pitfall 3 ("sibling-code grep
+   skipped, wrong pattern copied") — which I read IN FULL at the start of this
+   task, ten minutes before writing the map. Reading the pitfall is not the same
+   as running its check: it says grep how adjacent code in the same layer solves
+   the same job, and the layer here was the package I had open. The cheap
+   falsifier I skipped is one grep for the constructor I was about to
+   hand-roll around (`grep -rn UDPWebsocketDualStack`), which returns the
+   sibling and the server. Worth counting against Pitfall 3 rather than
+   proposing a new number here.
 2. **A per-candidate context deadline would have killed the session, not the
    dial** — `peer.Dial` hands its ctx to the CONNECTION. That trap is already
    written down in `cli/dataplane_dial.go`, where it was hit and cost a

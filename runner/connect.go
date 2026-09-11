@@ -213,20 +213,36 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 		return nil, errors.New("runner: no --server-cid candidate to dial")
 	}
 
-	// One endpoint per TRANSPORT rather than per candidate. Nothing closes an
-	// objproto.Endpoint — the interface has no Close, and AutoGarbageCollect /
-	// AutoKeyUpdate run on tickers with no stop — so each one built here
-	// outlives the attempt that built it. PersistLoop already pays that once
-	// per reconnect; building one per candidate would multiply it by the length
-	// of the list on a runner that reconnects all day. The pair this feature
-	// exists for (a LAN address and a tailnet one, both ws) shares a single
-	// endpoint, so the common case costs exactly what it costs today.
-	eps := map[string]objproto.Endpoint{}
+	// ONE endpoint for the whole walk, carrying a leg per transport the list
+	// names. A list may legitimately span ws and udp — that is what a dualstack
+	// server is for — and the construct for "one runner process, both
+	// transports" already exists in this package: ListenAndServe builds a
+	// single UDPWebsocketDualStackEndpoint rather than one endpoint per leg.
+	//
+	// Building one per candidate (or per transport) instead would leave
+	// whichever endpoint loses the walk holding a bound socket, a GC goroutine
+	// pair and an accept channel nobody reads — nothing closes an
+	// objproto.Endpoint, the interface has no Close and AutoGarbageCollect /
+	// AutoKeyUpdate tick with no stop. PersistLoop already pays for one per
+	// reconnect; it must not pay for more.
+	//
+	// The legs are decided from the list's TEXT, which is why this can happen
+	// before any candidate is resolved: a transport prefix needs no DNS.
+	legs, err := endpointLegsFor(cfg.ServerCandidates.Schemes())
+	if err != nil {
+		return nil, err
+	}
+	ep, err := buildRunnerEndpoint(cfg, legs)
+	if err != nil {
+		return nil, err
+	}
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
 
 	var lastErr error
 	all := cfg.ServerCandidates.All()
 	for i, spec := range all {
-		h, err := dialServerCandidate(ctx, cfg, eps, spec)
+		h, err := dialServerCandidate(ctx, cfg, ep, spec)
 		if err == nil {
 			return h, nil
 		}
@@ -254,23 +270,13 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 // dialServerCandidate resolves one candidate and runs the whole establish on
 // it. Split out of Connect so the candidate walk above reads as the policy it
 // is, and so each attempt's endpoint bookkeeping stays in one place.
-func dialServerCandidate(ctx context.Context, cfg Config, eps map[string]objproto.Endpoint, spec string) (*RunHandle, error) {
+func dialServerCandidate(ctx context.Context, cfg Config, ep objproto.Endpoint, spec string) (*RunHandle, error) {
 	// DNS runs HERE, on every attempt. A name that resolves only on the home
 	// LAN must be allowed to fail now and succeed later (and the other way
 	// round) without the runner having to restart.
 	cid, err := ResolveServerCandidate(spec)
 	if err != nil {
 		return nil, err
-	}
-	ep, ok := eps[cid.Transport]
-	if !ok {
-		ep, err = buildRunnerEndpoint(cfg, cid.Transport)
-		if err != nil {
-			return nil, err
-		}
-		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-		go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
-		eps[cid.Transport] = ep
 	}
 
 	// No deadline of our own: objproto bounds the ECDH handshake at 10s
@@ -866,11 +872,31 @@ func (s *peerSender) Publish(topic string, data []byte) error {
 //
 // UDP transport was already symmetric (binds a socket regardless of mode), so
 // the mode bump there only affects objproto-level handshake acceptance.
-// The scheme comes from the candidate being dialed, not from Config: a
-// candidate list may mix ws and udp, and each needs its own endpoint.
-func buildRunnerEndpoint(cfg Config, scheme string) (objproto.Endpoint, error) {
-	switch scheme {
-	case "ws", "wss":
+// The legs come from the whole --server-cid list rather than from one
+// candidate: a list may span ws and udp, and both must dial from a single
+// endpoint (see Connect).
+func buildRunnerEndpoint(cfg Config, legs endpointLegs) (objproto.Endpoint, error) {
+	switch {
+	case legs.ws && legs.udp:
+		// The same constructor ListenAndServe uses for its own dualstack case.
+		// Mux is nil here where listen mode passes one: nil means dial-only at
+		// the transport layer while objproto still accepts incoming handshakes
+		// under Mutual, which is the "Mutual + nil mux" configuration
+		// WebSocketEndpointEx documents.
+		ds, err := transport.UDPWebsocketDualStackEndpoint(transport.UDPWebsocketDualStackConfig{
+			Logger:  cfg.Logger,
+			UDPPort: 0, // OS-assigned, as the single-leg UDP path takes
+			WS: transport.WebSocketConfig{
+				Logger: cfg.Logger,
+				Path:   cli.WebSocketPath,
+				Mode:   objproto.EndpointModeMutual,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ws+udp dualstack endpoint: %w", err)
+		}
+		return ds.Endpoint, nil
+	case legs.ws:
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
 			Path:   cli.WebSocketPath,
@@ -880,15 +906,44 @@ func buildRunnerEndpoint(cfg Config, scheme string) (objproto.Endpoint, error) {
 			return nil, fmt.Errorf("ws endpoint: %w", err)
 		}
 		return ep, nil
-	case "udp":
+	case legs.udp:
 		ep, err := transport.UDPEndpoint(cfg.Logger, 0, objproto.EndpointModeMutual)
 		if err != nil {
 			return nil, fmt.Errorf("udp endpoint: %w", err)
 		}
 		return ep, nil
 	default:
-		return nil, fmt.Errorf("unsupported transport %q in --server-cid", scheme)
+		// endpointLegsFor refuses this case, so reaching it means the two went
+		// out of step rather than that the operator typed something.
+		return nil, errors.New("runner: no transport leg to build")
 	}
+}
+
+// endpointLegs is which transport legs one endpoint must carry.
+type endpointLegs struct{ ws, udp bool }
+
+// endpointLegsFor maps the --server-cid list's transports onto those legs.
+//
+// An unrecognised transport is NOT fatal: it is one candidate that will fail
+// when dialed, and a typo in the last entry must not stop the runner reaching
+// the first one. A list with nothing dialable in it has no endpoint to build at
+// all, and that error names what it found — otherwise the operator gets
+// "no transport leg" for a value they can see is wrong.
+func endpointLegsFor(schemes []string) (endpointLegs, error) {
+	var legs endpointLegs
+	for _, s := range schemes {
+		switch s {
+		case "ws", "wss":
+			legs.ws = true
+		case "udp":
+			legs.udp = true
+		}
+	}
+	if !legs.ws && !legs.udp {
+		return endpointLegs{}, fmt.Errorf(
+			"--server-cid: no dialable transport in %v (want ws, wss or udp)", schemes)
+	}
+	return legs, nil
 }
 
 // waitForAssignTaskBody resolves the server-initiated send-stream

@@ -78,6 +78,33 @@ func (c ServerCandidates) All() []string { return c.specs }
 // String renders the list back in the spelling --server-cid accepts.
 func (c ServerCandidates) String() string { return strings.Join(c.specs, ",") }
 
+// Schemes returns the distinct transport prefixes in the list, in order of
+// first appearance.
+//
+// The transport is the one part of a ConnectionID that needs NO resolution — it
+// is the text before the first ':', which is how objproto itself starts parsing
+// — so the endpoint's shape can be decided from the whole list up front while
+// each address is still resolved per attempt. That ordering matters: a list
+// spanning ws and udp needs one endpoint carrying BOTH legs, and which legs are
+// needed cannot wait for a DNS lookup that may be failing right now.
+//
+// Unrecognised transports are returned as they were written. Deciding what is
+// dialable is endpointLegsFor's job, and a candidate whose transport nothing
+// can dial fails when it is dialed rather than sinking the list.
+func (c ServerCandidates) Schemes() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range c.specs {
+		scheme, _, _ := strings.Cut(s, ":")
+		if seen[scheme] {
+			continue
+		}
+		seen[scheme] = true
+		out = append(out, scheme)
+	}
+	return out
+}
+
 // ResolveServerCandidate turns one candidate into a dialable ConnectionID. DNS
 // happens here, once per dial attempt.
 //

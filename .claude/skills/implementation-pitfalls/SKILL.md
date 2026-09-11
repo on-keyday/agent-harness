@@ -66,6 +66,27 @@ Fixed in `c55ed45` (TUI/WebUI use the `*With` variant on `a.client` / `currentCl
 
 > Does this diff use the same helper-invocation pattern as adjacent code in the same layer? Spec compliance alone is not enough — check layer-internal consistency.
 
+**Second incident (2026-09-11), and it generalises the mitigation past
+TUI/WebUI.** Giving `agent-runner --server-cid` a candidate list that may span
+ws and udp, I built a `map[transport]objproto.Endpoint` and filled it lazily.
+`runner/listen.go:326` — the file beside the one I was editing — already builds
+ONE `transport.UDPWebsocketDualStackEndpoint` for the same job (a single runner
+process reachable over both transports), as does `server/server.go:693`. Caught
+by the operator asking 「dual stackとかあるのに...?」 after landing.
+
+I had read this pitfall in full ten minutes earlier. Reading it is not running
+it: the mitigation above names TUI specifics, so nothing in its wording fired
+for the `runner` package. Two generalisations worth carrying:
+
+- **"The same layer" includes the file next to the one you are editing** — not
+  only cross-surface (cli → tui → webui), but same-package siblings solving the
+  adjacent case.
+- **A container of a dependency's objects is the tell.** The moment the code
+  holds a `map` or slice of a library type to get "one per X", grep the library
+  for a constructor that already does multi-X: `grep -rn UDPWebsocketDualStack`
+  returns both the sibling and the answer in one command. That grep is cheaper
+  than the design discussion it replaces, let alone the follow-up commit.
+
 ---
 
 ## Pitfall 4 — Build-output / runtime-state collision in `make clean`

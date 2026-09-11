@@ -620,11 +620,29 @@ implementation:**
   later, so `ResolveServerCandidate` is called per attempt instead. The price is
   that a mistyped transport surfaces as a dial error rather than a startup one;
   it is logged with the candidate text on every attempt, never skipped.
-- **One endpoint per TRANSPORT per attempt, not one per candidate.** Nothing
-  closes an `objproto.Endpoint` (the interface has no `Close`, and
-  `AutoGarbageCollect` / `AutoKeyUpdate` tick forever), so each one outlives the
-  attempt. A LAN/tailnet pair on `ws` therefore shares one endpoint and costs
-  exactly what a single-candidate attempt costs today.
+- **ONE endpoint for the whole walk, carrying a leg per transport the list
+  names.** Nothing closes an `objproto.Endpoint` (the interface has no `Close`,
+  and `AutoGarbageCollect` / `AutoKeyUpdate` tick forever), so any endpoint that
+  loses the walk keeps a bound socket, a GC goroutine pair and an accept channel
+  nobody reads. The legs are decided from the list's TEXT before anything is
+  resolved, which is possible because a transport prefix needs no DNS
+  (`ServerCandidates.Schemes`). A list spanning `ws` and `udp` therefore builds
+  one `transport.UDPWebsocketDualStackEndpoint` — the same constructor
+  `runner.ListenAndServe` uses for its own dualstack case — with `Mux` nil,
+  which is the documented "Mutual + nil mux" dial-only-transport
+  configuration. An unrecognised transport in the list is one candidate that
+  fails when dialed, not a reason to refuse the list; a list with nothing
+  dialable in it has no endpoint to build and says so.
+
+  **This corrects the position first written into this amendment**, which was
+  "one endpoint per TRANSPORT per attempt" built lazily from a map keyed on the
+  resolved candidate's transport. What moved it: `--server-cid` spanning
+  transports is not a corner — a dualstack server serves both legs and the
+  reason to list both is the same reason this feature exists — and
+  `runner/listen.go` already had the construct for "one runner process, two
+  transports" in the same package. Two single-leg endpoints were not merely
+  wasteful; they diverged from the sibling for no reason, which is what would
+  have cost the next reader.
 - **No per-candidate deadline.** `objproto.DoECDHHandshake` already bounds the
   handshake at 10s, which is what makes the walk terminate. A context deadline
   could not do the job here anyway — `peer.Dial` hands its ctx to the
