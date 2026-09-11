@@ -180,12 +180,13 @@ choose what to tell the human, because the branches lead opposite ways:
 | `NotPermitted` | fatal, and a restart will not help: the grant is live but does not cover this call |
 | `NoIdentity` | **not** a credential failure — back off and retry |
 
-`cli/persist.go`'s `Retryable()` draws exactly this line, and `NoIdentity` sits
-on the far side of it because it is what a version-skewed server answers when
-it cannot decode a hello it is too old to understand. That clears itself the
-moment the server is upgraded. Treating it as fatal is what emptied the fleet
-on 2026-07-16 — every runner exited within about a second and none came back.
-So do not collapse the five into one "auth failed, tell them to restart".
+harness-cli draws exactly this line internally: it retries `NoIdentity`, and
+nothing else. `NoIdentity` sits on the far side because it is what a
+version-skewed server answers when it cannot decode a hello it is too old to
+understand — which clears itself the moment the server is upgraded. Treating
+it as fatal has already emptied an entire runner fleet during an upgrade:
+every runner exited within about a second, and none came back. So do not
+collapse the five into one "auth failed, tell them to restart".
 
 **Why a restart, and not a re-read.** The credentials come from the
 environment your process was handed at launch, and a long-lived parent freezes
@@ -194,8 +195,8 @@ it: not re-reading a config file, not a reload verb, not reconnecting. Only a
 new process from a current shell picks up current values — which is why the
 message that helps is "restart me", not "check your credentials".
 
-**And `BadTicket` is not always about the ticket.** The PSK gate has no
-`UnknownTask` arm, so a task that no longer exists is reported as `BadTicket`
+**And `BadTicket` is not always about the ticket.** The PSK gate has no status
+for "no such task", so a task that no longer exists is reported as `BadTicket`
 too. If a harness-server restart is anywhere in the timeline, read it as "that
 task is gone; resume it" before suspecting rotation or PSK configuration. What
 a resume then does to the two credentials is §7.

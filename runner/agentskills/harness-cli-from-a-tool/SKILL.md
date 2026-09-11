@@ -1,6 +1,6 @@
 ---
 name: harness-cli-from-a-tool
-description: Use when bolting harness-cli onto a tool you already have — adding a "send this to an agent" button to a viewer, a dashboard, a dispatch script. A recipe for the additive part: the send call, getting a destination list, the three fields to read back, the size ceiling that fails silently, cleanup, and waiting for a peer without holding your tool open. Everything about the agentboard itself is the harness-cli skill; read that for anything this does not cover.
+description: Use when bolting harness-cli onto a tool you already have — adding a "send this to an agent" button to a viewer, a dashboard, a dispatch script. A recipe for the additive part: the send call, getting a destination list, the three fields to read back, the size ceiling that fails silently, cleanup, waiting for a peer without holding your tool open, and what to tell the human when the handshake is rejected (which rejections mean restart me, and the one that must not). Everything about the agentboard itself is the harness-cli skill; read that for anything this does not cover.
 ---
 
 # Bolting harness-cli onto your own tool
@@ -161,6 +161,42 @@ it, so the two must be refreshed **together**. Read them from the environment
 at the moment of use and write them nowhere: not to a config file, not to a
 unit file, not into your own cache.
 
-An auth failure here reports as `BadTicket` even when the real cause is that
-the task no longer exists, so read it as "that task is gone" before suspecting
-rotation or PSK configuration.
+## 8. When the handshake is rejected, say which kind
+
+`harness-cli whoami` is the probe to open with. It needs no capability, and it
+answers with the principal your tool is actually acting as, the caps and scope
+the **server** will enforce, and the commit the **server** is running — the
+last of which nothing else on any wire carries (`version` answers for your
+local binary, a different process). Call it at startup and you learn whether
+your tool can reach the harness before a user action depends on it.
+
+A rejection arrives as `psk: server rejected: <Status>` on a nonzero exit.
+Keep reading the exit code for pass/fail (§3); read the status name only to
+choose what to tell the human, because the branches lead opposite ways:
+
+| status | what your tool should do |
+|---|---|
+| `BadPsk`, `BadTicket`, `Expired` | fatal — **ask the human to restart your tool** |
+| `NotPermitted` | fatal, and a restart will not help: the grant is live but does not cover this call |
+| `NoIdentity` | **not** a credential failure — back off and retry |
+
+harness-cli draws exactly this line internally: it retries `NoIdentity`, and
+nothing else. `NoIdentity` sits on the far side because it is what a
+version-skewed server answers when it cannot decode a hello it is too old to
+understand — which clears itself the moment the server is upgraded. Treating
+it as fatal has already emptied an entire runner fleet during an upgrade:
+every runner exited within about a second, and none came back. So do not
+collapse the five into one "auth failed, tell them to restart".
+
+**Why a restart, and not a re-read.** The credentials come from the
+environment your process was handed at launch, and a long-lived parent freezes
+that environment for everything it later starts. Nothing in-process refreshes
+it: not re-reading a config file, not a reload verb, not reconnecting. Only a
+new process from a current shell picks up current values — which is why the
+message that helps is "restart me", not "check your credentials".
+
+**And `BadTicket` is not always about the ticket.** The PSK gate has no status
+for "no such task", so a task that no longer exists is reported as `BadTicket`
+too. If a harness-server restart is anywhere in the timeline, read it as "that
+task is gone; resume it" before suspecting rotation or PSK configuration. What
+a resume then does to the two credentials is §7.
