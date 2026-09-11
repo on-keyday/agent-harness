@@ -171,13 +171,13 @@ never learns it. Measured: after `stty`, `snapshot` still prints
 fallback; after `session send --resize`, it stops warning and renders at the
 size you gave. So on a session sized only by `stty`:
 
-- the server keeps rendering its own grid at **80x24**
-  (`server/session_mux.go:273-280` — the default it uses until a frame says
-  otherwise), while the program draws at whatever `stty` set;
+- the server keeps rendering its own grid at **80x24** — the default it holds
+  until a frame says otherwise — while the program draws at whatever `stty`
+  set;
 - the replay's screen repaint is built from that 80x24 grid, so a full-screen
   program comes back **partial** rather than corrupt — a handful of lines out
-  of a screenful. `cli/snapshot_native.go` names this case and says it is
-  **untested**, which is a warning, not a reassurance.
+  of a screenful. This path is marked **untested** in the implementation,
+  which is a warning, not a reassurance.
 
 The failure looks like the program being broken or the snapshot being unable to
 handle full-screen apps. It is neither. Use `session resize` / `send --resize`

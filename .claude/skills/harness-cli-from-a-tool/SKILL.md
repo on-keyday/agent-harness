@@ -171,22 +171,20 @@ local binary, a different process). Call it at startup and you learn whether
 your tool can reach the harness before a user action depends on it.
 
 A rejection arrives as `psk: server rejected: <Status>` on a nonzero exit.
-Keep reading the exit code for pass/fail (§3); read the status name only to
-choose what to tell the human, because the branches lead opposite ways:
+Keep reading the exit code for pass/fail (§3). **Every one of these has to
+reach the human** — none of them is something your tool can fix, and a tool
+that swallows one leaves someone staring at a button that does nothing. The
+status decides what you tell them:
 
-| status | what your tool should do |
-|---|---|
-| `BadPsk`, `BadTicket`, `Expired` | fatal — **ask the human to restart your tool** |
-| `NotPermitted` | fatal, and a restart will not help: the grant is live but does not cover this call |
-| `NoIdentity` | **not** a credential failure — back off and retry |
+| status | what happened | what to say |
+|---|---|---|
+| `BadPsk`, `BadTicket`, `Expired` | the credential your process was launched with is no longer good | restart the tool |
+| `NotPermitted` | the grant is live but does not cover this call | a restart will not help; the grant has to change |
+| `NoIdentity` | not your credential at all — the server is too old to decode the hello your side sent | the server needs upgrading, and the same call will work once it is |
 
-harness-cli draws exactly this line internally: it retries `NoIdentity`, and
-nothing else. `NoIdentity` sits on the far side because it is what a
-version-skewed server answers when it cannot decode a hello it is too old to
-understand — which clears itself the moment the server is upgraded. Treating
-it as fatal has already emptied an entire runner fleet during an upgrade:
-every runner exited within about a second, and none came back. So do not
-collapse the five into one "auth failed, tell them to restart".
+`NoIdentity` is the one worth separating, because reading it as "bad
+credentials, restart" sends someone to the wrong layer entirely: nothing about
+the caller is wrong, and nothing the caller restarts will change it.
 
 **Why a restart, and not a re-read.** The credentials come from the
 environment your process was handed at launch, and a long-lived parent freezes
