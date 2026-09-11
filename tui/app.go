@@ -540,8 +540,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case RunnerEventMsg:
-		// server-side RunnerStatusEvent.RunnerId is a placeholder (not keyable),
-		// so we kick a full snapshot refresh on every runner event.
+		// RunnerStatusEvent now carries the runner's identity, but a registered
+		// runner still needs the snapshot: the event has no Hostname,
+		// AllowedRoots, MaxTasks or AgentProfiles, so there is no row to build
+		// from it. Offline could key on RunnerId alone; it is not split out
+		// because the two arrive at the same rate (once per runner lifecycle).
 		//
 		// A runner appearing is also the event that can make a failed workspace
 		// resume succeed, so consume the one armed retry here. Armed only by a

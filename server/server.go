@@ -458,12 +458,17 @@ func New(cfg Config) *Server {
 
 	// publishRunnerEvent constructs and publishes a RunnerStatusEvent to
 	// the global runners.status topic.
-	publishRunnerEvent := func(_ objproto.ConnectionID, kind protocol.StatusEventKind, status protocol.RunnerStatus) {
+	//
+	// Takes the entry's Identity, not the ConnectionID the registry is keyed
+	// by: runner_id is what lets a subscriber update one row instead of
+	// refetching the whole List, and an address-shaped value cannot serve that
+	// — it changes under the subscriber on every reconnect.
+	publishRunnerEvent := func(identity protocol.RunnerID, kind protocol.StatusEventKind, status protocol.RunnerStatus) {
 		ev := protocol.RunnerStatusEvent{
 			Kind:         kind,
 			Ts:           uint64(time.Now().UnixNano()),
 			RunnerStatus: status,
-			RunnerId:     protocol.RunnerID{},
+			RunnerId:     identity,
 		}
 		payload := ev.MustAppend(nil)
 		s.pubsub.Publish("server", topics.RunnersStatus(), payload)
@@ -561,11 +566,11 @@ func New(cfg Config) *Server {
 
 	// Wire registry hooks.
 	s.registry.OnAdd = func(entry RunnerEntry) {
-		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
+		publishRunnerEvent(entry.Identity, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
 	s.registry.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
 		s.failAndRevokeTasksOf(id, snap)
-		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
+		publishRunnerEvent(snap.Identity, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
 
 	// Wire TaskStarted hook so the runner_handler can publish the event.
