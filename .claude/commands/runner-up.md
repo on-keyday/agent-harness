@@ -19,6 +19,7 @@ Arguments: $ARGUMENTS
    - If `server-cid=<cid>` is present in $ARGUMENTS, use it verbatim.
    - Else: read `$HARNESS_SERVER_CID` and rewrite the trailing `-<digits>` to `-*` so the runner reconnects across server restarts. Example: `ws:192.168.3.234:8549-12982` → `ws:192.168.3.234:8549-*`.
    - If env unset AND no flag given, abort with a clear error.
+   - **A comma-separated list is a valid value** and is forwarded verbatim (see Notes). Rewrite the `-<digits>` suffix of every entry, not just the first.
 
 3. **Shell-sandbox presets** — when the tag matches one of the well-known shell names and the user didn't supply `roots=` or `no-worktree`, fill in defaults. Any user-supplied flag overrides the matching default. The presets are OS-specific in intent — invoke them from a runner / host where the named shell actually exists; mismatched invocations will fail at spawn time.
 
@@ -248,6 +249,7 @@ Arguments: $ARGUMENTS
 
 - Before spawning a *new* slot, consider whether the workload can be folded into an existing slot's `--roots` (comma-separated). One runner per host/config is usually preferable to many narrow slots, unless `--max-tasks` parallelism is the bottleneck.
 - `--server-cid` accepts a wildcard suffix (`-*`) so the runner reconnects across server restarts. Locking to a specific instance id is only useful for short-lived debugging.
+- **`--server-cid` also accepts a comma-separated ORDERED list** — the runner tries the entries in turn until one answers, and starts from the top again on every reconnect, so a machine that goes back on the LAN returns to the first address by itself. It is for a runner on a host that MOVES (a laptop: a LAN address first, a tailnet one after it), and it matters most with `persist`, because the registered command line freezes whatever `--server-cid` was resolved at `register` time and the slot then comes up at login with nobody watching. Each entry is resolved at dial time, not at startup, so an address that does not resolve on the current network is simply the candidate that fails this attempt. A stray or trailing comma is refused at startup. Nothing else takes a list: `harness-cli` / TUI / WebUI take one address, and the agents a runner spawns are handed the single address the runner actually connected on.
 
 ### Corner cases for `persist`
 

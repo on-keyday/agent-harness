@@ -65,13 +65,13 @@ func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, 
 	}
 
 	cfg := runner.Config{
-		RunnerID:     runner.NewRunnerID(),
-		ServerCID:    serverCID,
-		AllowedRoots: roots,
-		MaxTasks:     maxTasks,
-		Hostname:     opts.Hostname,
-		Profiles:     singleAgentProfile(claudeBin),
-		PingInterval: 2 * time.Second,
+		RunnerID:         runner.NewRunnerID(),
+		ServerCandidates: runner.CandidatesOf(serverCID),
+		AllowedRoots:     roots,
+		MaxTasks:         maxTasks,
+		Hostname:         opts.Hostname,
+		Profiles:         singleAgentProfile(claudeBin),
+		PingInterval:     2 * time.Second,
 	}
 
 	h := &persistRunnerHandle{}
@@ -220,12 +220,12 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    serverCID,
-			AllowedRoots: []string{repo},
-			MaxTasks:     1,
-			Hostname:     "no-persist-test",
-			Profiles:     singleAgentProfile(claudeBin),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(serverCID),
+			AllowedRoots:     []string{repo},
+			MaxTasks:         1,
+			Hostname:         "no-persist-test",
+			Profiles:         singleAgentProfile(claudeBin),
 		})
 	}()
 

@@ -155,6 +155,17 @@ run on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
 ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
 runner / clients dial; the transport prefix selects the underlay.
 
+**`agent-runner --server-cid` additionally takes a comma-separated list**,
+tried in order until one answers and re-tried from the top on every
+reconnect — a LAN address first, a tailnet one after it, for a runner on a
+machine that moves. Each candidate is resolved at dial time, not at startup,
+so a name that only resolves on the home LAN is free to fail now and work
+later without restarting the runner. The other surfaces take a single
+address: `harness-cli`, the TUI and the WebUI are driven by an operator who
+knows which network they are on, while a runner has to come back up with
+nobody present. Agents are unaffected either way — the runner hands them the
+one address it actually connected on, never the list.
+
 ## Quick start
 
 Run each command in its own terminal. `make build` produces all five
@@ -179,6 +190,11 @@ bin/harness-server --listen :8539 --data-dir ./harness-data
 bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
                  --roots /abs/path/to/repo,/abs/path/to/other-repo \
                  --max-tasks 4
+# On a machine that moves between networks, give --server-cid the addresses
+# in preference order. Each dial tries them from the top, so coming home puts
+# the runner back on the first one by itself.
+# bin/agent-runner --server-cid 'ws:LANHOST:8539-*,ws:TAILNETHOST:8539-*' \
+#                  --roots /abs/path/to/repo
 # Non-Claude agents can be wired with argv templates, for example:
 #   --agent-bin codex
 #   --agent-oneshot-argv 'exec --json {args} {prompt}'
@@ -648,6 +664,21 @@ is still owned by `daemon.py` and the pid/log invariants are
 unchanged. Symmetric `unregister` removes the entry and stops the
 daemon; `--no-start` / `--no-stop` opt out of the immediate
 spawn / shutdown.
+
+The registered command line is fixed at `register` time — it bakes in the
+`--server-cid` you pass (or `$HARNESS_SERVER_CID` if you pass none). On a
+laptop, register it with the whole candidate list, so the runner that comes up
+at login finds the server wherever the machine happens to be:
+
+```bash
+scripts/runner-autostart.py register --tag laptop \
+  --server-cid 'ws:LANHOST:8539-*,ws:TAILNETHOST:8539-*' --roots /abs/repo
+```
+
+The list is passed through verbatim, and nothing has to be up at the moment
+the runner starts: an address that does not resolve yet is simply the
+candidate that fails this attempt, and the reconnect backoff tries the list
+again.
 
 ## Operating modes
 

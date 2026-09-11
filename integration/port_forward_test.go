@@ -65,10 +65,10 @@ func TestPortForwardE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -338,10 +338,10 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -654,10 +654,10 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -797,10 +797,10 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -974,10 +974,10 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -1197,10 +1197,10 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -1353,10 +1353,10 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    serverCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(serverCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)

@@ -1674,26 +1674,26 @@ Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 19 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
+| 31 (don't hide a value for what it IS) | 20 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. The twentieth is the first time the answer was to STAY silent: a per-candidate dial warning is suppressed on a one-entry `--server-cid`, because there the line duplicates the error PersistLoop already reports rather than withholding a measurement. Recorded in its entry precisely because it wears this item's failure shape. |
 | 16 (TUI task table) | 3 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 6 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. Sixth is the first where the item decided WHETHER to ship a column rather than how: unconditional, the runners table's ID cell was 3 cells at 80 columns, so the item's machinery (conditional set + one cell builder + a pinned swap) was the price of the column existing at all. |
 | 17 (TUI detail popup) | 5 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. Fifth firing is the one that shows why this popup is not interchangeable with a row: it REPLACES the view, so a field whose value is only meaningful joined to another listing has to be joined HERE — `assigned to:` printed a bare identity while `ls` could get away with pointing at the runner rows beside it. |
 | 18a (TUI runner table) | 1 | **1** | Born as a MISS, like 39: the runner ROW was the one display surface with no cell, while the task row, the task detail and the runner detail all had one. A field can therefore read `done` on every number and still be absent from the table an operator looks at first. Its constraint is the opposite of 18's — that table is over-subscribed, so the answer is usually a width-conditional column, which pulls 34 in. |
-| 33 (take effect or error) | 17 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
+| 33 (take effect or error) | 18 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
+| S5 (env and addressing contract) | 2 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". Second firing is the other half of the same contract — the FORMAT rather than the name. The wrapper peels `HARNESS_SERVER_CID` into ip/proto/port with shell substring ops, so widening that value's grammar anywhere would have skipped the carve-out fail-closed and cost the container its control plane silently. Reading the code S5 names is what turned "agents should still get one address" from a preference into a requirement with a guard test behind it. |
 | 10 (other verb families) | 13 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 6 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. Sixth walk added the `reconnect` verb (item 1), a TUI-only ScreenAction whose generated dispatch method the compiler then demanded. |
 | 27 (shared funnel) | 8 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. Eighth firing was 27, 28a and 32 arriving as ONE finding on a diagnostic row: two hand-written projections of `trsf.InternalState`, one per answerer, about to gain five fields. Worth noting that for a DIAGNOSTIC the miss is worse than for a display field — a counter present on one answerer and zero on the other is indistinguishable from a real zero. |
-| 32 (one serializer, round-trip tested) | 16 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. Sixteenth collapsed three at once, and one of them is the cheapest case there is: two functions in `tui/` whose own comments said "mirrors cli.X but lives in the tui package", where `tui` already imports `cli`. No runtime boundary, no reason, only drift — worth grepping for that comment shape directly. |
-| 28a (follow the value to the request build) | 13 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
+| 32 (one serializer, round-trip tested) | 17 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. Sixteenth collapsed three at once, and one of them is the cheapest case there is: two functions in `tui/` whose own comments said "mirrors cli.X but lives in the tui package", where `tui` already imports `cli`. No runtime boundary, no reason, only drift — worth grepping for that comment shape directly. |
+| 28a (follow the value to the request build) | 14 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
 | 34a (same KIND of control as its neighbours) | 5 | **2** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. SECOND miss, same shape one level up: a value carried to the WebUI conn list and not to the topology — two VIEWS of the same data where a media query decides which one a viewer gets, so "added to the WebUI" was true and half the operators saw nothing. Two misses, both "carried, but not to the sibling". If it misses a third time the wording should lead with the sibling sweep rather than close on it. |
 | 38 (live screen-rendering surfaces) | 7 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. Latest firing is the grid-pane vertical scroll itself — the pane IS the surface — with its WebUI-preview half recorded `omitted` only after checking that renderer has no crop window to offset. |
-| 29 (result messages name the target and the change) | 10 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 29 (result messages name the target and the change) | 11 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 | 36 (agent-facing skill texts) | 4 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 | 6 (WebUI controls) | 5 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |
-| 39 (feature's own surface matrix vs. what shipped) | 4 | **2** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). **That question now has an answer: second firing, second post-mortem.** The identity spec's §7 row promised "the address comes from the join" and no join was built; the operator found it one day after landing. Two for two retroactive means the item as written does not fire during a walk — the walk reads the spec's table as a description of what exists. Treat it as a landing gate, not a checklist line: the row is not `done` until someone has opened the file it names. |
+| 39 (feature's own surface matrix vs. what shipped) | 5 | **2** | Born as a MISS, which is the only way this one could have been born: it exists because two rows of the task-exec spec's Surfaces table shipped unimplemented and no other item asks about the spec. Watch whether it fires again as `done` on a feature's LAST walk — if it only ever fires retroactively, the item is a post-mortem rather than a check, and belongs at the end of the walk with teeth (strike the row in the spec, or build it). **That question now has an answer: second firing, second post-mortem.** The identity spec's §7 row promised "the address comes from the join" and no join was built; the operator found it one day after landing. Two for two retroactive means the item as written does not fire during a walk — the walk reads the spec's table as a description of what exists. Treat it as a landing gate, not a checklist line: the row is not `done` until someone has opened the file it names. **Fifth firing is the first `done` during a walk** — six design rows checked against the code before landing, all six shipped — but it came with a caveat that weakens the answer: there was no spec table to open, because the design was agreed in a conversation. An in-chat agreement is not an artefact a later reader can re-open, which is what the row is actually about; the fix was to write those rows into a spec Amendment so the next walk has a table. |
 | 15 (caps catalog) | 2 | 0 | First row, and it fired on a change that added NO capability: `purge` now gates two verbs with different outcomes (`board purge` destroys, `board retract` withdraws), so the catalog line understated the grant while being literally accurate. The item's question is not "was a bit added" but "does the description still name everything the bit reaches". |
 
 **Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after
@@ -1758,3 +1758,130 @@ omitted: **33** for `--json` on the TUI and WebUI — declared `CmdlineSurfaces:
          rejected by the declaration, and cmd_test.mjs pins that.
          **36**: no agent-facing skill mentions conns or the reading (grepped),
          so nothing to mirror.
+
+### 2026-09-11 (pre-landing) — `agent-runner --server-cid` takes an ordered candidate list
+
+Operator ask, not a bug: a runner on a laptop should find the server whether the
+machine is on the home LAN or out on the tailnet, so that the autostart slot
+that comes up at login connects with nobody present. One flag's grammar widens
+on ONE binary, which makes this the rare walk whose most useful verdicts are the
+`omitted` ones.
+
+done:    **2** (the cross-flag rule lives in `mainConfig.validate()` beside the
+         existing `--server-cid` × `--listen` exclusion, not in a surface — a
+         stray comma is refused there, argv-verified against the built binary),
+         **24** (the option's meaning written down per path: dial mode walks the
+         list, listen mode has NO candidates and the field is empty, and the
+         agents a runner spawns get the single winner — all three in the flag
+         help, the type comment and the spec amendment),
+         **27 + 28a** (counted: `ServerCandidates:` is set at 23 sites, and the
+         type change made the Go compiler enumerate every one of them as a build
+         error — the free-28a-walk-on-the-Go-side shape the `board subscribers`
+         entry recorded. The resolve itself is ONE function,
+         `ResolveServerCandidate`, called from one site),
+         **29** (the per-candidate line names the candidate AND its place —
+         `candidate=… position=1/2` — and startup logs the whole order when
+         there is more than one; a bare "dial failed" cannot say which
+         addresses were tried),
+         **31** (see the note below — this one needed a decision, not a check),
+         **32** (`ServerCandidates.String()` renders back in the spelling
+         `--server-cid` accepts and `TestCandidatesOfRoundTripsThroughText`
+         pins CID → String → Resolve. It also DELETED one of the two copies of
+         the objproto parse-option pair: `cmd/agent-runner/main.go` named
+         `AllowRandomID|ResolveAddr` itself and now does not.
+         `cli/cliopts.ResolveServerCID` still names it for harness-cli, whose
+         tier logic differs — one copy removed, one left, recorded rather than
+         claimed as collapsed),
+         **33** (a stray comma errors at startup; an unresolvable candidate is
+         logged with its text on every attempt rather than skipped),
+         **35** (README: the architecture paragraph, the Quick start runner
+         block, and the autostart section — which is the one an operator
+         actually needs, since `register` freezes the command line),
+         **37** (an Amendment on the persist-reconnect spec, whose §5.3/§5.4
+         describe one dial against one address parsed at startup),
+         **39** (first `done` firing in this log — see below),
+         **S5**
+omitted: **1** — and the walk is what made this explicit rather than assumed.
+         `server-cid` IS a row in `cli/verb/table.go` (`agentCommonFlags`, "the
+         one flag every agent verb carries"), and it stays SINGLE. The runner's
+         flag is not that row: `agent-runner` has always built its own
+         `flag.FlagSet` in `bindFlags`, so the two are different grammars behind
+         one name. That asymmetry is deliberate — the operator who moved
+         networks knows which one they are on, and a runner has to cross the
+         change unattended — and it is now written in the flag help, the type
+         comment and the amendment rather than left for a reader to infer.
+         **11 / 18 / 18a** — the candidate LIST is on no display surface, and
+         the reason is that the answer already is: a runner row's `cid=` names
+         the address it actually connected on, which is the only part an
+         operator can act on. Asked rather than reflexed, because "which
+         candidate won" is exactly the kind of thing this list catches missing.
+         **36** — no `runner/agentskills/*/SKILL.md` mentions `--server-cid` or
+         `HARNESS_SERVER_CID` (grepped, zero hits), so there is nothing to
+         mirror. Agents are unaffected by construction, which is S5's subject.
+         **S6** — `.claude/commands/runner-up.md` IS updated (step 2 and a Notes
+         bullet: the list is forwarded verbatim, and every entry's `-<digits>`
+         suffix needs the `-*` rewrite, not just the first).
+         `scripts/sandbox/README.md` and `probe.sh` gain nothing: the wrapper's
+         parse is unchanged and still correct, and a "the runner may hold a
+         list" line there would describe something the container never sees —
+         the unmeasured claim S6 warns about.
+n/a:     3–10 (a daemon's argv reaches no button, key, picker or dispatch; there
+         is no result surface to render to), 12–17, 19–23 (nothing new is
+         displayed on a task or runner row), 25, 26, 28 (no wire field, no WAL,
+         no spawn option — the value never leaves the runner process), 30, 34,
+         34a, 38. S1–S4 (no agent added or renamed, no bin, argv, log format,
+         credential mode or egress change; `scripts/agent_presets.py` never
+         mentions `--server-cid`, grepped).
+missed:  —
+
+**S5 is the item that shaped the change rather than checking it.** Its wording
+says the wrapper "parses `HARNESS_SERVER_CID` into ip/proto/port to build the
+harness-server carve-out; if the format changes and the parse fails, the
+carve-out is skipped entirely (deliberately fail-closed)". Reading the code it
+names (`scripts/sandbox/agent-in-podman.sh`, the `cid#*:` / `%-*` / `##*:`
+substring peel) is what turned "agents should keep getting one address" from a
+preference into a hard requirement: a comma list there yields a non-numeric
+port, `server_port=""`, no carve-out, and a bridged `harness-cli` inside the
+container that silently cannot reach the server. That is what
+`TestSpawnedAgentGetsOneServerCIDNotTheCandidateList` exists for, and per
+Pitfall 10 its negative control was run — with the injection removed the agent
+receives the literal list, which is the failure the guard forbids. Verified live
+too: a runner started from a real command line with a dead first candidate
+handed its task `AGENT_SEES=[ws:127.0.0.1:45353-34604]`, the winner, no comma.
+
+**Item 31 needed a decision, and it is recorded because it LOOKS like this
+item's failure shape.** The per-candidate warn is silent on a one-entry list.
+That is gating on a value, which is what the row keeps catching — but the value
+being withheld is not a measurement: for a single candidate the line would
+duplicate the error `PersistLoop` already reports through `OnState`, on every
+reconnect, in every existing runner's log. Dedup, not elision. Written here so a
+later reader counts it as a decision rather than as a fourth miss.
+
+**Item 39 fires as `done` during a walk for the first time, and the datum is
+weaker than the row wants.** The row asks whether it will ever fire as anything
+but a post-mortem. It did here — I walked the design's rows against the code
+before landing (runner-only flag / `cliopts` untouched / `scripts/` untouched /
+sequential walk only / agents get one address / a guard test with a negative
+control), and all six shipped. But there was no spec Surfaces table to open,
+because this was a bounded in-chat design: what I walked was an agreement in a
+conversation, which is exactly the artefact the row says cannot be re-opened
+later. The Amendment now carries those rows, so the NEXT reader has a table.
+Counting it `done` with that caveat rather than claiming the row's question is
+settled.
+
+**Two things the walk did not catch, both found by reading the code it touches.**
+Neither is a surface question and neither belongs on this list, but they are the
+two places this change could have gone wrong:
+
+1. **Nothing closes an `objproto.Endpoint`** — no `Close` on the interface, and
+   `AutoGarbageCollect` / `AutoKeyUpdate` tick forever. `PersistLoop` already
+   leaks one per reconnect; building one per CANDIDATE would have multiplied
+   that by the list length on a runner that reconnects all day. Answered by
+   memoising per transport inside one `Connect` call, so the LAN/tailnet `ws`
+   pair costs exactly what today costs.
+2. **A per-candidate context deadline would have killed the session, not the
+   dial** — `peer.Dial` hands its ctx to the CONNECTION. That trap is already
+   written down in `cli/dataplane_dial.go`, where it was hit and cost a
+   ten-second death on every transfer. No deadline was added: objproto's own
+   `DoECDHHandshake` bounds the handshake at 10s, which is what makes the walk
+   terminate.

@@ -71,10 +71,10 @@ func TestFileTransferE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -258,10 +258,10 @@ func TestFileDirTransferE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)

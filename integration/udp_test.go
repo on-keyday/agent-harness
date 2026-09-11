@@ -117,12 +117,12 @@ func startRunnerWithCID(t *testing.T, serverCID objproto.ConnectionID, repo, hos
 	done := make(chan error, 1)
 	go func() {
 		done <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    serverCID,
-			AllowedRoots: []string{repo},
-			MaxTasks:     1,
-			Hostname:     hostname,
-			Profiles:     singleAgentProfile(claudeBin),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(serverCID),
+			AllowedRoots:     []string{repo},
+			MaxTasks:         1,
+			Hostname:         hostname,
+			Profiles:         singleAgentProfile(claudeBin),
 		})
 	}()
 

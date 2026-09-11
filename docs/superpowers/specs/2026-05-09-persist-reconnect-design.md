@@ -594,3 +594,59 @@ integration/persist_test.go     (new; build tag: integration)
   `RefreshSnapshot`.
 - CLI subcommand persistence for `harness-cli watch` (the only
   long-lived non-TUI client today).
+
+## Amendment 2026-09-11 — a dial attempt walks a candidate list
+
+**What changed.** §5.3 and §5.4 describe one dial per attempt, against one
+`--server-cid` parsed once at startup. `agent-runner --server-cid` now takes a
+comma-separated ORDERED list, and one `PersistDialer` call
+(`runner.Connect`) walks it until a candidate answers. Nothing about
+`PersistLoop`, the backoff, or the fatal/retryable split moves: the walk
+happens strictly inside one attempt, and what the loop sees is still a single
+`(handle, error)`.
+
+**Why it belongs here rather than in a new mechanism.** The reconnect loop
+already existed and already re-ran the dialer; the only thing missing was that
+the dialer had one address. The case that wanted it — a runner on a machine that
+moves between networks, restarted by an autostart unit with no human present —
+is §7's "Server is down at runner startup" row with a second address to try.
+
+**Three consequences worth writing down, because each one constrains the
+implementation:**
+
+- **Resolution moved from startup to per-attempt.** `cmd/agent-runner/main.go`
+  used to call `objproto.ParseConnectionID(..., ResolveAddr)` once, which runs
+  DNS. A candidate naming the home LAN must be free to fail now and resolve
+  later, so `ResolveServerCandidate` is called per attempt instead. The price is
+  that a mistyped transport surfaces as a dial error rather than a startup one;
+  it is logged with the candidate text on every attempt, never skipped.
+- **One endpoint per TRANSPORT per attempt, not one per candidate.** Nothing
+  closes an `objproto.Endpoint` (the interface has no `Close`, and
+  `AutoGarbageCollect` / `AutoKeyUpdate` tick forever), so each one outlives the
+  attempt. A LAN/tailnet pair on `ws` therefore shares one endpoint and costs
+  exactly what a single-candidate attempt costs today.
+- **No per-candidate deadline.** `objproto.DoECDHHandshake` already bounds the
+  handshake at 10s, which is what makes the walk terminate. A context deadline
+  could not do the job here anyway — `peer.Dial` hands its ctx to the
+  CONNECTION, so a timeout would kill the established session ten seconds in
+  rather than cut the dial short. (The same trap is recorded in
+  `cli/dataplane_dial.go`'s comments, where it was hit.)
+
+**A non-retryable PSK rejection stops the walk** rather than continuing to the
+next candidate: that is a credential failure, not an address failure, and
+`driveAfterConn` has already classified it. §7's "PSK file rotated to wrong
+value" row is unchanged — the list does not turn it into a slow trip down the
+addresses followed by a retry loop.
+
+**Scope: the runner only.** `harness-cli`, the TUI and the WebUI still take one
+address (`cli/cliopts.ResolveServerCID` is untouched, as is the `server-cid`
+flag in `cli/verb/table.go`), because the operator who moved networks knows
+which one they are on. The agents a runner spawns also still receive one — and
+must, for two independent reasons: `harness-cli --server-cid` takes a single
+CID, and `scripts/sandbox/agent-in-podman.sh` splits `HARNESS_SERVER_CID` into
+ip/proto/port for its harness-server firewall carve-out, where a list yields a
+non-numeric port and the carve-out is skipped fail-closed. `driveAfterConn`
+already derives `Session.ServerCID` from the live connection rather than from
+the config, so the winner propagates with no further wiring;
+`TestSpawnedAgentGetsOneServerCIDNotTheCandidateList` pins it, with a negative
+control (removing the injection makes the agent receive the literal list).

@@ -208,11 +208,11 @@ func TestRelayE2E_DialModeProxy(t *testing.T) {
 	//    transport — outbound only at the WS layer, but objproto accepts
 	//    incoming Handshakes on the reused conn, enabling relay-proxy use.
 	proxyRunnerCfg := runner.Config{
-		RunnerID:     runner.NewRunnerID(),
-		ServerCID:    serverCID,
-		AllowedRoots: []string{t.TempDir()},
-		MaxTasks:     1,
-		Hostname:     "relay-dial-proxy",
+		RunnerID:         runner.NewRunnerID(),
+		ServerCandidates: runner.CandidatesOf(serverCID),
+		AllowedRoots:     []string{t.TempDir()},
+		MaxTasks:         1,
+		Hostname:         "relay-dial-proxy",
 	}
 	proxyHandle, err := runner.Connect(ctx, proxyRunnerCfg)
 	if err != nil {

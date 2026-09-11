@@ -86,11 +86,11 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	//    the legacy dial flow (no Phase A reverse-dial needed since the
 	//    runner reaches the server outbound).
 	proxyCfg := runner.Config{
-		RunnerID:     runner.NewRunnerID(),
-		ServerCID:    serverCID,
-		AllowedRoots: []string{t.TempDir()},
-		MaxTasks:     1,
-		Hostname:     "chained-proxy",
+		RunnerID:         runner.NewRunnerID(),
+		ServerCandidates: runner.CandidatesOf(serverCID),
+		AllowedRoots:     []string{t.TempDir()},
+		MaxTasks:         1,
+		Hostname:         "chained-proxy",
 	}
 	proxyHandle, err := runner.Connect(ctx, proxyCfg)
 	if err != nil {

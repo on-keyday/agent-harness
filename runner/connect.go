@@ -41,7 +41,11 @@ func skillsInjected(noWorktree, forceInject bool) bool {
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerCID objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
+	// ServerCandidates are the server addresses this runner dials, tried in
+	// order until one answers. Empty in listen mode, where the server dials the
+	// runner and there is no address to try. Held as text so every attempt
+	// re-resolves — see the type's comment for why that is load-bearing.
+	ServerCandidates ServerCandidates
 
 	// RunnerID identifies this runner PROCESS, and must be minted ONCE by the
 	// caller before PersistLoop starts — NewRunnerID does it. Minting it per
@@ -189,6 +193,11 @@ func (h *RunHandle) Close() {
 // Connect performs the WS dial, ECDH handshake, PSK exchange, and session
 // scaffolding. The caller drives the rest of the lifecycle via OnConnect.
 //
+// It walks cfg.ServerCandidates in order and returns on the first one that
+// answers. PersistLoop calls this again on every reconnect, so the walk starts
+// from the top each time: a runner that failed over to a second address goes
+// back to the first one as soon as that address works again.
+//
 // Returns *cli.PSKAuthError when the server rejects the PSK so PersistLoop
 // can treat it as fatal.
 func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
@@ -200,20 +209,84 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 		"no_worktree", cfg.NoWorktree,
 		"force_inject_harness_settings", cfg.ForceInjectHarnessSettings)
 
-	ep, err := buildRunnerEndpoint(cfg)
+	if cfg.ServerCandidates.Len() == 0 {
+		return nil, errors.New("runner: no --server-cid candidate to dial")
+	}
+
+	// One endpoint per TRANSPORT rather than per candidate. Nothing closes an
+	// objproto.Endpoint — the interface has no Close, and AutoGarbageCollect /
+	// AutoKeyUpdate run on tickers with no stop — so each one built here
+	// outlives the attempt that built it. PersistLoop already pays that once
+	// per reconnect; building one per candidate would multiply it by the length
+	// of the list on a runner that reconnects all day. The pair this feature
+	// exists for (a LAN address and a tailnet one, both ws) shares a single
+	// endpoint, so the common case costs exactly what it costs today.
+	eps := map[string]objproto.Endpoint{}
+
+	var lastErr error
+	all := cfg.ServerCandidates.All()
+	for i, spec := range all {
+		h, err := dialServerCandidate(ctx, cfg, eps, spec)
+		if err == nil {
+			return h, nil
+		}
+		// A credential the server refused is not an address problem. Walking on
+		// would turn "wrong PSK" into a slow trip down the list and then a
+		// reconnect loop, when driveAfterConn has already classified it as the
+		// one failure no retry can fix.
+		var fatal *cli.PSKAuthError
+		if errors.As(err, &fatal) {
+			return nil, err
+		}
+		lastErr = err
+		// Logged per candidate, with its place in the list, because a single
+		// returned error cannot say which addresses were tried. Silent on a
+		// one-entry list: there the returned error IS the whole story, and
+		// PersistLoop already reports it.
+		if len(all) > 1 {
+			cfg.Logger.Warn("server candidate did not answer",
+				"candidate", spec, "position", fmt.Sprintf("%d/%d", i+1, len(all)), "err", err)
+		}
+	}
+	return nil, lastErr
+}
+
+// dialServerCandidate resolves one candidate and runs the whole establish on
+// it. Split out of Connect so the candidate walk above reads as the policy it
+// is, and so each attempt's endpoint bookkeeping stays in one place.
+func dialServerCandidate(ctx context.Context, cfg Config, eps map[string]objproto.Endpoint, spec string) (*RunHandle, error) {
+	// DNS runs HERE, on every attempt. A name that resolves only on the home
+	// LAN must be allowed to fail now and succeed later (and the other way
+	// round) without the runner having to restart.
+	cid, err := ResolveServerCandidate(spec)
 	if err != nil {
 		return nil, err
 	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
+	ep, ok := eps[cid.Transport]
+	if !ok {
+		ep, err = buildRunnerEndpoint(cfg, cid.Transport)
+		if err != nil {
+			return nil, err
+		}
+		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+		go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
+		eps[cid.Transport] = ep
+	}
 
-	pc, err := peer.Dial(ctx, ep, cfg.ServerCID, peer.DialConfig{
+	// No deadline of our own: objproto bounds the ECDH handshake at 10s
+	// (DoECDHHandshake's WaitWithTimeout), which is what makes the walk
+	// terminate. A context deadline here could not do the job anyway — peer.Dial
+	// hands its ctx to the CONNECTION, so a timeout would kill the established
+	// session ten seconds in rather than cut the dial short.
+	pc, err := peer.Dial(ctx, ep, cid, peer.DialConfig{
 		Logger:       cfg.Logger,
 		PingInterval: cfg.PingInterval, // zero → peer.Dial default (15s post-Task 1)
 	})
 	if err != nil {
 		return nil, err
 	}
+	// driveAfterConn closes pc itself on failure, so a candidate that hands back
+	// an error leaves nothing behind for the next one to trip over.
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
 		return nil, err
@@ -284,11 +357,13 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	// Use the actual peer.Conn's ConnectionID as the server CID so that
 	// HARNESS_SERVER_CID injected into spawned agent processes points to
-	// the live server endpoint. In dial mode this equals cfg.ServerCID
-	// (peer.Dial uses that CID verbatim, including any random-ID
-	// resolution done by cliopts.ResolveServerCID). In listen mode
-	// cfg.ServerCID is the zero ConnectionID and `pc.Connection().ConnectionID()`
-	// is the only source of the server-side identity.
+	// the live server endpoint. In dial mode this is the candidate that
+	// ANSWERED, already resolved — which is what keeps the --server-cid
+	// candidate list off every agent: harness-cli takes one address, and the
+	// podman wrapper splits this value into ip/proto/port for its firewall
+	// carve-out. In listen mode there is no candidate at all and
+	// `pc.Connection().ConnectionID()` is the only source of the server-side
+	// identity.
 	serverCID := pc.Connection().ConnectionID()
 
 	sender := &peerSender{pc: pc, ctx: ctx}
@@ -791,8 +866,10 @@ func (s *peerSender) Publish(topic string, data []byte) error {
 //
 // UDP transport was already symmetric (binds a socket regardless of mode), so
 // the mode bump there only affects objproto-level handshake acceptance.
-func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
-	switch cfg.ServerCID.Transport {
+// The scheme comes from the candidate being dialed, not from Config: a
+// candidate list may mix ws and udp, and each needs its own endpoint.
+func buildRunnerEndpoint(cfg Config, scheme string) (objproto.Endpoint, error) {
+	switch scheme {
 	case "ws", "wss":
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
@@ -810,7 +887,7 @@ func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
 		}
 		return ep, nil
 	default:
-		return nil, fmt.Errorf("unsupported transport %q in --server-cid", cfg.ServerCID.Transport)
+		return nil, fmt.Errorf("unsupported transport %q in --server-cid", scheme)
 	}
 }
 

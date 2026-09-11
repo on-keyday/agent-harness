@@ -26,7 +26,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func resolvePSK(pskVal, pskFile string) []byte {
@@ -120,7 +119,7 @@ func newMainConfig() *mainConfig {
 
 // bindFlags registers all flags on fs, using cfg's current values as defaults.
 func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
-	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen")
+	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen. Takes a comma-separated list, tried in order until one answers, and re-tried from the top on every reconnect — for a runner that moves between networks (a LAN address first, a tailnet one after it). harness-cli/TUI/WebUI take a single address: the operator who moved knows which network they are on, and this runner may come back up with nobody present. Agents are unaffected either way; they are handed the ONE address this runner connected on.")
 	fs.StringVar(&c.Roots, "roots", c.Roots, "comma-separated list of absolute repo root paths this runner serves")
 	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
 	fs.StringVar(&c.ClaudeBin, "agent-bin", c.ClaudeBin, "path to the agent binary")
@@ -160,6 +159,22 @@ func (c *mainConfig) isListenMode() bool {
 	return strings.TrimSpace(c.WSListen) != "" || strings.TrimSpace(c.UDPListen) != ""
 }
 
+// serverCandidates splits --server-cid into the ordered list the runner dials.
+// Listen mode has none; every other mode has at least one.
+//
+// Syntax only — the addresses are NOT resolved here. Resolving means DNS, and a
+// candidate that names the home LAN must be free to fail now and work later
+// (and the other way round) without the runner restarting, so that happens per
+// dial attempt inside runner.Connect. The cost of the split is that a mistyped
+// transport reaches the operator as a dial error rather than a startup one; it
+// is logged with the candidate text on every attempt, not swallowed.
+func (c *mainConfig) serverCandidates() (runner.ServerCandidates, error) {
+	if c.isListenMode() {
+		return runner.ServerCandidates{}, nil
+	}
+	return runner.ParseServerCandidates(c.ServerCID)
+}
+
 // validate checks mutual-exclusion and required-one-of rules.
 func (c *mainConfig) validate() error {
 	if c.isListenMode() && c.serverCIDExplicit {
@@ -167,6 +182,11 @@ func (c *mainConfig) validate() error {
 	}
 	if !c.isListenMode() && strings.TrimSpace(c.ServerCID) == "" {
 		return fmt.Errorf("must provide either --server-cid (dial mode) or --listen/--udp-listen (reverse-dial mode)")
+	}
+	// A stray comma fails here, where the operator is still watching, rather
+	// than at the first dial of a list they did not write.
+	if _, err := c.serverCandidates(); err != nil {
+		return err
 	}
 	if c.MaxTasks < 1 {
 		return fmt.Errorf("--max-tasks must be >= 1, got %d", c.MaxTasks)
@@ -463,9 +483,9 @@ func main() {
 
 	if cfg.isListenMode() {
 		// Reverse-dial mode: server connects inbound to the runner.
-		// runCfg.ServerCID is intentionally left as the zero ConnectionID here
-		// — the listen branch never parses cfg.ServerCID into an objproto.ConnectionID
-		// because the runner doesn't know the server's CID at startup.
+		// runCfg.ServerCandidates is intentionally left empty here — the listen
+		// branch has no address to dial, because the runner doesn't know the
+		// server's CID at startup.
 		// driveAfterConn populates session.ServerCID from the accepted peer.Conn's
 		// ConnectionID once the server dials in, so HARNESS_SERVER_CID injected into
 		// agent subprocesses points to the actual server endpoint.
@@ -482,14 +502,17 @@ func main() {
 		return
 	}
 
-	// Dial mode (legacy): parse --server-cid and connect outbound.
-	peerCID, err := objproto.ParseConnectionID(cfg.ServerCID,
-		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	// Dial mode: hand Connect the candidate list and let it resolve one per
+	// attempt. validate() already rejected a malformed list.
+	candidates, err := cfg.serverCandidates()
 	if err != nil {
 		slog.Error("server-cid", "err", err)
 		os.Exit(1)
 	}
-	runCfg.ServerCID = peerCID
+	runCfg.ServerCandidates = candidates
+	if candidates.Len() > 1 {
+		slog.Info("server candidates", "order", candidates.All())
+	}
 
 	enabled := cfg.Persist && !cfg.NoPersist
 

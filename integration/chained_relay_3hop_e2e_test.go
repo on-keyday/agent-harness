@@ -82,11 +82,11 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	// 2. Start Q via runner.Connect (dial mode, reverse-dial).
 	//    Q registers with the server outbound; acts as the top-level relay proxy.
 	qCfg := runner.Config{
-		RunnerID:     runner.NewRunnerID(),
-		ServerCID:    serverCID,
-		AllowedRoots: []string{t.TempDir()},
-		MaxTasks:     1,
-		Hostname:     "chained-Q",
+		RunnerID:         runner.NewRunnerID(),
+		ServerCandidates: runner.CandidatesOf(serverCID),
+		AllowedRoots:     []string{t.TempDir()},
+		MaxTasks:         1,
+		Hostname:         "chained-Q",
 	}
 	qHandle, err := runner.Connect(ctx, qCfg)
 	if err != nil {

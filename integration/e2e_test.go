@@ -96,10 +96,10 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
 		})
 	}()
 
@@ -192,11 +192,11 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    peerCID,
-			AllowedRoots: []string{repo},
-			Profiles:     singleAgentProfile(fakeClaude),
-			NoWorktree:   true,
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
+			NoWorktree:       true,
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)

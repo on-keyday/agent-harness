@@ -123,12 +123,12 @@ func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts)
 	done := make(chan error, 1)
 	go func() {
 		done <- runner.Run(ctx, runner.Config{
-			RunnerID:     runner.NewRunnerID(),
-			ServerCID:    serverCID,
-			AllowedRoots: roots,
-			MaxTasks:     maxTasks,
-			Hostname:     opts.Hostname,
-			Profiles:     singleAgentProfile(claudeBin),
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(serverCID),
+			AllowedRoots:     roots,
+			MaxTasks:         maxTasks,
+			Hostname:         opts.Hostname,
+			Profiles:         singleAgentProfile(claudeBin),
 		})
 	}()
 
