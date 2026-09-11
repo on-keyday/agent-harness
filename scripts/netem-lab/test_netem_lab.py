@@ -286,5 +286,88 @@ class TestBenchSummary(unittest.TestCase):
         self.assertIn("spread=1.88x", out)
 
 
+class TwoPathLeg(unittest.TestCase):
+    """`up --paths 2` and the `path` / `failover` verbs.
+
+    Only the pure parts: building the leg needs namespaces, and the measurement
+    needs a running harness. The properties worth pinning here are the ones a
+    typo would silently invert — which devices a leg names, and that leg 1 stays
+    the devices the one-path lab has always used.
+    """
+
+    def test_leg_1_is_the_original_srv_devices(self):
+        # A renamed leg-1 device would leave every existing shaping command
+        # pointed at an interface that no longer exists.
+        self.assertEqual(netem_lab.leg_devs(1), netem_lab._DEV["srv"])
+
+    def test_leg_2_is_a_distinct_pair(self):
+        srv2, rtr2 = netem_lab.leg_devs(2)
+        srv1, rtr1 = netem_lab.leg_devs(1)
+        self.assertNotIn(srv2, (srv1, rtr1))
+        self.assertNotIn(rtr2, (srv1, rtr1))
+
+    def test_every_device_name_fits_the_kernel_limit(self):
+        for leg in (1, 2):
+            for dev in netem_lab.leg_devs(leg):
+                self.assertLessEqual(len(dev.encode()), 15, dev)
+
+    def test_an_out_of_range_leg_is_refused(self):
+        with self.assertRaises(SystemExit):
+            netem_lab.leg_devs(3)
+
+    def test_the_second_leg_addresses_differ_from_the_first_two(self):
+        a = netem_lab._addrs("10.90.0.0/24")
+        c = netem_lab._addrs("10.92.0.0/24")
+        self.assertNotEqual(a[0], c[0])
+        self.assertNotEqual(a[1], c[1])
+
+
+class RunnerRowParse(unittest.TestCase):
+    """The regex `failover` measures with. It reads a REAL `ls` runner row —
+    the shape recorded here is what the server printed during the 63s
+    measurement — so a row-format change breaks the measurement loudly instead
+    of reporting "never moved"."""
+
+    ROW = ("RUNNERS\n"
+           "  Idle     host=h  os=linux  tasks=0/4  agent=python  "
+           "roots=/tmp/r  id=8faf554ecb4d4d0e9a7b1d2e3f405162  "
+           "cid=ws:10.90.0.1:51712-31023\n"
+           "TASKS\n  (none)\n")
+
+    def test_reads_the_id_and_the_conn_id(self):
+        st = {"SERVER_PORT": 1, "USERNS_PID": 1, "SRV_PID": 1, "CLI_PID": 1}
+        with unittest.mock.patch.object(
+                netem_lab, "ns_run",
+                return_value=unittest.mock.Mock(stdout=self.ROW, returncode=0)):
+            with unittest.mock.patch.object(netem_lab.dh.daemon, "bin_path",
+                                            return_value="harness-cli"):
+                got = netem_lab._runner_row(st)
+        self.assertEqual(got, ("8faf554ecb4d4d0e9a7b1d2e3f405162",
+                               "ws:10.90.0.1:51712-31023"))
+
+    def test_no_runner_row_is_none_not_a_crash(self):
+        st = {"SERVER_PORT": 1, "USERNS_PID": 1, "SRV_PID": 1, "CLI_PID": 1}
+        with unittest.mock.patch.object(
+                netem_lab, "ns_run",
+                return_value=unittest.mock.Mock(stdout="RUNNERS\nTASKS\n",
+                                                returncode=0)):
+            with unittest.mock.patch.object(netem_lab.dh.daemon, "bin_path",
+                                            return_value="harness-cli"):
+                self.assertIsNone(netem_lab._runner_row(st))
+
+    def test_the_task_section_cannot_supply_the_match(self):
+        # A task row also carries id=; splitting at TASKS is what keeps a
+        # runnerless lab from reading a task as its runner.
+        rows = ("RUNNERS\n  (none)\nTASKS\n  Running  "
+                "id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  cid=ws:1.2.3.4:5-6\n")
+        st = {"SERVER_PORT": 1, "USERNS_PID": 1, "SRV_PID": 1, "CLI_PID": 1}
+        with unittest.mock.patch.object(
+                netem_lab, "ns_run",
+                return_value=unittest.mock.Mock(stdout=rows, returncode=0)):
+            with unittest.mock.patch.object(netem_lab.dh.daemon, "bin_path",
+                                            return_value="harness-cli"):
+                self.assertIsNone(netem_lab._runner_row(st))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -72,13 +72,17 @@ netem-lab.py [--name N] up    [--profile P] [knobs...] [-- <extra runner flags>]
 netem-lab.py [--name N] env
 netem-lab.py [--name N] exec  {srv|rtr|cli} -- <cmd...>
 netem-lab.py [--name N] shape [--profile P] [knobs...]
+netem-lab.py [--name N] path  {1|2} {up|down}
+netem-lab.py [--name N] failover [--leg N] [--timeout S]
 netem-lab.py [--name N] show
 netem-lab.py [--name N] down
 ```
 
 `--name` lets independent labs coexist. `up` also takes `--agent claude|fake`
-(default `fake`), `--transport udp|ws` (default `udp`), and
-`--subnet-a` / `--subnet-b`.
+(default `fake`), `--transport udp|ws` (default `udp`),
+`--subnet-a` / `--subnet-b`, and `--paths 1|2` with `--subnet-c`
+(see **Two paths** below; `--paths 1` is the default and leaves the topology
+exactly as it was).
 
 Words after `--` go to the **runner**. `--server-arg` is the server's
 equivalent, and it is repeatable. Use the `=` form for anything starting with a
@@ -244,6 +248,58 @@ Two things measured about the noise itself, so nobody re-derives them:
   comparing anything to them.** The resolution figures a `bench` run prints are
   still the right way to read a result; they are simply much tighter now.
 
+## Two paths, and `failover`
+
+`agent-runner --server-cid` takes a comma-separated ordered list of server
+addresses for a runner on a machine that moves. Whether it actually fails over
+cannot be tested on loopback: it needs two paths that can be taken away
+independently.
+
+```bash
+scripts/netem-lab/netem-lab.py --name fo up --paths 2 --transport ws
+#   netem-lab: up  name=fo  srv=10.90.0.2  cli=10.91.0.2  srv2=10.92.0.2 (leg 2, UNSHAPED)
+
+scripts/netem-lab/netem-lab.py --name fo failover
+#   netem-lab: runner 8faf554e on conn ws:10.90.0.1:51712-31023
+#   netem-lab: taking leg 1 down, waiting up to 150s for it to move
+#   netem-lab: moved to ws:10.91.0.2:34110-2275 in 63s
+#   netem-lab: RunnerID survived (8faf554e)
+```
+
+`--paths 2` gives `srv` a **second address on a second veth to the router**, so
+it is one server reachable two ways, and the runner is started with both as
+candidates. `path 1 down` takes a leg away; `failover` does that and measures
+the runner arriving on the other one, then restores the leg. The runner's list
+is `RUNNER_CID` in `env`; `CID` stays a single address, because `harness-cli`
+takes one and only the runner takes candidates.
+
+Two assertions, and the second is the one the feature was designed around: the
+runner comes back, and the server keeps it as the **same RunnerID** —
+`Registry.Add`'s takeover of an identity arriving on a new connection, rather
+than a second row for one process.
+
+**The wait is ~65 s, and it is not the ping interval.** Measured 63 s in the
+lab and ~70 s for both failure shapes in a two-veth probe: the runner's own link
+withdrawn (route gone) and the path blackholed with the route intact (`DROP`).
+`--ping-interval 2s` does not move it. Neither failure makes a **send** fail —
+an established TCP connection whose route disappears keeps accepting writes into
+the socket buffer — so `objproto`'s `CannotSend` never fires and what finally
+notices is `AutoGarbageCollect` deleting an inactive connection
+(`connectionTimeout = 1 min` in `runner.Connect`). The same asymmetry is on
+record for a dead UDP peer (~68 s). Budget a **minute of no dispatch** after a
+laptop changes networks; a faster failover means shortening that GC window, not
+the ping.
+
+Two properties of leg 2 to keep in mind, both deliberate:
+
+- **Unshaped.** `apply_shaping` only touches the leg-1 devices, so the second
+  path carries no delay, loss or MTU narrowing. It tests reachability, not two
+  shaped paths.
+- **Un-NAT'd.** The `MASQUERADE` rule names leg 1's device, so a runner that has
+  failed over appears at the **client's** own address (`10.91.0.2`) rather than
+  the router's. That is why `failover` keys on the connection id changing rather
+  than on which address it holds.
+
 ## Reading `show`
 
 `show` prints `tc -s qdisc show` for both shaped devices. The counters are how
@@ -322,5 +378,8 @@ python3 scripts/netem-lab/test_netem_lab.py
 `unittest`, stdlib only, run directly. **No make target runs it** — `make test`
 is `go test ./...`. It covers the parts whose failures are silent (profile
 expansion, `limit` always present, `--preserve-credentials` always present, the
-state round-trip, and that no profile carries a middlebox knob). Standing a lab
-up is a manual check by construction.
+state round-trip, that no profile carries a middlebox knob, which devices each
+server leg names, and the `ls` row shape `failover` measures against — that last
+one so a changed row format breaks loudly instead of reporting "never moved").
+Standing a lab up is a manual check by construction, and so is `failover`: it
+needs namespaces and a live harness.

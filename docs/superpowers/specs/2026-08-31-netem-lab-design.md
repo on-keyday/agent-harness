@@ -460,3 +460,63 @@ The documentation surfaces that *do* change:
 - **Trace-driven replay.** `mahimahi` records and replays real link traces and
   is the right tool if synthetic profiles turn out to be too clean. This lab
   does not attempt it.
+
+## Amendment 2026-09-11 — a second server leg, and `failover`
+
+**Why the lab grew a second path.** `agent-runner --server-cid` now takes an
+ordered candidate list, for a runner on a machine that moves between networks.
+Whether it fails over is not testable on loopback (P5's reasoning) and was not
+testable here either: one path, so nothing to fail over TO. The question needs
+two paths that can be taken away independently — which is machinery this lab
+already has, and which `dummy-harness.py` cannot have by construction.
+
+**Shape.** `up --paths 2` (default 1; the one-path topology is unchanged, and a
+`path` verb on such a lab is refused by name) gives `srv` a second address on a
+second veth to the router, from `--subnet-c` (default `10.92.0.0/24`), plus a
+second default route at metric 200 so srv's replies follow whichever leg is up:
+the kernel withdraws a route whose link is down, so nothing has to be rewritten
+when a leg goes away. Two verbs: `path {1|2} {up|down}` takes a leg away or
+restores it, and `failover` does that and measures the runner arriving on the
+other one.
+
+Three decisions, each of which could reasonably have gone the other way:
+
+- **The second leg is UNSHAPED and un-NAT'd.** `apply_shaping` names the leg-1
+  devices and so does the `MASQUERADE` rule. Shaping both would need a per-leg
+  knob set and — worse — would make every existing measurement ambiguous about
+  which path it was taken on. The visible consequence is that a failed-over
+  runner appears at the client's own address rather than the router's, which is
+  why `failover` keys on the connection id CHANGING rather than on which address
+  it holds.
+- **`CID` stays one address; `RUNNER_CID` carries the list.** `harness-cli`
+  takes one address and only the runner takes candidates, so conflating them
+  would have broken `bench` and every `exec` recipe the moment a second leg
+  existed.
+- **`path` downs BOTH ends of a leg.** Downing only the router side leaves the
+  srv end carrier-less, and carrier loss does not withdraw a route — so every
+  failure would present as a blackhole regardless of which one was meant.
+
+**What it measured, and the number is the point.** The failover takes **~65 s**:
+63 s in the lab, and ~70 s in a two-veth probe for both failure shapes — the
+runner's own link withdrawn (route gone) and the path blackholed with the route
+intact (`DROP`). `--ping-interval 2s` does not change it. Neither failure makes
+a SEND fail: an established TCP connection whose route disappears keeps
+accepting writes into the socket buffer, so `objproto`'s `CannotSend` never
+fires, and what finally notices is `AutoGarbageCollect` deleting an inactive
+connection (`connectionTimeout` = 1 min in `runner.Connect`). The same asymmetry
+was already on record for a dead UDP peer (~68 s); this confirms it for the ws
+leg. Operationally: a laptop that changes networks is undispatchable for about a
+minute, and shortening that means shortening the GC window, not the ping.
+
+The other assertion `failover` makes is the one the candidate list was designed
+around: the RunnerID survives, so the server treats the reconnect as
+`Registry.Add`'s takeover of one identity arriving on a new connection rather
+than as a second runner. That had been read out of `server/registry.go` and
+never executed until now.
+
+**Surfaces** — unchanged from the section above: still no operator-visible
+harness feature, so still no `surface-parity-checklist` walk. The documentation
+surfaces that changed are this amendment and `scripts/netem-lab/README.md`. The
+new tests are the two pure parts: which devices each leg names, and the `ls` row
+shape `failover` parses — the latter so a changed row format breaks loudly
+instead of reporting "never moved".

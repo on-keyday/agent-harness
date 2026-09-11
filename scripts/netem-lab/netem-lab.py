@@ -17,6 +17,8 @@ Usage:
   netem-lab.py [--name N] env
   netem-lab.py [--name N] exec  {srv|rtr|cli} -- <cmd...>
   netem-lab.py [--name N] shape [--profile P] [knobs...]
+  netem-lab.py [--name N] path  {1|2} {up|down}
+  netem-lab.py [--name N] failover [--leg N] [--timeout S]
   netem-lab.py [--name N] show
   netem-lab.py [--name N] down
 
@@ -32,6 +34,7 @@ import ipaddress
 import json
 import math
 import os
+import re
 import statistics
 import secrets
 import shutil
@@ -184,6 +187,28 @@ _DEV = {
     "cli": ("v-cli", "v-rtr-c"),
 }
 
+# The optional SECOND server leg (`up --paths 2`), for testing a runner whose
+# --server-cid lists more than one address. Kept out of _DEV because that map is
+# keyed by NAMESPACE and every loop over it means "once per endpoint"; this is a
+# second leg of ONE endpoint.
+#
+# Deliberately UNSHAPED and un-NAT'd: apply_shaping only touches the devices in
+# _DEV, and the MASQUERADE rule names leg 1's device, so the second path carries
+# no delay, loss or MTU narrowing and no address translation. It shows: a runner
+# that has failed over appears at the CLIENT's own address rather than the
+# router's. This leg exists to test reachability — whether a candidate list
+# fails over — not to compare two shaped paths. Shaping both would need a
+# per-leg knob set, which is a different feature and would make every existing
+# measurement ambiguous about which path it was taken on.
+_SRV_LEG2 = ("v-srv2", "v-rtr-s2")
+
+
+def leg_devs(leg: int) -> tuple[str, str]:
+    """(srv-side device, rtr-side device) for one server leg."""
+    if leg not in (1, 2):
+        die(f"leg must be 1 or 2, got {leg}")
+    return _DEV["srv"] if leg == 1 else _SRV_LEG2
+
 _PID_KEY = {"rtr": "USERNS_PID", "srv": "SRV_PID", "cli": "CLI_PID"}
 
 
@@ -234,7 +259,7 @@ def ns_run(st: dict, ns: str, argv: list[str], check: bool = True, **kw):
 
 
 def build_network(knobs: shaping.Knobs, subnet_a: str, subnet_b: str,
-                  tmp: Path) -> dict:
+                  tmp: Path, subnet_c: str | None = None) -> dict:
     """Create the three namespaces, wire them, address them, and route them.
 
     Returns the pid and address fields for the state dict. Every namespace is
@@ -280,6 +305,32 @@ def build_network(knobs: shaping.Knobs, subnet_a: str, subnet_b: str,
         ns_run(st, ns, ["ip", "route", "add", "default", "via", rtr_ip])
         st[f"{ns.upper()}_IP"] = end_ip
         st[f"{ns.upper()}_RTR_IP"] = rtr_ip
+
+    if subnet_c:
+        # A second leg to the SAME server, so `--server-cid A,B` has two real
+        # addresses to choose between. Built after the loop above because it is
+        # not a third endpoint: srv already has its address and its route.
+        end_dev, rtr_dev = _SRV_LEG2
+        rtr_ip, end_ip, plen = _addrs(subnet_c)
+        ns_run(st, "rtr", ["ip", "link", "add", rtr_dev,
+                           "type", "veth", "peer", "name", end_dev])
+        ns_run(st, "rtr", ["ip", "link", "set", end_dev,
+                           "netns", st[_PID_KEY["srv"]]])
+        ns_run(st, "rtr", ["ip", "addr", "add", f"{rtr_ip}/{plen}",
+                           "dev", rtr_dev])
+        ns_run(st, "rtr", ["ip", "link", "set", rtr_dev, "up"])
+        ns_run(st, "srv", ["ip", "addr", "add", f"{end_ip}/{plen}", "dev", end_dev])
+        ns_run(st, "srv", ["ip", "link", "set", end_dev, "up"])
+        # A SECOND default route at a higher metric, so srv's replies follow
+        # whichever leg is up. The kernel withdraws a route whose link is down,
+        # which is what makes `path 1 down` promote this one with no extra step
+        # — the same way a host with two uplinks behaves. The first leg's route
+        # is left exactly as the one-path lab writes it.
+        ns_run(st, "srv", ["ip", "route", "add", "default",
+                           "via", rtr_ip, "metric", "200"])
+        st["SRV_IP2"] = end_ip
+        st["SRV_RTR_IP2"] = rtr_ip
+        st["SUBNET_C"] = subnet_c
 
     ns_run(st, "rtr", ["sysctl", "-qw", "net.ipv4.ip_forward=1"])
 
@@ -431,16 +482,28 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
     port = dh.pick_port()
     psk = "netem-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
     srv_ip = st["SRV_IP"]
+    legs = [srv_ip] + ([st["SRV_IP2"]] if st.get("SRV_IP2") else [])
     # The server binds its own namespace's address. The runner's DIAL target is
     # derived from that address, never from the bind string — those are
     # different things even when they look alike, and using one for the other
     # has cost this project a cross-OS bug before (rewriteProxyViaForLocalDial).
+    #
+    # CID stays ONE address because harness-cli takes one; only the runner takes
+    # a list (runner.ServerCandidates). Keeping them separate is also what lets
+    # `bench` and the `exec` recipes go on working unchanged with two legs.
     cid = f"{args.transport}:{srv_ip}:{port}-*"
+    runner_cid = ",".join(f"{args.transport}:{ip}:{port}-*" for ip in legs)
+
+    # Two legs means the server has to answer on BOTH of its addresses, so it
+    # binds every interface. That also gives it a loopback route, which is the
+    # only address `failover` can ask `ls` over while one leg is down. One leg
+    # keeps the narrower per-address bind this lab has always used.
+    bind = f":{port}" if len(legs) > 1 else f"{srv_ip}:{port}"
 
     server = _ns_spawn(st, "srv", [
         dh.daemon.bin_path("harness-server"),
-        "--listen", f"{srv_ip}:{port}",
-        "--udp-listen", f"{srv_ip}:{port}",
+        "--listen", bind,
+        "--udp-listen", bind,
         "--psk", psk, "--operator-psk", psk,
         "--data-dir", str(data),
         *getattr(args, "server_args", []),
@@ -462,7 +525,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
 
     runner_args = [
         dh.daemon.bin_path("agent-runner"),
-        "--server-cid", cid, "--psk", psk, "--roots", str(repo),
+        "--server-cid", runner_cid, "--psk", psk, "--roots", str(repo),
         "--no-worktree", "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task; an
@@ -516,8 +579,8 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
         dh.kill_pid(server.pid)
         setup_err("runner never registered")
 
-    st.update({"HARNESS_PSK": psk, "CID": cid, "REPO": str(repo),
-               "SERVER_PORT": port})
+    st.update({"HARNESS_PSK": psk, "CID": cid, "RUNNER_CID": runner_cid,
+               "REPO": str(repo), "SERVER_PORT": port})
 
 
 def cmd_env(name: str) -> int:
@@ -529,6 +592,12 @@ def cmd_env(name: str) -> int:
     # caused in the tool this borrows from.
     for key in ("HARNESS_PSK", "CID", "REPO", "SERVER_PORT"):
         print(f"export {key}='{st[key]}'")
+    # RUNNER_CID can be a LIST and CID never is: harness-cli takes one address,
+    # the runner takes candidates. Exported separately so neither is pasted
+    # where the other belongs.
+    for key in ("RUNNER_CID", "SRV_IP2"):
+        if st.get(key):
+            print(f"export {key}='{st[key]}'")
     print(f"export NETEM_LAB_NAME='{name}'")
     print("# harness-cli must run INSIDE the lab: the host namespace has no")
     print(f"# route to {st['SRV_IP']}, so a call from here TIMES OUT rather")
@@ -569,7 +638,8 @@ def cmd_up(args, extra: list[str]) -> int:
 
     knobs = knobs_from_args(args)
     tmp = Path(tempfile.mkdtemp(prefix="harness-netem.", dir=str(dh.tmp_root())))
-    st = build_network(knobs, args.subnet_a, args.subnet_b, tmp)
+    st = build_network(knobs, args.subnet_a, args.subnet_b, tmp,
+                       args.subnet_c if args.paths == 2 else None)
     st["TMP"] = str(tmp)
     st["PROFILE"] = args.profile or ""
     apply_shaping(st, knobs)
@@ -582,7 +652,11 @@ def cmd_up(args, extra: list[str]) -> int:
     start_harness(st, args, extra)
     write_state(args.name, st)
     print(f"netem-lab: up  name={args.name}  "
-          f"srv={st['SRV_IP']}  cli={st['CLI_IP']}")
+          f"srv={st['SRV_IP']}  cli={st['CLI_IP']}"
+          + (f"  srv2={st['SRV_IP2']} (leg 2, UNSHAPED)" if st.get("SRV_IP2") else ""))
+    if st.get("SRV_IP2"):
+        print("netem-lab: 'path 1 down' kills the first leg; 'failover' measures "
+              "the runner moving off it")
     print("netem-lab: 'netem-lab.py exec cli -- <cmd>' runs inside the lab; "
           "'down' stops it")
     return 0
@@ -620,6 +694,14 @@ def cmd_show(name: str) -> int:
     print("--- addresses ---")
     for ns in ("srv", "cli"):
         print(f"{ns}: {st[f'{ns.upper()}_IP']} via {st[f'{ns.upper()}_RTR_IP']}")
+    if st.get("SRV_IP2"):
+        print(f"srv leg 2: {st['SRV_IP2']} via {st['SRV_RTR_IP2']} (unshaped)")
+        print("--- server legs ---")
+        for leg in (1, 2):
+            srv_dev, rtr_dev = leg_devs(leg)
+            state = ns_run(st, "rtr", ["ip", "-br", "link", "show", rtr_dev],
+                           check=False).stdout.strip()
+            print(f"leg {leg}: {state or '(absent)'}")
     return 0
 
 
@@ -776,6 +858,114 @@ def cmd_shape(args) -> int:
     return 0
 
 
+def cmd_path(name: str, leg: int, action: str) -> int:
+    """Take one server leg down, or bring it back.
+
+    BOTH ends of the leg, deliberately. Downing only the router side leaves the
+    srv end merely carrier-less, and carrier loss does NOT withdraw srv's route
+    — so replies would keep leaving through a dead link and every failure would
+    present as a blackhole regardless of which one you meant to model. With both
+    ends down it is unambiguous: rtr has no route to that server address, so the
+    next dial to it fails outright, and srv's higher-metric default takes over.
+    """
+    st = read_state(name)
+    if st is None:
+        die(f"no instance named {name!r}; run 'up' first")
+    if not st.get("SRV_IP2"):
+        die("this lab has one path; `up --paths 2` builds the second")
+    srv_dev, rtr_dev = leg_devs(leg)
+    ns_run(st, "rtr", ["ip", "link", "set", rtr_dev, action])
+    ns_run(st, "srv", ["ip", "link", "set", srv_dev, action])
+    print(f"netem-lab: leg {leg} {action}  ({rtr_dev} + {srv_dev})")
+    return 0
+
+
+def _runner_row(st: dict) -> tuple[str, str] | None:
+    """(RunnerID, the runner's connection id as the SERVER sees it), or None.
+
+    Asked over loopback from inside `srv`, which is the only address that stays
+    reachable whichever leg is down — that is what the all-interfaces bind of
+    `up --paths 2` is for. `ws:` regardless of the lab's --transport, because
+    the server binds both legs' listeners to the same address either way.
+
+    The connection id is the discriminator rather than the address in it: with
+    NAT on it also names the leg (the router's address on the leg the packets
+    arrived through), and with --no-nat it does not — but a RECONNECT always
+    produces a different connection id, which is the property being measured.
+    """
+    cli_bin = str(dh.daemon.bin_path("harness-cli"))
+    lo_cid = f"ws:127.0.0.1:{st['SERVER_PORT']}-*"
+    out = ns_run(st, "srv", [cli_bin, "--server-cid", lo_cid, "ls"],
+                 check=False).stdout or ""
+    body = out.split("TASKS")[0]
+    m = re.search(r"\bid=([0-9a-f]{32})\b.*?\bcid=(\S+)", body, re.S)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def cmd_failover(args) -> int:
+    """Kill the leg the runner is using and measure it arriving on the other.
+
+    This is the measurement `--server-cid A,B` exists for, and it cannot be made
+    on loopback: it needs two paths that can be taken away independently, which
+    is what this lab has and dummy-harness.py by construction does not.
+
+    Two assertions, and the second is the one the feature was designed around:
+    the runner comes back, and the server keeps it as the SAME RunnerID —
+    Registry.Add's takeover, rather than a second row for one process.
+    """
+    st = read_state(args.name)
+    if st is None:
+        die(f"no instance named {args.name!r}; run 'up' first")
+    if not st.get("SRV_IP2"):
+        die("failover needs two paths; `up --paths 2`")
+    if not st.get("CID"):
+        die("this lab has no harness running; `failover` needs one")
+
+    before = _runner_row(st)
+    if before is None:
+        die("no runner is registered, so there is nothing to fail over")
+    rid, cid_before = before
+    srv_dev, rtr_dev = leg_devs(args.leg)
+    print(f"netem-lab: runner {rid[:8]} on conn {cid_before}")
+    print(f"netem-lab: taking leg {args.leg} down, waiting up to "
+          f"{args.timeout:g}s for it to move")
+
+    ns_run(st, "rtr", ["ip", "link", "set", rtr_dev, "down"])
+    ns_run(st, "srv", ["ip", "link", "set", srv_dev, "down"])
+    t0 = time.monotonic()
+    moved = None
+    while time.monotonic() - t0 < args.timeout:
+        row = _runner_row(st)
+        if row is not None and row[1] != cid_before:
+            moved = row
+            break
+        time.sleep(1.0)
+    elapsed = time.monotonic() - t0
+
+    # Restored before reporting: a run that failed its assertion should leave a
+    # lab you can look at, not one with a leg still down.
+    ns_run(st, "rtr", ["ip", "link", "set", rtr_dev, "up"], check=False)
+    ns_run(st, "srv", ["ip", "link", "set", srv_dev, "up"], check=False)
+
+    if moved is None:
+        print(f"netem-lab: FAILED — still on {cid_before} after {elapsed:.0f}s")
+        print("netem-lab: leg restored; 'show' for the link states")
+        return 1
+    rid_after, cid_after = moved
+    print(f"netem-lab: moved to {cid_after} in {elapsed:.0f}s")
+    if rid_after != rid:
+        print(f"netem-lab: FAILED — RunnerID changed {rid[:8]} -> "
+              f"{rid_after[:8]}; the server took it for a new process")
+        return 1
+    print(f"netem-lab: RunnerID survived ({rid[:8]}) — the registry treated it "
+          "as the same runner on a new connection")
+    print("netem-lab: the WAIT is set by objproto's connection GC "
+          "(connectionTimeout = 1 min, runner.Connect), not by --ping-interval: "
+          "neither a withdrawn route nor a blackhole makes a send FAIL, so "
+          "CannotSend never fires. ~70s measured for both.")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     dh.survive_undisplayable_output()
     dh.scrub_own_env()
@@ -797,6 +987,10 @@ def main(argv: list[str]) -> int:
     up.add_argument("--transport", default="udp", choices=("udp", "ws"))
     up.add_argument("--subnet-a", dest="subnet_a", default="10.90.0.0/24")
     up.add_argument("--subnet-b", dest="subnet_b", default="10.91.0.0/24")
+    # A second, UNSHAPED leg to the same server, so --server-cid can carry two
+    # candidates. Default 1 leaves the topology byte-identical to before.
+    up.add_argument("--paths", type=int, choices=(1, 2), default=1)
+    up.add_argument("--subnet-c", dest="subnet_c", default="10.92.0.0/24")
     # Words after `--` go to the RUNNER, which left the server with no way to
     # be configured at all — and the server is the process a transfer spends
     # most of its CPU in, so it is the one you want --pprof-listen on.
@@ -819,6 +1013,12 @@ def main(argv: list[str]) -> int:
     bench.add_argument("--runs", type=int, default=6)
     bench.add_argument("--size-mb", dest="size_mb", type=int, default=100)
     bench.add_argument("--no-pin", dest="pin", action="store_false", default=True)
+    pa = sub.add_parser("path")
+    pa.add_argument("leg", type=int, choices=(1, 2))
+    pa.add_argument("action", choices=("up", "down"))
+    fo = sub.add_parser("failover")
+    fo.add_argument("--leg", type=int, choices=(1, 2), default=1)
+    fo.add_argument("--timeout", type=float, default=150.0)
     sub.add_parser("show")
     sub.add_parser("down")
 
@@ -838,6 +1038,10 @@ def main(argv: list[str]) -> int:
         return cmd_shape(args)
     if args.sub == "bench":
         return cmd_bench(args)
+    if args.sub == "path":
+        return cmd_path(args.name, args.leg, args.action)
+    if args.sub == "failover":
+        return cmd_failover(args)
     die(f"unhandled subcommand {args.sub!r}")
 
 
