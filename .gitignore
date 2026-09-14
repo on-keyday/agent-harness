@@ -57,3 +57,12 @@ go.work.sum
 /harness-tui
 /harness-stream-adapter
 /sandbox-connect-proxy
+
+# examples/memory-viewer writes the reader's whole auto-memory corpus verbatim
+# into one self-contained page, and `-o` defaults to ./out.html — so the file
+# lands in whatever directory the viewer was started from, this root included.
+# That is private notes in a public repository, and it is the same `git add -A`
+# path the strays above reached a commit through. Both spellings, because the
+# tool is run from the root as often as from its own directory.
+/out.html
+examples/memory-viewer/*.html

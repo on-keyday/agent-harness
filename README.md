@@ -1347,7 +1347,10 @@ scripts/sandbox/      opt-in rootless-podman confinement kit for spawned claude
 scripts/netem-lab/    rootless netns + netem lab: a shaped WAN path (delay, loss,
                       a bottleneck queue, small MTU, NAT) between server and
                       runner on one machine, for exercising the transport
-examples/             notify-hook samples (e.g. Discord webhook relay)
+examples/             standalone samples — notify-hooks/ relays a --notify-hook
+                      to a Discord webhook; memory-viewer/ is a browser viewer
+                      for Claude's auto-memory that drives harness-cli the way
+                      an outside tool has to (see its README)
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
 docs/superpowers/     specs/ and plans/ for design history
