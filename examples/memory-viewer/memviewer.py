@@ -17,7 +17,8 @@ it grows until something forces a prune, and the questions that decide what to
 prune are not answerable by reading one file at a time: which memory does
 nothing link to, which [[link]] points at a memory that no longer exists,
 which index line has lost its file, which two descriptions are saying the same
-thing, and how close the index is to the size where it stops being read.
+thing, and how close the index is to the point where it stops being read — which
+is two limits, bytes and lines, whichever comes first.
 """
 
 from __future__ import annotations
@@ -42,6 +43,17 @@ PROJECTS = Path.home() / ".claude" / "projects"
 # its own says nothing about how much room is left.
 INDEX_LIMIT_BYTES = 24_400
 INDEX_TARGET_BYTES = 17_100  # what the same warning asks you to compact to
+
+# The OTHER half of the same limit, and it was missing here until 2026-09-14.
+# code.claude.com/docs/en/memory: "The first 200 lines of MEMORY.md, or the first
+# 25KB, whichever comes first, are loaded at the start of every conversation."
+# Measuring only bytes reports headroom that does not exist: compacting an index
+# into many short lines SPENDS lines while freeing bytes, so the line axis can
+# bite first and a byte-only reading calls that comfortable.
+# No warning text states a line target the way it does for bytes, so this target
+# is DERIVED at the byte target's own ratio (17_100/24_400 = 0.70), not observed.
+INDEX_LIMIT_LINES = 200
+INDEX_TARGET_LINES = 140
 
 # Two descriptions this similar are probably one memory. Jaccard over words,
 # which is crude and is meant to be: it produces CANDIDATES for a human to
@@ -376,6 +388,8 @@ def scan() -> list[dict]:
             continue
         mems = [load_memory(p) for p in files] + [load_memory(p, area) for area, p in sub]
         index_path = mdir / "MEMORY.md"
+        index_raw = (index_path.read_text(encoding="utf-8", errors="replace")
+                     if index_path.exists() else "")
         projects.append(
             {
                 "key": pdir.name,
@@ -387,8 +401,11 @@ def scan() -> list[dict]:
                 "sub_index": sub_index,
                 "sub_index_raw": sub_raw,
                 "index_bytes": index_path.stat().st_size if index_path.exists() else 0,
-                "index_raw": index_path.read_text(encoding="utf-8", errors="replace")
-                if index_path.exists() else "",
+                # The other half of the load limit (INDEX_LIMIT_LINES). splitlines()
+                # so a trailing newline does not read as one more line than the file
+                # presents — the same count wc -l gives.
+                "index_lines": len(index_raw.splitlines()),
+                "index_raw": index_raw,
             }
         )
     projects.sort(key=lambda p: -len(p["memories"]))
@@ -551,6 +568,7 @@ def build_payload() -> dict:
                 "label": p["label"],
                 "dir": p["dir"],
                 "indexBytes": p["index_bytes"],
+                "indexLines": p["index_lines"],
                 # The whole file, because the per-line view has to show the
                 # lines that are NOT index rows too: a heading or a stray costs
                 # the same always-loaded bytes as a memory does.
@@ -586,6 +604,8 @@ def build_payload() -> dict:
         "generated": time.time(),
         "indexLimit": INDEX_LIMIT_BYTES,
         "indexTarget": INDEX_TARGET_BYTES,
+        "indexLimitLines": INDEX_LIMIT_LINES,
+        "indexTargetLines": INDEX_TARGET_LINES,
         "projects": out,
     }
 
@@ -742,11 +762,19 @@ function matches(m) {
 function warnBlock() {
   const c = P.checks, n = c.unreachable.length + c.orphans.length + c.dangling.length + c.missing_line.length
           + c.missing_file.length + c.similar.length;
-  const pct = Math.min(100, P.indexBytes / D.indexLimit * 100);
-  const cls = P.indexBytes >= D.indexLimit ? "over" : (P.indexBytes >= D.indexTarget ? "hot" : "");
-  let h = `<div class="warn"><h3><a href="#" id="open-index">MEMORY.md ${kb(P.indexBytes)} / ${kb(D.indexLimit)} 上限</a></h3>
+  // TWO limits truncate the index on load — bytes and LINES — and the bar shows
+  // whichever is closer to its own ceiling, because that is the one that will
+  // actually bite. Showing bytes alone reported headroom that did not exist:
+  // compacting entries into more, shorter lines frees bytes and SPENDS lines.
+  const bFrac = P.indexBytes / D.indexLimit, lFrac = P.indexLines / D.indexLimitLines;
+  const byLines = lFrac > bFrac;
+  const pct = Math.min(100, Math.max(bFrac, lFrac) * 100);
+  const cls = (P.indexBytes >= D.indexLimit || P.indexLines >= D.indexLimitLines) ? "over"
+            : (P.indexBytes >= D.indexTarget || P.indexLines >= D.indexTargetLines) ? "hot" : "";
+  let h = `<div class="warn"><h3><a href="#" id="open-index">MEMORY.md ${kb(P.indexBytes)} / ${kb(D.indexLimit)} · ${P.indexLines} / ${D.indexLimitLines} 行</a></h3>
     <div class="bar"><span class="${cls}" style="width:${pct}%"></span></div>
-    <div class="meta">目標 ${kb(D.indexTarget)} まで削ると警告が消えます</div></div>`;
+    <div class="meta">${byLines ? "行数" : "バイト"}が先に尽きます ·
+      目標 ${kb(D.indexTarget)} / ${D.indexTargetLines} 行</div></div>`;
   // The tail has to be REACHABLE, not just counted. A card that says "…他 21"
   // and offers no way to see them is a list with 21 items you cannot act on,
   // which is the same defect as a silent cut with a number painted on it.
@@ -919,7 +947,7 @@ function renderIndexView(a) {
   $("detail").innerHTML = `
     <h2>${esc(name)}</h2>
     <div class="meta">${lines.length} 行 · ${top
-        ? `${kb(P.indexBytes)} / ${kb(D.indexLimit)} 上限 · 常時読み込み`
+        ? `${kb(P.indexBytes)} / ${kb(D.indexLimit)} · ${P.indexLines} / ${D.indexLimitLines} 行 上限 · 常時読み込み`
         : `${total}B · 触っているときだけ読む`} ·
       索引行 ${rowsSrc.length} · 索引行でない行 ${nonRow.length} (${bytes(nonRow.map(x=>x.text).join("\n"))})</div>
     <div class="ixsort">
@@ -1100,13 +1128,22 @@ def print_check() -> int:
         c = p["checks"]
         n = (len(c["orphans"]) + len(c["dangling"]) + len(c["missing_line"])
              + len(c["missing_file"]) + len(c["unreachable"]))
-        over = p["indexBytes"] >= INDEX_TARGET_BYTES
+        over = (p["indexBytes"] >= INDEX_TARGET_BYTES
+                or p["indexLines"] >= INDEX_TARGET_LINES)
         if not n and not over and not c["similar"]:
             continue
         worst = max(worst, 1)
-        print(f"\n## {p['label']}  ({len(p['memories'])} memories, index {p['indexBytes']/1000:.1f}kB)")
+        print(f"\n## {p['label']}  ({len(p['memories'])} memories, index "
+              f"{p['indexBytes']/1000:.1f}kB / {p['indexLines']} lines)")
         if over:
-            print(f"  index: {p['indexBytes']/1000:.1f}kB — compact to {INDEX_TARGET_BYTES/1000:.1f}kB")
+            # Name WHICH axis is the near one. "compact the index" is acted on
+            # differently depending on the answer: fewer bytes per line, or
+            # fewer lines.
+            near = ("lines" if p["indexLines"] / INDEX_LIMIT_LINES
+                    > p["indexBytes"] / INDEX_LIMIT_BYTES else "bytes")
+            print(f"  index: {p['indexBytes']/1000:.1f}kB of {INDEX_LIMIT_BYTES/1000:.1f}kB, "
+                  f"{p['indexLines']} of {INDEX_LIMIT_LINES} lines — {near} run out first; "
+                  f"compact to {INDEX_TARGET_BYTES/1000:.1f}kB / {INDEX_TARGET_LINES} lines")
         if c["orphans"]:
             print(f"  orphan ({len(c['orphans'])}): " + ", ".join(c["orphans"][:8]) + (" …" if len(c["orphans"]) > 8 else ""))
 
