@@ -19,10 +19,20 @@ Pick by what actually changed:
   `make build` in the MAIN checkout (`$HARNESS_REPO_PATH`, where `which
   harness-cli` lives). The CLI is invoked fresh each time, so the rebuilt binary
   is used immediately — **no restart**.
-- **Runner** behavior (`runner/`, or what a live agent-runner executes) →
-  `/restart-all`.
-- **Server** behavior (`server/`) → restart the server on its own host yourself;
-  `/restart-all` will not do it.
+- **Runner** behavior (`runner/` minus the two exceptions below, or what a live
+  agent-runner executes) → `/restart-all`.
+- **Server** behavior (`server/`, `cmd/harness-server/`, `agentboard/`,
+  `pubsub/`, `appwire/`, and **`runner/protocol/`** — the wire schema is compiled
+  into the server too, its path notwithstanding, so `/restart-all` alone leaves
+  the server decoding the old format) → restart the server on its own host
+  yourself; `/restart-all` will not do it. A wire change is also the one case
+  where restart ORDER matters — run `scripts/wire-skew-check.sh` first.
+- **Already live — restart NOTHING.** `runner/agentskills/` when the runner runs
+  with `--agentskills-dir` (re-read on every task assign); `webui/` and
+  `cmd/harness-webui-wasm/` when the server runs with `--webui-dir`; `docs/` and
+  `scripts/` presets, which no live process loads. A bounce is not free — it can
+  mark live interactive tasks Failed — so paying it for one of these is pure
+  loss.
 
 `make build` rebuilds all binaries + the webui wasm but **restarts nothing**.
 Ask "what changed — CLI, runner, or server?" before reaching for `/restart-all`;
@@ -34,6 +44,12 @@ survives the cascade (`scripts/restart.py`), stale-slot skipping, and self
 detection via the parent-process chain. Re-deriving any of that before running is
 exactly the wasted "let me check the situation" sequence this command exists to
 skip.
+
+**And do NOT reach for the lower-level primitives** when the ask is just
+"restart" — `scripts/runner.sh down` + `up`, or `scripts/restart.sh <slot>`, act
+on one slot and know nothing about self-last ordering, so driving the fleet with
+them tears down the slot running this session before the others are back.
+`build_and_restart_all.py` is the orchestrator; those are what it calls.
 
 ## Procedure
 
