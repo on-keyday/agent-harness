@@ -730,6 +730,21 @@ h2.sec:first-child{margin-top:0}
 .ego .n.dang text{fill:#c08a4a}
 .egocap{color:#7a7a7a;font-size:.74rem;padding:.25rem .5rem}
 
+/* The map takes both panes: half a screen is not enough for 162 nodes, and on
+   a phone the panes stack anyway. */
+#mapview{position:relative;height:calc(100vh - 3.2rem);background:#161616;overflow:hidden}
+#mapview[hidden]{display:none}
+#mapsvg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#mapsvg.drag{cursor:grabbing}
+#mapsvg line{stroke:#3a3a3a;stroke-width:.8}
+#mapsvg circle{stroke:#161616;stroke-width:1}
+#mapsvg text{font:9px ui-monospace,Menlo,Consolas,monospace;fill:#9a9a9a;pointer-events:none}
+.maphud{position:absolute;right:.6rem;bottom:.6rem;background:#202020cc;border:1px solid #333;
+  border-radius:5px;padding:.3rem .55rem;font-size:.75rem;color:#9a9a9a}
+.mapbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.4rem .8rem;
+  border-bottom:1px solid #333;background:#1b1b1b}
+.mapbar[hidden]{display:none}
+
 .send{margin:.8rem 0;border:1px solid #333;border-radius:6px;padding:.4rem .6rem;background:#202020}
 .send summary{cursor:pointer;color:#9a9a9a;font-size:.86rem}
 .sendform{display:flex;flex-direction:column;gap:.4rem;margin-top:.5rem}
@@ -1310,6 +1325,69 @@ function goto(name) {
   }
 }
 
+// The map. Its state lives here rather than in the DOM because the camera has
+// to survive a round trip out to a memory and back — walking out to a node and
+// returning is the expected loop, and a camera that reset would undo the pan
+// that got you there.
+const mapState = {open:false, cam:{x:0,y:0,k:1}, colorBy:"area", sizeBy:"in",
+                  labels:false, area:"", neighbours:false, g:null, pos:null};
+
+function openMap(){
+  if (P.cross) return;           // links never cross projects; nothing to draw
+  mapState.open = true;
+  // Recomputed per open rather than cached: the corpus is re-read on every
+  // request, so a cached layout could describe memories that have changed.
+  mapState.g = projectGraph(P.memories);
+  mapState.pos = mapLayout(mapState.g.names.length, mapState.g.edges, 1234567);
+  $("mapview").hidden = false; $("mapbar").hidden = false;
+  document.querySelector("main").hidden = true;
+  $("mapbtn").classList.add("on");
+  renderMap();
+  if (mapState.cam.k === 1 && mapState.cam.x === 0 && mapState.cam.y === 0) mapFit();
+  else mapCam();
+}
+
+function closeMap(){
+  mapState.open = false;
+  $("mapview").hidden = true; $("mapbar").hidden = true;
+  document.querySelector("main").hidden = false;
+  $("mapbtn").classList.remove("on");
+}
+
+function renderMap(){
+  const {names, edges} = mapState.g, {X, Y} = mapState.pos;
+  const xy = (v) => v.toFixed(1);
+  let h = "";
+  for (const [a, b] of edges)
+    h += `<line x1="${xy(X[a])}" y1="${xy(Y[a])}" x2="${xy(X[b])}" y2="${xy(Y[b])}"/>`;
+  names.forEach((name, i) => {
+    h += `<g data-mapnode="${esc(name)}"><title>${esc(name)}</title>`
+       + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="4" fill="#6bb3f7"/></g>`;
+  });
+  $("mapcam").innerHTML = h;
+  $("maphud").textContent = `${names.length} nodes · ${edges.length} edges · zoom ${mapState.cam.k.toFixed(2)}x`;
+}
+
+function mapCam(){
+  $("mapcam").setAttribute("transform",
+    `translate(${mapState.cam.x} ${mapState.cam.y}) scale(${mapState.cam.k})`);
+  $("maphud").textContent = `${mapState.g.names.length} nodes · ${mapState.g.edges.length} edges · zoom ${mapState.cam.k.toFixed(2)}x`;
+}
+
+function mapFit(){
+  const {X, Y} = mapState.pos;
+  if (!X.length) return;
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  for (let i=0;i<X.length;i++){ x0=Math.min(x0,X[i]); x1=Math.max(x1,X[i]);
+                                y0=Math.min(y0,Y[i]); y1=Math.max(y1,Y[i]); }
+  const w = $("mapsvg").clientWidth, h = $("mapsvg").clientHeight;
+  const k = Math.min(w/(x1-x0+120), h/(y1-y0+120));
+  mapState.cam.k = k;
+  mapState.cam.x = w/2 - ((x0+x1)/2)*k;
+  mapState.cam.y = h/2 - ((y0+y1)/2)*k;
+  mapCam();
+}
+
 function render() {
   areaChips();
   const w = warnBlock();
@@ -1330,6 +1408,7 @@ function syncTypeChips() {
 
 document.addEventListener("click", (e) => {
   if (e.target.id === "sd-go") { doSend(); return; }
+  if (e.target.id === "mapbtn") { mapState.open ? closeMap() : openMap(); return; }
   if (e.target.id === "open-index") { e.preventDefault(); renderIndexView(""); return; }
   const ia = e.target.closest("[data-idxarea]");
   if (ia) { e.preventDefault(); renderIndexView(ia.dataset.idxarea); return; }
@@ -1380,6 +1459,10 @@ $("proj").addEventListener("change", (e) => {
   const was = P && P.cross;
   P = D.projects[+e.target.value];
   sel = null; area = ""; projFilter = "";
+  // A different project is a different graph, so the camera from the last one
+  // means nothing over it.
+  if (mapState.open) closeMap();
+  mapState.cam = {x:0, y:0, k:1};
   // Entering the cross view preselects `feedback`: 351 memories on one screen
   // is a wall, and the 139 that are about how to work are the reason this view
   // exists. The chips are right there to widen it. Leaving clears the filter
@@ -1453,9 +1536,12 @@ def page(payload: dict | None = None) -> str:
   <button class="chip" data-view="big">大きい順</button>
   <button class="chip" data-view="old">古い順</button>
   <button class="chip" data-view="linked">被リンク順</button>
+  <button class="chip" id="mapbtn">🗺 地図</button>
   <span class="meta" id="count"></span>
 </header>
 <div id="areas" class="arearow"></div>
+<div id="mapbar" class="mapbar" hidden></div>
+<div id="mapview" hidden><svg id="mapsvg"><g id="mapcam"></g></svg><div class="maphud" id="maphud"></div></div>
 <main>
   <div class="pane">
     <h2 class="sec" id="warnsec">要保守</h2><div id="warn"></div>
