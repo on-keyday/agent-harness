@@ -69,6 +69,43 @@ areas disagree with the observed communities — there are no observed communiti
 to disagree with. Any map of harness will therefore show a blob and a halo, and
 that is the corpus, not the drawing.
 
+**Reciprocal links are rare, so drawing direction everywhere would say nothing.**
+A `[[link]]` is directed, and an edge is either one-way or mutual:
+
+| project | edges | one-way | mutual | mutual % |
+|---|---:|---:|---:|---:|
+| remote-agent-harness | 373 | 354 | 19 | 5% |
+| sisaku-security-entrepreneurship | 61 | 49 | 12 | 19% |
+| sisaku-security-rule-review | 65 | 61 | 4 | 6% |
+| kcdn-ansible-ksdk | 62 | 52 | 10 | 16% |
+
+Arrowheads on all 373 would be 354 marks in the dense core restating what is
+already known — almost everything is one-way. The 5% that is not is the part
+carrying information.
+
+**The subsystem areas are not internally connected, and that is where the "56%
+within-area" figure came from.** Induced subgraph of each area in harness:
+
+| area | nodes | internal edges | isolated | components | largest |
+|---|---:|---:|---:|---:|---:|
+| (top) | 100 | 177 | 5 | 6 | 95 |
+| history | 9 | 1 | 7 | 8 | 2 |
+| host | 10 | 6 | 2 | 4 | 6 |
+| pty | 12 | 6 | 6 | 7 | 6 |
+| reference | 2 | 1 | 0 | 1 | 2 |
+| tools | 7 | 2 | 3 | 5 | 2 |
+| trsf | 10 | 7 | 3 | 5 | 5 |
+| user | 5 | 0 | 5 | 5 | 1 |
+| webui | 7 | 5 | 2 | 3 | 5 |
+| windows | 6 | 4 | 2 | 3 | 4 |
+
+177 of the 209 within-area edges are `(top)` linked to itself; the nine
+subsystem directories contribute 32 between them, and `user` contributes none at
+all. So the earlier reading — "over half the links stay inside an area" — was
+the unfiled bulk talking to itself, not evidence that the filing follows the
+links. The subsystem directories were filed by topic, and the link structure
+does not reproduce that grouping.
+
 **A throwaway spike answered the readability question.** Force-directed layout
 over the real data, with zoom:
 
@@ -108,7 +145,10 @@ byte-identical coordinates.
    one project that most needs the map. Reporting modularity as a number may be
    worth doing, but it belongs to `--check` and the 要保守 panel, not here.
 7. **No area-pinned or cluster-pinned layout.** Same measurement: there is nothing
-   to pin harness apart by, and the other projects have one area.
+   to pin harness apart by, and the other projects have one area. This is about
+   POSITION and is not the area filter in decision 14 — narrowing which nodes are
+   drawn is a different act from forcing where they sit, and only the latter
+   would be asserting a grouping the links do not support.
 8. **Zoom and pan are required.** Wheel zooms about the cursor, drag pans, and a
    button fits the whole graph. Stated as a requirement by the operator and
    confirmed necessary by the spike.
@@ -129,6 +169,26 @@ byte-identical coordinates.
 11. **Not offered in the cross-project view.** Links never cross projects, so a
     union map is fifteen disconnected islands whose largest is the one already
     reachable by picking that project.
+12. **Edges are drawn undirected, and only the mutual ones are styled apart.**
+    This decision existed only in the spike's code until it was questioned;
+    writing it down is the point of this entry. Measured above: 95% of harness's
+    edges are one-way, so arrowheads on everything would put 354 marks in the
+    core to restate a thing that is true of nearly all of them. The 19 reciprocal
+    pairs get their own stroke. Direction as such is already carried, better,
+    by the ego graph, which encodes it as position — and a node click leads
+    there.
+13. **Direction appears on hover, scoped to one node.** Hovering a node colours
+    the edges leaving it differently from the edges arriving at it. This is the
+    only shape in which "show one direction" means anything: globally every edge
+    is somebody's outbound and somebody else's inbound, so a global direction
+    filter selects the whole set. Bounded by degree — at worst 24 edges light up.
+14. **The area chips filter the map, with the same meaning they have for the
+    list**, plus one toggle, `隣接も含める`, default off. Measured above, the
+    plain filter is worth having for `(top)` (100 nodes, 177 edges) and shows
+    little more than dots for a subsystem — `user` has five nodes and no internal
+    edges at all. The toggle adds the filtered nodes' direct neighbours, drawn
+    dimmed, which is how you see where a subsystem's links actually go. It stays
+    off by default because on `(top)` the neighbours are everything else.
 
 ## Architecture
 
@@ -176,6 +236,11 @@ mechanically.
   opening the map expecting clusters there will find a mesh. This is recorded so
   that finding is read as a property of the corpus rather than a defect in the
   drawing.
+- **Filtering to a subsystem area shows mostly unconnected dots**, and that is
+  the corpus rather than the filter misbehaving: `user` 5 nodes / 0 internal
+  edges, `history` 9 / 1, `tools` 7 / 2. Anyone opening `trsf` expecting a
+  little constellation will get five connected and three alone. `隣接も含める`
+  exists for exactly this case.
 - At fit zoom the overview is shape-only. Reading names needs zoom, by
   construction.
 - At 390px the map is a zoom-and-pan surface on a small screen. Usable, cramped,
@@ -199,6 +264,13 @@ are `--check` plus the browser. So:
   zoom about the cursor; drag pan; the fit button; a node click landing on that
   memory's detail pane and ego graph; and the map absent from the cross-project
   entry.
+- Direction: the 19 mutual edges in harness are the ones drawn apart, counted
+  rather than eyeballed. Hovering a node lights exactly its own edges, split
+  into leaving and arriving, and nothing else changes.
+- Area filter: `(top)` yields 100 nodes and 177 edges; `user` yields 5 nodes and
+  none; `隣接も含める` on `trsf` brings in the neighbours its 10 members link to,
+  dimmed, and the same toggle on `(top)` is expected to pull in essentially the
+  whole project — checked so the behaviour is known rather than discovered.
 - 390px: the page itself must not overflow horizontally — the map scrolls and
   zooms inside its own box, the way the ego graph already does.
 
