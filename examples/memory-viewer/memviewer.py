@@ -1362,6 +1362,8 @@ $("mapsvg").addEventListener("pointerover", (e) => {
   mapHover(g ? g.dataset.mapnode : null);
 });
 
+$("maparea").addEventListener("change", (e) => { mapState.area = e.target.value; renderMap(); });
+$("mapneigh").addEventListener("change", (e) => { mapState.neighbours = e.target.checked; renderMap(); });
 $("mapcolor").addEventListener("change", (e) => { mapState.colorBy = e.target.value; renderMap(); });
 $("mapsize").addEventListener("change", (e) => { mapState.sizeBy = e.target.value; renderMap(); });
 $("maplabels").addEventListener("change", (e) => { mapState.labels = e.target.checked; renderMap(); });
@@ -1414,6 +1416,10 @@ function openMap(){
   $("mapview").hidden = false; $("mapbar").hidden = false;
   document.querySelector("main").hidden = true;
   $("mapbtn").classList.add("on");
+  $("maparea").innerHTML = `<option value="">全部</option>`
+    + (mapAreas().includes("") ? `<option value="${MAP_TOP}">${MAP_TOP}</option>` : "")
+    + mapAreas().filter(Boolean).map(a => `<option value="${esc(a)}">${esc(a)}/</option>`).join("");
+  $("maparea").value = mapState.area;
   renderMap();
   if (mapState.cam.k === 1 && mapState.cam.x === 0 && mapState.cam.y === 0) mapFit();
   else mapCam();
@@ -1430,6 +1436,10 @@ const MAP_AREA_COLORS = ["#6bb3f7","#5cc98a","#f0a060","#c080f0","#e06c75",
                          "#56b6c2","#d19a66","#98c379","#c678dd","#abb2bf"];
 const MAP_TYPE_COLORS = {feedback:"#f0a060", project:"#5cc98a",
                          reference:"#5aabf7", user:"#c080f0", "?":"#888"};
+
+// A sentinel rather than "": a directory cannot be called this, and the select
+// needs a value for the top level that is not also the value for "everything".
+const MAP_TOP = "(top)";
 
 function mapAreas(){ return [...new Set(P.memories.map(m => m.area || ""))].sort(); }
 
@@ -1461,17 +1471,51 @@ function mapLabel(name){
   return t.length > 20 ? t.slice(0, 19) + "\u2026" : t;
 }
 
+// Which nodes the map draws. Narrowing WHICH nodes appear is not the same as
+// forcing WHERE they sit: the layout stays innocent of areas, because the links
+// do not group by area and a layout that pretended otherwise would be asserting
+// a structure the data does not have.
+//
+// The neighbours toggle exists because a subsystem on its own is mostly dots —
+// measured: user has 5 memories and 0 internal edges, history 9 and 1. It is
+// off by default because on (top) the neighbours are everything else.
+// "" means every node; MAP_TOP means the top level only. They are different
+// questions and the empty string cannot carry both — top-level IS an area here
+// (100 of the 169 memories, and 177 of the 375 edges), and being unable to look
+// at it alone was the one thing the area filter existed for.
+function mapVisible(){
+  const g = mapState.g;
+  if (!mapState.area) return {show: new Set(g.names.map((_, i) => i)), dim: new Set()};
+  const want = mapState.area === MAP_TOP ? "" : mapState.area;
+  const show = new Set();
+  g.names.forEach((_, i) => {
+    if ((P.memories[i].area || "") === want) show.add(i);
+  });
+  const dim = new Set();
+  if (mapState.neighbours) {
+    for (const [a, b] of g.edges) {
+      if (show.has(a) && !show.has(b)) dim.add(b);
+      if (show.has(b) && !show.has(a)) dim.add(a);
+    }
+  }
+  return {show, dim};
+}
+
 function renderMap(){
   const {names, edges} = mapState.g, {X, Y} = mapState.pos;
+  const vis = mapVisible();
+  const drawn = (i) => vis.show.has(i) || vis.dim.has(i);
   const xy = (v) => v.toFixed(1);
   let h = "";
   for (const [a, b] of edges) {
+    if (!drawn(a) || !drawn(b)) continue;
     const mut = mapState.g.mutual.has(a + ":" + b) ? " mut" : "";
     h += `<line class="e${mut}" data-a="${a}" data-b="${b}" x1="${xy(X[a])}" y1="${xy(Y[a])}" x2="${xy(X[b])}" y2="${xy(Y[b])}"/>`;
   }
   names.forEach((name, i) => {
+    if (!drawn(i)) return;
     const nd = P.memories[i], r = mapRadius(nd);
-    h += `<g data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length}</title>`
+    h += `<g class="${vis.dim.has(i) ? "dim" : ""}" data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length}</title>`
        + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="${r.toFixed(1)}" fill="${mapColor(nd)}"/>`
        + (mapState.labels
             ? `<text x="${xy(X[i]+r+3)}" y="${xy(Y[i]+3)}">${esc(mapLabel(name))}</text>` : "")
@@ -1682,6 +1726,8 @@ def page(payload: dict | None = None) -> str:
     <option value="in">被リンク数</option><option value="sz">サイズ</option><option value="flat">一定</option>
   </select></label>
   <label><input type="checkbox" id="maplabels"> ラベル</label>
+  <label>area <select id="maparea"></select></label>
+  <label><input type="checkbox" id="mapneigh"> 隣接も含める</label>
   <button class="chip" id="mapfit">全体に合わせる</button>
   <span class="meta" id="maplegend"></span>
 </div>
