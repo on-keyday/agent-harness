@@ -144,7 +144,7 @@ func fileEditDecide(orig, next, remote []byte, force bool) FileEditStatus {
 // FileEditLoad pulls rel out of taskIDHex's worktree and returns it in
 // editable form. Errors with ErrFileEditTooLarge / ErrFileEditNotText when
 // the file is not something an editor should open.
-func (c *Client) FileEditLoad(ctx context.Context, taskIDHex, rel string, route protocol.FileTransferRoute, onProgress ProgressFunc) (FileEditDoc, error) {
+func (c *Client) FileEditLoad(ctx context.Context, taskIDHex, rel string, route protocol.DataPlaneRoute, onProgress ProgressFunc) (FileEditDoc, error) {
 	data, err := c.FilePullBytes(ctx, taskIDHex, rel, route, onProgress)
 	if err != nil {
 		return FileEditDoc{}, err
@@ -160,7 +160,7 @@ func (c *Client) FileEditLoad(ctx context.Context, taskIDHex, rel string, route 
 // A file that vanished between load and commit surfaces as an error rather
 // than as "no conflict": the operator asked to edit a file, and recreating
 // one is a different act.
-func (c *Client) FileEditCommit(ctx context.Context, taskIDHex string, d FileEditDoc, newText string, force bool, route protocol.FileTransferRoute) (FileEditStatus, error) {
+func (c *Client) FileEditCommit(ctx context.Context, taskIDHex string, d FileEditDoc, newText string, force bool, route protocol.DataPlaneRoute) (FileEditStatus, error) {
 	next := d.Encode(newText)
 	var remote []byte
 	if !bytes.Equal(next, d.Orig) && !force {

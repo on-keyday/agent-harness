@@ -201,9 +201,9 @@ func (h *TaskHandler) openDataPlane(
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	taskID protocol.TaskID,
-	route protocol.FileTransferRoute,
+	route protocol.DataPlaneRoute,
 ) (*dataPlaneOutcome, error) {
-	if route == protocol.FileTransferRoute_Splice {
+	if route == protocol.DataPlaneRoute_Splice {
 		return nil, nil
 	}
 	if h.SetupDataPlane == nil {
@@ -218,7 +218,7 @@ func (h *TaskHandler) openDataPlane(
 		return nil, fmt.Errorf("route %v: one end has no transport (client=%q runner=%q)",
 			route, clientCID.Transport, rc.Transport)
 	}
-	direct := route == protocol.FileTransferRoute_Direct
+	direct := route == protocol.DataPlaneRoute_Direct
 	if direct && !dataPlaneDirectOK(clientCID, rc) {
 		// Naming a transport pair that cannot dial is the common way to ask for
 		// direct by mistake -- a browser, or a ws client against a udp runner --

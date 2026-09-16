@@ -17,3 +17,7 @@ enum AppKind:
     psk_auth = 0x45
     agent_proxy_control = 0x46
     dial_greeting = 0x47
+    # Rides trsf's DATAGRAM frame rather than an objproto application message,
+    # so unlike every kind above it is acknowledged and (in its controlled mode)
+    # congestion controlled. The payload is a protocol.ForwardDatagram.
+    forward_datagram = 0x48

@@ -2764,7 +2764,7 @@ func harnessFileLs(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			rel := args[1].String()
-			entries, err := c.ListFiles(rootCtx, taskID, rel, protocol.FileTransferRoute_Splice)
+			entries, err := c.ListFiles(rootCtx, taskID, rel, protocol.DataPlaneRoute_Splice)
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -2811,9 +2811,9 @@ func harnessFileDelete(this js.Value, args []js.Value) any {
 			recursive := len(args) >= 3 && args[2].Truthy()
 			force := len(args) >= 4 && args[3].Truthy()
 			if recursive {
-				err = c.FileDeleteDir(rootCtx, taskID, rel, force, protocol.FileTransferRoute_Splice)
+				err = c.FileDeleteDir(rootCtx, taskID, rel, force, protocol.DataPlaneRoute_Splice)
 			} else {
-				err = c.FileDelete(rootCtx, taskID, rel, protocol.FileTransferRoute_Splice)
+				err = c.FileDelete(rootCtx, taskID, rel, protocol.DataPlaneRoute_Splice)
 			}
 			if err != nil {
 				rejectFileErr(reject, err)
@@ -2850,7 +2850,7 @@ func harnessFileMkdir(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if err := c.FileMkdir(rootCtx, taskID, rel, parents, protocol.FileTransferRoute_Splice); err != nil {
+			if err := c.FileMkdir(rootCtx, taskID, rel, parents, protocol.DataPlaneRoute_Splice); err != nil {
 				rejectFileErr(reject, err)
 				return
 			}
@@ -2947,7 +2947,7 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel, protocol.FileTransferRoute_Splice, jsProgress(args, 2))
+			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel, protocol.DataPlaneRoute_Splice, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -3093,7 +3093,7 @@ func harnessFilePullBytesRange(this js.Value, args []js.Value) any {
 				Offset: uint64(args[2].Int()),
 				Length: uint64(args[3].Int()),
 			}
-			data, total, err := c.FilePullBytesRange(rootCtx, args[0].String(), args[1].String(), rng, protocol.FileTransferRoute_Splice, jsProgress(args, 4))
+			data, total, err := c.FilePullBytesRange(rootCtx, args[0].String(), args[1].String(), rng, protocol.DataPlaneRoute_Splice, jsProgress(args, 4))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -3132,7 +3132,7 @@ func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel, protocol.FileTransferRoute_Splice, jsProgress(args, 2))
+			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel, protocol.DataPlaneRoute_Splice, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -3174,7 +3174,7 @@ func harnessFileEditLoad(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			doc, err := c.FileEditLoad(rootCtx, taskID, remoteRel, protocol.FileTransferRoute_Splice, onProgress)
+			doc, err := c.FileEditLoad(rootCtx, taskID, remoteRel, protocol.DataPlaneRoute_Splice, onProgress)
 			if err != nil {
 				rejectFileEditErr(reject, err)
 				return
@@ -3224,7 +3224,7 @@ func harnessFileEditCommit(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			st, err := c.FileEditCommit(rootCtx, taskID, doc, text, force, protocol.FileTransferRoute_Splice)
+			st, err := c.FileEditCommit(rootCtx, taskID, doc, text, force, protocol.DataPlaneRoute_Splice)
 			if err != nil {
 				rejectFileEditErr(reject, err)
 				return

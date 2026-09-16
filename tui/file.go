@@ -29,7 +29,7 @@ type FileResultMsg struct {
 // DoFileLs lists a directory under the task's worktree. Captures the
 // runner's listing into a buffer (the cli method writes to an
 // io.Writer) and delivers it via FileResultMsg.Output.
-func DoFileLs(c *cli.Client, taskID, relPath string, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileLs(c *cli.Client, taskID, relPath string, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -50,7 +50,7 @@ func DoFileLs(c *cli.Client, taskID, relPath string, route protocol.FileTransfer
 // non-recursive variant uses the single-file push path with optional
 // force overwrite. Parents creates missing parent directories of
 // remoteDst before the push (mkdir -p semantics).
-func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force, parents bool, route protocol.FileTransferRoute) tea.Cmd {
+func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force, parents bool, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -73,7 +73,7 @@ func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, fo
 // DoFileMkdir creates a directory under the task's worktree. parents
 // mirrors mkdir -p (create missing parents, existing dir is ok);
 // without it the runner is strict.
-func DoFileMkdir(c *cli.Client, taskID, relPath string, parents bool, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileMkdir(c *cli.Client, taskID, relPath string, parents bool, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -95,7 +95,7 @@ func DoFileMkdir(c *cli.Client, taskID, relPath string, parents bool, route prot
 // The recursive variant uses dir_pull (tar over the wire); the
 // non-recursive variant uses the single-file pull path with optional
 // force overwrite of the local destination.
-func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force bool, route protocol.FileTransferRoute, rng cli.FileTransferRange) tea.Cmd {
+func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force bool, route protocol.DataPlaneRoute, rng cli.FileTransferRange) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -119,7 +119,7 @@ func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, fo
 // os.RemoveAll, otherwise the runner only removes empty directories.
 // Force without recursive is no-op (single-file delete has no force
 // semantics) but accepted to keep the flag set uniform.
-func DoFileDelete(c *cli.Client, taskID, relPath string, recursive, force bool, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileDelete(c *cli.Client, taskID, relPath string, recursive, force bool, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -163,7 +163,7 @@ type FileEditCommittedMsg struct {
 
 // DoFileEditLoad pulls a file for editing. Threads a.client like every other
 // Do* here — it never dials.
-func DoFileEditLoad(c *cli.Client, taskID, rel string, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileEditLoad(c *cli.Client, taskID, rel string, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -174,7 +174,7 @@ func DoFileEditLoad(c *cli.Client, taskID, rel string, route protocol.FileTransf
 
 // DoFileEditCommit writes an edited buffer back to the file it came from,
 // re-reading the runner-side file first unless force is set.
-func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text string, force bool, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text string, force bool, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -187,7 +187,7 @@ func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text st
 // file, or an edit retargeted to a different path (save-as). Force stays off
 // so an accidental collision is reported rather than silently overwritten;
 // parents are created, matching the WebUI's prompt-and-retry outcome.
-func DoFileEditCreate(c *cli.Client, taskID, rel, text string, doc cli.FileEditDoc, route protocol.FileTransferRoute) tea.Cmd {
+func DoFileEditCreate(c *cli.Client, taskID, rel, text string, doc cli.FileEditDoc, route protocol.DataPlaneRoute) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()

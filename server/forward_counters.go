@@ -90,6 +90,48 @@ func (pf *portForward) counters() (toTarget, fromTarget, connsTotal uint64, conn
 		pf.connsTotal.Load(), uint32(open), uint64(last)
 }
 
+// datagramDropCause names why a datagram did not cross, and the three are kept
+// apart because they ask different things of whoever reads them. Oversize means
+// the payload can never fit and only the application can act; congestion means
+// the window said no and the transport did its job; queue means this process
+// fell behind, which is host load rather than the path. None of them is loss ON
+// the path — that is the transport's own accounting, and a reader who cannot
+// tell "we dropped it" from "the network dropped it" starts at the wrong layer.
+type datagramDropCause uint8
+
+const (
+	dropOversize datagramDropCause = iota
+	dropCongestion
+	dropQueue
+)
+
+// noteDatagramDrop counts one datagram this forward did not carry.
+func (pf *portForward) noteDatagramDrop(cause datagramDropCause) {
+	if pf == nil {
+		return
+	}
+	switch cause {
+	case dropOversize:
+		pf.droppedOversize.Add(1)
+	case dropCongestion:
+		pf.droppedCongestion.Add(1)
+	case dropQueue:
+		pf.droppedQueue.Add(1)
+	}
+}
+
+// noteMaxDatagramSize records what currently fits one datagram on this
+// forward's carrier. It MOVES with PLPMTUD, so it is stored on every send
+// rather than at registration: a listing shows the size that applied to the
+// most recent packet, which is the number that explains the oversize drops
+// beside it.
+func (pf *portForward) noteMaxDatagramSize(n int) {
+	if pf == nil || n <= 0 {
+		return
+	}
+	pf.maxDatagramSize.Store(uint32(n))
+}
+
 // observe accumulates the per-connection halves and, from the tap change on,
 // offers the bytes to every tap reading this forward. Called from the relay
 // goroutine: it must not block and must not retain data, which the relay

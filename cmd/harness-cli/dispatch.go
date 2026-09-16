@@ -66,7 +66,7 @@ func (h cliVerbs) withClient(fn func(c *cli.Client) error) error {
 
 func (h cliVerbs) FilePush(a verb.FilePushAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func (h cliVerbs) FilePush(a verb.FilePushAction) error {
 
 func (h cliVerbs) FilePull(a verb.FilePullAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (h cliVerbs) FilePull(a verb.FilePullAction) error {
 
 func (h cliVerbs) FileLs(a verb.FileLsAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ func (h cliVerbs) FileLs(a verb.FileLsAction) error {
 
 func (h cliVerbs) FileMkdir(a verb.FileMkdirAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (h cliVerbs) FileMkdir(a verb.FileMkdirAction) error {
 
 func (h cliVerbs) FileDelete(a verb.FileDeleteAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func (h cliVerbs) FileDelete(a verb.FileDeleteAction) error {
 
 func (h cliVerbs) FileEdit(a verb.FileEditAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}
@@ -139,7 +139,7 @@ func (h cliVerbs) FileEdit(a verb.FileEditAction) error {
 
 func (h cliVerbs) FileNew(a verb.FileNewAction) error {
 	return h.withClient(func(c *cli.Client) error {
-		route, err := verb.ParseFileTransferRoute(a.Route)
+		route, err := verb.ParseDataPlaneRoute(a.Route)
 		if err != nil {
 			return err
 		}

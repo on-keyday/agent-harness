@@ -21,7 +21,7 @@ func TestSpliceRouteTouchesNothing(t *testing.T) {
 	h := &TaskHandler{}
 	out, err := h.openDataPlane(nil, nil,
 		protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push,
-		protocol.TaskID{}, protocol.FileTransferRoute_Splice)
+		protocol.TaskID{}, protocol.DataPlaneRoute_Splice)
 	if err != nil {
 		t.Fatalf("splice must never fail: %v", err)
 	}
@@ -34,11 +34,11 @@ func TestSpliceRouteTouchesNothing(t *testing.T) {
 // widget passing the default -- takes the path that was always there.
 func TestZeroValuedRequestsSplice(t *testing.T) {
 	var oft protocol.OpenFileTransferRequest
-	if oft.Route != protocol.FileTransferRoute_Splice {
+	if oft.Route != protocol.DataPlaneRoute_Splice {
 		t.Fatalf("a zero-valued OpenFileTransferRequest names %v", oft.Route)
 	}
 	var lf protocol.ListFilesRequest
-	if lf.Route != protocol.FileTransferRoute_Splice {
+	if lf.Route != protocol.DataPlaneRoute_Splice {
 		t.Fatalf("a zero-valued ListFilesRequest names %v", lf.Route)
 	}
 	// And it survives a round trip, which is what an old peer actually sends.
@@ -50,7 +50,7 @@ func TestZeroValuedRequestsSplice(t *testing.T) {
 	if _, err := back.Decode(b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if back.Route != protocol.FileTransferRoute_Splice {
+	if back.Route != protocol.DataPlaneRoute_Splice {
 		t.Fatalf("the route came back as %v from an unset request", back.Route)
 	}
 }
@@ -62,9 +62,9 @@ func TestZeroValuedRequestsSplice(t *testing.T) {
 // withheld, and would do it silently.
 func TestANamedRouteThatCannotBeTakenIsRefusedNotSpliced(t *testing.T) {
 	h := &TaskHandler{} // no SetupDataPlane hook
-	for _, r := range []protocol.FileTransferRoute{
-		protocol.FileTransferRoute_Forwarded,
-		protocol.FileTransferRoute_Direct,
+	for _, r := range []protocol.DataPlaneRoute{
+		protocol.DataPlaneRoute_Forwarded,
+		protocol.DataPlaneRoute_Direct,
 	} {
 		out, err := h.openDataPlane(nil, nil,
 			protocol.TaskControlKind_OpenFileTransfer, protocol.FileTransferDirection_Push,

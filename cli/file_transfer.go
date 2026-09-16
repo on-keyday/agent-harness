@@ -45,7 +45,7 @@ func (c *Client) OpenFileTransfer(
 	rng FileTransferRange,
 	force bool,
 	mkdirParents bool,
-	route protocol.FileTransferRoute,
+	route protocol.DataPlaneRoute,
 ) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *dataPlaneStream) CloseBoth() error {
 
 // ListFiles round-trips a list_files request and decodes the FileListing
 // payload. Returns the entries in name order.
-func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, route protocol.FileTransferRoute) ([]FileEntryView, error) {
+func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string, route protocol.DataPlaneRoute) ([]FileEntryView, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("file ls: parse task id: %w", err)

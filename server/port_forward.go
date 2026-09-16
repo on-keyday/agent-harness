@@ -96,6 +96,19 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		slog.Error("port_forward: nil client conn (programmer error)")
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
+	// A route the schema accepts but no handler implements is REFUSED, never
+	// quietly downgraded to one that works. Naming forwarded or direct is a
+	// request for THIS PROCESS not to read the bytes, so substituting splice
+	// would hand over exactly what was withheld — DataPlaneRoute's own comment
+	// makes that the rule for file transfer and it is no different here. The
+	// same refusal covers a protocol x route cell the schema carries and no
+	// handler has landed yet, so a caller learns instead of getting a forward
+	// that silently took another path.
+	if req.Route != protocol.DataPlaneRoute_Splice {
+		slog.Info("port_forward: route not implemented for port forwarding",
+			"task_id", taskIDHex, "route", req.Route.String(), "protocol", req.Protocol.String())
+		return errResp(protocol.OpenPortForwardStatus_RouteUnavailable)
+	}
 	pf := &portForward{
 		direction:      req.Direction,
 		taskIDHex:      taskIDHex,
@@ -108,6 +121,8 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		targetHost:     string(req.TargetHost),
 		targetPort:     req.TargetPort,
 		clientEndpoint: req.ClientEndpoint,
+		protocolKind:   req.Protocol,
+		route:          req.Route,
 	}
 	// A runner-side listener whose accepted connections are answered by an
 	// in-process handler on the client is a separate design (the browser as a

@@ -48,7 +48,7 @@ func TestABadRouteWordIsRefusedBeforeAnythingRuns(t *testing.T) {
 			t.Errorf("%v has no Validate: a typo would reach the action", v.Path)
 		}
 	}
-	got, err := ParseFileTransferRoute("bogus")
+	got, err := ParseDataPlaneRoute("bogus")
 	if err == nil {
 		t.Fatal("a typo was accepted")
 	}

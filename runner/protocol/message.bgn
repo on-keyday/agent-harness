@@ -2125,7 +2125,7 @@ format FileListing:
     count   :u32
     entries :[count]FileEntry
 
-# FileTransferRoute names WHICH PATH carries the bytes. Three real paths exist
+# DataPlaneRoute names WHICH PATH carries the bytes. Three real paths exist
 # and they differ in where the plaintext is, so the caller names one instead of
 # setting a bit and letting the server decide between the two it cannot see.
 #
@@ -2230,11 +2230,40 @@ format FileListing:
 # silently replaced: a caller that asked for forwarded or direct asked for the
 # server not to read these bytes, and quietly splicing would hand over exactly
 # what was withheld. Retrying on another route is the caller's decision.
-enum FileTransferRoute:
+enum DataPlaneRoute:
     :u8
     splice    = "splice"
     forwarded = "forwarded"
     direct    = "direct"
+
+# ForwardProtocol is what a port forward CARRIES, which decides what the
+# registration's numbers mean: a udp row's conns_* count FLOWS, and a flow is
+# created by the arrival of its first datagram rather than by an accept.
+#
+# Absent from a spec string it is tcp, so every spelling that existed before
+# this axis still parses and still means what it did.
+enum ForwardProtocol:
+    :u8
+    tcp = "tcp"
+    udp = "udp"
+
+# ForwardDatagram is one UDP datagram crossing a forward, inside an
+# appwire.AppKind_ForwardDatagram payload.
+#
+# forward_id is redundant on a route whose carrier belongs to a single
+# registration, and is carried anyway so that ONE decoder serves every route.
+# Twelve bytes per datagram is cheaper than two framings that have to be kept
+# in step.
+#
+# There is no fragmentation and no fragment field. A payload that does not fit
+# one datagram is dropped and counted (see PortForwardInfo.dropped_oversize);
+# if fragmentation is ever wanted it belongs HERE, in the consumer's framing,
+# rather than in the transport frame -- which is also what leaves room for an
+# L3 mode where flow_id names a tun device and payload is an IP packet.
+format ForwardDatagram:
+    forward_id :u64
+    flow_id    :u32
+    payload    :[..]u8
 
 format OpenFileTransferRequest:
     task_id       :TaskID
@@ -2256,7 +2285,7 @@ format OpenFileTransferRequest:
     reserved   :u6
     # The zero value is splice, so a caller that says nothing -- an old peer, a
     # widget passing the default -- gets the path that was always there.
-    route :FileTransferRoute
+    route :DataPlaneRoute
 
 enum OpenFileTransferStatus:
     :u8
@@ -2299,7 +2328,7 @@ format ListFilesRequest:
     rel_path_len :u16
     rel_path     :[rel_path_len]u8
     # Same choice as OpenFileTransferRequest.route, and the same zero value.
-    route :FileTransferRoute
+    route :DataPlaneRoute
 
 enum ListFilesStatus:
     :u8
@@ -2687,6 +2716,13 @@ enum OpenPortForwardStatus:
     # forward_id named no live registration — unknown, already killed, or 0.
     # Appended, so existing ordinals are unchanged.
     no_such_forward = "no_such_forward"
+    # The named route cannot be taken for this pair. REFUSED rather than
+    # silently replaced: a caller who asked for forwarded or direct asked for
+    # the server not to read these bytes, and quietly splicing would hand over
+    # exactly what was withheld. Retrying on another route is the caller's
+    # decision. Also the answer for a protocol x route cell the schema accepts
+    # but no handler implements yet.
+    route_unavailable = "route_unavailable"
 
 # RegisterPortForwardRequest: one registration, either direction. Direction
 # decides what the address pair means:
@@ -2704,6 +2740,17 @@ format RegisterPortForwardRequest:
     target_host     :[target_host_len]u8
     target_port     :u16
     client_endpoint :ClientEndpointKind
+    # Appended. protocol x route is 2x3 and every cell means something -- a TCP
+    # forward over a data-plane connection is a TCP forward the server cannot
+    # read, and the data plane already carries streams. Leaving route
+    # meaningful only for udp would put a hole in the product that then needs a
+    # predicate to defend, which is the shape the ClientEndpointKind comment
+    # above already warns about.
+    #
+    # A route that cannot be taken is REFUSED (route_unavailable), never
+    # silently replaced, for the reason DataPlaneRoute's own comment gives.
+    protocol :ForwardProtocol
+    route    :DataPlaneRoute
 
 # Reuses OpenPortForwardStatus. A local registration can only answer ok,
 # no_such_task or internal_error: its listener is bound client-side before the
@@ -2751,6 +2798,26 @@ format PortForwardInfo:
                                 # forward cannot be watched invisibly
     last_activity_unix_ms :u64  # 0 = no byte has ever crossed. Rendered as
                                 # "never", not as a zero duration.
+    # Appended with RegisterPortForwardRequest's pair, so `forward ls` can say
+    # what a row carries and how. Without protocol, two rows with the same spec
+    # and different protocols are indistinguishable; without route, a row cannot
+    # say whether the server is reading these bytes.
+    protocol :ForwardProtocol
+    route    :DataPlaneRoute
+    # udp rows only -- gated on protocol == udp, an EXISTENCE condition. A tcp
+    # row has no max_datagram_size at all, which is a different statement from
+    # one that happens to be zero. Never gate these on their value: "0 packets
+    # overflowed" is the answer an operator needs, and eliding it deletes the
+    # only clue available to someone asking why QUIC will not connect.
+    #
+    # max_datagram_size MOVES with PLPMTUD, so a listing shows a snapshot. It is
+    # rendered beside dropped_oversize because neither means much alone: the
+    # size is what explains the drops.
+    max_datagram_size  :u16
+    dropped_oversize   :u64  # payload did not fit one datagram; only the
+                             # application can act, there is no fragmentation
+    dropped_congestion :u64  # the window was closed; congestion control worked
+    dropped_queue      :u64  # this process fell behind; host load, not the path
 
 format PortForwardListResultBody:
     forwards_len :u16

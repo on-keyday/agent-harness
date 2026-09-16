@@ -26,7 +26,7 @@ type FilePushOpts struct {
 	// This is the other half -- it is the only file-transfer path, so one
 	// invocation must be able to get push, pull and ls back with no restart
 	// and no rebuild, and the two routes must be comparable on one file.
-	Route protocol.FileTransferRoute
+	Route protocol.DataPlaneRoute
 }
 
 // FilePush copies localPath into the worktree of taskIDHex at remoteRel.

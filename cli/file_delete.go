@@ -12,7 +12,7 @@ import (
 // FileDeleteDir for those. Reuses the OpenFileTransfer stream: the
 // runner writes a FileTransferAck immediately after performing the
 // unlink, then closes; no payload bytes flow either direction.
-func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string, route protocol.FileTransferRoute) error {
+func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string, route protocol.DataPlaneRoute) error {
 	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_Delete, remoteRel, false, route, "delete")
 }
 
@@ -21,11 +21,11 @@ func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string, ro
 // returns not_empty); when force is true the directory is removed
 // recursively via os.RemoveAll on the runner. Regular files at the leaf
 // are rejected (returns not_a_directory) — use FileDelete for those.
-func (c *Client) FileDeleteDir(ctx context.Context, taskIDHex, remoteRel string, force bool, route protocol.FileTransferRoute) error {
+func (c *Client) FileDeleteDir(ctx context.Context, taskIDHex, remoteRel string, force bool, route protocol.DataPlaneRoute) error {
 	return c.fileDeleteCommon(ctx, taskIDHex, protocol.FileTransferDirection_DirDelete, remoteRel, force, route, "dir-delete")
 }
 
-func (c *Client) fileDeleteCommon(ctx context.Context, taskIDHex string, dir protocol.FileTransferDirection, remoteRel string, force bool, route protocol.FileTransferRoute, label string) error {
+func (c *Client) fileDeleteCommon(ctx context.Context, taskIDHex string, dir protocol.FileTransferDirection, remoteRel string, force bool, route protocol.DataPlaneRoute, label string) error {
 	stream, err := c.OpenFileTransfer(ctx, taskIDHex, dir, remoteRel, 0, FileTransferRange{}, force, false, route)
 	if err != nil {
 		return err

@@ -17,6 +17,7 @@ const (
 	AppKind_PskAuth           AppKind = 69
 	AppKind_AgentProxyControl AppKind = 70
 	AppKind_DialGreeting      AppKind = 71
+	AppKind_ForwardDatagram   AppKind = 72
 )
 
 func (e AppKind) String() string {
@@ -37,6 +38,8 @@ func (e AppKind) String() string {
 		return "AgentProxyControl"
 	case AppKind_DialGreeting:
 		return "DialGreeting"
+	case AppKind_ForwardDatagram:
+		return "ForwardDatagram"
 	default:
 		return fmt.Sprintf("AppKind(%d)", e)
 	}

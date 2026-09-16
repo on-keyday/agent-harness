@@ -813,10 +813,10 @@ func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 // mustRoute parses the verb's route word for the TUI's command line. A typo
 // takes the default rather than aborting the keystroke, and says so -- the
 // alternative is a cmdline that swallows the line with no output.
-func mustRoute(s string) protocol.FileTransferRoute {
-	r, err := verb.ParseFileTransferRoute(s)
+func mustRoute(s string) protocol.DataPlaneRoute {
+	r, err := verb.ParseDataPlaneRoute(s)
 	if err != nil {
-		return protocol.FileTransferRoute_Splice
+		return protocol.DataPlaneRoute_Splice
 	}
 	return r
 }

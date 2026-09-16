@@ -33,6 +33,22 @@ type portForward struct {
 	// was never bound.
 	clientEndpoint protocol.ClientEndpointKind
 
+	// What this forward carries and how it is carried. Both are stated by the
+	// caller at registration and never changed after, so they need no lock.
+	// protocol changes what the counters below MEAN — a udp row's conns_* count
+	// flows — and route says whether this process is reading the bytes.
+	protocolKind protocol.ForwardProtocol
+	route        protocol.DataPlaneRoute
+
+	// Datagram accounting, udp only. Kept apart from the byte counters because
+	// they answer a different question: the bytes say how much crossed, these
+	// say what did NOT and why. Each cause asks something different of the
+	// operator, and all three are distinct from loss on the path.
+	maxDatagramSize   atomic.Uint32
+	droppedOversize   atomic.Uint64
+	droppedCongestion atomic.Uint64
+	droppedQueue      atomic.Uint64
+
 	// Always-on traffic accounting. Atomics rather than the registry mutex:
 	// these are written from the relay goroutines of every connection under
 	// this forward, and a relay must never wait on a lock a listing holds.

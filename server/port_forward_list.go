@@ -102,9 +102,20 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.OriginKind = pf.clientKind
 	info.SetOriginCid([]byte(pf.clientCID))
 	info.ClientEndpoint = pf.clientEndpoint
+	info.Protocol = pf.protocolKind
+	info.Route = pf.route
 	info.BytesToTarget, info.BytesFromTarget, info.ConnsTotal, info.ConnsOpen,
 		info.LastActivityUnixMs = pf.counters()
 	info.Taps = pf.tapCount()
+	// Emitted for every row, zeros included. Only the RENDERER gates these on
+	// protocol == udp, and it gates on that existence condition rather than on
+	// the values: "0 packets overflowed" is an answer, and eliding it would
+	// delete the only clue an operator has when asking why a datagram protocol
+	// will not connect through the tunnel.
+	info.MaxDatagramSize = uint16(pf.maxDatagramSize.Load())
+	info.DroppedOversize = pf.droppedOversize.Load()
+	info.DroppedCongestion = pf.droppedCongestion.Load()
+	info.DroppedQueue = pf.droppedQueue.Load()
 	return info
 }
 

@@ -19,7 +19,7 @@ import (
 // runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.
 // A CLI has no terminal UI of its own to host an editor widget, so unlike the
 // TUI this path always goes through an external editor.
-func runFileEdit(ctx context.Context, c *cli.Client, taskID, rel string, route protocol.FileTransferRoute) error {
+func runFileEdit(ctx context.Context, c *cli.Client, taskID, rel string, route protocol.DataPlaneRoute) error {
 	doc, err := c.FileEditLoad(ctx, taskID, rel, route, nil)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func runFileEdit(ctx context.Context, c *cli.Client, taskID, rel string, route p
 }
 
 // runFileNew opens an empty buffer in $EDITOR and pushes it to rel.
-func runFileNew(ctx context.Context, c *cli.Client, taskID, rel string, route protocol.FileTransferRoute) error {
+func runFileNew(ctx context.Context, c *cli.Client, taskID, rel string, route protocol.DataPlaneRoute) error {
 	text, tmp, err := editViaExternalEditor(rel, "")
 	if err != nil {
 		return err

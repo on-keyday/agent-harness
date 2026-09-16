@@ -155,7 +155,13 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 		// mapping shows up as ZERO rather than being indistinguishable from a
 		// correctly-mapped OsSocket.
 		clientEndpoint: protocol.ClientEndpointKind_InProcess,
-		conns:          map[uint64]connBytes{},
+		// Udp (1) and Forwarded (1) rather than the zero values Tcp/Splice, for
+		// the same reason clientEndpoint is InProcess above: a forgotten mapping
+		// has to show up as ZERO instead of passing as a correctly-mapped
+		// default.
+		protocolKind: protocol.ForwardProtocol_Udp,
+		route:        protocol.DataPlaneRoute_Forwarded,
+		conns:        map[uint64]connBytes{},
 	}
 	// The traffic counters are atomics, which a struct literal cannot fill and
 	// the reflect sweep above therefore cannot see as "populated". Drive them
@@ -165,6 +171,13 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 	pf.noteBytes(protocol.ForwardTapDirection_ToTarget, 1024)
 	pf.noteBytes(protocol.ForwardTapDirection_FromTarget, 4096)
 	pf.addTap(newForwardTap(nil, protocol.ForwardTapFilter_Both, 0))
+	// Same treatment for the datagram counters. Each drop cause is driven
+	// separately: they are three fields and one call would leave two of them
+	// zero, which is exactly the forgotten-mapping shape this guard exists for.
+	pf.noteMaxDatagramSize(1169)
+	pf.noteDatagramDrop(dropOversize)
+	pf.noteDatagramDrop(dropCongestion)
+	pf.noteDatagramDrop(dropQueue)
 
 	info := portForwardInfo(pf)
 	assertNoZeroFields(t, info, map[string]string{})

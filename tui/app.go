@@ -1075,7 +1075,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, DoFileEditLoad(a.client, msg.TaskID, msg.Rel,
 			// The route is a command-line choice; the interactive widgets
 			// take the default.
-			protocol.FileTransferRoute_Splice)
+			protocol.DataPlaneRoute_Splice)
 
 	case FileEditNewRequestMsg:
 		a.fileEditor.SetSize(a.width, a.height)
@@ -1111,9 +1111,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A retargeted path is a new file wherever it points, so there is no
 		// baseline to compare it against — push it as a create.
 		if msg.Create || msg.Name != msg.Doc.Rel {
-			return a, DoFileEditCreate(a.client, msg.TaskID, msg.Name, msg.Text, msg.Doc, protocol.FileTransferRoute_Splice)
+			return a, DoFileEditCreate(a.client, msg.TaskID, msg.Name, msg.Text, msg.Doc, protocol.DataPlaneRoute_Splice)
 		}
-		return a, DoFileEditCommit(a.client, msg.TaskID, msg.Doc, msg.Text, force, protocol.FileTransferRoute_Splice)
+		return a, DoFileEditCommit(a.client, msg.TaskID, msg.Doc, msg.Text, force, protocol.DataPlaneRoute_Splice)
 
 	case FileEditCommittedMsg:
 		switch {
