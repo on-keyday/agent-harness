@@ -80,6 +80,20 @@ input, select {
   border: 1px solid #555;
   padding: 0.3rem;
   font-family: monospace;
+  /* A <select>'s intrinsic width is its LONGEST option, with no upper bound.
+   * The task pickers put a repo path in every option, and a task running in a
+   * harness worktree carries `…/.harness-worktrees/<32 hex>` — so ONE such task
+   * sets the whole document's minimum width and the page scrolls sideways.
+   * Measured 2026-09-16 at a 412px viewport: one worktree-path option took
+   * scrollWidth to 747px.
+   *
+   * On a phone that is not merely ugly. The browser zooms out to show the
+   * overflow, so the visual viewport becomes WIDER than the layout viewport,
+   * and the preview sheet — which is 100vw, i.e. the LAYOUT viewport — can no
+   * longer cover the screen. It then reads as "the modal is off-centre", which
+   * is how this was reported. Nothing in a form may set the page's minimum
+   * width. */
+  max-width: 100%;
 }
 #runner-select {
   min-width: 24rem;
@@ -1901,6 +1915,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 @media (max-width: 600px) {
   .raw-form input, .raw-send-row input { flex: 1 1 100%; min-width: 0; }
   .raw-http-line input, .raw-http-line select { flex: 1 1 100%; min-width: 0; }
+  /* The task picker was the one control in this row that never got this, and
+   * it is the one that carries a repo path. Same shape the Git tab already
+   * uses for the same reason (#git .actions label / #git-task-select below):
+   * the LABEL has to give way too, or it keeps the select's intrinsic width as
+   * its own and the row still overflows. */
+  .raw-form label { flex: 1 1 100%; max-width: 100%; min-width: 0; }
+  .raw-form select { width: 100%; min-width: 0; }
   .raw-output { max-height: 220px; font-size: 11px; }
 }
 
