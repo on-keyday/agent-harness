@@ -29,8 +29,16 @@ func ParseForwardValue(value string) (ForwardDir, cli.ForwardSpec, cli.RemoteFor
 	flag, rest, ok := strings.Cut(strings.TrimSpace(value), " ")
 	rest = strings.TrimSpace(rest)
 	if !ok || rest == "" {
+		// This message restates a grammar this package does not own — see the
+		// header comment: the VALUE grammars belong to cli's parsers. It is here
+		// only because the failure above happens before a spec is even handed to
+		// one, so no parser is in a position to answer. Anything the parsers
+		// accept must therefore be echoed here too, which is why the optional
+		// /tcp and /udp suffix appears below.
 		return 0, cli.ForwardSpec{}, cli.RemoteForwardSpec{},
-			fmt.Errorf("forward = %q: want `-L port` / `-L [bind:]localport:remotehost:remoteport`, or `-R port` / `-R [bind:]runnerport:dialhost:dialport`", value)
+			fmt.Errorf("forward = %q: want `-L port` / `-L [bind:]localport:remotehost:remoteport`, "+
+				"or `-R port` / `-R [bind:]runnerport:dialhost:dialport`, "+
+				"each optionally suffixed `/tcp` (the default) or `/udp`", value)
 	}
 	switch flag {
 	case "-L":

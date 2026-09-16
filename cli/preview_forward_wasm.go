@@ -66,8 +66,13 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 		closePinSlot(old)
 	}
 
+	// tcp, stated rather than inherited from the enum's zero value: a preview
+	// pin serves HTTP to a browser, so the protocol is never in question here
+	// and saying so keeps this out of the set of call sites where the axis was
+	// nobody's decision.
 	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-		"", 0, host, port, protocol.ClientEndpointKind_InProcessPreview)
+		"", 0, host, port, protocol.ClientEndpointKind_InProcessPreview,
+		protocol.ForwardProtocol_Tcp, protocol.DataPlaneRoute_Splice)
 	if err != nil {
 		pinMu.Lock()
 		if slot := pinSlots[key]; slot != nil && slot.gen == gen {

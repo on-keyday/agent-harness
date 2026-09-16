@@ -62,8 +62,12 @@ func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port
 	if logf == nil {
 		logf = func(string) {}
 	}
+	// tcp, stated rather than left to the enum's zero value: every consumer of
+	// a raw forward is stream-oriented (an HTTP preview, a stdio filter, a TUI
+	// pane), and a caller that silently inherited a default would be the one
+	// place the protocol axis is not a decision anybody made.
 	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-		"", 0, host, port, kind)
+		"", 0, host, port, kind, protocol.ForwardProtocol_Tcp, protocol.DataPlaneRoute_Splice)
 	if err != nil {
 		return nil, fmt.Errorf("raw forward: register: %w", err)
 	}

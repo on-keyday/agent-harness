@@ -23,6 +23,12 @@ type ForwardSpec struct {
 	LocalPort  int
 	RemoteHost string
 	RemotePort int
+	// Protocol is what this forward carries, from a trailing /tcp or /udp on
+	// the spec. It decides the local listener's network and what the runner
+	// dials, and it changes what the listing's conns_* counters mean: a udp
+	// row counts FLOWS, which are created by a datagram arriving rather than
+	// by an accept.
+	Protocol protocol.ForwardProtocol
 }
 
 // ParseForwardSpec parses "port" or "[bind:]localport:remotehost:remoteport".
@@ -38,6 +44,12 @@ type ForwardSpec struct {
 // shape is a `-W host:port` target, and reading it here as a port pair would
 // make one string mean two different things depending on which flag carried it.
 func ParseForwardSpec(s string) (ForwardSpec, error) {
+	// Peeled before the colon split, so the bare-port form's expansion sees a
+	// port and not "port/udp".
+	s, proto, perr := splitForwardProtocol(s)
+	if perr != nil {
+		return ForwardSpec{}, perr
+	}
 	parts := strings.Split(s, ":")
 	var bind, rhost, lportS, rportS string
 	switch len(parts) {
@@ -66,7 +78,7 @@ func ParseForwardSpec(s string) (ForwardSpec, error) {
 	if rhost == "" {
 		return ForwardSpec{}, fmt.Errorf("forward: empty remote host in %q", s)
 	}
-	return ForwardSpec{BindAddr: bind, LocalPort: lport, RemoteHost: rhost, RemotePort: rport}, nil
+	return ForwardSpec{BindAddr: bind, LocalPort: lport, RemoteHost: rhost, RemotePort: rport, Protocol: proto}, nil
 }
 
 // ParseStdioForwardSpec parses "host:port" for -W: the runner dials host:port
@@ -251,7 +263,8 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		// Register the port the kernel actually gave us (sp.LocalPort may be 0).
 		bound := ln.Addr().(*net.TCPAddr).Port
 		ctrl, fid, rerr := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, protocol.ClientEndpointKind_OsSocket)
+			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, protocol.ClientEndpointKind_OsSocket,
+			sp.Protocol, protocol.DataPlaneRoute_Splice)
 		if rerr != nil {
 			// A forward the server does not know about cannot be listed or
 			// killed, which is the whole point of registering — fail loudly.
@@ -365,9 +378,18 @@ type RemoteForwardSpec struct {
 	DialHost   string
 	DialPort   int
 	// DialNetwork selects how the client dials the local target: "tcp"
-	// (default; DialHost:DialPort) or "unix" (DialHost is the socket path,
-	// DialPort ignored). Used by X11 forwarding to reach a UNIX X server.
+	// (default; DialHost:DialPort), "udp" (set from Protocol), or "unix"
+	// (DialHost is the socket path, DialPort ignored). Used by X11 forwarding
+	// to reach a UNIX X server.
+	//
+	// A DIFFERENT axis from Protocol: this is the socket the client opens for
+	// its own target, that is what crosses the tunnel. They agree for tcp and
+	// udp and diverge only for unix, which is stream-oriented and so still a
+	// tcp forward on the wire.
 	DialNetwork string
+	// Protocol is what this forward carries, from a trailing /tcp or /udp on
+	// the spec. It decides what the RUNNER listens on.
+	Protocol protocol.ForwardProtocol
 }
 
 // ParseRemoteForwardSpec parses "port" or "[bind:]runnerport:dialhost:dialport".
@@ -378,6 +400,10 @@ type RemoteForwardSpec struct {
 // `-R 3000`. Here the dial side is the CLIENT's loopback and the listen side is
 // the runner's, which is the direction this flag already means.
 func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
+	s, proto, perr := splitForwardProtocol(s)
+	if perr != nil {
+		return RemoteForwardSpec{}, perr
+	}
 	parts := strings.Split(s, ":")
 	var bind, dhost, rportS, dportS string
 	switch len(parts) {
@@ -402,7 +428,12 @@ func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
 	if dhost == "" {
 		return RemoteForwardSpec{}, fmt.Errorf("forward: empty dial host in %q", s)
 	}
-	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport, DialNetwork: "tcp"}, nil
+	// DialNetwork follows the protocol. A caller that wants a unix socket
+	// (X11) overrides it afterwards, which is why it is derived here rather
+	// than hard-coded: a udp forward whose client dialled tcp would reach
+	// nothing, silently.
+	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport,
+		DialNetwork: forwardDialNetwork(proto), Protocol: proto}, nil
 }
 
 // parsePortForwardEvents consumes as many whole PortForwardEvent records from buf
@@ -427,14 +458,16 @@ func parsePortForwardEvents(buf []byte) (evs []protocol.PortForwardEvent, rest [
 // already bound its listener (local) or is asking the runner to bind (remote).
 func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir protocol.PortForwardDirection,
 	bindAddr string, bindPort int, targetHost string, targetPort int,
-	endpoint protocol.ClientEndpointKind) (trsf.BidirectionalStream, uint64, error) {
+	endpoint protocol.ClientEndpointKind, proto protocol.ForwardProtocol,
+	route protocol.DataPlaneRoute) (trsf.BidirectionalStream, uint64, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, 0, fmt.Errorf("forward: parse task id: %w", err)
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
 	body := protocol.RegisterPortForwardRequest{TaskId: tid, Direction: dir,
-		BindPort: uint16(bindPort), TargetPort: uint16(targetPort), ClientEndpoint: endpoint}
+		BindPort: uint16(bindPort), TargetPort: uint16(targetPort), ClientEndpoint: endpoint,
+		Protocol: proto, Route: route}
 	body.SetBindAddr([]byte(bindAddr))
 	body.SetTargetHost([]byte(targetHost))
 	req.SetRegisterPortForward(body)
@@ -486,7 +519,8 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 // TUI's existing call site (tui/portforward.go:262) is unchanged.
 func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp RemoteForwardSpec) (trsf.BidirectionalStream, uint64, error) {
 	return c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Remote,
-		sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort, protocol.ClientEndpointKind_OsSocket)
+		sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort, protocol.ClientEndpointKind_OsSocket,
+		sp.Protocol, protocol.DataPlaneRoute_Splice)
 }
 
 // RunRemoteForward registers each spec and reads its control stream, dialing the
