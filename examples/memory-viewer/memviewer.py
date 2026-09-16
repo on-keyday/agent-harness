@@ -1081,6 +1081,55 @@ function egoGraph(m) {
   </div>`;
 }
 
+// mapLayout: where the whole-project map's nodes sit.
+//
+// Force-directed, run to completion once rather than animated — measured at
+// 94.4 ms for the largest project here (168 nodes, 373 edges), so there is
+// nothing worth streaming. Pure: indices in, coordinates out, no DOM, no
+// globals, which is what lets maplayout_test.mjs assert it.
+//
+// The seed is a PARAMETER and the caller passes a constant. This tool is
+// revisited; a layout that moved between visits would make a change in the
+// notes indistinguishable from a change in the drawing.
+function mapLayout(n, edges, seed) {
+  const rnd = (() => { let s = seed | 0; return () => {
+    s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }; })();
+  const X = new Float64Array(n), Y = new Float64Array(n);
+  const vx = new Float64Array(n), vy = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = rnd() * Math.PI * 2, d = 200 + rnd() * 260;
+    X[i] = Math.cos(a) * d; Y[i] = Math.sin(a) * d;
+  }
+  const ITER = 400, SPRING = 260, REPEL = 9000;
+  for (let it = 0; it < ITER; it++) {
+    const cool = 1 - it / ITER;
+    for (let i = 0; i < n; i++) { vx[i] *= 0.85; vy[i] *= 0.85; }
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = X[i] - X[j], dy = Y[i] - Y[j];
+      const d2 = Math.max(1, dx * dx + dy * dy), d = Math.sqrt(d2);
+      const f = REPEL / d2, ux = dx / d, uy = dy / d;
+      vx[i] += ux * f; vy[i] += uy * f; vx[j] -= ux * f; vy[j] -= uy * f;
+    }
+    for (const [a, b] of edges) {
+      const dx = X[b] - X[a], dy = Y[b] - Y[a];
+      const d = Math.hypot(dx, dy) || 1;
+      const f = (d - SPRING) * 0.0004 * d, ux = dx / d, uy = dy / d;
+      vx[a] += ux * f; vy[a] += uy * f; vx[b] -= ux * f; vy[b] -= uy * f;
+    }
+    // Weak pull to the origin, or the unconnected drift away without limit.
+    for (let i = 0; i < n; i++) {
+      vx[i] -= X[i] * 0.0012; vy[i] -= Y[i] * 0.0012;
+      X[i] += Math.max(-30, Math.min(30, vx[i])) * cool;
+      Y[i] += Math.max(-30, Math.min(30, vy[i])) * cool;
+    }
+  }
+  return { X, Y };
+}
+
 // Collapsed by default: this is a reading tool, and the form should not sit
 // between the reader and the memory.
 function sendPanel(m) {
