@@ -119,7 +119,22 @@ func PortForwardSpecString(fi *protocol.PortForwardInfo) string {
 	case fi.ClientEndpoint.IsInProcess():
 		listen = inProcessLabel(fi.ClientEndpoint)
 	}
-	return fmt.Sprintf("%s -> %s:%d", listen, fi.TargetHost, fi.TargetPort)
+	return fmt.Sprintf("%s -> %s:%d%s", listen, fi.TargetHost, fi.TargetPort,
+		protocolSuffix(fi.Protocol))
+}
+
+// protocolSuffix is the "/udp" a udp row carries and a tcp row does not.
+//
+// Asymmetric on purpose, and it is the same asymmetry the parser has: no suffix
+// MEANS tcp, so printing "/tcp" would make every row that existed before this
+// axis render differently under a reader who had not changed anything. It also
+// keeps PortForwardConfigSpec's output identical to what an operator would have
+// typed, which is what makes a saved workspace round-trip.
+func protocolSuffix(p protocol.ForwardProtocol) string {
+	if p == protocol.ForwardProtocol_Udp {
+		return "/udp"
+	}
+	return ""
 }
 
 // PortForwardDirFlag renders the direction as the CLI flag that creates it.
@@ -164,10 +179,25 @@ func PortForwardTrafficLine(fi *protocol.PortForwardInfo) string {
 	if fi.LastActivityUnixMs != 0 {
 		last = time.Since(time.UnixMilli(int64(fi.LastActivityUnixMs))).Truncate(time.Second).String() + " ago"
 	}
-	return fmt.Sprintf("conns=%d/%d  to-target=%s  from-target=%s  last=%s  taps=%d",
+	line := fmt.Sprintf("conns=%d/%d  to-target=%s  from-target=%s  last=%s  taps=%d",
 		fi.ConnsOpen, fi.ConnsTotal,
 		FormatByteCount(fi.BytesToTarget), FormatByteCount(fi.BytesFromTarget),
 		last, fi.Taps)
+	if fi.Protocol != protocol.ForwardProtocol_Udp {
+		return line
+	}
+	// Gated on protocol == udp, an EXISTENCE condition — a tcp forward has no
+	// max datagram size and cannot drop a datagram, so these fields do not
+	// apply to it at all. Never gated on the values: a udp row prints
+	// `oversize=0`, because "nothing has overflowed yet" is the answer an
+	// operator needs, and a blank there would read as "this row does not
+	// report it".
+	//
+	// mtu is printed beside the drops because neither says much alone: it is
+	// the size that explains them, and it MOVES with PLPMTUD, so what a listing
+	// shows is the value that applied to the most recent packet.
+	return line + fmt.Sprintf("  mtu=%d  oversize=%d  congested=%d  queued=%d",
+		fi.MaxDatagramSize, fi.DroppedOversize, fi.DroppedCongestion, fi.DroppedQueue)
 }
 
 // portForwardJSON is the single source of truth for the JSON shape of a
@@ -184,6 +214,12 @@ type portForwardJSON struct {
 	ClientEndpoint string `json:"client_endpoint"`
 	OriginKind     string `json:"origin_kind"`
 	OriginCid      string `json:"origin_cid"`
+	// What this forward carries and how. On EVERY row: a consumer scripting
+	// against JSON reads a key's absence as a different shape, not as a
+	// default, so these cannot be omitted for tcp the way the rendered line
+	// omits the datagram columns.
+	Protocol string `json:"protocol"`
+	Route    string `json:"route"`
 	// Traffic. Always emitted, zeros included — the JSON form carries
 	// everything, with no elision.
 	BytesToTarget      uint64 `json:"bytes_to_target"`
@@ -192,6 +228,13 @@ type portForwardJSON struct {
 	ConnsOpen          uint32 `json:"conns_open"`
 	Taps               uint16 `json:"taps"`
 	LastActivityUnixMs uint64 `json:"last_activity_unix_ms"`
+	// Datagram accounting. Present on every row for the reason above; on a tcp
+	// row they are structurally zero, and the RENDERED line is where the
+	// existence gate lives.
+	MaxDatagramSize   uint16 `json:"max_datagram_size"`
+	DroppedOversize   uint64 `json:"dropped_oversize"`
+	DroppedCongestion uint64 `json:"dropped_congestion"`
+	DroppedQueue      uint64 `json:"dropped_queue"`
 }
 
 // clientEndpointJSON renders the JSON contract's own spelling for the enum:
@@ -259,12 +302,25 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 		OriginKind:     strings.ToLower(fi.OriginKind.String()),
 		OriginCid:      string(fi.OriginCid),
 
+		// The schema's own string tags ("tcp"/"udp", "splice"/…), which are the
+		// spelling the operator types and the wire carries. Not
+		// strings.ToLower(String()) — that is the generator's label, and the
+		// JSON contract is not the generator's to name (see clientEndpointJSON
+		// for where relying on it went wrong).
+		Protocol: fi.Protocol.String(),
+		Route:    fi.Route.String(),
+
 		BytesToTarget:      fi.BytesToTarget,
 		BytesFromTarget:    fi.BytesFromTarget,
 		ConnsTotal:         fi.ConnsTotal,
 		ConnsOpen:          fi.ConnsOpen,
 		Taps:               fi.Taps,
 		LastActivityUnixMs: fi.LastActivityUnixMs,
+
+		MaxDatagramSize:   fi.MaxDatagramSize,
+		DroppedOversize:   fi.DroppedOversize,
+		DroppedCongestion: fi.DroppedCongestion,
+		DroppedQueue:      fi.DroppedQueue,
 	})
 	return string(b)
 }
@@ -296,6 +352,10 @@ func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
 	if fi.ClientEndpoint != protocol.ClientEndpointKind_OsSocket {
 		return "", false
 	}
-	return fmt.Sprintf("%s %s:%d:%s:%d", PortForwardDirFlag(fi.Direction),
-		fi.BindAddr, fi.BindPort, fi.TargetHost, fi.TargetPort), true
+	// The protocol suffix is part of the SPEC, so it has to survive here or a
+	// saved workspace re-applies a udp forward as a tcp one — silently, and
+	// with the wrong thing listening on the port.
+	return fmt.Sprintf("%s %s:%d:%s:%d%s", PortForwardDirFlag(fi.Direction),
+		fi.BindAddr, fi.BindPort, fi.TargetHost, fi.TargetPort,
+		protocolSuffix(fi.Protocol)), true
 }

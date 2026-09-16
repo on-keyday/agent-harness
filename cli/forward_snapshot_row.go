@@ -35,12 +35,28 @@ func ForwardSnapshotRow(fi *protocol.PortForwardInfo) map[string]any {
 		// recover it would make the diagram depend on a formatting convention.
 		"origin_cid": string(fi.OriginCid),
 
+		// What the row carries and how it is carried. On every row, tcp
+		// included: a key that disappeared for tcp would make the browser's
+		// rendering decision impossible to write once.
+		"protocol": fi.Protocol.String(),
+		"route":    fi.Route.String(),
+
 		"bytes_to_target":       float64(fi.BytesToTarget),
 		"bytes_from_target":     float64(fi.BytesFromTarget),
 		"conns_total":           float64(fi.ConnsTotal),
 		"conns_open":            float64(fi.ConnsOpen),
 		"taps":                  float64(fi.Taps),
 		"last_activity_unix_ms": float64(fi.LastActivityUnixMs),
-		"traffic":               PortForwardTrafficLine(fi),
+
+		// Datagram accounting, raw. Its RENDERED form is inside `traffic`
+		// below, which already applies the protocol == udp existence gate — so
+		// the browser inherits that rule instead of reimplementing it in JS,
+		// which is the whole reason this assembly lives beside the renderers.
+		"max_datagram_size":  float64(fi.MaxDatagramSize),
+		"dropped_oversize":   float64(fi.DroppedOversize),
+		"dropped_congestion": float64(fi.DroppedCongestion),
+		"dropped_queue":      float64(fi.DroppedQueue),
+
+		"traffic": PortForwardTrafficLine(fi),
 	}
 }
