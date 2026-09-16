@@ -534,6 +534,48 @@ def analyze(proj: dict) -> dict:
     }
 
 
+def cross_project(projects: list[dict]) -> dict:
+    """Every project's memories as one pseudo-project.
+
+    The per-project view cannot answer the question this exists for: the same
+    lesson gets re-learned repo after repo under a different name, and nothing
+    put those side by side. Measured 2026-09-16: 351 memories over 15 projects,
+    175 of them type `feedback` — and pairs like `feedback_build_verification`
+    (kcdn) and `feedback_verify_with_make_targets_not_adhoc` (harness) say one
+    thing twice. Counting by FILENAME prefix gives 139 and undercounts by 36:
+    the type lives in the frontmatter, and not every file is named for it.
+
+    Only the fields the list and the detail pane read are carried, and the
+    per-project ones are present but EMPTY. An index budget, orphans, dangling
+    links and `similar` all resolve strictly within one project — a link in one
+    repo never points into another — so a union value for any of them would be
+    a number that means nothing. The page hides those panels here rather than
+    computing something that looks defensible. They are kept as empty keys so a
+    guard that someone forgets later renders nothing instead of throwing.
+    """
+    mems = []
+    for p in projects:
+        topics = p["subIndex"] or {}
+        for m in p["memories"]:
+            mems.append(dict(m, project=p["label"],
+                             topical=bool(m["area"]) and m["area"] in topics))
+    return {
+        "key": "*",
+        "label": "全プロジェクト",
+        "cross": True,
+        "dir": str(PROJECTS),
+        "memories": mems,
+        "index": [],
+        "subIndex": {},
+        "subIndexRaw": {},
+        "indexRaw": "",
+        "indexBytes": 0,
+        "indexLines": 0,
+        "checks": {"unreachable": [], "orphans": [], "dangling": [],
+                   "missing_line": [], "missing_file": [], "similar": []},
+    }
+
+
 def build_payload() -> dict:
     projects = scan()
     out = []
@@ -599,6 +641,11 @@ def build_payload() -> dict:
                 "index": p["index"],
             }
         )
+    # APPENDED, never prepended: the page opens on D.projects[0], so putting
+    # this first would silently change which view the tool starts in. With one
+    # project there is nothing to cross, so it is not offered.
+    if len(out) > 1:
+        out.append(cross_project(out))
     return {
         "send": send_targets(),
         "generated": time.time(),
@@ -696,6 +743,12 @@ h2.sec:first-child{margin-top:0}
   main{grid-template-columns:1fr}
   .pane{max-height:none}
   .pane.detail{border-top:1px solid #333}
+  /* The cross-project view puts one chip per project here, and at 390px
+     fifteen of them wrapped to eight rows and pushed the first memory off the
+     screen — a filter strip that costs half the viewport before you have read
+     anything. Capped and scrolled instead. Harmless for the per-project area
+     strip, which is a handful of short chips and stays under the cap. */
+  .arearow{max-height:6.5rem;overflow-y:auto}
 }
 @media (min-width:801px){ #back{display:none} }
 """
@@ -730,7 +783,13 @@ const ago = (t) => {
 // The areas are per project, so the row is built from the data rather than
 // written into the page: a directory added tomorrow has to show up without an
 // edit here, which is the whole point of filing things by moving them.
+//
+// Across projects that row means nothing — an area is a directory inside ONE
+// project's memory/, and two projects' `old/` are unrelated. The axis that
+// does mean something there is which project a memory came from, so the same
+// strip carries that instead.
 function areaChips() {
+  if (P.cross) { projChips(); return; }
   const areas = [...new Set(P.memories.map(m => m.area).filter(Boolean))].sort();
   let h = "";
   if (areas.length) {
@@ -746,13 +805,28 @@ function areaChips() {
   $("areas").innerHTML = h;
 }
 
+// Biggest first, because the question being asked is "who else wrote one of
+// these" and the three projects holding 76/39/20 of the feedback memories are
+// where the answer is.
+function projChips() {
+  const n = new Map();
+  for (const m of P.memories) n.set(m.project, (n.get(m.project) || 0) + 1);
+  const names = [...n.keys()].sort((a, b) => n.get(b) - n.get(a));
+  $("areas").innerHTML =
+    `<button class="chip${projFilter===""?" on":""}" data-proj="">全部</button>`
+    + names.map(x => `<button class="chip${projFilter===x?" on":""}" data-proj="${esc(x)}"
+         >${esc(x)}/ ${n.get(x)}</button>`).join("");
+}
+
 function projOptions() {
   $("proj").innerHTML = D.projects
     .map((p,i) => `<option value="${i}">${esc(p.label)} (${p.memories.length})</option>`).join("");
 }
 
 function matches(m) {
-  if (area === "_top" ? m.area : area && m.area !== area) return false;
+  if (P.cross) {
+    if (projFilter && m.project !== projFilter) return false;
+  } else if (area === "_top" ? m.area : area && m.area !== area) return false;
   if (types.size && !types.has(m.type)) return false;
   if (!q) return true;
   const hay = (m.name + " " + m.description + " " + m.html).toLowerCase();
@@ -760,6 +834,11 @@ function matches(m) {
 }
 
 function warnBlock() {
+  // Nothing here survives the union. The index budget is one file's, and
+  // orphans / dangling / unreachable / similar are all computed against ONE
+  // project's link graph — a [[link]] never crosses a project, so a union
+  // reading of any of them would be a number with no referent.
+  if (P.cross) return "";
   const c = P.checks, n = c.unreachable.length + c.orphans.length + c.dangling.length + c.missing_line.length
           + c.missing_file.length + c.similar.length;
   // TWO limits truncate the index on load — bytes and LINES — and the bar shows
@@ -816,6 +895,7 @@ function renderList() {
       <div class="nm">${esc(m.name)}</div>
       <div class="ds">${esc(m.description)}</div>
       <div class="meta"><span class="t t-${esc(m.type)}">${esc(m.type)}</span>${
+        P.cross ? `<span class="ar">${esc(m.project)}/</span>` : ""}${
         m.area ? `<span class="ar">${esc(m.area)}/</span>` : ""}${kb(m.size)} ·
         ${ago(m.mtime)} · →${m.links.length} ←${m.inbound.length}</div>
     </div>`).join("") : `<div class="empty">一致なし</div>`;
@@ -832,22 +912,24 @@ function renderDetail() {
   // something makes you open the file. Showing the frontmatter description
   // where the reader expects "what this says" would show the half nobody sees.
   const ix = m.index;
+  // Whether this memory's area is a TOPIC (has its own INDEX.md) or an
+  // archive. Per project that is read off P.subIndex; in the cross view there
+  // is no single subIndex, so the answer travels with the memory instead.
+  const isTopic = P.cross ? !!m.topical : !!(P.subIndex && P.subIndex[m.area]);
+  const idxName = m.area && isTopic ? esc(m.area) + "/INDEX.md" : "MEMORY.md";
   const idxBlock = ix
-    ? `<div class="ixrow"><div class="meta">${
-        m.area && P.subIndex && P.subIndex[m.area] ? esc(m.area) + "/INDEX.md" : "MEMORY.md"
-      } ${ix.line} 行目 · ${bytes(ix.raw)}</div>
+    ? `<div class="ixrow"><div class="meta">${idxName} ${ix.line} 行目 · ${bytes(ix.raw)}</div>
         <div class="ixline"><span class="ixtitle">${esc(ix.title)}</span>${
           ix.hook ? ` — ${ix.hookHtml}` : ` <span class="ixnone">— hook が無い</span>`}</div></div>`
-    : `<div class="ixrow ixmissing"><div class="ixline">${
-        m.area && P.subIndex && P.subIndex[m.area]
-          ? esc(m.area) + "/INDEX.md"
-          : "MEMORY.md"} に行が無い — このメモは開かれない限り存在しないのと同じ</div></div>`;
+    : `<div class="ixrow ixmissing"><div class="ixline">${idxName
+        } に行が無い — このメモは開かれない限り存在しないのと同じ</div></div>`;
   $("detail").innerHTML = `
     <h2>${esc(m.name)}</h2>
-    <div class="meta"><span class="t t-${esc(m.type)}">${esc(m.type)}</span>
+    <div class="meta"><span class="t t-${esc(m.type)}">${esc(m.type)}</span>${
+      P.cross ? `<span class="ar">${esc(m.project)}/</span>` : ""}
       <code>${m.area ? esc(m.area) + "/" : ""}${esc(m.file)}</code> · ${kb(m.size)} ·
       更新 ${ago(m.mtime)}${m.area
-        ? ` · <span class="arch">${P.subIndex && P.subIndex[m.area] ? "第2階層" : "退避"} (${esc(m.area)}/)</span>`
+        ? ` · <span class="arch">${isTopic ? "第2階層" : "退避"} (${esc(m.area)}/)</span>`
         : ""}</div>
     ${idxBlock}
     <div class="meta">frontmatter description</div>
@@ -920,6 +1002,11 @@ let idxSort = "file";
 let idxArea = "";
 const warnOpen = new Set();
 let area = "";
+// Which project's memories the cross view is showing. Separate from `area`
+// because they are different axes and the cross view has no areas: sharing one
+// variable would make leaving the cross view inherit a filter naming a project
+// that the per-project view has no chip for, and nothing would clear it.
+let projFilter = "";
 function renderIndexView(a) {
   if (a !== undefined) idxArea = a;
   sel = null;
@@ -992,7 +1079,23 @@ function goto(name) {
   }
 }
 
-function render() { areaChips(); $("warn").innerHTML = warnBlock(); renderList(); renderDetail(); }
+function render() {
+  areaChips();
+  const w = warnBlock();
+  $("warn").innerHTML = w;
+  // The heading is static markup, so an empty panel would leave 要保守 sitting
+  // over nothing — which reads as "no findings" rather than "not applicable".
+  $("warnsec").hidden = !w;
+  renderList();
+  renderDetail();
+}
+
+// The type chips are markup, so their lit state has to be pushed when
+// something other than a click changes the filter.
+function syncTypeChips() {
+  document.querySelectorAll(".chip[data-type]").forEach(c =>
+    c.classList.toggle("on", types.has(c.dataset.type)));
+}
 
 document.addEventListener("click", (e) => {
   if (e.target.id === "sd-go") { doSend(); return; }
@@ -1010,6 +1113,14 @@ document.addEventListener("click", (e) => {
   if (is) { idxSort = is.dataset.isort; renderIndexView(); return; }
   const t = e.target.closest("[data-goto]");
   if (t) { e.preventDefault(); goto(t.dataset.goto); return; }
+  const pc = e.target.closest("[data-proj]");
+  if (pc) {
+    // No index view to open alongside it, unlike an area: a project filter
+    // narrows the union, it does not point at a file.
+    projFilter = pc.dataset.proj;
+    projChips(); renderList();
+    return;
+  }
   const ac = e.target.closest("[data-area]");
   if (ac) {
     area = ac.dataset.area;
@@ -1035,7 +1146,17 @@ document.addEventListener("click", (e) => {
 });
 $("q").addEventListener("input", (e) => { q = e.target.value; renderList(); });
 $("proj").addEventListener("change", (e) => {
-  P = D.projects[+e.target.value]; sel = null; area = ""; render();
+  const was = P && P.cross;
+  P = D.projects[+e.target.value];
+  sel = null; area = ""; projFilter = "";
+  // Entering the cross view preselects `feedback`: 351 memories on one screen
+  // is a wall, and the 139 that are about how to work are the reason this view
+  // exists. The chips are right there to widen it. Leaving clears the filter
+  // again rather than carrying a default nobody asked for into a project view.
+  if (P && P.cross && !was) types = new Set(["feedback"]);
+  else if (was && !(P && P.cross)) types = new Set();
+  syncTypeChips();
+  render();
 });
 
 const narrow = () => window.matchMedia("(max-width:800px)").matches;
@@ -1106,7 +1227,7 @@ def page(payload: dict | None = None) -> str:
 <div id="areas" class="arearow"></div>
 <main>
   <div class="pane">
-    <h2 class="sec">要保守</h2><div id="warn"></div>
+    <h2 class="sec" id="warnsec">要保守</h2><div id="warn"></div>
     <h2 class="sec">memories</h2><div id="list"></div>
   </div>
   <div class="pane detail" id="detail"></div>
@@ -1125,6 +1246,12 @@ def page(payload: dict | None = None) -> str:
 def print_check() -> int:
     worst = 0
     for p in build_payload()["projects"]:
+        # The cross-project entry has no findings by construction — every check
+        # resolves within one project. Skipped explicitly rather than relying on
+        # its empty lists, so a check added later cannot start reporting a union
+        # figure here without someone deciding it should.
+        if p.get("cross"):
+            continue
         c = p["checks"]
         n = (len(c["orphans"]) + len(c["dangling"]) + len(c["missing_line"])
              + len(c["missing_file"]) + len(c["unreachable"]))
