@@ -1325,6 +1325,37 @@ function goto(name) {
   }
 }
 
+// Zoom about the CURSOR, not the centre: zooming toward a corner otherwise
+// walks the thing you were pointing at off the screen and you pan it back by
+// hand every time.
+$("mapsvg").addEventListener("wheel", (e) => {
+  if (!mapState.open) return;
+  e.preventDefault();
+  const r = $("mapsvg").getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const nk = Math.max(0.05, Math.min(12, mapState.cam.k * Math.exp(-e.deltaY * 0.0015)));
+  mapState.cam.x = mx - (mx - mapState.cam.x) * (nk / mapState.cam.k);
+  mapState.cam.y = my - (my - mapState.cam.y) * (nk / mapState.cam.k);
+  mapState.cam.k = nk;
+  mapCam();
+}, {passive:false});
+
+let mapDrag = null;
+$("mapsvg").addEventListener("pointerdown", (e) => {
+  if (!mapState.open) return;
+  mapDrag = {x:e.clientX, y:e.clientY, cx:mapState.cam.x, cy:mapState.cam.y, moved:false};
+  $("mapsvg").classList.add("drag");
+  $("mapsvg").setPointerCapture(e.pointerId);
+});
+$("mapsvg").addEventListener("pointermove", (e) => {
+  if (!mapDrag) return;
+  const dx = e.clientX - mapDrag.x, dy = e.clientY - mapDrag.y;
+  if (Math.hypot(dx, dy) > 3) mapDrag.moved = true;
+  mapState.cam.x = mapDrag.cx + dx; mapState.cam.y = mapDrag.cy + dy;
+  mapCam();
+});
+$("mapsvg").addEventListener("pointerup", () => { mapDrag = null; $("mapsvg").classList.remove("drag"); });
+
 // The map. Its state lives here rather than in the DOM because the camera has
 // to survive a round trip out to a memory and back — walking out to a node and
 // returning is the expected loop, and a camera that reset would undo the pan
@@ -1409,6 +1440,7 @@ function syncTypeChips() {
 document.addEventListener("click", (e) => {
   if (e.target.id === "sd-go") { doSend(); return; }
   if (e.target.id === "mapbtn") { mapState.open ? closeMap() : openMap(); return; }
+  if (e.target.id === "mapfit") { mapFit(); return; }
   if (e.target.id === "open-index") { e.preventDefault(); renderIndexView(""); return; }
   const ia = e.target.closest("[data-idxarea]");
   if (ia) { e.preventDefault(); renderIndexView(ia.dataset.idxarea); return; }
@@ -1540,7 +1572,9 @@ def page(payload: dict | None = None) -> str:
   <span class="meta" id="count"></span>
 </header>
 <div id="areas" class="arearow"></div>
-<div id="mapbar" class="mapbar" hidden></div>
+<div id="mapbar" class="mapbar" hidden>
+  <button class="chip" id="mapfit">全体に合わせる</button>
+</div>
 <div id="mapview" hidden><svg id="mapsvg"><g id="mapcam"></g></svg><div class="maphud" id="maphud"></div></div>
 <main>
   <div class="pane">
