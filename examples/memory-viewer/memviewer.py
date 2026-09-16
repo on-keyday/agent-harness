@@ -1383,21 +1383,43 @@ $("mapsvg").addEventListener("wheel", (e) => {
   mapCam();
 }, {passive:false});
 
+// Panning listens on the WINDOW for the duration of a drag, and the pointer is
+// never captured.
+//
+// Both halves are load-bearing and each was learned by breaking the other.
+// setPointerCapture on pointerdown redirects the click that follows to the
+// capturing element, so every click on a node arrived with target = the <svg>
+// and the map looked completely unclickable. Dropping the capture and leaving
+// the listeners on the <svg> then broke panning the other way: the moment the
+// pointer crosses onto anything that is not the svg — the HUD sits right there
+// in a corner — the svg stops hearing it and the drag dies mid-gesture.
 let mapDrag = null;
+function mapDragMove(e){
+  if (!mapDrag) return;
+  const dx = e.clientX - mapDrag.x, dy = e.clientY - mapDrag.y;
+  if (!mapDrag.moved) {
+    if (Math.hypot(dx, dy) <= 3) return;   // a press with a tremor is a click
+    mapDrag.moved = true;
+    $("mapsvg").classList.add("drag");
+  }
+  mapState.cam.x = mapDrag.cx + dx; mapState.cam.y = mapDrag.cy + dy;
+  mapCam();
+}
+function mapDragEnd(){
+  window.removeEventListener("pointermove", mapDragMove);
+  window.removeEventListener("pointerup", mapDragEnd);
+  $("mapsvg").classList.remove("drag");
+  // Cleared on the next tick, not here: the click that follows a plain press
+  // still has to be able to ask whether this gesture was a drag.
+  const was = mapDrag;
+  setTimeout(() => { if (mapDrag === was) mapDrag = null; }, 0);
+}
 $("mapsvg").addEventListener("pointerdown", (e) => {
   if (!mapState.open) return;
   mapDrag = {x:e.clientX, y:e.clientY, cx:mapState.cam.x, cy:mapState.cam.y, moved:false};
-  $("mapsvg").classList.add("drag");
-  $("mapsvg").setPointerCapture(e.pointerId);
+  window.addEventListener("pointermove", mapDragMove);
+  window.addEventListener("pointerup", mapDragEnd);
 });
-$("mapsvg").addEventListener("pointermove", (e) => {
-  if (!mapDrag) return;
-  const dx = e.clientX - mapDrag.x, dy = e.clientY - mapDrag.y;
-  if (Math.hypot(dx, dy) > 3) mapDrag.moved = true;
-  mapState.cam.x = mapDrag.cx + dx; mapState.cam.y = mapDrag.cy + dy;
-  mapCam();
-});
-$("mapsvg").addEventListener("pointerup", () => { mapDrag = null; $("mapsvg").classList.remove("drag"); });
 
 // The map. Its state lives here rather than in the DOM because the camera has
 // to survive a round trip out to a memory and back — walking out to a node and
