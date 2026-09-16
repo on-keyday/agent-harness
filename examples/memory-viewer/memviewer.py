@@ -1325,6 +1325,10 @@ function goto(name) {
   }
 }
 
+$("mapcolor").addEventListener("change", (e) => { mapState.colorBy = e.target.value; renderMap(); });
+$("mapsize").addEventListener("change", (e) => { mapState.sizeBy = e.target.value; renderMap(); });
+$("maplabels").addEventListener("change", (e) => { mapState.labels = e.target.checked; renderMap(); });
+
 // Zoom about the CURSOR, not the centre: zooming toward a corner otherwise
 // walks the thing you were pointing at off the screen and you pan it back by
 // hand every time.
@@ -1385,6 +1389,41 @@ function closeMap(){
   $("mapbtn").classList.remove("on");
 }
 
+const MAP_AREA_COLORS = ["#6bb3f7","#5cc98a","#f0a060","#c080f0","#e06c75",
+                         "#56b6c2","#d19a66","#98c379","#c678dd","#abb2bf"];
+const MAP_TYPE_COLORS = {feedback:"#f0a060", project:"#5cc98a",
+                         reference:"#5aabf7", user:"#c080f0", "?":"#888"};
+
+function mapAreas(){ return [...new Set(P.memories.map(m => m.area || ""))].sort(); }
+
+function mapColor(nd){
+  if (mapState.colorBy === "type") return MAP_TYPE_COLORS[nd.type] || "#888";
+  if (mapState.colorBy === "deg") {
+    const t = Math.min(1, nd.inbound.length / 12);
+    return `hsl(${210 - t*200},70%,${45 + t*15}%)`;
+  }
+  if (mapState.colorBy === "age") {
+    const t = Math.min(1, (Date.now()/1000 - nd.mtime) / 86400 / 180);
+    return `hsl(${200 - t*200},55%,${60 - t*15}%)`;
+  }
+  const areas = mapAreas();
+  return MAP_AREA_COLORS[areas.indexOf(nd.area || "")%MAP_AREA_COLORS.length];
+}
+
+function mapRadius(nd){
+  if (mapState.sizeBy === "flat") return 4;
+  if (mapState.sizeBy === "sz") return 3 + Math.sqrt(nd.size / 700);
+  return 3 + Math.sqrt(nd.inbound.length) * 1.6;
+}
+
+// Same trimming the ego graph uses, and for the same reason: nearly every name
+// starts with its type, so without this the visible characters are the ones
+// every node shares.
+function mapLabel(name){
+  const t = name.replace(/^(feedback|project|reference|user)[_-]/, "");
+  return t.length > 20 ? t.slice(0, 19) + "\u2026" : t;
+}
+
 function renderMap(){
   const {names, edges} = mapState.g, {X, Y} = mapState.pos;
   const xy = (v) => v.toFixed(1);
@@ -1392,9 +1431,17 @@ function renderMap(){
   for (const [a, b] of edges)
     h += `<line x1="${xy(X[a])}" y1="${xy(Y[a])}" x2="${xy(X[b])}" y2="${xy(Y[b])}"/>`;
   names.forEach((name, i) => {
-    h += `<g data-mapnode="${esc(name)}"><title>${esc(name)}</title>`
-       + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="4" fill="#6bb3f7"/></g>`;
+    const nd = P.memories[i], r = mapRadius(nd);
+    h += `<g data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length}</title>`
+       + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="${r.toFixed(1)}" fill="${mapColor(nd)}"/>`
+       + (mapState.labels
+            ? `<text x="${xy(X[i]+r+3)}" y="${xy(Y[i]+3)}">${esc(mapLabel(name))}</text>` : "")
+       + `</g>`;
   });
+  $("maplegend").innerHTML = mapState.colorBy === "area"
+    ? mapAreas().map((a,i) => `<span style="color:${MAP_AREA_COLORS[i%MAP_AREA_COLORS.length]}">\u25cf</span>${esc(a||"(top)")} `).join("")
+    : (mapState.colorBy === "type"
+        ? Object.entries(MAP_TYPE_COLORS).map(([k,v]) => `<span style="color:${v}">\u25cf</span>${k} `).join("") : "");
   $("mapcam").innerHTML = h;
   $("maphud").textContent = `${names.length} nodes · ${edges.length} edges · zoom ${mapState.cam.k.toFixed(2)}x`;
 }
@@ -1573,7 +1620,16 @@ def page(payload: dict | None = None) -> str:
 </header>
 <div id="areas" class="arearow"></div>
 <div id="mapbar" class="mapbar" hidden>
+  <label>色 <select id="mapcolor">
+    <option value="area">area</option><option value="type">type</option>
+    <option value="age">古さ</option><option value="deg">被リンク数</option>
+  </select></label>
+  <label>大きさ <select id="mapsize">
+    <option value="in">被リンク数</option><option value="sz">サイズ</option><option value="flat">一定</option>
+  </select></label>
+  <label><input type="checkbox" id="maplabels"> ラベル</label>
   <button class="chip" id="mapfit">全体に合わせる</button>
+  <span class="meta" id="maplegend"></span>
 </div>
 <div id="mapview" hidden><svg id="mapsvg"><g id="mapcam"></g></svg><div class="maphud" id="maphud"></div></div>
 <main>
