@@ -90,3 +90,65 @@ test("mapLayout places a graph with no edges at all", () => {
   assert.equal(X.length, 3);
   assert.ok([...X].every(Number.isFinite));
 });
+
+// A memory record carries only what the map reads. `links` are raw [[targets]]
+// as written; `inbound` is already resolved by the Python side.
+const mem = (name, file, links) => ({ name, file, links, inbound: [], area: "", type: "feedback", size: 100, mtime: 0 });
+
+test("projectGraph resolves a link by name and by filename stem", () => {
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["beta"]),
+    mem("beta-display-name", "beta.md", []),
+  ]);
+  // "beta" is nobody's name; it is beta.md's stem, and that is how half the
+  // corpus writes its links.
+  assert.equal(g.edges.length, 1);
+  // Spread first. The array was built inside the vm realm, so its prototype is
+  // that realm's Array.prototype and assert/strict rejects it on identity even
+  // when every value matches — webui/static/cmd_test.mjs records the same trap
+  // and answers it the same way: compare the VALUES.
+  assert.deepEqual([...g.edges[0]], [0, 1]);
+});
+
+test("projectGraph accepts a link written with the .md suffix", () => {
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["beta.md"]),
+    mem("beta", "beta.md", []),
+  ]);
+  assert.equal(g.edges.length, 1);
+});
+
+test("projectGraph drops a link that resolves to nothing", () => {
+  // Dangling links are the 要保守 panel's business. On the map they would be
+  // an edge to a node that is not there.
+  const g = page.projectGraph([mem("alpha", "alpha.md", ["nowhere"])]);
+  assert.equal(g.edges.length, 0);
+  assert.equal(g.names.length, 1);
+});
+
+test("projectGraph drops a self-link and emits one edge for a repeated one", () => {
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["alpha", "beta", "beta"]),
+    mem("beta", "beta.md", []),
+  ]);
+  assert.equal(g.edges.length, 1);
+});
+
+test("projectGraph collapses a reciprocal pair into one edge and marks it", () => {
+  // Measured over this corpus: 354 of harness's 373 edges are one-way, so the
+  // rare reciprocal ones are the part carrying information.
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["beta"]),
+    mem("beta", "beta.md", ["alpha"]),
+  ]);
+  assert.equal(g.edges.length, 1);
+  assert.ok(g.mutual.has("0:1"), [...g.mutual].join(","));
+});
+
+test("projectGraph leaves a one-way pair out of mutual", () => {
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["beta"]),
+    mem("beta", "beta.md", []),
+  ]);
+  assert.equal(g.mutual.size, 0);
+});

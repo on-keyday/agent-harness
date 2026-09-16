@@ -1081,6 +1081,48 @@ function egoGraph(m) {
   </div>`;
 }
 
+// projectGraph: one project's memories as an undirected graph of indices.
+//
+// Resolution matches the ego graph's, and for the same reason: a [[target]]
+// names a memory by its `name` or by its filename stem, and links never cross
+// projects, so the pool is one project's memories and nothing else.
+//
+// Edges are undirected — 354 of the 373 edges in the largest project here are
+// one-way, so arrowheads on all of them would restate what is true of nearly
+// all of them. The rare reciprocal pairs are marked instead, in `mutual`,
+// keyed "i:j" with i < j.
+function projectGraph(memories) {
+  const names = memories.map((m) => m.name);
+  const index = new Map();
+  memories.forEach((m, i) => index.set(m.name, i));
+  const byStem = new Map();
+  memories.forEach((m, i) => {
+    const stem = m.file.replace(/\.md$/, "");
+    if (!index.has(stem)) byStem.set(stem, i);
+  });
+  const resolve = (t) => {
+    const k = t.replace(/\.md$/, "");
+    return index.has(k) ? index.get(k) : (byStem.has(k) ? byStem.get(k) : -1);
+  };
+  const directed = new Set();
+  memories.forEach((m, i) => {
+    for (const raw of m.links) {
+      const j = resolve(raw);
+      if (j >= 0 && j !== i) directed.add(i + ":" + j);
+    }
+  });
+  const edges = [], mutual = new Set(), seen = new Set();
+  for (const key of directed) {
+    const [a, b] = key.split(":").map(Number);
+    const lo = Math.min(a, b), hi = Math.max(a, b), k = lo + ":" + hi;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    edges.push([lo, hi]);
+    if (directed.has(lo + ":" + hi) && directed.has(hi + ":" + lo)) mutual.add(k);
+  }
+  return { names, index, edges, mutual };
+}
+
 // mapLayout: where the whole-project map's nodes sit.
 //
 // Force-directed, run to completion once rather than animated — measured at
