@@ -36,6 +36,19 @@ import (
 // msg.Data[1:].
 type ControlHandler func(kind appwire.AppKind, payload []byte)
 
+// DatagramHandler receives every payload that arrived on trsf's datagram
+// frame, split the same way ControlHandler's is: kind is the leading
+// appwire.AppKind byte, payload is the rest.
+//
+// A SEPARATE seam from ControlHandler even though the split is identical,
+// because what reaches it differs in the properties that matter. A control
+// message rides objproto directly: unreliable, unacknowledged, outside
+// congestion control. A datagram is acknowledged, and in its controlled mode
+// congestion controlled — and it can be dropped by a bounded queue at either
+// end. A handler written for one is not automatically right for the other, so
+// they do not share a registration.
+type DatagramHandler func(kind appwire.AppKind, payload []byte)
+
 // Conn wraps an objproto.Connection together with its trsf.Transport and a
 // pubsub.Client correlator. Both cli.Client and the runner embed one of
 // these and layer their RPC / dispatch logic on top.
@@ -50,9 +63,15 @@ type Conn struct {
 	pub *pubsub.Client
 	log *slog.Logger
 
-	onControl atomic.Pointer[ControlHandler]
-	started   atomic.Bool
-	done      chan struct{}
+	onControl  atomic.Pointer[ControlHandler]
+	onDatagram atomic.Pointer[DatagramHandler]
+	started    atomic.Bool
+	done       chan struct{}
+	// dgDone closes when the datagram pump exits. Separate from done, which
+	// belongs to AutoReceive: the two goroutines end for different reasons (the
+	// pump on ctx alone), and folding them would make Wait report the receive
+	// loop's lifetime as the pump's.
+	dgDone chan struct{}
 
 	pubmu     sync.Mutex
 	pubTopics map[string]*pubTopic
@@ -191,6 +210,7 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 		pub:       pubsub.NewClient(),
 		log:       cfg.Logger,
 		done:      make(chan struct{}),
+		dgDone:    make(chan struct{}),
 		pubTopics: map[string]*pubTopic{},
 	}
 	go trsf.AutoSend(streamCtx, p, conn, nil)
@@ -209,6 +229,41 @@ func (c *Conn) SetOnControl(h ControlHandler) {
 	c.onControl.Store(&h)
 }
 
+// SetOnDatagram registers (or replaces) the handler invoked from the datagram
+// pump. Safe before or after Start, and concurrently with it.
+func (c *Conn) SetOnDatagram(h DatagramHandler) {
+	if h == nil {
+		c.onDatagram.Store(nil)
+		return
+	}
+	c.onDatagram.Store(&h)
+}
+
+// SendDatagram sends one payload on trsf's datagram frame, subject to
+// congestion control. b must already carry its leading appwire.AppKind byte,
+// exactly as Connection().SendMessage's payload does — the two send paths are
+// spelled the same way so a caller moving between them changes only which one
+// it calls.
+//
+// It never blocks and never retransmits. A closed window, a full queue or an
+// oversized payload all come back as an error, and the caller decides what that
+// means for its own accounting: for a tunnel the answer is usually to count it
+// and carry on, because that is what the path would have done.
+func (c *Conn) SendDatagram(b []byte) error { return c.trans.SendDatagram(b) }
+
+// SendDatagramUncontrolled is SendDatagram outside congestion control. Reserved
+// for senders whose rate is bounded by construction — a bulk sender here
+// starves the congestion-controlled streams sharing this connection, because
+// those are the only ones that yield.
+func (c *Conn) SendDatagramUncontrolled(b []byte) error {
+	return c.trans.SendDatagramUncontrolled(b)
+}
+
+// MaxDatagramSize is the largest payload SendDatagram will accept right now,
+// INCLUDING the appwire kind byte the caller prepends. It moves with PLPMTUD,
+// so callers read it per send rather than caching it.
+func (c *Conn) MaxDatagramSize() int { return c.trans.MaxDatagramSize() }
+
 // Start spawns the AutoReceive goroutine. Idempotent — second and later
 // calls are no-ops, so callers can defensively call Start without tracking
 // state. The goroutine runs until ctx is cancelled or the underlying
@@ -221,6 +276,31 @@ func (c *Conn) Start(ctx context.Context) {
 		defer close(c.done)
 		trsf.AutoReceive(ctx, c.trans, c.conn, c.dispatch)
 	}()
+	// A SECOND pump, because trsf delivers datagrams on their own queue rather
+	// than through AutoReceive's seam — that is what being acknowledged costs:
+	// the packet goes to the run loop, and the run loop hands the payload out
+	// here. One goroutine cannot drain both without one starving the other.
+	go func() {
+		defer close(c.dgDone)
+		c.pumpDatagrams(ctx)
+	}()
+}
+
+// pumpDatagrams drains received datagrams and dispatches them by kind. It
+// returns when ctx ends, which is also what unblocks ReceiveDatagram.
+func (c *Conn) pumpDatagrams(ctx context.Context) {
+	for {
+		b, err := c.trans.ReceiveDatagram(ctx)
+		if err != nil {
+			return // ctx ended; the connection's own death cancels it via streamCtx
+		}
+		if len(b) == 0 {
+			continue
+		}
+		if h := c.onDatagram.Load(); h != nil {
+			(*h)(appwire.AppKind(b[0]), b[1:])
+		}
+	}
 }
 
 // Done returns a channel that is closed when the AutoReceive goroutine exits
