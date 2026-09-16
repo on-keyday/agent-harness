@@ -256,3 +256,41 @@ test("mapLayout's defaults are the lean setting", () => {
   const b = page.mapLayout(n, CHAIN(n), 1234567, bias, 900, 0.02);
   assert.deepEqual([...a.Y], [...b.Y]);
 });
+
+test("biasWeights keeps the heavy end apart, which is the end being asked about", () => {
+  // A corpus-shaped distribution: a long tail of nothing and a few that
+  // everything points at.
+  const counts = [...Array(80).fill(0), ...Array(40).fill(1), 6, 8, 13, 19];
+  const w = page.biasWeights(counts);
+  assert.equal(w[w.length - 1], 1);                       // the heaviest is the top
+  assert.equal(w[0], 0);                                  // nothing inbound is the floor
+  // 19 and 13 must not be neighbours in weight — that is the failure the rank
+  // mapping had, and it put the most-linked memory below several lighter ones.
+  const gap = w[w.length - 1] - w[w.length - 2];
+  assert.ok(gap > 0.25, `19 and 13 are only ${gap.toFixed(3)} apart in weight`);
+  // and the weight must be proportional, so twice the inbound is twice the pull
+  assert.ok(Math.abs(page.biasWeights([0, 5, 10])[1] - 0.5) < 1e-9);
+});
+
+test("the layered setting puts the most-linked node near the top", () => {
+  // The claim the whole bias exists to support, asserted on the shape of graph
+  // it was built for: a long tail, dense enough that the springs have a say.
+  const counts = [...Array(80).fill(0), ...Array(40).fill(1), 6, 8, 13, 19];
+  const n = counts.length;
+  const seen = new Set(), edges = [];
+  for (const step of [7, 13, 23, 31]) {
+    for (let i = 0; i < n; i++) {
+      const j = (i * step + 3) % n;
+      if (i === j) continue;
+      const k = Math.min(i, j) + ":" + Math.max(i, j);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      edges.push([Math.min(i, j), Math.max(i, j)]);
+    }
+  }
+  const { Y } = page.mapLayout(n, edges, 1234567, page.biasWeights(counts), 1800, 0.08);
+  const heaviest = counts.indexOf(19);
+  const above = [...Y].filter((v) => v < Y[heaviest]).length;
+  assert.ok(above / n < 0.15,
+    `the most-linked node has ${above} of ${n} above it (${(above / n * 100).toFixed(0)}%)`);
+});

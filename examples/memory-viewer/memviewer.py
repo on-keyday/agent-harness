@@ -1449,19 +1449,39 @@ const mapState = {open:false, cam:{x:0,y:0,k:1}, colorBy:"area", sizeBy:"in",
                   labels:false, area:"", neighbours:false, bias:"", g:null, pos:null,
                   drawn:{nodes:0, edges:0, filtered:false}};
 
-// One number per node in [0,1] for the vertical bias: the share of the project
-// that has STRICTLY fewer inbound links. A rank rather than inbound/max because
-// the distribution is long-tailed — most memories have a handful and one has
-// nineteen, so the linear form would press almost everything against the floor.
-// Ties share a value, as they must: two memories nothing distinguishes should
-// not be drawn at different heights.
+// One number per node in [0,1] for the vertical bias: inbound count over the
+// largest inbound count. Linear, and the long tail is the POINT rather than a
+// problem to normalise away.
+//
+// The first version used a rank — the share of the project with strictly fewer
+// inbound links — on the reasoning that a long-tailed distribution would press
+// everything against the floor. That was backwards, and measurably so. A rank
+// spends its range where the nodes are, and 83 of this corpus's 169 memories
+// have at most one inbound link, so the whole heavy end was compressed into a
+// 45px sliver: inbound 19 targeted -900, inbound 13 targeted -894, inbound 8
+// targeted -857. Inside a band that thin the springs decide everything, and the
+// single most-linked memory in the project came out BELOW several memories with
+// half its inbound count.
+//
+// Measured over the four mappings, at the layer setting:
+//
+//   mapping   rank-correlation   inversions among   the heaviest node
+//                                per-count means    lands in the top
+//   rank                 0.870             31/91                  35%
+//   linear               0.881              9/91                   4%
+//   sqrt                 0.898             25/91                  22%
+//   log                  0.883             28/91                  32%
+//
+// Note what that table also says about the metric: rank correlation barely
+// separates the four, because it is dominated by the 83 light nodes whose order
+// among themselves nobody is asking about. It was the wrong thing to optimise.
+function biasWeights(counts){
+  const max = Math.max(0, ...counts);
+  return counts.map((c) => (max > 0 ? c / max : 0.5));
+}
+
 function mapBiasWeights(){
-  const counts = P.memories.map((m) => m.inbound.length);
-  const sorted = [...counts].sort((a, b) => a - b);
-  const n = counts.length;
-  const below = new Map();
-  sorted.forEach((c, i) => { if (!below.has(c)) below.set(c, i); });
-  return counts.map((c) => (n > 1 ? below.get(c) / (n - 1) : 0.5));
+  return biasWeights(P.memories.map((m) => m.inbound.length));
 }
 
 // Two settings, because they answer different questions and the map exists to
