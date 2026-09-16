@@ -306,7 +306,10 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 		}
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel, ForwardID: fid, FromWorkspace: fromWorkspace})
 		go func() {
-			c.ServeRemoteForwardControl(ctx, sp, ctrl, forwardStatusLogf(ctx, program))
+			// ServeRemoteForward, not ServeRemoteForwardControl: the latter is
+			// only the tcp half, and a udp -R started from here would bind on
+			// the runner and then carry nothing.
+			c.ServeRemoteForward(ctx, sp, ctrl, fid, forwardStatusLogf(ctx, program))
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
 		return nil

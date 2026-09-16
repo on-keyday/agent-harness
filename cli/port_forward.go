@@ -555,19 +555,7 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 		wg.Add(1)
 		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, fid uint64) {
 			defer wg.Done()
-			if sp.Protocol == protocol.ForwardProtocol_Udp {
-				// No conn_notify to wait for: a udp flow announces itself by its
-				// first datagram arriving with an id this end has not seen, so
-				// the dialer registry has to be live before the control stream is
-				// even read. The control stream still governs the LIFETIME —
-				// its EOF or a Closed record is what ends the forward.
-				dgCtx, dgCancel := context.WithCancel(ctx)
-				go runUDPRemoteForward(dgCtx, c.conn, sp, fid, logf)
-				c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
-				dgCancel()
-				return
-			}
-			c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
+			c.ServeRemoteForward(ctx, sp, ctrl, fid, logf)
 		}(sp, ctrl, fid)
 	}
 	// Return once every spec's forward has stopped — killed remotely, or ctx
@@ -718,4 +706,32 @@ func runOneUDPForward(ctx context.Context, c *Client, taskIDHex string, sp Forwa
 		serveForwardControl(fwdCtx, ctrl, logf, func() { _ = ln.Close() })
 	}()
 	return nil
+}
+
+// ServeRemoteForward runs one already-registered -R for its whole lifetime.
+//
+// It exists so that "serve a remote forward" is ONE function rather than a
+// sequence a caller has to remember. ServeRemoteForwardControl alone is only
+// the tcp half: a udp -R also needs its dialer registry live, and a caller that
+// reached for the control loop directly would register, bind, and carry
+// nothing — which is precisely what the TUI did before this existed. The
+// obligation belongs in a function, not in each call site's memory.
+//
+// forwardID is only read on the udp path, where it keys the dialer registry a
+// received datagram is routed through.
+func (c *Client) ServeRemoteForward(ctx context.Context, sp RemoteForwardSpec,
+	ctrl trsf.BidirectionalStream, forwardID uint64, logf func(string)) {
+	if sp.Protocol != protocol.ForwardProtocol_Udp {
+		c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
+		return
+	}
+	// The dialer has to be live BEFORE the control stream is read: nothing
+	// announces a udp flow in advance, so the first datagram may arrive at any
+	// moment after the runner's listener binds. The control stream still governs
+	// the LIFETIME — its EOF or a Closed record is what ends the forward, which
+	// is why the dialer's context is derived and cancelled here.
+	dgCtx, dgCancel := context.WithCancel(ctx)
+	defer dgCancel()
+	go runUDPRemoteForward(dgCtx, c.conn, sp, forwardID, logf)
+	c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
 }
