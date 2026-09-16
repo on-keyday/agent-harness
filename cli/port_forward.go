@@ -553,10 +553,22 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 		logf(fmt.Sprintf("remote-forwarding runner:%s:%d -> %s (task %s, fwd %d)",
 			sp.BindAddr, sp.RunnerPort, dialTarget, taskIDHex[:min(12, len(taskIDHex))], fid))
 		wg.Add(1)
-		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream) {
+		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, fid uint64) {
 			defer wg.Done()
+			if sp.Protocol == protocol.ForwardProtocol_Udp {
+				// No conn_notify to wait for: a udp flow announces itself by its
+				// first datagram arriving with an id this end has not seen, so
+				// the dialer registry has to be live before the control stream is
+				// even read. The control stream still governs the LIFETIME —
+				// its EOF or a Closed record is what ends the forward.
+				dgCtx, dgCancel := context.WithCancel(ctx)
+				go runUDPRemoteForward(dgCtx, c.conn, sp, fid, logf)
+				c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
+				dgCancel()
+				return
+			}
 			c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
-		}(sp, ctrl)
+		}(sp, ctrl, fid)
 	}
 	// Return once every spec's forward has stopped — killed remotely, or ctx
 	// cancelled — not solely on ctx.Done(). Blocking on ctx.Done() alone

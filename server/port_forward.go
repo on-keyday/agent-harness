@@ -199,6 +199,10 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 	body := protocol.RunnerOpenPortForwardRequest{
 		TaskId:    req.TaskId,
 		Direction: protocol.PortForwardDirection_Remote,
+		// Carried through, because it decides WHICH listener the runner opens:
+		// a udp -R binds a datagram socket and announces flows by their first
+		// packet, where a tcp -R accepts and names a stream per connection.
+		Protocol:  req.Protocol,
 		BindPort:  req.BindPort,
 		ForwardId: fid,
 	}

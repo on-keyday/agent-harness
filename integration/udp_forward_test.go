@@ -238,3 +238,129 @@ func readUDP(t *testing.T, conn *net.UDPConn, within time.Duration) []byte {
 	}
 	return buf[:n]
 }
+
+// TestUDPRemoteForwardE2E is the mirror: the RUNNER listens, the client dials
+// its own local target, and the roles of who allocates flow ids swap with it.
+//
+// It also pins the thing that makes -R simpler for udp than for tcp: there is
+// no conn_notify. A tcp -R has to announce each accepted connection and name a
+// stream for it; a udp flow announces itself by its first datagram carrying an
+// id the far end has not seen.
+func TestUDPRemoteForwardE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18563"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			RunnerID:         runner.NewRunnerID(),
+			ServerCandidates: runner.CandidatesOf(peerCID),
+			AllowedRoots:     []string{repo},
+			Profiles:         singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "udp-rpf-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	// The CLIENT's local target this time.
+	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echo.Close()
+	echoPort := echo.LocalAddr().(*net.UDPAddr).Port
+	go func() {
+		buf := make([]byte, 64*1024)
+		for {
+			n, from, rerr := echo.ReadFromUDP(buf)
+			if rerr != nil {
+				return
+			}
+			_, _ = echo.WriteToUDP(append([]byte("r-echo:"), buf[:n]...), from)
+		}
+	}()
+
+	probe, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	runnerPort := probe.LocalAddr().(*net.UDPAddr).Port
+	probe.Close()
+
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	spec, err := cli.ParseRemoteForwardSpec("127.0.0.1:" + strconv.Itoa(runnerPort) +
+		":127.0.0.1:" + strconv.Itoa(echoPort) + "/udp")
+	if err != nil {
+		t.Fatalf("parse -R spec: %v", err)
+	}
+	if spec.Protocol != protocol.ForwardProtocol_Udp || spec.DialNetwork != "udp" {
+		t.Fatalf("spec = %+v, want udp on both axes", spec)
+	}
+
+	fwdCtx, fwdCancel := context.WithCancel(ctx)
+	fwdDone := make(chan error, 1)
+	go func() {
+		fwdDone <- cli.RunRemoteForward(fwdCtx, c, taskID, []cli.RemoteForwardSpec{spec}, nil)
+	}()
+
+	// The runner is listening on this port in THIS process's test, so sending
+	// to it exercises the same path a process on the runner host would.
+	target := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: runnerPort}
+	reply := roundTripUDP(t, target, []byte("ping"), 25*time.Second)
+	if string(reply) != "r-echo:ping" {
+		t.Fatalf("reply = %q, want %q", reply, "r-echo:ping")
+	}
+
+	fwdCancel()
+	select {
+	case <-fwdDone:
+	case <-time.After(10 * time.Second):
+		t.Error("RunRemoteForward did not return within 10s of cancellation")
+	}
+	cancel()
+	<-serverDone
+	<-runnerDone
+}

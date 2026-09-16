@@ -73,6 +73,10 @@ func (s *Session) rforwardListeners() *remoteForwardListeners {
 // closes the accepted local connection — connection-refused semantics).
 func (s *Session) handleOpenPortForward(ctx context.Context, req *protocol.RunnerOpenPortForwardRequest) {
 	if req.Direction == protocol.PortForwardDirection_Remote {
+		if req.Protocol == protocol.ForwardProtocol_Udp {
+			s.startUDPRemoteForward(req)
+			return
+		}
 		s.startRemoteForward(ctx, req)
 		return
 	}

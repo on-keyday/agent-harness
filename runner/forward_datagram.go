@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"strconv"
@@ -71,6 +72,10 @@ type datagramSender interface {
 type udpForwards struct {
 	mu sync.Mutex
 	m  map[uint64]*udpForward
+	// remotes holds the -R half. A separate map rather than one interface,
+	// because the two are not variations on a type: one dials per flow and the
+	// other listens once, and a forward id belongs to exactly one of them.
+	remotes map[uint64]*udpRemoteForward
 }
 
 func (u *udpForwards) add(id uint64, target string, send datagramSender) *udpForward {
@@ -91,16 +96,45 @@ func (u *udpForwards) get(id uint64) (*udpForward, bool) {
 	return f, ok
 }
 
+// addRemote records a -R registration and its listening socket.
+func (u *udpForwards) addRemote(id uint64, conn *net.UDPConn, send datagramSender) *udpRemoteForward {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.remotes == nil {
+		u.remotes = map[uint64]*udpRemoteForward{}
+	}
+	r := &udpRemoteForward{forwardID: id, conn: conn, send: send,
+		byAddr: map[string]uint32{}, byID: map[uint32]*udpRemotePeer{}}
+	u.remotes[id] = r
+	return r
+}
+
+func (u *udpForwards) getRemote(id uint64) (*udpRemoteForward, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	r, ok := u.remotes[id]
+	return r, ok
+}
+
 // close drops one registration and every socket under it. Called when the
 // server says the forward is over; without it a registration's sockets outlive
 // the forward that justified them.
+//
+// Both maps, unconditionally: the id names one registration and only one map
+// holds it, so asking which first would mean carrying the direction on the
+// close request for no other reason.
 func (u *udpForwards) close(id uint64) {
 	u.mu.Lock()
 	f := u.m[id]
 	delete(u.m, id)
+	r := u.remotes[id]
+	delete(u.remotes, id)
 	u.mu.Unlock()
 	if f != nil {
 		f.closeAll()
+	}
+	if r != nil {
+		_ = r.conn.Close()
 	}
 }
 
@@ -132,6 +166,13 @@ func (s *Session) udpForwardRegistry() *udpForwards {
 // and a request has to cross the wire before any byte does.
 func (s *Session) handleForwardDatagram(dg *protocol.ForwardDatagram) {
 	log := s.logger()
+	// A -R forward's datagrams are REPLIES from the client, routed back to the
+	// source that started the flow. Checked first because the two registries
+	// are disjoint and this one needs no dial at all.
+	if rem, ok := s.udpForwardRegistry().getRemote(dg.ForwardId); ok {
+		rem.deliver(dg)
+		return
+	}
 	fwd, ok := s.udpForwardRegistry().get(dg.ForwardId)
 	if !ok {
 		// The registration is gone, or never reached this runner. Silent: at
@@ -301,4 +342,158 @@ func (s *Session) handleDatagram(kind appwire.AppKind, payload []byte) {
 		return
 	}
 	s.handleForwardDatagram(&dg)
+}
+
+// --- udp -R: the runner LISTENS, the client dials -----------------------
+//
+// The mirror of the -L pair above, and the roles swap with it: here the runner
+// holds one socket every source arrives on and allocates the flow ids, while
+// the client dials one socket per flow. Whichever end listens is the end that
+// sees source addresses, and therefore the end that must name the flows.
+
+// udpRemoteForward is one udp -R registration on the runner: the listening
+// socket, and a flow id per source address heard on it.
+type udpRemoteForward struct {
+	forwardID uint64
+	conn      *net.UDPConn
+	send      datagramSender
+
+	mu     sync.Mutex
+	nextID uint32
+	byAddr map[string]uint32
+	byID   map[uint32]*udpRemotePeer
+}
+
+type udpRemotePeer struct {
+	addr     *net.UDPAddr
+	lastSeen time.Time
+}
+
+func (r *udpRemoteForward) flowFor(addr *net.UDPAddr) uint32 {
+	key := addr.String()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id, ok := r.byAddr[key]; ok {
+		r.byID[id].lastSeen = time.Now()
+		return id
+	}
+	if len(r.byID) >= udpFlowsPerForward {
+		r.evictOldestLocked()
+	}
+	r.nextID++
+	id := r.nextID
+	r.byAddr[key] = id
+	r.byID[id] = &udpRemotePeer{addr: addr, lastSeen: time.Now()}
+	return id
+}
+
+func (r *udpRemoteForward) evictOldestLocked() {
+	var oldestID uint32
+	var oldest *udpRemotePeer
+	for id, p := range r.byID {
+		if oldest == nil || p.lastSeen.Before(oldest.lastSeen) {
+			oldestID, oldest = id, p
+		}
+	}
+	if oldest == nil {
+		return
+	}
+	delete(r.byID, oldestID)
+	delete(r.byAddr, oldest.addr.String())
+}
+
+// deliver writes one client-side reply back to the source that started its flow.
+func (r *udpRemoteForward) deliver(dg *protocol.ForwardDatagram) {
+	r.mu.Lock()
+	p, ok := r.byID[dg.FlowId]
+	if ok {
+		p.lastSeen = time.Now()
+	}
+	r.mu.Unlock()
+	if !ok {
+		// Reaped while a reply was in flight: no address left to write to, which
+		// is also what a NAT box would do with the same packet.
+		return
+	}
+	_, _ = r.conn.WriteToUDP(dg.Payload, p.addr)
+}
+
+func (r *udpRemoteForward) reapIdle(now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, p := range r.byID {
+		if now.Sub(p.lastSeen) < udpFlowIdleTimeout {
+			continue
+		}
+		delete(r.byID, id)
+		delete(r.byAddr, p.addr.String())
+	}
+}
+
+// readLoop carries each arriving datagram to the client under its flow id.
+func (r *udpRemoteForward) readLoop(log *slog.Logger) {
+	buf := make([]byte, 64*1024)
+	for {
+		n, addr, err := r.conn.ReadFromUDP(buf)
+		if err != nil {
+			return // socket closed: the forward ended
+		}
+		if n == 0 {
+			continue
+		}
+		id := r.flowFor(addr)
+		dg := protocol.ForwardDatagram{ForwardId: r.forwardID, FlowId: id, Payload: buf[:n]}
+		b, eerr := dg.Append([]byte{byte(appwire.AppKind_ForwardDatagram)})
+		if eerr != nil {
+			continue
+		}
+		if len(b) > r.send.MaxDatagramSize() {
+			// No fragmentation below this, so it cannot cross. The count lives
+			// server-side against the row an operator reads.
+			continue
+		}
+		_ = r.send.SendDatagram(b)
+	}
+}
+
+// startUDPRemoteForward binds the runner-side listener for a udp -R and starts
+// carrying what arrives on it.
+//
+// Unlike tcp there is no accept and so no RemoteForwardConn notification: a
+// flow is announced by its first datagram arriving with an id the client has
+// not seen, which is the same rule the client's own -L side already applies in
+// the other direction.
+func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardRequest) {
+	log := s.logger()
+	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+	if s.worktreeDirFor(taskIDHex) == "" {
+		log.Error("udp remote forward: unknown task", "task_id", taskIDHex)
+		s.sendBindResult(req.ForwardId, false)
+		return
+	}
+	if s.Sender == nil {
+		log.Error("udp remote forward: no sender wired")
+		s.sendBindResult(req.ForwardId, false)
+		return
+	}
+	bindAddr := string(req.BindAddr)
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	addr, err := net.ResolveUDPAddr("udp", targetAddr(bindAddr, req.BindPort))
+	if err != nil {
+		log.Info("udp remote forward: bad bind address", "err", err)
+		s.sendBindResult(req.ForwardId, false)
+		return
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		log.Info("udp remote forward: listen failed", "addr", addr.String(), "err", err)
+		s.sendBindResult(req.ForwardId, false)
+		return
+	}
+	rem := s.udpForwardRegistry().addRemote(req.ForwardId, conn, s.Sender)
+	s.sendBindResult(req.ForwardId, true)
+	log.Info("udp remote forward: listening", "fwd", req.ForwardId, "addr", conn.LocalAddr().String())
+	go rem.readLoop(log)
 }

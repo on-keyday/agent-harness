@@ -230,6 +230,13 @@ func (c *Client) dispatchDatagram(kind appwire.AppKind, payload []byte) {
 	if err := dg.DecodeExact(payload); err != nil {
 		return
 	}
+	// A -R forward's datagrams are REQUESTS from a source on the runner side,
+	// to be dialled locally. Checked first because the two registries are
+	// disjoint and an id belongs to exactly one of them.
+	if d, ok := lookupUDPRemoteDialer(dg.ForwardId); ok {
+		d.deliver(&dg, func(string) {})
+		return
+	}
 	u, ok := lookupUDPForwardClient(dg.ForwardId)
 	if !ok {
 		// Either the forward has ended or this reply belongs to another
@@ -252,4 +259,204 @@ func listenUDPForward(sp ForwardSpec) (*net.UDPConn, int, error) {
 		return nil, 0, err
 	}
 	return ln, ln.LocalAddr().(*net.UDPAddr).Port, nil
+}
+
+// --- udp -R: the runner listens, the CLIENT dials -----------------------
+//
+// The mirror of the pair above. Here the runner allocates the flow ids — it is
+// the end holding the listening socket and therefore the end that sees source
+// addresses — and this end dials one socket per flow, because the target's
+// reply has to come back on the socket the request left from.
+
+// udpRemoteDialer is the client end of a udp -R: the local target, and the
+// per-flow sockets dialled toward it so far.
+type udpRemoteDialer struct {
+	forwardID uint64
+	target    string
+	send      datagramSender
+
+	mu    sync.Mutex
+	flows map[uint32]*udpDialedFlow
+}
+
+type udpDialedFlow struct {
+	conn     *net.UDPConn
+	lastSeen time.Time
+	stop     chan struct{}
+}
+
+// deliver sends one datagram to the local target, dialling on first sight of
+// its flow id. An unseen id IS the flow's announcement — there is no
+// conn_notify for udp, because a flow has no accept to report.
+func (d *udpRemoteDialer) deliver(dg *protocol.ForwardDatagram, logf func(string)) {
+	fl, err := d.flow(dg.FlowId, logf)
+	if err != nil {
+		logf(fmt.Sprintf("remote-forward udp %d: dial %s failed: %v", d.forwardID, d.target, err))
+		return
+	}
+	_, _ = fl.conn.Write(dg.Payload)
+}
+
+func (d *udpRemoteDialer) flow(id uint32, logf func(string)) (*udpDialedFlow, error) {
+	d.mu.Lock()
+	if fl, ok := d.flows[id]; ok {
+		fl.lastSeen = time.Now()
+		d.mu.Unlock()
+		return fl, nil
+	}
+	d.mu.Unlock()
+
+	// Dialled outside the lock: a name can be slow to resolve, and holding it
+	// there would stall every other flow behind one.
+	raddr, err := net.ResolveUDPAddr("udp", d.target)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialUDP("udp", nil, raddr)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if fl, ok := d.flows[id]; ok {
+		d.mu.Unlock()
+		_ = conn.Close()
+		return fl, nil
+	}
+	if len(d.flows) >= udpClientFlowCap {
+		d.evictOldestLocked()
+	}
+	fl := &udpDialedFlow{conn: conn, lastSeen: time.Now(), stop: make(chan struct{})}
+	d.flows[id] = fl
+	d.mu.Unlock()
+	go d.readReplies(id, fl)
+	return fl, nil
+}
+
+func (d *udpRemoteDialer) evictOldestLocked() {
+	var oldestID uint32
+	var oldest *udpDialedFlow
+	for id, fl := range d.flows {
+		if oldest == nil || fl.lastSeen.Before(oldest.lastSeen) {
+			oldestID, oldest = id, fl
+		}
+	}
+	if oldest == nil {
+		return
+	}
+	delete(d.flows, oldestID)
+	close(oldest.stop)
+	_ = oldest.conn.Close()
+}
+
+// readReplies carries the local target's answers back under the same flow id,
+// which is the only thing that tells the runner which source they belong to.
+func (d *udpRemoteDialer) readReplies(id uint32, fl *udpDialedFlow) {
+	buf := make([]byte, 64*1024)
+	for {
+		select {
+		case <-fl.stop:
+			return
+		default:
+		}
+		// A deadline rather than a bare Read, so a flow whose target never
+		// answers still wakes often enough to be reaped.
+		_ = fl.conn.SetReadDeadline(time.Now().Add(udpFlowIdleTimeout / 4))
+		n, err := fl.conn.Read(buf)
+		if n > 0 {
+			d.mu.Lock()
+			fl.lastSeen = time.Now()
+			d.mu.Unlock()
+			dg := protocol.ForwardDatagram{ForwardId: d.forwardID, FlowId: id, Payload: buf[:n]}
+			if b, eerr := dg.Append([]byte{byte(appwire.AppKind_ForwardDatagram)}); eerr == nil {
+				if len(b) <= d.send.MaxDatagramSize() {
+					_ = d.send.SendDatagram(b)
+				}
+			}
+		}
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			return
+		}
+	}
+}
+
+func (d *udpRemoteDialer) reapIdle(now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for id, fl := range d.flows {
+		if now.Sub(fl.lastSeen) < udpFlowIdleTimeout {
+			continue
+		}
+		delete(d.flows, id)
+		close(fl.stop)
+		_ = fl.conn.Close()
+	}
+}
+
+func (d *udpRemoteDialer) closeAll() {
+	d.mu.Lock()
+	flows := d.flows
+	d.flows = map[uint32]*udpDialedFlow{}
+	d.mu.Unlock()
+	for _, fl := range flows {
+		close(fl.stop)
+		_ = fl.conn.Close()
+	}
+}
+
+// udpRemoteDialers is the registry a received -R datagram routes through,
+// keyed by forward id like its -L counterpart.
+var (
+	udpRemoteDialersMu sync.Mutex
+	udpRemoteDialers   = map[uint64]*udpRemoteDialer{}
+)
+
+func registerUDPRemoteDialer(id uint64, d *udpRemoteDialer) {
+	udpRemoteDialersMu.Lock()
+	udpRemoteDialers[id] = d
+	udpRemoteDialersMu.Unlock()
+}
+
+func unregisterUDPRemoteDialer(id uint64) {
+	udpRemoteDialersMu.Lock()
+	d := udpRemoteDialers[id]
+	delete(udpRemoteDialers, id)
+	udpRemoteDialersMu.Unlock()
+	if d != nil {
+		d.closeAll()
+	}
+}
+
+func lookupUDPRemoteDialer(id uint64) (*udpRemoteDialer, bool) {
+	udpRemoteDialersMu.Lock()
+	defer udpRemoteDialersMu.Unlock()
+	d, ok := udpRemoteDialers[id]
+	return d, ok
+}
+
+// runUDPRemoteForward carries one udp -R until ctx ends. Blocks, like its -L
+// counterpart: the caller owns the goroutine.
+func runUDPRemoteForward(ctx context.Context, send datagramSender, sp RemoteForwardSpec,
+	forwardID uint64, logf func(string)) {
+	d := &udpRemoteDialer{
+		forwardID: forwardID,
+		target:    net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)),
+		send:      send,
+		flows:     map[uint32]*udpDialedFlow{},
+	}
+	registerUDPRemoteDialer(forwardID, d)
+	defer unregisterUDPRemoteDialer(forwardID)
+
+	t := time.NewTicker(udpFlowIdleTimeout / 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			d.reapIdle(now)
+		}
+	}
 }
