@@ -152,3 +152,50 @@ test("projectGraph leaves a one-way pair out of mutual", () => {
   ]);
   assert.equal(g.mutual.size, 0);
 });
+
+// A vertical bias by inbound count: the memories many others point at are the
+// load-bearing ones, and putting them along one edge makes that readable at a
+// glance. y grows DOWNWARD in SVG, so "higher on screen" is a SMALLER y.
+const CHAIN = (n) => Array.from({length: n - 1}, (_, i) => [i, i + 1]);
+
+test("mapLayout without a bias is unchanged", () => {
+  // The bias is opt-in; passing nothing must give exactly the old layout, or
+  // every picture anyone has already looked at moves.
+  const a = page.mapLayout(N, EDGES, 1234567);
+  const b = page.mapLayout(N, EDGES, 1234567, null);
+  assert.deepEqual([...a.X], [...b.X]);
+  assert.deepEqual([...a.Y], [...b.Y]);
+});
+
+test("mapLayout with a bias puts the heavy nodes above the light ones", () => {
+  const n = 24;
+  // weight 1 for the first half, 0 for the second
+  const bias = Array.from({length: n}, (_, i) => (i < n / 2 ? 1 : 0));
+  const { Y } = page.mapLayout(n, CHAIN(n), 1234567, bias);
+  const mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  const heavy = mean([...Y].filter((_, i) => bias[i] === 1));
+  const light = mean([...Y].filter((_, i) => bias[i] === 0));
+  assert.ok(heavy < light,
+    `heavy mean y ${heavy.toFixed(1)} should be above light ${light.toFixed(1)}`);
+});
+
+test("mapLayout with a bias is still deterministic", () => {
+  const n = 12;
+  const bias = Array.from({length: n}, (_, i) => i / (n - 1));
+  const a = page.mapLayout(n, CHAIN(n), 1234567, bias);
+  const b = page.mapLayout(n, CHAIN(n), 1234567, bias);
+  assert.deepEqual([...a.Y], [...b.Y]);
+});
+
+test("mapLayout with a bias still separates nodes", () => {
+  // A bias strong enough to stack every heavy node on one point would satisfy
+  // the ordering test and ruin the drawing.
+  const n = 24;
+  const bias = Array.from({length: n}, (_, i) => (i < n / 2 ? 1 : 0));
+  const { X, Y } = page.mapLayout(n, CHAIN(n), 1234567, bias);
+  let minSep = Infinity;
+  for (let i = 0; i < n; i++)
+    for (let j = i + 1; j < n; j++)
+      minSep = Math.min(minSep, Math.hypot(X[i] - X[j], Y[i] - Y[j]));
+  assert.ok(minSep > 5, `closest pair is ${minSep.toFixed(2)} apart`);
+});

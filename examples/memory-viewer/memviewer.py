@@ -1152,7 +1152,10 @@ function projectGraph(memories) {
 // The seed is a PARAMETER and the caller passes a constant. This tool is
 // revisited; a layout that moved between visits would make a change in the
 // notes indistinguishable from a change in the drawing.
-function mapLayout(n, edges, seed) {
+// `bias`, when given, is one number per node in [0,1]: 1 is pulled to the top
+// of the drawing, 0 to the bottom. Passing nothing leaves the layout exactly as
+// it was — a picture already looked at must not move because an option exists.
+function mapLayout(n, edges, seed, bias) {
   const rnd = (() => { let s = seed | 0; return () => {
     s = s + 0x6D2B79F5 | 0;
     let t = Math.imul(s ^ s >>> 15, 1 | s);
@@ -1166,6 +1169,7 @@ function mapLayout(n, edges, seed) {
     X[i] = Math.cos(a) * d; Y[i] = Math.sin(a) * d;
   }
   const ITER = 400, SPRING = 260, REPEL = 9000;
+  const BIAS_SPAN = 900, BIAS_PULL = 0.02;
   for (let it = 0; it < ITER; it++) {
     const cool = 1 - it / ITER;
     for (let i = 0; i < n; i++) { vx[i] *= 0.85; vy[i] *= 0.85; }
@@ -1182,8 +1186,14 @@ function mapLayout(n, edges, seed) {
       vx[a] += ux * f; vy[a] += uy * f; vx[b] -= ux * f; vy[b] -= uy * f;
     }
     // Weak pull to the origin, or the unconnected drift away without limit.
+    // With a bias the vertical half of that pull is REPLACED rather than added
+    // to: two targets on one axis fight, and the result is a layout that obeys
+    // neither. Gentle enough that the springs still decide who sits by whom —
+    // this leans the picture, it does not sort it into rows.
     for (let i = 0; i < n; i++) {
-      vx[i] -= X[i] * 0.0012; vy[i] -= Y[i] * 0.0012;
+      vx[i] -= X[i] * 0.0012;
+      if (bias) vy[i] += ((0.5 - bias[i]) * BIAS_SPAN - Y[i]) * BIAS_PULL;
+      else vy[i] -= Y[i] * 0.0012;
       X[i] += Math.max(-30, Math.min(30, vx[i])) * cool;
       Y[i] += Math.max(-30, Math.min(30, vy[i])) * cool;
     }
@@ -1367,6 +1377,9 @@ $("mapneigh").addEventListener("change", (e) => { mapState.neighbours = e.target
 $("mapcolor").addEventListener("change", (e) => { mapState.colorBy = e.target.value; renderMap(); });
 $("mapsize").addEventListener("change", (e) => { mapState.sizeBy = e.target.value; renderMap(); });
 $("maplabels").addEventListener("change", (e) => { mapState.labels = e.target.checked; renderMap(); });
+// The bias changes WHERE the nodes are, so it re-runs the layout rather than
+// just repainting. 94 ms on the largest project, which is a click, not a wait.
+$("mapbias").addEventListener("change", (e) => { mapState.bias = e.target.checked; mapRelayout(); mapFit(); });
 
 // Zoom about the CURSOR, not the centre: zooming toward a corner otherwise
 // walks the thing you were pointing at off the screen and you pan it back by
@@ -1426,8 +1439,29 @@ $("mapsvg").addEventListener("pointerdown", (e) => {
 // returning is the expected loop, and a camera that reset would undo the pan
 // that got you there.
 const mapState = {open:false, cam:{x:0,y:0,k:1}, colorBy:"area", sizeBy:"in",
-                  labels:false, area:"", neighbours:false, g:null, pos:null,
+                  labels:false, area:"", neighbours:false, bias:false, g:null, pos:null,
                   drawn:{nodes:0, edges:0, filtered:false}};
+
+// One number per node in [0,1] for the vertical bias: the share of the project
+// that has STRICTLY fewer inbound links. A rank rather than inbound/max because
+// the distribution is long-tailed — most memories have a handful and one has
+// nineteen, so the linear form would press almost everything against the floor.
+// Ties share a value, as they must: two memories nothing distinguishes should
+// not be drawn at different heights.
+function mapBiasWeights(){
+  const counts = P.memories.map((m) => m.inbound.length);
+  const sorted = [...counts].sort((a, b) => a - b);
+  const n = counts.length;
+  const below = new Map();
+  sorted.forEach((c, i) => { if (!below.has(c)) below.set(c, i); });
+  return counts.map((c) => (n > 1 ? below.get(c) / (n - 1) : 0.5));
+}
+
+function mapRelayout(){
+  mapState.pos = mapLayout(mapState.g.names.length, mapState.g.edges, 1234567,
+                           mapState.bias ? mapBiasWeights() : null);
+  renderMap();
+}
 
 function openMap(){
   if (P.cross) return;           // links never cross projects; nothing to draw
@@ -1435,7 +1469,8 @@ function openMap(){
   // Recomputed per open rather than cached: the corpus is re-read on every
   // request, so a cached layout could describe memories that have changed.
   mapState.g = projectGraph(P.memories);
-  mapState.pos = mapLayout(mapState.g.names.length, mapState.g.edges, 1234567);
+  mapState.pos = mapLayout(mapState.g.names.length, mapState.g.edges, 1234567,
+                           mapState.bias ? mapBiasWeights() : null);
   $("mapview").hidden = false; $("mapbar").hidden = false;
   document.querySelector("main").hidden = true;
   $("mapbtn").classList.add("on");
@@ -1762,6 +1797,7 @@ def page(payload: dict | None = None) -> str:
     <option value="in">被リンク数</option><option value="sz">サイズ</option><option value="flat">一定</option>
   </select></label>
   <label><input type="checkbox" id="maplabels"> ラベル</label>
+  <label><input type="checkbox" id="mapbias"> 被リンクが多いものを上へ</label>
   <label>area <select id="maparea"></select></label>
   <label><input type="checkbox" id="mapneigh"> 隣接も含める</label>
   <button class="chip" id="mapfit">全体に合わせる</button>
