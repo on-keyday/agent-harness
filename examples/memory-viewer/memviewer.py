@@ -711,6 +711,25 @@ h2.sec:first-child{margin-top:0}
 .arearow:empty{display:none}
 .ar{color:#8aa0c0;margin-right:.4rem}
 
+/* The ego graph. Fixed intrinsic width in a scrolling box rather than a
+   viewBox scaled to the pane: at 390px a 720-wide viewBox would render the
+   labels at ~6px, which is a picture of text rather than text. */
+.egowrap{overflow-x:auto;margin:.6rem 0;border:1px solid #2f2f2f;border-radius:6px;background:#181818}
+.ego{display:block;width:820px}
+.ego .n{cursor:pointer}
+.ego circle{fill:#252526;stroke:#4a4a4a}
+.ego .n:hover circle{stroke:#6bb3f7}
+.ego .me circle{fill:#263140;stroke:#3a5a80}
+.ego text{font:11px ui-monospace,Menlo,Consolas,monospace;fill:#b8b8b8}
+.ego .me text{fill:#d4d4d4}
+.ego .out{stroke:#46603f}
+.ego .in{stroke:#3c5068}
+.ego .both{stroke:#6a5630}
+.ego .dang{stroke:#6a4a20;stroke-dasharray:3 2}
+.ego .n.dang circle{fill:#241c12;stroke:#6a4a20;stroke-dasharray:3 2}
+.ego .n.dang text{fill:#c08a4a}
+.egocap{color:#7a7a7a;font-size:.74rem;padding:.25rem .5rem}
+
 .send{margin:.8rem 0;border:1px solid #333;border-radius:6px;padding:.4rem .6rem;background:#202020}
 .send summary{cursor:pointer;color:#9a9a9a;font-size:.86rem}
 .sendform{display:flex;flex-direction:column;gap:.4rem;margin-top:.5rem}
@@ -934,11 +953,132 @@ function renderDetail() {
     ${idxBlock}
     <div class="meta">frontmatter description</div>
     <div class="ds">${esc(m.description)}</div>
+    ${egoGraph(m)}
     ${linkRow("→ このメモが指す", m.links)}
     ${linkRow("← このメモを指す", m.inbound)}
     ${sendPanel(m)}
     <hr>${m.html}`;
   $("detail").scrollTop = 0;
+}
+
+// This memory and what it is wired to, one hop.
+//
+// One hop on purpose: clicking a node re-centres, so walking reaches any depth
+// while the drawing stays bounded by DEGREE. Measured over this corpus
+// 2026-09-16 — median 4 neighbours, worst 24 — which is small enough that a
+// fixed polar placement beats an iterative layout, and this file carries no
+// dependency to run one with anyway.
+//
+// Direction is POSITION: what this memory points at is above it, what points
+// at it is below, and a mutual pair sits out on the equator. Arrowheads would
+// restate what the layout already says, and a legend would be a second thing
+// to read before the picture means anything.
+//
+// A [[link]] that resolves to nothing is DRAWN, dashed, not dropped. It is the
+// same defect the 要保守 panel lists, and a picture that quietly omitted it
+// would show this memory as wired up when it is not.
+function egoGraph(m) {
+  // Links never cross projects, so in the cross view resolve inside the
+  // memory's OWN project: otherwise a harness [[link]] could land on a
+  // same-named memory belonging to another repo.
+  const pool = P.cross ? P.memories.filter(x => x.project === m.project) : P.memories;
+  const by = new Map();
+  for (const x of pool) by.set(x.name, x.name);
+  for (const x of pool) {
+    const stem = x.file.replace(/\.md$/, "");
+    if (!by.has(stem)) by.set(stem, x.name);
+  }
+  const resolve = (t) => by.get(t.replace(/\.md$/, "")) || null;
+
+  const inn = new Set(m.inbound);
+  const out = new Set();
+  const dangling = [];
+  for (const t of m.links) {
+    const r = resolve(t);
+    if (r === null) { if (!dangling.includes(t)) dangling.push(t); }
+    else if (r !== m.name) out.add(r);
+  }
+  const mutual = [...out].filter(n => inn.has(n));
+  const outOnly = [...out].filter(n => !inn.has(n));
+  const inOnly = [...inn].filter(n => !out.has(n));
+  if (!outOnly.length && !inOnly.length && !mutual.length && !dangling.length) return "";
+
+  const W = 820, H = 470, cx = W / 2, cy = H / 2, R = 112, STEP = 44;
+  const nodes = [];
+  // Rings, not one circle. Labels are the thing that collides, not the dots:
+  // measured at 18 inbound on one arc they overlapped into unreadable mush at
+  // two radii. One ring per 8 keeps roughly 20 degrees between neighbours at
+  // any degree this corpus reaches (worst node: 24).
+  const arc = (items, a0, a1) => {
+    const tiers = Math.min(3, Math.max(1, Math.ceil(items.length / 8)));
+    items.forEach((it, i) => {
+      const t = items.length === 1 ? 0.5 : i / (items.length - 1);
+      const a = (a0 + (a1 - a0) * t) * Math.PI / 180;
+      const r = R + (i % tiers) * STEP;
+      nodes.push({...it, x: cx + r * Math.cos(a), y: cy - r * Math.sin(a)});
+    });
+  };
+  arc([...outOnly.map(n => ({label: n, go: n, kind: "out"})),
+       ...dangling.map(t => ({label: t, go: null, kind: "dang"}))], 168, 12);
+  arc(inOnly.map(n => ({label: n, go: n, kind: "in"})), -168, -12);
+  // The equator, alternating sides so a third and a fourth do not stack on one
+  // point. Beyond a handful they climb into the arcs, which is rare and still
+  // reads as "on the side".
+  mutual.forEach((n, i) => {
+    const right = i % 2 === 1;
+    const a = ((right ? 0 : 180) + Math.floor(i / 2) * (right ? 11 : -11)) * Math.PI / 180;
+    nodes.push({label: n, go: n, kind: "both",
+                x: cx + (R + 20) * Math.cos(a), y: cy - (R + 20) * Math.sin(a)});
+  });
+
+  // The type prefix is dropped from the LABEL, never from the tooltip: nearly
+  // every name starts with one, so without this the visible characters are the
+  // ones every node shares and the distinguishing tail is what gets cut.
+  //
+  // It does NOT reduce label collisions, and the comment here said it did until
+  // it was measured. The cap below decides the width, so dropping ten leading
+  // characters changes WHICH eighteen are shown, not how wide they are. Nor did
+  // geometry: widening 720 -> 820 and spreading the rings took the worst node
+  // from 7 overlapping pairs to 6. What is left is the tail of one project —
+  // 0-2 pairs everywhere else, 4-8 on the three densest nodes in
+  // remote-agent-harness, where every name is also listed in full in the chips
+  // directly below and carried in each node's tooltip.
+  const cut = (s) => {
+    const t = s.replace(/^(feedback|project|reference|user)[_-]/, "");
+    return t.length > 18 ? t.slice(0, 17) + "…" : t;
+  };
+  const side = (n) => n.x < cx - 14 ? "end" : (n.x > cx + 14 ? "start" : "middle");
+  const lx = (n) => n.x + (side(n) === "end" ? -9 : side(n) === "start" ? 9 : 0);
+  const ly = (n) => n.y + (side(n) === "middle" ? (n.y < cy ? -11 : 17) : 4);
+  const xy = (v) => v.toFixed(1);
+
+  const edges = nodes.map(n =>
+    `<line class="${n.kind}" x1="${xy(cx)}" y1="${xy(cy)}" x2="${xy(n.x)}" y2="${xy(n.y)}"></line>`).join("");
+  const dots = nodes.map(n =>
+    `<g class="n ${n.kind === "dang" ? "dang" : ""}"${n.go ? ` data-goto="${esc(n.go)}"` : ""}>
+       <title>${esc(n.label)}${n.go ? "" : "  (リンク先が無い)"}</title>
+       <circle cx="${xy(n.x)}" cy="${xy(n.y)}" r="5"></circle>
+       <text x="${xy(lx(n))}" y="${xy(ly(n))}" text-anchor="${side(n)}">${esc(cut(n.label))}</text>
+     </g>`).join("");
+
+  const cap = [
+    outOnly.length ? `↑ 指す ${outOnly.length}` : "",
+    inOnly.length ? `↓ 指される ${inOnly.length}` : "",
+    mutual.length ? `↔ 相互 ${mutual.length}` : "",
+    dangling.length ? `⚠ リンク先が無い ${dangling.length}` : "",
+  ].filter(Boolean).join(" · ");
+
+  return `<div class="egowrap">
+    <svg class="ego" viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="link graph">
+      ${edges}
+      <g class="n me"><title>${esc(m.name)}</title>
+        <circle cx="${xy(cx)}" cy="${xy(cy)}" r="8"></circle>
+        <text x="${xy(cx)}" y="${xy(cy - 16)}" text-anchor="middle">${esc(cut(m.name))}</text>
+      </g>
+      ${dots}
+    </svg>
+    <div class="egocap">${cap}</div>
+  </div>`;
 }
 
 // Collapsed by default: this is a reading tool, and the form should not sit
