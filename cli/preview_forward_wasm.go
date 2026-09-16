@@ -33,6 +33,11 @@ type pinSlot struct {
 	port      int
 	gen       uint64
 	stop      context.CancelFunc
+	// ready settles when the registration below finishes, successfully or not.
+	// A fetch that arrives while it is still in flight waits on this instead of
+	// being told the pin does not exist — the slot is entered BEFORE the round
+	// trip and completed after it, and the page is already running by then.
+	ready *pinReady
 	// closedLocally records that WE closed the registration, so the control
 	// watcher does not report our own teardown to the page as a revocation.
 	// Same trap RawConn.closedLocally exists for.
@@ -50,10 +55,12 @@ var (
 // Any previous registration for key is superseded and closed first. Returns the
 // forward id so the page can show what an operator would kill.
 func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string, port int) (uint64, error) {
+	mine := &pinSlot{gen: 0, taskID: taskIDHex, host: host, port: port, ready: newPinReady()}
 	pinMu.Lock()
 	old := pinSlots[key]
 	gen := pinGen.Add(1)
-	pinSlots[key] = &pinSlot{gen: gen, taskID: taskIDHex, host: host, port: port}
+	mine.gen = gen
+	pinSlots[key] = mine
 	pinMu.Unlock()
 	if old != nil {
 		closePinSlot(old)
@@ -67,6 +74,10 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 			delete(pinSlots, key)
 		}
 		pinMu.Unlock()
+		// Waiters get the registration's own error. Without this a fetch parked
+		// on a pin the server refused would sit until its context expired and
+		// then blame the timeout.
+		mine.ready.settle(err)
 		return 0, err
 	}
 
@@ -75,6 +86,9 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 	if slot == nil || slot.gen != gen {
 		pinMu.Unlock()
 		_ = ctrl.CloseBoth() // superseded while registering: discard
+		// closePinSlot already settled `mine` when it was superseded; this is
+		// belt and braces for the path where it was deleted rather than closed.
+		mine.ready.settle(errPinSuperseded)
 		return 0, nil
 	}
 	watchCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
@@ -82,6 +96,9 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 	slot.forwardID = fid
 	slot.stop = stop
 	pinMu.Unlock()
+	// After ctrl is installed, never before: a waiter released earlier would
+	// find the very nil it was waiting to stop seeing.
+	slot.ready.settle(nil)
 
 	go func() {
 		serveForwardControl(watchCtx, ctrl, func(line string) {
@@ -125,14 +142,36 @@ func OpenPreviewPin(ctx context.Context, c *Client, key, taskIDHex, host string,
 func PreviewPinFetch(ctx context.Context, c *Client, key string, spec HTTPRequestSpec) (*HTTPFetchResult, error) {
 	pinMu.Lock()
 	slot := pinSlots[key]
+	pinMu.Unlock()
+	if slot == nil {
+		return nil, errors.New("previewPinFetch: no live pin for this preview")
+	}
+	// The registration may still be in flight. Waiting for it is the point:
+	// the slot is entered before the round trip and completed after it, and
+	// the page starts fetching the moment its iframe is built, so refusing
+	// here told a page whose pin was BEING established that it had none.
+	if err := slot.ready.wait(ctx); err != nil {
+		return nil, err
+	}
+	// Re-read under the lock rather than reuse what was looked up before the
+	// wait: a re-render replaces the slot under the same key, and the target
+	// can change with it. Reading ctrl outside the lock was also a plain data
+	// race against the write in OpenPreviewPin.
+	pinMu.Lock()
+	cur := pinSlots[key]
 	var taskID, host string
 	var port int
 	var fid uint64
-	if slot != nil {
-		taskID, host, port, fid = slot.taskID, slot.host, slot.port, slot.forwardID
+	var live bool
+	if cur != nil {
+		taskID, host, port, fid = cur.taskID, cur.host, cur.port, cur.forwardID
+		live = cur.ctrl != nil
 	}
 	pinMu.Unlock()
-	if slot == nil || slot.ctrl == nil {
+	if cur != slot {
+		return nil, errPinSuperseded
+	}
+	if !live {
 		return nil, errors.New("previewPinFetch: no live pin for this preview")
 	}
 	req, method, err := buildFetchRequest(spec, host, port)
@@ -173,9 +212,21 @@ func ClosePreviewPin(key string) {
 	closePinSlot(slot)
 }
 
+// errPinSuperseded is what a fetch gets when the preview it belongs to was
+// re-rendered or closed while the request was starting. Distinct from "no live
+// pin": the page is not wrong about having had one, it just no longer owns the
+// realm that did.
+var errPinSuperseded = errors.New("previewPinFetch: this preview's pin was replaced")
+
 func closePinSlot(slot *pinSlot) {
 	if slot == nil {
 		return
+	}
+	// Release anything parked on a registration that will now never complete.
+	// settle keeps the first outcome, so a pin that had already come up stays
+	// successful — its waiters were released with the truth at the time.
+	if slot.ready != nil {
+		slot.ready.settle(errPinSuperseded)
 	}
 	slot.closedLocally.Store(true)
 	if slot.stop != nil {
