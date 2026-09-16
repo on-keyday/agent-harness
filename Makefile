@@ -85,10 +85,12 @@ wasm-check:
 test: js-test
 	go test ./...
 
-# The WebUI's command line, driven under node's built-in test runner against
-# the REAL wasm bridge (webui/static/harness_env.mjs loads main.wasm, so the
-# declaration under test is the one the CLI and TUI parse from). Depends on
-# webui-build because a stale main.wasm would test a stale table.
+# The half of main.js that lives outside the page's IIFE -- its command line
+# (cmd_test) and the preview's pure decisions (preview_test) -- driven under
+# node's built-in test runner against the REAL wasm bridge
+# (webui/static/harness_env.mjs loads main.wasm, so the declaration under test
+# is the one the CLI and TUI parse from). Depends on webui-build because a
+# stale main.wasm would test a stale table.
 #
 # Skipped where node is absent rather than failing: this repo builds on
 # Windows runners too, and a missing JS runtime must not stop `make test`
@@ -99,10 +101,16 @@ test: js-test
 # line in its own shell, so an `exit 0` in the guard ended only the guard --
 # the next line ran node anyway and `make test` died with 127 on exactly the
 # host the skip was written for, having run zero Go tests.
+#
+# if/else rather than `&& node --test … || echo`: that form cannot tell a
+# missing runtime from a failing test, so node exiting 1 printed the skip
+# message and js-test SUCCEEDED. Measured 2026-09-16 -- five deliberately
+# failing tests reported "no node on PATH, skipping" and `make js-test`
+# returned 0. The skip must cover only the absence of node.
 js-test: webui-build
-	@command -v node >/dev/null 2>&1 \
-	  && node --test webui/static/cmd_test.mjs \
-	  || echo "js-test: no node on PATH, skipping"
+	@if command -v node >/dev/null 2>&1; then \
+	  node --test webui/static/cmd_test.mjs webui/static/preview_test.mjs; \
+	else echo "js-test: no node on PATH, skipping"; fi
 
 # The integration suite lives behind the `integration` build tag and is NOT
 # part of `make test` / `go test ./...`. Run it explicitly (CI mirrors this in
@@ -143,7 +151,7 @@ protoregen:
 help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
-	@echo "  js-test       node --test over the WebUI command line (skipped without node)"
+	@echo "  js-test       node --test over the WebUI command line + preview logic (skipped without node)"
 	@echo "  build         webui-build + emit bin/<cmd> for each cmd/*"
 	@echo "  release       build with -trimpath -ldflags=\"-s -w\" (used by CI matrix)"
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"

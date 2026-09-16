@@ -564,6 +564,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // re-pull it. filePickerSelected is not usable for that: the picker keeps
   // working behind the modal.
   let previewSource = null;
+  // Set instead of previewSource when the open preview is a document fetched
+  // through the forward rather than pulled out of the worktree. The two are
+  // mutually exclusive, and which one is set decides where Reload goes, which
+  // task the pin is opened against, and whether Edit is offered at all —
+  // there is no file behind an http preview to edit.
+  //   { taskID, host, port, path }
+  let previewHttpSource = null;
   const filePreviewModals = document.getElementById("file-preview-modals");
   const filePreviewModalsLabel = document.getElementById("file-preview-modals-label");
   // The host:port the OPERATOR pinned for the rendered preview, or null. This
@@ -943,6 +950,23 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       renderRawTabs();
       renderRawOutput();
     }
+  });
+
+  // Open as page. Deliberately NOT gated on a live raw pane: this does not use
+  // one. It reads the same three fields Connect reads — the target — and opens
+  // its own forward, so requiring a connection first would force an unused byte
+  // stream to exist just to justify the button's position.
+  const rawPageBtn = document.getElementById("raw-page-btn");
+  const rawPagePath = document.getElementById("raw-page-path");
+  rawPageBtn?.addEventListener("click", () => {
+    const task = rawTaskSelect.value;
+    const host = document.getElementById("raw-host-input").value.trim();
+    const port = parseInt(document.getElementById("raw-port-input").value, 10);
+    if (!task || !host || !(port > 0 && port < 65536)) {
+      appendCmdOutput("open as page: task, host and port are required");
+      return;
+    }
+    openHttpPreview(task, host, port, normalizePagePath(rawPagePath && rawPagePath.value));
   });
 
   // hexToBytes accepts "48 65 6c" / "48656c" and rejects anything else, so a
@@ -1557,13 +1581,86 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     await loadPreview(taskID, joinFsPath(filePickerCurDir, sel.name), sel.name);
   });
 
+  // openHttpPreview fetches ONE document through a forward to host:port and
+  // renders it in the same modal a file preview uses. This is the other way in:
+  // loadPreview shows a file that is in the worktree, this shows what a server
+  // inside the task answers with. A phone has no local listener, so this is the
+  // only way to see a task's dev server from one.
+  //
+  // The document goes over httpFetch, which opens and closes its own forward
+  // for the one request. The PIN — the longer-lived reach the rendered page's
+  // own fetch() calls use — is opened afterwards by showHtmlPreview, from the
+  // value dropped into filePreviewApi below. Opening a pin here as well would
+  // put two registrations in `forward ls` for one preview.
+  async function openHttpPreview(taskID, host, port, path, preferredMode) {
+    const pin = parsePinnedTarget(`${host}:${port}`);
+    if (!pin) {
+      openFilePreview(`${host}:${port}`, 0, null, "preview: unusable target");
+      return;
+    }
+    const label = previewHttpLabel(pin, path);
+    // Same progress row a file pull uses: a page that is slow to answer
+    // otherwise leaves the operator looking at a UI that has simply stopped.
+    const fp = beginFileProgress(label);
+    try {
+      const res = await window.harness.httpFetch(taskID, pin.host, pin.port,
+        { method: "GET", path, headers: "", body: null });
+      const bytes = new Uint8Array(res.body);
+      const ct = contentTypeOf(res.headers);
+      previewSource = null;
+      previewHttpSource = { taskID, host: pin.host, port: pin.port, path };
+      // Pre-fill the pin rather than making the operator retype it: naming
+      // this target is how they got here, and the rendered page's relative
+      // fetches resolve against this same origin. They can still change it —
+      // that path re-fetches the document from the new target.
+      filePreviewApi.value = `${pin.host}:${pin.port}`;
+      if (!isHtmlContentType(ct)) {
+        // Not a page. Show the bytes as text and say why, because a blank
+        // frame is indistinguishable from a server that answered with nothing.
+        filePreviewHtml = null;
+        const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        const pre = document.createElement("pre");
+        pre.textContent = text;
+        openFilePreview(label, bytes.byteLength, pre,
+          `not HTML (${ct || "no Content-Type"}) — shown as text`);
+        showPreviewCopy({ text });
+        showPreviewReload();
+        return;
+      }
+      filePreviewHtml = {
+        rel: label, size: bytes.byteLength, bytes,
+        mode: preferredMode === "source" ? "source" : "render",
+      };
+      showHtmlPreview();
+      // Notes go after showHtmlPreview: it rebuilds the body, so anything
+      // appended before it would be wiped.
+      if (res.status >= 400) {
+        appendPreviewNote(`HTTP ${res.status} ${res.statusText} — showing what the server returned`);
+      }
+      if (res.truncated) {
+        appendPreviewNote("the response hit the 8 MiB cap and was cut short");
+      }
+    } catch (e) {
+      previewHttpSource = null;
+      openFilePreview(label, 0, null, `preview error: ${e.message}`);
+    } finally {
+      fp.end();
+    }
+  }
+
   // Reload re-pulls the open preview. The file is usually being written by an
   // agent while it is on screen, so the bytes the modal opened with go stale
   // within seconds.
   filePreviewReload.addEventListener("click", () => {
+    const mode = filePreviewHtml && filePreviewHtml.mode;
+    if (previewHttpSource) {
+      const { taskID, host, port, path } = previewHttpSource;
+      openHttpPreview(taskID, host, port, path, mode);
+      return;
+    }
     if (!previewSource) return;
     const { taskID, rel, name } = previewSource;
-    loadPreview(taskID, rel, name, filePreviewHtml && filePreviewHtml.mode);
+    loadPreview(taskID, rel, name, mode);
   });
 
   fileEditBtn.addEventListener("click", async () => {
@@ -1603,6 +1700,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     filePreviewRefetchLabel.hidden = true;
     filePreviewRefetch.checked = false;
     previewSource = null;
+    previewHttpSource = null;
     filePreviewModalsLabel.hidden = true;
     filePreviewModals.checked = false;
     filePreviewCopyPayload = null;
@@ -1638,6 +1736,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // the error path does not offer to reload something that never loaded.
     filePreviewReload.hidden = true;
     filePreviewRefetchLabel.hidden = true;
+    // The rendered-HTML controls belong to the iframe, and showHtmlPreview is
+    // the only thing that builds one — so it is the only thing that turns them
+    // back on. Clearing them HERE rather than in each non-HTML renderer is
+    // what stops them being left over: an http preview whose far end stopped
+    // answering with HTML re-renders as text through this function, and
+    // without this it kept an API pin and a "View source" toggle belonging to
+    // a frame that is gone. Visibility only — filePreviewApi.value is the
+    // operator's, and every rebuild reads it back.
+    filePreviewToggle.hidden = true;
+    filePreviewApi.hidden = true;
+    filePreviewModalsLabel.hidden = true;
     filePreviewTitle.textContent = `${rel}  (${size} bytes)`;
     filePreviewBody.innerHTML = "";
     if (bodyNode) {
@@ -1692,15 +1801,25 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // live pin is refused wasm-side.
       releasePreviewPin();
       if (previewPin) {
-        window.harness.previewPinOpen(PREVIEW_PIN_KEY, fileTaskSelect.value, previewPin.host, previewPin.port)
-          .then((id) => { previewPinForwardID = id; })
+        // The task is the one the preview was opened against, which is NOT
+        // always the file picker's: a document fetched through the forward
+        // came from the raw pane's task, and the picker may be pointing
+        // somewhere else entirely by now.
+        const pinTask = previewHttpSource ? previewHttpSource.taskID : fileTaskSelect.value;
+        window.harness.previewPinOpen(PREVIEW_PIN_KEY, pinTask, previewPin.host, previewPin.port)
+          .then((id) => {
+            previewPinForwardID = id;
+            // The reach the operator just granted should be listed NOW, not up
+            // to one poll later — the registration exists to be seen.
+            refreshSnapshot();
+          })
           .catch((e) => {
             previewPin = null;
             appendPreviewNote(`preview: could not register the forward (${e.message}) — the page has no network`);
           });
       }
       iframe.srcdoc = previewPin
-        ? injectPreviewShim(text, previewShimSource(previewPin, rel))
+        ? injectPreviewShim(text, previewShimSource(previewPin, rel, previewHttpSource ? "http" : "html-file"))
         : text;
       node = iframe;
     } else {
@@ -1720,8 +1839,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Re-enable Reload here too: this path rebuilds from cached bytes without
     // going through loadPreview, and openFilePreview has just hidden them.
     showPreviewReload();
-    // HTML is text: offer Edit in both the rendered and the source view.
-    showPreviewEdit(rel);
+    // HTML is text: offer Edit in both the rendered and the source view — but
+    // only for a FILE. An http preview's `rel` is a URL, and handing that to
+    // the editor would open a path that does not exist in the worktree.
+    if (!previewHttpSource) showPreviewEdit(rel);
   }
 
   filePreviewEdit.addEventListener("click", async () => {
@@ -1763,7 +1884,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // to exist before the page's scripts run, so it cannot be added to a page
   // that is already running.
   filePreviewApi.addEventListener("change", () => {
-    if (filePreviewHtml && filePreviewHtml.mode === "render") rebuildPreview("render");
+    if (!filePreviewHtml || filePreviewHtml.mode !== "render") return;
+    // For an http preview the target IS where the document came from, so a new
+    // target means a new document. Re-rendering the bytes already in hand would
+    // show one server's page wired to another server's API.
+    if (previewHttpSource) {
+      const pin = parsePinnedTarget(filePreviewApi.value);
+      if (!pin) return;
+      openHttpPreview(previewHttpSource.taskID, pin.host, pin.port, previewHttpSource.path, "render");
+      return;
+    }
+    rebuildPreview("render");
   });
 
   // releasePreviewPin drops the registration if there is one. Safe to call when
@@ -1970,6 +2101,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // every render, so each path that produced a real preview turns them back on
   // and the error path stays without them.
   function showPreviewReload() {
+    if (previewHttpSource) {
+      // Reload re-issues the request. The refetch toggle stays hidden: it
+      // means "re-pull the file before re-rendering", and an http preview has
+      // no cached file to go stale — its Reload already goes to the far end.
+      filePreviewReload.hidden = false;
+      return;
+    }
     if (!previewSource) return;
     filePreviewReload.hidden = false;
     filePreviewRefetchLabel.hidden = false;
@@ -7023,6 +7161,46 @@ function parsePinnedTarget(text) {
   return { host, port, origin: `http://${host}:${port}` };
 }
 
+// normalizePagePath turns what the operator typed into a request target.
+// Empty means the site root, which is what "open this server as a page" means
+// with nothing else said. A bare "api/payload" gets its slash rather than
+// being refused: refusing would surface as a 404 from the far end, which reads
+// as the server's problem instead of as a typo.
+function normalizePagePath(text) {
+  const s = String(text ?? "").trim();
+  if (!s) return "/";
+  return s.startsWith("/") ? s : "/" + s;
+}
+
+// contentTypeOf reads Content-Type out of the [[name, value], ...] list
+// httpFetch resolves with. Case-insensitive because the case is whatever the
+// far end wrote, and these responses come from servers this repo does not own
+// — python's http.server sends "Content-Type", net/http sends "Content-Type",
+// and neither is promised by anything.
+function contentTypeOf(headers) {
+  for (const h of headers || []) {
+    if (h && h.length >= 2 && String(h[0]).toLowerCase() === "content-type") {
+      return String(h[1]);
+    }
+  }
+  return "";
+}
+
+// isHtmlContentType decides whether a response may be handed to an iframe.
+// Everything else is shown as text, so opening a JSON endpoint by mistake
+// reads as JSON rather than as a blank frame.
+function isHtmlContentType(ct) {
+  const base = String(ct ?? "").split(";")[0].trim().toLowerCase();
+  return base === "text/html" || base === "application/xhtml+xml";
+}
+
+// previewHttpLabel is the absolute URL a page preview was fetched from. It is
+// both the modal's title and the `rel` the shim reports as the page's own
+// identity, so one function keeps those two from drifting apart.
+function previewHttpLabel(pin, path) {
+  return pin.origin + path;
+}
+
 // previewFetchTargetAllowed decides whether a URL the page asked for may be
 // tunneled. Relative URLs resolve against the pinned origin so they are always
 // in scope; an absolute URL has to match the pin exactly.
@@ -7067,11 +7245,19 @@ function injectPreviewShim(html, scriptText) {
 // realm, so nothing it holds is a secret and nothing it claims is trusted by
 // the parent.
 //
-// The config is escaped for "<" because it carries a file path: a file named
-// with a literal </script> would otherwise close the tag it is embedded in.
-function previewShimSource(pin, rel) {
+// The config is escaped for "<" because it carries a path: a file named with a
+// literal </script>, or a URL an operator typed one into, would otherwise
+// close the tag it is embedded in.
+//
+// kind is "html-file" (a file pulled out of the worktree) or "http" (a
+// document fetched through the forward). The page can tell them apart because
+// they are not interchangeable: a document fetched through the forward reaches
+// its own relative paths, while a previewed file reaches nothing unless the
+// operator pinned a target by hand.
+function previewShimSource(pin, rel, kind) {
   const cfg = JSON.stringify({ origin: pin.origin, host: pin.host, port: pin.port, rel: rel || "" })
     .replace(/</g, "\\u003c");
+  const marker = JSON.stringify(kind === "http" ? "http" : "html-file");
   return `(() => {
   "use strict";
   const CFG = ${cfg};
@@ -7082,7 +7268,7 @@ function previewShimSource(pin, rel) {
   Object.defineProperty(window, "__harness", {
     value: Object.freeze({
       v: 1,
-      preview: "html-file",
+      preview: ${marker},
       rel: CFG.rel,
       api: Object.freeze({ host: CFG.host, port: CFG.port }),
     }),

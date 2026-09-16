@@ -203,11 +203,22 @@
       <div id="exec-list"></div>
       <h2>Raw connect</h2>
       <div id="raw-connect" class="raw-connect">
+        <!-- The row above the verbs is the TARGET. Connect and Open as page are
+             two things to do with it, and neither needs the other: Connect
+             holds a byte stream, Open as page fetches one document through its
+             own forward and renders it. Both appear in `forward ls` while they
+             last, so pressing both shows two rows for one target — which is
+             what is actually happening. -->
         <div class="raw-form">
           <label>Task: <select id="raw-task-select"><option value="">(select task)</option></select></label>
           <input id="raw-host-input" type="text" value="127.0.0.1" size="16" placeholder="host">
           <input id="raw-port-input" type="number" min="1" max="65535" placeholder="port">
           <button id="raw-connect-btn" type="button">Connect</button>
+          <input id="raw-page-path" type="text" size="14" value="/" placeholder="/"
+                 autocomplete="off" spellcheck="false"
+                 title="Path to fetch when opening this target as a page">
+          <button id="raw-page-btn" type="button"
+                  title="この接続先を1ページとして取得して描画する。Connect は不要で、専用の forward を張る">Open as page</button>
         </div>
         <div id="raw-tabs" class="raw-tabs" role="tablist"></div>
         <div class="raw-view-row">
