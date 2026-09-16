@@ -199,3 +199,60 @@ test("mapLayout with a bias still separates nodes", () => {
       minSep = Math.min(minSep, Math.hypot(X[i] - X[j], Y[i] - Y[j]));
   assert.ok(minSep > 5, `closest pair is ${minSep.toFixed(2)} apart`);
 });
+
+// Spearman's rho between the vertical order and the bias order. 1 means the
+// drawing is perfectly layered by weight; 0 means the weight decided nothing.
+function verticalRankCorrelation(Y, bias) {
+  const n = Y.length;
+  const byY = [...Y.keys()].sort((a, b) => Y[a] - Y[b]);
+  const byW = [...Y.keys()].sort((a, b) => bias[b] - bias[a]);
+  const rY = new Map(byY.map((k, i) => [k, i]));
+  const rW = new Map(byW.map((k, i) => [k, i]));
+  let d2 = 0;
+  for (const k of Y.keys()) d2 += (rY.get(k) - rW.get(k)) ** 2;
+  return 1 - (6 * d2) / (n * (n * n - 1));
+}
+
+test("mapLayout's bias strength is a real dial, not a label", () => {
+  // Two settings ship: a lean that leaves the springs in charge, and a layering
+  // that puts weight in charge. If the stronger one did not actually order the
+  // drawing better, offering both would be offering the same thing twice.
+  //
+  // The graph has to FIGHT the bias or the test proves nothing. A chain whose
+  // weights run along it is trivially layerable and the lean setting scores
+  // 0.987 on it — which is what this test asserted against first. Here the edges
+  // are a deterministic scramble, so every spring pulls a heavy node toward a
+  // light one, the way a real corpus does.
+  // Density matched to the corpus this was built for: 169 nodes / 375 edges,
+  // mean degree 4.4. A sparser fixture sits in a different regime where both
+  // settings score ~0.92 and the comparison says nothing.
+  const n = 60;
+  const seen = new Set(), edges = [];
+  for (const step of [7, 13, 23, 31]) {
+    for (let i = 0; i < n; i++) {
+      const j = (i * step + 3) % n;
+      if (i === j) continue;
+      const k = Math.min(i, j) + ":" + Math.max(i, j);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      edges.push([Math.min(i, j), Math.max(i, j)]);
+    }
+  }
+  const bias = Array.from({length: n}, (_, i) => 1 - i / (n - 1));
+  const lean = page.mapLayout(n, edges, 1234567, bias);                 // defaults
+  const layered = page.mapLayout(n, edges, 1234567, bias, 1800, 0.08);
+  const rl = verticalRankCorrelation(lean.Y, bias);
+  const rr = verticalRankCorrelation(layered.Y, bias);
+  assert.ok(rr > rl + 0.05,
+    `layered rho ${rr.toFixed(3)} should clear lean rho ${rl.toFixed(3)} by a margin`);
+});
+
+test("mapLayout's defaults are the lean setting", () => {
+  // Passing a bias and nothing else must equal passing the lean numbers, or the
+  // two call sites drift and the committed picture moves for no stated reason.
+  const n = 12;
+  const bias = Array.from({length: n}, (_, i) => i / (n - 1));
+  const a = page.mapLayout(n, CHAIN(n), 1234567, bias);
+  const b = page.mapLayout(n, CHAIN(n), 1234567, bias, 900, 0.02);
+  assert.deepEqual([...a.Y], [...b.Y]);
+});
