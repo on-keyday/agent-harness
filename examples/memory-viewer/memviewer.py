@@ -737,6 +737,10 @@ h2.sec:first-child{margin-top:0}
 #mapsvg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
 #mapsvg.drag{cursor:grabbing}
 #mapsvg line{stroke:#3a3a3a;stroke-width:.8}
+#mapsvg line.mut{stroke:#6a5630;stroke-width:1.4}
+#mapsvg line.hout{stroke:#46603f;stroke-width:1.8}
+#mapsvg line.hin{stroke:#3c5068;stroke-width:1.8}
+#mapsvg g.dim circle{opacity:.25}
 #mapsvg circle{stroke:#161616;stroke-width:1}
 #mapsvg text{font:9px ui-monospace,Menlo,Consolas,monospace;fill:#9a9a9a;pointer-events:none}
 .maphud{position:absolute;right:.6rem;bottom:.6rem;background:#202020cc;border:1px solid #333;
@@ -1135,7 +1139,7 @@ function projectGraph(memories) {
     edges.push([lo, hi]);
     if (directed.has(lo + ":" + hi) && directed.has(hi + ":" + lo)) mutual.add(k);
   }
-  return { names, index, edges, mutual };
+  return { names, index, edges, mutual, resolve };
 }
 
 // mapLayout: where the whole-project map's nodes sit.
@@ -1325,6 +1329,39 @@ function goto(name) {
   }
 }
 
+// Direction, scoped to one node. Globally it says nothing — every edge is
+// somebody's outbound and somebody else's inbound, so a global direction
+// filter selects the whole set. Against ONE node it is the real question:
+// what does this reach, and what reaches it.
+function mapHover(name){
+  const lines = $("mapcam").querySelectorAll("line");
+  if (!name) { lines.forEach(l => l.classList.remove("hout","hin")); return; }
+  const g = mapState.g;
+  const i = g.index.get(name);
+  if (i === undefined) return;
+  const mem = P.memories[i];
+  const out = new Set(), inn = new Set();
+  for (const raw of mem.links) {
+    const j = g.resolve(raw);
+    if (j >= 0 && j !== i) out.add(j);
+  }
+  for (const n of mem.inbound) if (g.index.has(n)) inn.add(g.index.get(n));
+  lines.forEach((l) => {
+    const a = +l.dataset.a, b = +l.dataset.b;
+    l.classList.remove("hout","hin");
+    const other = a === i ? b : (b === i ? a : -1);
+    if (other < 0) return;
+    if (out.has(other)) l.classList.add("hout");
+    else if (inn.has(other)) l.classList.add("hin");
+  });
+}
+
+$("mapsvg").addEventListener("pointerover", (e) => {
+  if (!mapState.open) return;
+  const g = e.target.closest("[data-mapnode]");
+  mapHover(g ? g.dataset.mapnode : null);
+});
+
 $("mapcolor").addEventListener("change", (e) => { mapState.colorBy = e.target.value; renderMap(); });
 $("mapsize").addEventListener("change", (e) => { mapState.sizeBy = e.target.value; renderMap(); });
 $("maplabels").addEventListener("change", (e) => { mapState.labels = e.target.checked; renderMap(); });
@@ -1428,8 +1465,10 @@ function renderMap(){
   const {names, edges} = mapState.g, {X, Y} = mapState.pos;
   const xy = (v) => v.toFixed(1);
   let h = "";
-  for (const [a, b] of edges)
-    h += `<line x1="${xy(X[a])}" y1="${xy(Y[a])}" x2="${xy(X[b])}" y2="${xy(Y[b])}"/>`;
+  for (const [a, b] of edges) {
+    const mut = mapState.g.mutual.has(a + ":" + b) ? " mut" : "";
+    h += `<line class="e${mut}" data-a="${a}" data-b="${b}" x1="${xy(X[a])}" y1="${xy(Y[a])}" x2="${xy(X[b])}" y2="${xy(Y[b])}"/>`;
+  }
   names.forEach((name, i) => {
     const nd = P.memories[i], r = mapRadius(nd);
     h += `<g data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length}</title>`
