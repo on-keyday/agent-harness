@@ -24,6 +24,10 @@ func (stubConn) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream             {
 func (stubConn) CreateBidirectionalStream() trsf.BidirectionalStream           { return nil }
 func (stubConn) GetBidirectionalStream(trsf.StreamID) trsf.BidirectionalStream { return nil }
 
+// The datagram half of ConnHandle, stubbed like the rest of this fake.
+func (stubConn) SendDatagram([]byte) error { return nil }
+func (stubConn) MaxDatagramSize() int      { return 1169 }
+
 // newTestHandler returns a *TaskHandler with an empty Registry and TaskStore,
 // suitable for unit-testing handleSubmit and handleOpenInteractive.
 func newTestHandler(t *testing.T) *TaskHandler {

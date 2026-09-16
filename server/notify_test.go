@@ -271,3 +271,10 @@ func TestHandleNotify_WorkerOrigin_PopulatesEvent(t *testing.T) {
 		t.Fatalf("worker fields not propagated: task_id=%q hostname=%q runner_id=%q", w.TaskId, w.Hostname, w.RunnerId)
 	}
 }
+
+// The datagram half of ConnHandle, stubbed like the rest of this fake: no test
+// in this package drives the udp forward relay through it. MaxDatagramSize
+// answers a realistic size rather than 0, so a caller comparing a payload
+// against it is not told everything is oversized.
+func (c *captureConn) SendDatagram([]byte) error { return nil }
+func (c *captureConn) MaxDatagramSize() int      { return 1169 }

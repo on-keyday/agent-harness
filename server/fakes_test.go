@@ -174,6 +174,13 @@ func (f *fakeConn) GetReceiveStream(_ trsf.StreamID) trsf.ReceiveStream { return
 // GetBidirectionalStream resolves a peer-created stream by id from bidiByID
 // (nil if absent), mirroring how the real conn looks up a runner-created
 // remote-forward data stream.
+// The datagram half of ConnHandle. Stubs: nothing in this package's unit tests
+// drives the udp forward relay, which has its own fake (see forward_datagram_test.go).
+// MaxDatagramSize answers a realistic size rather than 0, so a caller that
+// compares a payload against it is not told everything is oversized.
+func (f *fakeConn) SendDatagram(b []byte) error { return nil }
+func (f *fakeConn) MaxDatagramSize() int        { return 1169 }
+
 func (f *fakeConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
 	return f.bidiByID[id]
 }

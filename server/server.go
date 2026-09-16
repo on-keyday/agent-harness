@@ -1152,6 +1152,19 @@ func (s streamingConn) GetBidirectionalStream(id trsf.StreamID) trsf.Bidirection
 	return s.trans.GetBidirectionalStream(id)
 }
 
+// SendDatagram relays one payload on trsf's datagram frame. Congestion
+// controlled: the relay is bulk traffic, and the uncontrolled mode is for
+// senders whose rate is bounded by construction, which a tunnel is not.
+//
+// The error is returned rather than logged here because the CALLER is what
+// knows which forward the payload belonged to, and a drop that is not counted
+// against a row is a drop no operator can find.
+func (s streamingConn) SendDatagram(b []byte) error { return s.trans.SendDatagram(b) }
+
+// MaxDatagramSize is what currently fits one packet on this connection. It
+// moves with PLPMTUD, so the relay reads it per datagram.
+func (s streamingConn) MaxDatagramSize() int { return s.trans.MaxDatagramSize() }
+
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
 	// Defer close announcement so peers (runners / clients) see an explicit
@@ -1236,6 +1249,17 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		}
 		return protocol.PskAuthStatus_BadTicket
 	}
+
+	// Datagrams arrive on their own queue, not through AutoReceive's callback —
+	// that is what being acknowledged costs, since the packet has to reach the
+	// run loop first. So they need their own pump.
+	//
+	// It reads gate.Authed() per datagram rather than being started after the
+	// handshake: the pump has to exist before the first packet can arrive, and
+	// an unauthenticated connection must not be able to reach the forward
+	// registry at all. Same fail-closed rule the message path applies, stated
+	// where the datagram path can honour it.
+	go s.pumpForwardDatagrams(connCtx, wrapped, p, gate.Authed)
 
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil {

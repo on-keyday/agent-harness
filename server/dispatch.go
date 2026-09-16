@@ -36,6 +36,18 @@ type ConnHandle interface {
 	// pick up a runner-created remote-forward data stream (the runner creates it
 	// per accepted connection and sends the id via RemoteForwardConn).
 	GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream
+	// SendDatagram relays one unreliable payload; MaxDatagramSize says what
+	// currently fits in one and MOVES with PLPMTUD.
+	//
+	// Here rather than only on streamingConn because the udp forward relay
+	// reaches the FAR leg through this interface: the registry hands back a
+	// runner's ConnHandle, and that is the only reference the relay has to it.
+	//
+	// The error is returned rather than logged inside, because only the caller
+	// knows which forward the payload belonged to — and a drop counted against
+	// no row is one no operator can find.
+	SendDatagram(b []byte) error
+	MaxDatagramSize() int
 }
 
 type Dispatcher struct {
