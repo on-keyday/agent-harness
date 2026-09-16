@@ -1904,6 +1904,30 @@ enum TrsfCounterKey:
     send_push_cwnd = "send_push_cwnd"       # delta only: revived when cwnd reopened
     send_push_loss = "send_push_loss"       # delta only: one per LOST PACKET
     send_push_other = "send_push_other"     # delta only: open, cancel, peer window
+    # Datagrams. Appended, so every ordinal above is unchanged and a runner
+    # older than these omits them rather than reporting zeros -- which is the
+    # distinction the keyed list exists for.
+    #
+    # The drop causes are separate keys on purpose. They ask different things of
+    # whoever reads them: oversize means the payload can never fit and only the
+    # application can act, congestion means the window said no, and the two
+    # queue keys mean this process could not keep up on its own send or receive
+    # side. All four are distinct from datagrams_lost, which is the PATH. A
+    # reader that cannot tell "we dropped it" from "the network dropped it"
+    # starts every diagnosis at the wrong layer.
+    datagrams_received = "datagrams_received"
+    datagrams_dropped_recv_queue = "datagrams_dropped_recv_queue"
+    datagrams_sent = "datagrams_sent"
+    datagrams_sent_uncontrolled = "datagrams_sent_uncontrolled"
+    datagrams_lost = "datagrams_lost"
+    datagrams_dropped_oversize = "datagrams_dropped_oversize"
+    datagrams_dropped_congestion = "datagrams_dropped_congestion"
+    datagrams_dropped_send_queue = "datagrams_dropped_send_queue"
+    # Must read ZERO. Nonzero means trsf's routing predicate and its packet
+    # union have drifted apart and some transport kind is being dropped in
+    # silence -- a defect in the transport, surfaced here because this row is
+    # the only place an operator would ever see it.
+    unrouted_transport_kind = "unrouted_transport_kind"
 
 format TrsfCounter:
     key :TrsfCounterKey

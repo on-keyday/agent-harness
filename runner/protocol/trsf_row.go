@@ -20,7 +20,7 @@ import "github.com/on-keyday/objtrsf/trsf"
 // InternalState.SentPackets is deliberately not carried: it is an unbounded
 // slice, and no reading of a stalled transfer needs per-packet detail.
 func TrsfRowFrom(st *trsf.InternalState) TrsfConnState {
-	c := make([]TrsfCounter, 0, 29)
+	c := make([]TrsfCounter, 0, 38)
 	add := func(k TrsfCounterKey, v uint64) {
 		c = append(c, TrsfCounter{Key: k, Value: v})
 	}
@@ -60,6 +60,18 @@ func TrsfRowFrom(st *trsf.InternalState) TrsfConnState {
 	add(TrsfCounterKey_SendPushCwnd, st.SendPushCwnd)
 	add(TrsfCounterKey_SendPushLoss, st.SendPushLoss)
 	add(TrsfCounterKey_SendPushOther, st.SendPushOther)
+	// Datagrams. Emitted unconditionally, zeros included: on a connection that
+	// carries none, "0 sent, 0 dropped" is the answer, and gating on the value
+	// would make a quiet tunnel indistinguishable from a peer too old to report.
+	add(TrsfCounterKey_DatagramsReceived, st.DatagramsReceived)
+	add(TrsfCounterKey_DatagramsDroppedRecvQueue, st.DatagramsDroppedReceiveQueue)
+	add(TrsfCounterKey_DatagramsSent, st.DatagramsSent)
+	add(TrsfCounterKey_DatagramsSentUncontrolled, st.DatagramsSentUncontrolled)
+	add(TrsfCounterKey_DatagramsLost, st.DatagramsLost)
+	add(TrsfCounterKey_DatagramsDroppedOversize, st.DatagramsDroppedOversize)
+	add(TrsfCounterKey_DatagramsDroppedCongestion, st.DatagramsDroppedCongestion)
+	add(TrsfCounterKey_DatagramsDroppedSendQueue, st.DatagramsDroppedSendQueue)
+	add(TrsfCounterKey_UnroutedTransportKind, st.UnroutedTransportKind)
 
 	row := TrsfConnState{CounterCount: uint16(len(c))}
 	row.SetCounters(c)

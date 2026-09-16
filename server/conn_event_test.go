@@ -537,6 +537,19 @@ func (r *recordingTransport) GetBidirectionalStream(_ trsf.StreamID) trsf.Bidire
 func (r *recordingTransport) Send(_ *objproto.Message)                {}
 func (r *recordingTransport) Recv(_ context.Context) *trsf.SendAction { return nil }
 
+// The datagram half of trsf.Transport, stubbed like the rest: pubsub carries
+// its payloads on streams, so nothing on the Subscribe path reaches these.
+// ReceiveDatagram blocks until ctx ends rather than returning immediately,
+// because that is what a transport with no datagrams does — returning would
+// spin any caller that did reach it.
+func (r *recordingTransport) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (r *recordingTransport) SendDatagram(_ []byte) error             { return nil }
+func (r *recordingTransport) SendDatagramUncontrolled(_ []byte) error { return nil }
+func (r *recordingTransport) MaxDatagramSize() int                    { return 0 }
+
 // recordingStream is a trsf.BidirectionalStream that counts AppendData calls
 // (the delivery the broker performs) and returns EOF from ReadDirect so the
 // Subscribe read goroutine terminates immediately instead of spinning.
