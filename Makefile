@@ -85,12 +85,18 @@ wasm-check:
 test: js-test
 	go test ./...
 
-# The half of main.js that lives outside the page's IIFE -- its command line
-# (cmd_test) and the preview's pure decisions (preview_test) -- driven under
-# node's built-in test runner against the REAL wasm bridge
-# (webui/static/harness_env.mjs loads main.wasm, so the declaration under test
-# is the one the CLI and TUI parse from). Depends on webui-build because a
-# stale main.wasm would test a stale table.
+# Every JavaScript assertion in the repo, under node's built-in test runner:
+# the half of main.js that lives outside the page's IIFE -- its command line
+# (cmd_test) and the preview's pure decisions (preview_test) -- against the
+# REAL wasm bridge (webui/static/harness_env.mjs loads main.wasm, so the
+# declaration under test is the one the CLI and TUI parse from), plus the two
+# pure functions behind memviewer's project map (maplayout_test), which reads
+# its subject out of the Python source the same way.
+#
+# examples/ is listed here rather than left to be run by hand for the reason
+# this file already carries twice: a test nothing executes is not a test.
+#
+# Depends on webui-build because a stale main.wasm would test a stale table.
 #
 # Skipped where node is absent rather than failing: this repo builds on
 # Windows runners too, and a missing JS runtime must not stop `make test`
@@ -109,7 +115,8 @@ test: js-test
 # returned 0. The skip must cover only the absence of node.
 js-test: webui-build
 	@if command -v node >/dev/null 2>&1; then \
-	  node --test webui/static/cmd_test.mjs webui/static/preview_test.mjs; \
+	  node --test webui/static/cmd_test.mjs webui/static/preview_test.mjs \
+	              examples/memory-viewer/maplayout_test.mjs; \
 	else echo "js-test: no node on PATH, skipping"; fi
 
 # The integration suite lives behind the `integration` build tag and is NOT
@@ -151,7 +158,7 @@ protoregen:
 help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
-	@echo "  js-test       node --test over the WebUI command line + preview logic (skipped without node)"
+	@echo "  js-test       node --test over every JS assertion: WebUI command line, preview logic, memviewer map (skipped without node)"
 	@echo "  build         webui-build + emit bin/<cmd> for each cmd/*"
 	@echo "  release       build with -trimpath -ldflags=\"-s -w\" (used by CI matrix)"
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"
