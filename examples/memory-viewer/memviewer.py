@@ -748,6 +748,12 @@ h2.sec:first-child{margin-top:0}
 .mapbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.4rem .8rem;
   border-bottom:1px solid #333;background:#1b1b1b}
 .mapbar[hidden]{display:none}
+/* The area filter is a chip strip rather than a select: which areas exist, and
+   which one is being looked at, are both things you should see without opening
+   anything. It was a select first and the operator could not find it. Same
+   shape as the list's own area chips, so there is one thing to learn. */
+.mapareas{display:flex;flex-wrap:wrap;gap:.35rem;flex-basis:100%}
+.mapareas:empty{display:none}
 
 .send{margin:.8rem 0;border:1px solid #333;border-radius:6px;padding:.4rem .6rem;background:#202020}
 .send summary{cursor:pointer;color:#9a9a9a;font-size:.86rem}
@@ -1170,16 +1176,20 @@ function projectGraph(memories) {
 // without ever reaching its neighbour's.
 function bandsFor(counts, span){
   const SPAN = span || 1800;
-  const max = Math.max(0, ...counts);
-  const centre = (c) => (0.5 - (max > 0 ? c / max : 0.5)) * SPAN;
+  // One strip per distinct weight, EVENLY spaced — the row is an ordinal, not
+  // a measurement. Spacing proportional to the weight was tried first and its
+  // whole effect was empty space: this corpus jumps 13 -> 19 at the top, so the
+  // gap between the two highest rows was 561px, 30% of the drawing's height,
+  // holding one node. Magnitude is already carried by node size and by colour;
+  // a third encoding of it costs the layout and tells nobody anything, and a
+  // 561px gap is not read as "six more inbound links" by anyone.
   const distinct = [...new Set(counts)].sort((a, b) => a - b);
-  let closest = Infinity;
-  for (let i = 1; i < distinct.length; i++)
-    closest = Math.min(closest, Math.abs(centre(distinct[i]) - centre(distinct[i - 1])));
+  const k = distinct.length;
+  const centre = (c) => (k > 1 ? (0.5 - distinct.indexOf(c) / (k - 1)) * SPAN : 0);
   // 0.45 rather than 0.5 so neighbouring strips are separated, not merely
   // adjacent — touching strips let a node sit exactly level with one a weight
   // below, which is the inversion this exists to rule out.
-  const half = Number.isFinite(closest) ? closest * 0.45 : SPAN / 4;
+  const half = k > 1 ? (SPAN / (k - 1)) * 0.45 : SPAN / 4;
   return counts.map((c) => [centre(c) - half, centre(c) + half]);
 }
 
@@ -1416,7 +1426,6 @@ $("mapsvg").addEventListener("pointerover", (e) => {
   mapHover(g ? g.dataset.mapnode : null);
 });
 
-$("maparea").addEventListener("change", (e) => { mapState.area = e.target.value; renderMap(); });
 $("mapneigh").addEventListener("change", (e) => { mapState.neighbours = e.target.checked; renderMap(); });
 $("mapcolor").addEventListener("change", (e) => { mapState.colorBy = e.target.value; renderMap(); });
 $("mapsize").addEventListener("change", (e) => { mapState.sizeBy = e.target.value; renderMap(); });
@@ -1559,10 +1568,7 @@ function openMap(){
   $("mapview").hidden = false; $("mapbar").hidden = false;
   document.querySelector("main").hidden = true;
   $("mapbtn").classList.add("on");
-  $("maparea").innerHTML = `<option value="">全部</option>`
-    + (mapAreas().includes("") ? `<option value="${MAP_TOP}">${MAP_TOP}</option>` : "")
-    + mapAreas().filter(Boolean).map(a => `<option value="${esc(a)}">${esc(a)}/</option>`).join("");
-  $("maparea").value = mapState.area;
+  mapAreaChips();
   renderMap();
   if (mapState.cam.k === 1 && mapState.cam.x === 0 && mapState.cam.y === 0) mapFit();
   else mapCam();
@@ -1626,6 +1632,19 @@ function mapLabel(name){
 // questions and the empty string cannot carry both — top-level IS an area here
 // (100 of the 169 memories, and 177 of the 375 edges), and being unable to look
 // at it alone was the one thing the area filter existed for.
+// Same strip the list carries, drawn from the data for the same reason: an
+// area added tomorrow has to appear without an edit here.
+function mapAreaChips(){
+  const n = new Map();
+  for (const m of P.memories) n.set(m.area || "", (n.get(m.area || "") + 1) || 1);
+  const areas = [...n.keys()].sort();
+  const chip = (val, label) =>
+    `<button class="chip${mapState.area === val ? " on" : ""}" data-maparea="${esc(val)}">${label}</button>`;
+  $("mapareas").innerHTML = chip("", "\u5168\u90e8")
+    + areas.map((a) => chip(a === "" ? MAP_TOP : a,
+        esc(a === "" ? MAP_TOP : a + "/") + " " + n.get(a))).join("");
+}
+
 function mapVisible(){
   const g = mapState.g;
   if (!mapState.area) return {show: new Set(g.names.map((_, i) => i)), dim: new Set()};
@@ -1756,6 +1775,8 @@ document.addEventListener("click", (e) => {
   if (is) { idxSort = is.dataset.isort; renderIndexView(); return; }
   const t = e.target.closest("[data-goto]");
   if (t) { e.preventDefault(); goto(t.dataset.goto); return; }
+  const mac = e.target.closest("[data-maparea]");
+  if (mac) { mapState.area = mac.dataset.maparea; mapAreaChips(); renderMap(); return; }
   const pc = e.target.closest("[data-proj]");
   if (pc) {
     // No index view to open alongside it, unlike an area: a project filter
@@ -1887,10 +1908,10 @@ def page(payload: dict | None = None) -> str:
     <option value="lean">上へ傾ける</option>
     <option value="layer">上から層にする</option>
   </select></label>
-  <label>area <select id="maparea"></select></label>
   <label><input type="checkbox" id="mapneigh"> 隣接も含める</label>
   <button class="chip" id="mapfit">全体に合わせる</button>
   <span class="meta" id="maplegend"></span>
+  <span class="mapareas" id="mapareas"></span>
 </div>
 <div id="mapview" hidden><svg id="mapsvg"><g id="mapcam"></g></svg><div class="maphud" id="maphud"></div></div>
 <main>

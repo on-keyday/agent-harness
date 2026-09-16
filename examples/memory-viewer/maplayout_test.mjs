@@ -335,3 +335,19 @@ test("mapLayout with bands cannot invert two different weights", () => {
       minSep = Math.min(minSep, Math.hypot(X[i] - X[j], Y[i] - Y[j]));
   assert.ok(minSep > 3, `closest pair is ${minSep.toFixed(2)} apart`);
 });
+
+test("bandsFor spaces the strips evenly, one per distinct weight", () => {
+  // Even, not proportional to the weight. Magnitude is already carried twice
+  // over — by node size and by colour — so spending the vertical range on it
+  // again only buys empty space: proportional strips left 561px, 30% of the
+  // drawing's height, between the top two rows of this corpus.
+  const bands = page.bandsFor([0, 1, 5, 19]);           // gaps 1, 4, 14 by value
+  const centre = (b) => (b[0] + b[1]) / 2;
+  const gaps = [centre(bands[0]) - centre(bands[1]),
+                centre(bands[1]) - centre(bands[2]),
+                centre(bands[2]) - centre(bands[3])];
+  for (const g of gaps)
+    assert.ok(Math.abs(g - gaps[0]) < 1e-9,
+      `strip gaps must be equal, got ${gaps.map((x) => x.toFixed(1)).join(", ")}`);
+  assert.ok(gaps[0] > 0, "heavier weights must be higher, so gaps run positive");
+});
