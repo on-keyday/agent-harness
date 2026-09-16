@@ -125,3 +125,7 @@ func TestRebindFailureToleratesAMissingOrDeadEntry(t *testing.T) {
 		t.Error("a dead child's entry stayed in the registry")
 	}
 }
+
+// The datagram half of Sender, stubbed like the rest of this fake.
+func (nopSender) SendDatagram([]byte) error { return nil }
+func (nopSender) MaxDatagramSize() int      { return 1169 }

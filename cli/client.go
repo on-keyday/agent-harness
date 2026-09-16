@@ -154,6 +154,10 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Clie
 
 	// Merged handshake complete — switch to the pure app handler.
 	pc.SetOnControl(c.dispatchControl)
+	// The datagram seam needs no handshake staging the way the control one
+	// does: a forward's datagrams cannot arrive before the forward is
+	// registered, and registration is a control RPC over this same connection.
+	pc.SetOnDatagram(c.dispatchDatagram)
 	return c, nil
 }
 

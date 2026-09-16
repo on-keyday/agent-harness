@@ -454,6 +454,13 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// lost.
 		h.bufferOrDispatch(kind, payload)
 	})
+	// Datagrams need no buffering across the handshake the way control messages
+	// do: a forward's datagrams cannot arrive before the forward is registered,
+	// and registration is a control message that this connection has to accept
+	// first. So the seam can be its final form from the start.
+	pc.SetOnDatagram(func(kind appwire.AppKind, payload []byte) {
+		session.handleDatagram(kind, payload)
+	})
 	pc.Start(ctx)
 
 	// Build and send the merged PSK+identity request (role=runner).
@@ -795,6 +802,11 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		session.rforwardListeners().close(cpf.ForwardId)
+		// Both, unconditionally: the id names one registration and only one of
+		// the two registries holds it. Asking which first would mean carrying
+		// the protocol on the close request for no other reason, and a close
+		// that reached the wrong registry would leave the sockets open.
+		session.udpForwardRegistry().close(cpf.ForwardId)
 	case protocol.RunnerRequestType_EstablishRelay:
 		er := req.EstablishRelay()
 		if er == nil {
@@ -876,6 +888,10 @@ func (s *peerSender) ID() objproto.ConnectionID {
 func (s *peerSender) Publish(topic string, data []byte) error {
 	return s.pc.Publish(s.ctx, "runner", topic, data)
 }
+
+func (s *peerSender) SendDatagram(b []byte) error { return s.pc.SendDatagram(b) }
+
+func (s *peerSender) MaxDatagramSize() int { return s.pc.MaxDatagramSize() }
 
 // buildRunnerEndpoint constructs an objproto.Endpoint for dial-mode runner.
 //

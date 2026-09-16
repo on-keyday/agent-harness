@@ -2999,6 +2999,15 @@ format RunnerOpenPortForwardRequest:
     bind_addr         :[bind_addr_len]u8
     bind_port         :u16
     forward_id        :u64
+    # Appended. For tcp this request arrives PER CONNECTION and stream_id names
+    # the stream that connection's bytes cross; for udp it arrives ONCE, at
+    # registration, with stream_id 0 — there is no per-connection open because a
+    # flow is created by its first datagram arriving, not by an accept.
+    #
+    # So this field is also what tells the runner which of those two things it
+    # is being handed. A udp request is a standing instruction: remember that
+    # forward_id dials remote_host:remote_port, and expect datagrams naming it.
+    protocol :ForwardProtocol
 
 # ClosePortForwardRequest tells the runner to stop a remote-forward listener.
 format ClosePortForwardRequest:

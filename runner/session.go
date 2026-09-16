@@ -97,6 +97,15 @@ type Sender interface {
 	ID() objproto.ConnectionID
 	// Publish writes a chunk of data to the given pubsub topic.
 	Publish(topic string, data []byte) error
+	// SendDatagram transmits one unreliable payload, already wire-prefixed like
+	// Send's. MaxDatagramSize says what currently fits in one and MOVES with
+	// PLPMTUD, so a caller reads it per send.
+	//
+	// Separate from Send because what they ride differs in the properties that
+	// matter: Send's message is unacknowledged and outside congestion control,
+	// this is neither. A udp forward's replies go here; nothing else does yet.
+	SendDatagram(b []byte) error
+	MaxDatagramSize() int
 }
 
 // taskEntry holds the per-task cancellation function, the repo it runs
@@ -224,6 +233,12 @@ type Session struct {
 	// ClosePortForward request can shut them down. Lazily created (see
 	// remoteForwardListeners / port_forward.go).
 	rforwards *remoteForwardListeners
+	// udpForwards tracks udp -L registrations and the per-flow sockets dialled
+	// under each. Separate from rforwards because it holds a different thing
+	// for a different direction: those are listeners this runner opened for -R,
+	// these are sockets it dialled for -L, and a udp -L has no listener at all.
+	// Lazily created (see udpForwardRegistry / forward_datagram.go).
+	udpForwards *udpForwards
 
 	// ServerCID, Hostname, WSPath, BinDir are required for HARNESS_* env
 	// injection at task spawn time. Filled from Config in connect.go.

@@ -39,6 +39,7 @@ type mockSender struct {
 	mu        sync.Mutex
 	sent      [][]byte
 	publishes []publishedMsg
+	datagrams [][]byte
 }
 
 type publishedMsg struct {
@@ -1045,3 +1046,17 @@ func TestHandleAssign_NoWorktree_ForceInject(t *testing.T) {
 		t.Errorf(".harness-worktrees should not exist in NoWorktree mode; stat err=%v", err)
 	}
 }
+
+// The datagram half of Sender. Recorded rather than dropped: a test that wants
+// to assert what a udp forward sent back has nowhere else to look, and a
+// silent stub would make "it sent nothing" and "it sent into a void"
+// indistinguishable. The size answers a realistic value rather than 0, so a
+// caller comparing a payload against it is not told everything is oversized.
+func (m *mockSender) SendDatagram(b []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.datagrams = append(m.datagrams, append([]byte(nil), b...))
+	return nil
+}
+
+func (m *mockSender) MaxDatagramSize() int { return 1169 }

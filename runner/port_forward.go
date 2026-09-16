@@ -76,6 +76,10 @@ func (s *Session) handleOpenPortForward(ctx context.Context, req *protocol.Runne
 		s.startRemoteForward(ctx, req)
 		return
 	}
+	if req.Protocol == protocol.ForwardProtocol_Udp {
+		s.registerUDPForward(req)
+		return
+	}
 	log := s.logger()
 	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
 	if stream == nil {
@@ -231,4 +235,26 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 		}
 	}()
 	wg.Wait()
+}
+
+// registerUDPForward records a standing instruction: datagrams naming this
+// forward_id are to be sent to remote_host:remote_port, one socket per flow.
+//
+// Nothing is dialled here. A udp forward has no per-connection open — a flow
+// begins when its first datagram arrives — so registration only has to make the
+// target findable by the time one does.
+func (s *Session) registerUDPForward(req *protocol.RunnerOpenPortForwardRequest) {
+	log := s.logger()
+	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+	if s.worktreeDirFor(taskIDHex) == "" {
+		log.Error("udp forward: unknown task", "task_id", taskIDHex)
+		return
+	}
+	if s.Sender == nil {
+		log.Error("udp forward: no sender wired; replies would have nowhere to go")
+		return
+	}
+	target := targetAddr(string(req.RemoteHost), req.RemotePort)
+	s.udpForwardRegistry().add(req.ForwardId, target, s.Sender)
+	log.Info("udp forward: registered", "fwd", req.ForwardId, "target", target)
 }

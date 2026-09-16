@@ -254,6 +254,12 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		closeAll()
 	}
 	for _, sp := range specs {
+		if sp.Protocol == protocol.ForwardProtocol_Udp {
+			if err := runOneUDPForward(runCtx, c, taskIDHex, sp, logf, onRegistered, &wg, abort); err != nil {
+				return err
+			}
+			continue
+		}
 		ln, err := net.Listen("tcp", net.JoinHostPort(sp.BindAddr, strconv.Itoa(sp.LocalPort)))
 		if err != nil {
 			abort()
@@ -659,4 +665,45 @@ func (c *Client) dialAndSplice(ctx context.Context, sp RemoteForwardSpec, stream
 		return
 	}
 	spliceConnStream(conn, st)
+}
+
+// runOneUDPForward binds, registers and starts one udp -L, and is the udp half
+// of RunForward's loop.
+//
+// A separate function rather than a branch inside that loop because almost
+// nothing is shared: there is no accept, no per-connection open, and no
+// net.Listener to add to the teardown list — the socket's lifetime is the
+// forward's, and ctx is what ends it.
+func runOneUDPForward(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec,
+	logf func(string), onRegistered func(sp ForwardSpec, id uint64),
+	wg *sync.WaitGroup, abort func()) error {
+	ln, bound, err := listenUDPForward(sp)
+	if err != nil {
+		abort()
+		return fmt.Errorf("forward: listen udp %s:%d: %w", sp.BindAddr, sp.LocalPort, err)
+	}
+	ctrl, fid, rerr := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
+		sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, protocol.ClientEndpointKind_OsSocket,
+		protocol.ForwardProtocol_Udp, protocol.DataPlaneRoute_Splice)
+	if rerr != nil {
+		_ = ln.Close()
+		abort()
+		return fmt.Errorf("forward: register udp %s:%d: %w", sp.BindAddr, bound, rerr)
+	}
+	if onRegistered != nil {
+		onRegistered(sp, fid)
+	}
+	fwdCtx, cancel := context.WithCancel(ctx)
+	logf(fmt.Sprintf("forwarding %s:%d -> %s:%d/udp (task %s, fwd %d)",
+		sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))], fid))
+	go runUDPForward(fwdCtx, c.conn, sp, fid, ln, logf)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		// Same control stream contract as tcp: its EOF or a Closed record is
+		// what ends the forward, and closing it is what deregisters server-side.
+		serveForwardControl(fwdCtx, ctrl, logf, func() { _ = ln.Close() })
+	}()
+	return nil
 }

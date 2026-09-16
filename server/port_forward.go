@@ -57,9 +57,13 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
 	body := protocol.RunnerOpenPortForwardRequest{
-		TaskId:     req.TaskId,
-		StreamId:   uint64(runnerStream.ID()),
-		Direction:  protocol.PortForwardDirection_Local,
+		TaskId:    req.TaskId,
+		StreamId:  uint64(runnerStream.ID()),
+		Direction: protocol.PortForwardDirection_Local,
+		// tcp, stated: this request is the PER-CONNECTION open, which only tcp
+		// has. A udp forward is handed its standing instruction once, at
+		// registration, and never reaches here.
+		Protocol:   protocol.ForwardProtocol_Tcp,
 		RemotePort: req.RemotePort,
 	}
 	body.SetRemoteHost(req.RemoteHost)
@@ -150,6 +154,17 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 	}
 	pf.control = ctrl
 	fid := h.pforwards().add(pf)
+	// A udp -L needs the runner told NOW, because there is no per-connection
+	// open to carry the target later: a flow begins when its first datagram
+	// arrives, and by then the runner must already know where to send it.
+	if req.Protocol == protocol.ForwardProtocol_Udp {
+		if err := h.sendUDPForwardInstruction(pf, req, task.AssignedTo); err != nil {
+			h.pforwards().remove(fid)
+			_ = ctrl.CloseBoth()
+			slog.Error("udp forward: could not instruct the runner", "task_id", taskIDHex, "err", err)
+			return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
+		}
+	}
 	h.emitForwardEvent(protocol.StatusEventKind_ForwardRegistered, pf)
 	go h.watchRemoteForwardControl(pf)
 	return protocol.RegisterPortForwardResponse{
@@ -329,4 +344,30 @@ func (h *TaskHandler) watchRemoteForwardControl(pf *portForward) {
 	// record onto a stream the client has already walked away from would be
 	// a no-op at best. The reason argument is unused on this path.
 	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
+}
+
+// sendUDPForwardInstruction tells the runner which target a udp forward dials.
+//
+// Sent once per registration rather than per connection, which is the whole
+// shape difference between udp and tcp here: stream_id is 0 because there is no
+// stream, and the runner keeps the target until a ClosePortForward arrives.
+func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.RegisterPortForwardRequest, runnerID protocol.RunnerID) error {
+	runner, ok := h.Registry.GetByIdentity(runnerID)
+	if !ok || runner.Conn == nil {
+		return errRunnerOffline
+	}
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
+	body := protocol.RunnerOpenPortForwardRequest{
+		TaskId:     req.TaskId,
+		StreamId:   0,
+		Direction:  protocol.PortForwardDirection_Local,
+		Protocol:   protocol.ForwardProtocol_Udp,
+		RemotePort: req.TargetPort,
+		ForwardId:  pf.forwardID,
+	}
+	body.SetRemoteHost(req.TargetHost)
+	rreq.SetOpenPortForward(body)
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
+	_, _, err := runner.Conn.SendMessage(data)
+	return err
 }
