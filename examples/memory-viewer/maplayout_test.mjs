@@ -294,3 +294,44 @@ test("the layered setting puts the most-linked node near the top", () => {
   assert.ok(above / n < 0.15,
     `the most-linked node has ${above} of ${n} above it (${(above / n * 100).toFixed(0)}%)`);
 });
+
+// Bands: the strict form. A soft pull gets the ordering mostly right, and
+// "mostly" is the worst of both — it reads as exact and then lies in a handful
+// of places. With bands the y of a node is a function of its weight alone, so
+// no pair can invert, by construction rather than by tuning.
+test("bandsFor gives every distinct weight its own non-overlapping strip", () => {
+  const bands = page.bandsFor([0, 0, 1, 5]);
+  // same weight, same strip
+  assert.deepEqual([...bands[0]], [...bands[1]]);
+  // heavier is strictly higher, and the strips do not touch
+  assert.ok(bands[3][1] < bands[2][0], `weight 5 strip ${bands[3]} must clear weight 1 ${bands[2]}`);
+  assert.ok(bands[2][1] < bands[1][0], `weight 1 strip ${bands[2]} must clear weight 0 ${bands[1]}`);
+});
+
+test("mapLayout with bands cannot invert two different weights", () => {
+  const counts = [...Array(80).fill(0), ...Array(40).fill(1), 6, 8, 13, 19];
+  const n = counts.length;
+  const seen = new Set(), edges = [];
+  for (const step of [7, 13, 23, 31]) {
+    for (let i = 0; i < n; i++) {
+      const j = (i * step + 3) % n;
+      if (i === j) continue;
+      const k = Math.min(i, j) + ":" + Math.max(i, j);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      edges.push([Math.min(i, j), Math.max(i, j)]);
+    }
+  }
+  const { X, Y } = page.mapLayout(n, edges, 1234567, null, 1800, 0.08, page.bandsFor(counts));
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++)
+      if (counts[i] > counts[j])
+        assert.ok(Y[i] < Y[j],
+          `${counts[i]} at y=${Y[i].toFixed(0)} must be above ${counts[j]} at y=${Y[j].toFixed(0)}`);
+  // and it must still be a drawing, not a stack of dots
+  let minSep = Infinity;
+  for (let i = 0; i < n; i++)
+    for (let j = i + 1; j < n; j++)
+      minSep = Math.min(minSep, Math.hypot(X[i] - X[j], Y[i] - Y[j]));
+  assert.ok(minSep > 3, `closest pair is ${minSep.toFixed(2)} apart`);
+});

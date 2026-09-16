@@ -1155,7 +1155,35 @@ function projectGraph(memories) {
 // `bias`, when given, is one number per node in [0,1]: 1 is pulled to the top
 // of the drawing, 0 to the bottom. Passing nothing leaves the layout exactly as
 // it was — a picture already looked at must not move because an option exists.
-function mapLayout(n, edges, seed, bias, span, pull) {
+// bandsFor: one horizontal strip per distinct weight, and strips never touch.
+//
+// This is the strict alternative to the soft bias, and it exists because the
+// soft one was reported as "uncomfortable" — it got the ordering MOSTLY right,
+// which is the worst of the three possible states. A drawing that is ordered
+// nine times out of ten is read as ordered and then misleads on the tenth. Here
+// y is a function of weight alone, so no two different weights can invert. Not
+// by tuning; by construction.
+//
+// Strips rather than lines: the weights are not evenly populated — 83 of this
+// corpus's 169 memories have at most one inbound link — and a line would make
+// those rows a hundred nodes wide. A strip gives the crowd somewhere to go
+// without ever reaching its neighbour's.
+function bandsFor(counts, span){
+  const SPAN = span || 1800;
+  const max = Math.max(0, ...counts);
+  const centre = (c) => (0.5 - (max > 0 ? c / max : 0.5)) * SPAN;
+  const distinct = [...new Set(counts)].sort((a, b) => a - b);
+  let closest = Infinity;
+  for (let i = 1; i < distinct.length; i++)
+    closest = Math.min(closest, Math.abs(centre(distinct[i]) - centre(distinct[i - 1])));
+  // 0.45 rather than 0.5 so neighbouring strips are separated, not merely
+  // adjacent — touching strips let a node sit exactly level with one a weight
+  // below, which is the inversion this exists to rule out.
+  const half = Number.isFinite(closest) ? closest * 0.45 : SPAN / 4;
+  return counts.map((c) => [centre(c) - half, centre(c) + half]);
+}
+
+function mapLayout(n, edges, seed, bias, span, pull, bands) {
   const rnd = (() => { let s = seed | 0; return () => {
     s = s + 0x6D2B79F5 | 0;
     let t = Math.imul(s ^ s >>> 15, 1 | s);
@@ -1167,6 +1195,10 @@ function mapLayout(n, edges, seed, bias, span, pull) {
   for (let i = 0; i < n; i++) {
     const a = rnd() * Math.PI * 2, d = 200 + rnd() * 260;
     X[i] = Math.cos(a) * d; Y[i] = Math.sin(a) * d;
+    // Start inside the strip rather than relaxing into it: a node that begins
+    // outside is clamped on the first step anyway, and the shove it takes on
+    // the way is a force nothing asked for.
+    if (bands) Y[i] = bands[i][0] + (bands[i][1] - bands[i][0]) * rnd();
   }
   const ITER = 400, SPRING = 260, REPEL = 9000;
   // Defaults are the LEAN setting, so a caller that passes only a bias gets
@@ -1199,10 +1231,15 @@ function mapLayout(n, edges, seed, bias, span, pull) {
     // this leans the picture, it does not sort it into rows.
     for (let i = 0; i < n; i++) {
       vx[i] -= X[i] * 0.0012;
-      if (bias) vy[i] += ((0.5 - bias[i]) * BIAS_SPAN - Y[i]) * BIAS_PULL;
+      // Bands own the vertical axis outright — no pull toward them, because a
+      // pull is a force that can be outvoted and that is exactly the failure
+      // being fixed.
+      if (bands) vy[i] = 0;
+      else if (bias) vy[i] += ((0.5 - bias[i]) * BIAS_SPAN - Y[i]) * BIAS_PULL;
       else vy[i] -= Y[i] * 0.0012;
       X[i] += Math.max(-30, Math.min(30, vx[i])) * cool;
       Y[i] += Math.max(-30, Math.min(30, vy[i])) * cool;
+      if (bands) Y[i] = Math.max(bands[i][0], Math.min(bands[i][1], Y[i]));
     }
   }
   return { X, Y };
@@ -1484,16 +1521,27 @@ function mapBiasWeights(){
   return biasWeights(P.memories.map((m) => m.inbound.length));
 }
 
-// Two settings, because they answer different questions and the map exists to
-// be looked at more than one way. "lean" leaves the springs in charge, so what
-// you read is who sits beside whom; "layer" puts the weight in charge, so what
-// you read is who the project rests on.
-const MAP_BIAS = {lean: {span: 900, pull: 0.02}, layer: {span: 1800, pull: 0.08}};
-
+// Two settings, and they differ in KIND rather than in strength.
+//
+// "lean" is a force: inbound count pulls a node up, the springs pull it toward
+// its neighbours, and the drawing is the compromise. It claims no ordering, and
+// it should not be read as one.
+//
+// "layer" is a constraint: y is a function of inbound count and nothing else,
+// so two different counts cannot appear in the wrong order. The soft setting
+// was tried for this job first and got the ordering right about nine times in
+// ten, which the operator called uncomfortable and was right to — a drawing
+// that is nearly ordered gets read as ordered.
 function mapLayoutNow(){
-  const b = MAP_BIAS[mapState.bias];
-  return mapLayout(mapState.g.names.length, mapState.g.edges, 1234567,
-                   b ? mapBiasWeights() : null, b && b.span, b && b.pull);
+  const n = mapState.g.names.length, edges = mapState.g.edges;
+  if (mapState.bias === "layer") {
+    const counts = P.memories.map((m) => m.inbound.length);
+    return mapLayout(n, edges, 1234567, null, null, null, bandsFor(counts, 1800));
+  }
+  if (mapState.bias === "lean") {
+    return mapLayout(n, edges, 1234567, mapBiasWeights(), 900, 0.02);
+  }
+  return mapLayout(n, edges, 1234567);
 }
 
 function mapRelayout(){
