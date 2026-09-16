@@ -1468,6 +1468,10 @@ function mapFit(){
 
 function render() {
   areaChips();
+  // Links never cross projects, so a union map is fifteen disconnected islands
+  // whose largest is the one already reachable by picking that project.
+  $("mapbtn").hidden = !!P.cross;
+  if (P.cross && mapState.open) closeMap();
   const w = warnBlock();
   $("warn").innerHTML = w;
   // The heading is static markup, so an empty panel would leave 要保守 sitting
@@ -1488,6 +1492,17 @@ document.addEventListener("click", (e) => {
   if (e.target.id === "sd-go") { doSend(); return; }
   if (e.target.id === "mapbtn") { mapState.open ? closeMap() : openMap(); return; }
   if (e.target.id === "mapfit") { mapFit(); return; }
+  const mn = e.target.closest("[data-mapnode]");
+  if (mn) {
+    // Closing is not incidental: the map occupies both panes, so a click that
+    // only selected would look like nothing happened. mapState.cam is kept, so
+    // re-opening returns to the same view — walking out to a memory and back is
+    // the expected loop.
+    if (mapDrag && mapDrag.moved) return;   // a pan that ended on a node is not a click
+    closeMap();
+    goto(mn.dataset.mapnode);
+    return;
+  }
   if (e.target.id === "open-index") { e.preventDefault(); renderIndexView(""); return; }
   const ia = e.target.closest("[data-idxarea]");
   if (ia) { e.preventDefault(); renderIndexView(ia.dataset.idxarea); return; }
