@@ -1404,7 +1404,8 @@ $("mapsvg").addEventListener("pointerup", () => { mapDrag = null; $("mapsvg").cl
 // returning is the expected loop, and a camera that reset would undo the pan
 // that got you there.
 const mapState = {open:false, cam:{x:0,y:0,k:1}, colorBy:"area", sizeBy:"in",
-                  labels:false, area:"", neighbours:false, g:null, pos:null};
+                  labels:false, area:"", neighbours:false, g:null, pos:null,
+                  drawn:{nodes:0, edges:0, filtered:false}};
 
 function openMap(){
   if (P.cross) return;           // links never cross projects; nothing to draw
@@ -1526,13 +1527,26 @@ function renderMap(){
     : (mapState.colorBy === "type"
         ? Object.entries(MAP_TYPE_COLORS).map(([k,v]) => `<span style="color:${v}">\u25cf</span>${k} `).join("") : "");
   $("mapcam").innerHTML = h;
-  $("maphud").textContent = `${names.length} nodes · ${edges.length} edges · zoom ${mapState.cam.k.toFixed(2)}x`;
+  // Count what was DRAWN, not what exists. With a filter on, a HUD reporting
+  // the whole graph contradicts the picture beside it.
+  mapState.drawn = {
+    nodes: names.filter((_, i) => drawn(i)).length,
+    edges: edges.filter(([a, b]) => drawn(a) && drawn(b)).length,
+    filtered: !!mapState.area,
+  };
+  mapHud();
+}
+
+function mapHud(){
+  const d = mapState.drawn;
+  const of = d.filtered ? ` / ${mapState.g.names.length} · ${mapState.g.edges.length}` : "";
+  $("maphud").textContent = `${d.nodes} nodes · ${d.edges} edges${of} · zoom ${mapState.cam.k.toFixed(2)}x`;
 }
 
 function mapCam(){
   $("mapcam").setAttribute("transform",
     `translate(${mapState.cam.x} ${mapState.cam.y}) scale(${mapState.cam.k})`);
-  $("maphud").textContent = `${mapState.g.names.length} nodes · ${mapState.g.edges.length} edges · zoom ${mapState.cam.k.toFixed(2)}x`;
+  mapHud();
 }
 
 function mapFit(){
