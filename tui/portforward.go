@@ -399,6 +399,7 @@ func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
 		cli.FormatByteCount(fi.BytesToTarget),
 		cli.FormatByteCount(fi.BytesFromTarget),
 		fmt.Sprintf("%d", fi.Taps),
+		cli.PortForwardDatagramCell(fi),
 		cli.PortForwardOrigin(fi),
 	}
 }
@@ -450,6 +451,14 @@ func NewForwardsModal() ForwardsModal {
 		{Title: "->tgt", Width: 8},
 		{Title: "<-tgt", Width: 8},
 		{Title: "taps", Width: 5},
+		// Datagram accounting. ALWAYS present rather than width- or
+		// protocol-conditional: a column set that varies has to swap with its
+		// rows in one step (item 34's panic), and this one costs 18 columns to
+		// avoid that entirely. Empty on a tcp row, which is an EXISTENCE gate —
+		// a tcp forward has no max datagram size and cannot drop a datagram —
+		// and never a value gate: a udp row with nothing dropped prints 0/0/0,
+		// because a blank there would read as "this row does not report it".
+		{Title: "udp", Width: 18},
 		{Title: "origin", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))

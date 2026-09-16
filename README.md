@@ -76,7 +76,12 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `-L [bind:]lport:rhost:rport` (SSH `-L` style — the runner dials
       `rhost:rport`, bytes relayed over the same transport; a bare port
       is shorthand for `port:127.0.0.1:port`, and `-R` takes the same
-      one; `-L` repeatable, foreground until Ctrl-C).
+      one; `-L` repeatable, foreground until Ctrl-C). A trailing `/udp`
+      forwards datagrams instead of a stream — no suffix means `/tcp`, so
+      every existing spelling is unchanged. A udp row's `conns` count is
+      FLOWS, created by a datagram arriving rather than by an accept, and
+      the row also reports the largest datagram that currently fits plus
+      what was dropped for being oversized, congested, or queued.
       `forward ls` reports what each forward has carried — connections,
       bytes each way, last activity, and how many taps are reading it —
       and `forward tap <forward-id>` streams the bytes themselves, live.
@@ -346,6 +351,11 @@ bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
 # A bare port is the same thing: it expands to port:127.0.0.1:port, so both
 # ends are that port and the runner dials its own loopback. -R takes it too.
 bin/harness-cli forward <task-id> -L 3000
+# A trailing /udp carries datagrams instead. There is no fragmentation
+# anywhere in the path, so a payload larger than one datagram is DROPPED and
+# counted -- `forward ls` prints the size that currently fits beside the drop
+# counts, which is what explains a protocol that will not come up.
+bin/harness-cli forward <task-id> -L 5353:127.0.0.1:5353/udp
 
 # 7b. See what a forward is doing. `forward ls` reports traffic per row;
 # `forward tap` shows the bytes, live, as a hexdump (--text for HTTP, --raw

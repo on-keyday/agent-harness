@@ -1906,3 +1906,57 @@ two places this change could have gone wrong:
    ten-second death on every transfer. No deadline was added: objproto's own
    `DoECDHHandshake` bounds the handshake at 10s, which is what makes the walk
    terminate.
+
+---
+
+## 2026-09-17 — udp forwarding: `protocol` and `route` on port forwards
+
+Walked 1–39 for a change adding two axes to `PortForwardInfo` /
+`RegisterPortForwardRequest` (`protocol` tcp/udp, `route`) plus four datagram
+counters. S1–S6 `n/a`: no agent added, renamed, or relaunched differently.
+
+**done:** 5 (TUI forwards modal: the spec cell via the shared renderer, plus a
+new `udp` column), 19, 20, 22, 23, 24, 27, 28a, 29, 31, 32, 33, 34, 35, 37, 39.
+Plus the two non-numbered listing surfaces `forward ls` / `forward ls --json`,
+which items 11–12 name for TASKS and have no forward equivalent on this list.
+
+**omitted:**
+
+- **1 / 33 — `--route` is not a flag.** splice is the only implemented route, so
+  every non-default value of the flag would error. The axis is on the wire, in
+  `RegisterPortForward`, and refused server-side with `route_unavailable`; only
+  the flag is deferred until a second route works. Recorded in the spec's
+  matrix as an `omitted` row rather than left as an unstated gap.
+- **6 / 34a — no WebUI control.** Starting a forward is CLI+TUI only
+  (`forward`'s `CmdlineSurfaces: CLI` plus two TUI modals). The WebUI's forward
+  surface is the LISTING, covered at 20/22/23.
+- **25 — no presence bit.** Neither axis has a "not given" that differs from its
+  zero value: zero is `tcp`/`splice`, which is exactly the pre-change behaviour,
+  so an older peer's zeros decode as what it actually meant.
+
+**Two findings the walk produced that nothing else would have:**
+
+1. **Item 39 caught a serving path the spec's matrix did not name.** The matrix
+   row said "TUI input — `tui/portforward.go`", which was true for `-L` and
+   incomplete for `-R`: `DoStartRemoteForward` called
+   `ServeRemoteForwardControl` directly. That is only the tcp half — a udp `-R`
+   also needs its dialer registry live — so a udp `-R` started from the TUI
+   bound a listener on the runner and carried nothing. Silent: the forward
+   listed fine.
+   Fixed by collapsing the obligation into `(*Client).ServeRemoteForward` and
+   adding a grep guard, then **verifying the guard by reintroducing the exact
+   violation** and watching it fail. Worth noting the shape: the CLI path was
+   written first and correctly, and the TUI path was a second call site of the
+   *narrower* function — which the compiler cannot distinguish from the right
+   one.
+2. **Item 34 was satisfied by NOT varying the column set.** The forwards table
+   needed the datagram numbers, and the tempting shape — a column present only
+   for udp rows — is the `SetRows`/`SetColumns` swap hazard this item exists
+   for. Shipped as an always-present column that is EMPTY on tcp rows, which is
+   item 31's permitted existence gate (a tcp forward has no max datagram size)
+   rather than a forbidden value gate.
+
+**Item 31 was the design's spine rather than a checkbox.** The whole datagram
+accounting turns on emitting `oversize=0` on a udp row and nothing at all on a
+tcp one, and both directions are pinned by tests in
+`cli/forward_protocol_render_test.go`.

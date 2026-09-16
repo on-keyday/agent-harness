@@ -359,3 +359,24 @@ func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
 		fi.BindAddr, fi.BindPort, fi.TargetHost, fi.TargetPort,
 		protocolSuffix(fi.Protocol)), true
 }
+
+// PortForwardDatagramCell renders a udp row's datagram accounting compactly
+// enough for a table cell, and an EMPTY string for a tcp row.
+//
+// Empty is an existence gate, not a value gate: a tcp forward has no max
+// datagram size and cannot drop a datagram, so there is nothing to report. A
+// udp row with nothing dropped renders `1169 0/0/0` — the zeros are the answer
+// to "is anything being dropped", and a blank there would read as "this row
+// does not report it".
+//
+// The drop order is oversize/congested/queued, matching PortForwardTrafficLine
+// so an operator reading both surfaces does not have to learn two orders. It is
+// the terse form on purpose: the traffic line names each one, and this is the
+// cell that has to fit beside eight others.
+func PortForwardDatagramCell(fi *protocol.PortForwardInfo) string {
+	if fi.Protocol != protocol.ForwardProtocol_Udp {
+		return ""
+	}
+	return fmt.Sprintf("%d %d/%d/%d", fi.MaxDatagramSize,
+		fi.DroppedOversize, fi.DroppedCongestion, fi.DroppedQueue)
+}

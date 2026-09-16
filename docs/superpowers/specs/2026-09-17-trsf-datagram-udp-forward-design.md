@@ -631,3 +631,72 @@ churn in the generated `.go` is expected and is not investigated.
   after the first flow, not during it. If `forwarded` still trails `splice` once
   the connection is warm, the cold-window explanation is wrong and §6a's
   prediction fails.
+
+---
+
+## Amendment — 2026-09-17, written from the implementation
+
+Three things this spec got wrong or left unsaid, recorded here so a later
+reader verifying against the shipped behaviour is not misled by the text above.
+
+### §5c: retransmission is NOT fully expressed by the `OnLost` callback
+
+The claim was that "not retransmitting is expressed as the per-packet `OnLost`
+callback", so passing one that does not re-push is the whole of it. It is not.
+`OnTimeout`'s PTO path also has to KNOW which packets are retransmittable, for
+two reasons it could not get from a callback:
+
+- with only an exempt packet outstanding it returned
+  `errors.New("BUG: no packets in flight")` — a legitimate state reported as a
+  defect, permanently, in the log of every connection carrying uncontrolled
+  datagrams;
+- its retransmit loop picked any non-probe, so it would have chosen a datagram,
+  called an `OnLost` that re-sends nothing, reported `true` for a retransmission
+  that never happened, and left the packet in `sentRanges` for the next expiry
+  to count as a second loss.
+
+So `SentPacket` has FOUR new-or-narrowed properties, not three:
+`CongestionExempt`, `PathEvidence`, `Retransmittable`, and `IsMTUProbe` reduced
+to probe bookkeeping. `declareLostMTUProbes` generalised to
+`declareLostUnretransmittable`, whose predecessor's own comment had already
+argued the case without noticing it was not probe-specific.
+
+### §6: the runner needs the target BEFORE the first datagram
+
+The spec described the flow lifecycle but not how the runner learns where to
+dial. tcp carries the target on a per-connection `RunnerOpenPortForwardRequest`;
+a udp flow has no open, so there is nothing to carry it on. Shipped:
+`RunnerOpenPortForwardRequest` gains `protocol`, and a udp `-L` sends ONE such
+request at registration with `stream_id = 0`. That field is also what tells the
+runner which of the two things it has been handed.
+
+### §7: a second serving path existed and the spec did not name it
+
+§8's matrix lists "TUI input" as `tui/portforward.go`, which is true for `-L`
+and was incomplete for `-R`: `DoStartRemoteForward` called
+`ServeRemoteForwardControl` directly, which is only the tcp half. A udp `-R`
+from the TUI bound a listener on the runner and carried nothing. Fixed by
+making `(*Client).ServeRemoteForward` the whole obligation, with a grep guard;
+the matrix row should be read as "every path that SERVES a forward", not only
+every path that parses one.
+
+### Surface matrix, checked row by row against the code
+
+| row | verdict |
+|---|---|
+| CLI input (`/udp` suffix, `--route`) | `/udp` done; **`--route` omitted** — splice is the only implemented route, so the flag's every non-default value would error. The axis is on the wire and in the API; only the flag is deferred |
+| workspace file | done — the grammar is delegated, and the validator's restated error string was updated |
+| TUI input | done for `-L` (spec string) and for `-R` after the fix above |
+| WebUI input | **n/a** — starting a forward is CLI+TUI only (`forward`'s `CmdlineSurfaces: CLI` plus two TUI modals); the WebUI's forward surface is the listing |
+| spec parse | done |
+| non-parser creators | done — all four state `tcp` explicitly rather than inheriting a zero value |
+| CLI display | done — spec string, traffic line, JSON struct |
+| WebUI display | done — `ForwardSnapshotRow` carries both axes raw AND the rendered `traffic`/`spec` from the Go renderers |
+| TUI display | done — the spec cell carries `/udp`, and an always-present `udp` column carries the datagram numbers (empty on tcp rows, which is an existence gate) |
+| server | done — route dispatch, the splice-side datagram relay, the counters |
+| runner | done — both directions |
+
+`udp × forwarded` and `udp × direct` remain `route_unavailable`, as §2 said they
+would. §6a's prediction — that a long-lived registration does not pay the cold
+window those measurements captured — is therefore still untested, and its
+falsifier in §11 is still open.
