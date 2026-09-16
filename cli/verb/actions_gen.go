@@ -232,9 +232,9 @@ type ForwardLsAction struct {
 // ForwardOpenAction is built by: forward.
 type ForwardOpenAction struct {
 	ActionMarker
-	// local forward [bind:]localport:remotehost:remoteport (repeatable)
+	// local forward port | [bind:]localport:remotehost:remoteport (repeatable; a bare port means port:127.…
 	L []string
-	// remote forward [bind:]runnerport:dialhost:dialport (repeatable)
+	// remote forward port | [bind:]runnerport:dialhost:dialport (repeatable; a bare port means port:127.0.…
 	R []string
 	// raw stdio forward host:port (mutually exclusive with -L / -R)
 	W string

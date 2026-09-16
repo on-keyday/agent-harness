@@ -163,6 +163,8 @@ and the TUI call the **same** code over a long-lived client (per the
 
 - Unit: `-L` spec parser (`bind:lport:rhost:rport` and `lport:rhost:rport`
   forms; reject malformed).
+  Amended 2026-09-16: a one-element `port` form is accepted too — see the
+  amendment below.
 - Integration: bring up server + runner + a task, stand up an echo TCP
   server the runner can reach, forward through it and assert:
   - byte round-trip through the local port,
@@ -170,3 +172,42 @@ and the TUI call the **same** code over a long-lived client (per the
   - dial failure (closed target port) closes the local accepted conn
     without killing the listener,
   - non-terminal-task requirement (terminal task ⇒ error status).
+
+## Amendment 2026-09-16 — a bare port is a spec
+
+The **CLI surface** section above says `-L [bind:]localport:remotehost:remoteport`
+and nothing else, which made the ssh-compatible spelling the only one. The
+overwhelmingly common invocation spells out a value the two ends share and a
+host that is always the runner's loopback — the section's own example is
+`-L 3000:127.0.0.1:3000` — so a one-element form is now accepted and expands to
+exactly that:
+
+```
+-L 3000   ==  -L 3000:127.0.0.1:3000
+-R 8080   ==  -R 8080:127.0.0.1:8080
+```
+
+- `127.0.0.1` rather than `localhost`, because the expansion is what
+  `forward ls` shows and a NAME there would be resolved on the runner, not on
+  the host of whoever reads the row.
+- `-R` takes the same form, so the two flags do not need separate rules.
+- **Two elements stays an error.** `host:port` is already the `-W` target
+  grammar; reading `3000:8080` here as a port pair would make one string mean
+  two different things depending on which flag carried it.
+- This widens what is ACCEPTED and changes no existing spelling's meaning. It
+  does diverge from ssh, which takes no bare port — a deliberate trade, since
+  the reason to match ssh was recall and a shorthand ssh lacks costs no recall.
+- A workspace `save` never writes the short form back:
+  `cli.PortForwardConfigSpec` always emits four fields, because the bound port
+  may differ from the requested one (a `-L 0:…` gets a kernel-assigned port).
+  So the shorthand is a thing a human types, on the command line, in the TUI
+  modal, or by hand into `.harness/config` — never a thing the harness
+  produces.
+
+One parser per flag, in `cli/port_forward.go`, is what every surface calls
+(CLI `-L`/`-R`, the TUI modal, the TUI workspace picker's `f` editor, and
+`cli/workspace`'s config validation), so the form reached all of them in one
+edit. What did NOT follow automatically were the strings that DESCRIBE the
+grammar — the flag help in `cli/verb/table.go`, the two modal placeholders,
+the picker's placeholder and the config error — each of which had to be
+updated by hand.

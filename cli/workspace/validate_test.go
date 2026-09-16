@@ -19,6 +19,20 @@ func TestParseForwardValue(t *testing.T) {
 	if _, l, _, err := ParseForwardValue("-L 0.0.0.0:3000:127.0.0.1:3000"); err != nil || l.BindAddr != "0.0.0.0" {
 		t.Errorf("four-field -L = %+v %v", l, err)
 	}
+	// The bare-port form reaches a config file too — this package hands the
+	// spec to the same parser the command line uses, so a hand-written
+	// `forward = -L 3000` is accepted here exactly as it is there. A SAVE never
+	// writes it back (PortForwardConfigSpec always emits four fields, because
+	// the bound port may differ from the requested one), so this is about what
+	// a human may type, not about a round trip.
+	if _, l, _, err := ParseForwardValue("-L 3000"); err != nil ||
+		l.BindAddr != "127.0.0.1" || l.LocalPort != 3000 || l.RemoteHost != "127.0.0.1" || l.RemotePort != 3000 {
+		t.Errorf("bare-port -L = %+v %v", l, err)
+	}
+	if _, _, r, err := ParseForwardValue("-R 8080"); err != nil ||
+		r.BindAddr != "127.0.0.1" || r.RunnerPort != 8080 || r.DialHost != "127.0.0.1" || r.DialPort != 8080 {
+		t.Errorf("bare-port -R = %+v %v", r, err)
+	}
 	for _, bad := range []string{"-W host:port", "3000:127.0.0.1:3000", "-L", "-L not-a-spec", ""} {
 		if _, _, _, err := ParseForwardValue(bad); err == nil {
 			t.Errorf("ParseForwardValue(%q) succeeded, want an error", bad)

@@ -91,7 +91,18 @@ func TestParseForwardSpec(t *testing.T) {
 		{"3000:127.0.0.1:3000", "127.0.0.1", 3000, "127.0.0.1", 3000, false},
 		{"0.0.0.0:8080:10.0.0.5:80", "0.0.0.0", 8080, "10.0.0.5", 80, false},
 		{"3000:localhost:3000", "127.0.0.1", 3000, "localhost", 3000, false},
+		// Bare port: same port both ends, loopback both ends. 127.0.0.1 rather
+		// than "localhost" so `forward ls` shows the address the runner will
+		// actually dial instead of a name resolved on a host the operator is
+		// not on.
+		{"3000", "127.0.0.1", 3000, "127.0.0.1", 3000, false},
 		{"badspec", "", 0, "", 0, true},
+		{"0", "", 0, "", 0, true},
+		{"70000", "", 0, "", 0, true},
+		// Two elements stays an error: that shape is a `-W host:port` target,
+		// and reading it as a port PAIR here would make one string mean two
+		// things depending on which flag carried it.
+		{"3000:8080", "", 0, "", 0, true},
 		{"3000:host", "", 0, "", 0, true},
 		{"notaport:host:80", "", 0, "", 0, true},
 		{"3000:host:notaport", "", 0, "", 0, true},

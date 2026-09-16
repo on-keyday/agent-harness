@@ -60,10 +60,13 @@ func (m *PortForwardModal) OpenMode(taskID string, dir ForwardDirection) {
 	if m.input.Prompt == "" {
 		m.input = textinput.New()
 	}
+	// The bare-port form leads because it is the one an operator types by hand;
+	// the long form is what it expands to, and naming both is what keeps the
+	// placeholder a grammar rather than a single example.
 	if dir == ForwardRemote {
-		m.input.Placeholder = "[bind:]runnerport:dialhost:dialport"
+		m.input.Placeholder = "port | [bind:]runnerport:dialhost:dialport"
 	} else {
-		m.input.Placeholder = "[bind:]localport:remotehost:remoteport"
+		m.input.Placeholder = "port | [bind:]localport:remotehost:remoteport"
 	}
 	m.input.SetValue("")
 	m.input.Focus()

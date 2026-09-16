@@ -634,9 +634,9 @@ var Verbs = []VerbSpec{
 			Reason: "an HTTP request needs a target to send it to"}},
 		Flags: []Flag{
 			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
-				Help: "local forward [bind:]localport:remotehost:remoteport (repeatable)"},
+				Help: "local forward port | [bind:]localport:remotehost:remoteport (repeatable; a bare port means port:127.0.0.1:port)"},
 			{Name: "R", Type: FlagString, Custom: argListValue, Field: "R",
-				Help: "remote forward [bind:]runnerport:dialhost:dialport (repeatable)"},
+				Help: "remote forward port | [bind:]runnerport:dialhost:dialport (repeatable; a bare port means port:127.0.0.1:port)"},
 			{Name: "W", Type: FlagString, Default: "", Field: "W",
 				Help: "raw stdio forward host:port (mutually exclusive with -L / -R)"},
 			{Name: "http-method", Type: FlagString, Default: "GET", Field: "HTTPMethod",

@@ -25,20 +25,35 @@ type ForwardSpec struct {
 	RemotePort int
 }
 
-// ParseForwardSpec parses "[bind:]localport:remotehost:remoteport".
+// ParseForwardSpec parses "port" or "[bind:]localport:remotehost:remoteport".
 // bind defaults to 127.0.0.1 (do not expose the local port externally).
 // IPv6 literal hosts are not supported (dogfood scope).
+//
+// The one-element form expands to "port:127.0.0.1:port" — same port both ends,
+// target on the runner's loopback, which is what the three-element form is
+// almost always spelling out by hand. The remote host is the literal address
+// rather than "localhost" so the expansion names what the runner will actually
+// dial: a name there is resolved on the runner, not on the host of whoever
+// reads the `forward ls` row. Two elements stays an error on purpose — that
+// shape is a `-W host:port` target, and reading it here as a port pair would
+// make one string mean two different things depending on which flag carried it.
 func ParseForwardSpec(s string) (ForwardSpec, error) {
 	parts := strings.Split(s, ":")
 	var bind, rhost, lportS, rportS string
 	switch len(parts) {
+	case 1:
+		// Both ports come from one field, so the range check below runs twice
+		// over the same string and reports it as the LOCAL port — the half the
+		// operator typed.
+		bind, rhost = "127.0.0.1", "127.0.0.1"
+		lportS, rportS = parts[0], parts[0]
 	case 3:
 		bind = "127.0.0.1"
 		lportS, rhost, rportS = parts[0], parts[1], parts[2]
 	case 4:
 		bind, lportS, rhost, rportS = parts[0], parts[1], parts[2], parts[3]
 	default:
-		return ForwardSpec{}, fmt.Errorf("forward: bad spec %q (want [bind:]localport:remotehost:remoteport)", s)
+		return ForwardSpec{}, fmt.Errorf("forward: bad spec %q (want port, or [bind:]localport:remotehost:remoteport)", s)
 	}
 	lport, err := strconv.Atoi(lportS)
 	if err != nil || lport <= 0 || lport > 65535 {
@@ -355,18 +370,26 @@ type RemoteForwardSpec struct {
 	DialNetwork string
 }
 
-// ParseRemoteForwardSpec parses "[bind:]runnerport:dialhost:dialport".
+// ParseRemoteForwardSpec parses "port" or "[bind:]runnerport:dialhost:dialport".
 // bind defaults to 127.0.0.1 (on the runner). IPv6 literal hosts unsupported.
+//
+// The one-element form mirrors ParseForwardSpec's: "port:127.0.0.1:port", so an
+// operator who learned `-L 3000` does not have to learn a second rule for
+// `-R 3000`. Here the dial side is the CLIENT's loopback and the listen side is
+// the runner's, which is the direction this flag already means.
 func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
 	parts := strings.Split(s, ":")
 	var bind, dhost, rportS, dportS string
 	switch len(parts) {
+	case 1:
+		bind, dhost = "127.0.0.1", "127.0.0.1"
+		rportS, dportS = parts[0], parts[0]
 	case 3:
 		bind, rportS, dhost, dportS = "127.0.0.1", parts[0], parts[1], parts[2]
 	case 4:
 		bind, rportS, dhost, dportS = parts[0], parts[1], parts[2], parts[3]
 	default:
-		return RemoteForwardSpec{}, fmt.Errorf("forward: bad -R spec %q (want [bind:]runnerport:dialhost:dialport)", s)
+		return RemoteForwardSpec{}, fmt.Errorf("forward: bad -R spec %q (want port, or [bind:]runnerport:dialhost:dialport)", s)
 	}
 	rport, err := strconv.Atoi(rportS)
 	if err != nil || rport <= 0 || rport > 65535 {

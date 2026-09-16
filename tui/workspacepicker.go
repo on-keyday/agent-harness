@@ -393,7 +393,12 @@ func (m *WorkspacePickerModel) BeginEdit() {
 	if m.input.Prompt == "" {
 		m.input = textinput.New()
 	}
-	m.input.Placeholder = "-L [bind:]localport:remotehost:remoteport, -R …  (comma-separated, empty = none)"
+	// Width is 64, so a placeholder longer than that is cut mid-word — the old
+	// one spelled the long form out and lost its own "(empty = none)" to the
+	// truncation. Two examples fit and say more: a bare port is accepted, and
+	// the long form still is. The grammar itself is in the error CommitEdit
+	// returns, which names both forms.
+	m.input.Placeholder = "-L 3000, -L [bind:]lport:rhost:rport, -R …  (empty = none)"
 	m.input.CharLimit = 1024
 	m.input.Width = 64
 	m.input.SetValue(strings.Join(m.rows[m.cur].Forwards, ", "))

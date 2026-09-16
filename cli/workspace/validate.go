@@ -30,7 +30,7 @@ func ParseForwardValue(value string) (ForwardDir, cli.ForwardSpec, cli.RemoteFor
 	rest = strings.TrimSpace(rest)
 	if !ok || rest == "" {
 		return 0, cli.ForwardSpec{}, cli.RemoteForwardSpec{},
-			fmt.Errorf("forward = %q: want `-L [bind:]localport:remotehost:remoteport` or `-R [bind:]runnerport:dialhost:dialport`", value)
+			fmt.Errorf("forward = %q: want `-L port` / `-L [bind:]localport:remotehost:remoteport`, or `-R port` / `-R [bind:]runnerport:dialhost:dialport`", value)
 	}
 	switch flag {
 	case "-L":

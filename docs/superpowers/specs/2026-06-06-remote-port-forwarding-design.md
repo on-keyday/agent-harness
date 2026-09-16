@@ -202,3 +202,14 @@ supports multiple concurrent forwards** per task and overall:
   the selected task). Multiple forwards per task IS now supported (both
   directions); the CLI also accepts repeated `-L` / `-R`.
 - Forcibly tearing down in-flight relays when a listener closes.
+
+## Amendment 2026-09-16 — `-R port` is also a spec
+
+`ParseRemoteForwardSpec` now accepts a one-element `port`, expanding to
+`port:127.0.0.1:port` — the runner listens on that port, the client dials its
+own loopback on the same one. It mirrors the `-L` shorthand landed in the same
+change, which is the point: the two flags share one rule rather than each
+having its own. The reasoning, the rejected two-element form, and what it means
+for a workspace save are in the local-forward spec's *Amendment 2026-09-16 — a
+bare port is a spec*; this note exists so the `-R` grammar on line 54 does not
+read as the whole of what is accepted.

@@ -72,9 +72,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
-    - Port forwarding: `forward <task-id> -L [bind:]lport:rhost:rport`
-      (SSH `-L` style — the runner dials `rhost:rport`, bytes relayed
-      over the same transport; `-L` repeatable, foreground until Ctrl-C).
+    - Port forwarding: `forward <task-id> -L 3000` or
+      `-L [bind:]lport:rhost:rport` (SSH `-L` style — the runner dials
+      `rhost:rport`, bytes relayed over the same transport; a bare port
+      is shorthand for `port:127.0.0.1:port`, and `-R` takes the same
+      one; `-L` repeatable, foreground until Ctrl-C).
       `forward ls` reports what each forward has carried — connections,
       bytes each way, last activity, and how many taps are reading it —
       and `forward tap <forward-id>` streams the bytes themselves, live.
@@ -341,6 +343,9 @@ bin/harness-cli git file   <task-id> [--staged | --rev REV] <path>
 # for reaching a dev server the agent started inside its worktree. Foreground;
 # Ctrl-C tears down. bind defaults to 127.0.0.1; -L is repeatable.
 bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
+# A bare port is the same thing: it expands to port:127.0.0.1:port, so both
+# ends are that port and the runner dials its own loopback. -R takes it too.
+bin/harness-cli forward <task-id> -L 3000
 
 # 7b. See what a forward is doing. `forward ls` reports traffic per row;
 # `forward tap` shows the bytes, live, as a hexdump (--text for HTTP, --raw
