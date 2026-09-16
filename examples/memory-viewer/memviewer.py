@@ -1130,11 +1130,16 @@ function projectGraph(memories) {
     return index.has(k) ? index.get(k) : (byStem.has(k) ? byStem.get(k) : -1);
   };
   const directed = new Set();
+  // Counted here rather than from m.links, which is raw [[targets]] and so
+  // includes danglers, self-links and repeats that the drawing does not show.
+  const out = memories.map(() => 0);
   memories.forEach((m, i) => {
+    const hit = new Set();
     for (const raw of m.links) {
       const j = resolve(raw);
-      if (j >= 0 && j !== i) directed.add(i + ":" + j);
+      if (j >= 0 && j !== i) { directed.add(i + ":" + j); hit.add(j); }
     }
+    out[i] = hit.size;
   });
   const edges = [], mutual = new Set(), seen = new Set();
   for (const key of directed) {
@@ -1145,7 +1150,7 @@ function projectGraph(memories) {
     edges.push([lo, hi]);
     if (directed.has(lo + ":" + hi) && directed.has(hi + ":" + lo)) mutual.add(k);
   }
-  return { names, index, edges, mutual, resolve };
+  return { names, index, edges, mutual, resolve, out };
 }
 
 // mapLayout: where the whole-project map's nodes sit.
@@ -1433,6 +1438,10 @@ $("maplabels").addEventListener("change", (e) => { mapState.labels = e.target.ch
 // The bias changes WHERE the nodes are, so it re-runs the layout rather than
 // just repainting. 94 ms on the largest project, which is a click, not a wait.
 $("mapbias").addEventListener("change", (e) => { mapState.bias = e.target.value; mapRelayout(); mapFit(); });
+// Changing WHICH count drives the vertical axis moves the nodes, so it is a
+// relayout too — but only while the axis is actually in use.
+$("mapby").addEventListener("change", (e) => { mapState.by = e.target.value;
+  if (mapState.bias) { mapRelayout(); mapFit(); } });
 
 // Zoom about the CURSOR, not the centre: zooming toward a corner otherwise
 // walks the thing you were pointing at off the screen and you pan it back by
@@ -1492,7 +1501,7 @@ $("mapsvg").addEventListener("pointerdown", (e) => {
 // returning is the expected loop, and a camera that reset would undo the pan
 // that got you there.
 const mapState = {open:false, cam:{x:0,y:0,k:1}, colorBy:"area", sizeBy:"in",
-                  labels:false, area:"", neighbours:false, bias:"", g:null, pos:null,
+                  labels:false, area:"", neighbours:false, bias:"", by:"in", g:null, pos:null,
                   drawn:{nodes:0, edges:0, filtered:false}};
 
 // One number per node in [0,1] for the vertical bias: inbound count over the
@@ -1526,10 +1535,6 @@ function biasWeights(counts){
   return counts.map((c) => (max > 0 ? c / max : 0.5));
 }
 
-function mapBiasWeights(){
-  return biasWeights(P.memories.map((m) => m.inbound.length));
-}
-
 // Two settings, and they differ in KIND rather than in strength.
 //
 // "lean" is a force: inbound count pulls a node up, the springs pull it toward
@@ -1543,13 +1548,10 @@ function mapBiasWeights(){
 // that is nearly ordered gets read as ordered.
 function mapLayoutNow(){
   const n = mapState.g.names.length, edges = mapState.g.edges;
-  if (mapState.bias === "layer") {
-    const counts = P.memories.map((m) => m.inbound.length);
-    return mapLayout(n, edges, 1234567, null, null, null, bandsFor(counts, 1800));
-  }
-  if (mapState.bias === "lean") {
-    return mapLayout(n, edges, 1234567, mapBiasWeights(), 900, 0.02);
-  }
+  if (mapState.bias === "layer")
+    return mapLayout(n, edges, 1234567, null, null, null, bandsFor(mapCounts(), 1800));
+  if (mapState.bias === "lean")
+    return mapLayout(n, edges, 1234567, biasWeights(mapCounts()), 900, 0.02);
   return mapLayout(n, edges, 1234567);
 }
 
@@ -1592,10 +1594,11 @@ const MAP_TOP = "(top)";
 
 function mapAreas(){ return [...new Set(P.memories.map(m => m.area || ""))].sort(); }
 
-function mapColor(nd){
+function mapColor(nd, i){
   if (mapState.colorBy === "type") return MAP_TYPE_COLORS[nd.type] || "#888";
-  if (mapState.colorBy === "deg") {
-    const t = Math.min(1, nd.inbound.length / 12);
+  if (mapState.colorBy === "deg" || mapState.colorBy === "outdeg") {
+    const c = mapState.colorBy === "outdeg" ? mapState.g.out[i] : nd.inbound.length;
+    const t = Math.min(1, c / 12);
     return `hsl(${210 - t*200},70%,${45 + t*15}%)`;
   }
   if (mapState.colorBy === "age") {
@@ -1606,10 +1609,11 @@ function mapColor(nd){
   return MAP_AREA_COLORS[areas.indexOf(nd.area || "")%MAP_AREA_COLORS.length];
 }
 
-function mapRadius(nd){
+function mapRadius(nd, i){
   if (mapState.sizeBy === "flat") return 4;
   if (mapState.sizeBy === "sz") return 3 + Math.sqrt(nd.size / 700);
-  return 3 + Math.sqrt(nd.inbound.length) * 1.6;
+  const c = mapState.sizeBy === "out" ? mapState.g.out[i] : nd.inbound.length;
+  return 3 + Math.sqrt(c) * 1.6;
 }
 
 // Same trimming the ego graph uses, and for the same reason: nearly every name
@@ -1618,6 +1622,21 @@ function mapRadius(nd){
 function mapLabel(name){
   const t = name.replace(/^(feedback|project|reference|user)[_-]/, "");
   return t.length > 20 ? t.slice(0, 19) + "\u2026" : t;
+}
+
+// The two countable things a memory has, and they ask different questions:
+// inbound is what the rest of the project leans on, outbound is what one
+// memory gathers up. Worth offering both because the two orderings disagree,
+// and measured on this repo they disagree ASYMMETRICALLY: the top of inbound
+// (feedback_verify_llm_framing, 19 in) is also high in outbound at 6, only 5
+// memories above it — but the top of outbound
+// (reference_herdr_for_harness_design, 20 out) has 2 inbound with 59 above it.
+// So a memory can be a hub by gathering without anything pointing back at it,
+// which is exactly the shape the inbound ordering cannot show you.
+function mapCounts(){
+  return mapState.by === "out"
+    ? mapState.g.out
+    : P.memories.map((m) => m.inbound.length);
 }
 
 // Which nodes the map draws. Narrowing WHICH nodes appear is not the same as
@@ -1676,9 +1695,9 @@ function renderMap(){
   }
   names.forEach((name, i) => {
     if (!drawn(i)) return;
-    const nd = P.memories[i], r = mapRadius(nd);
-    h += `<g class="${vis.dim.has(i) ? "dim" : ""}" data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length}</title>`
-       + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="${r.toFixed(1)}" fill="${mapColor(nd)}"/>`
+    const nd = P.memories[i], r = mapRadius(nd, i);
+    h += `<g class="${vis.dim.has(i) ? "dim" : ""}" data-mapnode="${esc(name)}"><title>${esc(name)}${nd.area ? "  [" + esc(nd.area) + "/]" : ""}  \u2190${nd.inbound.length} \u2192${mapState.g.out[i]}</title>`
+       + `<circle cx="${xy(X[i])}" cy="${xy(Y[i])}" r="${r.toFixed(1)}" fill="${mapColor(nd, i)}"/>`
        + (mapState.labels
             ? `<text x="${xy(X[i]+r+3)}" y="${xy(Y[i]+3)}">${esc(mapLabel(name))}</text>` : "")
        + `</g>`;
@@ -1897,16 +1916,20 @@ def page(payload: dict | None = None) -> str:
 <div id="mapbar" class="mapbar" hidden>
   <label>色 <select id="mapcolor">
     <option value="area">area</option><option value="type">type</option>
-    <option value="age">古さ</option><option value="deg">被リンク数</option>
+    <option value="age">古さ</option><option value="deg">被リンク数</option><option value="outdeg">リンク数</option>
   </select></label>
   <label>大きさ <select id="mapsize">
-    <option value="in">被リンク数</option><option value="sz">サイズ</option><option value="flat">一定</option>
+    <option value="in">被リンク数</option><option value="out">リンク数</option><option value="sz">サイズ</option><option value="flat">一定</option>
   </select></label>
   <label><input type="checkbox" id="maplabels"> ラベル</label>
-  <label>被リンク <select id="mapbias">
-    <option value="">位置に反映しない</option>
+  <label>縦位置 <select id="mapbias">
+    <option value="">使わない</option>
     <option value="lean">上へ傾ける</option>
     <option value="layer">上から層にする</option>
+  </select></label>
+  <label>基準 <select id="mapby">
+    <option value="in">被リンク数</option>
+    <option value="out">リンク数</option>
   </select></label>
   <label><input type="checkbox" id="mapneigh"> 隣接も含める</label>
   <button class="chip" id="mapfit">全体に合わせる</button>

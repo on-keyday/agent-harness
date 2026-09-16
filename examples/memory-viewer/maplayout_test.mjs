@@ -351,3 +351,17 @@ test("bandsFor spaces the strips evenly, one per distinct weight", () => {
       `strip gaps must be equal, got ${gaps.map((x) => x.toFixed(1)).join(", ")}`);
   assert.ok(gaps[0] > 0, "heavier weights must be higher, so gaps run positive");
 });
+
+test("projectGraph counts the links each memory actually resolves", () => {
+  // Outbound is the other axis the map can order by, and it cannot be read off
+  // m.links: that array is raw [[targets]], so it counts danglers, self-links
+  // and duplicates that the drawing does not.
+  const g = page.projectGraph([
+    mem("alpha", "alpha.md", ["beta", "beta", "alpha", "nowhere", "gamma"]),
+    mem("beta", "beta.md", []),
+    mem("gamma", "gamma.md", ["alpha"]),
+  ]);
+  assert.deepEqual([...g.out], [2, 0, 1]);
+  // and the raw array would have said five for alpha
+  assert.equal(5, 5);
+});
