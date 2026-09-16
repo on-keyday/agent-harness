@@ -14,14 +14,21 @@ Verbatim: *"グラフで見ると特徴が見える可能性があるからい�
 That is an exploratory motive, and it is worth naming as such: the value is the
 chance of noticing something, which cannot be specified in advance. An earlier
 framing of this design tried to justify the map by a decision it would serve
-(which unfiled memory belongs in which subsystem directory) and that framing was
-wrong twice over — it was measured and found unsupported, and it was never the
-requester's goal.
+(which top-level memory belongs in which subsystem directory) and that framing
+was wrong three times over: it was measured and found unsupported, it was never
+the requester's goal, and it misread the placement rule — see below.
 
 ## What was measured before designing
 
 Everything below is from the live corpus on 2026-09-16, and several numbers
 changed the design.
+
+**Re-derive it with `examples/memory-viewer/graphstats.py`** (`--areas` for the
+last table alone). It reads the corpus through memviewer's own `build_payload()`,
+so the nodes and edges are the ones the viewer draws rather than a second
+parser's. Every table below is that script's output: a number in a design
+document that cannot be re-run is not evidence, and these were inline one-liners
+that existed only in a transcript until the omission was caught.
 
 **The graphs are small, and only one of them is hard.**
 
@@ -37,17 +44,27 @@ changed the design.
 Seven of eight are small enough to draw without any cleverness. The design
 question is entirely about remote-agent-harness and its 162-node component.
 
-**Only harness has areas, and most of it is unfiled.** `(top)` holds 100 of its
-168; the nine subsystem directories hold 68 between them. Every other project
-keeps everything at the top level. 56% of harness's edges are within one area
-and the cross-area ones are almost all `(top)`↔something.
+**Only harness uses subdirectories at all.** `(top)` holds 100 of its 168; the
+nine subsystem directories hold 68 between them. Every other project keeps
+everything at the top level. 56% of harness's edges are within one area and the
+cross-area ones are almost all `(top)`↔something.
 
-**The filing signal that an earlier draft was built on does not exist.** Of the
-top-level memories with at least two links and at least one filed neighbour (56
-of them), the strongest pull toward a single area is 3 links out of 8. Everything
-else is two. The cause is structural: with 100 unfiled, most of anyone's
-neighbours are also unfiled, so filed neighbours are a minority everywhere. A map
-drawing that as an attraction would invite reading two links as a verdict.
+**`(top)` is not a backlog.** What belongs in MEMORY.md is decided by how likely
+a memory is to fire, and a memory moves down to a subsystem only when it is
+needed *while touching that subsystem and not otherwise* — the index says so in
+its own first line, and `feedback_demote_by_trigger_kind` says it again. So the
+100 at the top are there because they fire broadly, not because nobody has got
+round to them. An earlier draft of this design read them as unfiled work and
+proposed a map to help clear it; that was wrong about the corpus before it was
+wrong about anything else.
+
+**And the signal that draft rested on is not in the data either.** Of the
+top-level memories with at least two links and at least one neighbour in a
+subsystem (56 of them), the strongest pull toward a single area is 3 links out of
+8. Everything else is two. The cause is structural: most of anyone's neighbours
+are also at the top, so subsystem neighbours are a minority everywhere. A map
+drawing that as an attraction would invite reading two links as a verdict — and
+would be recommending a move the placement rule does not ask for.
 
 **harness has no community structure to show.** Deterministic label propagation
 puts 147 of 168 in one community (the rest: one of 15 and six singletons), at
@@ -102,9 +119,10 @@ within-area" figure came from.** Induced subgraph of each area in harness:
 177 of the 209 within-area edges are `(top)` linked to itself; the nine
 subsystem directories contribute 32 between them, and `user` contributes none at
 all. So the earlier reading — "over half the links stay inside an area" — was
-the unfiled bulk talking to itself, not evidence that the filing follows the
-links. The subsystem directories were filed by topic, and the link structure
-does not reproduce that grouping.
+the top level talking to itself, not evidence that placement follows the links.
+It does not, and it is not meant to: memories go down when their trigger is a
+location, so the grouping is by when a memory fires, and the link structure has
+no reason to reproduce that.
 
 **A throwaway spike answered the readability question.** Force-directed layout
 over the real data, with zoom:
