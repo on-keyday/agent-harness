@@ -109,7 +109,7 @@ func (v VerbSpec) Parse(fs *flag.FlagSet, args []string) (Bound, error) {
 		// no defaults, and the wrap turned the sentinel into the whole answer —
 		// `session new -h` said "session new: flag: help requested" and nothing
 		// else. The usage is generated from this very spec, so carry it.
-		return Bound{}, &HelpRequested{Usage: strings.Join(v.UsageLines(), "\n      ")}
+		return Bound{}, &HelpRequested{Spec: v}
 	}
 	if err != nil {
 		// Named HERE, once. `flag`'s own message is "flag provided but not
@@ -387,14 +387,27 @@ var (
 	WorkspaceLookup func(string) string
 )
 
-// HelpRequested is what a verb returns for -h / --help: the generated usage as
+// HelpRequested is what a verb returns for -h / --help: the generated help as
 // the error's own text, so a caller that only prints the error prints the help.
+//
+// It carries the SPEC rather than a rendered string because the rendering needs
+// a width and this package has none: the CLI knows its terminal's, the TUI its
+// panel's, and the browser wraps for itself. A caller that knows better than
+// "do not wrap" calls Lines; one that does not gets Error().
 //
 // It unwraps to flag.ErrHelp, so a caller that wants the conventional exit 0
 // tests errors.Is(err, flag.ErrHelp) — asking for help is not a failure, and
 // harness-cli's dispatch treats it that way.
-type HelpRequested struct{ Usage string }
+type HelpRequested struct {
+	// Spec is the verb as the surface that parsed it sees the verb: For() has
+	// already dropped the flags and positionals another surface declares, so
+	// the block lists exactly what could have been typed here.
+	Spec VerbSpec
+}
 
-func (h *HelpRequested) Error() string { return h.Usage }
+// Lines renders the help at width columns; 0 does not wrap. See HelpBlock.
+func (h *HelpRequested) Lines(width int) []string { return h.Spec.HelpBlock(width) }
+
+func (h *HelpRequested) Error() string { return strings.Join(h.Lines(0), "\n") }
 
 func (h *HelpRequested) Unwrap() error { return flag.ErrHelp }

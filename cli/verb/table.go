@@ -340,7 +340,6 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"counts revisions the way git does: none = unstaged, one = that revision",
 			"against the working tree, two = commit against commit",
-			"--submodule inlines a submodule's own changes",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Pathspec:        true,
@@ -386,13 +385,12 @@ var Verbs = []VerbSpec{
 	{
 		Path:          []string{"git", "show"},
 		WebUIDispatch: WebUIDispatch{Fn: "gitQuery"},
-		SurfaceNotes:  map[Surface][]string{WebUI: {"one commit and its diff"}, TUI: {"one commit and its diff"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/gitmodal.go:GitModal"},
 			{Surface: WebUI, At: "webui/index.html#git-repo"},
 		},
 		Notes: []string{
-			"--submodule inlines a submodule's own changes",
+			"one commit and its diff",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Pathspec:        true,
@@ -508,7 +506,6 @@ var Verbs = []VerbSpec{
 			"a task that ended with uncommitted work keeps one",
 			"dies with this process; for something to leave running, submit a task instead",
 			"NOT `session exec`, which types into the session's foreground shell",
-			"--shell: hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Action:          "ExecRunAction",
@@ -544,7 +541,7 @@ var Verbs = []VerbSpec{
 	{
 		Path:          []string{"exec", "ls"},
 		WebUIDispatch: WebUIDispatch{Fn: "execRunList"},
-		SurfaceNotes:  map[Surface][]string{WebUI: {"list the running execs / stop one (the task row shows execs=N)", "--shell: one line for the runner's own shell, so pipes and redirects mean something", "--sshd-parent: give the line a parent process named sshd, for a client that checks its ancestry (Windows; needs --shell)"}, TUI: {"list the running execs (Obs column shows Nx while any run)"}},
+		SurfaceNotes:  map[Surface][]string{WebUI: {"list the running execs / stop one (the task row shows execs=N)"}, TUI: {"list the running execs (Obs column shows Nx while any run)"}},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/execsmodal.go:ExecsModal"},
 			{Surface: WebUI, At: "webui/index.html#exec-list"},
@@ -1072,8 +1069,7 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
 		},
 		Notes: []string{
-			"withdraw one message: gone from every agent path, still readable here until the topic ages out.",
-			"--seq is required -- there is no whole-topic retract (cap: purge)",
+			"withdraw one message: gone from every agent path, still readable here until the topic ages out (cap: purge)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "BoardAction",
@@ -1139,7 +1135,6 @@ var Verbs = []VerbSpec{
 		},
 		Notes: []string{
 			"enqueue a new task (--repo: HARNESS_REPO_PATH)",
-			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
 			"--resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)",
 		},
 		CmdlineSurfaces: CLI | TUI | WebUI,
@@ -1177,8 +1172,6 @@ var Verbs = []VerbSpec{
 		},
 		Notes: []string{
 			"attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)",
-			"--agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias",
-			"--resume reuses an existing terminal interactive task id + worktree branch",
 		},
 		CmdlineSurfaces: CLI | TUI,
 		Action:          "SpawnAction",
@@ -1232,11 +1225,7 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
-			"--enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH",
 			"flags must precede <task-id>; everything after it is joined with spaces and sent literally",
-			"--settle-ms waits that long after sending whether or not --snapshot follows, " +
-				"so it is also how you give a program time to react before the next command; " +
-				"with --snapshot it is the window output is collected in (1500ms when unnamed)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "SendAction",
@@ -1266,7 +1255,7 @@ var Verbs = []VerbSpec{
 			// would turn `session send -e '...'` into a spurious Enter typed
 			// into a live PTY -- while compiling and reviewing cleanly.
 			{Name: "enter", Type: FlagBool, Default: false, Field: "Enter",
-				Help: "append a carriage return (Enter) after the text"},
+				Help: "append a carriage return (Enter) after the text — i.e. actually submit it"},
 			{Name: "e", Type: FlagBool, Default: false, Field: "Interp",
 				Help: `interpret backslash escapes (\n \r \t \e \xHH \\)`},
 			{Name: "quiet", Type: FlagBool, Default: false, Field: "Quiet",
@@ -1379,7 +1368,6 @@ var Verbs = []VerbSpec{
 			"publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
 			"A bare \"-\" is a VALUE OF --data, never a positional: `send --topic T -` publishes the one-byte body \"-\".",
 			"The ok line reports bytes and source, so a body that went out wrong says so at once.",
-			"--in-reply-to SEQ replies to that message; --topic is then optional (the server routes it where that message asked).",
 			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
 		},
 		CmdlineSurfaces: CLI,
@@ -2100,8 +2088,6 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
 			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
-			"--style/--color append attribute/color spans; --json emits {rows,cols,title,lines[],spans[]} instead of text",
-			"--detect judges the state: working / blocked (waiting on a HUMAN) / idle / unknown, naming the rule and the text it read",
 			"--raw writes the verbatim PTY bytes instead of the VT render (not combinable with --style/--color/--json/--detect)",
 		},
 		Action: "SessionAction",
@@ -2129,10 +2115,11 @@ var Verbs = []VerbSpec{
 				Help: "render only what the PTY produced, dropping the server's replay additions"},
 			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
 				Help: "write the verbatim replay bytes instead of the VT-rendered screen"},
-			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "emit the screen as one JSON object"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				Help: "emit the screen as one JSON object — {rows,cols,title,lines[],spans[]} — instead of text"},
 			{Name: "ansi", Type: FlagBool, Default: false, Field: "ANSI", Help: "re-emit the screen WITH its colours and attributes"},
 			{Name: "detect", Type: FlagBool, Default: false, Field: "Detect",
-				Help: "also judge what STATE the screen shows (working / blocked / idle / unknown)"},
+				Help: "also judge what STATE the screen shows — working / blocked (waiting on a HUMAN) / idle / unknown — naming the rule it matched and the text it read"},
 			{Name: "detect-agent", Type: FlagString, Default: "claude", Field: "DetectAgent", Help: "with --detect: which agent's rule set"},
 		},
 		Examples: []string{"session snapshot aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -2469,7 +2456,7 @@ func agentSendFlags(withTimeout bool) []Flag {
 	}
 	return append(out,
 		Flag{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
-			Help: "seq of the message being replied to; with it, --topic may be omitted"},
+			Help: "seq of the message being replied to; with it, --topic may be omitted (the server routes the reply where that message asked)"},
 		Flag{Name: "no-retire-on-reply", Type: FlagBool, Default: false, Field: "NoRetireOnReply",
 			Help: "keep this message on the board even after its recipient replies"},
 	)

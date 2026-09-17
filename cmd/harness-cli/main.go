@@ -19,6 +19,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/objtrsf/objproto"
+	"golang.org/x/term"
 )
 
 // workspaceRepo is the `repo` a --workspace supplied, consulted by the two
@@ -302,11 +303,34 @@ func printFamilyNotes(w io.Writer, family string) {
 	}
 }
 
+// helpWidth is what `<verb> -h` wraps to: the terminal's width when stdout is
+// one, and 100 when it is not.
+//
+// Asked HERE rather than in cli/verb because this is the process that has a
+// terminal. `harness-cli session new -h | less` is a pipe, and GetSize fails on
+// it — which is the right answer, not a fallback: the reader's pager decides
+// how to fold, and a width guessed from the writer's side would be wrong for it.
+func helpWidth() int {
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 20 {
+		return w
+	}
+	return 100
+}
+
 func die(err error) {
-	// -h is a request that was answered, not a failure. verb.HelpRequested
-	// carries the generated usage as its message, so this prints the help to
-	// STDOUT and exits 0 — `harness-cli session new -h | less` works, and a
-	// script that checks the status does not see a false error.
+	// -h is a request that was answered, not a failure. It prints to STDOUT and
+	// exits 0 — `harness-cli session new -h | less` works, and a script that
+	// checks the status does not see a false error.
+	//
+	// Rendered from the spec rather than printed as the error's text, because
+	// the width belongs to this process: Error() cannot wrap and this can.
+	var help *verb.HelpRequested
+	if errors.As(err, &help) {
+		for _, l := range help.Lines(helpWidth()) {
+			fmt.Println(l)
+		}
+		os.Exit(0)
+	}
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Println(err)
 		os.Exit(0)

@@ -3954,6 +3954,9 @@ func harnessParseCommand(this js.Value, args []js.Value) any {
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, rest)
+	if help := helpAnswer(err); help != nil {
+		return js.ValueOf(help)
+	}
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
@@ -4138,6 +4141,9 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 	fs := sp.NewFlagSet(flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	b, err := sp.Parse(fs, fields[2:])
+	if help := helpAnswer(err); help != nil {
+		return js.ValueOf(help)
+	}
 	if err != nil {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
@@ -4156,6 +4162,29 @@ func harnessParseGit(this js.Value, args []js.Value) any {
 		"staged": g.Staged, "submodule": g.Submodule,
 		"max": float64(g.Max), "maxBytes": float64(g.MaxBytes),
 	})
+}
+
+// helpAnswer turns a -h into the page's `help` payload, or returns nil when err
+// is anything else.
+//
+// A separate key from `error` because the two are opposite outcomes that used
+// to share one: the bridge reported the help text as an error, the page threw
+// it, and asking `submit -h` in the command box produced a red failure whose
+// body happened to be the answer. Width 0: the output pane is a <pre> with
+// overflow:auto, so it scrolls a long line rather than folding it — as it
+// already does for `help` and for every wide listing. A column count guessed
+// here would fight that.
+func helpAnswer(err error) map[string]any {
+	var help *verb.HelpRequested
+	if !errors.As(err, &help) {
+		return nil
+	}
+	lines := help.Lines(0)
+	out := make([]any, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, l)
+	}
+	return map[string]any{"help": out}
 }
 
 // harnessHelp hands the WebUI its command list, generated from the same verb

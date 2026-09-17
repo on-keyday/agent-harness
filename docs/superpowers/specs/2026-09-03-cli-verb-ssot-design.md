@@ -42,6 +42,7 @@ author chose it while writing — those are the rows worth a second look.
 | D28 | One build per **(verb, surface)** pair, not per verb. A positional the declaration narrows away shifts every index after it: `file push` names three positionals on the CLI and two in a browser | this spec |
 | D29 | `VerbSpec.Build` is **deleted**, not kept as an escape hatch. What does not generate is declared instead — `Flag.Convert` for a value carrying a grammar, `VerbSpec.Derived` for a field computed from the whole line, `VerbSpec.Validate` for a rule about values. All three take or return only `Bound`, never a generated type (D27) | operator ("do it now… whenever an LLM does this, drift that is left somewhere is not noticed by default, so it definitely drifts") |
 | D30 | Cross-flag rules carry their REASON in the declaration (`Rule.Reason`, `Requirement.Reason`). Moving a hand-written check to an attribute was silently dropping the sentence that said what was actually wrong | this spec |
+| D31 | `Flag.Help` is RENDERED: `<verb> -h` prints the synopsis, the verb's notes, then one line per flag with its Help — on all three surfaces. The full listings stay one line per verb | operator (2026-09-18, over the alternative of declaring `Help` a doc comment and keeping every flag's prose in `Notes`) |
 
 ## Problem
 
@@ -833,6 +834,48 @@ the five `session stream *`), which had survived the entire migration. The
 reverse direction found three verbs — `skill`, `watch`, `notify-watch` — that
 `usage()` printed and the table had never declared, so every completeness
 check had passed over them. That is why the count above is 80 and not 77.
+
+### Amendment (2026-09-18): the flag's Help reaches an operator (D31)
+
+The declaration's `Flag.Help` was written for all 233 flags, maintained with
+them, and printed to nobody. `--help` rendered `UsageLines()` — the generated
+synopsis plus the verb's `Notes` — and nothing called the flag package's
+`PrintDefaults`, so the string went to the `FlagSet` (which requires a usage
+argument) and to the generated Action field's doc comment, and no further.
+`harness-cli file push --help` printed four lines and described no flag, while
+`--route`'s declared 381 characters — which of splice / forwarded / direct a
+transfer takes, and what each costs in measured numbers — sat unread on seven
+verbs.
+
+That was never a decision. The hand-written usage D12 replaced printed a
+synopsis of flag NAMES too, so the generated one dropped nothing.
+
+`VerbSpec.HelpBlock(width)` renders it: `UsageLines()`, then `flags:`, then one
+line per flag, aliases included, the description column set by the widest
+spelling that fits 24 columns. `HelpRequested` carries the surface-narrowed
+`VerbSpec` instead of a rendered string, because the width belongs to the
+process: the CLI asks its terminal (100 when stdout is a pipe), the TUI passes
+its result panel's width, and the WebUI passes 0 — its output pane is a `<pre>`
+that scrolls, as it already does for every wide listing.
+
+Only `-h` on ONE verb prints it. The full listings — `usage()`, the TUI's
+`help`, `HelpLines` for the WebUI — stay one line per verb: 233 descriptions
+there would bury the grammar they explain.
+
+Two things came out with it:
+
+- **The duplication D12 could not see.** Two dozen `Notes` lines began with a
+  flag name, written by authors who wanted a flag explained and found that
+  `Help` did not show. Where the note said no more than the Help, it is gone;
+  where it said more about that one flag, the extra moved into the Help; where
+  it is about how one flag combines with another (`--raw` needing `--dir`,
+  `--suggestion` riding either verdict), it stays a note. That split is now the
+  rule in `Flag.Help`'s own doc comment.
+- **A latent generator bug.** `firstLine` truncated a Help at byte 100 for the
+  Action field's doc comment. A long enough description with an em dash across
+  that byte emitted half a rune, `go/format` refused the output, and `go
+  generate ./cli/verb` failed pointing at a line whose source is a string in
+  `table.go`. It cuts on a rune boundary now.
 
 ### The gate this migration did not run
 

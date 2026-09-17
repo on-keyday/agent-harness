@@ -6329,9 +6329,41 @@ async function runGitAction(taskID, g) {
 // it and runs after the wasm module is up.
 let RUNCMD_DISPATCH = {};
 
-// runVerbCommand is the WebUI's command-line dispatch: one parsed verb in,
-// the text to print out (or undefined when the case reported through ctx.echo
-// itself).
+// HelpRequest is a -h on its way out of the switch below. It is not an error:
+// the operator asked a question and the bridge answered it, so it unwinds past
+// whichever case was parsing and is printed as that command's output.
+class HelpRequest {
+  constructor(lines) { this.text = lines.join("\n"); }
+}
+
+// parseOrHelp is the parse every case does, with the two non-Bound answers
+// separated: a help request becomes output, a parse error stays an error.
+//
+// One helper rather than two lines per case because there are sixteen cases,
+// and the shape it replaces (`if (b.error) throw`) is what made `submit -h`
+// report the help text as a red failure -- the bridge had nowhere else to put
+// it.
+function parseOrHelp(ctx, tokens, opts) {
+  const b = ctx.harness.parseCommand(tokens, opts || {});
+  if (b.help) throw new HelpRequest(b.help);
+  if (b.error) throw new Error(b.error);
+  return b;
+}
+
+// runVerbCommand answers a -h from anywhere inside the dispatch below, and
+// hands everything else through untouched.
+async function runVerbCommand(tokens, ctx) {
+  try {
+    return await runVerbCommandDispatch(tokens, ctx);
+  } catch (e) {
+    if (e instanceof HelpRequest) return e.text;
+    throw e;
+  }
+}
+
+// runVerbCommandDispatch is the WebUI's command-line dispatch: one parsed verb
+// in, the text to print out (or undefined when the case reported through
+// ctx.echo itself). runVerbCommand above wraps it.
 //
 // Top level, like runFileAction and runGitAction above it, and for the reason
 // those two were hoisted: nothing inside the page's IIFE can be executed
@@ -6344,7 +6376,7 @@ let RUNCMD_DISPATCH = {};
 // ctx is everything the page owns and a test does not: the compose dropdowns,
 // the snapshot cache, the panels. Every one is a function so the test can
 // record the call rather than mimic the widget.
-async function runVerbCommand(tokens, ctx) {
+async function runVerbCommandDispatch(tokens, ctx) {
   const cmd = tokens[0];
   let out;
   switch (cmd) {
@@ -6355,11 +6387,10 @@ async function runVerbCommand(tokens, ctx) {
       // ladder with three injections, instead of three ladders.
       const dropdownRepo = ctx.composeRepo();
       const dropdownHost = ctx.composeHost();
-      const b = ctx.harness.parseCommand(tokens, {
+      const b = parseOrHelp(ctx, tokens, {
         repo: dropdownRepo, host: dropdownHost,
         agent: ctx.composeAgent(),
       });
-      if (b.error) throw new Error(b.error);
       // b.flags.repo is already the ladder's answer -- typed flag first,
       // dropdown second -- because parseCommand applies the
       // surface-context tier from the object above. Both were read
@@ -6395,8 +6426,7 @@ async function runVerbCommand(tokens, ctx) {
       // The tab and, with --trsf, the reading panel inside it. Nothing is
       // fetched here: the tab is already fed by the snapshot poll, and the
       // panel starts its own read when it expands.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       ctx.connsView({
         trsf: !!b.flags.trsf,
         runner: b.flags.runner || "",
@@ -6421,8 +6451,7 @@ async function runVerbCommand(tokens, ctx) {
       // controls are not overridden. Same state as the chips (D17: one idea,
       // one answer), so this drives them rather than keeping a second copy.
       if (cmd === "scope" || sub === "set-defaults") {
-        const b = ctx.harness.parseCommand(tokens, {});
-        if (b.error) throw new Error(b.error);
+        const b = parseOrHelp(ctx, tokens, {});
         const raw = {
           caps: b.flags.caps || "",
           scope: b.flags.scope || "",
@@ -6451,8 +6480,7 @@ async function runVerbCommand(tokens, ctx) {
         // of the sentences. A word that is not a declared sub-verb reaches
         // the declaration and is refused there, rather than by a second list
         // of sub-verbs kept here.
-        const b = ctx.harness.parseCommand(["caps", ...tokens.slice(1)], {});
-        if (b.error) throw new Error(b.error);
+        const b = parseOrHelp(ctx, ["caps", ...tokens.slice(1)], {});
         const text = ctx.harness.capsCatalog(!!b.flags.json);
         if (text && text.error) throw new Error(text.error);
         out = text;
@@ -6461,8 +6489,7 @@ async function runVerbCommand(tokens, ctx) {
 
       // `caps set-parent` on the other surfaces; the shared declaration
       // enforces "exactly one of --parent / --none / --swap".
-      const b = ctx.harness.parseCommand(["caps", "set-parent", ...tokens.slice(2)], {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, ["caps", "set-parent", ...tokens.slice(2)], {});
       const req = { taskId: b.args[0] };
       if (b.flags.swap) req.swap = true;
       else if (b.flags.none) req.parentId = "";
@@ -6478,8 +6505,7 @@ async function runVerbCommand(tokens, ctx) {
       // snapshot: one idea, two answers, which is what D17 forbids.
       // cli.Client.List was already exposed here as harness.list and
       // simply went unused.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       if (b.flags.filtered) {
         await ctx.refreshSnapshot();
         out = ctx.filteredTaskRows();
@@ -6498,8 +6524,7 @@ async function runVerbCommand(tokens, ctx) {
       out = "snapshot refreshed";
       break;
     case "cancel": {
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       await ctx.harness.cancel(b.args[0]);
       out = "cancelled";
       break;
@@ -6513,8 +6538,7 @@ async function runVerbCommand(tokens, ctx) {
       // The grid grammar was already shared (cli.ParseGridArgs, which the
       // workspace config validates against too); this routes the command
       // input through the same declaration as everything else.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       // The declaration already refused --descendants without --under, so
       // the mode follows from what survived the parse.
       const under = b.flags.under || "";
@@ -6533,8 +6557,7 @@ async function runVerbCommand(tokens, ctx) {
     case "restore": {
       // The undo half of prune. Ids only -- there is no sweep back, because
       // the WAL holds every task the server has ever seen.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       // The bare form lists: the ids live in a file on the server host that
       // no other surface reads, so a restore that only ACTED would be usable
       // by someone who wrote the id down before the accident.
@@ -6547,8 +6570,7 @@ async function runVerbCommand(tokens, ctx) {
       // the TUI parse. The hand-written --before / -f loop that used to
       // live here was a third independent copy of it, and the one that
       // spelled the task listing `list` while the others said `ls`.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       if (b.args.length > 0) {
         out = await ctx.harness.prune({ taskIds: b.args, force: !!b.flags.force });
       } else {
@@ -6561,8 +6583,7 @@ async function runVerbCommand(tokens, ctx) {
       // per-sub-verb argument loops this case used to reach were a third
       // copy of this grammar -- and the copy where `file push` quietly
       // accepted no flags at all while the CLI and TUI took -r/-f/-p.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       out = await runFileAction(b);
       break;
     }
@@ -6571,13 +6592,13 @@ async function runVerbCommand(tokens, ctx) {
       // The id is an ordinary positional now, so the bridge parses the line
       // like any other and this page holds no knowledge of its position.
       const g = ctx.harness.parseGit(tokens);
+      if (g.help) throw new HelpRequest(g.help);
       if (g.error) throw new Error(g.error);
       out = await runGitAction(g.taskId, g);
       break;
     }
     case "server": {
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       const status = await ctx.harness.serverDialRunner(b.args[0], b.flags.via || undefined);
       out = `server dial-runner ${b.args[0]}${b.flags.via ? ` --via=${b.flags.via}` : ""}: ${status}`;
       break;
@@ -6590,8 +6611,7 @@ async function runVerbCommand(tokens, ctx) {
       // Parsed by the shared declaration: --shell/--sshd-parent, the
       // optional `--` before the argv, and the refusal of `exec --shell
       // kill 3` (a sub-verb where a task id belongs) all come from there.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       const sub = b.path.length > 1 ? b.path[1] : "run";
       if (sub === "ls") {
         const es = await ctx.harness.execRunList(b.flags.task || undefined);
@@ -6627,8 +6647,7 @@ async function runVerbCommand(tokens, ctx) {
       // not (see forwardLsView). Starting a socket-bound forward is CLI-only
       // (a browser cannot bind a local listener), which the declaration says
       // by leaving the open form off this surface.
-      const b = ctx.harness.parseCommand(tokens, {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, tokens, {});
       const sub = b.path[1];
       if (sub === "ls") {
         const fwds = await ctx.forwardLsView({
@@ -6680,8 +6699,7 @@ async function runVerbCommand(tokens, ctx) {
       if (tokens[1] === "await-idle") {
         // Parsed by the shared declaration, which also refuses --notify
         // with --topic: two sinks for one fire.
-        const b = ctx.harness.parseCommand(["session", "await-idle", ...tokens.slice(2)], {});
-        if (b.error) throw new Error(b.error);
+        const b = parseOrHelp(ctx, ["session", "await-idle", ...tokens.slice(2)], {});
         const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
         if (sink === "reply") ctx.echo("await-idle: waiting for the session to go idle…");
         const r = await ctx.harness.awaitIdle({
@@ -6728,8 +6746,7 @@ async function runVerbCommand(tokens, ctx) {
         sid = ctx.chatTaskID();
       }
       if (!sid) { ctx.echo("session stream: a task id is required (or open a chat first)"); break; }
-      const b = ctx.harness.parseCommand(["session", "stream", verb, sid, ...rest], {});
-      if (b.error) throw new Error(b.error);
+      const b = parseOrHelp(ctx, ["session", "stream", verb, sid, ...rest], {});
       try {
         switch (verb) {
           case "turn":

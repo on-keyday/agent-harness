@@ -1960,3 +1960,44 @@ which items 11–12 name for TASKS and have no forward equivalent on this list.
 accounting turns on emitting `oversize=0` on a udp row and nothing at all on a
 tcp one, and both directions are pinned by tests in
 `cli/forward_protocol_render_test.go`.
+
+### 2026-09-18 (pre-landing) — `Flag.Help` is printed by `<verb> -h`
+
+Walked 1–39 for a change that adds no flag and no field: it RENDERS a part of
+the declaration that already existed and reached no operator. S1–S6 `n/a` — no
+agent added, renamed, or launched differently.
+
+**done:** 1 (the rendering is one function over the existing declaration, plus
+`table.go`/`spawn.go` edits folding two dozen flag-leading `Notes` back into the
+`Help` beside the flag), 7 (`runVerbCommand` is now a wrapper around
+`runVerbCommandDispatch`; the startup assertion and `page.runVerbCommand` both
+still resolve to the same name), 8, 10, 24, 29, 30, 31, 32, 36 (checked, no edit
+needed), 37, 39.
+
+**omitted:**
+
+- **35 — README says nothing about per-verb help.** `grep -- '--help' README.md`
+  is empty, so there is no claim to correct. The TUI cmdline verb list it
+  carries is about which verbs exist, which did not change.
+- **36 — the agent-facing skill is left alone.** Its two `--help` sentences
+  (`harness-cli/SKILL.md` :422, :429) stay true. Telling agents that `-h` now
+  lists every flag would be useful and is a separate, three-mirror edit.
+- **WebUI wrap.** The CLI wraps to its terminal and the TUI to its result panel;
+  the browser is handed width 0. `#cmd-output` is a `<pre>` with
+  `overflow:auto`, so it scrolls a long line rather than folding it — the same
+  treatment `help` and every wide listing already get there. Making it wrap
+  would need a character-width measurement in JS, and changing the pane to
+  `pre-wrap` would fold the tabular output that shares it.
+
+**What the walk produced that the diff would not have:**
+
+1. **Item 8 was the whole WebUI half.** Sixteen cases parse through
+   `harness.parseCommand`, and `git` does NOT — it has its own bridge function
+   because its `Build` interprets its positionals. Wiring only `parseCommand`
+   would have left `git diff -h` painting the answer as a red error, with every
+   other verb fixed. Two tests, one per bridge function.
+2. **Item 30 WAS the defect on two of the three surfaces.** `-h` is answered by
+   `VerbSpec.Parse`, which all three share, so the TEXT was never the problem:
+   the TUI rendered it through `ErrorStyle` behind an `error: ` prefix and the
+   WebUI threw it as an `Error`. The operator who asked what a flag does was
+   told they had made a mistake.

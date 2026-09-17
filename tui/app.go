@@ -1479,6 +1479,19 @@ func (a *App) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.addCmdHistory(input)
 		a.cmdline.SetValue("")
 		act, err := ParseCommand(input, a.defaultRepo)
+		// -h is a request that was answered. It arrived here as an error and
+		// was rendered in ErrorStyle, which told an operator who asked for help
+		// that they had made a mistake -- and, because the panel is narrower
+		// than the terminal, folded it at the left margin. Both are fixed by
+		// treating it as the output it is.
+		var help *verb.HelpRequested
+		if errors.As(err, &help) {
+			a.cmdresult.Append("> " + input)
+			for _, l := range help.Lines(a.cmdresult.Width()) {
+				a.cmdresult.Append(l)
+			}
+			return a, nil
+		}
 		if err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("error: " + err.Error()))
 			return a, nil

@@ -142,22 +142,23 @@ type Flag struct {
 	Type    FlagType
 	Default any
 
-	// Help is NOT printed to an operator. `--help` renders UsageLines() — the
-	// generated synopsis plus this verb's Notes — and nothing calls the flag
-	// package's PrintDefaults, so this string reaches only two readers: the
-	// FlagSet (which needs a usage argument) and the generated Action field's
-	// doc comment.
+	// Help is what `<verb> -h` prints beside this flag, on all three surfaces:
+	// VerbSpec.HelpBlock renders it and the answer to -h is built from that.
 	//
-	// That was never decided. The hand-written usage this replaced printed a
-	// synopsis of flag NAMES too, so the generated one dropped nothing; the
-	// field exists because fs.XVar takes a string.
+	// It reached no operator until then — `--help` rendered UsageLines() alone
+	// and nothing called the flag package's PrintDefaults, so the string went
+	// only to the FlagSet (which needs a usage argument) and to the generated
+	// Action field's doc comment. That was never a decision: the hand-written
+	// usage the generated one replaced printed a synopsis of flag NAMES too, so
+	// nothing was dropped when it was generated. What it cost was visible in
+	// table.go, where two dozen Notes lines began with a flag name because an
+	// author who wanted a flag explained found that Help did not show and wrote
+	// it into Notes instead — a flag's prose in two places, the copy beside the
+	// flag being the unread one. Those lines are folded back in here.
 	//
-	// The cost is real and visible in this file: 25 Notes lines begin with a
-	// flag name, because an author who wanted a flag explained found that Help
-	// did not show and wrote it into Notes instead. So a flag's prose can sit
-	// in two places, and the copy next to the flag is the one nobody reads.
-	// Before adding prose here, check whether it belongs in Notes — and see
-	// the backlog note for making this printable instead.
+	// So: prose about THIS flag belongs here. Prose about how it combines with
+	// another flag, or what the verb does, belongs in Notes, which prints above
+	// the flag list and in the full listings where this does not.
 	Help string
 
 	// Custom supplies a flag.Value for options the stdlib types cannot carry:

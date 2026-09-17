@@ -28,6 +28,11 @@ func (m *CmdResultModel) SetSize(w, h int) {
 	m.vp.Height = h
 }
 
+// Width is how wide a line may be before this panel folds it. Exported because
+// the help block wraps to the width of whatever shows it, and this panel is
+// narrower than the terminal it sits in.
+func (m CmdResultModel) Width() int { return m.vp.Width }
+
 func (m *CmdResultModel) Append(line string) {
 	m.lines = append(m.lines, line)
 	if len(m.lines) > 200 {

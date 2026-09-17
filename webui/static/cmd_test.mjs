@@ -472,3 +472,37 @@ test("conns refuses --runner / --watch without --trsf", async () => {
     eq(named(calls, "connsView"), [], `${line} must not open the view`);
   }
 });
+
+// -h is an answer, and it used to leave here as a failure: the bridge returned
+// the usage under the `error` key, every case threw it, and the page painted
+// the help text red. Now the bridge answers under `help`, parseOrHelp unwinds
+// it past whichever case was parsing, and it prints as that command's output.
+test("-h prints the flag block instead of failing", async () => {
+  for (const line of ["file push -h", "submit --help"]) {
+    const { out, err } = await run(line);
+    assert.equal(err, undefined, `${line} must not throw, got: ${err}`);
+    assert.match(String(out), /\nflags:\n/, `${line} must list its flags`);
+  }
+  const { out } = await run("file push -h");
+  assert.match(String(out), /--route/, "the flag's own description must reach the page");
+});
+
+// `git` reaches the bridge through parseGit, not parseCommand — it is the one
+// verb whose Build interprets its positionals — so its help had to be wired
+// separately. A test per bridge function, because one covering the other would
+// have passed while this one printed a red error.
+test("-h on the git family answers through its own bridge function", async () => {
+  const gitPath = page.harness.pathsForSurface("webui").find((p) => p.startsWith("git "));
+  assert.ok(gitPath, "the webui declares at least one git path");
+  const { out, err } = await run(`git ${gitPath.split(" ")[1]} -h`);
+  assert.equal(err, undefined, `git -h must not throw, got: ${err}`);
+  assert.match(String(out), /\nflags:\n/);
+});
+
+// The branch above must not swallow the thing it was added next to: a flag the
+// declaration does not know is still a failure, not a help request.
+test("an undeclared flag is still an error", async () => {
+  const { err, out } = await run("file push --zzz-no-such-flag a b c");
+  assert.ok(err, `an undeclared flag must fail, got out=${out}`);
+  assert.doesNotMatch(String(err), /\nflags:\n/, "and must not print the block");
+});

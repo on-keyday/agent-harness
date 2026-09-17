@@ -29,6 +29,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
 )
@@ -804,12 +805,25 @@ func singular(name string) string {
 	return strings.ReplaceAll(name, "-", " ")
 }
 
+// firstLine is the one-line form of a declared Help, for the generated field's
+// doc comment.
+//
+// Cut on a RUNE boundary. `s[:100]` splits whatever sits across byte 100, and a
+// Help with an em dash there emitted a half rune into the comment: the output
+// stopped being valid UTF-8, go/format refused it, and `go generate ./cli/verb`
+// failed with "illegal UTF-8 encoding" pointing at a line whose source is a
+// string in table.go. Reached by writing a long enough description with an em
+// dash in it, which is ordinary prose here.
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
 	if len(s) > 100 {
-		s = s[:100] + "…"
+		cut := 100
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }

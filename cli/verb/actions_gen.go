@@ -55,7 +55,7 @@ type AgentSendAction struct {
 	Data string
 	// route replies to THIS message to this topic instead of your own chat.<short-id>
 	ReplyTo string
-	// seq of the message being replied to; with it, --topic may be omitted
+	// seq of the message being replied to; with it, --topic may be omitted (the server routes the reply wh…
 	InReplyTo uint64
 	// keep this message on the board even after its recipient replies
 	NoRetireOnReply bool
@@ -384,7 +384,7 @@ type ScreenAction struct {
 // SendAction is built by: session send.
 type SendAction struct {
 	ActionMarker
-	// append a carriage return (Enter) after the text
+	// append a carriage return (Enter) after the text — i.e. actually submit it
 	Enter bool
 	// interpret backslash escapes (\n \r \t \e \xHH \\)
 	Interp bool
@@ -470,7 +470,7 @@ type SessionAction struct {
 	Raw bool
 	// re-emit the screen WITH its colours and attributes
 	ANSI bool
-	// also judge what STATE the screen shows (working / blocked / idle / unknown)
+	// also judge what STATE the screen shows — working / blocked (waiting on a HUMAN) / idle / unknown …
 	Detect bool
 	// with --detect: which agent's rule set
 	DetectAgent string
@@ -563,7 +563,7 @@ type SpawnAction struct {
 	Agent string
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
-	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
+	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args); -…
 	ExtraArgs []string
 	// pin to a specific runner by ConnectionID (the id= value from `ls`)
 	Runner string
