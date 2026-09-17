@@ -30,6 +30,7 @@ const udpClientFlowCap = 512
 // reply can be written back to the right address. The runner's end is the
 // mirror image: one socket per flow, because it dials.
 type udpForwardClient struct {
+	drops     protocol.ForwardDropCounters
 	forwardID uint64
 	conn      *net.UDPConn
 	send      datagramSender
@@ -157,6 +158,10 @@ func runUDPForward(ctx context.Context, send datagramSender, sp ForwardSpec,
 				return
 			case now := <-t.C:
 				u.reapIdle(now)
+				// The drop report rides the same ticker: no goroutine and no
+				// timer of its own for something that only has to be roughly
+				// current, and silent when nothing changed.
+				u.reportDrops(send, logf)
 			}
 		}
 	}()
@@ -178,14 +183,44 @@ func runUDPForward(ctx context.Context, send datagramSender, sp ForwardSpec,
 		}
 		if len(b) > send.MaxDatagramSize() {
 			// There is no fragmentation anywhere below this, so an oversized
-			// payload cannot cross. The COUNT lives server-side against the row
-			// `forward ls` shows; here the honest act is to drop it rather than
-			// send a truncated datagram the far end would treat as complete.
+			// payload cannot cross. Counted HERE and reported: the server's own
+			// oversize counter fires when the FAR leg cannot take a datagram it
+			// already received, and one too large for this leg never arrives,
+			// which is how a row came to read oversize=0 while this very line
+			// was logging every drop.
+			u.drops.NoteOversize()
+			u.reportDrops(send, logf)
 			logf(fmt.Sprintf("udp forward %d: datagram of %d bytes exceeds the %d that fit; dropped",
 				forwardID, n, send.MaxDatagramSize()))
 			continue
 		}
-		_ = send.SendDatagram(b)
+		if err := send.SendDatagram(b); err != nil {
+			u.drops.NoteSendError(err)
+			u.reportDrops(send, logf)
+		}
+	}
+}
+
+// reportDrops tells the server what this endpoint dropped, so `forward ls`
+// stops reporting only what the server's own relay dropped.
+//
+// Sent on the same unreliable frame as the data it counts, which is safe
+// because the totals are cumulative: a refused report is carried by the next
+// tick. A failure here is deliberately not counted as a drop of its own --
+// counting the loss of a loss report is a hall of mirrors, and the number it
+// would corrupt is the one being reported.
+func (u *udpForwardClient) reportDrops(send datagramSender, logf func(string)) {
+	if err := u.drops.ReportTo(u.forwardID, send.SendDatagram); err != nil {
+		// Logged, not swallowed. A report that cannot cross is the one case
+		// where the operator's numbers go stale without anything saying so, and
+		// this file has already paid once for a drop nobody counted.
+		logf(fmt.Sprintf("udp forward %d: drop report not sent: %v", u.forwardID, err))
+	}
+}
+
+func (d *udpRemoteDialer) reportDrops(send datagramSender, logf func(string)) {
+	if err := d.drops.ReportTo(d.forwardID, send.SendDatagram); err != nil {
+		logf(fmt.Sprintf("udp remote forward %d: drop report not sent: %v", d.forwardID, err))
 	}
 }
 
@@ -271,6 +306,8 @@ func listenUDPForward(sp ForwardSpec) (*net.UDPConn, int, error) {
 // udpRemoteDialer is the client end of a udp -R: the local target, and the
 // per-flow sockets dialled toward it so far.
 type udpRemoteDialer struct {
+	drops     protocol.ForwardDropCounters
+	logf      func(string)
 	forwardID uint64
 	target    string
 	send      datagramSender
@@ -368,8 +405,12 @@ func (d *udpRemoteDialer) readReplies(id uint32, fl *udpDialedFlow) {
 			d.mu.Unlock()
 			dg := protocol.ForwardDatagram{ForwardId: d.forwardID, FlowId: id, Payload: buf[:n]}
 			if b, eerr := dg.Append([]byte{byte(appwire.AppKind_ForwardDatagram)}); eerr == nil {
-				if len(b) <= d.send.MaxDatagramSize() {
-					_ = d.send.SendDatagram(b)
+				if len(b) > d.send.MaxDatagramSize() {
+					d.drops.NoteOversize()
+					d.reportDrops(d.send, d.logf)
+				} else if serr := d.send.SendDatagram(b); serr != nil {
+					d.drops.NoteSendError(serr)
+					d.reportDrops(d.send, d.logf)
 				}
 			}
 		}
@@ -441,6 +482,7 @@ func lookupUDPRemoteDialer(id uint64) (*udpRemoteDialer, bool) {
 func runUDPRemoteForward(ctx context.Context, send datagramSender, sp RemoteForwardSpec,
 	forwardID uint64, logf func(string)) {
 	d := &udpRemoteDialer{
+		logf:      logf,
 		forwardID: forwardID,
 		target:    net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)),
 		send:      send,
@@ -457,6 +499,7 @@ func runUDPRemoteForward(ctx context.Context, send datagramSender, sp RemoteForw
 			return
 		case now := <-t.C:
 			d.reapIdle(now)
+			d.reportDrops(send, logf)
 		}
 	}
 }

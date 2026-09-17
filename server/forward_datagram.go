@@ -34,15 +34,25 @@ func (s *Server) pumpForwardDatagrams(ctx context.Context, sc streamingConn, tr 
 			// peer at all would tell it this port speaks the protocol.
 			continue
 		}
-		if len(b) == 0 || appwire.AppKind(b[0]) != appwire.AppKind_ForwardDatagram {
+		if len(b) == 0 {
 			continue
 		}
-		var dg protocol.ForwardDatagram
-		if derr := dg.DecodeExact(b[1:]); derr != nil {
-			s.cfg.Logger.Warn("forward datagram: undecodable", "cid", cid, "err", derr)
-			continue
+		switch appwire.AppKind(b[0]) {
+		case appwire.AppKind_ForwardDatagram:
+			var dg protocol.ForwardDatagram
+			if derr := dg.DecodeExact(b[1:]); derr != nil {
+				s.cfg.Logger.Warn("forward datagram: undecodable", "cid", cid, "err", derr)
+				continue
+			}
+			s.relayForwardDatagram(sc, cid, &dg, b)
+		case appwire.AppKind_ForwardDropReport:
+			var rep protocol.ForwardDropReport
+			if derr := rep.DecodeExact(b[1:]); derr != nil {
+				s.cfg.Logger.Warn("forward drop report: undecodable", "cid", cid, "err", derr)
+				continue
+			}
+			s.noteForwardDropReport(cid, &rep)
 		}
-		s.relayForwardDatagram(sc, cid, &dg, b)
 	}
 }
 
@@ -122,4 +132,39 @@ func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protoc
 			pf.noteDatagramDrop(dropQueue)
 		}
 	}
+}
+
+// noteForwardDropReport records what one endpoint says it dropped before the
+// server ever saw it.
+//
+// STORED, not added: the report carries running totals, because it rides the
+// same unreliable frame as the data it counts and a lost one has to be
+// harmless. Adding deltas would double-count a duplicate and lose a dropped
+// one.
+//
+// Which endpoint sent it is read the same way relayForwardDatagram reads it,
+// and for the same reason: a forward_id names two connections and nobody
+// else's report about it is accepted.
+func (s *Server) noteForwardDropReport(cid string, rep *protocol.ForwardDropReport) {
+	if s.taskHandler == nil {
+		return
+	}
+	pf, ok := s.taskHandler.pforwards().get(rep.ForwardId)
+	if !ok {
+		return // the registration went away; an in-flight report is ordinary
+	}
+	slot := &pf.runnerDrops
+	if pf.clientCID == cid {
+		slot = &pf.clientDrops
+	} else {
+		runner, rok := s.registry.GetByIdentity(pf.runnerID)
+		if !rok || runner.Conn == nil || runner.Conn.ConnectionID().String() != cid {
+			s.cfg.Logger.Warn("forward drop report: sender is not an endpoint of this forward",
+				"cid", cid, "fwd", rep.ForwardId)
+			return
+		}
+	}
+	slot.oversize.Store(rep.DroppedOversize)
+	slot.congestion.Store(rep.DroppedCongestion)
+	slot.queue.Store(rep.DroppedQueue)
 }

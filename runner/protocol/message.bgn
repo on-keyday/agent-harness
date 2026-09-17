@@ -2285,6 +2285,25 @@ format ForwardDatagram:
     flow_id    :u32
     payload    :[..]u8
 
+# ForwardDropReport is one endpoint's running total of the datagrams it dropped
+# for a forward, before they ever reached the server.
+#
+# It exists because the server can only count what it relayed. A datagram the
+# CLIENT refused -- a closed window, a full handoff queue, a payload too large
+# for its own leg -- never arrives, so `forward ls` reported zero for it and the
+# row said "nothing overflowed" while the client was logging every drop. At an
+# offered 3,500 datagrams/s that was 74% of the loss.
+#
+# CUMULATIVE, and the receiver stores rather than adds. This rides the same
+# unreliable frame as the data it counts, so a lost report has to be harmless;
+# a delta would lose those counts for good.
+format ForwardDropReport:
+    forward_id         :u64
+    dropped_oversize   :u64
+    dropped_congestion :u64
+    dropped_queue      :u64
+
+
 format OpenFileTransferRequest:
     task_id       :TaskID
     direction     :FileTransferDirection

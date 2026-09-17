@@ -416,6 +416,12 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}
+	// The udp forwards' periodic work. On THIS ctx, the connection's, so it
+	// dies with the connection rather than outliving it once per reconnect --
+	// which is the whole reason it is started here and not lazily beside the
+	// registry, where no scope knows when the session ends.
+	go session.udpForwardRegistry().sweep(ctx, cfg.Logger)
+
 	// The registry outlives this Session, so a held task's output can find
 	// whatever connection is current instead of the one it started on.
 	cfg.Tasks.setSender(sender)

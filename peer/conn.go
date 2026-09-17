@@ -209,7 +209,11 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 	// through SendDatagram has to be listed, or the peer's core routes it to
 	// the control seam and it is never acknowledged.
 	p.SetDatagramKinds(func(kind uint8) bool {
-		return appwire.AppKind(kind) == appwire.AppKind_ForwardDatagram
+		switch appwire.AppKind(kind) {
+		case appwire.AppKind_ForwardDatagram, appwire.AppKind_ForwardDropReport:
+			return true
+		}
+		return false
 	})
 
 	c := &Conn{

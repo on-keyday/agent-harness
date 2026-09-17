@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
 	"net"
@@ -41,6 +42,7 @@ const udpFlowsPerForward = 512
 // carries the stream for it. A udp flow has no open of its own, so the standing
 // instruction is all the runner gets and all it needs.
 type udpForward struct {
+	drops     protocol.ForwardDropCounters
 	forwardID uint64
 	target    string
 	send      datagramSender
@@ -293,12 +295,62 @@ func (f *udpForward) sendBack(id uint32, payload []byte, log *slog.Logger) {
 		return
 	}
 	if len(b) > send.MaxDatagramSize() {
-		// No fragmentation anywhere below this, so the reply cannot cross. The
-		// COUNT lives server-side, against the row an operator reads; here the
-		// honest thing is to drop it rather than send something truncated.
+		// No fragmentation anywhere below this, so the reply cannot cross.
+		// Counted here and reported: the server's oversize counter only sees a
+		// datagram that reached it, and one too large for this leg never does.
+		f.drops.NoteOversize()
 		return
 	}
-	_ = send.SendDatagram(b)
+	f.drops.NoteSendError(send.SendDatagram(b))
+}
+
+// sweep runs the session's periodic udp-forward work until ctx ends: reaping
+// idle flows, and flushing any drop report the rate limit held back.
+//
+// It had no caller at all until 2026-09-17. sweepIdleFlows was written, and the
+// comment below already said "runs for the session", but nothing ever started
+// it -- so a runner-side flow was never reaped on its idle timeout and its
+// socket stayed open until the 512-flow cap evicted it. Started here, off the
+// CONNECTION's context, so it dies with the connection rather than outliving it
+// on every reconnect.
+func (u *udpForwards) sweep(ctx context.Context, log *slog.Logger) {
+	t := time.NewTicker(udpFlowSweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			u.sweepIdleFlows(now)
+			u.flushDropReports(log)
+		}
+	}
+}
+
+// flushDropReports sends what the rate limit held back. Reporting happens at
+// the drop site so it is prompt, but a burst that ends inside the floor would
+// otherwise leave its tail unreported until the next drop.
+func (u *udpForwards) flushDropReports(log *slog.Logger) {
+	u.mu.Lock()
+	forwards := make([]*udpForward, 0, len(u.m))
+	for _, f := range u.m {
+		forwards = append(forwards, f)
+	}
+	remotes := make([]*udpRemoteForward, 0, len(u.remotes))
+	for _, r := range u.remotes {
+		remotes = append(remotes, r)
+	}
+	u.mu.Unlock()
+	for _, f := range forwards {
+		if err := f.drops.ReportTo(f.forwardID, f.send.SendDatagram); err != nil {
+			log.Warn("udp forward: drop report not sent", "fwd", f.forwardID, "err", err)
+		}
+	}
+	for _, r := range remotes {
+		if err := r.drops.ReportTo(r.forwardID, r.send.SendDatagram); err != nil {
+			log.Warn("udp remote forward: drop report not sent", "fwd", r.forwardID, "err", err)
+		}
+	}
 }
 
 // sweepIdleFlows reaps flows that have gone quiet. Runs for the session, not
@@ -354,6 +406,7 @@ func (s *Session) handleDatagram(kind appwire.AppKind, payload []byte) {
 // udpRemoteForward is one udp -R registration on the runner: the listening
 // socket, and a flow id per source address heard on it.
 type udpRemoteForward struct {
+	drops     protocol.ForwardDropCounters
 	forwardID uint64
 	conn      *net.UDPConn
 	send      datagramSender
@@ -448,11 +501,12 @@ func (r *udpRemoteForward) readLoop(log *slog.Logger) {
 			continue
 		}
 		if len(b) > r.send.MaxDatagramSize() {
-			// No fragmentation below this, so it cannot cross. The count lives
-			// server-side against the row an operator reads.
+			// No fragmentation below this, so it cannot cross. Counted here:
+			// the server never sees a datagram refused on this leg.
+			r.drops.NoteOversize()
 			continue
 		}
-		_ = r.send.SendDatagram(b)
+		r.drops.NoteSendError(r.send.SendDatagram(b))
 	}
 }
 

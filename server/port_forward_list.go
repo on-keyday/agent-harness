@@ -113,9 +113,17 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	// delete the only clue an operator has when asking why a datagram protocol
 	// will not connect through the tunnel.
 	info.MaxDatagramSize = uint16(pf.maxDatagramSize.Load())
-	info.DroppedOversize = pf.droppedOversize.Load()
-	info.DroppedCongestion = pf.droppedCongestion.Load()
-	info.DroppedQueue = pf.droppedQueue.Load()
+	// The forward's drops wherever they happened: this server's relay plus what
+	// each endpoint reported. Summed rather than split by hop, because the
+	// first thing to fix was a row that read zero while datagrams vanished; the
+	// server knows which endpoint sent each report, so splitting later is a
+	// display change and not a wire one.
+	info.DroppedOversize = pf.droppedOversize.Load() +
+		pf.clientDrops.oversize.Load() + pf.runnerDrops.oversize.Load()
+	info.DroppedCongestion = pf.droppedCongestion.Load() +
+		pf.clientDrops.congestion.Load() + pf.runnerDrops.congestion.Load()
+	info.DroppedQueue = pf.droppedQueue.Load() +
+		pf.clientDrops.queue.Load() + pf.runnerDrops.queue.Load()
 	return info
 }
 

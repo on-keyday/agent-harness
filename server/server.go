@@ -1200,7 +1200,11 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// through SendDatagram has to be listed, or the peer's core routes it to
 	// the control seam and it is never acknowledged.
 	p.SetDatagramKinds(func(kind uint8) bool {
-		return appwire.AppKind(kind) == appwire.AppKind_ForwardDatagram
+		switch appwire.AppKind(kind) {
+		case appwire.AppKind_ForwardDatagram, appwire.AppKind_ForwardDropReport:
+			return true
+		}
+		return false
 	})
 	subscriber := pubsub.NewSubscriber(session.ConnectionID(), p)
 	defer subscriber.LeaveAll(s.pubsub)

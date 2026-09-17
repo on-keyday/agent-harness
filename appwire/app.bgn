@@ -17,7 +17,21 @@ enum AppKind:
     psk_auth = 0x45
     agent_proxy_control = 0x46
     dial_greeting = 0x47
-    # Rides trsf's DATAGRAM frame rather than an objproto application message,
-    # so unlike every kind above it is acknowledged and (in its controlled mode)
-    # congestion controlled. The payload is a protocol.ForwardDatagram.
+    # The two kinds below are sent with trsf's SendDatagram rather than
+    # Connection().SendMessage, so unlike every kind above they are
+    # acknowledged and (in the controlled mode) congestion controlled. trsf has
+    # no datagram kind of its own: THIS byte is the packet's kind, and the core
+    # routes it because SetDatagramKinds claims it. A kind added here and not
+    # added there is refused at the sender rather than lost at the far end.
+    #
+    # Payload: protocol.ForwardDatagram.
     forward_datagram = 0x48
+
+    # One endpoint's running total of the datagrams IT dropped for a forward,
+    # so `forward ls` can stop reporting only what the server's relay dropped.
+    # Cumulative, not a delta: this rides the same unreliable frame as the data,
+    # so a lost report is corrected by the next one instead of losing counts for
+    # good.
+    #
+    # Payload: protocol.ForwardDropReport.
+    forward_drop_report = 0x49

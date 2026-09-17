@@ -573,8 +573,12 @@ func BenchmarkUDPForwardMTU(b *testing.B) {
 		b.Logf("final row: %s", forwardTrafficLine(b, fx))
 
 		// What the number is FOR: a payload one byte over it must be refused,
-		// and refused with the cause that names the payload rather than the
-		// window or the queue.
+		// and it must SHOW. The client drops this one before trsf ever sees it,
+		// so the server cannot count it and the row read oversize=0 while the
+		// client logged every one -- which is the hole the drop report closes.
+		//
+		// The wait is the report's own cadence: it rides the client's existing
+		// 30 s reap ticker rather than a timer of its own.
 		before := readForwardDrops(b, fx)
 		oversize := make([]byte, int(last)+64)
 		conn, derr := net.DialUDP("udp", nil, target)
@@ -582,9 +586,20 @@ func BenchmarkUDPForwardMTU(b *testing.B) {
 			_, _ = conn.Write(oversize)
 			conn.Close()
 		}
-		time.Sleep(1500 * time.Millisecond)
-		b.Logf("after one %d-byte payload against mtu=%d: %s",
-			len(oversize), last, readForwardDrops(b, fx).sub(before))
+		reportBy := time.Now().Add(40 * time.Second)
+		var after forwardDrops
+		for time.Now().Before(reportBy) {
+			time.Sleep(2 * time.Second)
+			after = readForwardDrops(b, fx)
+			if after.total() > before.total() {
+				break
+			}
+		}
+		b.Logf("after one %d-byte payload against mtu=%d: %s", len(oversize), last, after.sub(before))
+		if after.oversize <= before.oversize {
+			b.Errorf("the row still reports oversize=%d after a payload the client refused: "+
+				"the drop report did not reach it", after.oversize)
+		}
 	}
 }
 
