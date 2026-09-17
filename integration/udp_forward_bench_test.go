@@ -69,6 +69,17 @@ type forwardBenchFixture struct {
 }
 
 func newForwardBenchFixture(b *testing.B, addr string) *forwardBenchFixture {
+	return newForwardBenchFixtureOn(b, "ws", addr)
+}
+
+// newForwardBenchFixtureOn picks the transport the three parties speak.
+//
+// The scheme is a parameter because it decides the datagram SIZE, and so what
+// any of these benchmarks can observe. On ws the carrier is a stream and
+// MaxDatagramSize is StreamMTU (16 KB), fixed for the connection's life — a
+// run there can never see PLPMTUD move and can never produce an oversize drop.
+// Only udp has a path MTU to discover.
+func newForwardBenchFixtureOn(b *testing.B, scheme, addr string) *forwardBenchFixture {
 	b.Helper()
 	clearAgentEnvB(b)
 
@@ -77,14 +88,20 @@ func newForwardBenchFixture(b *testing.B, addr string) *forwardBenchFixture {
 	if err != nil {
 		b.Fatal(err)
 	}
-	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+	peerCID, err := objproto.ParseConnectionID(scheme+":"+addr+"-*",
 		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
 		b.Fatalf("parse server cid: %v", err)
 	}
 
+	cfg := server.Config{DataDir: b.TempDir()}
+	if scheme == "udp" {
+		cfg.UDPAddr = addr
+	} else {
+		cfg.Addr = addr
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{Addr: addr, DataDir: b.TempDir()})
+	s := server.New(cfg)
 	srvDone := make(chan error, 1)
 	go func() { srvDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
@@ -280,6 +297,35 @@ func datagramCounterDelta(before, after map[protocol.TrsfCounterKey]uint64) stri
 	return s
 }
 
+// readForwardMTU is the row's max_datagram_size. The server stores it on EVERY
+// relayed send from the FAR leg's MaxDatagramSize, so on an asymmetric pair —
+// the ws client and udp runner the relay's own comment names — this reports the
+// runner leg and says nothing about the client's.
+func readForwardMTU(b *testing.B, fx *forwardBenchFixture) uint16 {
+	b.Helper()
+	rows, err := fx.client.PortForwardListWith(fx.ctx, fx.taskID)
+	if err != nil {
+		return 0
+	}
+	for i := range rows {
+		if rows[i].Protocol == protocol.ForwardProtocol_Udp {
+			return rows[i].MaxDatagramSize
+		}
+	}
+	return 0
+}
+
+func freeUDPPortB(b *testing.B) string {
+	b.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		b.Fatalf("freeUDPPort: %v", err)
+	}
+	addr := conn.LocalAddr().String()
+	conn.Close()
+	return addr
+}
+
 // forwardTrafficLine is the row exactly as `forward ls` renders it, so the
 // mtu= the tunnel is actually running at is in the log beside the numbers it
 // explains rather than being inferred from the design doc.
@@ -440,6 +486,105 @@ func BenchmarkUDPForwardSpliceSize(b *testing.B) {
 					size, offP, gotP, after.sub(before), forwardTrafficLine(b, fx))
 			}
 		})
+	}
+}
+
+// BenchmarkUDPForwardMTU follows max_datagram_size over the life of a forward
+// on a UDP carrier, which is the only transport where the number can move.
+//
+// Two things are being asked. First, what the tunnel's usable payload actually
+// is at each moment — the design doc computes ~1157 B at DefaultInitialMTU
+// growing toward ~1400, and a computed figure is not a measurement. Second,
+// whether the growth is fast enough to matter: §6d notes that a 1200-byte QUIC
+// Initial cannot pass until the outer path has grown, so the interesting
+// quantity is how long a forward spends below that threshold and whether
+// anything but time is required to leave it.
+//
+// The offered load is held well under the ~500 dg/s the rate ladder shows this
+// path carries losslessly, so what is measured is the MTU and not the queue.
+func BenchmarkUDPForwardMTU(b *testing.B) {
+	fx := newForwardBenchFixtureOn(b, "udp", freeUDPPortB(b))
+	defer fx.stopOnce()
+
+	sink := newUDPSink(b)
+	defer sink.close()
+
+	probe, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		b.Fatalf("probe listen: %v", err)
+	}
+	localPort := probe.LocalAddr().(*net.UDPAddr).Port
+	probe.Close()
+
+	spec, err := cli.ParseForwardSpec("127.0.0.1:" + strconv.Itoa(localPort) +
+		":127.0.0.1:" + strconv.Itoa(sink.port) + "/udp")
+	if err != nil {
+		b.Fatalf("parse spec: %v", err)
+	}
+	fwdCtx, fwdCancel := context.WithCancel(fx.ctx)
+	defer fwdCancel()
+	go func() {
+		_ = cli.RunForward(fwdCtx, fx.client, fx.taskID, []cli.ForwardSpec{spec}, nil, nil)
+	}()
+
+	target := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
+	waitForwardUp(b, target, sink)
+
+	for b.Loop() {
+		// A steady trickle, so the carrier keeps sending and PLPMTUD has
+		// traffic to probe alongside. An idle connection would measure how
+		// fast the MTU grows with nothing happening, which is not the question.
+		stop := make(chan struct{})
+		go func() {
+			conn, derr := net.DialUDP("udp", nil, target)
+			if derr != nil {
+				return
+			}
+			defer conn.Close()
+			payload := make([]byte, 200)
+			t := time.NewTicker(5 * time.Millisecond) // 200 dg/s
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+					_, _ = conn.Write(payload)
+				}
+			}
+		}()
+
+		start := time.Now()
+		var traj []string
+		last := uint16(0)
+		deadline := time.Now().Add(45 * time.Second)
+		for time.Now().Before(deadline) {
+			mtu := readForwardMTU(b, fx)
+			if mtu != last {
+				traj = append(traj, fmt.Sprintf("%.1fs:%d", time.Since(start).Seconds(), mtu))
+				last = mtu
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		close(stop)
+
+		b.ReportMetric(float64(last), "final_mtu_B")
+		b.Logf("max_datagram_size trajectory: %v", traj)
+		b.Logf("final row: %s", forwardTrafficLine(b, fx))
+
+		// What the number is FOR: a payload one byte over it must be refused,
+		// and refused with the cause that names the payload rather than the
+		// window or the queue.
+		before := readForwardDrops(b, fx)
+		oversize := make([]byte, int(last)+64)
+		conn, derr := net.DialUDP("udp", nil, target)
+		if derr == nil {
+			_, _ = conn.Write(oversize)
+			conn.Close()
+		}
+		time.Sleep(1500 * time.Millisecond)
+		b.Logf("after one %d-byte payload against mtu=%d: %s",
+			len(oversize), last, readForwardDrops(b, fx).sub(before))
 	}
 }
 
