@@ -203,6 +203,14 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 		initialMTU, maxMTU = cfg.MTU, cfg.MTU
 	}
 	p := trsf.NewStreams(streamCtx, cfg.CreatesServerInitiatedStreams, initialMTU, maxMTU, conn, cfg.Logger)
+	// The consumer's datagram kinds. trsf carries no datagram kind of its own:
+	// the byte in the packet's kind position IS this one, and the core asks
+	// this predicate rather than decoding a wrapper. Every appwire kind sent
+	// through SendDatagram has to be listed, or the peer's core routes it to
+	// the control seam and it is never acknowledged.
+	p.SetDatagramKinds(func(kind uint8) bool {
+		return appwire.AppKind(kind) == appwire.AppKind_ForwardDatagram
+	})
 
 	c := &Conn{
 		conn:      conn,

@@ -550,6 +550,12 @@ func (r *recordingTransport) SendDatagram(_ []byte) error             { return n
 func (r *recordingTransport) SendDatagramUncontrolled(_ []byte) error { return nil }
 func (r *recordingTransport) MaxDatagramSize() int                    { return 0 }
 
+// No kind is a datagram here, which is the honest answer for a fake that never
+// carries one: trsf has no datagram kind of its own, so this predicate is the
+// only thing that could claim one.
+func (r *recordingTransport) SetDatagramKinds(_ func(kind uint8) bool) {}
+func (r *recordingTransport) IsDatagramKind(_ uint8) bool              { return false }
+
 // recordingStream is a trsf.BidirectionalStream that counts AppendData calls
 // (the delivery the broker performs) and returns EOF from ReadDirect so the
 // Subscribe read goroutine terminates immediately instead of spinning.

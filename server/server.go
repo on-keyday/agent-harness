@@ -1194,6 +1194,14 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	}()
 	initialMTU, maxMTU := peer.MTUForTransport(session.ConnectionID().Transport)
 	p := trsf.NewStreams(connCtx, true, initialMTU, maxMTU, session, s.cfg.Logger)
+	// The consumer's datagram kinds. trsf carries no datagram kind of its own:
+	// the byte in the packet's kind position IS this one, and the core asks
+	// this predicate rather than decoding a wrapper. Every appwire kind sent
+	// through SendDatagram has to be listed, or the peer's core routes it to
+	// the control seam and it is never acknowledged.
+	p.SetDatagramKinds(func(kind uint8) bool {
+		return appwire.AppKind(kind) == appwire.AppKind_ForwardDatagram
+	})
 	subscriber := pubsub.NewSubscriber(session.ConnectionID(), p)
 	defer subscriber.LeaveAll(s.pubsub)
 
