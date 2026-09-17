@@ -555,3 +555,80 @@ fallback, `k` is too small.
 The below-BASE arm is the reproduction that opened this investigation. Its
 expected outcome changes from "hangs" to "says why", and that is the whole of
 what §5d claims.
+
+---
+
+## Amendment — 2026-09-17, written from the implementation and the lab
+
+### The numbers this shipped with
+
+Measured on `scripts/netem-lab`, harness `5409a64f`, objtrsf `82f3e6c`. The
+false-positive arms never touch the MTU; they exist to set `k`.
+
+| arm | what the path does | `mtu_fallbacks` |
+|---|---|---|
+| `--profile lossy` (1 %, RTT 150 ms) | link corruption | **0** |
+| `--profile bufferbloat` (20 mbit, 2000-packet queue) | queueing, `tc dropped 0` | **0** |
+| `--profile thin` (2 mbit, 100-packet queue) | **self-inflicted overflow, `tc dropped 0 → 54`** | **0** |
+| `--profile lan --mtu 1300` then `--mtu 1260`, with traffic | an MTU black hole | **1** |
+
+`k = 10`, `floor = 1 s`, `cap = 30 s` stand. The shrink arm detected, fell to
+the base, re-searched and settled at **1230** inside the first five-second
+sample — 1230 is the arithmetic answer for a 1260-byte link (less IPv4 20 and
+UDP 8) — and the transfer that ran across it measured 22.8 MB/s against 21.2
+before the shrink, i.e. unchanged. Before this change the same lab held 1270
+for sixty seconds and `conns --trsf` never returned.
+
+**`bufferbloat` is a weaker arm than it looks and `thin` is the real one.**
+`tc -s qdisc` read `dropped 0` through the whole bufferbloat run: a 2000-packet
+queue at 20 mbit delays rather than overflows, so that arm exercises congestion
+DELAY and not congestion LOSS. `thin`'s 100-packet queue is what actually drops.
+Reshaping into `thin` from another htb profile fails with "Change operation not
+supported by specified qdisc" — the limit cannot be changed in place, so that
+arm needs its own lab.
+
+### §5d is wrong: the counter cannot be read in the state it describes
+
+`mtu_base_unusable` was to make a below-BASE path visible instead of mysterious.
+Measured at `--mtu 1100`, it does not:
+
+| call | result |
+|---|---|
+| `harness-cli ls` | returns |
+| `harness-cli conns` | returns, runner still registered, age 17m |
+| `harness-cli conns --trsf` | **never returns** |
+
+Which is the symptom §1 opened with, unchanged — as §2 said the behaviour would
+be. What does not hold is §5d's claim that we would at least report it. The
+counter rides `conns --trsf`, whose answer is a stream packetised at
+`CurrentMTU`, and at a path below BASE that is exactly what cannot cross. **The
+one row that explains the failure is only readable on a connection that is not
+failing.**
+
+A fix has to put the signal somewhere that crosses, or somewhere that needs no
+network at all. The cheapest is the second: log it where it is detected, on
+whichever side detects it, so the server's own log carries it. That is not built
+here and §5d should be read as describing an intent the measurement refuted.
+
+### Three things the implementation changed, all found by running the tests
+
+- **`OnLost` ignores a probe at or below the current estimate.** §5c said
+  re-pointing `lastProbe` covered the late-ACK and late-loss races together. It
+  covers the ACK; the loss needed this guard as well, or a probe outstanding
+  across a fallback sets `high = min-1` and inverts the range the fallback just
+  reopened.
+- **The liveness signal is any packet RECEIVED, not an ACK of ours.** §5b's
+  fourth clause was written as "some ACK has arrived", and on a bulk transfer in
+  a black hole nothing of ours is acknowledged at all — the clause would be
+  unsatisfiable on exactly the connection the verdict is for. `OnPeerActivity`
+  is called from `handlePacket`.
+- **`NextDeadline` stays silent while SEARCHING, not only while a probe is
+  outstanding.** §5a named one gate; returning "now" for a pending search probe
+  handed the run loop a past deadline every iteration and broke
+  `TestNextWakeDeadlineNoSpinNothingToSend`, which is the guard that exists for
+  it. A search probe is issued by the next pass through the send half anyway;
+  the timer is for the converged connection, which has no other reason to wake.
+
+`srtt` arrives through `OnSRTT` rather than a fourth constructor parameter.
+`NewMTUTracker` has twelve call sites, eleven of them tests that do not care,
+and `blackHoleTimeout` has to handle the unset case regardless.
