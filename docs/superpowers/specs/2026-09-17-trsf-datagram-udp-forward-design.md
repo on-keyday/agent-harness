@@ -747,3 +747,83 @@ The §2 non-goal that migrating `appwire.AppKind` control messages onto the new
 frame is a separate change is **unaffected**: those still travel by
 `SendMessage`, unreliable and unacknowledged. What changed is only that a
 datagram no longer wraps its consumer kind in a transport one.
+
+---
+
+## Amendment — 2026-09-17, the counters are asked for, per hop
+
+Harness `7faa28c0` and `bda4c667`. §7c and §7d are the sections this changes, and
+§4c's field list no longer describes the wire.
+
+### What §7d could not express
+
+§7d drew one line — omitted-because-zero is forbidden, omitted-because-it-cannot-
+exist is correct — and the gate was `protocol == udp`, evaluated at each
+renderer. Fixed fields cannot hold that line, because a field is always present:
+a tcp row shipped `dropped_oversize: 0`, a count of datagrams for a forward that
+carries none, and every surface re-derived the real answer from `protocol`.
+
+So `PortForwardInfo` carries `counters :[counter_count]ForwardCounter` instead of
+`max_datagram_size` and the three `dropped_*` fields — the shape `TrsfConnState`
+already uses, for the reason its own comment gives. §7d's rule is unchanged and
+now structural: an absent key says "not reported", a key holding 0 says "nothing
+yet". A udp row emits its group in full, zeros included; a tcp row emits none of
+it.
+
+The always-on traffic accounting stays in named fields. It has no existence
+condition, so a list would only make it harder to read.
+
+### §7c's table was measuring one hop and reading as if it were all three
+
+The counters named in §7c are the SERVER RELAY's. A datagram an endpoint refused
+never reaches the server, so the relay cannot count it — and measured at an
+offered 3,500 datagrams/s, that was **74% of the loss**, with the row reading
+zero for all of it. Worse for the commonest case: a payload too large for the
+client's own leg is refused before trsf is called, so `dropped_oversize` — the
+counter §7c calls "the only line that explains a QUIC connection failing to
+establish" — read 0 while the client logged every one.
+
+The keys are therefore hop-prefixed: `relay_dropped_*` always, and
+`client_dropped_*` / `runner_dropped_*` when `forward ls --drops` asked. §7c's
+three causes and their three remedies are unchanged; what is new is that the row
+says WHICH of the three parties applied them.
+
+A sum would also have fixed the row reading zero, and was tried. It hides the
+hop, which is the next question and the one an operator cannot answer any other
+way.
+
+### A third reason for absence, and why the flag exists
+
+§7d's two categories become three: **omitted because the caller did not ask**.
+`--drops` is a telemetry round trip to the client and to the runner per udp
+forward, against a map walk for a plain listing, so it is off by default. An
+endpoint that does not answer also leaves its keys absent rather than zero — the
+three seconds it costs is itself a finding, and zero would be a claim the server
+is not entitled to make.
+
+### The reporting direction reversed
+
+These numbers were briefly PUSHED: each endpoint sent a cumulative
+`ForwardDropReport` on the datagram frame, rate limited, with the last-sent
+totals kept so a refused report could be retried. That put the telemetry in the
+same queue as the traffic it was measuring — least likely to arrive exactly when
+it had most to say — and it is gone, along with every piece of state that existed
+only to serve the direction.
+
+They are asked for now, on `AppKind_Telemetry`, which is also what a runner and a
+cli client answer for their own transport state. One request, one pending table,
+one ask-and-await for every peer kind; before it, the runner leg travelled
+`RunnerRequest{trsf_state}` and the client leg a second family invented for it.
+`RunnerRequestType.trsf_state` and `RunnerMessageType.trsf_state_response` are
+reserved dead members until the fleet is updated.
+
+### Still open
+
+- **`dropped_queue` points the operator at the wrong thing.** §7c's table maps it
+  to "host load, not the network". Measured, the cause was a structurally 32-deep
+  send queue: `cong_drop=0 queue_drop=4417 cwnd=143317` on a client whose window
+  was wide open with nothing in flight. Why that queue drains slowly on a ws
+  carrier — the same queue clears 30–50k dg/s on a udp pair — is not diagnosed.
+- **§11's "a UDP row renders `oversize=0`"** now reads `relay: oversize=0`, and
+  the test that asserts it asserts the substring, so the rename did not break it
+  silently. Stated because it looks like it should have.
