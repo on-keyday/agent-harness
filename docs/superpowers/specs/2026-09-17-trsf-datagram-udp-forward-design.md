@@ -700,3 +700,50 @@ every path that parses one.
 would. §6a's prediction — that a long-lived registration does not pay the cold
 window those measurements captured — is therefore still untested, and its
 falsifier in §11 is still open.
+
+---
+
+## Amendment — 2026-09-17, the frame lost a byte
+
+§4a's `ApplicationPayloadKind.datagram` and `DatagramPacket` no longer exist.
+objtrsf `ab0ecf8`, harness `d764baca`.
+
+The shape this spec shipped put **two** kind bytes on the wire: the
+transport-owned `datagram` kind in the header, and inside its opaque payload the
+consumer's own `appwire.AppKind`. §4a justified the outer one on
+acknowledgement — only transport kinds reach `PacketNumTracker`, so a consumer
+kind could not be ACKed — and that was true of how `AutoReceive` routed, not of
+the layering.
+
+The inner byte was never a discriminator. `ForwardDatagram` was the only thing
+sent through `SendDatagram`, and `ReceiveDatagram` is a separate queue from the
+control seam, so the consumer already knew what it was getting. `peer/conn.go`
+recorded the real reason it was there: so a payload is spelled the same whether
+it goes to `SendMessage` or `SendDatagram`.
+
+Now the routing asks the CONSUMER. `SetDatagramKinds(func(kind uint8) bool)` is
+registered by the owner, `AutoReceive` consults it for kinds at or above
+`USER_DEFINED_START`, and the byte in the header position is the consumer's own
+— acknowledged like stream data, with the core still never learning what it
+means. The range boundary already said who owns the byte; it did not need saying
+twice.
+
+Consequences for what this spec claims:
+
+- **`datagramFrameOverhead` is gone** — it was literally the removed byte, so
+  `MaxDatagramSize()` grows by one and §6d's ~1157 B becomes ~1158.
+- **§4a's `isStreamRelated` note stands but shrinks**: the predicate and the
+  union are still two hand-kept lists, with one fewer member in each.
+- **`sendDatagram` refuses a payload whose leading byte is below
+  `USER_DEFINED_START`.** That check is what makes one byte sufficient for both
+  layers: such a payload would be decoded by the peer's core as one of its own
+  kinds.
+- **The wire break is udp forwards only.** An old sender's kind 7 raises
+  `unrouted_transport_kind` on a new peer — the counter §4a's sibling says must
+  read zero — so one direction announces the skew; a new sender's 0x48 lands on
+  an old peer's control seam and is dropped.
+
+The §2 non-goal that migrating `appwire.AppKind` control messages onto the new
+frame is a separate change is **unaffected**: those still travel by
+`SendMessage`, unreliable and unacknowledged. What changed is only that a
+datagram no longer wraps its consumer kind in a transport one.
