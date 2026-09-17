@@ -146,6 +146,13 @@ type TaskHandler struct {
 	// forward is neither this server nor a runner.
 	ClientTrsfStateFn func(ctx context.Context, client protocol.ConnID) ([]protocol.TrsfConnState, int64, error)
 
+	// ForwardEndpointDropsFn asks both ends of each udp row what THEY dropped
+	// and writes the answers onto the rows. Called only for a listing that
+	// asked, because it is a round trip per endpoint. Nil on a server built
+	// without a listener, which then reports the relay's numbers alone --
+	// absent endpoint keys, which is the honest statement.
+	ForwardEndpointDropsFn func(ctx context.Context, rows []protocol.PortForwardInfo)
+
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
@@ -594,7 +601,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ListPortForwards variant is nil")
 			return
 		}
-		h.handleListPortForwards(conn, req.RequestId, cid, lp.TaskId)
+		h.handleListPortForwards(conn, req.RequestId, cid, lp.TaskId, lp.AskEndpoints == 1)
 
 	case protocol.TaskControlKind_KillPortForward:
 		kr := req.KillPortForward()

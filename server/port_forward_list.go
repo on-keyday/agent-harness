@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
 
@@ -13,7 +14,21 @@ import (
 // TaskControlResponse{ListPortForwards} carries only the stream id, and the
 // actual PortForwardListResultBody is encoded onto the stream so the response
 // fits in any path MTU.
-func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID) {
+func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID, askEndpoints bool) {
+	if askEndpoints && h.ForwardEndpointDropsFn != nil {
+		// OFF the receive goroutine, and not as an optimisation. Filling the
+		// endpoint drops asks the forward's own CLIENT, which is very often the
+		// caller issuing this listing -- and a connection's inbound messages
+		// are handled serially, so the answer would arrive on the goroutine
+		// blocked waiting for it. The same deadlock handleTrsfState's client
+		// branch has a comment about.
+		go h.listPortForwards(conn, requestID, connID, filter, true)
+		return
+	}
+	h.listPortForwards(conn, requestID, connID, filter, false)
+}
+
+func (h *TaskHandler) listPortForwards(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID, askEndpoints bool) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListPortForwards, RequestId: requestID}
 		resp.SetListPortForwards(protocol.PortForwardListResult{StreamId: streamID})
@@ -22,6 +37,9 @@ func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, 
 	}
 
 	forwards := h.visiblePortForwards(connID, filter)
+	if askEndpoints && h.ForwardEndpointDropsFn != nil {
+		h.ForwardEndpointDropsFn(context.Background(), forwards)
+	}
 
 	var body protocol.PortForwardListResultBody
 	body.SetForwards(forwards)
@@ -107,20 +125,24 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.BytesToTarget, info.BytesFromTarget, info.ConnsTotal, info.ConnsOpen,
 		info.LastActivityUnixMs = pf.counters()
 	info.Taps = pf.tapCount()
-	// Emitted for every row, zeros included. Only the RENDERER gates these on
-	// protocol == udp, and it gates on that existence condition rather than on
-	// the values: "0 packets overflowed" is an answer, and eliding it would
-	// delete the only clue an operator has when asking why a datagram protocol
-	// will not connect through the tunnel.
-	info.MaxDatagramSize = uint16(pf.maxDatagramSize.Load())
-	// What THIS SERVER's relay dropped, and nothing else. An endpoint's own
-	// drops are not here and cannot be: a datagram the client refused never
-	// reached this process. They are asked for per endpoint over telemetry,
-	// which is also why they are no longer added in here -- a sum would hide
-	// which hop lost them, and the hop is the answer an operator needs.
-	info.DroppedOversize = pf.droppedOversize.Load()
-	info.DroppedCongestion = pf.droppedCongestion.Load()
-	info.DroppedQueue = pf.droppedQueue.Load()
+	// The udp group, as a group, zeros included -- and ONLY on a udp row. That
+	// split is the existence condition the counter list exists to express: a tcp
+	// forward has no max datagram size and cannot drop a datagram, while a udp
+	// row that has dropped nothing must still say so. "0 packets overflowed" is
+	// the answer to "why will QUIC not connect", and an absent key there would
+	// read as "this row does not report it".
+	if pf.protocolKind == protocol.ForwardProtocol_Udp {
+		info.SetCounter(protocol.ForwardCounterKey_MaxDatagramSize, uint64(pf.maxDatagramSize.Load()))
+		// What THIS SERVER's relay dropped, and nothing else. An endpoint's own
+		// drops are not here and cannot be: a datagram the client refused never
+		// reached this process. Those arrive per hop, under their own keys, and
+		// only when a caller asked -- see fillEndpointDrops.
+		info.SetForwardDropCounters(protocol.ForwardHopRelay, protocol.ForwardDropsBody{
+			DroppedOversize:   pf.droppedOversize.Load(),
+			DroppedCongestion: pf.droppedCongestion.Load(),
+			DroppedQueue:      pf.droppedQueue.Load(),
+		})
+	}
 	return info
 }
 

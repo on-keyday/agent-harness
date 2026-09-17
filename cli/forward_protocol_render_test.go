@@ -13,12 +13,15 @@ func udpRow() *protocol.PortForwardInfo {
 		ForwardId: 7,
 		Direction: protocol.PortForwardDirection_Local,
 		BindPort:  5353, TargetPort: 5353,
-		Protocol:        protocol.ForwardProtocol_Udp,
-		Route:           protocol.DataPlaneRoute_Splice,
-		MaxDatagramSize: 1169,
+		Protocol: protocol.ForwardProtocol_Udp,
+		Route:    protocol.DataPlaneRoute_Splice,
 	}
 	fi.SetBindAddr([]byte("127.0.0.1"))
 	fi.SetTargetHost([]byte("127.0.0.1"))
+	// The udp group, as the server emits it: a size and the relay's own three
+	// causes, together, zeros included.
+	fi.SetCounter(protocol.ForwardCounterKey_MaxDatagramSize, 1169)
+	fi.SetForwardDropCounters(protocol.ForwardHopRelay, protocol.ForwardDropsBody{})
 	return fi
 }
 
@@ -65,9 +68,10 @@ func TestTrafficLineCarriesDatagramCountersIncludingZero(t *testing.T) {
 	}
 }
 
-// A tcp row carries none of them, and the gate is EXISTENCE (protocol == udp),
-// never the values: a tcp forward has no max datagram size at all, which is a
-// different statement from one that happens to be zero.
+// A tcp row carries none of them, and the gate is EXISTENCE -- now the key's,
+// rather than a protocol test each surface repeats. A tcp forward has no max
+// datagram size at all, which is a different statement from one that happens to
+// be zero.
 func TestTrafficLineOmitsDatagramCountersOnTCP(t *testing.T) {
 	got := PortForwardTrafficLine(tcpRow())
 	for _, unwanted := range []string{"mtu=", "oversize=", "congested=", "queued="} {
@@ -77,30 +81,52 @@ func TestTrafficLineOmitsDatagramCountersOnTCP(t *testing.T) {
 	}
 }
 
-// The JSON form carries everything with no elision, which is its stated
-// contract. protocol and route are on EVERY row; the datagram numbers too,
-// because a consumer scripting against JSON reads the key's presence as the
-// schema and its absence as a different shape.
-func TestJSONCarriesProtocolRouteAndDatagramFields(t *testing.T) {
+// protocol and route are on EVERY row; the datagram counters are on the rows
+// that HAVE them.
+//
+// That second half is a deliberate change to the stated contract. It used to be
+// "carries everything with no elision", so a tcp row reported
+// dropped_oversize=0 -- a count of datagrams for a forward that carries none.
+// Absence now means something, and it has to: a key missing from `counters`
+// says "this row does not report that", which is how a tcp row says it has no
+// datagrams and how a listing that did not ask the endpoints is told apart from
+// endpoints that dropped nothing.
+func TestJSONCarriesProtocolRouteAndTheCountersARowHas(t *testing.T) {
 	for _, row := range []*protocol.PortForwardInfo{udpRow(), tcpRow()} {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(PortForwardInfoJSONLine(row)), &m); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		for _, k := range []string{"protocol", "route", "max_datagram_size",
-			"dropped_oversize", "dropped_congestion", "dropped_queue"} {
+		for _, k := range []string{"protocol", "route"} {
 			if _, ok := m[k]; !ok {
 				t.Errorf("JSON for protocol=%v is missing %q", row.Protocol, k)
 			}
 		}
 	}
-	var m map[string]any
-	_ = json.Unmarshal([]byte(PortForwardInfoJSONLine(udpRow())), &m)
-	if m["protocol"] != "udp" {
-		t.Errorf("protocol = %v, want \"udp\"", m["protocol"])
+
+	var udp map[string]any
+	_ = json.Unmarshal([]byte(PortForwardInfoJSONLine(udpRow())), &udp)
+	if udp["protocol"] != "udp" {
+		t.Errorf("protocol = %v, want \"udp\"", udp["protocol"])
 	}
-	if m["route"] != "splice" {
-		t.Errorf("route = %v, want \"splice\"", m["route"])
+	if udp["route"] != "splice" {
+		t.Errorf("route = %v, want \"splice\"", udp["route"])
+	}
+	counters, ok := udp["counters"].(map[string]any)
+	if !ok {
+		t.Fatalf("a udp row carries no counters object: %v", udp["counters"])
+	}
+	for _, k := range []string{"max_datagram_size", "relay_dropped_oversize",
+		"relay_dropped_congestion", "relay_dropped_queue"} {
+		if _, ok := counters[k]; !ok {
+			t.Errorf("udp counters missing %q; zeros are answers and must be emitted", k)
+		}
+	}
+
+	var tcp map[string]any
+	_ = json.Unmarshal([]byte(PortForwardInfoJSONLine(tcpRow())), &tcp)
+	if _, present := tcp["counters"]; present {
+		t.Errorf("a tcp row reported datagram counters: %v", tcp["counters"])
 	}
 }
 
@@ -141,11 +167,17 @@ func TestConfigSpecLeavesTCPUnsuffixed(t *testing.T) {
 // text `forward ls` prints without re-deriving the format in JS.
 func TestSnapshotRowCarriesTheNewAxes(t *testing.T) {
 	row := ForwardSnapshotRow(udpRow())
-	for _, k := range []string{"protocol", "route", "max_datagram_size",
-		"dropped_oversize", "dropped_congestion", "dropped_queue", "traffic"} {
+	for _, k := range []string{"protocol", "route", "counters", "traffic"} {
 		if _, ok := row[k]; !ok {
 			t.Errorf("ForwardSnapshotRow is missing %q", k)
 		}
+	}
+	counters, ok := row["counters"].(map[string]any)
+	if !ok {
+		t.Fatalf("counters is not an object: %v", row["counters"])
+	}
+	if counters["max_datagram_size"] != float64(1169) {
+		t.Errorf("counters[max_datagram_size] = %v, want 1169", counters["max_datagram_size"])
 	}
 	if row["protocol"] != "udp" {
 		t.Errorf("row[protocol] = %v, want \"udp\"", row["protocol"])

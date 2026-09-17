@@ -2899,10 +2899,63 @@ format RegisterPortForwardResponse:
 
 format PortForwardListQuery:
     task_id :TaskID   # all-zero = every forward visible to the caller
+    # 1 = also ask each endpoint what IT dropped, and report those per hop.
+    #
+    # A flag rather than always-on because it costs a telemetry round trip to
+    # the client and to the runner, per udp forward, while a plain listing costs
+    # a map walk. An operator asks for it when a row's numbers do not add up.
+    ask_endpoints :u8
 
 format PortForwardListResult:
     stream_id :u64    # server-initiated send-stream carrying PortForwardListResultBody
                       # until EOF (mirrors ConnListResult). 0 = error.
+
+# ForwardCounterKey names one number a forward row can carry.
+#
+# A keyed list rather than a field apiece, for the reason TrsfCounterKey already
+# gives, plus one specific to this row: which counters EXIST varies by protocol
+# and by what the caller asked for. Absent and zero are different answers here,
+# and the operator's question ("is anything being dropped?") is answered by the
+# zero, while "this row does not report it" is answered by the absence.
+enum ForwardCounterKey:
+    :u16
+    # The udp group. Emitted together whenever protocol == udp, zeros included:
+    # a quiet tunnel and one nobody measured must not render the same.
+    max_datagram_size = "max_datagram_size"  # MOVES with PLPMTUD; a snapshot,
+                                             # and the size that explains the
+                                             # oversize drops beside it
+    relay_dropped_oversize   = "relay_dropped_oversize"    # payload did not fit
+                                                           # one datagram; only
+                                                           # the application can
+                                                           # act, nothing here
+                                                           # fragments
+    relay_dropped_congestion = "relay_dropped_congestion"  # the window was
+                                                           # closed; congestion
+                                                           # control worked
+    relay_dropped_queue      = "relay_dropped_queue"       # this process fell
+                                                           # behind; host load,
+                                                           # not the path
+
+    # What each ENDPOINT refused to send, which the relay counters above cannot
+    # see at all: a datagram an endpoint refused never reached this server.
+    # Measured at an offered 3,500 datagrams/s, that was 74% of the loss.
+    #
+    # Named per hop rather than summed into the relay's. The first thing to fix
+    # was a row reading zero while datagrams vanished, and a sum fixes that
+    # while hiding WHICH hop lost them -- which is the next question, and the
+    # one an operator cannot answer any other way.
+    #
+    # Present only when the listing asked (PortForwardListQuery.ask_endpoints).
+    client_dropped_oversize   = "client_dropped_oversize"
+    client_dropped_congestion = "client_dropped_congestion"
+    client_dropped_queue      = "client_dropped_queue"
+    runner_dropped_oversize   = "runner_dropped_oversize"
+    runner_dropped_congestion = "runner_dropped_congestion"
+    runner_dropped_queue      = "runner_dropped_queue"
+
+format ForwardCounter:
+    key   :ForwardCounterKey
+    value :u64
 
 format PortForwardInfo:
     forward_id      :u64
@@ -2941,20 +2994,16 @@ format PortForwardInfo:
     # say whether the server is reading these bytes.
     protocol :ForwardProtocol
     route    :DataPlaneRoute
-    # udp rows only -- gated on protocol == udp, an EXISTENCE condition. A tcp
-    # row has no max_datagram_size at all, which is a different statement from
-    # one that happens to be zero. Never gate these on their value: "0 packets
-    # overflowed" is the answer an operator needs, and eliding it deletes the
-    # only clue available to someone asking why QUIC will not connect.
+    # Everything whose PRESENCE varies. A udp row carries the datagram group and
+    # a tcp row carries none of it -- an existence condition, not a zero -- and
+    # the per-endpoint drops appear only when the caller paid for them. A key
+    # that is absent says "not reported"; a key holding 0 says "nothing yet",
+    # and fixed fields cannot say both. See ForwardCounterKey.
     #
-    # max_datagram_size MOVES with PLPMTUD, so a listing shows a snapshot. It is
-    # rendered beside dropped_oversize because neither means much alone: the
-    # size is what explains the drops.
-    max_datagram_size  :u16
-    dropped_oversize   :u64  # payload did not fit one datagram; only the
-                             # application can act, there is no fragmentation
-    dropped_congestion :u64  # the window was closed; congestion control worked
-    dropped_queue      :u64  # this process fell behind; host load, not the path
+    # The always-on accounting above stays in named fields on purpose: every row
+    # has it, so it has no existence condition to express.
+    counter_count :u16
+    counters      :[counter_count]ForwardCounter
 
 format PortForwardListResultBody:
     forwards_len :u16

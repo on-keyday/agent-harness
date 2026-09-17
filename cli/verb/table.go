@@ -660,17 +660,23 @@ var Verbs = []VerbSpec{
 		},
 		Notes: []string{
 			"list registered port forwards; --task filters, --json emits JSON lines",
+			"a udp row's drop counts are the SERVER RELAY's own unless --drops is given: " +
+				"a datagram an endpoint refused never reached the server, so it cannot be counted there",
 		},
 		Action:          "ForwardLsAction",
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Flags: []Flag{
 			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only forwards for this task id"},
+			{Name: "drops", Type: FlagBool, Default: false, Field: "Drops",
+				Help: "also ask each endpoint what IT dropped, reported per hop (client/relay/runner). " +
+					"Costs a round trip to the client and the runner per udp forward; an endpoint that " +
+					"does not answer is reported as absent, never as zero"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
 				CmdlineSurfaces: CLI | WebUI,
 				SurfaceReason:   "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
 				Help:            "one JSON object per forward"},
 		},
-		Examples: []string{"forward ls", "forward ls --json"},
+		Examples: []string{"forward ls", "forward ls --json", "forward ls --drops"},
 	},
 	{
 		Path:          []string{"forward", "kill"},

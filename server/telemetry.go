@@ -153,3 +153,85 @@ func (s *Server) deliverTelemetryResponse(payload []byte) {
 	}
 	s.telemetry.deliver(resp)
 }
+
+// peerForwardDrops asks one endpoint what IT dropped for a forward.
+func (s *Server) peerForwardDrops(ctx context.Context, conn ConnHandle, forwardID uint64) (protocol.ForwardDropsBody, error) {
+	req := protocol.TelemetryRequest{Kind: protocol.TelemetryKind_ForwardDrops}
+	req.SetForwardDrops(protocol.ForwardDropsQuery{ForwardId: forwardID})
+	resp, err := s.askTelemetry(ctx, conn, req)
+	if err != nil {
+		return protocol.ForwardDropsBody{}, err
+	}
+	body := resp.ForwardDrops()
+	if body == nil {
+		return protocol.ForwardDropsBody{}, fmt.Errorf("telemetry: an ok forward_drops answer carried no body")
+	}
+	return *body, nil
+}
+
+// fillEndpointDrops asks both ends of every udp row what each of them dropped,
+// and writes the answers onto the rows under their own per-hop keys.
+//
+// Only reached when the caller asked for it. It is two round trips per forward
+// against a plain listing's map walk, and the numbers it adds are the ones the
+// server structurally cannot know: a datagram an endpoint refused never arrived
+// here. Measured at an offered 3,500 datagrams/s, that was 74% of the loss and
+// every operator surface read zero for it.
+//
+// A peer that does not answer leaves its keys ABSENT rather than zero. The
+// difference is the whole reason the row is a keyed list: "this endpoint did
+// not report" and "this endpoint dropped nothing" send an operator to different
+// places, and the three seconds an unreachable peer costs is itself a finding.
+//
+// Concurrent across rows and across the two ends of each, because the cost is
+// entirely waiting: serially, one unreachable endpoint would add its full
+// timeout to every row behind it.
+func (s *Server) fillEndpointDrops(ctx context.Context, rows []protocol.PortForwardInfo) {
+	if s.taskHandler == nil {
+		return
+	}
+	type answer struct {
+		row  int
+		hop  protocol.ForwardHop
+		body protocol.ForwardDropsBody
+	}
+	out := make(chan answer, 2*len(rows))
+	var wg sync.WaitGroup
+	ask := func(i int, hop protocol.ForwardHop, conn ConnHandle, id uint64) {
+		if conn == nil {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body, err := s.peerForwardDrops(ctx, conn, id)
+			if err != nil {
+				s.cfg.Logger.Debug("forward drops: endpoint did not answer",
+					"fwd", id, "hop", hop.String(), "err", err)
+				return
+			}
+			out <- answer{row: i, hop: hop, body: body}
+		}()
+	}
+	for i := range rows {
+		// A udp row is one that reports a datagram size. Asking a tcp forward
+		// what datagrams it dropped is a question with no meaning, and the row
+		// itself is what says which kind it is.
+		if _, ok := rows[i].Counter(protocol.ForwardCounterKey_MaxDatagramSize); !ok {
+			continue
+		}
+		pf, ok := s.taskHandler.pforwards().get(rows[i].ForwardId)
+		if !ok {
+			continue // torn down between the listing and here; ordinary
+		}
+		ask(i, protocol.ForwardHopClient, pf.clientCxn, rows[i].ForwardId)
+		if runner, rok := s.registry.GetByIdentity(pf.runnerID); rok {
+			ask(i, protocol.ForwardHopRunner, runner.Conn, rows[i].ForwardId)
+		}
+	}
+	wg.Wait()
+	close(out)
+	for a := range out {
+		rows[a.row].SetForwardDropCounters(a.hop, a.body)
+	}
+}

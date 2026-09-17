@@ -303,13 +303,13 @@ func datagramCounterDelta(before, after map[protocol.TrsfCounterKey]uint64) stri
 // runner leg and says nothing about the client's.
 func readForwardMTU(b *testing.B, fx *forwardBenchFixture) uint16 {
 	b.Helper()
-	rows, err := fx.client.PortForwardListWith(fx.ctx, fx.taskID)
+	rows, err := fx.client.PortForwardListWith(fx.ctx, cli.ForwardListQuery{Task: fx.taskID})
 	if err != nil {
 		return 0
 	}
 	for i := range rows {
-		if rows[i].Protocol == protocol.ForwardProtocol_Udp {
-			return rows[i].MaxDatagramSize
+		if mtu, ok := rows[i].Counter(protocol.ForwardCounterKey_MaxDatagramSize); ok {
+			return uint16(mtu)
 		}
 	}
 	return 0
@@ -331,7 +331,7 @@ func freeUDPPortB(b *testing.B) string {
 // explains rather than being inferred from the design doc.
 func forwardTrafficLine(b *testing.B, fx *forwardBenchFixture) string {
 	b.Helper()
-	rows, err := fx.client.PortForwardListWith(fx.ctx, fx.taskID)
+	rows, err := fx.client.PortForwardListWith(fx.ctx, cli.ForwardListQuery{Task: fx.taskID})
 	if err != nil {
 		return "forward ls: " + err.Error()
 	}
@@ -732,13 +732,17 @@ func (d forwardDrops) sub(o forwardDrops) string {
 
 func readForwardDrops(b *testing.B, fx *forwardBenchFixture) forwardDrops {
 	b.Helper()
-	rows, err := fx.client.PortForwardListWith(fx.ctx, fx.taskID)
+	rows, err := fx.client.PortForwardListWith(fx.ctx, cli.ForwardListQuery{Task: fx.taskID})
 	if err != nil {
 		b.Fatalf("forward ls: %v", err)
 	}
+	// The RELAY's own three, which is what this row reports without --drops.
+	k := protocol.ForwardDropKeys(protocol.ForwardHopRelay)
 	for i := range rows {
-		if rows[i].Protocol == protocol.ForwardProtocol_Udp {
-			return forwardDrops{rows[i].DroppedOversize, rows[i].DroppedCongestion, rows[i].DroppedQueue}
+		if over, ok := rows[i].Counter(k[0]); ok {
+			cong, _ := rows[i].Counter(k[1])
+			queue, _ := rows[i].Counter(k[2])
+			return forwardDrops{over, cong, queue}
 		}
 	}
 	return forwardDrops{}

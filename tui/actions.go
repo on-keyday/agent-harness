@@ -79,7 +79,7 @@ func (a *App) onForwards(msg tea.KeyMsg) (tea.Cmd, bool) {
 	a.forwardsModal.SetSize(a.width, a.height)
 	a.forwardTap.SetSize(a.width, a.height)
 	a.forwardsModal.Open()
-	return DoListForwards(a.client, false), true
+	return DoListForwards(a.client, false, cli.ForwardListQuery{}), true
 }
 
 // `e` opens the full-screen running-exec list: every exec visible to

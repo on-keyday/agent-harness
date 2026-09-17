@@ -149,7 +149,7 @@ func (a *App) inForwardTap(msg tea.KeyMsg) tea.Cmd {
 		// Straight back onto a pane whose counters moved while the tap
 		// was up — refetch rather than show the numbers from before.
 		if a.forwardsModal.IsOpen() {
-			return DoListForwards(a.client, false)
+			return DoListForwards(a.client, false, cli.ForwardListQuery{})
 		}
 		return nil
 	}
@@ -205,7 +205,7 @@ func (a *App) inForwardsModal(msg tea.KeyMsg) tea.Cmd {
 	// pane shows 0/0 while bytes are crossing — which reads as "this
 	// forward is idle", the one thing the counters exist to answer.
 	if msg.String() == modalKeys.ForwardRefresh {
-		return DoListForwards(a.client, false)
+		return DoListForwards(a.client, false, cli.ForwardListQuery{})
 	}
 	var cmd tea.Cmd
 	a.forwardsModal, cmd = a.forwardsModal.Update(msg)

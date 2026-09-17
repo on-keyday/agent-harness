@@ -227,6 +227,8 @@ type ForwardLsAction struct {
 	ActionMarker
 	// only forwards for this task id
 	TaskFilter string
+	// also ask each endpoint what IT dropped, reported per hop (client/relay/runner). Costs a round trip t…
+	Drops bool
 	// one JSON object per forward
 	JSON bool
 }
@@ -1316,17 +1318,20 @@ func init() {
 		"forward ls\x00cli": func(b Bound) (Action, error) {
 			a := ForwardLsAction{}
 			a.TaskFilter = b.Str("task")
+			a.Drops = b.Bool("drops")
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"forward ls\x00tui": func(b Bound) (Action, error) {
 			a := ForwardLsAction{}
 			a.TaskFilter = b.Str("task")
+			a.Drops = b.Bool("drops")
 			return a, nil
 		},
 		"forward ls\x00webui": func(b Bound) (Action, error) {
 			a := ForwardLsAction{}
 			a.TaskFilter = b.Str("task")
+			a.Drops = b.Bool("drops")
 			a.JSON = b.Bool("json")
 			return a, nil
 		},

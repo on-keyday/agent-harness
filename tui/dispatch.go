@@ -200,7 +200,7 @@ func (h tuiVerbs) ForwardLs(v verb.ForwardLsAction) tea.Cmd {
 		}
 		filter = full
 	}
-	return DoListForwardsFiltered(a.client, true, filter)
+	return DoListForwards(a.client, true, cli.ForwardListQuery{Task: filter, AskEndpoints: v.Drops})
 }
 
 func (h tuiVerbs) ForwardKill(v verb.ForwardKillAction) tea.Cmd {

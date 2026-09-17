@@ -711,7 +711,7 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	var lastErr error
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{})
 		if len(fs) == 1 {
 			break
 		}
@@ -741,7 +741,7 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if fs, lastErr = observer.PortForwardListWith(ctx, ""); len(fs) == 0 {
+		if fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{}); len(fs) == 0 {
 			cancel()
 			select {
 			case <-serverDone:
@@ -867,7 +867,7 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	var lastErr error
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{})
 		if len(fs) == 1 {
 			break
 		}
@@ -1058,7 +1058,7 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	var lastErr error
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{})
 		if len(fs) == 2 {
 			break
 		}
@@ -1098,7 +1098,7 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	// The list must now show only B.
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{})
 		if len(fs) == 1 {
 			break
 		}
@@ -1275,7 +1275,7 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 	var lastErr error
 	promptDeadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(promptDeadline) {
-		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, cli.ForwardListQuery{})
 		if len(fs) == 0 {
 			break
 		}
@@ -1416,7 +1416,7 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 		t.Fatalf("echo round-trip = %q, want \"ping\"", got)
 	}
 
-	forwards, err := cli.PortForwardList(context.Background(), serverCID, "")
+	forwards, err := cli.PortForwardList(context.Background(), serverCID, cli.ForwardListQuery{})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

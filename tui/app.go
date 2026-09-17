@@ -653,7 +653,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cmdresult.Append(OKStyle.Render(line))
 		if a.forwardsModal.IsOpen() {
-			return a, DoListForwards(a.client, false)
+			return a, DoListForwards(a.client, false, cli.ForwardListQuery{})
 		}
 		return a, nil
 

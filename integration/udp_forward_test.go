@@ -166,7 +166,7 @@ func TestUDPPortForwardE2E(t *testing.T) {
 	}
 
 	// --- (3) the listing says udp, and carries the datagram counters ---
-	fwds, err := c.PortForwardListWith(ctx, taskID)
+	fwds, err := c.PortForwardListWith(ctx, cli.ForwardListQuery{Task: taskID})
 	if err != nil {
 		t.Fatalf("forward ls: %v", err)
 	}
@@ -189,6 +189,53 @@ func TestUDPPortForwardE2E(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("traffic line %q is missing %q", line, want)
 		}
+	}
+	// Without --drops the endpoint keys are ABSENT, not zero. That distinction
+	// is the contract: zero would claim the client dropped nothing, which this
+	// listing has no way to know.
+	if _, ok := row.Counter(protocol.ForwardCounterKey_ClientDroppedOversize); ok {
+		t.Error("a plain listing reported a client drop count; it never asked the client")
+	}
+
+	// --- (4) --drops attributes a drop to the hop that made it ---
+	//
+	// The drop is forced where only the CLIENT can see it: a payload larger
+	// than its own leg accepts is refused before trsf is called, so it never
+	// reaches the server and the relay's own counters cannot include it. That
+	// is the exact shape that used to render as oversize=0 on a row while the
+	// client logged every one.
+	big := make([]byte, 20000)
+	if _, err := a.Write(big); err != nil {
+		t.Fatalf("oversize write: %v", err)
+	}
+	// Nothing acknowledges a drop, so there is no event to wait on. Poll the
+	// listing instead: the count is what says the drop was seen.
+	var clientOver, relayOver uint64
+	dropDeadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(dropDeadline) {
+		withDrops, lerr := c.PortForwardListWith(ctx, cli.ForwardListQuery{Task: taskID, AskEndpoints: true})
+		if lerr != nil {
+			t.Fatalf("forward ls --drops: %v", lerr)
+		}
+		if len(withDrops) != 1 {
+			t.Fatalf("forward ls --drops returned %d rows, want 1", len(withDrops))
+		}
+		var ok bool
+		clientOver, ok = withDrops[0].Counter(protocol.ForwardCounterKey_ClientDroppedOversize)
+		if !ok {
+			t.Fatal("--drops did not report a client drop count; the endpoint was not asked, or did not answer")
+		}
+		relayOver, _ = withDrops[0].Counter(protocol.ForwardCounterKey_RelayDroppedOversize)
+		if clientOver > 0 {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if clientOver == 0 {
+		t.Error("client_dropped_oversize stayed 0 after a payload too large for the client's own leg")
+	}
+	if relayOver != 0 {
+		t.Errorf("relay_dropped_oversize = %d, want 0: the datagram never reached the server, so the relay cannot have dropped it", relayOver)
 	}
 
 	fwdCancel()

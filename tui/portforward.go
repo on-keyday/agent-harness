@@ -331,21 +331,28 @@ type ForwardsSnapshotMsg struct {
 	ToCmdresult bool
 }
 
-// DoListForwards fetches every forward visible to this operator. Uses the
-// long-lived client (a.client), like every other Do* in this file.
-// toCmdresult is threaded straight onto the result (see ForwardsSnapshotMsg).
-func DoListForwards(c *cli.Client, toCmdresult bool) tea.Cmd {
-	return DoListForwardsFiltered(c, toCmdresult, "")
-}
-
-// DoListForwardsFiltered is the same listing narrowed to one task.
-// `forward ls --task <id>` is declared for this surface and the filter was
-// dropped here, so it listed every forward.
-func DoListForwardsFiltered(c *cli.Client, toCmdresult bool, taskFilter string) tea.Cmd {
+// DoListForwards fetches the forwards visible to this operator, narrowed and
+// detailed by q. Uses the long-lived client (a.client), like every other Do* in
+// this file. toCmdresult is threaded straight onto the result (see
+// ForwardsSnapshotMsg).
+//
+// One command rather than one per option. It was briefly three -- plain,
+// filtered, and endpoint-drops -- which is the same name growth cli.
+// ForwardListQuery exists to stop.
+func DoListForwards(c *cli.Client, toCmdresult bool, q cli.ForwardListQuery) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Longer when the endpoints are asked, because the deadline has to
+		// outlast one that never answers: the server waits its own 3s per peer
+		// before giving up, and this deadline expiring first would turn "one
+		// endpoint is unreachable" -- which the listing reports as absent keys
+		// -- into no listing at all.
+		timeout := 5 * time.Second
+		if q.AskEndpoints {
+			timeout = 10 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		fs, err := c.PortForwardListWith(ctx, taskFilter)
+		fs, err := c.PortForwardListWith(ctx, q)
 		return ForwardsSnapshotMsg{Forwards: fs, Err: err, ToCmdresult: toCmdresult}
 	}
 }

@@ -1262,7 +1262,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// client (Pitfall 3: never dial+close here). A failure here must
 			// not fail the whole snapshot — log and emit an empty array,
 			// exactly as the conns section above degrades.
-			fwInfos, fwErr := c.PortForwardListWith(rootCtx, "")
+			fwInfos, fwErr := c.PortForwardListWith(rootCtx, cli.ForwardListQuery{})
 			if fwErr != nil {
 				slog.Warn("snapshot: PortForwardListWith failed (forwards will be empty)", "err", fwErr)
 			}

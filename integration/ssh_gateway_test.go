@@ -339,7 +339,7 @@ func TestSSHGatewayE2E(t *testing.T) {
 		// a quiet baseline rather than assuming one: counting from a stale row
 		// would make this pass or fail on the neighbour's timing.
 		eventually(t, func() bool {
-			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			fs, lerr := c.PortForwardListWith(context.Background(), cli.ForwardListQuery{Task: taskID})
 			return lerr == nil && len(fs) == 0
 		}, 10*time.Second, 100*time.Millisecond, "the previous forward to deregister")
 
@@ -352,13 +352,13 @@ func TestSSHGatewayE2E(t *testing.T) {
 		}
 
 		eventually(t, func() bool {
-			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			fs, lerr := c.PortForwardListWith(context.Background(), cli.ForwardListQuery{Task: taskID})
 			return lerr == nil && len(fs) == 1
 		}, 10*time.Second, 100*time.Millisecond, "the gateway's forward to be listed")
 
 		_ = conn.Close()
 		eventually(t, func() bool {
-			fs, lerr := c.PortForwardListWith(context.Background(), taskID)
+			fs, lerr := c.PortForwardListWith(context.Background(), cli.ForwardListQuery{Task: taskID})
 			return lerr == nil && len(fs) == 0
 		}, 10*time.Second, 100*time.Millisecond, "the forward to deregister when the channel closes")
 	})

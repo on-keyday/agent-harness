@@ -343,6 +343,7 @@ func New(cfg Config) *Server {
 		}
 		return s.peerTrsfState(ctx, conn)
 	}
+	s.taskHandler.ForwardEndpointDropsFn = s.fillEndpointDrops
 	// Wire notify ring + egress hook into the TaskHandler.
 	s.notifyRing = newNotifyRing(64)
 	s.taskHandler.NotifyHook = cfg.NotifyHook

@@ -84,7 +84,10 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		// `workspace save <name>` records the same set the TUI would rather than
 		// one task. --task narrows it, and is also what lets a save CLEAR one
 		// task's forwards: the registry reports presence, never absence.
-		forwards, err := cli.PortForwardList(ctx, cid(), *taskID)
+		// No AskEndpoints: a workspace save records what a forward IS, not how
+		// it is performing, so there is nothing here worth a round trip to
+		// every endpoint.
+		forwards, err := cli.PortForwardList(ctx, cid(), cli.ForwardListQuery{Task: *taskID})
 		if err != nil {
 			return err
 		}

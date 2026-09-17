@@ -451,7 +451,9 @@ func (h cliVerbs) ExecKill(a verb.ExecRunAction) error {
 // --- forward ------------------------------------------------------------
 
 func (h cliVerbs) ForwardLs(a verb.ForwardLsAction) error {
-	forwards, err := cli.PortForwardList(h.ctx, h.cid(), a.TaskFilter)
+	forwards, err := cli.PortForwardList(h.ctx, h.cid(), cli.ForwardListQuery{
+		Task: a.TaskFilter, AskEndpoints: a.Drops,
+	})
 	if err != nil {
 		return err
 	}

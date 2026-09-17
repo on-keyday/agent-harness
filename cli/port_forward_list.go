@@ -12,21 +12,45 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
+// ForwardListQuery is what a listing may ask for. A struct rather than a
+// parameter per option, and rather than a named variant per option: the second
+// spelling was PortForwardListWithEndpointDrops, which overloads a suffix this
+// package already spends on something else -- `XWith` means "using the caller's
+// own *Client", from when that client was an argument rather than a receiver.
+// An option added here is a field; it is never another name.
+type ForwardListQuery struct {
+	// Task filters to one task id. Empty lists every forward the caller may
+	// see.
+	Task string
+
+	// AskEndpoints also asks each endpoint of a udp forward what IT dropped,
+	// reported under per-hop keys.
+	//
+	// Off by default because the cost is different in kind: a plain listing is
+	// a map walk on the server, this is a telemetry round trip to the client
+	// and to the runner for every udp forward. An endpoint that does not answer
+	// leaves its keys absent rather than zero.
+	AskEndpoints bool
+}
+
 // PortForwardListWith queries the server for the forwards this caller may see.
 // Reuses the caller's existing *Client — no extra dial. Wire path is the same
 // three steps as ConnListWith (cli/conns.go:28): round-trip, pick up the
 // server-initiated send-stream by id, read to EOF, decode.
-func (c *Client) PortForwardListWith(ctx context.Context, taskFilter string) ([]protocol.PortForwardInfo, error) {
-	var q protocol.PortForwardListQuery
-	if taskFilter != "" {
-		tid, err := parseTaskIDHex(taskFilter)
+func (c *Client) PortForwardListWith(ctx context.Context, q ForwardListQuery) ([]protocol.PortForwardInfo, error) {
+	var wq protocol.PortForwardListQuery
+	if q.AskEndpoints {
+		wq.AskEndpoints = 1
+	}
+	if q.Task != "" {
+		tid, err := parseTaskIDHex(q.Task)
 		if err != nil {
 			return nil, fmt.Errorf("forward ls: parse task id: %w", err)
 		}
-		q.TaskId = tid
+		wq.TaskId = tid
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ListPortForwards}
-	req.SetListPortForwards(q)
+	req.SetListPortForwards(wq)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, err
@@ -67,13 +91,13 @@ func (c *Client) PortForwardListWith(ctx context.Context, taskFilter string) ([]
 
 // PortForwardList opens a fresh Client, lists, and closes it. For short-lived
 // harness-cli invocations only — TUI/WebUI hold a *Client and call the With form.
-func PortForwardList(ctx context.Context, peerCID objproto.ConnectionID, taskFilter string) ([]protocol.PortForwardInfo, error) {
+func PortForwardList(ctx context.Context, peerCID objproto.ConnectionID, q ForwardListQuery) ([]protocol.PortForwardInfo, error) {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return nil, err
 	}
 	defer c.Close()
-	return c.PortForwardListWith(ctx, taskFilter)
+	return c.PortForwardListWith(ctx, q)
 }
 
 // KillPortForwardWith closes one registered forward by id.
@@ -183,21 +207,35 @@ func PortForwardTrafficLine(fi *protocol.PortForwardInfo) string {
 		fi.ConnsOpen, fi.ConnsTotal,
 		FormatByteCount(fi.BytesToTarget), FormatByteCount(fi.BytesFromTarget),
 		last, fi.Taps)
-	if fi.Protocol != protocol.ForwardProtocol_Udp {
+	// Gated on the KEY being present, not on protocol and not on the values.
+	// A tcp forward reports no datagram counters at all — a different statement
+	// from zero — while a udp row that has dropped nothing still prints
+	// `oversize=0`, because "nothing has overflowed yet" is the answer an
+	// operator needs and a blank there would read as "this row does not report
+	// it". The existence condition now lives in the row rather than in a
+	// protocol test each surface repeats.
+	mtu, ok := fi.Counter(protocol.ForwardCounterKey_MaxDatagramSize)
+	if !ok {
 		return line
 	}
-	// Gated on protocol == udp, an EXISTENCE condition — a tcp forward has no
-	// max datagram size and cannot drop a datagram, so these fields do not
-	// apply to it at all. Never gated on the values: a udp row prints
-	// `oversize=0`, because "nothing has overflowed yet" is the answer an
-	// operator needs, and a blank there would read as "this row does not
-	// report it".
-	//
 	// mtu is printed beside the drops because neither says much alone: it is
 	// the size that explains them, and it MOVES with PLPMTUD, so what a listing
 	// shows is the value that applied to the most recent packet.
-	return line + fmt.Sprintf("  mtu=%d  oversize=%d  congested=%d  queued=%d",
-		fi.MaxDatagramSize, fi.DroppedOversize, fi.DroppedCongestion, fi.DroppedQueue)
+	line += fmt.Sprintf("  mtu=%d", mtu)
+	// One group per hop that reported. The relay always does; the endpoints do
+	// only when the listing asked them, so their absence here means "not asked"
+	// rather than "nothing dropped".
+	for _, hop := range []protocol.ForwardHop{protocol.ForwardHopRelay, protocol.ForwardHopClient, protocol.ForwardHopRunner} {
+		k := protocol.ForwardDropKeys(hop)
+		over, ok := fi.Counter(k[0])
+		if !ok {
+			continue
+		}
+		cong, _ := fi.Counter(k[1])
+		queue, _ := fi.Counter(k[2])
+		line += fmt.Sprintf("  %s: oversize=%d congested=%d queued=%d", hop, over, cong, queue)
+	}
+	return line
 }
 
 // portForwardJSON is the single source of truth for the JSON shape of a
@@ -228,13 +266,12 @@ type portForwardJSON struct {
 	ConnsOpen          uint32 `json:"conns_open"`
 	Taps               uint16 `json:"taps"`
 	LastActivityUnixMs uint64 `json:"last_activity_unix_ms"`
-	// Datagram accounting. Present on every row for the reason above; on a tcp
-	// row they are structurally zero, and the RENDERED line is where the
-	// existence gate lives.
-	MaxDatagramSize   uint16 `json:"max_datagram_size"`
-	DroppedOversize   uint64 `json:"dropped_oversize"`
-	DroppedCongestion uint64 `json:"dropped_congestion"`
-	DroppedQueue      uint64 `json:"dropped_queue"`
+	// Every counter the server sent, by its own name. Nothing here enumerates
+	// them, the way TrsfSampler.ObserveJSON does not: a counter added to a
+	// forward reaches this output with no edit here. Absent on a row that
+	// carries none — a tcp forward — which is the same existence statement the
+	// rendered line makes.
+	Counters map[string]uint64 `json:"counters,omitempty"`
 }
 
 // clientEndpointJSON renders the JSON contract's own spelling for the enum:
@@ -317,10 +354,7 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 		Taps:               fi.Taps,
 		LastActivityUnixMs: fi.LastActivityUnixMs,
 
-		MaxDatagramSize:   fi.MaxDatagramSize,
-		DroppedOversize:   fi.DroppedOversize,
-		DroppedCongestion: fi.DroppedCongestion,
-		DroppedQueue:      fi.DroppedQueue,
+		Counters: forwardCountersMap(fi),
 	})
 	return string(b)
 }
@@ -377,6 +411,27 @@ func PortForwardDatagramCell(fi *protocol.PortForwardInfo) string {
 	if fi.Protocol != protocol.ForwardProtocol_Udp {
 		return ""
 	}
-	return fmt.Sprintf("%d %d/%d/%d", fi.MaxDatagramSize,
-		fi.DroppedOversize, fi.DroppedCongestion, fi.DroppedQueue)
+	mtu, ok := fi.Counter(protocol.ForwardCounterKey_MaxDatagramSize)
+	if !ok {
+		return ""
+	}
+	k := protocol.ForwardDropKeys(protocol.ForwardHopRelay)
+	over, _ := fi.Counter(k[0])
+	cong, _ := fi.Counter(k[1])
+	queue, _ := fi.Counter(k[2])
+	return fmt.Sprintf("%d %d/%d/%d", mtu, over, cong, queue)
+}
+
+// forwardCountersMap is the counter list as a name-keyed object, for the JSON
+// surfaces. A key this build does not know still appears, under the enum's
+// numeric fallback name, rather than being silently dropped.
+func forwardCountersMap(fi *protocol.PortForwardInfo) map[string]uint64 {
+	if len(fi.Counters) == 0 {
+		return nil
+	}
+	m := make(map[string]uint64, len(fi.Counters))
+	for _, c := range fi.Counters {
+		m[c.Key.String()] = c.Value
+	}
+	return m
 }

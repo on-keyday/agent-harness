@@ -48,15 +48,25 @@ func ForwardSnapshotRow(fi *protocol.PortForwardInfo) map[string]any {
 		"taps":                  float64(fi.Taps),
 		"last_activity_unix_ms": float64(fi.LastActivityUnixMs),
 
-		// Datagram accounting, raw. Its RENDERED form is inside `traffic`
-		// below, which already applies the protocol == udp existence gate — so
-		// the browser inherits that rule instead of reimplementing it in JS,
-		// which is the whole reason this assembly lives beside the renderers.
-		"max_datagram_size":  float64(fi.MaxDatagramSize),
-		"dropped_oversize":   float64(fi.DroppedOversize),
-		"dropped_congestion": float64(fi.DroppedCongestion),
-		"dropped_queue":      float64(fi.DroppedQueue),
+		// Datagram accounting, raw and by the counter's own name. Its RENDERED
+		// form is inside `traffic` below, which already applies the existence
+		// gate — so the browser inherits that rule instead of reimplementing it
+		// in JS, which is the whole reason this assembly lives beside the
+		// renderers. Absent entirely on a row carrying no counters.
+		"counters": forwardCountersAny(fi),
 
 		"traffic": PortForwardTrafficLine(fi),
 	}
+}
+
+// forwardCountersAny is forwardCountersMap in the shape this snapshot uses:
+// float64 values, because the browser receives these through JSON and a
+// consumer that type-switches on the map's values should not have to handle two
+// numeric types depending on which assembly produced it.
+func forwardCountersAny(fi *protocol.PortForwardInfo) map[string]any {
+	m := make(map[string]any, len(fi.Counters))
+	for _, c := range fi.Counters {
+		m[c.Key.String()] = float64(c.Value)
+	}
+	return m
 }

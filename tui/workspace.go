@@ -370,7 +370,7 @@ func (a *App) saveWorkspace(name string, all bool) tea.Cmd {
 	}
 	a.workspaceSaveName = name
 	a.workspaceSaveAll = all
-	return DoListForwards(a.client, false)
+	return DoListForwards(a.client, false, cli.ForwardListQuery{})
 }
 
 // finishWorkspaceSave has the forward snapshot a save was waiting for. Unless
