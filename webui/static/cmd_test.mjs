@@ -404,6 +404,30 @@ test("conns --trsf --watch parses regardless of flag order", async () => {
   eq(named(a.calls, "connsView"), [["connsView", { trsf: true, runner: "", client: "", watch: "1s" }]]);
 });
 
+// The picker is what the panel can be AIMED at, and it listed runners only —
+// so `--client` reaching the page still had nothing to select. Pure decision,
+// no DOM, which is why it can be asserted here at all.
+test("the trsf picker offers client connections, not runners alone", async () => {
+  const conns = [
+    { cid: "ws:127.0.0.1:1-a", role: "cli" },
+    { cid: "udp:127.0.0.1:2-b", role: "runner" },
+    { cid: "ws:127.0.0.1:3-c", role: "webui" },
+    { cid: "ws:127.0.0.1:4-d", role: "server" },
+  ];
+  const rows = page.trsfTargetRows(conns, "", "");
+  eq(rows, [
+    { cid: "udp:127.0.0.1:2-b", kind: "runner" },
+    { cid: "ws:127.0.0.1:1-a", kind: "client" },
+    { cid: "ws:127.0.0.1:3-c", kind: "client" },
+  ], "every askable peer, with the end it names; the server is not aimed AT");
+
+  // A cid typed on the command line that this snapshot has not carried yet is
+  // kept, WITH its kind — nothing else can say which end it is.
+  const kept = page.trsfTargetRows(conns, "ws:127.0.0.1:9-z", "client");
+  assert.ok(kept.some((r) => r.cid === "ws:127.0.0.1:9-z" && r.kind === "client"),
+    "a target named on the command line must survive a snapshot that lacks it");
+});
+
 // --json is declared CLI-only, with a SurfaceReason: the other two answer with
 // a live view and have nothing to pipe it to. The declaration is what enforces
 // it, so typing it here must be REFUSED rather than accepted and ignored --

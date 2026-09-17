@@ -32,7 +32,9 @@ func (t clientTelemetry) TrsfStates() []protocol.TrsfConnState {
 		return nil
 	}
 	row := protocol.TrsfRowFrom(st)
-	row.Role = protocol.ConnRole_Cli
+	// This process's own kind, not a constant: a TUI reporting itself as `cli`
+	// made the same connection read two ways depending on which end answered.
+	row.Role = protocol.ConnRoleForClientKind(t.c.kind)
 	row.SetCid([]byte(t.c.conn.Connection().ConnectionID().String()))
 	return []protocol.TrsfConnState{row}
 }

@@ -27,6 +27,17 @@ import (
 type Client struct {
 	conn *peer.Conn
 
+	// kind is what this process ANNOUNCED itself as — the effective kind, not
+	// the one the caller asked for. Kept rather than discarded after the
+	// handshake because the telemetry answer reports a row about THIS
+	// connection, and that row's role has to be the one the server also gives
+	// it; the server's comes from the hello, so this must too.
+	//
+	// The distinction is load-bearing and cost a live run to find: a TUI in a
+	// task env asks for Tui and announces Agent, so storing the argument made
+	// it report `Tui` for a connection the server lists as `agent`.
+	kind protocol.ClientKind
+
 	mu      sync.Mutex
 	nextReq uint32
 	pending map[uint32]chan taskControlResult
@@ -96,8 +107,13 @@ func DialWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connec
 // PSK+identity handshake and the control-handler wiring. Both entry points
 // share it, so the two cannot drift in what they authenticate.
 func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Client, error) {
+	// The same decision buildMergedClientHello makes, through the same
+	// function, for the reason its own comment gives: the header cannot
+	// disagree with the handshake, and neither can this.
+	announced, _ := EffectiveClientKind(kind)
 	c := &Client{
 		conn:    pc,
+		kind:    announced,
 		pending: map[uint32]chan taskControlResult{},
 	}
 

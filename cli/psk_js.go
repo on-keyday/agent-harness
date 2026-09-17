@@ -37,11 +37,24 @@ func resolveBinderPSK() []byte {
 	return GetPSK()
 }
 
+// EffectiveClientKind is the WASM variant: a browser is always an operator
+// context, so there is no in-task env to upgrade to Agent and the kind asked
+// for is the kind announced.
+//
+// Declared here rather than left to the !js build so buildMergedClientHello
+// and the telemetry row a client reports about ITSELF go through one function
+// on both builds — the header cannot disagree with the handshake, and neither
+// can the row.
+func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind, protocol.TaskID) {
+	return operatorKind, protocol.TaskID{}
+}
+
 // buildMergedClientHello constructs the ClientHello for the WASM context.
 // WASM runs in the browser (operator context) so agent-env detection is not
 // applicable; the supplied operatorKind is always used.
 func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHello {
-	return protocol.ClientHello{Kind: operatorKind}
+	kind, _ := EffectiveClientKind(operatorKind)
+	return protocol.ClientHello{Kind: kind}
 }
 
 // SendMergedHandshake is the WASM variant of the merged PSK+identity handshake.

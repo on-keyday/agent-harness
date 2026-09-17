@@ -1447,24 +1447,14 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		principalRunner = entry.Identity
 	} else if s.taskHandler != nil {
 		kind := s.taskHandler.lookupClientKind(cidStr)
-		switch kind {
-		case protocol.ClientKind_Cli:
-			role = protocol.ConnRole_Cli
-			identified = true
-		case protocol.ClientKind_Tui:
-			role = protocol.ConnRole_Tui
-			identified = true
-		case protocol.ClientKind_Webui:
-			role = protocol.ConnRole_Webui
-			identified = true
-		case protocol.ClientKind_Agent:
-			role = protocol.ConnRole_Agent
-			identified = true
+		// The mapping is shared with the client that reports about itself, so
+		// one connection cannot be given two roles by the two ends.
+		role = protocol.ConnRoleForClientKind(kind)
+		// Unspecified means the handshake has not completed, which is the only
+		// thing "not identified" means here.
+		identified = role != protocol.ConnRole_Unspecified
+		if kind == protocol.ClientKind_Agent {
 			principal = s.taskHandler.lookupPrincipal(cidStr)
-		default:
-			// ClientKind_Unspecified: handshake not yet completed.
-			role = protocol.ConnRole_Unspecified
-			identified = false
 		}
 	}
 

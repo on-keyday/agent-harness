@@ -7847,6 +7847,23 @@ function renderTrsfTable(rows) {
 // it is a different wire target, not because it is a different kind of answer.
 const TRSF_CLIENT_ROLES = new Set(["cli", "tui", "webui", "agent"]);
 
+// trsfTargetRows is which peers the picker offers, and in which order — the
+// whole DECISION, with no DOM in it, so a node test can assert what the picker
+// would contain. renderTrsfTargets below is then only the drawing.
+function trsfTargetRows(conns, want, wantKind) {
+  const rows = (conns || [])
+    .map((c) => ({ cid: c.cid, kind: trsfTargetKind(c.role) }))
+    .filter((r) => r.kind)
+    .sort((a, b) => (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
+  // A target set by the command line can name a connection this snapshot does
+  // not carry yet; keeping it is what stops the picker from silently moving
+  // the reading back to the server under an operator who aimed it elsewhere.
+  if (want && !rows.some((r) => r.cid === want)) {
+    rows.push({ cid: want, kind: wantKind || "runner" });
+  }
+  return rows;
+}
+
 // trsfTargetKind maps a connection row's role to which of the bridge's two
 // peer fields carries it. Derived HERE and stored on the option, so the poll
 // site does not re-derive it and the two cannot disagree.
@@ -7861,16 +7878,7 @@ function renderTrsfTargets(conns, keep, keepKind) {
   if (!sel) return;
   const want = keep !== undefined ? keep : sel.value;
   const wantKind = keep !== undefined ? (keepKind || "") : trsfSelectedKind(sel);
-  const rows = (conns || [])
-    .map((c) => ({ cid: c.cid, kind: trsfTargetKind(c.role) }))
-    .filter((r) => r.kind)
-    .sort((a, b) => (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
-  // A target set by the command line can name a connection this snapshot does
-  // not carry yet; keeping it is what stops the picker from silently moving
-  // the reading back to the server under an operator who aimed it elsewhere.
-  if (want && !rows.some((r) => r.cid === want)) {
-    rows.push({ cid: want, kind: wantKind || "runner" });
-  }
+  const rows = trsfTargetRows(conns, want, wantKind);
   sel.textContent = "";
   const server = document.createElement("option");
   server.value = "";
