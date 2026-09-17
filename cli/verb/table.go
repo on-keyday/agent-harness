@@ -1234,6 +1234,9 @@ var Verbs = []VerbSpec{
 			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
 			"--enter appends a CR (i.e. actually submits); -e interprets \\n \\r \\t \\e \\xHH",
 			"flags must precede <task-id>; everything after it is joined with spaces and sent literally",
+			"--settle-ms waits that long after sending whether or not --snapshot follows, " +
+				"so it is also how you give a program time to react before the next command; " +
+				"with --snapshot it is the window output is collected in (1500ms when unnamed)",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "SendAction",

@@ -141,7 +141,24 @@ type Flag struct {
 
 	Type    FlagType
 	Default any
-	Help    string
+
+	// Help is NOT printed to an operator. `--help` renders UsageLines() — the
+	// generated synopsis plus this verb's Notes — and nothing calls the flag
+	// package's PrintDefaults, so this string reaches only two readers: the
+	// FlagSet (which needs a usage argument) and the generated Action field's
+	// doc comment.
+	//
+	// That was never decided. The hand-written usage this replaced printed a
+	// synopsis of flag NAMES too, so the generated one dropped nothing; the
+	// field exists because fs.XVar takes a string.
+	//
+	// The cost is real and visible in this file: 25 Notes lines begin with a
+	// flag name, because an author who wanted a flag explained found that Help
+	// did not show and wrote it into Notes instead. So a flag's prose can sit
+	// in two places, and the copy next to the flag is the one nobody reads.
+	// Before adding prose here, check whether it belongs in Notes — and see
+	// the backlog note for making this printable instead.
+	Help string
 
 	// Custom supplies a flag.Value for options the stdlib types cannot carry:
 	// --agent-arg accumulates one entry per occurrence, and --scope-for parses

@@ -97,15 +97,21 @@ func TestRunNotifyHook_Accepted_DeliversPayload(t *testing.T) {
 	if status != protocol.NotifyStatus_Accepted {
 		t.Fatalf("status = %v, want accepted", status)
 	}
-	var data []byte
-	for i := 0; i < 100; i++ {
-		if b, err := os.ReadFile(outFile); err == nil && len(b) > 0 {
-			data = b
-			break
+	// Wait for the hook to FINISH, not merely to have started writing. It
+	// writes twice -- `cat > out` then `echo LEVEL=... >> out` -- so "the file
+	// is non-empty" is true in between, and polling on that caught the payload
+	// without the env line often enough to fail the package run (seen
+	// 2026-09-18). The last write is the completion condition, so wait for it.
+	var s string
+	for i := 0; i < 200; i++ {
+		if b, err := os.ReadFile(outFile); err == nil {
+			s = string(b)
+			if strings.Contains(s, "LEVEL=") {
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	s := string(data)
 	if !strings.Contains(s, `"text":"hello"`) || !strings.Contains(s, "LEVEL=warn") {
 		t.Fatalf("hook did not receive payload/env, got: %q", s)
 	}
