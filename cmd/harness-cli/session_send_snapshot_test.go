@@ -23,15 +23,19 @@ func sendLine(args ...string) error {
 	return runSessionSendWith(objproto.ConnectionID{}, a)
 }
 
-// The snapshot-only flags are rejected without --snapshot BEFORE anything
-// dials, so this needs no server: the check sits between flag parsing and the
-// usage check, which is also why a zero ConnectionID is safe here.
+// The RENDER flags are rejected without --snapshot BEFORE anything dials, so
+// this needs no server: the check sits between flag parsing and the usage
+// check, which is also why a zero ConnectionID is safe here.
 //
 // The property under test is the one this repo keeps re-learning: a typed
-// option either takes effect or errors. `--settle-ms 5000` without --snapshot
-// reads exactly like "wait 5s then show me", and silently doing neither is
-// worse than either.
-func TestSessionSendRejectsSnapshotFlagsWithoutSnapshot(t *testing.T) {
+// option either takes effect or errors. Each of these shapes a screen, so with
+// no screen there is nothing for it to take effect on, and silently doing
+// neither is worse than either.
+//
+// --settle-ms was in this list until 2026-09-18 and is deliberately not any
+// more; see TestSessionSendSettleMsWaitsWithoutSnapshot for why the same rule
+// moved it out.
+func TestSessionSendRejectsRenderFlagsWithoutSnapshot(t *testing.T) {
 	const id = "0123456789abcdef0123456789abcdef"
 	for _, tc := range []struct {
 		name string
@@ -40,7 +44,6 @@ func TestSessionSendRejectsSnapshotFlagsWithoutSnapshot(t *testing.T) {
 	}{
 		{"rows", []string{"--rows", "10", id, "x"}, "--rows"},
 		{"cols", []string{"--cols", "10", id, "x"}, "--cols"},
-		{"settle-ms", []string{"--settle-ms", "10", id, "x"}, "--settle-ms"},
 		{"style", []string{"--style", id, "x"}, "--style"},
 		{"several at once", []string{"--rows", "10", "--style", id, "x"}, "--rows, --style"},
 	} {
@@ -79,3 +82,46 @@ func TestSessionSendPlainFormIsNotRejected(t *testing.T) {
 }
 
 const id0 = "0123456789abcdef0123456789abcdef"
+
+// --settle-ms is a DURATION, not a property of a render: time passes whether or
+// not the screen is photographed, so it takes effect on its own rather than
+// being refused. The same "takes effect or errors" rule that refuses the
+// others is what admits this one.
+//
+// It was refused, and the refusal cost more than it saved: the send did not
+// happen either, and the send is this verb's job. An operator — or an agent
+// that discards stderr — then sees a command that did nothing at all, with the
+// one line explaining why thrown away. That happened repeatedly.
+func TestSessionSendSettleMsWaitsWithoutSnapshot(t *testing.T) {
+	// A deliberately WRONG arity so the run stops at the usage check instead of
+	// dialling. Reaching that error is the assertion: the render-flag guard did
+	// not fire on --settle-ms.
+	err := sendLine("--settle-ms", "10", id0)
+	if err == nil {
+		t.Fatal("want the usage error, got none")
+	}
+	// The GUARD's own wording, not the bare word "--snapshot": the usage text
+	// lists every flag, so the looser check passes for the wrong reason —
+	// which is what the neighbouring test says three lines up and what I wrote
+	// anyway on the first try.
+	if strings.Contains(err.Error(), "needs --snapshot") {
+		t.Errorf("--settle-ms was refused for want of --snapshot: %v", err)
+	}
+	if !strings.Contains(err.Error(), "usage: session send") {
+		t.Errorf("want the usage error, got %v", err)
+	}
+}
+
+// Unset means no extra wait. The flag's default moved to 0 for exactly this:
+// a plain send must not silently gain the 1500ms the snapshot path collects
+// for, which is what a non-zero default would have done the moment the wait
+// stopped being gated on --snapshot.
+func TestSessionSendSettleMsDefaultsToNoWait(t *testing.T) {
+	a, err := verb.ParseCmdSessionSend(verb.CLI, []string{id0, "x"}, nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if a.SettleMs != 0 {
+		t.Errorf("SettleMs = %d with the flag unset, want 0: a plain send would wait for it", a.SettleMs)
+	}
+}

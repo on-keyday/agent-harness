@@ -148,6 +148,12 @@ func runSessionStreamAttachWith(cid objproto.ConnectionID, a verb.SessionAction)
 	return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
 }
 
+// defaultSendSettleMs is what `session send --snapshot` collects for when the
+// caller names no window. It is a constant here rather than the flag's default
+// because the flag's default has to be 0 for an unset value to be
+// distinguishable from a deliberate one.
+const defaultSendSettleMs = 1500
+
 // runSessionSnapshotWith is runSessionSnapshot for a caller that already has the parsed action --
 // the generated CLI dispatch.
 func runSessionSnapshotWith(cid objproto.ConnectionID, a verb.SessionAction) error {
@@ -536,6 +542,14 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
 	// The summary goes to stderr and the screen to stdout, so a caller can pipe
 	// one without the other — and --quiet composes with --snapshot rather than
 	// suppressing it.
+	// Asked for and honoured whether or not a screen follows. --settle-ms used
+	// to be refused without --snapshot, which meant the SEND did not happen
+	// either -- and the send is this verb's job. It names a duration, not a
+	// property of a render, so it can take effect on its own: the program is
+	// given that long to react before this returns.
+	if !*snapshot && *settleMs > 0 {
+		time.Sleep(time.Duration(*settleMs) * time.Millisecond)
+	}
 	if *snapshot {
 		// Both style dimensions and the encoding pass through unchanged. They
 		// default off, so the did-my-keystroke-land check stays terse; what
@@ -543,9 +557,17 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
 		if *ansi && *asJSON {
 			return fmt.Errorf("--ansi cannot be combined with --json (--json encodes the render for a reader that parses; --ansi paints it for one that looks)")
 		}
+		// The collection window keeps the 1500ms it has always had when the
+		// caller named none; the flag's own default moved to 0 so that "given"
+		// is readable from the value, not so that an unasked-for snapshot
+		// renders instantly.
+		settle := *settleMs
+		if settle == 0 {
+			settle = defaultSendSettleMs
+		}
 		opts := screenOpts{
 			rows: uint16(*rows), cols: uint16(*cols),
-			settle:    time.Duration(*settleMs) * time.Millisecond,
+			settle:    time.Duration(settle) * time.Millisecond,
 			withAttrs: *style, withColor: *colorOut, asJSON: *asJSON, ansi: *ansi,
 			includeSynth: !*withoutSynth,
 		}

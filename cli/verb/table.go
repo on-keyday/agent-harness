@@ -1243,8 +1243,16 @@ var Verbs = []VerbSpec{
 		// The snapshot knobs only mean something with --snapshot. Naming one
 		// without it is refused rather than ignored: a caller who asked for 80
 		// columns and silently got the default is debugging the wrong thing.
+		//
+		// --settle-ms LEFT this group on 2026-09-18. Every other member shapes
+		// a RENDER, so with no render there is nothing for it to take effect
+		// on; settle-ms is a duration, and time passes whether or not the
+		// screen is photographed. It was refused for years on the reasoning
+		// above, which the group's own test states as "a typed option either
+		// takes effect or errors" — and that rule is what moved it out rather
+		// than what kept it in: it can take effect, so it does.
 		Requires: []Requirement{{
-			Flags: []string{"rows", "cols", "settle-ms", "style", "color", "json",
+			Flags: []string{"rows", "cols", "style", "color", "json",
 				"ansi", "without-synth", "detect", "detect-agent"},
 			Needs: "snapshot",
 		}},
@@ -1268,8 +1276,13 @@ var Verbs = []VerbSpec{
 				Help: "after sending, render the session's screen to stdout"},
 			{Name: "rows", Type: FlagUint, Default: uint(40), Field: "Rows", Help: "with --snapshot: fallback rows"},
 			{Name: "cols", Type: FlagUint, Default: uint(120), Field: "Cols", Help: "with --snapshot: fallback cols"},
-			{Name: "settle-ms", Type: FlagUint, Default: uint(1500), Field: "SettleMs",
-				Help: "with --snapshot: ms to collect output before rendering"},
+			// Default 0 rather than 1500 so "given" is readable from the value:
+			// a plain send must not gain a second and a half of waiting, and
+			// the snapshot path supplies the same 1500 it always did when this
+			// is unset.
+			{Name: "settle-ms", Type: FlagUint, Default: uint(0), Field: "SettleMs",
+				Help: "ms to wait after sending, so the program has time to react " +
+					"(with --snapshot this is also the window output is collected in; default 1500 there)"},
 			{Name: "style", Type: FlagBool, Default: false, Field: "Style", Help: "with --snapshot: also print attribute spans"},
 			{Name: "color", Type: FlagBool, Default: false, Field: "Color", Help: "with --snapshot: also print colour spans"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "with --snapshot: emit the screen as one JSON object"},

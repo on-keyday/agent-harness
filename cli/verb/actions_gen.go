@@ -400,7 +400,7 @@ type SendAction struct {
 	Rows uint
 	// with --snapshot: fallback cols
 	Cols uint
-	// with --snapshot: ms to collect output before rendering
+	// ms to wait after sending, so the program has time to react (with --snapshot this is also the window …
 	SettleMs uint
 	// with --snapshot: also print attribute spans
 	Style bool
