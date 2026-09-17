@@ -632,3 +632,40 @@ here and §5d should be read as describing an intent the measurement refuted.
 `srtt` arrives through `OnSRTT` rather than a fourth constructor parameter.
 `NewMTUTracker` has twelve call sites, eleven of them tests that do not care,
 and `blackHoleTimeout` has to handle the unset case regardless.
+
+---
+
+## Amendment — 2026-09-17, the idle arm, and what it caught
+
+§10 called the idle arm "the only arm that would still pass if the wake
+deadline were forgotten". It was forgotten, in exactly the state that arm
+exercises, and the arm caught it.
+
+**First run, objtrsf `ab0ecf8`: a 1300-byte path, no traffic, 160 s — the
+estimate never left 1200.** `NextDeadline` stayed silent while SEARCHING, which
+took the wrong half of the lesson from `conn_spin_test`. The invariant that test
+holds is "never a deadline in the PAST"; returning none at all satisfies it and
+also means nothing wakes the run loop, so `Probe` is never called. An idle
+connection therefore never converges — and the validation probe this design is
+built around protects a converged connection, so it could never fire either.
+
+Fixed in objtrsf `19be535`: the searching case returns a deadline
+`searchProbeInterval` (100 ms) out. Future, so no spin; short, because the
+search is a handful of steps and a connection carrying traffic reaches `Probe`
+long before it. `probeSent` still silences it, so the cost is one timer per
+search step.
+
+**Second run, objtrsf `19be535`:**
+
+| phase | observed |
+|---|---|
+| converge, no traffic | 1200 → **1270 within 15 s** |
+| `shape --mtu 1260`, still no traffic | 1270 held at t=121 s, **1230 with `mtu_fallbacks=1` by t=151 s** |
+
+The timing identifies the detector. With no traffic there are no large packets
+to lose, so the data-loss half cannot fire; 121–151 s is two to three
+60-second validation intervals, and the connection had converged ~90 s before
+the shrink, so the first interval was already part-spent. This is the validation
+probe, end to end, on the connection type it exists for.
+
+1230 is again the arithmetic answer for a 1260-byte link.
