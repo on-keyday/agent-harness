@@ -1,16 +1,13 @@
 package protocol
 
 import (
-	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // ForwardDropCounters is one endpoint's tally of the datagrams it did not carry
-// for a forward, and the thing that turns that tally into a report.
+// for a forward.
 //
 // It lives here rather than in cli and runner because both count the same three
 // causes off the same three trsf errors, and the server already maps those same
@@ -20,25 +17,7 @@ type ForwardDropCounters struct {
 	oversize   atomic.Uint64
 	congestion atomic.Uint64
 	queue      atomic.Uint64
-
-	// Guards the reporting state below. The drop sites are several goroutines
-	// -- a listener loop and one reply reader per flow -- and reporting from
-	// the site that noticed is what lets this work without a ticker, so the
-	// state it reads has to tolerate them.
-	mu       sync.Mutex
-	sent     [3]uint64
-	lastSent time.Time
 }
-
-// ForwardDropReportInterval is the floor between two reports for one forward.
-//
-// Reporting from the drop site rather than a ticker means no goroutine, no
-// timer and no lifetime to manage -- but a drop storm would otherwise send one
-// report per dropped datagram, on the same congested path that is dropping
-// them. This is the rate limit that makes that safe, and it is a floor rather
-// than a period: a single drop on an otherwise quiet forward is reported at
-// once.
-const ForwardDropReportInterval = 5 * time.Second
 
 // NoteOversize records a payload refused before trsf ever saw it, because it
 // did not fit this leg's MaxDatagramSize.
@@ -68,40 +47,19 @@ func (c *ForwardDropCounters) NoteSendError(err error) {
 	}
 }
 
-// ReportTo sends the current totals through send, and records them as sent
-// ONLY if that succeeded. Returns the error send gave, or nil when there was
-// nothing to report or the rate limit swallowed it.
+// Snapshot answers a forward_drops question with the running totals.
 //
-// The success check is load-bearing and its absence was a real bug: marking the
-// totals sent before the send happened meant a refused report was lost for
-// good, because the next tick compared against totals that never crossed and
-// found nothing changed. "Cumulative, so a lost report self-heals" is only true
-// if a lost one is still pending.
-func (c *ForwardDropCounters) ReportTo(forwardID uint64, send func([]byte) error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := [3]uint64{c.oversize.Load(), c.congestion.Load(), c.queue.Load()}
-	if now == c.sent {
-		return nil
-	}
-	if at := time.Now(); at.Sub(c.lastSent) < ForwardDropReportInterval {
-		return nil // rate limited; the totals are cumulative, so nothing is lost
-	} else {
-		c.lastSent = at
-	}
-	r := ForwardDropReport{
+// These used to be PUSHED: the drop site sent a report on the datagram frame,
+// rate limited to one per five seconds, keeping the last-sent totals here so a
+// refused report could be retried rather than lost for good. All of that state
+// belonged to the direction rather than to the counters — a pull has nothing in
+// flight, so there is nothing to retry, nothing to rate limit, and the numbers
+// no longer compete for the queue they are reporting on.
+func (c *ForwardDropCounters) Snapshot(forwardID uint64) ForwardDropsBody {
+	return ForwardDropsBody{
 		ForwardId:         forwardID,
-		DroppedOversize:   now[0],
-		DroppedCongestion: now[1],
-		DroppedQueue:      now[2],
+		DroppedOversize:   c.oversize.Load(),
+		DroppedCongestion: c.congestion.Load(),
+		DroppedQueue:      c.queue.Load(),
 	}
-	b, err := r.Append([]byte{byte(appwire.AppKind_ForwardDropReport)})
-	if err != nil {
-		return err
-	}
-	if err := send(b); err != nil {
-		return err
-	}
-	c.sent = now
-	return nil
 }

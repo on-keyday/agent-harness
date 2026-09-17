@@ -18,8 +18,7 @@ const (
 	AppKind_AgentProxyControl AppKind = 70
 	AppKind_DialGreeting      AppKind = 71
 	AppKind_ForwardDatagram   AppKind = 72
-	AppKind_ForwardDropReport AppKind = 73
-	AppKind_ClientControl     AppKind = 74
+	AppKind_Telemetry         AppKind = 73
 )
 
 func (e AppKind) String() string {
@@ -42,10 +41,8 @@ func (e AppKind) String() string {
 		return "DialGreeting"
 	case AppKind_ForwardDatagram:
 		return "ForwardDatagram"
-	case AppKind_ForwardDropReport:
-		return "ForwardDropReport"
-	case AppKind_ClientControl:
-		return "ClientControl"
+	case AppKind_Telemetry:
+		return "Telemetry"
 	default:
 		return fmt.Sprintf("AppKind(%d)", e)
 	}

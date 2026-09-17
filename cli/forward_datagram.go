@@ -158,10 +158,6 @@ func runUDPForward(ctx context.Context, send datagramSender, sp ForwardSpec,
 				return
 			case now := <-t.C:
 				u.reapIdle(now)
-				// The drop report rides the same ticker: no goroutine and no
-				// timer of its own for something that only has to be roughly
-				// current, and silent when nothing changed.
-				u.reportDrops(send, logf)
 			}
 		}
 	}()
@@ -183,45 +179,40 @@ func runUDPForward(ctx context.Context, send datagramSender, sp ForwardSpec,
 		}
 		if len(b) > send.MaxDatagramSize() {
 			// There is no fragmentation anywhere below this, so an oversized
-			// payload cannot cross. Counted HERE and reported: the server's own
-			// oversize counter fires when the FAR leg cannot take a datagram it
-			// already received, and one too large for this leg never arrives,
-			// which is how a row came to read oversize=0 while this very line
-			// was logging every drop.
+			// payload cannot cross. Counted HERE: the server's own oversize
+			// counter fires when the FAR leg cannot take a datagram it already
+			// received, and one too large for this leg never arrives, which is
+			// how a row came to read oversize=0 while this very line was
+			// logging every drop.
 			u.drops.NoteOversize()
-			u.reportDrops(send, logf)
 			logf(fmt.Sprintf("udp forward %d: datagram of %d bytes exceeds the %d that fit; dropped",
 				forwardID, n, send.MaxDatagramSize()))
 			continue
 		}
 		if err := send.SendDatagram(b); err != nil {
 			u.drops.NoteSendError(err)
-			u.reportDrops(send, logf)
 		}
 	}
 }
 
-// reportDrops tells the server what this endpoint dropped, so `forward ls`
-// stops reporting only what the server's own relay dropped.
+// forwardDrops reports what this process refused to send for one forward, and
+// false when it is running no forward by that id.
 //
-// Sent on the same unreliable frame as the data it counts, which is safe
-// because the totals are cumulative: a refused report is carried by the next
-// tick. A failure here is deliberately not counted as a drop of its own --
-// counting the loss of a loss report is a hall of mirrors, and the number it
-// would corrupt is the one being reported.
-func (u *udpForwardClient) reportDrops(send datagramSender, logf func(string)) {
-	if err := u.drops.ReportTo(u.forwardID, send.SendDatagram); err != nil {
-		// Logged, not swallowed. A report that cannot cross is the one case
-		// where the operator's numbers go stale without anything saying so, and
-		// this file has already paid once for a drop nobody counted.
-		logf(fmt.Sprintf("udp forward %d: drop report not sent: %v", u.forwardID, err))
+// Both registries are searched because a forward_id names one registration and
+// which map it lives in is a property of its direction, not of the id. The
+// server asking about a -R forward should not have to know that.
+//
+// These numbers used to be PUSHED from the drop sites on the datagram frame --
+// the same frame as the traffic they measure, so a drop storm's report competed
+// with the storm. They are read here instead, when someone asks.
+func forwardDrops(id uint64) (protocol.ForwardDropsBody, bool) {
+	if u, ok := lookupUDPForwardClient(id); ok {
+		return u.drops.Snapshot(id), true
 	}
-}
-
-func (d *udpRemoteDialer) reportDrops(send datagramSender, logf func(string)) {
-	if err := d.drops.ReportTo(d.forwardID, send.SendDatagram); err != nil {
-		logf(fmt.Sprintf("udp remote forward %d: drop report not sent: %v", d.forwardID, err))
+	if d, ok := lookupUDPRemoteDialer(id); ok {
+		return d.drops.Snapshot(id), true
 	}
+	return protocol.ForwardDropsBody{}, false
 }
 
 // udpForwardClients is the process-wide registry a received datagram is routed
@@ -407,10 +398,8 @@ func (d *udpRemoteDialer) readReplies(id uint32, fl *udpDialedFlow) {
 			if b, eerr := dg.Append([]byte{byte(appwire.AppKind_ForwardDatagram)}); eerr == nil {
 				if len(b) > d.send.MaxDatagramSize() {
 					d.drops.NoteOversize()
-					d.reportDrops(d.send, d.logf)
 				} else if serr := d.send.SendDatagram(b); serr != nil {
 					d.drops.NoteSendError(serr)
-					d.reportDrops(d.send, d.logf)
 				}
 			}
 		}
@@ -499,7 +488,6 @@ func runUDPRemoteForward(ctx context.Context, send datagramSender, sp RemoteForw
 			return
 		case now := <-t.C:
 			d.reapIdle(now)
-			d.reportDrops(send, logf)
 		}
 	}
 }

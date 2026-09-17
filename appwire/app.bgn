@@ -17,38 +17,34 @@ enum AppKind:
     psk_auth = 0x45
     agent_proxy_control = 0x46
     dial_greeting = 0x47
-    # The two kinds below are sent with trsf's SendDatagram rather than
-    # Connection().SendMessage, so unlike every kind above they are
-    # acknowledged and (in the controlled mode) congestion controlled. trsf has
-    # no datagram kind of its own: THIS byte is the packet's kind, and the core
-    # routes it because SetDatagramKinds claims it. A kind added here and not
-    # added there is refused at the sender rather than lost at the far end.
+    # The ONLY kind sent with trsf's SendDatagram rather than
+    # Connection().SendMessage, so unlike every other it is acknowledged and
+    # (in the controlled mode) congestion controlled. trsf has no datagram kind
+    # of its own: THIS byte is the packet's kind, and the core routes it
+    # because SetDatagramKinds claims it. A kind added here and not added there
+    # is refused at the sender rather than lost at the far end.
+    #
+    # Telemetry deliberately does NOT travel this way. It would share a queue
+    # with the traffic it measures.
     #
     # Payload: protocol.ForwardDatagram.
     forward_datagram = 0x48
 
-    # One endpoint's running total of the datagrams IT dropped for a forward,
-    # so `forward ls` can stop reporting only what the server's relay dropped.
-    # Cumulative, not a delta: this rides the same unreliable frame as the data,
-    # so a lost report is corrected by the next one instead of losing counts for
-    # good.
+    # Telemetry: the SERVER asks a peer -- a runner or a client -- for numbers
+    # about itself, and the peer answers on the same kind. One family for the
+    # direction, with the question inside, the way TaskControl works for the
+    # other one.
     #
-    # Payload: protocol.ForwardDropReport.
-    forward_drop_report = 0x49
-
-
-    # The SERVER's requests to a client, and their answers. Everything else on
-    # this connection goes client -> server; this is the reverse direction.
+    # One kind rather than one per peer, because the peer kind decides only
+    # which CONNECTION the request goes out on, never which question is being
+    # asked. Splitting it would declare every question twice and make the
+    # server's ask-and-await machinery two copies of itself, which is what it
+    # briefly was.
     #
-    # It exists because a client's own transport state is reachable from nowhere
-    # else: `conns --trsf` can target the server or a runner, and the client
-    # running a port forward is neither. A datagram dropped INSIDE trsf's run
-    # loop never reaches the application as an error either, so counting at the
-    # call site cannot substitute for asking.
+    # Pull, not push, and that is the whole shape: a number that must be
+    # current when read is asked for when read. The one push that existed here
+    # rode the datagram frame and therefore competed with the traffic it was
+    # reporting on -- least likely to arrive exactly when it had most to say.
     #
-    # One kind for the direction, with the question inside, exactly as
-    # TaskControl does for the other one: request and response share it because
-    # the direction already tells them apart.
-    #
-    # Payloads: protocol.ClientControlRequest / ClientControlResponse.
-    client_control = 0x4A
+    # Payloads: protocol.TelemetryRequest / TelemetryResponse.
+    telemetry = 0x49

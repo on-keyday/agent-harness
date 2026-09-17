@@ -49,17 +49,6 @@ type portForward struct {
 	droppedCongestion atomic.Uint64
 	droppedQueue      atomic.Uint64
 
-	// What the two ENDPOINTS report dropping, which the three counters above
-	// cannot see: they count the server's own relay, and a datagram an endpoint
-	// refused never reached it. Measured at an offered 3,500 datagrams/s, that
-	// was 74% of the loss and the row read zero for all of it.
-	//
-	// Kept per endpoint rather than folded in on arrival because a report
-	// carries running totals: the row adds them at read time, so a re-sent or
-	// re-ordered report is idempotent.
-	clientDrops endpointDrops
-	runnerDrops endpointDrops
-
 	// Always-on traffic accounting. Atomics rather than the registry mutex:
 	// these are written from the relay goroutines of every connection under
 	// this forward, and a relay must never wait on a lock a listing holds.
@@ -204,11 +193,4 @@ func (r *portForwardRegistry) remove(id uint64) (*portForward, bool) {
 		delete(r.m, id)
 	}
 	return pf, ok
-}
-
-// endpointDrops is one endpoint's last reported totals for a forward.
-type endpointDrops struct {
-	oversize   atomic.Uint64
-	congestion atomic.Uint64
-	queue      atomic.Uint64
 }

@@ -304,8 +304,7 @@ func (f *udpForward) sendBack(id uint32, payload []byte, log *slog.Logger) {
 	f.drops.NoteSendError(send.SendDatagram(b))
 }
 
-// sweep runs the session's periodic udp-forward work until ctx ends: reaping
-// idle flows, and flushing any drop report the rate limit held back.
+// sweep reaps idle flows until ctx ends.
 //
 // It had no caller at all until 2026-09-17. sweepIdleFlows was written, and the
 // comment below already said "runs for the session", but nothing ever started
@@ -313,7 +312,7 @@ func (f *udpForward) sendBack(id uint32, payload []byte, log *slog.Logger) {
 // socket stayed open until the 512-flow cap evicted it. Started here, off the
 // CONNECTION's context, so it dies with the connection rather than outliving it
 // on every reconnect.
-func (u *udpForwards) sweep(ctx context.Context, log *slog.Logger) {
+func (u *udpForwards) sweep(ctx context.Context) {
 	t := time.NewTicker(udpFlowSweepInterval)
 	defer t.Stop()
 	for {
@@ -322,35 +321,26 @@ func (u *udpForwards) sweep(ctx context.Context, log *slog.Logger) {
 			return
 		case now := <-t.C:
 			u.sweepIdleFlows(now)
-			u.flushDropReports(log)
 		}
 	}
 }
 
-// flushDropReports sends what the rate limit held back. Reporting happens at
-// the drop site so it is prompt, but a burst that ends inside the floor would
-// otherwise leave its tail unreported until the next drop.
-func (u *udpForwards) flushDropReports(log *slog.Logger) {
+// dropsFor reports what this runner refused to send for one forward, and false
+// when it holds neither a local nor a remote registration by that id.
+//
+// Both maps are searched because a forward_id names one registration and which
+// map it lives in is a property of its direction, not of the id. A caller
+// asking about a -R forward should not have to know that.
+func (u *udpForwards) dropsFor(id uint64) (protocol.ForwardDropsBody, bool) {
 	u.mu.Lock()
-	forwards := make([]*udpForward, 0, len(u.m))
-	for _, f := range u.m {
-		forwards = append(forwards, f)
+	defer u.mu.Unlock()
+	if f, ok := u.m[id]; ok {
+		return f.drops.Snapshot(id), true
 	}
-	remotes := make([]*udpRemoteForward, 0, len(u.remotes))
-	for _, r := range u.remotes {
-		remotes = append(remotes, r)
+	if r, ok := u.remotes[id]; ok {
+		return r.drops.Snapshot(id), true
 	}
-	u.mu.Unlock()
-	for _, f := range forwards {
-		if err := f.drops.ReportTo(f.forwardID, f.send.SendDatagram); err != nil {
-			log.Warn("udp forward: drop report not sent", "fwd", f.forwardID, "err", err)
-		}
-	}
-	for _, r := range remotes {
-		if err := r.drops.ReportTo(r.forwardID, r.send.SendDatagram); err != nil {
-			log.Warn("udp remote forward: drop report not sent", "fwd", r.forwardID, "err", err)
-		}
-	}
+	return protocol.ForwardDropsBody{}, false
 }
 
 // sweepIdleFlows reaps flows that have gone quiet. Runs for the session, not

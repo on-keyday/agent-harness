@@ -3,18 +3,12 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
-
-// runnerTrsfTimeout bounds the round trip to a runner. Short: the answer is a
-// snapshot of counters already in memory, so a runner that has not replied in
-// this long is not slow, it is not answering.
-const runnerTrsfTimeout = 3 * time.Second
 
 // trsfConnStates is the ONE walk of this process's connections. SIGUSR1's dump
 // and the trsf_state request both read it, so the two views cannot drift into
@@ -53,68 +47,6 @@ func (s *Server) trsfConnStates(allowed map[string]bool, globalView bool) ([]pro
 		out = append(out, row)
 	}
 	return out, sampled
-}
-
-// sendRunnerTrsfStateRequest asks one runner for its own transport state.
-//
-// Correlated by request_id rather than by the runner's connection id, which is
-// what the data-plane sibling uses. The id is on the wire, so reading it is
-// what keeps it from being a field nobody consults -- and it lets two callers
-// poll the same runner at once, which --watch makes ordinary.
-func (s *Server) sendRunnerTrsfStateRequest(ctx context.Context, entry *RunnerEntry) ([]protocol.TrsfConnState, int64, error) {
-	if entry == nil || entry.Conn == nil {
-		return nil, 0, fmt.Errorf("runner offline")
-	}
-	id := s.trsfReqSeq.Add(1)
-	respCh := make(chan protocol.RunnerTrsfStateResponse, 1)
-	s.trsfRespMu.Lock()
-	if s.trsfRespCh == nil {
-		s.trsfRespCh = make(map[uint32]chan protocol.RunnerTrsfStateResponse)
-	}
-	s.trsfRespCh[id] = respCh
-	s.trsfRespMu.Unlock()
-	defer func() {
-		s.trsfRespMu.Lock()
-		delete(s.trsfRespCh, id)
-		s.trsfRespMu.Unlock()
-	}()
-
-	var rr protocol.RunnerRequest
-	rr.Kind = protocol.RunnerRequestType_TrsfState
-	rr.SetTrsfState(protocol.RunnerTrsfStateRequest{RequestId: id})
-	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		return nil, 0, fmt.Errorf("encode: %w", err)
-	}
-	if _, _, err := entry.Conn.SendMessage(payload); err != nil {
-		return nil, 0, fmt.Errorf("send: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, runnerTrsfTimeout)
-	defer cancel()
-	select {
-	case <-ctx.Done():
-		return nil, 0, ctx.Err()
-	case resp := <-respCh:
-		// The RUNNER's stamp, not this server's: the counters advanced on the
-		// runner's clock and one round trip separates the two.
-		return resp.Conns, int64(resp.SampledUnixNs), nil
-	}
-}
-
-// deliverRunnerTrsfStateResponse routes a runner's answer to whoever asked.
-func (s *Server) deliverRunnerTrsfStateResponse(resp protocol.RunnerTrsfStateResponse) {
-	s.trsfRespMu.Lock()
-	ch, ok := s.trsfRespCh[resp.RequestId]
-	s.trsfRespMu.Unlock()
-	if !ok {
-		// A late answer to a request that already timed out. Not worth a
-		// warning: --watch produces these whenever a runner is slow once.
-		return
-	}
-	select {
-	case ch <- resp:
-	default:
-	}
 }
 
 // handleTrsfState answers a caller's request for congestion state.

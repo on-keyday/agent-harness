@@ -185,8 +185,8 @@ func NewProcessEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, error
 func (c *Client) dispatchControl(kind appwire.AppKind, payload []byte) {
 	// The one kind that flows server -> client as a REQUEST. Handled before the
 	// response path below, which would otherwise try to decode it as one.
-	if kind == appwire.AppKind_ClientControl {
-		c.answerClientControl(payload)
+	if kind == appwire.AppKind_Telemetry {
+		c.answerTelemetry(payload)
 		return
 	}
 	if kind != appwire.AppKind_TaskControl {

@@ -210,7 +210,7 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 	// the control seam and it is never acknowledged.
 	p.SetDatagramKinds(func(kind uint8) bool {
 		switch appwire.AppKind(kind) {
-		case appwire.AppKind_ForwardDatagram, appwire.AppKind_ForwardDropReport:
+		case appwire.AppKind_ForwardDatagram:
 			return true
 		}
 		return false

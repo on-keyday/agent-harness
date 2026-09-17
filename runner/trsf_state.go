@@ -3,9 +3,7 @@ package runner
 import (
 	"errors"
 	"sync"
-	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -98,33 +96,46 @@ func (s *Session) trsfStates() []protocol.TrsfConnState {
 	return out
 }
 
-// handleTrsfState answers the server's request with this runner's own state.
-func handleTrsfState(sess *Session, req protocol.RunnerTrsfStateRequest, send func(protocol.RunnerMessage) error) {
-	rows := sess.trsfStates()
-	var rm protocol.RunnerMessage
-	rm.Kind = protocol.RunnerMessageType_TrsfStateResponse
-	rm.SetTrsfStateResponse(protocol.RunnerTrsfStateResponse{
-		RequestId: req.RequestId,
-		Count:     uint16(len(rows)),
-		// Stamped HERE, by the clock the counters advanced against. The server
-		// passes it through rather than restamping: its own clock is one round
-		// trip away, and the delta between two readings is the interval every
-		// one of these counters is read as a rate over.
-		SampledUnixNs: uint64(time.Now().UnixNano()),
-		Conns:         rows,
-	})
-	if err := send(rm); err != nil && sess != nil {
-		sess.logger().Warn("trsf_state: could not answer", "err", err)
+// sessionTelemetry is what the server may ask this runner about itself.
+//
+// An adapter rather than methods on Session, so the answer side stays one seam
+// instead of two exported methods on the type the whole runner is built around.
+type sessionTelemetry struct{ s *Session }
+
+func (t sessionTelemetry) TrsfStates() []protocol.TrsfConnState { return t.s.trsfStates() }
+
+// ForwardDrops reads s.udpForwards rather than going through
+// udpForwardRegistry, which CREATES it when absent. A runner holding no udp
+// forward has no registry, and "no such forward" is the honest answer; creating
+// one from a read would also write a field the forward-open path owns, from a
+// goroutine with no reason to touch it.
+func (t sessionTelemetry) ForwardDrops(forwardID uint64) (protocol.ForwardDropsBody, bool) {
+	if t.s == nil || t.s.udpForwards == nil {
+		return protocol.ForwardDropsBody{}, false
+	}
+	return t.s.udpForwards.dropsFor(forwardID)
+}
+
+// handleTelemetry answers whatever the server asked about this runner.
+//
+// Nothing here knows which question it was: AnswerTelemetry decodes it and
+// calls back for the numbers, so a kind added to the family reaches a runner
+// through sessionTelemetry rather than through another case in the dispatch
+// switch.
+func handleTelemetry(sess *Session, payload []byte) {
+	if err := protocol.AnswerTelemetry(payload, sessionTelemetry{sess}, sess.sendTelemetry); err != nil && sess != nil {
+		sess.logger().Warn("telemetry: could not answer", "err", err)
 	}
 }
 
-// sendRunnerMessage is the one-liner the handler needs, kept here so the
-// dispatch case reads as a single call.
-func (s *Session) sendRunnerMessage(rm protocol.RunnerMessage) error {
+// sendTelemetry puts one already-encoded answer on the uplink. The AppKind byte
+// is on the front already; AnswerTelemetry owns the framing so both peers that
+// answer cannot disagree about it.
+func (s *Session) sendTelemetry(b []byte) error {
 	if s == nil || s.Sender == nil {
 		return errNoSender
 	}
-	return s.Sender.Send(rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+	return s.Sender.Send(b)
 }
 
 var errNoSender = errors.New("runner: no sender wired")

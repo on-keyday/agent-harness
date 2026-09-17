@@ -420,7 +420,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	// dies with the connection rather than outliving it once per reconnect --
 	// which is the whole reason it is started here and not lazily beside the
 	// registry, where no scope knows when the session ends.
-	go session.udpForwardRegistry().sweep(ctx, cfg.Logger)
+	go session.udpForwardRegistry().sweep(ctx)
 
 	// The registry outlives this Session, so a held task's output can find
 	// whatever connection is current instead of the one it started on.
@@ -668,6 +668,15 @@ func Run(ctx context.Context, cfg Config) error {
 // the appropriate session handler. Extracted from the OnControl closure so that
 // tests can call it directly without a live peer connection.
 func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logger, kind appwire.AppKind, payload []byte) {
+	if kind == appwire.AppKind_Telemetry {
+		// The server asking this runner about itself. Its own kind rather than
+		// a RunnerRequest case because the same question, in the same bytes,
+		// goes to a cli client too -- and a client speaks no RunnerRequest.
+		//
+		// Read-only and synchronous: a map walk plus one reply.
+		handleTelemetry(session, payload)
+		return
+	}
 	if kind != appwire.AppKind_RunnerControl {
 		return // server side never sends TaskControl/Pubsub-other to runners
 	}
@@ -835,14 +844,6 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if !session.DeliverChainedRelayResponse(*rcr) {
 			log.Warn("dispatch: ChainedRelayResponse without waiter", "status", rcr.Status)
 		}
-	case protocol.RunnerRequestType_TrsfState:
-		ts := req.TrsfState()
-		if ts == nil {
-			return
-		}
-		// Read-only and synchronous: a map walk plus one reply.
-		handleTrsfState(session, *ts, session.sendRunnerMessage)
-
 	case protocol.RunnerRequestType_AuthorizeDataPlane:
 		ad := req.AuthorizeDataPlane()
 		if ad == nil {

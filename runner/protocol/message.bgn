@@ -19,7 +19,10 @@ enum RunnerMessageType:
     authorize_data_plane_response  # answer to AuthorizeDataPlaneRequest
     revoke_data_plane_response     # answer to RevokeDataPlaneRequest
     data_plane_finished            # a data-plane transfer ended; drop its state
-    trsf_state_response            # this runner's own transport state, as asked
+    trsf_state_response            # RESERVED, dead. A runner answers for itself
+                                   # on AppKind_Telemetry now. Kept so the
+                                   # ordinals below it hold while a fleet still
+                                   # runs the old build; free to reuse after.
     hold_tasks_ack                 # the exact task set this runner will keep
                                    # alive across a deliberate server restart
 
@@ -44,7 +47,10 @@ enum RunnerRequestType:
                        # its input goroutine while the process runs on.
     authorize_data_plane  # expect a connection redeeming this grant
     revoke_data_plane     # drop a grant and close whatever redeems it
-    trsf_state            # report this runner's own transport state
+    trsf_state            # RESERVED, dead. The server asks on
+                          # AppKind_Telemetry now, and no runner handles this.
+                          # Kept for the ordinals below it while a fleet still
+                          # runs the old build; free to reuse after.
     hold_tasks            # keep your children alive, I am going down on purpose
     rebind_session        # attach a held task's live PTY to a new stream
 
@@ -2308,25 +2314,6 @@ format ForwardDatagram:
     flow_id    :u32
     payload    :[..]u8
 
-# ForwardDropReport is one endpoint's running total of the datagrams it dropped
-# for a forward, before they ever reached the server.
-#
-# It exists because the server can only count what it relayed. A datagram the
-# CLIENT refused -- a closed window, a full handoff queue, a payload too large
-# for its own leg -- never arrives, so `forward ls` reported zero for it and the
-# row said "nothing overflowed" while the client was logging every drop. At an
-# offered 3,500 datagrams/s that was 74% of the loss.
-#
-# CUMULATIVE, and the receiver stores rather than adds. This rides the same
-# unreliable frame as the data it counts, so a lost report has to be harmless;
-# a delta would lose those counts for good.
-format ForwardDropReport:
-    forward_id         :u64
-    dropped_oversize   :u64
-    dropped_congestion :u64
-    dropped_queue      :u64
-
-
 format OpenFileTransferRequest:
     task_id       :TaskID
     direction     :FileTransferDirection
@@ -2503,37 +2490,93 @@ format RunnerTrsfStateRequest:
 # sampled_unix_ns is by the RUNNER's clock, and the server passes it through
 # rather than restamping: the interval the counters advanced over is the
 # runner's, and the server's own clock is one round trip away from it.
-# What the SERVER asks a client, in the shape TaskControl uses for the other
-# direction: one envelope, a kind, a request id, and the body under a union arm.
+# What the SERVER asks a PEER about itself -- a runner or a client, the same
+# questions either way. The peer kind decides which connection the request goes
+# out on and nothing else, so it does not appear here.
 #
-# There is one question today. The envelope is still the right shape, because
-# the alternative -- an appwire kind per question -- makes the second question a
-# pair of new wire kinds instead of one enum member, and this direction is new
-# enough that a second is likely.
-enum ClientControlKind:
+# Pull. A number that has to be current when it is read is asked for when it is
+# read. The alternative tried first -- endpoints pushing counters on the
+# datagram frame -- put the telemetry in the same queue as the traffic it was
+# measuring, so it was least likely to arrive exactly when it had most to say.
+enum TelemetryKind:
     :u8
     trsf_state = "trsf_state"
+    forward_drops = "forward_drops"
 
-format ClientControlRequest:
-    kind :ClientControlKind
-    request_id :u32
-    # No arm for trsf_state: the question carries nothing beyond its own name.
-    # An arm appears with the first question that has a body.
-
-format ClientControlResponse:
-    kind :ClientControlKind
+format TelemetryRequest:
+    kind :TelemetryKind
     request_id :u32
     match kind:
-        ClientControlKind.trsf_state => trsf_state :ClientTrsfStateBody
-        .. => error("Unexpected client control response")
+        # trsf_state asks about the whole peer, so it carries nothing beyond its
+        # own name. NAMED even so, rather than folded into the catch-all below:
+        # both arms decode to an empty body, and only the name tells the
+        # answerer that this one is a question it knows.
+        TelemetryKind.trsf_state => ..
+        TelemetryKind.forward_drops => forward_drops :ForwardDropsQuery
+        # NO catch-all arm, which is what lets a kind newer than this build
+        # decode: it arrives with no body and the answerer refuses it by name.
+        # An `error(..)` arm here would instead make an unknown kind
+        # undecodable, and an answerer that cannot decode cannot answer
+        # `unsupported` either -- so a newer asker would get silence, and spend
+        # its whole timeout learning what this side knew at once.
 
-# The rows are the same rows a runner reports, and sampled_unix_ns is the
-# ANSWERER's clock for the same reason: every counter here is read as a rate,
-# and the interval has to be measured where the counters advanced.
-format ClientTrsfStateBody:
+# Names the registration a forward_drops answer is about, because a peer holds
+# several and the counters are per forward.
+format ForwardDropsQuery:
+    forward_id :u64
+
+# A peer that cannot answer says so. Silence would work -- the asker times out
+# -- but it costs the asker three seconds to learn what the answerer knew
+# immediately, and it cannot tell "I do not hold that forward" from "that peer
+# is gone".
+enum TelemetryStatus:
+    :u8
+    ok              = "ok"
+    unknown_forward = "unknown_forward"  # this peer holds no forward by that id
+    unsupported     = "unsupported"      # a kind this build does not answer
+
+format TelemetryResponse:
+    kind :TelemetryKind
+    request_id :u32
+    status :TelemetryStatus
+    # NOT nested under `if status == ok`, although the body is meaningless
+    # without it. ebm2go mis-generates that shape: the public SetX it emits
+    # dereferences the GETTER, which is nil until the variant is allocated, so
+    # building any such answer panics. Left flat deliberately -- re-nesting it
+    # reads like a tightening and is a crash.
+    #
+    # A refusal therefore carries a zero-valued body for whichever kind it
+    # names. Reading it as counts is the hazard; askTelemetry closes it by
+    # turning any non-ok status into an error before a caller reaches the body.
+    match kind:
+        TelemetryKind.trsf_state => trsf_state :TelemetryTrsfStateBody
+        TelemetryKind.forward_drops => forward_drops :ForwardDropsBody
+        # No catch-all, same reason as the request: an unsupported kind has to
+        # decode for its refusal to be readable.
+
+# The rows are the same rows a runner has always reported, and sampled_unix_ns
+# is the ANSWERER's clock: every counter on a row is read as a rate, and the
+# interval has to be measured where the counters advanced.
+format TelemetryTrsfStateBody:
     count :u16
     sampled_unix_ns :u64
     conns :[count]TrsfConnState
+
+# What THIS peer dropped for that forward, before the server ever saw it.
+#
+# The server can only count what it relayed. A datagram the endpoint refused --
+# a closed window, a full handoff queue, a payload too large for its own leg --
+# never arrives, so `forward ls` reported zero for it and the row said "nothing
+# overflowed" while the client was logging every drop. At an offered 3,500
+# datagrams/s that was 74% of the loss.
+#
+# CUMULATIVE, as the counters themselves are. The reader takes a difference
+# between two readings when it wants a rate; nothing here resets.
+format ForwardDropsBody:
+    forward_id :u64
+    dropped_oversize :u64
+    dropped_congestion :u64
+    dropped_queue :u64
 
 format RunnerTrsfStateResponse:
     request_id :u32

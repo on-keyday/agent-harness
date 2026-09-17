@@ -158,3 +158,85 @@ func TestTrsfPeerRefusesBothFlags(t *testing.T) {
 		t.Errorf("--client gave %+v, %v", p, err)
 	}
 }
+
+// The same question put to the OTHER peer kind.
+//
+// Worth its own test because the two legs used to be different protocols: the
+// runner answered a RunnerRequest{trsf_state} with a RunnerMessage of its own,
+// correlated through a table only runners used, while the client answered a
+// second family invented for it. They are now one request on one AppKind
+// through one pending table, and nothing else in the suite crosses that wire to
+// a runner.
+func TestRunnerTrsfStateIsReadableThroughTheServer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	serverCID := startServer(t)
+	rh := startRunner(t, serverCID, runnerOpts{
+		Roots:    []string{t.TempDir()},
+		Hostname: "trsf-runner-host",
+	})
+	defer rh.Close()
+
+	c, err := cli.Dial(ctx, serverCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	// The runner's cid as the SERVER holds it, polled rather than slept for:
+	// registration is what makes it appear, and that is the event to wait on.
+	var runnerCID string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		conns, lerr := c.ConnListWith(ctx)
+		if lerr != nil {
+			t.Fatalf("conns: %v", lerr)
+		}
+		for i := range conns {
+			if conns[i].Role == protocol.ConnRole_Runner {
+				runnerCID = string(conns[i].Cid)
+			}
+		}
+		if runnerCID != "" {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if runnerCID == "" {
+		t.Fatal("no runner connection was ever listed; nothing to ask about")
+	}
+
+	rows, sampled, err := c.TrsfStateOn(ctx, cli.TrsfPeer{
+		Target: protocol.TrsfTarget_Runner,
+		CID:    runnerCID,
+	})
+	if err != nil {
+		t.Fatalf("TrsfStateOn(runner): %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("the runner reported no connections; it holds at least its uplink")
+	}
+	if sampled == 0 {
+		t.Error("sampled_unix_ns is zero: the row's counters are read as rates over an interval, and the answerer's clock is what measures it")
+	}
+	// The uplink names the SERVER as its peer, which is how a runner's own row
+	// is told apart from a data-plane one it also holds.
+	var uplink *protocol.TrsfConnState
+	for i := range rows {
+		if rows[i].Role == protocol.ConnRole_Server {
+			uplink = &rows[i]
+		}
+	}
+	if uplink == nil {
+		t.Fatalf("no uplink row among %d: the runner answered about something else", len(rows))
+	}
+	if mtu, ok := uplink.Counter(protocol.TrsfCounterKey_Mtu); !ok || mtu == 0 {
+		t.Errorf("mtu counter = %d (present=%v), want the runner's own non-zero MTU", mtu, ok)
+	}
+}

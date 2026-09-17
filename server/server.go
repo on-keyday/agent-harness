@@ -154,15 +154,9 @@ type Server struct {
 	// restart (SkipHold). Read by both entries to the hold.
 	skipHold atomic.Bool
 
-	// trsfRespCh correlates a runner's trsf_state answer with the caller
-	// waiting for it, keyed by the request_id that went out.
-	trsfRespMu sync.Mutex
-	trsfRespCh map[uint32]chan protocol.RunnerTrsfStateResponse
-
-	// The same correlation for the other peer kind. See client_trsf_state.go
-	// for why the server ever asks a client anything.
-	clientTrsf clientTrsfPending
-	trsfReqSeq atomic.Uint32
+	// telemetry correlates a peer's answer with the caller waiting for it. One
+	// table for runners and clients alike; see server/telemetry.go.
+	telemetry telemetryPending
 
 	// relayRespChMu / relayRespCh correlate inbound
 	// RunnerMessageType_EstablishRelayResponse messages back to the goroutine
@@ -340,14 +334,14 @@ func New(cfg Config) *Server {
 		if !ok {
 			return nil, 0, errRunnerOffline
 		}
-		return s.sendRunnerTrsfStateRequest(ctx, &entry)
+		return s.peerTrsfState(ctx, entry.Conn)
 	}
 	s.taskHandler.ClientTrsfStateFn = func(ctx context.Context, cid protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
 		conn := s.connByID(cid)
 		if conn == nil {
 			return nil, 0, errClientOffline
 		}
-		return s.sendClientTrsfStateRequest(ctx, conn)
+		return s.peerTrsfState(ctx, conn)
 	}
 	// Wire notify ring + egress hook into the TaskHandler.
 	s.notifyRing = newNotifyRing(64)
@@ -367,7 +361,6 @@ func New(cfg Config) *Server {
 	// runner connection and belongs to the registry the TaskHandler holds.
 	s.runnerHandler.OnExecRunFinished = s.taskHandler.onExecRunFinished
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
-	s.runnerHandler.OnTrsfStateResponse = s.deliverRunnerTrsfStateResponse
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
 		if s.shuttingDown.Load() {
@@ -392,12 +385,12 @@ func New(cfg Config) *Server {
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
 		OnAgentMessage:  s.handleAgentMessage,
-		// The reverse direction: a client answering something this server
-		// asked it. See client_trsf_state.go.
-		OnClientControlResponse: s.deliverClientControlResponse,
-		RecordClientIdentity:    s.taskHandler.RecordClientIdentity,
-		Registry:                s.registry,
-		Tasks:                   s.tasks,
+		// The reverse direction: a peer answering something this server asked
+		// it. See server/telemetry.go.
+		OnTelemetryResponse:  s.deliverTelemetryResponse,
+		RecordClientIdentity: s.taskHandler.RecordClientIdentity,
+		Registry:             s.registry,
+		Tasks:                s.tasks,
 		// Board is wired after construction via Server.SetBoard (Task 9).
 	}
 
@@ -1215,7 +1208,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// the control seam and it is never acknowledged.
 	p.SetDatagramKinds(func(kind uint8) bool {
 		switch appwire.AppKind(kind) {
-		case appwire.AppKind_ForwardDatagram, appwire.AppKind_ForwardDropReport:
+		case appwire.AppKind_ForwardDatagram:
 			return true
 		}
 		return false
