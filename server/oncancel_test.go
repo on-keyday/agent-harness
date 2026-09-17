@@ -44,15 +44,15 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-20")}
 	runnerID := fc.id
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     2,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         2,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	// Create a task and manually assign it (simulating TryDispatch success).
@@ -104,15 +104,15 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-21")}
 	runnerID := fc.id
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     2,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         2,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")

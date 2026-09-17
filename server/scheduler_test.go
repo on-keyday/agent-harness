@@ -24,14 +24,14 @@ type assignPair struct {
 func TestSchedulerAssignsOnePair(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r1"),
-		Hostname:     "h1",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r1"),
+		Hostname:         "h1",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -80,14 +80,14 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 func TestSchedulerNoMatch(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r1"),
-		Hostname:     "h1",
-		AllowedRoots: []string{"/y"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r1"),
+		Hostname:         "h1",
+		AllowedRoots:     []string{"/y"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -119,25 +119,25 @@ func TestSchedulerNoMatch(t *testing.T) {
 func TestSchedulerSkipsBusy(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r1"),
-		Hostname:     "h1",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r1"),
+		Hostname:         "h1",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	})
 	// r2 starts at capacity (1/1).
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r2"),
-		Hostname:     "h2",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{"existing": {}},
-		ConnectedAt:  time.Unix(2, 0),
-		LastSeen:     time.Unix(2, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r2"),
+		Hostname:         "h2",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{"existing": {}},
+		ConnectedAt:      time.Unix(2, 0),
+		LastTaskActivity: time.Unix(2, 0),
+		Conn:             &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -171,14 +171,14 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r1"),
-		Hostname:     "h1",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r1"),
+		Hostname:         "h1",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -219,24 +219,24 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r1"),
-		Hostname:     "h1",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(2, 0),
-		LastSeen:     time.Unix(2, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r1"),
+		Hostname:         "h1",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(2, 0),
+		LastTaskActivity: time.Unix(2, 0),
+		Conn:             &fakeConn{},
 	})
 	reg.Add(&RunnerEntry{
-		ID:           tcid("r2"),
-		Hostname:     "h2",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         &fakeConn{},
+		ID:               tcid("r2"),
+		Hostname:         "h2",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -305,15 +305,15 @@ func hostnameSelector(t *testing.T, name string) protocol.RunnerSelector {
 
 func idleRunner(id, hostname string, profiles []string) *RunnerEntry {
 	return &RunnerEntry{
-		ID:            tcid(id),
-		Hostname:      hostname,
-		AllowedRoots:  []string{"/x"},
-		AgentProfiles: profiles,
-		MaxTasks:      4,
-		ActiveTasks:   map[string]struct{}{},
-		ConnectedAt:   time.Unix(1, 0),
-		LastSeen:      time.Unix(1, 0),
-		Conn:          &fakeConn{},
+		ID:               tcid(id),
+		Hostname:         hostname,
+		AllowedRoots:     []string{"/x"},
+		AgentProfiles:    profiles,
+		MaxTasks:         4,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             &fakeConn{},
 	}
 }
 

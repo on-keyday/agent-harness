@@ -114,14 +114,14 @@ func TestConnList_JoinAndRoles(t *testing.T) {
 	// (iii) Runner conn — register in the runner registry
 	runnerCID := addActiveConn(s, "ws:127.0.0.1:9100-3", now)
 	s.registry.Add(&RunnerEntry{
-		ID:           runnerCID,
-		Hostname:     "runner-host",
-		AllowedRoots: []string{"/"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  now,
-		LastSeen:     now,
-		Conn:         stubConn{},
+		ID:               runnerCID,
+		Hostname:         "runner-host",
+		AllowedRoots:     []string{"/"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+		Conn:             stubConn{},
 	})
 
 	// (iv) Unidentified conn — no ClientHello, not in runner registry
@@ -388,15 +388,15 @@ func TestConnList_RunnerConnCarriesItsIdentityAndJoinsToAssignedTasks(t *testing
 
 	runnerCID := addActiveConn(s, "ws:127.0.0.1:9200-1", now)
 	s.registry.Add(&RunnerEntry{
-		ID:           runnerCID,
-		Identity:     identity,
-		Hostname:     "runner-host",
-		AllowedRoots: []string{"/"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  now,
-		LastSeen:     now,
-		Conn:         stubConn{},
+		ID:               runnerCID,
+		Identity:         identity,
+		Hostname:         "runner-host",
+		AllowedRoots:     []string{"/"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+		Conn:             stubConn{},
 	})
 	// A non-runner conn, to pin that the field is absent rather than defaulted
 	// to whatever runner happens to be registered.

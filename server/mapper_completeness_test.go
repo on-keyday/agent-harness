@@ -114,19 +114,19 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 func TestToRunnerInfoMapsEveryField(t *testing.T) {
 	now := time.Now()
 	e := RunnerEntry{
-		ID:             tcid("ws:127.0.0.1:8539-1"),
-		Identity:       testRunnerID("ws:127.0.0.1:8539-1"),
-		Hostname:       "gmkhost",
-		GOOS:           "linux",
-		AllowedRoots:   []string{"/repo"},
-		MaxTasks:       8,
-		AgentBin:       "claude",
-		AgentProfiles:  []string{"claude", "codex"},
-		SkillsInjected: true,
-		ActiveTasks:    map[string]struct{}{"00112233445566778899aabbccddeeff": {}},
-		ConnectedAt:    now,
-		LastSeen:       now,
-		Conn:           &fakeConn{id: buildTestCID("ws:127.0.0.1:8539-1")},
+		ID:               tcid("ws:127.0.0.1:8539-1"),
+		Identity:         testRunnerID("ws:127.0.0.1:8539-1"),
+		Hostname:         "gmkhost",
+		GOOS:             "linux",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         8,
+		AgentBin:         "claude",
+		AgentProfiles:    []string{"claude", "codex"},
+		SkillsInjected:   true,
+		ActiveTasks:      map[string]struct{}{"00112233445566778899aabbccddeeff": {}},
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+		Conn:             &fakeConn{id: buildTestCID("ws:127.0.0.1:8539-1")},
 	}
 	info := toRunnerInfo(e)
 	assertNoZeroFields(t, info, map[string]string{

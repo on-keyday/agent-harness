@@ -94,14 +94,14 @@ func TestSpawnAttenuation(t *testing.T) {
 	now := time.Now()
 	// Register a runner so handleSubmit can resolve a candidate.
 	h.Registry.Add(&RunnerEntry{
-		ID:           tcid("A"),
-		Hostname:     "runner-a",
-		AllowedRoots: []string{"/x"},
-		MaxTasks:     4,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  now,
-		LastSeen:     now,
-		Conn:         stubConn{},
+		ID:               tcid("A"),
+		Hostname:         "runner-a",
+		AllowedRoots:     []string{"/x"},
+		MaxTasks:         4,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+		Conn:             stubConn{},
 	})
 
 	// Create the parent task with a limited cap set (Spawn + FileRead).

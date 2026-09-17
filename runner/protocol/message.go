@@ -12884,7 +12884,7 @@ type RunnerInfo struct {
 	ActiveTasksLen   uint16
 	ActiveTasks      []ActiveTaskRef
 	ConnectedAt      uint64
-	LastSeen         uint64
+	LastTaskActivity uint64
 	AgentBinLen      uint8
 	AgentBin         []uint8
 	tmp2569          uint8
@@ -13043,7 +13043,7 @@ func (r *RunnerInfo) Write(tmp193 io.Writer) error {
 		return err
 	}
 	tmp13579 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastSeen))
+	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastTaskActivity))
 	if _, err := tmp193.Write(tmp13579[:8]); err != nil {
 		return err
 	}
@@ -13209,10 +13209,10 @@ func (r *RunnerInfo) EncodeSlice(tmp193 []byte, tmp193Offset *int) error {
 	*tmp193Offset += int(8)
 	tmp13579 := []uint8{}
 	if len(tmp193)-*tmp193Offset < int(8) {
-		return errors.New("not enough space to reserve data for field \"RunnerInfo::LastSeen\"")
+		return errors.New("not enough space to reserve data for field \"RunnerInfo::LastTaskActivity\"")
 	}
 	tmp13579 = tmp193[*tmp193Offset : *tmp193Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastSeen))
+	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastTaskActivity))
 	*tmp193Offset += int(8)
 	tmp13577 := []uint8{}
 	if len(tmp193)-*tmp193Offset < int(1) {
@@ -13341,7 +13341,7 @@ func (r *RunnerInfo) Append(tmp193 []byte) ([]byte, error) {
 	binary.BigEndian.PutUint64(tmp13581[:], uint64(r.ConnectedAt))
 	tmp193 = append(tmp193, tmp13581[:8]...)
 	tmp13579 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastSeen))
+	binary.BigEndian.PutUint64(tmp13579[:], uint64(r.LastTaskActivity))
 	tmp193 = append(tmp193, tmp13579[:8]...)
 	tmp13577 := [1]uint8{}
 	tmp13577[0] = r.AgentBinLen
@@ -13563,7 +13563,7 @@ func (r *RunnerInfo) Read(tmp184 io.Reader) error {
 	if _, err := io.ReadFull(tmp184, tmp13640[0:0+8]); err != nil {
 		return err
 	}
-	r.LastSeen = binary.BigEndian.Uint64(tmp13640[:])
+	r.LastTaskActivity = binary.BigEndian.Uint64(tmp13640[:])
 	if tmp184ByteIO != nil {
 		var err error
 		r.AgentBinLen, err = tmp184ByteIO.ReadByte()
@@ -13776,11 +13776,11 @@ func (r *RunnerInfo) DecodeSlice(tmp184 []byte, tmp184Offset *int) error {
 	r.ConnectedAt = binary.BigEndian.Uint64(tmp13642[:])
 	tmp13640 := []uint8{}
 	if len(tmp184)-*tmp184Offset < 8 {
-		return errors.New("not enough data to read for field \"RunnerInfo::LastSeen\"")
+		return errors.New("not enough data to read for field \"RunnerInfo::LastTaskActivity\"")
 	}
 	tmp13640 = tmp184[*tmp184Offset : *tmp184Offset+8]
 	*tmp184Offset += int(8)
-	r.LastSeen = binary.BigEndian.Uint64(tmp13640[:])
+	r.LastTaskActivity = binary.BigEndian.Uint64(tmp13640[:])
 	tmp13638 := []uint8{}
 	if len(tmp184)-*tmp184Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerInfo::AgentBinLen\"")

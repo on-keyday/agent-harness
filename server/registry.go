@@ -13,7 +13,7 @@ import (
 //
 // Read methods (Get, List, Candidates) return value snapshots; callers
 // may freely read the returned values. All mutations go through the
-// Add / Remove / BindTask / UnbindTask / SetLastSeen methods.
+// Add / Remove / BindTask / UnbindTask / NoteTaskActivity methods.
 //
 // Conn is set by the server when registering and is the path through which
 // sendAssign reaches the runner. The value-snapshot semantics still hold
@@ -56,12 +56,12 @@ type RunnerEntry struct {
 	// RunnerHello.AgentProfiles. The first entry is this runner's default
 	// (see DefaultProfile). Empty for legacy runners that don't advertise any
 	// profiles — HasProfile/DefaultProfile fall back to AgentBin in that case.
-	AgentProfiles  []string
-	SkillsInjected bool                // from RunnerHello.skills_injected
-	ActiveTasks    map[string]struct{} // task_id (hex) set; len() = current load
-	ConnectedAt    time.Time
-	LastSeen       time.Time
-	Conn           ConnHandle // set by server.go on registration; nil in zero-value / test stubs
+	AgentProfiles    []string
+	SkillsInjected   bool                // from RunnerHello.skills_injected
+	ActiveTasks      map[string]struct{} // task_id (hex) set; len() = current load
+	ConnectedAt      time.Time
+	LastTaskActivity time.Time
+	Conn             ConnHandle // set by server.go on registration; nil in zero-value / test stubs
 
 	// Via, when non-nil, is the proxy_runner this runner was registered
 	// through via Phase C (--via). nil for Phase A direct and reverse-dial
@@ -249,16 +249,20 @@ func (r *Registry) Get(id objproto.ConnectionID) (RunnerEntry, bool) {
 	return *e, true
 }
 
-// SetLastSeen updates the runner's LastSeen timestamp to ts.
+// NoteTaskActivity stamps when this runner last did something with a TASK.
+//
+// NOT a liveness signal, which is what the old name (SetLastSeen) promised: a
+// runner holding no tasks never reaches any of these call sites, however alive
+// its connection is. Liveness is the peer ping and the GC behind it.
 // Returns false if the runner is not registered.
-func (r *Registry) SetLastSeen(id objproto.ConnectionID, ts time.Time) bool {
+func (r *Registry) NoteTaskActivity(id objproto.ConnectionID, ts time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.runners[id]
 	if !ok {
 		return false
 	}
-	e.LastSeen = ts
+	e.LastTaskActivity = ts
 	return true
 }
 
@@ -279,7 +283,7 @@ func (r *Registry) BindTask(id objproto.ConnectionID, taskID string) bool {
 		e.ActiveTasks = make(map[string]struct{})
 	}
 	e.ActiveTasks[taskID] = struct{}{}
-	e.LastSeen = time.Now()
+	e.LastTaskActivity = time.Now()
 	return true
 }
 
@@ -295,7 +299,7 @@ func (r *Registry) UnbindTask(id objproto.ConnectionID, taskID string) {
 		return
 	}
 	delete(e.ActiveTasks, taskID)
-	e.LastSeen = time.Now()
+	e.LastTaskActivity = time.Now()
 }
 
 // Candidates returns runner snapshots that can serve repo, restricted to

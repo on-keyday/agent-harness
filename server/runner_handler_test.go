@@ -86,15 +86,15 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 
 	// Pre-populate Registry with a Busy runner that has the task bound.
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "h",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{taskID: {}},
-		ConnectedAt:  time.Now(),
-		LastSeen:     time.Now(),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "h",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{taskID: {}},
+		ConnectedAt:      time.Now(),
+		LastTaskActivity: time.Now(),
+		Conn:             fc,
 	})
 
 	// Pre-populate TaskStore with a Running task.
@@ -170,15 +170,15 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 
 	// Pre-populate Registry.
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "h",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{taskID: {}},
-		ConnectedAt:  time.Now(),
-		LastSeen:     time.Now(),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "h",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{taskID: {}},
+		ConnectedAt:      time.Now(),
+		LastTaskActivity: time.Now(),
+		Conn:             fc,
 	})
 
 	// Pre-populate TaskStore with a Running task.
@@ -215,58 +215,7 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 	}
 }
 
-func TestHeartbeatUpdatesLastSeen(t *testing.T) {
-	reg := NewRegistry()
-	tasks := NewTaskStore()
-	changeCalled := 0
-
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1 := t0.Add(time.Second)
-
-	nowFn := func() time.Time { return t1 }
-
-	h := &RunnerHandler{
-		Registry: reg,
-		Tasks:    tasks,
-		Now:      nowFn,
-		OnChange: func() { changeCalled++ },
-	}
-
-	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-4")}
-	runnerID := fc.ConnectionID()
-
-	// Pre-populate registry with LastSeen at t0.
-	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "h",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  t0,
-		LastSeen:     t0,
-		Conn:         fc,
-	})
-
-	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Heartbeat}
-
-	payload := encodeRunnerMessage(t, msg)
-	h.Handle(fc, payload)
-
-	entry, ok := reg.Get(runnerID)
-	if !ok {
-		t.Fatalf("runner %q not found after Handle", runnerID)
-	}
-	if !entry.LastSeen.Equal(t1) {
-		t.Errorf("expected LastSeen %v, got %v", t1, entry.LastSeen)
-	}
-
-	if changeCalled != 1 {
-		t.Errorf("expected OnChange called 1 time, got %d", changeCalled)
-	}
-}
-
-func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
+func TestTaskAcceptedUpdatesTaskActivity(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()
 	changeCalled := 0
@@ -290,17 +239,17 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	rawID[0] = 0x99
 	taskID := hex.EncodeToString(rawID[:])
 
-	// Register the runner with LastSeen at t0 and an active task.
+	// Register the runner with LastTaskActivity at t0 and an active task.
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "h",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{taskID: {}},
-		ConnectedAt:  t0,
-		LastSeen:     t0,
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "h",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{taskID: {}},
+		ConnectedAt:      t0,
+		LastTaskActivity: t0,
+		Conn:             fc,
 	})
 
 	ta := protocol.TaskAccepted{}
@@ -316,8 +265,8 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	if !ok {
 		t.Fatalf("runner %q not found after Handle", runnerID)
 	}
-	if !entry.LastSeen.Equal(t1) {
-		t.Errorf("expected LastSeen %v after TaskAccepted, got %v", t1, entry.LastSeen)
+	if !entry.LastTaskActivity.Equal(t1) {
+		t.Errorf("expected LastTaskActivity %v after TaskAccepted, got %v", t1, entry.LastTaskActivity)
 	}
 
 	if changeCalled != 1 {
@@ -325,7 +274,7 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	}
 }
 
-func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
+func TestTaskAcceptedMismatchStillUpdatesTaskActivity(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()
 	changeCalled := 0
@@ -349,17 +298,17 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	expectedRawID[0] = 0xAA
 	expectedTaskID := hex.EncodeToString(expectedRawID[:])
 
-	// Register the runner with LastSeen at t0 and an active task.
+	// Register the runner with LastTaskActivity at t0 and an active task.
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "h",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{expectedTaskID: {}},
-		ConnectedAt:  t0,
-		LastSeen:     t0,
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "h",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{expectedTaskID: {}},
+		ConnectedAt:      t0,
+		LastTaskActivity: t0,
+		Conn:             fc,
 	})
 
 	// Send TaskAccepted with a DIFFERENT TaskID (all 0xFF bytes).
@@ -382,8 +331,8 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	if !ok {
 		t.Fatalf("runner %q not found after Handle", runnerID)
 	}
-	if !entry.LastSeen.Equal(t1) {
-		t.Errorf("expected LastSeen %v after TaskAccepted (mismatch case), got %v", t1, entry.LastSeen)
+	if !entry.LastTaskActivity.Equal(t1) {
+		t.Errorf("expected LastTaskActivity %v after TaskAccepted (mismatch case), got %v", t1, entry.LastTaskActivity)
 	}
 
 	// The mismatch warning does not prevent OnChange from being called.
@@ -415,15 +364,15 @@ func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
 	taskIDHex := hex.EncodeToString(rawID[:])
 
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{taskIDHex: {}},
-		ConnectedAt:  time.Now(),
-		LastSeen:     time.Now(),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{taskIDHex: {}},
+		ConnectedAt:      time.Now(),
+		LastTaskActivity: time.Now(),
+		Conn:             fc,
 	})
 
 	// Step 2: add + MarkRunning task t1 in the TaskStore.

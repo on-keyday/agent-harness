@@ -1116,16 +1116,16 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"hostname": string(r.Hostname),
 					// Which platform a runner is decides real things — the shell
 					// an `ssh host cmd` reaches, how its roots are spelled.
-					"goos":           cli.RunnerGOOSStr(r.Goos),
-					"status":         r.Status.String(),
-					"tasks":          float64(r.ActiveTasksLen),
-					"maxTasks":       float64(r.MaxTasks),
-					"roots":          roots,
-					"connectedAt":    float64(r.ConnectedAt),
-					"lastSeen":       float64(r.LastSeen),
-					"agentBin":       string(r.AgentBin),
-					"agentProfiles":  profiles,
-					"skillsInjected": r.SkillsInjected(),
+					"goos":             cli.RunnerGOOSStr(r.Goos),
+					"status":           r.Status.String(),
+					"tasks":            float64(r.ActiveTasksLen),
+					"maxTasks":         float64(r.MaxTasks),
+					"roots":            roots,
+					"connectedAt":      float64(r.ConnectedAt),
+					"lastTaskActivity": float64(r.LastTaskActivity),
+					"agentBin":         string(r.AgentBin),
+					"agentProfiles":    profiles,
+					"skillsInjected":   r.SkillsInjected(),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))

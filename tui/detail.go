@@ -138,7 +138,7 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 		}
 	}
 	fmt.Fprintf(&sb, "connected:     %s\n", formatNanoTs(r.ConnectedAt))
-	fmt.Fprintf(&sb, "last seen:     %s\n", formatNanoTs(r.LastSeen))
+	fmt.Fprintf(&sb, "last task:     %s\n", formatNanoTs(r.LastTaskActivity))
 	return sb.String()
 }
 

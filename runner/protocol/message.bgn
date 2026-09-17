@@ -6,7 +6,11 @@ enum RunnerMessageType:
     task_accepted
     task_started
     task_finished
-    heartbeat
+    heartbeat          # NEVER SENT. No runner has ever emitted one -- liveness
+                       # is the peer ping and the GC behind it -- and the
+                       # server's handler for it was removed. Kept because
+                       # this enum is on the wire and dropping a member
+                       # renumbers every one below it.
     establish_relay_response
     request_chained_relay
     remote_forward_conn
@@ -753,7 +757,17 @@ format RunnerInfo:
     active_tasks_len :u16
     active_tasks :[active_tasks_len]ActiveTaskRef
     connected_at :u64  # unix nano
-    last_seen :u64
+    # When this runner last did something with a TASK: registered, was bound
+    # one, accepted one, or finished one. Renamed from last_seen -- same
+    # ordinal, same type, no wire change -- because that name promised a
+    # liveness reading it never carried. A runner holding no tasks does not
+    # touch this, however alive its connection is, and the displays read
+    # "last seen" as though silence here meant silence on the wire.
+    #
+    # Liveness is the peer ping (15 s) and the GC that notices a dead peer
+    # around 65 s. Nothing reads this field to decide whether a runner is
+    # there, and nothing should.
+    last_task_activity :u64
     # peer identity (mirrors RunnerHello): agent binary basename + whether the
     # runner injects .claude/{settings.json,skills}. Echoed by the server.
     agent_bin_len :u8

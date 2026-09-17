@@ -1937,10 +1937,10 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 // the runner identity precisely, but server-internal logic uses RunnerEntry.ID directly).
 func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info := protocol.RunnerInfo{
-		Status:      r.Status(),
-		MaxTasks:    uint16(r.MaxTasks),
-		ConnectedAt: uint64(r.ConnectedAt.UnixNano()),
-		LastSeen:    uint64(r.LastSeen.UnixNano()),
+		Status:           r.Status(),
+		MaxTasks:         uint16(r.MaxTasks),
+		ConnectedAt:      uint64(r.ConnectedAt.UnixNano()),
+		LastTaskActivity: uint64(r.LastTaskActivity.UnixNano()),
 	}
 	info.SetHostname([]byte(r.Hostname))
 	info.SetGoos([]byte(r.GOOS))

@@ -53,15 +53,15 @@ func TestRunnerEvents_CarryIdentity(t *testing.T) {
 	now := time.Now()
 
 	s.registry.Add(&RunnerEntry{
-		ID:           cid,
-		Identity:     identity,
-		Hostname:     "runner-host",
-		AllowedRoots: []string{"/"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  now,
-		LastSeen:     now,
-		Conn:         stubConn{},
+		ID:               cid,
+		Identity:         identity,
+		Hostname:         "runner-host",
+		AllowedRoots:     []string{"/"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      now,
+		LastTaskActivity: now,
+		Conn:             stubConn{},
 	})
 	s.registry.Remove(cid)
 

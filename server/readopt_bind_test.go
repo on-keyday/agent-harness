@@ -38,7 +38,7 @@ func readoptFixture(t *testing.T) (srv *Server, reg *Registry, store *TaskStore,
 	reg.Add(&RunnerEntry{
 		ID: cid, Identity: identity, Hostname: "h", MaxTasks: 4,
 		ActiveTasks: map[string]struct{}{},
-		ConnectedAt: time.Unix(1, 0), LastSeen: time.Unix(1, 0),
+		ConnectedAt: time.Unix(1, 0), LastTaskActivity: time.Unix(1, 0),
 	})
 	taskID = runningTask(t, store, identity)
 	return srv, reg, store, identity, cid, taskID

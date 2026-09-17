@@ -27,15 +27,15 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 
 	// Register runner with both tasks active.
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     2,
-		ActiveTasks:  map[string]struct{}{taskA: {}, taskB: {}},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         2,
+		ActiveTasks:      map[string]struct{}{taskA: {}, taskB: {}},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	offlineEvents := 0
@@ -87,15 +87,15 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 	// Register runner with the already-finished task still in ActiveTasks
 	// (race condition snapshot).
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{taskID: {}},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{taskID: {}},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	reg.OnRemove = func(id objproto.ConnectionID, snap RunnerEntry) {
@@ -123,15 +123,15 @@ func TestOnRemoveMarks_EmptyActiveTasks(t *testing.T) {
 	runnerID := fc.id
 
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{}, // no active tasks
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{}, // no active tasks
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	markFailedCalled := 0
@@ -175,13 +175,13 @@ func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
 	}
 
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		Identity:    testRunnerID(runnerID.String()),
-		MaxTasks:    2,
-		ActiveTasks: map[string]struct{}{id: {}},
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
-		Conn:        fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		MaxTasks:         2,
+		ActiveTasks:      map[string]struct{}{id: {}},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 	reg.OnRemove = func(_ objproto.ConnectionID, snap RunnerEntry) {
 		for taskID := range snap.ActiveTasks {
@@ -228,13 +228,13 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	tasks.Assign(id, testRunnerID(runnerID.String()), "", false)
 
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		Identity:    testRunnerID(runnerID.String()),
-		MaxTasks:    2,
-		ActiveTasks: map[string]struct{}{id: {}},
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
-		Conn:        fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		MaxTasks:         2,
+		ActiveTasks:      map[string]struct{}{id: {}},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	h.afterMuxStopped(id, runnerID)

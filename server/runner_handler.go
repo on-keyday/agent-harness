@@ -133,18 +133,18 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			profiles[i] = string(p.Name)
 		}
 		entry := &RunnerEntry{
-			ID:             runnerID,
-			Identity:       hello.RunnerId,
-			Hostname:       string(hello.Hostname),
-			GOOS:           string(hello.Goos),
-			AllowedRoots:   roots,
-			MaxTasks:       maxTasks,
-			AgentBin:       string(hello.AgentBin),
-			AgentProfiles:  profiles,
-			SkillsInjected: hello.SkillsInjected(),
-			ActiveTasks:    make(map[string]struct{}),
-			ConnectedAt:    now,
-			LastSeen:       now,
+			ID:               runnerID,
+			Identity:         hello.RunnerId,
+			Hostname:         string(hello.Hostname),
+			GOOS:             string(hello.Goos),
+			AllowedRoots:     roots,
+			MaxTasks:         maxTasks,
+			AgentBin:         string(hello.AgentBin),
+			AgentProfiles:    profiles,
+			SkillsInjected:   hello.SkillsInjected(),
+			ActiveTasks:      make(map[string]struct{}),
+			ConnectedAt:      now,
+			LastTaskActivity: now,
 		}
 		entry.Conn = conn
 		// Populate Via + ViaDialAddr from the pending info stashed by OnDialed
@@ -215,8 +215,8 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 					"runner", runnerID, "accepted", accepted)
 			}
 		}
-		if !h.Registry.SetLastSeen(runnerID, now) {
-			slog.Error("runner_handler: SetLastSeen on unknown runner", "runner", runnerID)
+		if !h.Registry.NoteTaskActivity(runnerID, now) {
+			slog.Error("runner_handler: NoteTaskActivity on unknown runner", "runner", runnerID)
 			return
 		}
 
@@ -253,12 +253,6 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Registry.UnbindTask(runnerID, taskID)
 		// Revoke the auth ticket so the agent can no longer authenticate for this task.
 		boardRevokeTask(h.Board, identityOfConn(h.Registry, runnerID), taskID)
-
-	case protocol.RunnerMessageType_Heartbeat:
-		if !h.Registry.SetLastSeen(runnerID, now) {
-			slog.Error("RunnerHandler: Heartbeat from unknown runner", "runnerID", runnerID)
-			return
-		}
 
 	case protocol.RunnerMessageType_EstablishRelayResponse:
 		er := msg.EstablishRelayResponse()

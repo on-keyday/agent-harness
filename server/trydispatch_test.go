@@ -35,15 +35,15 @@ func newTestDispatcher() (*Dispatcher, *Registry, *TaskStore) {
 // registerRunner adds a runner entry with the given conn to the registry.
 func registerRunner(reg *Registry, id objproto.ConnectionID, conn ConnHandle, roots []string, maxTasks int) {
 	reg.Add(&RunnerEntry{
-		ID:           id,
-		Identity:     testRunnerID(id.String()),
-		Hostname:     "host",
-		AllowedRoots: roots,
-		MaxTasks:     maxTasks,
-		ActiveTasks:  map[string]struct{}{},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         conn,
+		ID:               id,
+		Identity:         testRunnerID(id.String()),
+		Hostname:         "host",
+		AllowedRoots:     roots,
+		MaxTasks:         maxTasks,
+		ActiveTasks:      map[string]struct{}{},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             conn,
 	})
 }
 
@@ -125,15 +125,15 @@ func TestTryDispatch_NoCapacity(t *testing.T) {
 
 	// Runner at full capacity (MaxTasks=1, 1 active task).
 	reg.Add(&RunnerEntry{
-		ID:           runnerID,
-		Identity:     testRunnerID(runnerID.String()),
-		Hostname:     "host",
-		AllowedRoots: []string{"/repo"},
-		MaxTasks:     1,
-		ActiveTasks:  map[string]struct{}{"existingtask": {}},
-		ConnectedAt:  time.Unix(1, 0),
-		LastSeen:     time.Unix(1, 0),
-		Conn:         fc,
+		ID:               runnerID,
+		Identity:         testRunnerID(runnerID.String()),
+		Hostname:         "host",
+		AllowedRoots:     []string{"/repo"},
+		MaxTasks:         1,
+		ActiveTasks:      map[string]struct{}{"existingtask": {}},
+		ConnectedAt:      time.Unix(1, 0),
+		LastTaskActivity: time.Unix(1, 0),
+		Conn:             fc,
 	})
 
 	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
