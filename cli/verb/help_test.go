@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -130,6 +131,57 @@ func TestHelpRequestedCarriesTheFlagDescriptions(t *testing.T) {
 	for _, want := range []string{"flags:", "--enter", "--detect-agent"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help does not mention %q:\n%s", want, got)
+		}
+	}
+}
+
+// Every declared default that is NOT the zero value must reach the block.
+//
+// The guard exists because the first version of defaultNote was a type switch
+// over the five declared FlagTypes, and a switch answers "" for a type it does
+// not know — the same answer as "this is the zero value". A sixth FlagType
+// would have silently stopped printing defaults for every flag using it.
+func TestEveryNonZeroDefaultIsPrinted(t *testing.T) {
+	for _, v := range Verbs {
+		block := strings.Join(v.HelpBlock(0), "\n")
+		for _, f := range v.Flags {
+			if f.Default == nil || reflect.ValueOf(f.Default).IsZero() {
+				continue
+			}
+			note := defaultNote(f)
+			if note == "" {
+				t.Errorf("%s: --%s declares %#v and renders no default note",
+					v.FlagSetName(), f.Name, f.Default)
+				continue
+			}
+			if !strings.Contains(block, strings.TrimSpace(note)) {
+				t.Errorf("%s: --%s's %q does not reach the block", v.FlagSetName(), f.Name, note)
+			}
+		}
+	}
+}
+
+// A ZERO default is a sentinel in this table and must not be printed.
+// `session send --settle-ms` declares 0 and waits 1500ms once --snapshot
+// follows; `git log --max` declares 0 and fetches 100. "(default 0)" would
+// state a fact neither flag has, and what zero means is in the Help already.
+func TestZeroDefaultIsNotPrinted(t *testing.T) {
+	for _, tc := range []struct{ path []string }{
+		{[]string{"session", "send"}},
+		{[]string{"git", "log"}},
+	} {
+		sp, ok := Lookup(tc.path...)
+		if !ok {
+			t.Fatalf("%v must be declared", tc.path)
+		}
+		for _, f := range sp.Flags {
+			if f.Default == nil || !reflect.ValueOf(f.Default).IsZero() {
+				continue
+			}
+			if note := defaultNote(f); note != "" {
+				t.Errorf("%s: --%s declares the zero value and printed %q",
+					sp.FlagSetName(), f.Name, note)
+			}
 		}
 	}
 }

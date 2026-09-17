@@ -96,7 +96,7 @@ var Verbs = []VerbSpec{
 		},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -137,7 +137,7 @@ var Verbs = []VerbSpec{
 		},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "transfer a directory tree"},
 			{Name: "force", Aliases: []string{"f"}, Type: FlagBool, Default: false, Field: "Force",
@@ -182,7 +182,7 @@ var Verbs = []VerbSpec{
 		},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
 		Validate: validateRoute,
 	},
@@ -204,7 +204,7 @@ var Verbs = []VerbSpec{
 		},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "parents", Aliases: []string{"p"}, Type: FlagBool, Default: false, Field: "Parents",
 				Help: "create missing parent directories (mkdir -p); also makes an existing directory a success"},
 		},
@@ -229,7 +229,7 @@ var Verbs = []VerbSpec{
 		},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 			{Name: "recursive", Aliases: []string{"r"}, Type: FlagBool, Default: false, Field: "Recursive",
 				Help: "target a directory tree instead of a single file (uses dir_delete)"},
 			// Without -r this flag is ignored, so its absence never widens: -r
@@ -263,7 +263,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file edit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/x.txt"},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
 		Validate: validateRoute,
 	},
@@ -286,7 +286,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"file new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docs/new.txt"},
 		Flags: []Flag{
 			{Name: "route", Type: FlagString, Default: "splice", Field: "Route",
-				Help: "which path carries the bytes: splice (default; the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
+				Help: "which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forwarded (the server forwards packets and cannot read them; ~2.6x slower at 20ms RTT, 8x with 1% loss), direct (the client dials the runner, which the server punches a path open toward; needs both ends on udp). A route that cannot be taken is refused, never silently replaced"},
 		},
 		Validate: validateRoute,
 	},

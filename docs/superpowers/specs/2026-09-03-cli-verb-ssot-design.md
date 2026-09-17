@@ -862,6 +862,23 @@ Only `-h` on ONE verb prints it. The full listings — `usage()`, the TUI's
 `help`, `HelpLines` for the WebUI — stay one line per verb: 233 descriptions
 there would bury the grammar they explain.
 
+**A declared default is printed when it is not the zero value.** Zero is where
+this table keeps its sentinels — `session send --settle-ms` declares 0 and waits
+1500ms once `--snapshot` follows, `git log --max` declares 0 and fetches 100 —
+so `(default 0)` would state a fact the flag does not have, and 91 flags already
+explain what their zero means in the Help. That left 21 flags whose default is
+really the value and which said so nowhere (`--flush-ms` 400, `--rows` 40,
+`--before` 168h0m0s, `--listen`, `--detect-agent`), plus the enumerations whose
+Help lists the choices without marking which one is taken (`--dir`:
+"to-target, from-target or both"). The two Helps that DID state their default in
+prose, `--route` and `--x11-display`, dropped the parenthetical.
+
+The zero test is `reflect.Value.IsZero`, not a type switch over the five
+declared `FlagType`s: a switch answers `""` for a type it does not know, which
+is the same answer as "this is the zero value", so a sixth type would silently
+stop printing defaults for every flag using it.
+`TestEveryNonZeroDefaultIsPrinted` is the other half.
+
 Two things came out with it:
 
 - **The duplication D12 could not see.** Two dozen `Notes` lines began with a

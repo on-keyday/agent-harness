@@ -1,6 +1,8 @@
 package verb
 
 import (
+	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -153,15 +155,44 @@ func (v VerbSpec) HelpBlock(width int) []string {
 	indent := 2 + namew + 2
 	out = append(out, "", "flags:")
 	for i, f := range v.Flags {
+		help := strings.TrimSpace(f.Help) + defaultNote(f)
 		if len(labels[i]) > namew {
 			out = append(out, "  "+labels[i])
-			out = append(out, wrapHanging(strings.Repeat(" ", indent), indent, width, f.Help)...)
+			out = append(out, wrapHanging(strings.Repeat(" ", indent), indent, width, help)...)
 			continue
 		}
 		first := "  " + labels[i] + strings.Repeat(" ", namew-len(labels[i])+2)
-		out = append(out, wrapHanging(first, indent, width, f.Help)...)
+		out = append(out, wrapHanging(first, indent, width, help)...)
 	}
 	return out
+}
+
+// defaultNote is the "(default X)" a flag's declaration implies, empty when the
+// Default is its type's zero value.
+//
+// Zero is where this table keeps its SENTINELS: `session send --settle-ms`
+// declares 0 and means 1500 once --snapshot follows, `git log --max` declares 0
+// and means 100. Printing "(default 0)" for those would state a fact the flag
+// does not have, and what zero means is already in the Help — 91 flags say it
+// there. What is left is a declared value that IS the value, and no operator
+// could see it: `--flush-ms` 400, `--rows` 40, `--before` 168h0m0s, `--listen`,
+// `--detect-agent`, and the enumerations whose Help lists the choices without
+// marking which is taken (`--dir`: "to-target, from-target or both").
+//
+// Zero-tested through reflect rather than a type switch over the five declared
+// FlagTypes: a switch answers "" for a type it does not know, which is the same
+// answer as "this is the zero value" and would hide a sixth type the day one is
+// added. TestEveryNonZeroDefaultIsPrinted is the other half of that.
+func defaultNote(f Flag) string {
+	if f.Default == nil || reflect.ValueOf(f.Default).IsZero() {
+		return ""
+	}
+	// Quoted for a string, because ".", "-" and "" are all declared defaults
+	// here and an unquoted one reads as punctuation in the sentence it ends.
+	if s, ok := f.Default.(string); ok {
+		return fmt.Sprintf(" (default %q)", s)
+	}
+	return fmt.Sprintf(" (default %v)", f.Default)
 }
 
 // wrapHanging lays text out with `first` in front of its first line and

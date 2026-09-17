@@ -134,7 +134,7 @@ type ExecRunAction struct {
 // FileDeleteAction is built by: file delete.
 type FileDeleteAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route string
 	// target a directory tree instead of a single file (uses dir_delete)
 	Recursive bool
@@ -147,7 +147,7 @@ type FileDeleteAction struct {
 // FileEditAction is built by: file edit.
 type FileEditAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route   string
 	TaskID  string
 	RelPath string
@@ -156,7 +156,7 @@ type FileEditAction struct {
 // FileLsAction is built by: file ls.
 type FileLsAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route   string
 	TaskID  string
 	RelPath string
@@ -165,7 +165,7 @@ type FileLsAction struct {
 // FileMkdirAction is built by: file mkdir.
 type FileMkdirAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route string
 	// create missing parent directories (mkdir -p); also makes an existing directory a success
 	Parents bool
@@ -176,7 +176,7 @@ type FileMkdirAction struct {
 // FileNewAction is built by: file new.
 type FileNewAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route   string
 	TaskID  string
 	RelPath string
@@ -185,7 +185,7 @@ type FileNewAction struct {
 // FilePullAction is built by: file pull.
 type FilePullAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route string
 	// transfer a directory tree
 	Recursive bool
@@ -203,7 +203,7 @@ type FilePullAction struct {
 // FilePushAction is built by: file push.
 type FilePushAction struct {
 	ActionMarker
-	// which path carries the bytes: splice (default; the server terminates both legs and reads them; faste…
+	// which path carries the bytes: splice (the server terminates both legs and reads them; fastest), forw…
 	Route string
 	// transfer a directory tree
 	Recursive bool
@@ -576,7 +576,7 @@ type SpawnAction struct {
 	Kind string
 	// forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server
 	X11 bool
-	// with --x11: the local display number (0..99, default 10)
+	// with --x11: the local display number (0..99)
 	X11Display uint
 	// start the session and exit immediately (don't attach the terminal)
 	Detach bool

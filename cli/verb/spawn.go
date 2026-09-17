@@ -87,7 +87,7 @@ func spawnFlags(k spawnKind) []Flag {
 		// convention precisely so a forward does not land on the runner's own
 		// :0 X port.
 		Flag{Name: "x11-display", Type: FlagUint, Default: uint(10), Field: "X11Display",
-			Help: "with --x11: the local display number (0..99, default 10)"},
+			Help: "with --x11: the local display number (0..99)"},
 	)
 	if k == spawnSessionNew {
 		out = append(out,
