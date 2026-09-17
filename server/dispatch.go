@@ -55,6 +55,11 @@ type Dispatcher struct {
 	OnTaskControl   func(ConnHandle, []byte)
 	OnAgentMessage  func(ConnHandle, []byte) // payload is the full AgentMessage bytes (kind byte stripped)
 
+	// OnClientControlResponse receives a client's answer to a request this
+	// server made of it. Nothing else on this connection flows in that
+	// direction; see server/client_trsf_state.go for why one does.
+	OnClientControlResponse func(payload []byte)
+
 	// RecordClientIdentity records the client kind / principal for the given
 	// connection WITHOUT sending a wire response. Called by pskDispatchIdentity
 	// for the client role so the merged-PSK gate does not emit a redundant
@@ -96,6 +101,14 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	case appwire.AppKind_AgentMessage:
 		if d.OnAgentMessage != nil {
 			d.OnAgentMessage(conn, payload)
+		}
+	case appwire.AppKind_ClientControl:
+		// The ANSWER to something this server asked. The request travels the
+		// other way on the same kind, and the direction is what tells them
+		// apart -- the client never sends one and this server never answers
+		// one.
+		if d.OnClientControlResponse != nil {
+			d.OnClientControlResponse(payload)
 		}
 	}
 }

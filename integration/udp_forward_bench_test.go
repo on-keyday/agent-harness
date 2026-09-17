@@ -258,7 +258,7 @@ func blastUDPSize(tb testing.TB, target *net.UDPAddr, size, rateBytes int, d tim
 func serverDatagramCounters(b *testing.B, fx *forwardBenchFixture) map[protocol.TrsfCounterKey]uint64 {
 	b.Helper()
 	out := map[protocol.TrsfCounterKey]uint64{}
-	conns, _, err := fx.client.TrsfStateOn(fx.ctx, "")
+	conns, _, err := fx.client.TrsfStateOn(fx.ctx, cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	if err != nil {
 		b.Logf("trsf state: %v", err)
 		return out
@@ -416,6 +416,10 @@ func BenchmarkUDPForwardSplice(b *testing.B) {
 				b.ReportMetric(float64(offP)/elapsed.Seconds(), "offered_pps")
 				b.Logf("offered %d dg / delivered %d dg / forward row: %s / server trsf: %s",
 					offP, gotP, after.sub(before), datagramCounterDelta(tBefore, tAfter))
+				// The CLIENT's own connection, which is the one refusing. Read
+				// directly because nothing carries it: trsf_state can target
+				// the server or a runner, and the client is neither.
+				b.Logf("client trsf: %s", clientDatagramState(fx))
 			}
 		})
 	}
@@ -809,4 +813,16 @@ func initRepoB(b *testing.B) string {
 	run("add", "README")
 	run("commit", "-m", "init")
 	return dir
+}
+
+// clientDatagramState reads the client's own trsf counters. In this benchmark
+// the client is in-process, which is the only reason they are reachable at all
+// -- `harness-cli trsf` can ask the server or a runner and the client is
+// neither, and a datagram dropped INSIDE the run loop (a closed window at drain
+// time) never reaches the caller as an error either.
+func clientDatagramState(fx *forwardBenchFixture) string {
+	st := fx.client.Transport().GetInternalState()
+	return fmt.Sprintf("sent=%d cong_drop=%d queue_drop=%d oversize_drop=%d lost=%d cwnd=%d inflight=%d",
+		st.DatagramsSent, st.DatagramsDroppedCongestion, st.DatagramsDroppedSendQueue,
+		st.DatagramsDroppedOversize, st.DatagramsLost, st.CongestionWindow, st.BytesInFlight)
 }

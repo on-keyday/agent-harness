@@ -179,11 +179,28 @@ func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid str
 		respond(protocol.TrsfStateStatus_NotPermitted, 0)
 		return
 	}
+
+	if req.Target == protocol.TrsfTarget_Client {
+		if h.ClientTrsfStateFn == nil {
+			respond(protocol.TrsfStateStatus_Unavailable, 0)
+			return
+		}
+		// OFF the receive goroutine, unlike the runner branch beside it, and
+		// this is not a style choice. A connection's inbound messages are
+		// handled serially, so asking a CLIENT while serving that same
+		// client's request means the answer arrives on the goroutine that is
+		// blocked waiting for it: a deadlock the timeout breaks three seconds
+		// later. Asking a runner cannot do this, because its answer comes back
+		// on a different connection.
+		go h.answerClientTrsfState(req.PeerCid, respond, send)
+		return
+	}
+
 	if h.RunnerTrsfStateFn == nil {
 		respond(protocol.TrsfStateStatus_Unavailable, 0)
 		return
 	}
-	rows, sampled, err := h.RunnerTrsfStateFn(context.Background(), req.RunnerCid)
+	rows, sampled, err := h.RunnerTrsfStateFn(context.Background(), req.PeerCid)
 	switch {
 	case errors.Is(err, errRunnerOffline):
 		respond(protocol.TrsfStateStatus_RunnerOffline, 0)
@@ -195,7 +212,31 @@ func (h *TaskHandler) handleTrsfState(conn ConnHandle, requestID uint32, cid str
 	}
 }
 
+// answerClientTrsfState runs the client round trip on its own goroutine. See
+// the call site for why it cannot run on the receive goroutine.
+func (h *TaskHandler) answerClientTrsfState(peer protocol.ConnID,
+	respond func(protocol.TrsfStateStatus, uint64), send func([]protocol.TrsfConnState, int64)) {
+	rows, sampled, err := h.ClientTrsfStateFn(context.Background(), peer)
+	switch {
+	case errors.Is(err, errClientOffline):
+		// Reuses the runner-offline status rather than minting a second one: it
+		// says "no such peer is connected", which is the same thing the caller
+		// must do about it.
+		respond(protocol.TrsfStateStatus_RunnerOffline, 0)
+	case err != nil:
+		slog.Warn("trsf_state: client did not answer", "err", err)
+		respond(protocol.TrsfStateStatus_Unavailable, 0)
+	default:
+		send(rows, sampled)
+	}
+}
+
 // errRunnerOffline separates "no such runner" from "the runner did not answer",
 // because the two send the caller to different places: one is a stale id, the
 // other is a runner worth looking at.
 var errRunnerOffline = errors.New("runner offline")
+
+// errClientOffline separates "no such client connection" from "the client did
+// not answer", the same split errRunnerOffline makes: one is a stale id, the
+// other is a client worth looking at.
+var errClientOffline = errors.New("client offline")

@@ -19,6 +19,7 @@ const (
 	AppKind_DialGreeting      AppKind = 71
 	AppKind_ForwardDatagram   AppKind = 72
 	AppKind_ForwardDropReport AppKind = 73
+	AppKind_ClientControl     AppKind = 74
 )
 
 func (e AppKind) String() string {
@@ -43,6 +44,8 @@ func (e AppKind) String() string {
 		return "ForwardDatagram"
 	case AppKind_ForwardDropReport:
 		return "ForwardDropReport"
+	case AppKind_ClientControl:
+		return "ClientControl"
 	default:
 		return fmt.Sprintf("AppKind(%d)", e)
 	}

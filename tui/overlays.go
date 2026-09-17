@@ -106,7 +106,7 @@ func (a *App) readTrsfOnce() tea.Cmd {
 		a.connsModal.SetTrsfError(errNotConnected)
 		return nil
 	}
-	return DoTrsfState(a.client, a.connsModal.TrsfTarget())
+	return DoTrsfState(a.client, a.connsModal.TrsfPeer())
 }
 
 // Running-exec list: Esc closes; `x` arms a y/n kill confirmation for the

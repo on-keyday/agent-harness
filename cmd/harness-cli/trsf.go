@@ -26,10 +26,10 @@ const trsfHdr = "%-34s %-7s %-9s %8s %9s %9s %8s %8s %7s %7s %7s %-11s\n"
 // The reading itself — the deltas, BLOCK%, WAIT, QUEUE — is derived by
 // cli.TrsfSampler, which the TUI modal and the WebUI panel share. This file is
 // only the table.
-func runTrsf(ctx context.Context, c *cli.Client, runnerCID, watch string, asJSON bool, out io.Writer) error {
+func runTrsf(ctx context.Context, c *cli.Client, peer cli.TrsfPeer, watch string, asJSON bool, out io.Writer) error {
 	var sampler cli.TrsfSampler
 	read := func() error {
-		conns, sampledAt, err := c.TrsfStateOn(ctx, runnerCID)
+		conns, sampledAt, err := c.TrsfStateOn(ctx, peer)
 		if err != nil {
 			return err
 		}

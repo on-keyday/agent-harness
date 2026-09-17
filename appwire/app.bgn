@@ -35,3 +35,20 @@ enum AppKind:
     #
     # Payload: protocol.ForwardDropReport.
     forward_drop_report = 0x49
+
+
+    # The SERVER's requests to a client, and their answers. Everything else on
+    # this connection goes client -> server; this is the reverse direction.
+    #
+    # It exists because a client's own transport state is reachable from nowhere
+    # else: `conns --trsf` can target the server or a runner, and the client
+    # running a port forward is neither. A datagram dropped INSIDE trsf's run
+    # loop never reaches the application as an error either, so counting at the
+    # call site cannot substitute for asking.
+    #
+    # One kind for the direction, with the question inside, exactly as
+    # TaskControl does for the other one: request and response share it because
+    # the direction already tells them apart.
+    #
+    # Payloads: protocol.ClientControlRequest / ClientControlResponse.
+    client_control = 0x4A

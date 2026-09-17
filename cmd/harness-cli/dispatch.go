@@ -211,7 +211,11 @@ func (h cliVerbs) Conns(a verb.ConnsAction) error {
 		// verb rather than inventing one: --trsf asks what each connection's
 		// transport is doing, where the bare form asks which exist.
 		return h.withClient(func(c *cli.Client) error {
-			return runTrsf(h.ctx, c, a.Runner, a.Watch, a.JSON, os.Stdout)
+			peer, perr := cli.TrsfPeerFor(a.Runner, a.Client)
+			if perr != nil {
+				return perr
+			}
+			return runTrsf(h.ctx, c, peer, a.Watch, a.JSON, os.Stdout)
 		})
 	}
 	if a.Follow {

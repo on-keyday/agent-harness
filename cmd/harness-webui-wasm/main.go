@@ -181,25 +181,30 @@ func main() {
 var trsfPanel struct {
 	mu      sync.Mutex
 	sampler cli.TrsfSampler
-	target  string
+	peer    cli.TrsfPeer
 }
 
 // harnessTrsfState reads congestion state and returns it as already-rendered
-// rows. runner empty asks the SERVER about its own connections.
+// rows. Neither runner nor client asks the SERVER about its own connections;
+// client names a CLIENT connection, which is reachable no other way.
 //
 // reset starts a fresh series — the page passes it when the panel is opened,
 // so a reading taken minutes after the last one is not presented as a delta
 // over an interval nobody watched.
 //
-//	harness.trsfState({runner, reset}) -> Promise<[{cid, role, task, cwnd, …}]>
+//	harness.trsfState({runner, client, reset}) -> Promise<[{cid, role, task, …}]>
 func harnessTrsfState(this js.Value, args []js.Value) any {
-	runner, reset := "", false
+	runner, client, reset := "", "", false
 	if len(args) > 0 && args[0].Type() == js.TypeObject {
 		if v := args[0].Get("runner"); v.Type() == js.TypeString {
 			runner = v.String()
 		}
+		if v := args[0].Get("client"); v.Type() == js.TypeString {
+			client = v.String()
+		}
 		reset = args[0].Get("reset").Truthy()
 	}
+	peer, perr := cli.TrsfPeerFor(runner, client)
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -215,11 +220,18 @@ func harnessTrsfState(this js.Value, args []js.Value) any {
 			// half that does not depend on the page being careful.
 			trsfPanel.mu.Lock()
 			defer trsfPanel.mu.Unlock()
-			if reset || trsfPanel.target != runner {
-				trsfPanel.sampler = cli.TrsfSampler{}
-				trsfPanel.target = runner
+			if perr != nil {
+				rejectErr(reject, perr)
+				return
 			}
-			conns, sampledAt, err := c.TrsfStateOn(rootCtx, runner)
+			// Keyed on the whole peer: aiming from a runner to a client with
+			// the same cid string would otherwise carry a series across two
+			// hosts, which is the thing resetting exists to prevent.
+			if reset || trsfPanel.peer != peer {
+				trsfPanel.sampler = cli.TrsfSampler{}
+				trsfPanel.peer = peer
+			}
+			conns, sampledAt, err := c.TrsfStateOn(rootCtx, peer)
 			if err != nil {
 				rejectErr(reject, err)
 				return

@@ -103,6 +103,8 @@ type ConnsAction struct {
 	Trsf bool
 	// with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the gl…
 	Runner string
+	// with --trsf: ask this CLIENT connection about its own transport. The only way to see it -- a client …
+	Client string
 	// with --trsf: re-read at this interval (e.g. 200ms) and report the DELTA. Several counters mean nothi…
 	Watch string
 	// output JSON lines instead of a table
@@ -2056,6 +2058,7 @@ func init() {
 			a := ConnsAction{}
 			a.Trsf = b.Bool("trsf")
 			a.Runner = b.Str("runner")
+			a.Client = b.Str("client")
 			a.Watch = b.Str("watch")
 			a.JSON = b.Bool("json")
 			a.Follow = b.Bool("follow")
@@ -2065,6 +2068,7 @@ func init() {
 			a := ConnsAction{}
 			a.Trsf = b.Bool("trsf")
 			a.Runner = b.Str("runner")
+			a.Client = b.Str("client")
 			a.Watch = b.Str("watch")
 			a.Follow = b.Bool("follow")
 			return a, nil
@@ -2073,6 +2077,7 @@ func init() {
 			a := ConnsAction{}
 			a.Trsf = b.Bool("trsf")
 			a.Runner = b.Str("runner")
+			a.Client = b.Str("client")
 			a.Watch = b.Str("watch")
 			a.Follow = b.Bool("follow")
 			return a, nil

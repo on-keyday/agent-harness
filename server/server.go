@@ -158,6 +158,10 @@ type Server struct {
 	// waiting for it, keyed by the request_id that went out.
 	trsfRespMu sync.Mutex
 	trsfRespCh map[uint32]chan protocol.RunnerTrsfStateResponse
+
+	// The same correlation for the other peer kind. See client_trsf_state.go
+	// for why the server ever asks a client anything.
+	clientTrsf clientTrsfPending
 	trsfReqSeq atomic.Uint32
 
 	// relayRespChMu / relayRespCh correlate inbound
@@ -338,6 +342,13 @@ func New(cfg Config) *Server {
 		}
 		return s.sendRunnerTrsfStateRequest(ctx, &entry)
 	}
+	s.taskHandler.ClientTrsfStateFn = func(ctx context.Context, cid protocol.ConnID) ([]protocol.TrsfConnState, int64, error) {
+		conn := s.connByID(cid)
+		if conn == nil {
+			return nil, 0, errClientOffline
+		}
+		return s.sendClientTrsfStateRequest(ctx, conn)
+	}
 	// Wire notify ring + egress hook into the TaskHandler.
 	s.notifyRing = newNotifyRing(64)
 	s.taskHandler.NotifyHook = cfg.NotifyHook
@@ -378,12 +389,15 @@ func New(cfg Config) *Server {
 		return res
 	}
 	s.dispatcher = &Dispatcher{
-		OnRunnerControl:      s.runnerHandler.Handle,
-		OnTaskControl:        s.taskHandler.Handle,
-		OnAgentMessage:       s.handleAgentMessage,
-		RecordClientIdentity: s.taskHandler.RecordClientIdentity,
-		Registry:             s.registry,
-		Tasks:                s.tasks,
+		OnRunnerControl: s.runnerHandler.Handle,
+		OnTaskControl:   s.taskHandler.Handle,
+		OnAgentMessage:  s.handleAgentMessage,
+		// The reverse direction: a client answering something this server
+		// asked it. See client_trsf_state.go.
+		OnClientControlResponse: s.deliverClientControlResponse,
+		RecordClientIdentity:    s.taskHandler.RecordClientIdentity,
+		Registry:                s.registry,
+		Tasks:                   s.tasks,
 		// Board is wired after construction via Server.SetBoard (Task 9).
 	}
 

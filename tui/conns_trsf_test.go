@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -123,7 +124,7 @@ func TestConnsModalRetargetResetsTheSeries(t *testing.T) {
 	m := NewConnsModal()
 	m.Open()
 	m.SetSize(200, 24)
-	m.EnterTrsf("")
+	m.EnterTrsf(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Runner, 1)}, 1_000_000_000)
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Runner, 4)}, 2_000_000_000)
 	if got := m.trsfRows[0].LossD; got != "3" {
@@ -131,8 +132,8 @@ func TestConnsModalRetargetResetsTheSeries(t *testing.T) {
 	}
 
 	m.TargetSelectedRunner() // the row is a runner, so this retargets
-	if m.TrsfTarget() != "c1" {
-		t.Fatalf("target = %q, want c1", m.TrsfTarget())
+	if got := m.TrsfPeer(); got.CID != "c1" || got.Target != protocol.TrsfTarget_Runner {
+		t.Fatalf("peer = %+v, want the runner c1", got)
 	}
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Runner, 9)}, 3_000_000_000)
 	if got := m.trsfRows[0].LossD; got != "-" {
@@ -146,7 +147,7 @@ func TestConnsModalSelectedRunnerOnlyOnRunnerRows(t *testing.T) {
 	m := NewConnsModal()
 	m.Open()
 	m.SetSize(200, 24)
-	m.EnterTrsf("")
+	m.EnterTrsf(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	m.ApplyTrsf([]protocol.TrsfConnState{
 		trsfConnState("cli-conn", protocol.ConnRole_Cli, 0),
 		trsfConnState("runner-conn", protocol.ConnRole_Runner, 0),
@@ -170,7 +171,7 @@ func TestConnsModalCloseEndsTheSeries(t *testing.T) {
 	m := NewConnsModal()
 	m.Open()
 	m.SetSize(200, 24)
-	m.EnterTrsf("")
+	m.EnterTrsf(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Cli, 1)}, 1_000_000_000)
 	m.Close()
 
@@ -178,7 +179,7 @@ func TestConnsModalCloseEndsTheSeries(t *testing.T) {
 		t.Error("a closed modal is still in the reading; reopening would show stale rows")
 	}
 	m.Open()
-	m.EnterTrsf("")
+	m.EnterTrsf(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Cli, 7)}, 9_000_000_000)
 	if got := m.trsfRows[0].LossD; got != "-" {
 		t.Errorf("first reading after reopening: LossD = %q, want %q", got, "-")
@@ -191,7 +192,7 @@ func TestConnsModalErrorKeepsTheRows(t *testing.T) {
 	m := NewConnsModal()
 	m.Open()
 	m.SetSize(200, 24)
-	m.EnterTrsf("")
+	m.EnterTrsf(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
 	m.ApplyTrsf([]protocol.TrsfConnState{trsfConnState("c1", protocol.ConnRole_Cli, 1)}, 1)
 
 	m.SetTrsfError(errors.New("trsf: the runner did not answer"))

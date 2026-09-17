@@ -1497,7 +1497,7 @@ var Verbs = []VerbSpec{
 		// handlers. A cross-flag rule belongs to the verb, not to a surface:
 		// stated here it is one refusal everywhere instead of three answers.
 		Requires: []Requirement{{
-			Flags: []string{"runner", "watch"}, Needs: "trsf",
+			Flags: []string{"runner", "client", "watch"}, Needs: "trsf",
 			Reason: "the connection list has no answerer to aim at and nothing to re-read",
 		}},
 		Flags: []Flag{
@@ -1505,6 +1505,8 @@ var Verbs = []VerbSpec{
 				Help: "report congestion state (cwnd/srtt/in-flight/loss) and where the run loop's time goes, instead of the connection list"},
 			{Name: "runner", Type: FlagString, Default: "", Field: "Runner",
 				Help: "with --trsf: ask this runner about its OWN transport, rather than the server about its. Needs the global view"},
+			{Name: "client", Type: FlagString, Default: "", Field: "Client",
+				Help: "with --trsf: ask this CLIENT connection about its own transport. The only way to see it -- a client is neither the server nor a runner, and a datagram its trsf dropped at the congestion gate never reached the client's own code as an error either. Mutually exclusive with --runner; needs the global view"},
 			{Name: "watch", Type: FlagString, Default: "", Field: "Watch",
 				Help: "with --trsf: re-read at this interval (e.g. 200ms) and report the DELTA. Several counters mean nothing as a single sample -- loop_iterations separates a blocked run loop from a busy-spinning one only across two reads, and BLOCK%/WAIT exist only as a delta. The CLI loops a printer; the TUI and WebUI poll their view for as long as it is open"},
 			{

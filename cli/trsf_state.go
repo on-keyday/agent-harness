@@ -20,9 +20,13 @@ var (
 
 // TrsfStateOn reads congestion state from one end of the fleet.
 //
-// runnerCID empty asks the SERVER about its own connections; otherwise the
-// server asks that runner about its. The two are different machines and the
-// answer says which by the role on each row.
+// target says whose: the SERVER's own connections, a RUNNER's, or a CLIENT's.
+// The last is the only way to see a client's transport at all -- it is neither
+// of the other two, and a datagram its trsf dropped inside the run loop never
+// reached the client's own application code as an error either.
+//
+// peer.CID names the peer for the two non-server targets, and the answer says
+// which host it came from by the role on each row.
 //
 // The second return is when the ANSWERER sampled, by its own clock. Every
 // counter on a row is read as a rate, and the interval has to be measured where
@@ -30,15 +34,17 @@ var (
 // elapsed, which is how a share-of-the-interval column came to print 135%.
 // Only the difference of two of these is ever used, and both come from the same
 // host, so no clock is compared against another's.
-func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.TrsfConnState, int64, error) {
-	body := protocol.TrsfStateRequest{Target: protocol.TrsfTarget_Server}
-	if runnerCID != "" {
-		cid, err := objproto.ParseConnectionID(runnerCID, objproto.ParseOption_ResolveAddr)
-		if err != nil {
-			return nil, 0, fmt.Errorf("trsf: parse runner cid %q: %w", runnerCID, err)
+func (c *Client) TrsfStateOn(ctx context.Context, peer TrsfPeer) ([]protocol.TrsfConnState, int64, error) {
+	body := protocol.TrsfStateRequest{Target: peer.Target}
+	if peer.Target != protocol.TrsfTarget_Server {
+		if peer.CID == "" {
+			return nil, 0, fmt.Errorf("trsf: target %v needs a connection id", peer.Target)
 		}
-		body.Target = protocol.TrsfTarget_Runner
-		body.RunnerCid = protocol.ConnIDFromObjproto(cid)
+		cid, err := objproto.ParseConnectionID(peer.CID, objproto.ParseOption_ResolveAddr)
+		if err != nil {
+			return nil, 0, fmt.Errorf("trsf: parse %v cid %q: %w", peer.Target, peer.CID, err)
+		}
+		body.PeerCid = protocol.ConnIDFromObjproto(cid)
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_TrsfState}
 	req.SetTrsfState(body)
@@ -91,5 +97,31 @@ func (c *Client) TrsfStateOn(ctx context.Context, runnerCID string) ([]protocol.
 		return nil, 0, ErrTrsfNotPermitted
 	default:
 		return nil, 0, ErrTrsfUnavailable
+	}
+}
+
+// TrsfPeer names whose transport state to read: the server's own connections,
+// or a named runner's or client's.
+//
+// One value rather than the two mutually exclusive strings the flags arrive as.
+// Threading those side by side through every surface would put the "exactly
+// one of these" rule wherever someone remembered it, and make a signature that
+// takes both read as though both could be set.
+type TrsfPeer struct {
+	Target protocol.TrsfTarget
+	CID    string
+}
+
+// TrsfPeerFor resolves the two peer flags, once, at the edge that reads them.
+func TrsfPeerFor(runnerCID, clientCID string) (TrsfPeer, error) {
+	switch {
+	case runnerCID != "" && clientCID != "":
+		return TrsfPeer{}, errors.New("trsf: --runner and --client name different peers; pass one")
+	case runnerCID != "":
+		return TrsfPeer{Target: protocol.TrsfTarget_Runner, CID: runnerCID}, nil
+	case clientCID != "":
+		return TrsfPeer{Target: protocol.TrsfTarget_Client, CID: clientCID}, nil
+	default:
+		return TrsfPeer{Target: protocol.TrsfTarget_Server}, nil
 	}
 }

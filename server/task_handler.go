@@ -140,6 +140,12 @@ type TaskHandler struct {
 	TrsfStateFn       func(allowed map[string]bool, globalView bool) ([]protocol.TrsfConnState, int64)
 	RunnerTrsfStateFn func(ctx context.Context, runner protocol.ConnID) ([]protocol.TrsfConnState, int64, error)
 
+	// ClientTrsfStateFn asks a named CLIENT for its own. The only place this
+	// server makes a request of a client rather than answering one, and it
+	// exists because nothing else can see that state: the client running a port
+	// forward is neither this server nor a runner.
+	ClientTrsfStateFn func(ctx context.Context, client protocol.ConnID) ([]protocol.TrsfConnState, int64, error)
+
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int

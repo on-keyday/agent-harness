@@ -175,7 +175,12 @@ func (h tuiVerbs) Conns(v verb.ConnsAction) tea.Cmd {
 		}
 		a.connsModal.SetTrsfEvery(every)
 	}
-	a.connsModal.EnterTrsf(v.Runner)
+	peer, perr := cli.TrsfPeerFor(v.Runner, v.Client)
+	if perr != nil {
+		a.cmdresult.Append(ErrorStyle.Render(perr.Error()))
+		return nil
+	}
+	a.connsModal.EnterTrsf(peer)
 	// The identity rows are fetched too: 't' switches back to them, and they
 	// are what the conns.status subscription keeps current.
 	return tea.Batch(DoConnSnapshot(a.client), a.startTrsfPoll())

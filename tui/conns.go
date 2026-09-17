@@ -60,11 +60,11 @@ var errNotConnected = errors.New("not connected")
 // On a.client, the connection this TUI already holds — the pattern every other
 // Do* here follows, and the reason TrsfStateOn is a method on the client rather
 // than a dial-and-close helper.
-func DoTrsfState(c *cli.Client, runnerCID string) tea.Cmd {
+func DoTrsfState(c *cli.Client, peer cli.TrsfPeer) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		conns, sampledAt, err := c.TrsfStateOn(ctx, runnerCID)
+		conns, sampledAt, err := c.TrsfStateOn(ctx, peer)
 		return TrsfStateMsg{Conns: conns, SampledAt: sampledAt, Err: err}
 	}
 }
@@ -117,7 +117,7 @@ type ConnsModal struct {
 	trsfRows []cli.TrsfRow
 	// Empty means the SERVER's own connections; otherwise a runner is being
 	// asked about its own, which needs the global view.
-	target   string
+	peer     cli.TrsfPeer
 	every    time.Duration
 	trsfErr  string
 	readings int // how many have landed; the first has no deltas by construction
@@ -197,7 +197,7 @@ func (m *ConnsModal) IsTrsf() bool { return m.mode == connsTrsf }
 
 // TrsfTarget is the runner whose own transport is being read; empty is the
 // server's.
-func (m *ConnsModal) TrsfTarget() string { return m.target }
+func (m *ConnsModal) TrsfPeer() cli.TrsfPeer { return m.peer }
 
 // TrsfEvery is the poll interval in force.
 func (m *ConnsModal) TrsfEvery() time.Duration { return m.every }
@@ -210,9 +210,9 @@ func (m *ConnsModal) SetTrsfEvery(d time.Duration) {
 	}
 }
 
-// EnterTrsf switches to the reading, aimed at runnerCID (empty = the server).
-func (m *ConnsModal) EnterTrsf(runnerCID string) {
-	m.setTarget(runnerCID)
+// EnterTrsf switches to the reading, aimed at peer.
+func (m *ConnsModal) EnterTrsf(peer cli.TrsfPeer) {
+	m.setTarget(peer)
 	m.setMode(connsTrsf)
 }
 
@@ -231,11 +231,11 @@ func (m *ConnsModal) ToggleTrsf() bool {
 // elapsed between the last reading and the first from the new target measures
 // nothing that happened on it — carrying either over would render a delta and
 // a BLOCK% over an interval the new answerer never lived through.
-func (m *ConnsModal) setTarget(runnerCID string) {
-	if m.target == runnerCID {
+func (m *ConnsModal) setTarget(peer cli.TrsfPeer) {
+	if m.peer == peer {
 		return
 	}
-	m.target = runnerCID
+	m.peer = peer
 	m.resetTrsf()
 }
 
@@ -280,12 +280,14 @@ func (m *ConnsModal) TargetSelectedRunner() bool {
 	if !ok {
 		return false
 	}
-	m.setTarget(cid)
+	m.setTarget(cli.TrsfPeer{Target: protocol.TrsfTarget_Runner, CID: cid})
 	return true
 }
 
 // TargetServer aims the reading back at the server's own connections.
-func (m *ConnsModal) TargetServer() { m.setTarget("") }
+func (m *ConnsModal) TargetServer() {
+	m.setTarget(cli.TrsfPeer{Target: protocol.TrsfTarget_Server})
+}
 
 // setMode swaps the column set and the rows together, keeping the highlighted
 // CONNECTION rather than the highlighted row index — the two modes can hold
@@ -547,8 +549,8 @@ func (m ConnsModal) View() string {
 	}
 
 	target := "server"
-	if m.target != "" {
-		target = m.target
+	if m.peer.CID != "" {
+		target = fmt.Sprintf("%v %s", m.peer.Target, m.peer.CID)
 	}
 	head := fmt.Sprintf("connections · trsf (%s) every %v — %d conn(s)", target, m.every, len(m.trsfRows))
 	header := HeaderStyle.Render(head)

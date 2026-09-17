@@ -15,7 +15,7 @@ import (
 func trsfRequest(t *testing.T, target protocol.TrsfTarget, runner protocol.ConnID) []byte {
 	t.Helper()
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_TrsfState, RequestId: 21}
-	req.SetTrsfState(protocol.TrsfStateRequest{Target: target, RunnerCid: runner})
+	req.SetTrsfState(protocol.TrsfStateRequest{Target: target, PeerCid: runner})
 	return encodeTaskControlRequest(t, req)
 }
 

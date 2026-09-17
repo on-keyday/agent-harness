@@ -1850,6 +1850,11 @@ enum TrsfTarget:
     :u8
     server = "server"
     runner = "runner"
+    # A CLIENT connection, named by peer_cid. Reachable from nowhere else: the
+    # client running a port forward is neither the server nor a runner, and the
+    # drops that matter most to it happen inside trsf's run loop, after
+    # SendDatagram has already returned nil to the caller.
+    client = "client"
 
 # TrsfCounterKey names every number a connection reports about itself.
 #
@@ -1993,7 +1998,11 @@ enum TrsfStateStatus:
 
 format TrsfStateRequest:
     target :TrsfTarget
-    runner_cid :ConnID          # target == runner only; ignored otherwise
+    # Whose state to read, when target names a peer rather than the server.
+    # Renamed from runner_cid when client joined the enum: the field holds
+    # whichever peer target names, and a name that says "runner" would have to
+    # be read past. Same ordinal, same type -- no wire change.
+    peer_cid :ConnID            # target == runner or client; ignored otherwise
 
 # The rows travel on a STREAM, not in this response, and that is not a style
 # choice. A TaskControlResponse is one application message and objproto does not
@@ -2480,6 +2489,38 @@ format RunnerTrsfStateRequest:
 # sampled_unix_ns is by the RUNNER's clock, and the server passes it through
 # rather than restamping: the interval the counters advanced over is the
 # runner's, and the server's own clock is one round trip away from it.
+# What the SERVER asks a client, in the shape TaskControl uses for the other
+# direction: one envelope, a kind, a request id, and the body under a union arm.
+#
+# There is one question today. The envelope is still the right shape, because
+# the alternative -- an appwire kind per question -- makes the second question a
+# pair of new wire kinds instead of one enum member, and this direction is new
+# enough that a second is likely.
+enum ClientControlKind:
+    :u8
+    trsf_state = "trsf_state"
+
+format ClientControlRequest:
+    kind :ClientControlKind
+    request_id :u32
+    # No arm for trsf_state: the question carries nothing beyond its own name.
+    # An arm appears with the first question that has a body.
+
+format ClientControlResponse:
+    kind :ClientControlKind
+    request_id :u32
+    match kind:
+        ClientControlKind.trsf_state => trsf_state :ClientTrsfStateBody
+        .. => error("Unexpected client control response")
+
+# The rows are the same rows a runner reports, and sampled_unix_ns is the
+# ANSWERER's clock for the same reason: every counter here is read as a rate,
+# and the interval has to be measured where the counters advanced.
+format ClientTrsfStateBody:
+    count :u16
+    sampled_unix_ns :u64
+    conns :[count]TrsfConnState
+
 format RunnerTrsfStateResponse:
     request_id :u32
     count :u16
