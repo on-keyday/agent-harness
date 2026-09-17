@@ -25,6 +25,8 @@ func TrsfRowFrom(st *trsf.InternalState) TrsfConnState {
 		c = append(c, TrsfCounter{Key: k, Value: v})
 	}
 	add(TrsfCounterKey_Mtu, uint64(st.CurrentMTU))
+	add(TrsfCounterKey_MtuFallbacks, st.MTUFallbacks)
+	add(TrsfCounterKey_MtuBaseUnusable, st.MTUBaseUnusable)
 	add(TrsfCounterKey_Cwnd, uint64(st.CongestionWindow))
 	add(TrsfCounterKey_BytesInFlight, uint64(st.BytesInFlight))
 	add(TrsfCounterKey_SrttUs, uint64(st.SmoothedRTT.Microseconds()))

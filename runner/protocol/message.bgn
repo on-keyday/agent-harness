@@ -1928,6 +1928,26 @@ enum TrsfCounterKey:
     # silence -- a defect in the transport, surfaced here because this row is
     # the only place an operator would ever see it.
     unrouted_transport_kind = "unrouted_transport_kind"
+    # PLPMTUD, the downward half. Appended for the same reason as the datagram
+    # block above: existing ordinals unchanged, so a runner older than these
+    # omits them rather than reporting zeros.
+    #
+    # mtu_fallbacks is how many times the estimate fell because a path stopped
+    # carrying a size it had already proven -- the one thing the upward search
+    # can never discover on its own. A fleet-wide rise means the detector is
+    # firing on congestion; zero everywhere means it is not firing at all, and
+    # those two are the same picture without this number.
+    mtu_fallbacks = "mtu_fallbacks"
+    # How many times the search collapsed with the base itself still being
+    # lost. Nothing below the base is attempted -- RFC 9000 s14, "QUIC MUST NOT
+    # be used if the network path cannot support a maximum datagram size of at
+    # least 1200 bytes" -- so this is the row that explains a connection
+    # answering small calls and hanging on large ones.
+    #
+    # A COUNT, like every member here: it reads "this happened N times", never
+    # "this is true now". Pair it with mtu on the same row to tell a connection
+    # that is currently stuck from one that was.
+    mtu_base_unusable = "mtu_base_unusable"
 
 format TrsfCounter:
     key :TrsfCounterKey
