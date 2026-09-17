@@ -210,6 +210,65 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "logFormat": "",
         "streamAdapter": "",
     },
+    "pi": {
+        "bin": "pi",
+        # --print is a BOOLEAN (non-interactive mode) and the prompt is a
+        # positional `messages..`, so {prompt} carries no flag of its own —
+        # agy's shape, not claude's `-p {prompt}`.
+        #
+        # The `--` is the one deviation from every sibling preset here. pi
+        # documents it as "End option parsing; treat remaining arguments as
+        # messages/files", so it is what keeps a task prompt beginning with a
+        # dash from being read as a flag. codex/agy/opencode carry that
+        # exposure because their CLIs offer no separator; pi does not have to.
+        #
+        # No --mode json is requested, for agy's reason: pi's json mode emits
+        # its OWN event schema, not claude's, and agentlog has no decoder for
+        # it. Structured output nothing can decode only makes the task log
+        # unreadable, so plain text passes through and logFormat stays "".
+        #
+        # RESUME SCOPE — the question opencode's entry above had to measure
+        # twice. Here it is answered by construction: pi stores sessions
+        # "organized by working directory" (its own docs/sessions.md) under
+        # ~/.pi/agent/sessions/<escaped-cwd>/, and the directory name is
+        # literally that path. The harness gives each task its own linked
+        # worktree, so each task gets its own bucket and --continue has no way
+        # to reach a SIBLING task's conversation the way opencode 1.1.35 did.
+        #
+        # STDIN — --print reads stdin and blocks until EOF, so pi hangs forever
+        # when handed a pipe nobody closes. The oneshot path is safe because
+        # runner/process.go assigns cmd.Stdout/cmd.Stderr and never cmd.Stdin,
+        # and os/exec then gives the child os.DevNull. That is a fact about the
+        # descriptor pi is handed, not about its argv: anything else launching
+        # pi with an inherited stdin has to redirect it.
+        #
+        # NODE — pi's package engines require Node >= 22.19.0, and this bare
+        # name is PATH-resolved by ResolveBinPaths at startup. A runner whose
+        # PATH froze on an older node needs `pi` to be a wrapper pinning a new
+        # enough interpreter; a plain symlink would resolve the script's
+        # `#!/usr/bin/env node` against that stale PATH and fail the engine.
+        #
+        # VERIFIED against pi 0.85.1 with NO provider credentials configured
+        # (2026-09-17): all three templates parse and reach pi's own "No API
+        # key found for the selected model" at exit 1, and bare `pi` renders
+        # its TUI under a PTY. Without a PTY it exits 0 immediately — neither
+        # agy's "could not open TTY" error nor opencode's hang.
+        # NOT verified, because this machine has no credential yet: that a
+        # one-shot exits 0 with the response on stdout, and that --continue
+        # recalls the previous turn. Both need a provider login first.
+        #
+        # No sandbox-pi twin: deliberately absent from the derivation tuple
+        # below. scripts/sandbox/agent-in-podman.sh has no `pi` arm and there
+        # is no pi-in-podman.sh symlink, and its default arm is AGENT=claude —
+        # a derived twin would silently run Claude Code while the task row read
+        # agent=sandbox-pi. Leaving it out makes `--agents sandbox-pi` an error
+        # instead of a wrong binary.
+        "oneshotArgv": "{args} --print -- {prompt}",
+        "resumeOneshotArgv": "{args} --continue --print -- {prompt}",
+        "resumeInteractiveArgv": "{args} --continue",
+        "logFormat": "",
+        "streamAdapter": "",
+    },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
     # only emits the bin/argv triplet; the accompanying --no-worktree and

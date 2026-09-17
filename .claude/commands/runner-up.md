@@ -33,6 +33,7 @@ Arguments: $ARGUMENTS
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
    | `opencode`   | `--agents opencode` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-opencode` when roots overlap a Claude slot) | OpenCode CLI runner (**1.18.18+ only**, see below) |
+   | `pi`         | `--agents pi` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-pi` when roots overlap a Claude slot) | Pi coding agent runner (needs Node ≥ 22.19.0 **and a provider login**, see below) |
 
    **The `sandbox*` presets are NOT shell presets.** They run the *full* agent
    inside a rootless-podman container (`scripts/sandbox/`), confining its
@@ -154,6 +155,59 @@ Arguments: $ARGUMENTS
    Also: opencode's auto-approve-permissions flag is `--auto`, the analogue of
    claude's `--dangerously-skip-permissions`. Like that flag it is the caller's
    choice via `--agent-args`, not part of the preset.
+
+   **Pi preset details.** Same source of truth as above — the literal argv
+   lives only in `scripts/agent_presets.py`. Its shape is agy's: `--print` is a
+   boolean and the prompt is a positional `messages..`, so `{prompt}` carries no
+   flag. It is the only preset here whose templates put `--` before `{prompt}`;
+   pi documents that as "end option parsing", which is what stops a task prompt
+   beginning with a dash from being read as a flag. No structured output is
+   requested — pi's `--mode json` is its own event schema and `runner/agentlog`
+   has no decoder for it, so `logFormat` stays `""`, the same call agy's and
+   opencode's presets make.
+
+   Unlike opencode, **resume needs no version gate**: pi stores sessions
+   "organized by working directory" under `~/.pi/agent/sessions/<escaped-cwd>/`,
+   and the harness gives each task its own worktree, so `--continue` cannot
+   reach a sibling task's conversation by construction.
+
+   Four things to check before spawning a slot:
+
+   - **A provider login is required, and its absence is quiet.** The slot
+     registers and looks healthy with no credential at all — `ResolveBinPaths`
+     only LookPaths the bin — and then every task dies with pi's own "No API key
+     found for the selected model" at exit 1. Log in with `/login` in an
+     interactive pi rather than exporting `ANTHROPIC_API_KEY` and friends:
+     `/login` writes `~/.pi/agent/auth.json`, which the runner reaches through
+     `HOME`, while an env var has to be present in the slot's *frozen* launch
+     environment to be seen at all.
+   - **Node ≥ 22.19.0**, which `pi`'s npm package declares in `engines`. The
+     preset uses the bare name, resolved through `PATH` at runner startup. A
+     slot whose `PATH` froze on an older node needs `pi` on that `PATH` to be a
+     wrapper pinning a new enough interpreter — a plain symlink resolves the
+     script's `#!/usr/bin/env node` against the stale `PATH` and fails the
+     engine check. The registered-slot warning in the OpenCode section applies
+     verbatim here: the unit holds a literal `Environment=PATH=…` from
+     `register` time, so fixing a shell rc does not reach it.
+   - **There is no tool-approval prompt to skip.** pi has no
+     `--dangerously-skip-permissions` analogue because it never asks: its docs
+     state it ships no built-in sandbox and its tools read, write and run shell
+     commands with the permissions of the pi process. Good for unattended
+     one-shots, and the reason pi's own security doc tells you to run untrusted
+     or unmonitored work in a container.
+   - **Project trust is a separate thing from that, and it does prompt.** A repo
+     carrying project-local pi resources — `.pi/settings.json`, project
+     `.agents/skills`, and this repository has the latter — makes an
+     *interactive* launch ask whether to trust the folder, once per canonical
+     directory, and a harness worktree is a fresh directory every time.
+     Non-interactive modes never prompt: they silently *ignore* those project
+     resources unless the run passes `--approve`/`-a` or global settings set
+     `defaultProjectTrust: "always"`. Pass `-a` via `--agent-args` if a one-shot
+     is meant to load them.
+
+   There is deliberately **no `sandbox-pi`** — see the comment on the preset for
+   why a derived twin without a `pi-in-podman.sh` symlink would silently run
+   Claude Code instead.
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its argv (defined in `scripts/agent_presets.py`) runs
