@@ -151,6 +151,7 @@ func main() {
 		"pathsForSurface":    js.FuncOf(harnessPathsForSurface),
 		"parseGit":           js.FuncOf(harnessParseGit),
 		"forwardTap":         js.FuncOf(harnessForwardTap),
+		"forwardList":        js.FuncOf(harnessForwardList),
 		"trsfState":          js.FuncOf(harnessTrsfState),
 		"parseDurationMs":    js.FuncOf(harnessParseDurationMs),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
@@ -245,6 +246,51 @@ func harnessTrsfState(this js.Value, args []js.Value) any {
 					"queue": r.Queue, "loss": r.LossD, "spur": r.SpurD,
 					"loop": r.LoopD, "block": r.BlockPct, "wait": r.Wait,
 				})
+			}
+			resolve.Invoke(js.ValueOf(out))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessForwardList reads the port-forward registry live, as already-rendered
+// snapshot rows — the same shape the 5s poll puts in the page's cache.
+//
+// It exists for ONE caller: `forward ls --drops`. The bare listing reads the
+// cache and must keep doing so, because the text it prints sits under a panel
+// drawn from that same cache and a second fetch is how two renderings of one
+// thing come to disagree. --drops asks something the snapshot never asks and
+// should not: a telemetry round trip to the client and to the runner, for
+// every udp forward, which on a 5s timer would be load rather than diagnosis.
+//
+// So the split is the one `conns --trsf` already makes — the tab is snapshot
+// fed, the reading beside it is a live call made while somebody is looking.
+//
+//	harness.forwardList({askEndpoints}) -> Promise<[{forward_id, spec, traffic, counters, …}]>
+func harnessForwardList(this js.Value, args []js.Value) any {
+	askEndpoints := false
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		askEndpoints = args[0].Get("askEndpoints").Truthy()
+	}
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows, err := c.PortForwardListWith(rootCtx, cli.ForwardListQuery{AskEndpoints: askEndpoints})
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			out := make([]any, 0, len(rows))
+			for i := range rows {
+				out = append(out, cli.ForwardSnapshotRow(&rows[i]))
 			}
 			resolve.Invoke(js.ValueOf(out))
 		}()

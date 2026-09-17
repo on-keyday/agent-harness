@@ -159,6 +159,18 @@ export function recordingCtx(page, overrides = {}) {
     openGridSet: async (o) => { calls.push(["openGridSet", o]); return "grid"; },
     execRunToOutput: async (...a) => { calls.push(["execRunToOutput", ...a]); return "ran"; },
     forwards: () => overrides.forwards ?? [],
+    // forwardLsView answers the same two ways the page does, so a test can
+    // tell them apart: the cached rows, or -- with --drops -- the live ones,
+    // recorded so an assertion can say WHICH was asked for. overrides.
+    // dropRows stands in for what the endpoints reported.
+    forwardLsView: async (o) => {
+      const opts = o || {};
+      calls.push(["forwardLsView", opts]);
+      const rows = opts.drops
+        ? (overrides.dropRows ?? overrides.forwards ?? [])
+        : (overrides.forwards ?? []);
+      return rows.filter((f) => !opts.task || f.task === opts.task);
+    },
     findForwardEntry: (id) => { calls.push(["findForwardEntry", id]); return { wrap: {}, button: {} }; },
     toggleForwardTap: (f, wrap, btn, opts) => { calls.push(["toggleForwardTap", f.forward_id, opts]); },
     tapOpen: () => true,

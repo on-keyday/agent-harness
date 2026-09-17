@@ -250,37 +250,72 @@ func (m *ConnsModal) resetTrsf() {
 	m.pendingSelect = ""
 }
 
-// SelectedRunnerCID is the cid of the highlighted row when that row is a
-// RUNNER connection — what 'enter' retargets the reading to. Any other role
-// has no separate transport to ask about: it is one end of a connection the
-// server is already reporting.
-func (m *ConnsModal) SelectedRunnerCID() (string, bool) {
+// peerTargetFor maps a connection's role to the answerer 'enter' aims at.
+//
+// It used to be runners only, and the comment here said why: "any other role
+// has no separate transport to ask about — it is one end of a connection the
+// server is already reporting". That was true until TrsfTarget_Client existed.
+// It is the SERVER's end of a client connection that the server reports; the
+// client's own end has its own window, its own send queue and its own drops,
+// and a datagram its trsf refused at the congestion gate never reached the
+// client's own code as an error either. Asking it is the only way to see that,
+// which is the whole argument --client's help makes.
+//
+// The server answers for any live connection it holds, so the split here is
+// only between "the server's own" and "ask that peer".
+func peerTargetFor(role protocol.ConnRole) (protocol.TrsfTarget, bool) {
+	switch role {
+	case protocol.ConnRole_Runner:
+		return protocol.TrsfTarget_Runner, true
+	case protocol.ConnRole_Cli, protocol.ConnRole_Tui, protocol.ConnRole_Webui, protocol.ConnRole_Agent:
+		return protocol.TrsfTarget_Client, true
+	default:
+		// server, and unspecified. The server's own reading is what the modal
+		// already shows, and 'escape' is how you go back to it.
+		return 0, false
+	}
+}
+
+// SelectedPeer is the answerer the highlighted row names — what 'enter'
+// retargets the reading to, and false when the row is not one that can be
+// asked.
+func (m *ConnsModal) SelectedPeer() (cli.TrsfPeer, bool) {
 	i := m.table.Cursor()
 	if m.mode == connsTrsf {
 		if i < 0 || i >= len(m.trsfRows) {
-			return "", false
+			return cli.TrsfPeer{}, false
 		}
-		if !strings.EqualFold(m.trsfRows[i].Role, protocol.ConnRole_Runner.String()) {
-			return "", false
+		// The trsf row carries its role as the string the enum renders, so it
+		// is parsed back rather than compared one member at a time -- a role
+		// added to the enum reaches this with no edit here.
+		for _, role := range []protocol.ConnRole{
+			protocol.ConnRole_Runner, protocol.ConnRole_Cli, protocol.ConnRole_Tui,
+			protocol.ConnRole_Webui, protocol.ConnRole_Agent,
+		} {
+			if strings.EqualFold(m.trsfRows[i].Role, role.String()) {
+				t, ok := peerTargetFor(role)
+				return cli.TrsfPeer{Target: t, CID: m.trsfRows[i].CID}, ok
+			}
 		}
-		return m.trsfRows[i].CID, true
+		return cli.TrsfPeer{}, false
 	}
 	if i < 0 || i >= len(m.rowConns) {
-		return "", false
+		return cli.TrsfPeer{}, false
 	}
-	if m.rowConns[i].Role != protocol.ConnRole_Runner {
-		return "", false
+	t, ok := peerTargetFor(m.rowConns[i].Role)
+	if !ok {
+		return cli.TrsfPeer{}, false
 	}
-	return string(m.rowConns[i].Cid), true
+	return cli.TrsfPeer{Target: t, CID: string(m.rowConns[i].Cid)}, true
 }
 
-// TargetSelectedRunner aims the reading at the highlighted runner row.
-func (m *ConnsModal) TargetSelectedRunner() bool {
-	cid, ok := m.SelectedRunnerCID()
+// TargetSelectedPeer aims the reading at the highlighted row's own transport.
+func (m *ConnsModal) TargetSelectedPeer() bool {
+	peer, ok := m.SelectedPeer()
 	if !ok {
 		return false
 	}
-	m.setTarget(cli.TrsfPeer{Target: protocol.TrsfTarget_Runner, CID: cid})
+	m.setTarget(peer)
 	return true
 }
 

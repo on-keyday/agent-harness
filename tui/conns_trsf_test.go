@@ -131,7 +131,7 @@ func TestConnsModalRetargetResetsTheSeries(t *testing.T) {
 		t.Fatalf("second reading on one target: LossD = %q, want 3", got)
 	}
 
-	m.TargetSelectedRunner() // the row is a runner, so this retargets
+	m.TargetSelectedPeer() // the row is a runner, so this retargets
 	if got := m.TrsfPeer(); got.CID != "c1" || got.Target != protocol.TrsfTarget_Runner {
 		t.Fatalf("peer = %+v, want the runner c1", got)
 	}
@@ -141,9 +141,17 @@ func TestConnsModalRetargetResetsTheSeries(t *testing.T) {
 	}
 }
 
-// TestConnsModalSelectedRunnerOnlyOnRunnerRows: any other role is one end of a
-// connection the server already reports, so there is nothing separate to ask.
-func TestConnsModalSelectedRunnerOnlyOnRunnerRows(t *testing.T) {
+// TestConnsModalSelectedPeerNamesTheRowsOwnTransport: a row's role decides
+// which answerer 'enter' aims at.
+//
+// This test asserted the opposite until 2026-09-17 — that only a runner row
+// offered itself, because "any other role is one end of a connection the
+// server already reports, so there is nothing separate to ask". That stopped
+// being true when TrsfTarget_Client landed: it is the SERVER's end of a client
+// connection the server reports, and the client's own end has its own window,
+// its own queue and its own drops. The command line could already ask
+// (`conns --trsf --client`); only the modal could not.
+func TestConnsModalSelectedPeerNamesTheRowsOwnTransport(t *testing.T) {
 	m := NewConnsModal()
 	m.Open()
 	m.SetSize(200, 24)
@@ -151,16 +159,24 @@ func TestConnsModalSelectedRunnerOnlyOnRunnerRows(t *testing.T) {
 	m.ApplyTrsf([]protocol.TrsfConnState{
 		trsfConnState("cli-conn", protocol.ConnRole_Cli, 0),
 		trsfConnState("runner-conn", protocol.ConnRole_Runner, 0),
+		trsfConnState("server-conn", protocol.ConnRole_Server, 0),
 	}, 1)
 
 	m.table.SetCursor(0)
-	if _, ok := m.SelectedRunnerCID(); ok {
-		t.Error("a cli row offered itself as a trsf target")
+	peer, ok := m.SelectedPeer()
+	if !ok || peer.Target != protocol.TrsfTarget_Client || peer.CID != "cli-conn" {
+		t.Errorf("cli row: got (%+v,%v), want a client target on cli-conn", peer, ok)
 	}
 	m.table.SetCursor(1)
-	cid, ok := m.SelectedRunnerCID()
-	if !ok || cid != "runner-conn" {
-		t.Errorf("runner row: got (%q,%v), want (runner-conn,true)", cid, ok)
+	peer, ok = m.SelectedPeer()
+	if !ok || peer.Target != protocol.TrsfTarget_Runner || peer.CID != "runner-conn" {
+		t.Errorf("runner row: got (%+v,%v), want a runner target on runner-conn", peer, ok)
+	}
+	// The server's own reading is what the modal already shows, and escape is
+	// how you return to it — so a server row is not a target to aim AT.
+	m.table.SetCursor(2)
+	if peer, ok = m.SelectedPeer(); ok {
+		t.Errorf("a server row offered itself as a target: %+v", peer)
 	}
 }
 

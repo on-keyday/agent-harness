@@ -77,7 +77,7 @@ func (a *App) inConnsModal(msg tea.KeyMsg) tea.Cmd {
 		// Only in the reading, and only on a runner row: any other role has no
 		// separate transport to ask about. Elsewhere it falls through to the
 		// table rather than looking like it did something.
-		if a.connsModal.IsTrsf() && a.connsModal.TargetSelectedRunner() {
+		if a.connsModal.IsTrsf() && a.connsModal.TargetSelectedPeer() {
 			return a.readTrsfOnce()
 		}
 	case modalKeys.ConnsReadServer:

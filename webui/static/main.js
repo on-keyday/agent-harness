@@ -2586,7 +2586,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     trsfInFlight = true;
     try {
       const rows = await window.harness.trsfState({
-        runner: trsfTargetSel ? trsfTargetSel.value : "",
+        // Which of the two the cid goes in is the option's own kind: the
+        // bridge resolves the pair into one peer, and sending a client's cid
+        // as a runner would ask the registry for a runner that is not there.
+        runner: trsfTargetSel && trsfSelectedKind(trsfTargetSel) === "runner" ? trsfTargetSel.value : "",
+        client: trsfTargetSel && trsfSelectedKind(trsfTargetSel) === "client" ? trsfTargetSel.value : "",
         reset: !!reset,
       });
       renderTrsfTable(rows);
@@ -2664,12 +2668,30 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       }
       trsfEverySel.value = String(p.ms);
     }
-    renderTrsfTargets(lastConns, opts.runner || "");
+    // The kind travels beside the cid: a target named on the command line may
+    // not be in this snapshot yet, and then nothing else can say which end it
+    // is.
+    renderTrsfTargets(lastConns, opts.client || opts.runner || "",
+      opts.client ? "client" : opts.runner ? "runner" : "");
     const wasOpen = trsfPanelEl.open;
     trsfPanelEl.open = true;
     // Setting .open fires `toggle` only when it CHANGES, so an already-open
     // panel has to be restarted here or a retarget would not take effect.
     if (wasOpen) startTrsfPoll(true);
+  };
+
+  // forwardLsView is what the `forward ls` verb does here — the WebUIDispatch
+  // the declaration names. Two answers behind one verb, and the page is what
+  // picks: the bare form reads the snapshot cache, so the text it prints
+  // cannot disagree with the forward panel drawn from the same rows; --drops
+  // asks the endpoints, which the snapshot never does, so it is a live call.
+  // The same split `conns --trsf` makes between its tab and its panel.
+  const forwardLsView = async (o) => {
+    const opts = o || {};
+    const rows = opts.drops
+      ? await window.harness.forwardList({ askEndpoints: true })
+      : (lastForwards || []);
+    return (rows || []).filter((f) => !opts.task || f.task === opts.task);
   };
 
   // What the page owns and runVerbCommand does not: the compose dropdowns,
@@ -2692,6 +2714,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     openGridSet: (o) => openGridSet(o),
     execRunToOutput: (id, argv, opts) => execRunToOutput(id, argv, opts),
     forwards: () => lastForwards || [],
+    forwardLsView: (o) => forwardLsView(o),
     connsView: (o) => connsView(o),
     findForwardEntry: (id) => findForwardEntry(id),
     toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
@@ -6377,6 +6400,10 @@ async function runVerbCommand(tokens, ctx) {
       ctx.connsView({
         trsf: !!b.flags.trsf,
         runner: b.flags.runner || "",
+        // --client was parsed and dropped here, so `conns --trsf --client`
+        // aimed the panel at the server. The declaration makes the two
+        // mutually exclusive, so at most one of these is set.
+        client: b.flags.client || "",
         watch: b.flags.watch || "",
       });
       out = b.flags.trsf ? "conns: trsf reading open" : "conns: showing the connections tab";
@@ -6596,15 +6623,21 @@ async function runVerbCommand(tokens, ctx) {
     }
     case "forward": {
       // forward ls renders from the snapshot the page already polls -- no
-      // extra RPC. Starting a socket-bound forward is CLI-only (a browser
-      // cannot bind a local listener), which the declaration says by
-      // leaving the open form off this surface.
+      // extra RPC, except for --drops, which asks something the snapshot does
+      // not (see forwardLsView). Starting a socket-bound forward is CLI-only
+      // (a browser cannot bind a local listener), which the declaration says
+      // by leaving the open form off this surface.
       const b = ctx.harness.parseCommand(tokens, {});
       if (b.error) throw new Error(b.error);
       const sub = b.path[1];
       if (sub === "ls") {
-        const fwds = ctx.forwards().filter(
-          (f) => !b.flags.task || f.task === b.flags.task);
+        const fwds = await ctx.forwardLsView({
+          task: b.flags.task || "",
+          // --drops was parsed and dropped here: it would have read the
+          // snapshot, which never asked the endpoints, so every hop key was
+          // absent no matter what was typed.
+          drops: !!b.flags.drops,
+        });
         out = fwds.length
           ? (b.flags.json
               ? fwds.map((f) => JSON.stringify(f)).join("\n")
@@ -7790,32 +7823,76 @@ function renderTrsfTable(rows) {
   }
 }
 
-// renderTrsfTargets fills the answerer picker: the server, plus every RUNNER
-// connection in the snapshot. Any other role is one end of a connection the
-// server already reports, so there is nothing separate to ask it.
+// renderTrsfTargets fills the answerer picker: the server, plus every peer in
+// the snapshot that can be asked about its OWN transport.
+//
+// It listed runners only, and said "any other role is one end of a connection
+// the server already reports, so there is nothing separate to ask it". That
+// stopped being true when TrsfTarget_Client landed: what the server reports is
+// the SERVER's end, and the client's end has its own window, its own send
+// queue and its own drops. `conns --trsf --client` could already ask; only
+// this picker could not offer it.
 //
 // keep is a cid to preserve even when the snapshot does not carry it — a
-// `conns --trsf --runner <cid>` naming a runner this page has not polled yet,
-// or one that has just gone. It is shown rather than silently dropped, so the
-// picker cannot disagree with what the reading is actually aimed at.
-function renderTrsfTargets(conns, keep) {
+// `conns --trsf --runner|--client <cid>` naming a peer this page has not
+// polled yet, or one that has just gone — and keepKind says which end it is,
+// which nothing else can supply for a cid the snapshot is missing. Shown
+// rather than silently dropped, so the picker cannot disagree with what the
+// reading is actually aimed at.
+// TRSF_CLIENT_ROLES are the roles whose own transport can be asked about, as
+// distinct from the SERVER's end of their connection — which is what the server
+// already reports, and is a different window, queue and drop count.
+//
+// Mirrors peerTargetFor in tui/conns.go. Runner is handled separately because
+// it is a different wire target, not because it is a different kind of answer.
+const TRSF_CLIENT_ROLES = new Set(["cli", "tui", "webui", "agent"]);
+
+// trsfTargetKind maps a connection row's role to which of the bridge's two
+// peer fields carries it. Derived HERE and stored on the option, so the poll
+// site does not re-derive it and the two cannot disagree.
+function trsfTargetKind(role) {
+  if (role === "runner") return "runner";
+  if (TRSF_CLIENT_ROLES.has(role)) return "client";
+  return "";
+}
+
+function renderTrsfTargets(conns, keep, keepKind) {
   const sel = document.getElementById("trsf-target");
   if (!sel) return;
   const want = keep !== undefined ? keep : sel.value;
-  const cids = (conns || []).filter((c) => c.role === "runner").map((c) => c.cid).sort();
-  if (want && !cids.includes(want)) cids.push(want);
+  const wantKind = keep !== undefined ? (keepKind || "") : trsfSelectedKind(sel);
+  const rows = (conns || [])
+    .map((c) => ({ cid: c.cid, kind: trsfTargetKind(c.role) }))
+    .filter((r) => r.kind)
+    .sort((a, b) => (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
+  // A target set by the command line can name a connection this snapshot does
+  // not carry yet; keeping it is what stops the picker from silently moving
+  // the reading back to the server under an operator who aimed it elsewhere.
+  if (want && !rows.some((r) => r.cid === want)) {
+    rows.push({ cid: want, kind: wantKind || "runner" });
+  }
   sel.textContent = "";
   const server = document.createElement("option");
   server.value = "";
+  server.dataset.kind = "";
   server.textContent = "server";
   sel.appendChild(server);
-  for (const cid of cids) {
+  for (const r of rows) {
     const o = document.createElement("option");
-    o.value = cid;
-    o.textContent = cid;
+    o.value = r.cid;
+    o.dataset.kind = r.kind;
+    // The kind is shown, not only stored: two rows can differ only by it, and
+    // an operator picking a cid has to be able to see which end it means.
+    o.textContent = `${r.cid}  (${r.kind})`;
     sel.appendChild(o);
   }
   sel.value = want || "";
+}
+
+// trsfSelectedKind reads the kind off the selected option, "" for the server.
+function trsfSelectedKind(sel) {
+  const o = sel && sel.selectedOptions && sel.selectedOptions[0];
+  return o ? (o.dataset.kind || "") : "";
 }
 
 // renderConnTopology renders the radial hub-and-spoke SVG topology into

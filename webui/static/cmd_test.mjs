@@ -159,6 +159,24 @@ test("forward ls honours --task and --json", async () => {
   assert.equal(j.out.split("\n").length, 2);
 });
 
+// --drops is the one form that does NOT read the snapshot: the poll that fills
+// it never asks the endpoints, so a cached answer carries no hop keys whatever
+// was typed. It was parsed and discarded here until 2026-09-17.
+test("forward ls --drops asks for a live reading, the bare form does not", async () => {
+  const forwards = [{ forward_id: 1, task: ID, dir: "L", spec: "s", origin: "cli", traffic: "cached" }];
+  const dropRows = [{ forward_id: 1, task: ID, dir: "L", spec: "s", origin: "cli", traffic: "live relay: oversize=0" }];
+
+  const bare = await run("forward ls", { forwards, dropRows });
+  eq(named(bare.calls, "forwardLsView")[0][1], { task: "", drops: false },
+    "the bare listing must not ask the endpoints");
+  assert.match(bare.out, /cached/);
+
+  const asked = await run("forward ls --drops", { forwards, dropRows });
+  eq(named(asked.calls, "forwardLsView")[0][1], { task: "", drops: true },
+    "--drops must reach the view rather than being parsed and dropped");
+  assert.match(asked.out, /live relay/, "--drops must render the live rows, not the cache");
+});
+
 test("forward tap passes --dir and --max-bytes to the tap", async () => {
   const forwards = [{ forward_id: 7, task: ID, dir: "L", spec: "s", origin: "cli" }];
   const { calls } = await run("forward tap 7 --dir to-target --max-bytes 64", { forwards });
@@ -355,14 +373,26 @@ test("tasksOnRunner never joins two absences", () => {
 
 test("conns shows the tab; --trsf carries runner and watch into the panel", async () => {
   const bare = await run("conns");
-  eq(named(bare.calls, "connsView"), [["connsView", { trsf: false, runner: "", watch: "" }]],
+  eq(named(bare.calls, "connsView"), [["connsView", { trsf: false, runner: "", client: "", watch: "" }]],
     "the bare form asks for the tab and nothing else");
 
   const RCID = "udp:127.0.0.1:41233-a1";
   const full = await run(`conns --trsf --runner ${RCID} --watch 200ms`);
   eq(named(full.calls, "connsView"),
-    [["connsView", { trsf: true, runner: RCID, watch: "200ms" }]],
+    [["connsView", { trsf: true, runner: RCID, client: "", watch: "200ms" }]],
     "--runner and --watch reach the panel rather than being parsed and dropped");
+});
+
+// --client is the other peer this reading can be aimed at, and it was parsed
+// and dropped here until 2026-09-17: the wasm bridge already read a `client`
+// field and the page never sent one, so `conns --trsf --client <cid>` aimed
+// the panel at the server. Exactly the silent-drop class this file exists for.
+test("conns --trsf --client reaches the panel too", async () => {
+  const CCID = "ws:127.0.0.1:41234-b2";
+  const r = await run(`conns --trsf --client ${CCID}`);
+  eq(named(r.calls, "connsView"),
+    [["connsView", { trsf: true, runner: "", client: CCID, watch: "" }]],
+    "--client must reach the panel, not be parsed and discarded");
 });
 
 // The flag-order footgun this repo has hit before (Pitfall 13): Go's flag
@@ -371,7 +401,7 @@ test("conns shows the tab; --trsf carries runner and watch into the panel", asyn
 // is shared and the check is one line.
 test("conns --trsf --watch parses regardless of flag order", async () => {
   const a = await run("conns --watch 1s --trsf");
-  eq(named(a.calls, "connsView"), [["connsView", { trsf: true, runner: "", watch: "1s" }]]);
+  eq(named(a.calls, "connsView"), [["connsView", { trsf: true, runner: "", client: "", watch: "1s" }]]);
 });
 
 // --json is declared CLI-only, with a SurfaceReason: the other two answer with

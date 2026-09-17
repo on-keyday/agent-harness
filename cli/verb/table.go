@@ -651,9 +651,19 @@ var Verbs = []VerbSpec{
 		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
 	},
 	{
-		Path:          []string{"forward", "ls"},
-		WebUIDispatch: WebUIDispatch{Cache: "lastForwards", Stale: "one snapshot poll"},
-		SurfaceNotes:  map[Surface][]string{WebUI: {"list registered port forwards (from the last snapshot poll)"}, TUI: {"list every port forward visible to this operator (also: f key, kill: x then y/n)"}},
+		Path: []string{"forward", "ls"},
+		// Page-owned, the way conns is, because the PAGE decides which of two
+		// answers this is: the bare form reads the snapshot it already polls,
+		// and --drops is a live call. A Cache declaration said only the first
+		// and made the second a flag that parsed and did nothing.
+		WebUIDispatch: WebUIDispatch{Fn: "forwardLsView", Local: true},
+		SurfaceNotes: map[Surface][]string{
+			WebUI: {
+				"list registered port forwards (from the last snapshot poll)",
+				"--drops is the exception: it reads live, because the snapshot does not ask the endpoints and putting that round trip on a 5s timer would be load rather than diagnosis",
+			},
+			TUI: {"list every port forward visible to this operator (also: f key, kill: x then y/n)"},
+		},
 		ModalSurfaces: []ModalSurface{
 			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
 			{Surface: WebUI, At: "webui/index.html#forward-list"},
