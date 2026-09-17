@@ -158,6 +158,7 @@ may overturn them on evidence.
 | 8 | The state machine must stay correct for any configured `(min, max)`, including `min` below 1200 — that number is a caller's default, not an algorithmic constant | operator |
 | 9 | "Large" means `size > min`: exactly the set a shrunk path can drop and BASE cannot | author |
 | 10 | The data-loss verdict is time-based, not a consecutive-loss count | author |
+| 10a | That time derives from the RTT estimate rather than being a constant | operator |
 | 11 | The MTU deadline joins `nextWakeDeadline`, gated on `probeSent` and on `min < max` | author |
 | 12 | A too-large retransmit is SPLIT, not discarded and not stalled | author |
 
@@ -261,9 +262,33 @@ The second clause is required because a period during which nothing large was
 would otherwise fire; falling back there is harmless but the verdict would stop
 meaning what it is named.
 
-**T = 10 s.** Fleet RTTs reach ~200 ms, and NewReno recovery is a few RTTs, so a
-congestion episode that delivers small packets for ten seconds while delivering
-no large one is not a shape this transport produces.
+**T is derived from the RTT estimate, not fixed.** What T has to outlast is a
+congestion episode, and an episode is measured in round trips — a constant is
+either far too long on a LAN or far too short on a satellite path.
+
+```
+T = clamp(k * srtt, floor, cap)
+```
+
+srtt is well defined at exactly the moment this verdict is evaluated, which is
+not obvious and is why this works: the fourth clause above already requires that
+ACKs are arriving, so the RTT estimate is live and being updated by the small
+packets that are still getting through. A detector that fired on a silent
+connection could not rely on that.
+
+**PTO would be the wrong unit** even though it already folds in RTT variance.
+It backs off exponentially under sustained loss, which is precisely the state
+this verdict is trying to recognise, so `N * PTO` stretches T as the black hole
+persists and pushes detection away exactly when it is needed.
+
+`mtu` does not import `congestion`; the tracker takes a `func() time.Duration`
+supplied by `Streams`, which already holds the RTT stats it passes to NewReno
+(`trsf/conn.go:1289`).
+
+Three numbers, all author picks and all calibratable by §10's lossy and
+bufferbloat arms rather than by argument: **k = 10**, **floor = 1 s**,
+**cap = 30 s**. The floor exists because `k * srtt` on loopback is microseconds;
+the cap bounds worst-case detection latency on a very slow path.
 
 The validation probe reuses the existing `OnLost`. **Its loss counter must be
 separate from the search counter.** Sharing `lossCount` means two lost search
@@ -276,10 +301,25 @@ One named method, and the only place in the module where the estimate decreases:
 
 ```
 mtu = min;  low = min + 1;  high = max
+lastProbe = mtu;  probeSent = false          # see below
 reset the loss counters and the black-hole timestamps
 onMTUUpdate(mtu)
 mtu_fallbacks++
 ```
+
+**The `lastProbe` line is load-bearing and its absence is a silent
+regression.** `OnACK` raises the estimate on `t.lastProbe > t.mtu`
+(`plpmtud.go:102`) and reads `lastProbe` unconditionally. A probe issued at,
+say, 1327 before the fallback can be acknowledged *after* it — the ACK is in
+flight while the verdict fires — and would then set `mtu = 1327`, restoring
+precisely the estimate the fallback just ruled out, with `onMTUUpdate`
+announcing it as an increase. Re-pointing `lastProbe` at the new `mtu` makes
+that late ACK a no-op, and clearing `probeSent` lets the next `Probe()` issue a
+fresh one rather than waiting on a probe whose verdict no longer applies.
+
+The same reasoning covers a late `OnLost` for that stale probe: it must not
+lower `high` below the range the fallback just opened. Deriving both from the
+post-fallback `lastProbe` handles it without a separate epoch counter.
 
 Because it sets `low <= high`, the machine is back in the searching state, and
 `Probe()`'s backoff gate at `:64` is not consulted at all — **the climb back up
@@ -400,7 +440,8 @@ first step has no skew to check.
   constraint measured on this transport is the packet rate, not the byte rate,
   so a smaller MTU is a near-proportional throughput cut for that window.
   `mtu_fallbacks` is what makes a fleet-wide false-positive rate visible; the
-  unit tests in §10 pin the negative cases.
+  unit tests in §10 pin the negative cases, and its `lossy` and `bufferbloat`
+  arms are what set `k` rather than leaving it a guess.
 - **Idle connections now wake periodically.** Bounded to UDP connections by the
   `min == max` gate. The cost is one timer and one probe packet per interval per
   UDP connection.
@@ -434,7 +475,12 @@ belongs here and runs in milliseconds:
   and `min + 1 == max`.** Per decision 8 the algorithm's correctness must not
   depend on the caller's defaults: the estimate stays within `[min, max]`, the
   search terminates, a fallback lands on `min`, and no configuration produces a
-  past-timestamp deadline.
+  past-timestamp deadline;
+- **a probe issued before a fallback, acknowledged after it, does not raise the
+  estimate** — the §5c race. Its `OnLost` twin must likewise not lower `high`
+  below the reopened range;
+- **two fallbacks in a row** — a verdict reached while already at `min` leaves a
+  consistent state rather than an inverted range.
 
 **The split, as a unit test** (`send_stream`). Also no network:
 
@@ -442,7 +488,26 @@ belongs here and runs in milliseconds:
   B2, with contiguous offsets and `Eof` on the tail alone;
 - `sentRanges` holds the two new pointers and not the original, and ACKing both
   retires them through the O(1) head path;
-- a range whose length crosses a varint boundary gets a recomputed header.
+- a range whose length crosses a varint boundary gets a recomputed header;
+- **the tail splits again** when the budget drops a second time before it is
+  sent. Splitting is not a one-shot;
+- **a budget too small for `header + 1` byte pushes back instead of splitting.**
+  That is the original guard's job and it has to survive the rewrite: `n <= 0`
+  must never produce an empty range, which would consume a queue slot and
+  advance nothing;
+- **a range carrying only `Eof` with no data is not split.** A head with no
+  bytes and no EOF advances nothing and the tail is the same range again —
+  the shape that turns the retransmit queue into a spin;
+- **splitting does not double-count flow control.** The original send already
+  consumed the window; two ranges where there was one must not consume it twice.
+
+**The harness surface needs no new test, and that is worth stating rather than
+assuming.** `TestTrsfRowFromCarriesEveryNumberInInternalState`
+(`runner/protocol/trsf_row_test.go:57`) already fails, naming each one, for any
+`InternalState` number a row does not carry — it is how the nine datagram
+counters were caught in `9f4472dc`. The two members of §4b are covered by it the
+moment `objtrsf` exposes them. What does have to be run is
+`scripts/wire-skew-check.sh`, unconditionally, because `message.bgn` changes.
 
 **Regression on the rungs.** `mock` is **not** a free control here: unlike the
 datagram frame, this change is inside `trsf` itself, including the run loop's
@@ -470,11 +535,23 @@ different halves:
 | shrink, above BASE | `up --profile lan --mtu 1300` then `shape --mtu 1260` | `mtu` falls to 1200 and re-converges near 1230; `conns --trsf` answers throughout |
 | shrink, idle | the same, with no traffic offered at all | the same — this is the only arm that exercises §5a, and the only one that would still pass if the wake deadline were forgotten |
 | shrink, below BASE | `up --profile lan --mtu 1300` then `shape --mtu 1100` | `mtu_base_unusable` non-zero. The connection is NOT repaired: 1100 cannot carry BASE, and §2 says so |
+| **no shrink, lossy** | `up --profile lossy` (1 % independent loss), bulk traffic, MTU never touched | `mtu_fallbacks` stays **0** |
+| **no shrink, bufferbloat** | `up --profile bufferbloat` (20 mbit, 2000-packet queue), bulk traffic, MTU never touched | `mtu_fallbacks` stays **0** |
+| **idle ws** | `up --transport ws`, connections established, no traffic | the loop's iteration count does not rise — the `min == max` gate, checked in place rather than only in a unit test |
 
-Add `--pmtu-blackhole` to each. With ICMP delivered the local kernel learns the
-new size first and can mask the effect; the black-hole variant is the one that
-tests PLPMTUD rather than the kernel's PMTU cache.
+Add `--pmtu-blackhole` to each shrink arm. With ICMP delivered the local kernel
+learns the new size first and can mask the effect; the black-hole variant is the
+one that tests PLPMTUD rather than the kernel's PMTU cache.
 
-The third arm is the reproduction that opened this investigation. Its expected
-outcome changes from "hangs" to "says why", and that is the whole of what §5d
-claims.
+**The two no-shrink arms are what calibrate `k`, `floor` and `cap`**, and they
+are the reason those numbers are not settled by argument in §5b. `lossy` and
+`bufferbloat` are the two shapes that can make a healthy path lose large packets
+in bursts, which is the whole false-positive hazard; `lossy` models link
+corruption and `bufferbloat` models a queue the sender fills itself, and
+netem-lab's README is explicit that a congestion controller measured only
+against the first is measured against the wrong thing. If either arm produces a
+fallback, `k` is too small.
+
+The below-BASE arm is the reproduction that opened this investigation. Its
+expected outcome changes from "hangs" to "says why", and that is the whole of
+what §5d claims.
