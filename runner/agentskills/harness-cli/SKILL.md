@@ -182,6 +182,46 @@ Reading is limited to topics you subscribe to. A seq outside them reports
 the same "not readable" as one that has rotated out of its ring, so it is
 not a way to browse topics you have not joined.
 
+### Seeing the whole exchange — `agent thread`
+
+`agent read <seq>` gives you one parent. This gives you the chain.
+
+```bash
+harness-cli agent thread                      # every chain you can see
+harness-cli agent thread --seq 42             # the chain containing seq 42
+harness-cli agent thread --task <32-hex>      # chains involving that task (repeatable)
+harness-cli agent thread --headers-only       # rows without bodies
+harness-cli agent thread --json               # JSON Lines
+```
+
+**No capability is required**, for the same reason `retained` needs none: it
+summarizes topics you already subscribe to, and gating it would gate a read
+more tightly than the content it reports. A task spawned with no `--caps` at
+all can run it.
+
+Read what it shows you carefully, because it is bounded by what YOU can see:
+
+- It covers **the topics this task subscribes to**, which for most tasks is
+  `chat.<your-short-id>` alone. Your peer receives on its own topic, so its
+  half of the conversation — the messages you sent it — is not yours to read.
+  A chain therefore often arrives as a **fragment rooted at an ORPHAN**: the
+  reply is here, the message it answers is on the peer's topic. That is the
+  view working, not a gap in it.
+- **Indent marks a fork, not a reply.** A message answered once keeps its
+  parent's depth; only a message answered more than once steps right. Every
+  row carries `re=<seq>`, which names its parent exactly — read that, not the
+  indentation, when you need the linkage. (A back-and-forth is linear, so
+  indenting per reply would push a 20-turn exchange 60 columns right and say
+  nothing.)
+- A message that was answered has usually been **auto-retired** by that reply,
+  so it is withdrawn and you will not see it here at all. What you see is what
+  is still live on your topics.
+
+The operator's counterpart is `board thread`, which reads every topic on the
+board. It needs `board_observe`, so do not reach for it from a confined task:
+it will be denied, and the denial says `BoardTopics requires capability
+board_observe` rather than naming this verb.
+
 ## Withdrawing a message you sent (`agent retract`)
 
 If you sent an instruction and it is now spent — the peer reported it done,

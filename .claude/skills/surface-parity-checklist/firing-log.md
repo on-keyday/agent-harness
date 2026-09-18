@@ -2030,3 +2030,76 @@ Two things this says about the list rather than about the diff:
   resolution ladder is a per-path axis too, and nothing in the item's text
   reaches it. Fixed by naming the ladder in item 24 rather than by adding a
   number: it is the same question.
+
+## 2026-09-18 — agentboard reply-chain view (`board thread` / `agent thread`)
+
+Walked 1–39 for a new operator action with two capability faces, a shared
+assembly (`cli.BuildThreads` / `SelectThreads` / `CollectThreadsWith`) and a
+view on all three surfaces. S1–S6 `n/a`: no agent added, renamed or relaunched
+differently.
+
+**done:** 1, 4, 6, 10, 23, 24, 29, 31, 32, 33, 35, 36, 37, 39.
+
+- **1** — two rows in `cli/verb/table.go` (`board thread`, `agent thread`),
+  five flags each, no hand-written FlagSet anywhere.
+- **4** — `BoardChains: "c"` + its `mainKeyBindings` row; dispatched in
+  `tui/overlays.go` from the topics list and for refresh inside the view.
+- **6** — the `Topics | Chains` toggle in `webui/index.html` + `main.js`.
+- **10** — result rendering is shared here, against this item's default. The
+  "result" IS the rows, and three formatters would be three trees; what stays
+  per surface is placement, not format. The TUI draws `cli.RenderThreads` into
+  a viewport and the browser draws rows Go ordered.
+- **23** — `boardThread` on the bridge carries the label AND the raw value for
+  every seq: decimal strings, per D6.
+- **24** — `--raw` now exists on three paths (`board read`, `board thread`,
+  `agent thread`) and means the same on each: exact bytes. `--headers-only` and
+  `--json` likewise. Written into the spec's destination table rather than
+  implied.
+- **29 / 31** — every row names its target (`#seq topic= from=`), and `size=0`
+  prints because Amendment C made the field always-populated; a zero is a
+  zero-byte publish, not an unset field. ORPHAN is marked, never hidden.
+- **32** — one serializer per grammar, and the browser does not own a copy:
+  `TreePrefix` renders the gutter, `RenderThreads` the rows, and
+  `cli.ThreadWindowOperator` crosses the bridge so the WebUI cannot word the
+  window statement differently from the CLI.
+- **33** — a `--seq` outside the visible set is an error naming the seq, not an
+  empty result; `--task` matching nothing returns empty, never the unfiltered
+  board (a real defect found and fixed on both faces during implementation).
+- **35** — README: a "Reading a conversation, not a topic" section, and the
+  `agent {…}` summary list, which had been missing `read`/`retained`/`retract`/
+  `purge` as well.
+- **36** — `agent thread` section in the embedded skill + both mirrors.
+- **37** — spec Amendments A–D.
+- **39** — **this is the item that fired.** Two rows of the feature's own matrix
+  had gone stale against what shipped: the WebUI row still said "a tab beside
+  Board" when the operator had asked for a toggle inside it, and the verb
+  declaration still carried `NoModalSurface: "…the TUI chain view and WebUI tab
+  do not exist yet"` after both had landed. Nothing in 1–38 asks either
+  question. Both fixed; `ModalSurfaces` now names `tui/board.go:BoardModal` and
+  `webui/index.html#board-chains-view`, which `TestModalSurfaceEntryPointsExist`
+  verifies exist.
+
+**omitted:**
+
+- **7 — no `WEBUI_DISPATCH` entry.** The whole `board` family is
+  `CmdlineSurfaces: CLI`; neither the TUI nor the WebUI has a `board` verb to
+  type. The chain view is reached by its toggle, so there is no path for the
+  startup assertion to check. Matches `board read` / `board retract`.
+- **34a — no decomposed control.** The WebUI view takes no options: it shows
+  every chain. `--seq` / `--task` are selectors for a command line, and this
+  item's rule (build a form field from the controls its siblings use) has
+  nothing to apply to until the view grows filters.
+- **38 — the live screen panes do not render this.** `tui/pane_streamer.go` and
+  the WebUI session preview draw a session's SCREEN; a chain is board state, not
+  a screen. Asked and answered rather than skipped, per the item's own note.
+
+Everything unlisted was `n/a`: the change adds no task or runner field (11–18a,
+19–22), no request field or spawn option (25–28a), and no table whose column set
+varies (34).
+
+**Worth recording about the walk itself:** item 39 is the only reason the two
+stale statements were found, and both had been written by the same author who
+then built the thing they described. The spec row and the declaration were
+consistent with each OTHER the whole time — they were written together and
+never re-read against the code. A walk that had stopped at 38 would have
+reported full parity.

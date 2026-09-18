@@ -1049,14 +1049,18 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"print retained messages arranged by reply chain, across topics (cap: board_observe).",
 			"Roots in seq order; ORPHAN marks a reply whose parent is outside the visible set —",
-			"shown at root, never hidden. A topic leaves the board when its last subscriber task",
-			"finishes, and each topic holds at most the last 64 messages — so this view shows",
-			"conversations that are still happening, not post-mortems.",
+			"shown at root, never hidden. Indent marks a FORK, not a reply: a message answered",
+			"once keeps its parent's depth, and re=<seq> names the parent on every row.",
+			"Each topic holds at most the last 64 messages, kept until 30 minutes after that",
+			"topic's last publish.",
 		},
+		// Cmdline: CLI only, matching every other `board` sub-verb — neither the
+		// TUI nor the WebUI has a `board` verb family to type into at all.
 		CmdlineSurfaces: CLI,
-		NoModalSurface: "the TUI chain view (plan Task 8) and WebUI tab (plan Task 7) of " +
-			"docs/superpowers/plans/2026-09-18-agentboard-thread-viewer.md do not exist yet; until " +
-			"they land, the command line is the only way in",
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-chains-view"},
+		},
 		Action: "BoardAction",
 		Const:  map[string]string{"Sub": "thread"},
 		Flags: []Flag{

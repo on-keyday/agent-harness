@@ -108,9 +108,10 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       counters mean nothing as a single sample, so all three surfaces
       carry the reading: see **Reading a connection's transport state**.
     - Agent runtime (called from inside agent sessions):
-      `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
-      | topics | subscriptions}`. See `runner/agentskills/harness-cli/
-      SKILL.md` for conventions.
+      `agent {send | wait | inbox | read | thread | retained | retract
+      | purge | dispatch | subscribe | unsubscribe | topics
+      | subscriptions}`. See `runner/agentskills/harness-cli/SKILL.md`
+      for conventions.
     - Workspace config: `workspace {save,ls,show}` reads and writes
       `.harness/config`, and the global `--config` / `--workspace` add a
       third resolution tier below flag and env for `server-cid` /
@@ -895,6 +896,39 @@ That only applies point-to-point (the message sat on the replier's own
 `chat.<short-id>`) — one subscriber's answer never withdraws a shared-topic
 publish the others may not have read. `agent send --no-retire-on-reply`
 opts a message out.
+
+### Reading a conversation, not a topic
+
+The board is keyed by topic and a conversation is not: each agent receives on
+its own `chat.<short-id>`, so an exchange between two of them lives in two
+topics and every topic-keyed view shows one side of it. **`board thread`**
+follows `in_reply_to` across every topic instead, and each row says which
+topic it landed on.
+
+```bash
+bin/harness-cli board thread                                   # every chain
+bin/harness-cli board thread --seq 42                          # one chain
+bin/harness-cli board thread --task <32-hex> --task <32-hex>   # a pair's exchange
+```
+
+The TUI opens it with `c` on the board modal's topic list, the WebUI with the
+**Chains** toggle in the Board tab — both beside the topic view rather than
+replacing it, and both drawing the CLI's own renderer, so the three cannot
+show different trees. Agents get **`agent thread`**, which needs no
+capability: it summarizes topics the task already subscribes to, which also
+means it is bounded to that task's own side of a conversation and says so.
+
+**Indent marks a fork, not a reply.** A message answered once keeps its
+parent's depth; only one answered more than once steps right, and `re=<seq>`
+on every row names the parent exactly. Indenting per reply was the first shape
+and it does not survive a back-and-forth: measured on a real supervisor/worker
+exchange, 31 messages reached depth 17 with no forks in them at all.
+
+A body is escaped before it reaches a terminal, a viewport or the browser — C0
+except newline and tab, DEL, and C1 — because the bytes come from a peer and
+`ESC [ 2 J` clears a screen. Redirected or piped output is byte-exact instead,
+and `--json` always is: the CLI is a data path as well as a display, and
+escaping an extraction would corrupt it where nobody would see.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms

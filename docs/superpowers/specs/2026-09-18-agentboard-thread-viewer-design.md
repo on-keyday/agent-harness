@@ -55,9 +55,9 @@ and nothing that walks the chain.
 
 ## Scope
 
-In: a shared assembly in Go; two CLI verbs; a TUI view; a WebUI tab; the wasm
-bridge function behind it; payload escaping (D7) applied to both the new view
-and `board read`.
+In: a shared assembly in Go; two CLI verbs; a TUI view; a WebUI view (a toggle
+inside the Board tab — Amendment A); the wasm bridge function behind it;
+payload escaping (D7) applied to both the new view and `board read`.
 
 Out, explicitly:
 
@@ -81,9 +81,10 @@ disagree".
 type ThreadRow struct {
     Msg    BoardMessage
     Topic  string // which topic retained it; a chain spans several
-    Depth  int
+    Depth  int    // FORKS above this row, not replies — Amendment B
     IsLast []bool // last-child flags per ancestor level, for the gutter
     Orphan bool   // its in_reply_to names a seq not in the input set
+    Size   int    // published byte count, always populated — Amendment C
 }
 
 // BuildThreads arranges messages under the messages they reply to.
@@ -283,8 +284,8 @@ decimal string, and the JS side compares them as strings.
 |---------|--------|
 | CLI | `board thread`, `agent thread` verbs, both with `--headers-only` and `--raw`; `board read` body printing routed through the escape helper behind the `isTTY` gate, and `board read` gains `--raw` |
 | CLI (shared) | `cli/boardthread.go`; `TreePrefix` signature change |
-| TUI | a chain view beside the existing board view, reachable from it; the topic view unchanged |
-| WebUI | a tab beside Board; JS draws rows returned by wasm and performs no walk |
+| TUI | a chain view beside the existing board view, reachable from it (`c` on the topic list); the topic view unchanged |
+| WebUI | ~~a tab beside Board~~ → a **Topics / Chains toggle inside the Board tab** (Amendment A). JS draws rows returned by wasm and performs no walk |
 | wasm bridge | `boardThread` beside `boardRead` / `boardTopics` (`main.go:144-148`), seq fields as strings |
 | server | none — both verbs are built from calls that already exist |
 
@@ -335,26 +336,24 @@ was.** Found by running the verb against a live board rather than the
 in-process one the unit tests use. Three bounds apply, and the first is the one
 that usually bites:
 
-1. **A topic dies with its last subscriber.** `Board.Revoke`
-   (`agentboard/board.go:154`), called on `TaskFinished`, deletes every topic
-   only that task subscribed — retained messages included. A worker's
-   `chat.<short-id>` is subscribed by exactly that task, so a finished worker
-   takes its whole side of every conversation with it, at once. The one
-   carve-out is deliberate and documented in that function: a topic still
-   holding a **retracted** message survives to the TTL instead, because
-   otherwise finishing a task would destroy the audit trail `retract` exists to
-   keep, including entries the operator had not read.
-2. **30 minutes after the last publish**, for a topic that outlived its
-   subscribers under that carve-out.
-3. **64 messages per topic**, within a living topic.
+1. ~~**A topic dies with its last subscriber.**~~ **No longer true** — this
+   was the bound that bit first, and building this view is what surfaced it.
+   `Board.Revoke` deleted every topic only the finishing task subscribed,
+   retained messages included, exempting only one holding a *withdrawn*
+   message. Since commit `d0c9ff77` it drops a topic only when it holds
+   **nothing at all**; anything still readable stays and ages out under the
+   TTL. See the retract design's Amendment 2026-09-18d for why that exemption
+   was widened, and Amendment B below for what it changed here.
+2. **30 minutes after the last publish** — now the bound that actually fires.
+3. **64 messages per topic**.
 
-What this means for the view, stated plainly on each surface rather than
-discovered: between two tasks that are both still running — the case this
-feature was asked for — the chain is whole, because both topics live as long as
-their tasks. Once a participant finishes, its side is gone immediately and what
-remains renders as orphans. This view shows conversations that are still
-happening; it is not a post-mortem tool, and D2 keeps changing that out of
-scope.
+What this means for the view: a conversation between two tasks stays readable
+for half an hour after it goes quiet, whether or not either task is still
+alive. Before the Revoke change it was readable only while both participants
+ran, which made the view a live monitor and nothing else. It is still not a
+post-mortem tool — 30 minutes is 30 minutes, and D2 keeps persistence out of
+scope — but "the worker finished, so its side is gone" is no longer one of the
+ways a chain arrives half-missing.
 
 **`agent thread` shows a partial conversation by design.** A task sees its own
 subscribed topics. The view says so rather than implying it is the whole
@@ -374,3 +373,78 @@ Accepted under D2.
 4. TUI view and WebUI tab, both drawing rows they did not walk.
 5. `surface-parity-checklist` walked, verdict per number.
 6. `make check` green.
+
+---
+
+# Amendment A (2026-09-18) — the WebUI reaches it from the Board tab, not a tab of its own
+
+The Surface matrix gave the TUI "a chain view **reachable from** the board
+view" and the WebUI "a **tab beside** Board", with no reason for the
+difference. Nobody wrote the difference down as a decision because nobody
+noticed it was one; the operator did, on reading the matrix.
+
+Rule: the Board tab hosts a `Topics | Chains` toggle
+(`webui/index.html#board-chains-view`). The topic list and its drill-down are
+untouched, as D1 requires. The two surfaces now reach the same capability the
+same way, and a seventh top-level tab is not spent on a second view of one
+subject.
+
+Recorded as a reversal rather than an edit because the matrix had already been
+agreed: what changed is the route, not the feature, and the row above says so
+with its old value struck through — a table that quietly acquires the right
+answer cannot be audited against what shipped.
+
+# Amendment B (2026-09-18) — indent marks a fork, not a reply
+
+`Depth` was the number of replies between a row and its root. That is the
+`BuildTaskTree` shape, and it does not transfer: a spawn tree is shallow by
+construction while a reply chain is as deep as the conversation is long.
+
+Measured with `board thread` itself against the live board, on the
+supervisor/worker exchange that produced this feature: **31 messages, maximum
+depth 17, and zero messages with more than one reply.** Fifty-one columns of
+gutter encoding nothing, because a strictly linear back-and-forth has nothing
+to encode.
+
+Rule: a message that is its parent's **only** reply is a continuation and keeps
+its parent's depth; a message with siblings steps right. The gutter therefore
+means one thing — *here the conversation forked* — and `re=<seq>`, already on
+every row, is what names a parent exactly. Re-measured after the change on the
+same board: 31 rows, maximum depth 0.
+
+Two tests encoded the old semantics and were rewritten rather than deleted;
+`TestBuildThreadsDepthMarksForksNotReplies` pins the new rule with a linear run
+and a two-way fork in one input. Three more depth expectations across both
+faces were found one package at a time, which is the cost of not grepping for
+every expectation of a semantics before changing it.
+
+# Amendment C (2026-09-18) — `ThreadRow.Size`, and why it is not a sentinel
+
+`ThreadRow` gains `Size int`, the published byte count. The agent face collects
+through `agent retained`, whose metadata carries a size but no body, so under
+`--headers-only` there is no payload to measure and a renderer reading
+`len(Payload)` would print `size=0` for every row.
+
+It arrived meaning "the published size, or zero if nobody set it, in which case
+read `len(Payload)`". That is a value-gated sentinel, and an empty publish is a
+real case here — `agent send` reports `bytes: 0`, and the harness-cli skill
+warns about it — so a genuinely zero-byte message was indistinguishable from an
+unpopulated field. Both sources answer 0 today, which is exactly what would have
+kept it working until a third face arrived.
+
+Rule: `BuildThreads` fills it from the payload it was handed and the agent face
+overwrites it from its metadata, so it is always populated and the renderer
+reads it unconditionally. The JSON row carries it too: under `--headers-only`
+there is no body, and the size is the one field that form cannot derive.
+
+# Amendment D (2026-09-18) — the renderer is told its body mode, not left to guess
+
+`RenderThreads` judged its destination by asking whether its `io.Writer` was an
+`*os.File`. That answers "exact bytes" for anything else — including the TUI's
+viewport, the one surface that must always escape, where a stray `ESC` repaints
+over the panel border.
+
+Rule: `ThreadRenderOptions` carries an explicit `BodyMode`. The two CLI faces
+compute it from `os.Stdout` at their own call site, where it is still a file and
+where obligation 2 of the payload section lives; the TUI states `BodyEscaped`.
+`BodyMode` is exported for that reason alone.
