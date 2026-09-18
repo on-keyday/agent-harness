@@ -256,7 +256,12 @@ func TestAgentThread_JSON(t *testing.T) {
 	seedThreadExchange(t, addr, board, a, b)
 
 	got := runAgentThread(t, addr, a, "--json")
-	for _, want := range []string{`"depth":0`, `"depth":1`, `"orphan":false`, `"payload_b64":`} {
+	// The seeded exchange is linear — one reply to one root — so BOTH rows are
+	// at depth 0: indent marks a fork, not a reply
+	// (cli.BuildThreads, TestBuildThreadsDepthMarksForksNotReplies). This
+	// asserted "depth":1 until 2026-09-18, when the rule changed; what the test
+	// is actually for is that the placement fields reach the JSON at all.
+	for _, want := range []string{`"depth":0`, `"orphan":false`, `"payload_b64":`, `"is_last":`, `"size":`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("json record missing %s:\n%s", want, got)
 		}

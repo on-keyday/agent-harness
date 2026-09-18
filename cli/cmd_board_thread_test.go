@@ -253,7 +253,10 @@ func TestBoardThread_JSON(t *testing.T) {
 	if recs[0]["seq"].(float64) != float64(s1) || recs[1]["in_reply_to"].(float64) != float64(s1) {
 		t.Errorf("seq linkage wrong: %v / %v", recs[0]["seq"], recs[1]["in_reply_to"])
 	}
-	if recs[1]["depth"].(float64) != 1 || recs[1]["orphan"].(bool) {
+	// depth 0, not 1: the seeded chain is linear, and indent marks a fork
+	// rather than a reply (TestBuildThreadsDepthMarksForksNotReplies). The
+	// linkage this row carries is in_reply_to, asserted above.
+	if recs[1]["depth"].(float64) != 0 || recs[1]["orphan"].(bool) {
 		t.Errorf("chain placement wrong on row 1: %v", recs[1])
 	}
 	if _, ok := recs[0]["payload_b64"]; !ok {
