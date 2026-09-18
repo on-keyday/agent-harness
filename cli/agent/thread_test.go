@@ -148,7 +148,7 @@ func TestAgentThread_OwnSideJoined(t *testing.T) {
 	if strings.Contains(got, "ORPHAN") {
 		t.Errorf("A's chain is complete; an ORPHAN marker is wrong here:\n%s", got)
 	}
-	if !strings.Contains(got, "topics THIS task subscribes to") {
+	if !strings.Contains(got, agent.ThreadWindowAgent) {
 		t.Errorf("window statement missing:\n%s", got)
 	}
 }

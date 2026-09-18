@@ -96,7 +96,7 @@ func TestBoardThread_JoinsAcrossTopics(t *testing.T) {
 		}
 	}
 	// The window line is what makes an empty view legible; it must be there.
-	if !strings.Contains(got, "a topic dies when its last subscriber task finishes") {
+	if !strings.Contains(got, cli.ThreadWindowOperator) {
 		t.Errorf("window statement missing:\n%s", got)
 	}
 	// Order: the three bodies must appear in seq order.
@@ -170,7 +170,7 @@ func TestBoardThread_TaskFilterMatchingNothingIsEmpty(t *testing.T) {
 	if strings.Contains(got, "root from A") || strings.Contains(got, "c talks to himself") {
 		t.Errorf("a non-matching --task printed the unfiltered board:\n%s", got)
 	}
-	if !strings.Contains(got, "last subscriber task finishes") {
+	if !strings.Contains(got, cli.ThreadWindowOperator) {
 		t.Errorf("empty result lost the window line:\n%s", got)
 	}
 }

@@ -143,6 +143,7 @@ func main() {
 		"setParent":          js.FuncOf(harnessSetParent),
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
+		"boardThread":        js.FuncOf(harnessBoardThread),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
@@ -1634,6 +1635,101 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"found": found,
 				"msgs":  msgsOut,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardThread returns the agentboard's reply chains, already assembled
+// and ordered.
+//
+//	harness.boardThread() -> Promise<{window, rows: [{seq, inReplyTo, topic,
+//	                                   depth, isLast, orphan, gutter, size, body,
+//	                                   from{...}, retracted, retractedAtMs,
+//	                                   retractedBy}]}>
+//
+// `window` is cli.ThreadWindowOperator, the same sentence the CLI prints. It
+// crosses the bridge rather than being retyped in JS because a view whose
+// emptiness is explained by two slightly different sentences on two surfaces is
+// a view whose explanation nobody trusts.
+//
+// The walk happens in Go — the browser receives rows in draw order with the
+// depth and last-child flags already decided, and must not follow inReplyTo
+// itself. A conversation spans topics (each agent receives on its own
+// chat.<short-id>), so a second walk in JS would be free to disagree with the
+// one the CLI and TUI draw, which is the mirror this codebase keeps getting
+// bitten by.
+//
+// `gutter` ships the rendered tree prefix for the same reason cli.ShownTo's
+// result crosses rather than its inputs: one implementation of the ├─/└─/│
+// columns, not two.
+func harnessBoardThread(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows, err := cli.CollectThreadsWith(rootCtx, c, cli.ThreadFilter{})
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardThread: %w", err))
+				return
+			}
+			out := make([]any, 0, len(rows))
+			for _, r := range rows {
+				isLast := make([]any, 0, len(r.IsLast))
+				for _, b := range r.IsLast {
+					isLast = append(isLast, b)
+				}
+				out = append(out, map[string]any{
+					// Decimal strings, not float64: a board seq is
+					// UnixNano-seeded (~1.9e18) and past
+					// Number.MAX_SAFE_INTEGER, so a float64 rounds to the
+					// nearest ULP (~256). This view joins parent to child on
+					// seq equality alone, so rounding would not misprint a
+					// number — it would attach replies to the wrong parent and
+					// still look plausible.
+					"seq":       strconv.FormatUint(r.Msg.Seq, 10),
+					"inReplyTo": strconv.FormatUint(r.Msg.InReplyTo, 10),
+					"topic":     r.Topic,
+					"depth":     float64(r.Depth),
+					"isLast":    isLast,
+					"gutter":    cli.TreePrefix(r.IsLast),
+					"orphan":    r.Orphan,
+					// Always populated, so a zero here means a zero-byte
+					// publish rather than a field nobody filled in.
+					"size": float64(r.Size),
+					// Escaped on this side. A body is an untrusted peer's
+					// bytes and this surface has no byte-extraction path to
+					// protect — that is `--json` on the CLI — so the browser
+					// never receives a raw control byte to decide about.
+					"body":         cli.EscapeForTerminal(r.Msg.Payload),
+					"replyToTopic": r.Msg.ReplyToTopic,
+					"receivedAtMs": float64(r.Msg.ReceivedAtMs),
+					"from": map[string]any{
+						"taskId":       r.Msg.FromTaskHex,
+						"hostname":     r.Msg.FromHostname,
+						"agentProfile": r.Msg.FromAgentProfile,
+					},
+					"retracted":     r.Msg.Retracted,
+					"retractedAtMs": float64(r.Msg.RetractedAtMs),
+					"retractedBy": func() string {
+						if !r.Msg.Retracted {
+							return ""
+						}
+						return cli.RetractedByLabel(r.Msg)
+					}(),
+				})
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"window": cli.ThreadWindowOperator,
+				"rows":   out,
 			}))
 		}()
 		return nil

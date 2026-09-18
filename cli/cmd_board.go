@@ -301,32 +301,13 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		// a conversation spans topics by construction (each agent receives
 		// on its own chat.<short-id>) — and hands one flat list to
 		// BuildThreads. The rows carry the topic each message landed on.
-		topics, err := BoardTopics(ctx, cid)
-		if err != nil {
-			return err
-		}
-		var msgs []BoardMessage
-		topicOf := make(map[uint64]string)
-		for _, t := range topics {
-			tmsgs, found, err := BoardRead(ctx, cid, t.Name)
-			if err != nil {
-				return err
-			}
-			if !found {
-				continue
-			}
-			for _, m := range tmsgs {
-				topicOf[m.Seq] = t.Name
-			}
-			msgs = append(msgs, tmsgs...)
-		}
-
-		// Chains, not messages, are the unit the selectors pick: the shared
-		// SelectThreads owns the union-find, the --task semantics and the
-		// --seq error, and the agent face (cli/agent/thread.go) calls the
-		// same function. A second copy here would be the second way to
-		// flatten the graph this design exists to prevent.
-		rows, serr := SelectThreads(BuildThreads(msgs, topicOf), topicOf, ThreadFilter{
+		// Chains, not messages, are the unit the selectors pick, and the
+		// collection is shared with the WebUI's wasm bridge: CollectThreads
+		// owns which topics are read as well as the union-find, the --task
+		// semantics and the --seq error. The agent face (cli/agent/thread.go)
+		// reaches the same SelectThreads by its own collection route, which is
+		// the only part that differs between the two faces.
+		rows, serr := CollectThreads(ctx, cid, ThreadFilter{
 			Tasks: ba.Tasks,
 			Seq:   ba.Seq,
 		})
@@ -430,16 +411,19 @@ func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) erro
 		JSON:        ba.JSON,
 		HeadersOnly: ba.HeadersOnly,
 		Raw:         ba.Raw,
-		Window:      threadWindowOperator,
+		Window:      ThreadWindowOperator,
 	}, nil)
 }
 
-// threadWindowOperator is the window statement the operator face prints. The
+// ThreadWindowOperator is the window statement the operator face prints. The
 // wording is deliberate: it must not promise a duration the board does not
 // honour. A topic dies when its last subscriber task finishes (Board.Revoke),
 // and each topic holds at most the last 64 messages — the TTL exists but
 // rarely fires first.
-const threadWindowOperator = "board thread: shows what is still on the board — a topic dies when its last subscriber task finishes, and holds at most the last 64 messages; ORPHAN marks a reply whose parent is outside that set"
+// ThreadWindowOperator is the window statement every operator-facing chain
+// view prints. Exported because the WebUI shows it too and reaches it through
+// the wasm bridge: one wording, not one per surface.
+const ThreadWindowOperator = "board thread: shows what is still on the board — at most the last 64 messages per topic, kept until 30 minutes after that topic's last publish; ORPHAN marks a reply whose parent is outside that window"
 
 // ThreadRenderOptions carries what the two faces of the thread view may
 // differ on: output mode, body suppression, escaping, and the window

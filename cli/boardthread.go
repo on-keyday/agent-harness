@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ThreadRow is one board message placed in its reply chain, flattened into the
@@ -270,4 +274,54 @@ func rowsOfChain(rows []ThreadRow, find func(uint64) uint64, want uint64) []Thre
 		}
 	}
 	return out
+}
+
+// CollectThreadsWith gathers every topic the caller can see, assembles the
+// reply chains across all of them, and applies f.
+//
+// It exists so the CLI verb and the WebUI's wasm bridge run the SAME
+// collection. A conversation spans topics by construction — each agent
+// receives on its own chat.<short-id> — so "which topics" is part of the
+// answer, not a caller's choice, and a second implementation on the browser
+// side would be free to disagree about it.
+//
+// It takes a *Client rather than a ConnectionID because the surfaces that are
+// not one-shot commands hold a long-lived one; CollectThreads is the
+// dial-per-call wrapper for the ones that do not.
+//
+// A topic that vanishes between the listing and the read is skipped, not an
+// error: topics die with their last subscriber (see the retract design's
+// Amendment 2026-09-18d), so the race is ordinary rather than exceptional.
+func CollectThreadsWith(ctx context.Context, c *Client, f ThreadFilter) ([]ThreadRow, error) {
+	topics, err := c.BoardTopics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var msgs []BoardMessage
+	topicOf := make(map[uint64]string)
+	for _, t := range topics {
+		tmsgs, found, err := c.BoardRead(ctx, t.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		for _, m := range tmsgs {
+			topicOf[m.Seq] = t.Name
+		}
+		msgs = append(msgs, tmsgs...)
+	}
+	return SelectThreads(BuildThreads(msgs, topicOf), topicOf, f)
+}
+
+// CollectThreads is CollectThreadsWith for a caller that has no client to
+// reuse: it dials, collects and closes.
+func CollectThreads(ctx context.Context, peerCID objproto.ConnectionID, f ThreadFilter) ([]ThreadRow, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return CollectThreadsWith(ctx, c, f)
 }

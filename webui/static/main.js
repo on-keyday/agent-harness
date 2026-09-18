@@ -5555,9 +5555,130 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
 
+  // ── Agentboard chain view ─────────────────────────────────────────────────
+  // The second view of the same board. Topics answers "what is on this topic";
+  // this follows in_reply_to across topics, which is the only way to see a
+  // whole exchange: each agent receives on its own chat.<short-id>, so a
+  // conversation is split across at least two topics by construction.
+  //
+  // The walk is NOT here. harness.boardThread() returns rows already in draw
+  // order with depth, the last-child flags and the rendered gutter decided in
+  // Go, and this code only paints them. Following inReplyTo in JS would be a
+  // second walk, free to disagree with the one the CLI and TUI draw.
+  //
+  // Seqs arrive as decimal strings and stay strings: a board seq is ~1.9e18,
+  // past Number.MAX_SAFE_INTEGER, so parsing one to a Number rounds it to the
+  // nearest ~256 and would silently merge distinct messages.
+
+  const boardTopicsViewEl  = document.getElementById("board-topics-view");
+  const boardChainsViewEl  = document.getElementById("board-chains-view");
+  const boardChainsWindowEl = document.getElementById("board-chains-window");
+  const boardChainsRowsEl  = document.getElementById("board-chains-rows");
+  const boardViewTopicsBtn = document.getElementById("board-view-topics");
+  const boardViewChainsBtn = document.getElementById("board-view-chains");
+
+  // boardView is which of the two views the Board tab is showing.
+  let boardView = "topics";
+
+  function setBoardView(name) {
+    boardView = name;
+    if (boardTopicsViewEl) boardTopicsViewEl.hidden = name !== "topics";
+    if (boardChainsViewEl) boardChainsViewEl.hidden = name !== "chains";
+    if (boardViewTopicsBtn) boardViewTopicsBtn.classList.toggle("is-active", name === "topics");
+    if (boardViewChainsBtn) boardViewChainsBtn.classList.toggle("is-active", name === "chains");
+    if (name === "chains") renderBoardChains();
+    else renderBoardTopics();
+  }
+
+  // renderBoardChains paints the rows the bridge returns.
+  async function renderBoardChains() {
+    if (!boardChainsRowsEl) return;
+    boardChainsRowsEl.innerHTML = "";
+    if (!window.harness) {
+      boardChainsRowsEl.textContent = "(not connected)";
+      return;
+    }
+    let res;
+    try {
+      res = await window.harness.boardThread();
+    } catch (err) {
+      boardChainsRowsEl.textContent = "boardThread failed: " + err;
+      return;
+    }
+    // The window statement comes from Go (cli.ThreadWindowOperator) so this
+    // surface cannot drift from the CLI's wording. It is shown even when there
+    // are rows: it is what tells a reader that an ORPHAN is the retention
+    // window, not a broken view.
+    if (boardChainsWindowEl) boardChainsWindowEl.textContent = (res && res.window) || "";
+    const rows = (res && res.rows) || [];
+    if (!rows.length) {
+      boardChainsRowsEl.textContent = "(nothing on the board within that window)";
+      return;
+    }
+    for (const r of rows) {
+      const row = document.createElement("div");
+      row.className = "board-chain-row";
+      if (r.orphan) row.classList.add("is-orphan");
+      if (r.retracted) row.classList.add("is-retracted");
+
+      const head = document.createElement("div");
+      head.className = "board-chain-head";
+      // The gutter is monospace and pre-formatted: it is the same ├─ / └─ / │
+      // string the CLI and TUI draw, rendered by cli.TreePrefix.
+      const gutter = document.createElement("span");
+      gutter.className = "board-chain-gutter";
+      gutter.textContent = r.gutter || "";
+      head.appendChild(gutter);
+
+      const meta = document.createElement("span");
+      meta.className = "board-chain-meta";
+      const bits = ["#" + r.seq];
+      if (r.inReplyTo && r.inReplyTo !== "0") bits.push("re=" + r.inReplyTo);
+      if (r.replyToTopic) bits.push("reply-to=" + r.replyToTopic);
+      bits.push("topic=" + r.topic);
+      bits.push("from=" + String(r.from && r.from.taskId || "").slice(0, 8));
+      if (r.from && r.from.agentProfile) bits.push("agent=" + r.from.agentProfile);
+      // size is always populated, so a 0 here is a zero-byte publish rather
+      // than a field nobody filled in — printed rather than hidden.
+      bits.push("size=" + r.size);
+      meta.textContent = bits.join(" ");
+      head.appendChild(meta);
+
+      if (r.orphan) {
+        const tag = document.createElement("span");
+        tag.className = "board-chain-tag";
+        tag.textContent = "ORPHAN";
+        tag.title = "its parent is outside the retention window, or on a topic this view cannot read";
+        head.appendChild(tag);
+      }
+      if (r.retracted) {
+        const tag = document.createElement("span");
+        tag.className = "board-chain-tag is-retracted";
+        tag.textContent = "RETRACTED" + (r.retractedBy ? " by=" + r.retractedBy : "");
+        head.appendChild(tag);
+      }
+      row.appendChild(head);
+
+      // Body bytes arrive already escaped by Go, so nothing here has to decide
+      // what a control byte means.
+      const body = document.createElement("pre");
+      body.className = "board-chain-body";
+      body.style.marginLeft = (r.depth * 2) + "ch";
+      body.textContent = prettyPayload(r.body || "");
+      row.appendChild(body);
+
+      boardChainsRowsEl.appendChild(row);
+    }
+  }
+
+  if (boardViewTopicsBtn) boardViewTopicsBtn.addEventListener("click", () => setBoardView("topics"));
+  if (boardViewChainsBtn) boardViewChainsBtn.addEventListener("click", () => setBoardView("chains"));
+
   if (boardRefreshBtn) {
     boardRefreshBtn.addEventListener("click", () => {
-      if (boardDetailEl && !boardDetailEl.hidden && currentBoardTopic) {
+      if (boardView === "chains") {
+        renderBoardChains();
+      } else if (boardDetailEl && !boardDetailEl.hidden && currentBoardTopic) {
         openBoardTopic(currentBoardTopic);
       } else {
         renderBoardTopics();
@@ -6063,10 +6184,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Keep the git task dropdown in step with the snapshot poll.
   window.__renderGitTaskSelect = renderGitTaskSelect;
 
-  // Activate renderBoardTopics when the board tab is selected.
+  // Activate whichever board view is showing when the board tab is selected.
   tabbar.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab-btn");
-    if (btn && btn.dataset.tab === "board") renderBoardTopics();
+    if (btn && btn.dataset.tab === "board") {
+      if (boardView === "chains") renderBoardChains();
+      else renderBoardTopics();
+    }
   });
 })();
 

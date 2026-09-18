@@ -79,7 +79,7 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	if serr != nil {
 		var e *cli.SeqNotVisibleError
 		if errors.As(serr, &e) {
-			return fmt.Errorf("agent thread: seq %d is not readable from this task: its topic may have died with its last subscriber task, it may have rotated out of a 64-message ring, or it sits on a topic this task does not subscribe to", e.Seq)
+			return fmt.Errorf("agent thread: seq %d is not readable from this task: it may have rotated out of a 64-message ring, its topic may have aged out 30 minutes after its last publish, it may have been purged, or it sits on a topic this task does not subscribe to", e.Seq)
 		}
 		return serr
 	}
@@ -107,17 +107,20 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 		JSON:        a.JSON,
 		HeadersOnly: a.HeadersOnly,
 		Raw:         a.Raw,
-		Window:      threadWindowAgent,
+		Window:      ThreadWindowAgent,
 	}, nil)
 }
 
-// threadWindowAgent is the agent face's window statement. It differs from the
+// ThreadWindowAgent is the agent face's window statement. It differs from the
 // operator's in the half that matters here: this view covers the topics THIS
 // task subscribes to, so a peer's half of the exchange is invisible and the
 // chain renders as an orphan-rooted fragment. A reader who does not know that
 // will read a truncated conversation as a viewer bug — the line exists to
 // stop that reading.
-const threadWindowAgent = "agent thread: shows what is still on the board on the topics THIS task subscribes to — a peer's half of an exchange may be invisible, so a fragment here is the view working, not a bug; a topic dies when its last subscriber task finishes, and holds at most the last 64 messages"
+// ThreadWindowAgent is the agent face's window statement. It differs from the
+// operator's by naming the visibility limit, which is the part a reader of a
+// truncated chain needs.
+const ThreadWindowAgent = "agent thread: shows what is still on the board on the topics THIS task subscribes to — a peer's half of an exchange may be invisible, so a fragment here is the view working, not a bug; at most the last 64 messages per topic, kept until 30 minutes after that topic's last publish"
 
 // listSubscribedTopics fetches the calling task's subscription pattern list.
 // The patterns are concrete topic names (the seeded chat.<short-id> plus

@@ -301,19 +301,31 @@
       <pre id="git-content" class="git-diff"></pre>
     </section>
     <section id="board" data-tabgroup="board">
-      <h2>Agentboard Topics</h2>
+      <h2>Agentboard</h2>
+      <!-- Two views of one board, not two tabs: Topics answers "what is on this
+           topic", Chains follows in_reply_to across topics. A conversation spans
+           topics by construction, so the topic view structurally shows one side
+           of every exchange. -->
       <div class="actions">
+        <button type="button" id="board-view-topics" class="board-view-btn is-active">Topics</button>
+        <button type="button" id="board-view-chains" class="board-view-btn">Chains</button>
         <button id="board-refresh-btn">↻ Refresh</button>
       </div>
-      <div id="board-topics"></div>
-      <div id="board-detail" hidden>
-        <div class="board-detail-header">
-          <button id="board-back-btn" class="board-back-btn">← Back</button>
-          <span id="board-detail-title" class="board-detail-title"></span>
-          <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
+      <div id="board-topics-view">
+        <div id="board-topics"></div>
+        <div id="board-detail" hidden>
+          <div class="board-detail-header">
+            <button id="board-back-btn" class="board-back-btn">← Back</button>
+            <span id="board-detail-title" class="board-detail-title"></span>
+            <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
+          </div>
+          <div id="board-subscribers"></div>
+          <div id="board-messages"></div>
         </div>
-        <div id="board-subscribers"></div>
-        <div id="board-messages"></div>
+      </div>
+      <div id="board-chains-view" hidden>
+        <div id="board-chains-window" class="board-chains-window"></div>
+        <div id="board-chains-rows" class="board-chains-rows"></div>
       </div>
     </section>
     <section id="interactive" data-tabgroup="terminal">

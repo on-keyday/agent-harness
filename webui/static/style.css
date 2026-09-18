@@ -2125,3 +2125,73 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   .chat-input-row { flex-wrap: wrap; }
   .chat-input-row textarea { flex: 1 0 100%; }
 }
+
+/* ── Agentboard chain view ──────────────────────────────────────────────────
+   The second view of the Board tab. Colours follow .board-msg-* so the two
+   views of one board do not look like two features. */
+.board-view-btn {
+  background: #2d2d30;
+  color: #d4d4d4;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+.board-view-btn:hover { background: #333; }
+.board-view-btn.is-active {
+  background: #094771;
+  border-color: #0e639c;
+}
+/* The window statement. It explains an empty view and an ORPHAN row, so it is
+   readable rather than fine print, and it is shown even when rows exist. */
+.board-chains-window {
+  color: #999;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0.4rem 0 0.8rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid #444;
+}
+.board-chain-row {
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.35rem;
+  background: #252526;
+}
+.board-chain-row.is-orphan { border-left: 3px solid #d7ba7d; }
+.board-chain-row.is-retracted { opacity: 0.55; border-style: dashed; }
+.board-chain-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-family: monospace;
+  font-size: 0.82rem;
+}
+/* pre-wrap, not normal: the gutter's spacing IS the tree, and collapsing it
+   would leave every row at the same indent. */
+.board-chain-gutter {
+  white-space: pre;
+  color: #6a9955;
+}
+.board-chain-meta { color: #888; word-break: break-all; }
+.board-chain-tag {
+  color: #d7ba7d;
+  border: 1px solid #5a4d2b;
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
+.board-chain-tag.is-retracted { color: #ce9178; border-color: #6b4a3a; }
+.board-chain-body {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+  color: #d4d4d4;
+}
+@media (max-width: 390px) {
+  .board-chain-head { font-size: 0.76rem; }
+  .board-chain-body { font-size: 0.76rem; }
+}
