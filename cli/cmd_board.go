@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -239,6 +238,13 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
 		}
 		shown := 0
+		// The body mode is judged ONCE, from the real destination, before the
+		// loop: stdout is os.Stdout in the generated dispatch, and a test's
+		// bytes.Buffer is not an *os.File at all. Both fail toward bodyExact —
+		// the mode nobody set yields the published bytes, which is obligation
+		// 2: escaping a redirect would corrupt extraction invisibly.
+		destFile, _ := out.(*os.File)
+		mode := bodyModeFor(destFile, ba.Raw)
 		for _, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
@@ -278,14 +284,10 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				m.Seq, re, replyTo, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
 				ShownToLabel(subs, topic, m.Seq), retracted)
-			if json.Valid(m.Payload) {
-				var buf bytes.Buffer
-				_ = json.Indent(&buf, m.Payload, "", "  ")
-				fmt.Fprintln(out, buf.String())
-			} else {
-				out.Write(m.Payload) //nolint:errcheck
-				fmt.Fprintln(out)
-			}
+			// JSON-indent behaviour lives in writeBoardBody now, along with the
+			// escape gate; json escapes C0 but leaves C1 raw, so the escaped
+			// mode still needs its pass there.
+			writeBoardBody(out, m.Payload, mode)
 		}
 		if shown == 0 {
 			// Third way to print nothing: the topic has messages, none of them
@@ -293,6 +295,45 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			fmt.Fprintf(os.Stderr, "board read: topic %q holds %d message(s), none replying to %d\n",
 				topic, len(msgs), *inReplyTo)
 		}
+
+	case verb.SubThread:
+		// The chain view. It collects EVERY topic the operator can see —
+		// a conversation spans topics by construction (each agent receives
+		// on its own chat.<short-id>) — and hands one flat list to
+		// BuildThreads. The rows carry the topic each message landed on.
+		topics, err := BoardTopics(ctx, cid)
+		if err != nil {
+			return err
+		}
+		var msgs []BoardMessage
+		topicOf := make(map[uint64]string)
+		for _, t := range topics {
+			tmsgs, found, err := BoardRead(ctx, cid, t.Name)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			for _, m := range tmsgs {
+				topicOf[m.Seq] = t.Name
+			}
+			msgs = append(msgs, tmsgs...)
+		}
+
+		// Chains, not messages, are the unit the selectors pick: the shared
+		// SelectThreads owns the union-find, the --task semantics and the
+		// --seq error, and the agent face (cli/agent/thread.go) calls the
+		// same function. A second copy here would be the second way to
+		// flatten the graph this design exists to prevent.
+		rows, serr := SelectThreads(BuildThreads(msgs, topicOf), topicOf, ThreadFilter{
+			Tasks: ba.Tasks,
+			Seq:   ba.Seq,
+		})
+		if serr != nil {
+			return serr
+		}
+		return renderThreadRows(out, ba, rows)
 
 	case verb.SubSubscribers:
 		// Optional <topic>: with it, only the tasks a publish to that topic
@@ -380,4 +421,151 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		return fmt.Errorf("unknown board subcommand: %q", ba.Sub)
 	}
 	return nil
+}
+
+// renderThreadRows is the operator face's call into RenderThreads; the two
+// faces share one renderer so their rows cannot drift.
+func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) error {
+	return RenderThreads(out, rows, ThreadRenderOptions{
+		JSON:        ba.JSON,
+		HeadersOnly: ba.HeadersOnly,
+		Raw:         ba.Raw,
+		Window:      threadWindowOperator,
+	}, nil)
+}
+
+// threadWindowOperator is the window statement the operator face prints. The
+// wording is deliberate: it must not promise a duration the board does not
+// honour. A topic dies when its last subscriber task finishes (Board.Revoke),
+// and each topic holds at most the last 64 messages — the TTL exists but
+// rarely fires first.
+const threadWindowOperator = "board thread: shows what is still on the board — a topic dies when its last subscriber task finishes, and holds at most the last 64 messages; ORPHAN marks a reply whose parent is outside that set"
+
+// ThreadRenderOptions carries what the two faces of the thread view may
+// differ on: output mode, body suppression, escaping, and the window
+// statement — the agent face's says which topics it can see, the operator
+// face's says which it cannot see past.
+type ThreadRenderOptions struct {
+	JSON        bool
+	HeadersOnly bool
+	Raw         bool
+	Window      string
+}
+
+// RenderThreads draws the rows BuildThreads and SelectThreads produced.
+//
+// The window line is the spec's Risks requirement in visible form: an empty
+// view must read as "nothing recent" rather than "broken", so the retention
+// bounds are stated once, above the rows. In --json mode the line cannot join
+// the feed (it would corrupt one-record-per-line framing), so it goes to
+// stderr instead.
+func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, keep func(seq uint64) bool) error {
+	if opts.JSON {
+		fmt.Fprintln(os.Stderr, opts.Window)
+	} else {
+		fmt.Fprintln(out, opts.Window)
+	}
+
+	// The body mode is judged ONCE, from the real destination — the same
+	// gate and the same reasoning as board read's.
+	destFile, _ := out.(*os.File)
+	mode := bodyModeFor(destFile, opts.Raw)
+
+	for _, r := range rows {
+		if keep != nil && !keep(r.Msg.Seq) {
+			continue
+		}
+		if opts.JSON {
+			emitThreadRowJSON(out, r, !opts.HeadersOnly)
+			continue
+		}
+		// re= only on replies; reply-to only when the sender declared one;
+		// ORPHAN only when it applies — the same "marker when it applies"
+		// rule the board read rows use. A retracted message is still shown:
+		// this row is where a withdrawal stays auditable.
+		re := ""
+		if r.Msg.InReplyTo != 0 {
+			re = fmt.Sprintf(" re=%d", r.Msg.InReplyTo)
+		}
+		replyTo := ""
+		if r.Msg.ReplyToTopic != "" {
+			replyTo = fmt.Sprintf(" reply-to=%s", r.Msg.ReplyToTopic)
+		}
+		marker := ""
+		if r.Orphan {
+			marker = " ORPHAN"
+		}
+		if r.Msg.Retracted {
+			marker += fmt.Sprintf(" RETRACTED at=%s by=%s",
+				boardMsToRFC3339(r.Msg.RetractedAtMs), RetractedByLabel(r.Msg))
+		}
+		size := len(r.Msg.Payload)
+		if r.Size != 0 {
+			// A face that collected metadata without carrying the body knows
+			// the published size from it; len(Payload) would print 0 and
+			// claim a zero-byte message was published.
+			size = r.Size
+		}
+		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
+			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
+			boardTaskShort(r.Msg.FromTaskHex), r.Msg.FromHostname,
+			boardAgentOrDash(r.Msg.FromAgentProfile), size,
+			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
+		if !opts.HeadersOnly {
+			writeBoardBody(out, r.Msg.Payload, mode)
+		}
+	}
+	return nil
+}
+
+// boardTaskShort renders a sender task hex as the 8-hex prefix every other
+// board row surface uses. An empty hex prints as-is (""), which the caller
+// reads as "no attribution".
+func boardTaskShort(hex string) string {
+	if len(hex) > 8 {
+		return hex[:8]
+	}
+	return hex
+}
+
+// emitThreadRowJSON writes one JSON-Lines record for a chain row. The record
+// mirrors `board read --json`'s shape where the fields overlap (seq,
+// in_reply_to, topic, reply_to_topic, received_at, retracted, from,
+// payload_b64) so the two feeds parse the same way, and adds the chain
+// placement: depth, is_last (the gutter flags per level, for a renderer that
+// wants them) and orphan. seq and in_reply_to are JSON numbers here — the
+// same choice emitBoardMessageJSON makes; the decimal-string rule (D6) is the
+// wasm boundary's, where a JS float64 would silently corrupt the ~1.9e18 seq.
+// includeBody=false (--headers-only) omits the body, in either form.
+func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
+	rec := map[string]any{
+		"seq":            r.Msg.Seq,
+		"in_reply_to":    r.Msg.InReplyTo,
+		"topic":          r.Topic,
+		"depth":          r.Depth,
+		"is_last":        r.IsLast,
+		"orphan":         r.Orphan,
+		"reply_to_topic": r.Msg.ReplyToTopic,
+		"received_at_ms": r.Msg.ReceivedAtMs,
+		"received_at":    boardMsToRFC3339(r.Msg.ReceivedAtMs),
+		"retracted":      r.Msg.Retracted,
+		"from": map[string]any{
+			"task_id":  r.Msg.FromTaskHex,
+			"hostname": r.Msg.FromHostname,
+			"agent":    r.Msg.FromAgentProfile,
+		},
+	}
+	if r.Msg.Retracted {
+		// retracted_at_ms emitted only when true, same rule as board read.
+		rec["retracted_at_ms"] = r.Msg.RetractedAtMs
+		rec["retracted_by"] = RetractedByLabel(r.Msg)
+	}
+	if includeBody {
+		rec["payload_b64"] = base64.StdEncoding.EncodeToString(r.Msg.Payload)
+		if len(r.Msg.Payload) > 0 && json.Valid(r.Msg.Payload) {
+			rec["payload"] = json.RawMessage(r.Msg.Payload)
+		}
+	}
+	line, _ := json.Marshal(rec)
+	fmt.Fprintln(out, string(line))
 }

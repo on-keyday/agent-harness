@@ -323,7 +323,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		if row.Orphan {
 			marker = " " + orphanMarker
 		}
-		fmt.Fprintf(out, "  %s%s%s\n", TreePrefix(row), line, marker)
+		fmt.Fprintf(out, "  %s%s%s\n", TreePrefix(row.IsLast), line, marker)
 	}
 }
 

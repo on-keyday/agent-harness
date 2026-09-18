@@ -159,24 +159,30 @@ func TaskSubtree(tasks []protocol.TaskInfo, anchorHex string) []protocol.TaskInf
 	return nil
 }
 
-// TreePrefix renders the ├─ / └─ / │ gutter for a row. Depth 0 yields "".
+// TreePrefix renders the ├─ / └─ / │ gutter for a row. An empty isLast
+// (depth 0) yields "".
 //
 // Single implementation shared by every surface: the CLI writes it into a text
 // line, the TUI into its Task column, and the WebUI into a monospace span, so
 // the three cannot drift into three different-looking trees.
-func TreePrefix(row TaskTreeRow) string {
-	if len(row.IsLast) == 0 {
+//
+// It takes the []bool it actually reads rather than a TaskTreeRow, so
+// ThreadRow — whose rows carry the same per-level last-child flags for a
+// reply chain — draws an identical gutter without either type knowing about
+// the other.
+func TreePrefix(isLast []bool) string {
+	if len(isLast) == 0 {
 		return ""
 	}
-	out := make([]rune, 0, len(row.IsLast)*3)
-	for _, last := range row.IsLast[:len(row.IsLast)-1] {
+	out := make([]rune, 0, len(isLast)*3)
+	for _, last := range isLast[:len(isLast)-1] {
 		if last {
 			out = append(out, ' ', ' ', ' ')
 		} else {
 			out = append(out, '│', ' ', ' ')
 		}
 	}
-	if row.IsLast[len(row.IsLast)-1] {
+	if isLast[len(isLast)-1] {
 		out = append(out, '└', '─', ' ')
 	} else {
 		out = append(out, '├', '─', ' ')

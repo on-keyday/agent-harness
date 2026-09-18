@@ -403,7 +403,7 @@ func TestTreePrefix_DrawsAncestorGutters(t *testing.T) {
 		{"deep, ancestor continues", []bool{false, true}, "│  └─ "},
 		{"deep, ancestor finished", []bool{true, false}, "   ├─ "},
 	} {
-		if got := TreePrefix(TaskTreeRow{IsLast: tc.isLast}); got != tc.want {
+		if got := TreePrefix(tc.isLast); got != tc.want {
 			t.Errorf("%s: TreePrefix(%v) = %q, want %q", tc.name, tc.isLast, got, tc.want)
 		}
 	}
