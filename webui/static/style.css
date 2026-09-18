@@ -2161,14 +2161,16 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-chain-row.is-orphan { border-left: 3px solid #d7ba7d; }
 .board-chain-row.is-retracted { opacity: 0.55; border-style: dashed; }
+/* Inline flow, deliberately NOT flex. As a flex line the gutter is its own
+   item, so at phone width it wraps onto a line by itself and stops carrying
+   the nesting — the one thing this view exists to show. Inline, it stays at
+   the head of the text the way it does in the CLI and TUI. */
 .board-chain-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.4rem;
   font-family: monospace;
   font-size: 0.82rem;
+  line-height: 1.6;
 }
+.board-chain-head > span { margin-right: 0.4rem; }
 /* pre-wrap, not normal: the gutter's spacing IS the tree, and collapsing it
    would leave every row at the same indent. */
 .board-chain-gutter {

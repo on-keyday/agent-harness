@@ -5663,7 +5663,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // what a control byte means.
       const body = document.createElement("pre");
       body.className = "board-chain-body";
-      body.style.marginLeft = (r.depth * 2) + "ch";
       body.textContent = prettyPayload(r.body || "");
       row.appendChild(body);
 
