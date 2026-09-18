@@ -903,12 +903,40 @@ rejected, both for reasons worth keeping:
   It also hides a true statement: with an empty ladder the declared default is
   what the operator gets, unlike a sentinel, which never reaches the program.
 - **Naming the tiers in the shared `repoHelp`.** `Flag.Help` has no per-surface
-  form, and the TUI and WebUI have no env or workspace tier at all (see
-  `Flag.Resolve`'s doc comment), so that would state an env variable on two
-  surfaces that never read one. `prune-local` being CLI-only is what makes the
-  prose unambiguous where it is written. The three spawn verbs' `--repo` keeps
-  its `Notes` parenthetical, which carries the same cross-surface imprecision
-  and predates this.
+  form, and `repoHelp` is read in a browser, where no environment variable is
+  reachable. `prune-local` being CLI-only is what makes the prose unambiguous
+  where it is written.
+
+  **Corrected the same day, on the operator reading the note rather than my
+  paraphrase of it.** The first version of this bullet said the TUI and WebUI
+  "have no env or workspace tier at all" and that naming the env var would
+  therefore state it on **two** surfaces that never read one. That is wrong
+  about the TUI. `cmd/harness-tui/main.go:80` resolves `HARNESS_REPO_PATH` and
+  the workspace config's repo at process startup
+  (`cliopts.ResolveStringWith(*repoFlag, "HARNESS_REPO_PATH", wsRepo)`) and
+  hands the result to `App.DefaultRepo`, which `tui/app.go:1481` passes as the
+  `SurfaceContext` tier. So the TUI reads both, one layer above `Resolve`, and
+  `(--repo: HARNESS_REPO_PATH)` is TRUE there. Only the browser never reads it.
+
+  The mistake is worth keeping because of where it came from:
+  `Flag.Resolve`'s doc comment says the TUI's `--repo` default "is its session,
+  not the process it was started from", and I read a statement about **tier
+  plumbing inside `Resolve`** as a statement about the TUI **process**. The
+  session default that comment points at is itself seeded from the process env
+  one level up. A comment's SCOPE is a thing to check, not to infer — and the
+  cost here was an argument that read as measured while being about one
+  surface, not two.
+
+  What this does not change: `prune-local` declares its own `--repo` and never
+  touched `repoHelp`, so the fix above stands either way. What it does change
+  is the weight of this rejected alternative — the objection is one surface,
+  not two — and the size of the imprecision next door: the three spawn verbs'
+  shared `Notes` parenthetical is accurate on the CLI and the TUI and
+  misleading only in the browser, where that verb's own `SurfaceNotes` already
+  says to use the repo dropdown. `SurfaceNotes` cannot fix it by itself, since
+  `For(s)` MERGES it onto `Notes` (`build.go:318`) rather than replacing them;
+  the shared sentence would have to be split and its tier half moved to
+  `SurfaceNotes[CLI]`, which no verb uses today. Untouched, and predates this.
 
 Two things came out with it:
 

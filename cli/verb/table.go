@@ -1675,8 +1675,12 @@ var Verbs = []VerbSpec{
 				// runner-spawned task HARNESS_REPO_PATH is always set, so "." is
 				// precisely the case that never happens there -- on the verb that
 				// removes worktrees. Stated in the Help rather than the shared
-				// repoHelp because this verb is CLI-only: Flag.Help has no per-surface
-				// form, and the TUI and WebUI have no env or workspace tier at all.
+				// repoHelp because this verb is CLI-only and repoHelp is read in a
+				// browser too, where no env var is reachable. NOT because the TUI has
+				// no env tier: cmd/harness-tui/main.go:80 resolves HARNESS_REPO_PATH
+				// and the workspace repo at startup and hands the result to the
+				// SurfaceContext tier, so Resolve seeing one tier there is the
+				// PLUMBING, not the whole process.
 				Help:    "repo to prune; when not given, HARNESS_REPO_PATH, then the workspace config's repo",
 				Resolve: []Tier{{Env: "HARNESS_REPO_PATH"}, {Workspace: "repo"}}},
 			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Field: "Before",
