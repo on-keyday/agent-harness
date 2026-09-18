@@ -34,10 +34,17 @@ type ThreadRow struct {
 	// root rather than hidden: a tree view re-orders a listing, it never
 	// filters one.
 	Orphan bool
-	// Size is the PUBLISHED byte count, known to faces that collect metadata
-	// without carrying payloads (the agent face under --headers-only; the
-	// ListRetained metas carry Size but no body). Zero means "read
-	// len(Msg.Payload) instead", which is the board face's always-true case.
+	// Size is the PUBLISHED byte count. It is always populated: BuildThreads
+	// fills it from the payload it was handed, and a face that collected
+	// metadata without bodies (the agent face — ListRetained carries a size
+	// but no body) overwrites it from that metadata.
+	//
+	// It is a field rather than len(Msg.Payload) at the point of use because
+	// under --headers-only the agent face never fetches a body, and a renderer
+	// reading len(Payload) there would print 0 and claim a zero-byte message
+	// was published. It is always populated, rather than zero-means-unset,
+	// because an empty publish is a real and documented case here (`agent
+	// send` reporting bytes: 0) and a sentinel would make it unrepresentable.
 	Size int
 }
 
@@ -107,6 +114,7 @@ func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
 			Depth:  len(isLast),
 			IsLast: append([]bool(nil), isLast...),
 			Orphan: orphan[m.Seq],
+			Size:   len(m.Payload),
 		})
 		if topicOf != nil {
 			out[len(out)-1].Topic = topicOf[m.Seq]
@@ -125,7 +133,7 @@ func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
 	for _, m := range msgs {
 		if !visited[m.Seq] {
 			visited[m.Seq] = true
-			row := ThreadRow{Msg: m, Depth: 0, Orphan: true}
+			row := ThreadRow{Msg: m, Depth: 0, Orphan: true, Size: len(m.Payload)}
 			if topicOf != nil {
 				row.Topic = topicOf[m.Seq]
 			}

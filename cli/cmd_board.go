@@ -499,17 +499,10 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 			marker += fmt.Sprintf(" RETRACTED at=%s by=%s",
 				boardMsToRFC3339(r.Msg.RetractedAtMs), RetractedByLabel(r.Msg))
 		}
-		size := len(r.Msg.Payload)
-		if r.Size != 0 {
-			// A face that collected metadata without carrying the body knows
-			// the published size from it; len(Payload) would print 0 and
-			// claim a zero-byte message was published.
-			size = r.Size
-		}
 		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
 			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
 			boardTaskShort(r.Msg.FromTaskHex), r.Msg.FromHostname,
-			boardAgentOrDash(r.Msg.FromAgentProfile), size,
+			boardAgentOrDash(r.Msg.FromAgentProfile), r.Size,
 			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
 		if !opts.HeadersOnly {
 			writeBoardBody(out, r.Msg.Payload, mode)
@@ -549,6 +542,9 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 		"received_at_ms": r.Msg.ReceivedAtMs,
 		"received_at":    boardMsToRFC3339(r.Msg.ReceivedAtMs),
 		"retracted":      r.Msg.Retracted,
+		// size is carried even under --headers-only, where there is no body to
+		// measure: it is the one field a consumer of that form cannot derive.
+		"size": r.Size,
 		"from": map[string]any{
 			"task_id":  r.Msg.FromTaskHex,
 			"hostname": r.Msg.FromHostname,

@@ -121,3 +121,21 @@ func TestBuildThreadsIsLastFlagsOnlyTheLastChild(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildThreadsSizeIsPopulatedIncludingEmpty pins the field that replaced a
+// zero-means-unset sentinel. An empty publish is a real case here (`agent send`
+// reporting bytes: 0), so size 0 must be a value the renderer prints, not a
+// marker meaning "ask the payload instead".
+func TestBuildThreadsSizeIsPopulated(t *testing.T) {
+	rows := BuildThreads([]BoardMessage{
+		{Seq: 1, Payload: []byte("seven!!")},
+		{Seq: 2, InReplyTo: 1, Payload: []byte{}},
+		{Seq: 3, InReplyTo: 99, Payload: []byte("orphan")},
+	}, nil)
+	want := map[uint64]int{1: 7, 2: 0, 3: 6}
+	for _, r := range rows {
+		if got := r.Size; got != want[r.Msg.Seq] {
+			t.Errorf("seq %d: Size = %d, want %d", r.Msg.Seq, got, want[r.Msg.Seq])
+		}
+	}
+}
