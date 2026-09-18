@@ -74,7 +74,9 @@ type BoardAction struct {
 	Sub  string
 	// only messages replying to this seq
 	InReplyTo uint64
-	Topic     string
+	// print the body bytes unescaped even on a terminal
+	Raw   bool
+	Topic string
 	// the message to withdraw; required — there is no whole-topic retract
 	Seq uint64
 }
@@ -1575,6 +1577,7 @@ func init() {
 			a.Sub = "read"
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.JSON = b.Bool("json")
+			a.Raw = b.Bool("raw")
 			if len(b.Args) > 0 {
 				a.Topic = b.Args[0]
 			}

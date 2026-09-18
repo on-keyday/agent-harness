@@ -239,9 +239,9 @@ func IsTTY(f *os.File) bool
 
 ```go
 func TestEscapeForTerminalCoversTheByteSet(t *testing.T) {
-    in := []byte("a\x1b[2Jb\rc\x07d\x7fef")
+    in := []byte("a\x1b[2Jb\rc\x07d\x7fe\u009bf")
     got := EscapeForTerminal(in)
-    for _, bad := range []string{"\x1b", "\r", "\x07", "\x7f", ""} {
+    for _, bad := range []string{"\x1b", "\r", "\x07", "\x7f", "\u009b"} {
         if strings.Contains(got, bad) {
             t.Errorf("output still holds %q raw: %q", bad, got)
         }
@@ -264,7 +264,7 @@ func TestBoardReadRedirectedIsByteExact(t *testing.T) {
     // `board read` uses, and compare against the published bytes.
     body := []byte("x\x1b[2J\r\x9b\xff\xfe binary")
     var buf bytes.Buffer // not a character device
-    writeBoardBody(&buf, body, false /* isTTY */, false /* raw */)
+    writeBoardBody(&buf, body, bodyExact)
     if !bytes.Equal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), body) {
         t.Errorf("redirected output altered the bytes:\n got %q\nwant %q", buf.Bytes(), body)
     }
@@ -273,7 +273,7 @@ func TestBoardReadRedirectedIsByteExact(t *testing.T) {
 func TestBoardReadRawIsByteExactOnATerminal(t *testing.T) {
     body := []byte("x\x1b[2J\xff")
     var buf bytes.Buffer
-    writeBoardBody(&buf, body, true /* isTTY */, true /* raw */)
+    writeBoardBody(&buf, body, bodyExact)
     if !bytes.Equal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), body) {
         t.Errorf("--raw altered the bytes: %q", buf.Bytes())
     }
@@ -281,7 +281,7 @@ func TestBoardReadRawIsByteExactOnATerminal(t *testing.T) {
 
 func TestBoardReadTerminalIsEscaped(t *testing.T) {
     var buf bytes.Buffer
-    writeBoardBody(&buf, []byte("x\x1b[2J"), true /* isTTY */, false /* raw */)
+    writeBoardBody(&buf, []byte("x\x1b[2J"), bodyEscaped)
     if bytes.Contains(buf.Bytes(), []byte{0x1b}) {
         t.Errorf("a terminal got a raw ESC: %q", buf.Bytes())
     }
@@ -291,14 +291,22 @@ func TestBoardReadTerminalIsEscaped(t *testing.T) {
 // the same gate covers it: encoding/json escapes C0 and leaves C1 raw.
 func TestJSONBodyC1IsEscapedForTerminal(t *testing.T) {
     var buf bytes.Buffer
-    writeBoardBody(&buf, []byte(`{"k":"ab"}`), true, false)
+    writeBoardBody(&buf, []byte(`{"k":"a\u009bb"}`), bodyEscaped)
     if bytes.Contains(buf.Bytes(), []byte{0xc2, 0x9b}) {
         t.Errorf("C1 survived into terminal output: %q", buf.Bytes())
     }
 }
 ```
 
-`writeBoardBody(w io.Writer, payload []byte, isTTY, raw bool)` is the single
+**Changed 2026-09-18, during implementation.** The signature was originally
+`writeBoardBody(w io.Writer, payload []byte, isTTY, raw bool)`. Two adjacent
+bools compile in the wrong order, and a swap silently escapes redirected
+output — the exact invisible defect this task exists to prevent. The decision
+now travels as one `bodyMode` value (`bodyExact` is the zero value on
+purpose), the destination is judged in exactly one place (`bodyModeFor`), and
+the test bodies above carry the same assertions adapted to it.
+
+`writeBoardBody(w io.Writer, payload []byte, mode bodyMode)` is the single
 body-printing function both `board read` and the new verbs call. Extract it
 from the existing branch at `cli/cmd_board.go:283-289`; it keeps that branch's
 JSON-indent behaviour.

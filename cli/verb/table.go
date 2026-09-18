@@ -1039,6 +1039,8 @@ var Verbs = []VerbSpec{
 			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
 				Help: "only messages replying to this seq"},
 			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
+				Help: "print the body bytes unescaped even on a terminal"},
 		},
 		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json"},
 	},

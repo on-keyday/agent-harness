@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -239,6 +238,13 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
 		}
 		shown := 0
+		// The body mode is judged ONCE, from the real destination, before the
+		// loop: stdout is os.Stdout in the generated dispatch, and a test's
+		// bytes.Buffer is not an *os.File at all. Both fail toward bodyExact —
+		// the mode nobody set yields the published bytes, which is obligation
+		// 2: escaping a redirect would corrupt extraction invisibly.
+		destFile, _ := out.(*os.File)
+		mode := bodyModeFor(destFile, ba.Raw)
 		for _, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
@@ -278,14 +284,10 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				m.Seq, re, replyTo, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
 				ShownToLabel(subs, topic, m.Seq), retracted)
-			if json.Valid(m.Payload) {
-				var buf bytes.Buffer
-				_ = json.Indent(&buf, m.Payload, "", "  ")
-				fmt.Fprintln(out, buf.String())
-			} else {
-				out.Write(m.Payload) //nolint:errcheck
-				fmt.Fprintln(out)
-			}
+			// JSON-indent behaviour lives in writeBoardBody now, along with the
+			// escape gate; json escapes C0 but leaves C1 raw, so the escaped
+			// mode still needs its pass there.
+			writeBoardBody(out, m.Payload, mode)
 		}
 		if shown == 0 {
 			// Third way to print nothing: the topic has messages, none of them
