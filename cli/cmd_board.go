@@ -296,6 +296,110 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				topic, len(msgs), *inReplyTo)
 		}
 
+	case verb.SubThread:
+		// The chain view. It collects EVERY topic the operator can see —
+		// a conversation spans topics by construction (each agent receives
+		// on its own chat.<short-id>) — and hands one flat list to
+		// BuildThreads. The rows carry the topic each message landed on.
+		topics, err := BoardTopics(ctx, cid)
+		if err != nil {
+			return err
+		}
+		var msgs []BoardMessage
+		topicOf := make(map[uint64]string)
+		for _, t := range topics {
+			tmsgs, found, err := BoardRead(ctx, cid, t.Name)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			for _, m := range tmsgs {
+				topicOf[m.Seq] = t.Name
+			}
+			msgs = append(msgs, tmsgs...)
+		}
+
+		// A reply links messages into CHAINS, and --task / --seq pick chains,
+		// not messages: keep or drop a chain whole. Component id = the
+		// chain's root seq, computed by a union over the in_reply_to links so
+		// a malformed cycle still lands every member in one component
+		// instead of looping.
+		comp := make(map[uint64]uint64, len(msgs))
+		var find func(uint64) uint64
+		find = func(x uint64) uint64 {
+			for comp[x] != x {
+				comp[x] = comp[comp[x]]
+				x = comp[x]
+			}
+			return x
+		}
+		for _, m := range msgs {
+			comp[m.Seq] = m.Seq
+		}
+		for _, m := range msgs {
+			if m.InReplyTo != 0 {
+				if _, parentVisible := comp[m.InReplyTo]; parentVisible {
+					rp, rt := find(m.Seq), find(m.InReplyTo)
+					if rp != rt {
+						comp[rp] = rt
+					}
+				}
+			}
+		}
+
+		// --task: a chain is kept if ANY message in it was sent by a named
+		// task OR sits on that task's own inbound topic (chat.<id8>). Both
+		// halves matter: the first finds what it said, the second what was
+		// said to it. Repeating the flag UNIONS — two ids give the pair's
+		// exchange plus anything either had with a third party, because a
+		// filter that dropped the third party would hide the fact that the
+		// conversation was not private. With no --task, every chain is kept.
+		keepComp := map[uint64]bool{}
+		for _, t := range ba.Tasks {
+			id := strings.ToLower(strings.TrimSpace(t))
+			if id == "" {
+				continue
+			}
+			prefix := id
+			if len(prefix) > 8 {
+				prefix = prefix[:8]
+			}
+			chatTopic := "chat." + prefix
+			for _, m := range msgs {
+				if m.FromTaskHex == id || topicOf[m.Seq] == chatTopic {
+					keepComp[find(m.Seq)] = true
+				}
+			}
+		}
+
+		rows := BuildThreads(msgs, topicOf)
+
+		// keep answers: does THIS message's chain survive the filters? With
+		// no --task, every chain survives.
+		keep := func(seq uint64) bool {
+			return len(keepComp) == 0 || keepComp[find(seq)]
+		}
+		// --seq: the chain containing N. A seq outside the visible set is an
+		// ERROR naming the seq — the same distinction board read draws when a
+		// topic holds messages but none reply to the requested seq. An empty
+		// result and a bad argument must not look the same.
+		if ba.Seq != 0 {
+			want, found := comp[ba.Seq]
+			if !found {
+				return fmt.Errorf("board thread: seq %d is not in the visible set (the board keeps the last 64 messages per topic for 30 minutes)", ba.Seq)
+			}
+			keep = func(seq uint64) bool {
+				// AND of the two axes: the chain must be THE one containing
+				// the seq and, when --task was given, involve a named task.
+				// The second half failing is an empty result, not an error —
+				// the chain exists, the filter just does not select it.
+				return find(seq) == want && (len(keepComp) == 0 || keepComp[want])
+			}
+		}
+		return renderThreadRows(out, ba, rows, keep)
+
 	case verb.SubSubscribers:
 		// Optional <topic>: with it, only the tasks a publish to that topic
 		// would reach; without it, every task known to the board.
@@ -382,4 +486,118 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		return fmt.Errorf("unknown board subcommand: %q", ba.Sub)
 	}
 	return nil
+}
+
+// renderThreadRows draws the rows BuildThreads produced, dropping any whose
+// chain the --seq / --task filters did not select. It is the single rendering
+// both of `board thread` and of every later caller of the assembly.
+//
+// The window line is the spec's Risks requirement in visible form: an empty
+// view must read as "nothing recent" rather than "broken", so the retention
+// window (64 per topic, 30 minutes) and the orphan rule are stated once,
+// above the rows. In --json mode the line cannot join the feed (it would
+// corrupt one-record-per-line framing), so it goes to stderr instead.
+func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow, keep func(seq uint64) bool) error {
+	window := "board thread: window = last 64 messages per topic, 30 minutes; ORPHAN marks a reply whose parent is outside that window"
+	if ba.JSON {
+		fmt.Fprintln(os.Stderr, window)
+	} else {
+		fmt.Fprintln(out, window)
+	}
+
+	// The body mode is judged ONCE, from the real destination — the same
+	// gate and the same reasoning as board read's.
+	destFile, _ := out.(*os.File)
+	mode := bodyModeFor(destFile, ba.Raw)
+
+	for _, r := range rows {
+		if !keep(r.Msg.Seq) {
+			continue
+		}
+		if ba.JSON {
+			emitThreadRowJSON(out, r, !ba.HeadersOnly)
+			continue
+		}
+		// re= only on replies; reply-to only when the sender declared one;
+		// ORPHAN only when it applies — the same "marker when it applies"
+		// rule the board read rows use. A retracted message is still shown:
+		// this row is where a withdrawal stays auditable.
+		re := ""
+		if r.Msg.InReplyTo != 0 {
+			re = fmt.Sprintf(" re=%d", r.Msg.InReplyTo)
+		}
+		replyTo := ""
+		if r.Msg.ReplyToTopic != "" {
+			replyTo = fmt.Sprintf(" reply-to=%s", r.Msg.ReplyToTopic)
+		}
+		marker := ""
+		if r.Orphan {
+			marker = " ORPHAN"
+		}
+		if r.Msg.Retracted {
+			marker += fmt.Sprintf(" RETRACTED at=%s by=%s",
+				boardMsToRFC3339(r.Msg.RetractedAtMs), RetractedByLabel(r.Msg))
+		}
+		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
+			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
+			boardTaskShort(r.Msg.FromTaskHex), r.Msg.FromHostname,
+			boardAgentOrDash(r.Msg.FromAgentProfile), len(r.Msg.Payload),
+			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
+		if !ba.HeadersOnly {
+			writeBoardBody(out, r.Msg.Payload, mode)
+		}
+	}
+	return nil
+}
+
+// boardTaskShort renders a sender task hex as the 8-hex prefix every other
+// board row surface uses. An empty hex prints as-is (""), which the caller
+// reads as "no attribution".
+func boardTaskShort(hex string) string {
+	if len(hex) > 8 {
+		return hex[:8]
+	}
+	return hex
+}
+
+// emitThreadRowJSON writes one JSON-Lines record for a chain row. The record
+// mirrors `board read --json`'s shape where the fields overlap (seq,
+// in_reply_to, topic, reply_to_topic, received_at, retracted, from,
+// payload_b64) so the two feeds parse the same way, and adds the chain
+// placement: depth, is_last (the gutter flags per level, for a renderer that
+// wants them) and orphan. seq and in_reply_to are JSON numbers here — the
+// same choice emitBoardMessageJSON makes; the decimal-string rule (D6) is the
+// wasm boundary's, where a JS float64 would silently corrupt the ~1.9e18 seq.
+// includeBody=false (--headers-only) omits the body, in either form.
+func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
+	rec := map[string]any{
+		"seq":            r.Msg.Seq,
+		"in_reply_to":    r.Msg.InReplyTo,
+		"topic":          r.Topic,
+		"depth":          r.Depth,
+		"is_last":        r.IsLast,
+		"orphan":         r.Orphan,
+		"reply_to_topic": r.Msg.ReplyToTopic,
+		"received_at_ms": r.Msg.ReceivedAtMs,
+		"received_at":    boardMsToRFC3339(r.Msg.ReceivedAtMs),
+		"retracted":      r.Msg.Retracted,
+		"from": map[string]any{
+			"task_id":  r.Msg.FromTaskHex,
+			"hostname": r.Msg.FromHostname,
+			"agent":    r.Msg.FromAgentProfile,
+		},
+	}
+	if r.Msg.Retracted {
+		// retracted_at_ms emitted only when true, same rule as board read.
+		rec["retracted_at_ms"] = r.Msg.RetractedAtMs
+		rec["retracted_by"] = RetractedByLabel(r.Msg)
+	}
+	if includeBody {
+		rec["payload_b64"] = base64.StdEncoding.EncodeToString(r.Msg.Payload)
+		if len(r.Msg.Payload) > 0 && json.Valid(r.Msg.Payload) {
+			rec["payload"] = json.RawMessage(r.Msg.Payload)
+		}
+	}
+	line, _ := json.Marshal(rec)
+	fmt.Fprintln(out, string(line))
 }

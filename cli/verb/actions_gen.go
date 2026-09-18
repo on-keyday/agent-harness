@@ -66,7 +66,7 @@ type AgentSendAction struct {
 	Timeout time.Duration
 }
 
-// BoardAction is built by: board purge, board read, board retract, board subscribers, board topics.
+// BoardAction is built by: board purge, board read, board retract, board subscribers, board thread, board topics.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -77,8 +77,12 @@ type BoardAction struct {
 	// print the body bytes unescaped even on a terminal
 	Raw   bool
 	Topic string
-	// the message to withdraw; required — there is no whole-topic retract
+	// only the chain containing this seq; a seq outside the visible set is an error, not an empty result
 	Seq uint64
+	// keep chains involving ANY named task (repeatable, 32-hex id); a task matches what it sent and what l…
+	Tasks []string
+	// print rows without bodies
+	HeadersOnly bool
 }
 
 // CancelAction is built by: cancel.
@@ -1583,6 +1587,16 @@ func init() {
 			}
 			return a, nil
 		},
+		"board thread\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "thread"
+			a.Seq = uint64Of(b.Flags["seq"])
+			a.Tasks = stringsOf(b.Custom["task"])
+			a.HeadersOnly = b.Bool("headers-only")
+			a.Raw = b.Bool("raw")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"board subscribers\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "subscribers"
@@ -2812,6 +2826,7 @@ const (
 	CmdWorkspaceDetach        = "workspace detach"
 	CmdBoardTopics            = "board topics"
 	CmdBoardRead              = "board read"
+	CmdBoardThread            = "board thread"
 	CmdBoardSubscribers       = "board subscribers"
 	CmdBoardRetract           = "board retract"
 	CmdBoardPurge             = "board purge"
@@ -2927,6 +2942,7 @@ const (
 	SubSubscribe       = "subscribe"
 	SubSubscribers     = "subscribers"
 	SubSubscriptions   = "subscriptions"
+	SubThread          = "thread"
 	SubTopics          = "topics"
 	SubTrsf            = "trsf"
 	SubUnsubscribe     = "unsubscribe"
@@ -3642,6 +3658,27 @@ func ParseCmdBoardRead(sf Surface, args []string, ctx map[string]string) (BoardA
 	sp, ok := Lookup("board", "read")
 	if !ok {
 		return zero, fmt.Errorf("board read: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardThread(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "thread")
+	if !ok {
+		return zero, fmt.Errorf("board thread: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -5048,6 +5085,8 @@ type CLIDispatch[R any] interface {
 	BoardTopics(BoardAction) R
 	// board read
 	BoardRead(BoardAction) R
+	// board thread
+	BoardThread(BoardAction) R
 	// board subscribers
 	BoardSubscribers(BoardAction) R
 	// board retract
@@ -5327,6 +5366,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardRead(a), true, nil
+	case CmdBoardThread:
+		a, perr := ParseCmdBoardThread(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardThread(a), true, nil
 	case CmdBoardSubscribers:
 		a, perr := ParseCmdBoardSubscribers(CLI, args, ctx)
 		if perr != nil {
@@ -5706,6 +5751,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardTopics(a), true
 		case "read":
 			return h.BoardRead(a), true
+		case "thread":
+			return h.BoardThread(a), true
 		case "subscribers":
 			return h.BoardSubscribers(a), true
 		case "retract":
@@ -6008,6 +6055,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardRead:
 			a, perr := ParseCmdBoardRead(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardThread:
+			a, perr := ParseCmdBoardThread(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

@@ -1045,6 +1045,33 @@ var Verbs = []VerbSpec{
 		Examples: []string{"board read chat.abcd1234", "board read chat.abcd1234 --json"},
 	},
 	{
+		Path: []string{"board", "thread"},
+		Notes: []string{
+			"print retained messages arranged by reply chain, across topics (cap: board_observe).",
+			"Roots in seq order; ORPHAN marks a reply whose parent is outside the visible set —",
+			"shown at root, never hidden. The board keeps the last 64 messages per topic for",
+			"30 minutes, so an empty view reads as nothing recent, not broken.",
+		},
+		CmdlineSurfaces: CLI,
+		NoModalSurface: "the TUI chain view (plan Task 8) and WebUI tab (plan Task 7) of " +
+			"docs/superpowers/plans/2026-09-18-agentboard-thread-viewer.md do not exist yet; until " +
+			"they land, the command line is the only way in",
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "thread"},
+		Flags: []Flag{
+			{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq",
+				Help: "only the chain containing this seq; a seq outside the visible set is an error, not an empty result"},
+			{Name: "task", Type: FlagString, Custom: argListValue, Field: "Tasks",
+				Help: "keep chains involving ANY named task (repeatable, 32-hex id); a task matches what it sent and what landed on its chat.<id8> topic"},
+			{Name: "headers-only", Type: FlagBool, Default: false, Field: "HeadersOnly",
+				Help: "print rows without bodies"},
+			{Name: "raw", Type: FlagBool, Default: false, Field: "Raw",
+				Help: "print the body bytes unescaped even on a terminal"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
+		Examples: []string{"board thread", "board thread --seq 42", "board thread --task <taskid32hex> --task <taskid32hex>"},
+	},
+	{
 		Path: []string{"board", "subscribers"},
 		ModalSurfaces: []ModalSurface{
 			// s inside the board modal.

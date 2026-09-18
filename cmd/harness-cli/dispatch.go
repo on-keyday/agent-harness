@@ -518,11 +518,12 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	return nil
 }
 
-// The five board verbs share one body: cli.RunBoardAction switches on the Sub
-// the declaration fixed. Five methods rather than one because the interface is
+// The six board verbs share one body: cli.RunBoardAction switches on the Sub
+// the declaration fixed. Six methods rather than one because the interface is
 // per-VERB -- that is what makes a new board verb a build error here.
 func (h cliVerbs) BoardTopics(a verb.BoardAction) error      { return h.board(a) }
 func (h cliVerbs) BoardRead(a verb.BoardAction) error        { return h.board(a) }
+func (h cliVerbs) BoardThread(a verb.BoardAction) error      { return h.board(a) }
 func (h cliVerbs) BoardSubscribers(a verb.BoardAction) error { return h.board(a) }
 func (h cliVerbs) BoardRetract(a verb.BoardAction) error     { return h.board(a) }
 func (h cliVerbs) BoardPurge(a verb.BoardAction) error       { return h.board(a) }
