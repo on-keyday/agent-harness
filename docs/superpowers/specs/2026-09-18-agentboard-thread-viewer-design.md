@@ -79,7 +79,7 @@ disagree".
 // ThreadRow is one board message placed in its reply chain, flattened into
 // the order a renderer draws it in.
 type ThreadRow struct {
-    Msg    protocol.BoardMessageRow
+    Msg    BoardMessage
     Topic  string // which topic retained it; a chain spans several
     Depth  int
     IsLast []bool // last-child flags per ancestor level, for the gutter
@@ -87,8 +87,24 @@ type ThreadRow struct {
 }
 
 // BuildThreads arranges messages under the messages they reply to.
-func BuildThreads(msgs []protocol.BoardMessageRow, topicOf func(seq uint64) string) []ThreadRow
+func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow
 ```
+
+**Corrected 2026-09-18, after the implementation caught it.** This sketch first
+read `[]protocol.BoardMessageRow` and `topicOf func(seq uint64) string`, which
+is wrong twice over, and the worker that implemented Task 1 raised it rather
+than quietly following one of the two documents.
+
+`BuildTaskTree` takes `protocol.TaskInfo`, so the protocol type looks like the
+house pattern — but the board path differs: `cli.BoardMessage` is the decoded
+form the CLI already works in (`FromTaskHex` is a hex string there, not raw
+id bytes), and every board consumer in `cli` already holds one. Taking the wire
+row would make each caller re-decode on the way in.
+
+`topicOf` is a map rather than a function because every caller builds the
+seq→topic association while collecting the messages anyway; a lookup function
+would buy laziness nobody asked for and give each caller a second thing to get
+right.
 
 Rules, each of which a test pins:
 
