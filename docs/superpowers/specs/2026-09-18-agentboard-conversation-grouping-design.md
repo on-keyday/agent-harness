@@ -212,6 +212,24 @@ moves rows between sections between one refresh and the next. That is correct
 like the view lost something. The section header naming its participants is
 what makes the change legible rather than surprising.
 
+**A task id is the identity, and a one-shot task is a new identity every time.**
+Found by running it, 2026-09-18: a "supervisor" that sends each message from a
+fresh `submit --agent bash` task appears as a different participant per message,
+so one stream of instructions to the same worker split into two conversations.
+Nothing is wrong with the grouping — those really were different tasks — but the
+mental model "a supervisor" and the mechanical fact "a task id" come apart
+exactly there.
+
+It is bounded: a long-lived session keeps its id, a `--resume`d task keeps its
+id, and the case this view is for — agents talking over their `chat.<short-id>`
+topics — is long-lived on both sides. The pattern it degrades on is a script
+spawning a throwaway task per message, which is not a conversation so much as a
+sequence of announcements.
+
+Deliberately not fixed here. A stable "who" above the task id would be a new
+identity concept on the wire, and inventing one to tidy a view is the wrong
+order; if it is ever wanted, it wants its own spec.
+
 ## Completion
 
 1. The grouping + its tests green, including the measured 8/4/1 fixture.

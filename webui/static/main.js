@@ -5615,7 +5615,22 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       boardChainsRowsEl.textContent = "(nothing on the board within that window)";
       return;
     }
+    // Section headers come from Go (cli.ConversationHeader), keyed by the same
+    // conversation key the rows carry. A chain is not a conversation — an
+    // unanswered message is its own chain — so without this the sections of
+    // different exchanges interleave with nothing marking the boundary.
+    const headerOf = new Map();
+    for (const c of ((res && res.conversations) || [])) headerOf.set(c.key, c.header);
+    let currentConv = null;
+
     for (const r of rows) {
+      if (r.conversation !== currentConv) {
+        currentConv = r.conversation;
+        const h = document.createElement("div");
+        h.className = "board-chain-conv";
+        h.textContent = headerOf.get(currentConv) || currentConv;
+        boardChainsRowsEl.appendChild(h);
+      }
       const row = document.createElement("div");
       row.className = "board-chain-row";
       if (r.orphan) row.classList.add("is-orphan");

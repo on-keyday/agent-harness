@@ -2103,3 +2103,48 @@ then built the thing they described. The spec row and the declaration were
 consistent with each OTHER the whole time — they were written together and
 never re-read against the code. A walk that had stopped at 38 would have
 reported full parity.
+
+## 2026-09-18 — conversation grouping on the chain view (continuation walk)
+
+Same surfaces as the entry above, one increment later: the chain view now
+groups chains into conversations and prints a section header per conversation.
+**Walked as a NEW walk rather than as a continuation of the one above**, which
+is what that entry's own closing note says to do. S1–S6 `n/a`.
+
+**done:** 10, 23, 31, 32, 37, 39.
+
+- **10** — result rendering stays shared and now carries one more shared piece:
+  `cli.ConversationHeader`. The browser receives the rendered header and picks
+  it by key; it composes nothing.
+- **23 / 32** — the wasm row gains `conversation`, and the headers cross as a
+  `conversations` list rather than being assembled in JS. Same rule as
+  `cli.ShownTo`: the RESULT crosses, not the inputs.
+- **31** — a conversation of one message still gets a header. The section is
+  gated on existing, not on being interesting.
+- **37** — the design spec gained a Risks entry for something the live run
+  surfaced: a one-shot task is a new identity per message, so a "supervisor"
+  that sends each instruction from a fresh task splits into several
+  conversations. Recorded rather than fixed; a stable identity above the task
+  id would be a wire concept, and inventing one to tidy a view is the wrong
+  order.
+- **39** — the new spec's own Surfaces table, walked row by row against the
+  code. The TUI row claims it inherits the sections "because it draws
+  RenderThreads". That claim had no test, and writing one **failed**: the TUI
+  test built `ThreadRow` values by hand, a shape production never produces
+  because every row reaches `ApplyChains` through `SelectThreads`, which is what
+  stamps the key. The renderer was right; the test was feeding it something
+  real code cannot. Fixed by running the test's fixture through the real
+  pipeline.
+
+**omitted:**
+
+- **1 / 6 / 34a — no option, no control.** Grouping is the view, not a mode:
+  there is no flag to turn it off and no form field anywhere. If one is ever
+  wanted it is a new declaration row, which is item 1's job then rather than
+  now.
+- **11–22 — no task or runner field.** Unchanged from the previous walk.
+
+**The lesson this one paid for:** "surface X inherits it from the shared
+renderer" is a claim about a code path, and a passing test suite does not check
+it — the assertion has to exist. Writing it cost one line and immediately found
+that the test around it was fictional.

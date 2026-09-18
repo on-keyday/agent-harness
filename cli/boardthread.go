@@ -38,6 +38,14 @@ type ThreadRow struct {
 	// root rather than hidden: a tree view re-orders a listing, it never
 	// filters one.
 	Orphan bool
+	// Conversation is the key of the conversation this row's chain belongs to
+	// — the participant set, or a named topic when the chain touched one. It is
+	// stamped by SelectThreads and carried to every consumer, including the
+	// browser, so nothing has to re-derive the grouping and disagree about it.
+	//
+	// Empty only when the row came from a path that does not group (nothing
+	// does today; it is the zero value, not a state).
+	Conversation string
 	// Size is the PUBLISHED byte count. It is always populated: BuildThreads
 	// fills it from the payload it was handed, and a face that collected
 	// metadata without bodies (the agent face — ListRetained carries a size
@@ -261,7 +269,7 @@ func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) 
 			// is the error above, not this.
 			return nil, nil
 		}
-		return rowsOfChain(rows, find, want), nil
+		return groupConversations(rowsOfChain(rows, find, want), topicOf), nil
 	}
 	if haveTasks {
 		// --task names at least one task. An empty keepComp here means the
@@ -278,9 +286,9 @@ func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) 
 				out = append(out, r)
 			}
 		}
-		return out, nil
+		return groupConversations(out, topicOf), nil
 	}
-	return rows, nil
+	return groupConversations(rows, topicOf), nil
 }
 
 // rowsOfChain keeps only the rows whose chain root is want. The rows arrive
@@ -344,4 +352,227 @@ func CollectThreads(ctx context.Context, peerCID objproto.ConnectionID, f Thread
 	}
 	defer c.Close()
 	return CollectThreadsWith(ctx, c, f)
+}
+
+// conversationKey identifies the conversation one chain belongs to.
+//
+// A chain that touched a topic which is NOT a chat.<short-id> keys on that
+// topic: a sender who declared a subject with --reply-to said the subject is
+// the unit, and this takes them at their word. The lowest-sorting such name
+// wins so the key does not depend on message order.
+//
+// Otherwise the key is the participant set. A message on chat.<id> has TWO
+// parties — whoever sent it and whoever owns that inbox — and the second is
+// the half a sender-only rule would drop, which is the very asymmetry that
+// makes a topic-keyed view show one side of an exchange.
+func conversationKey(chain []ThreadRow, topicOf map[uint64]string) string {
+	named := ""
+	parties := map[string]bool{}
+	for _, r := range chain {
+		topic := r.Topic
+		if topic == "" && topicOf != nil {
+			topic = topicOf[r.Msg.Seq]
+		}
+		switch {
+		case strings.HasPrefix(topic, "chat."):
+			parties[strings.TrimPrefix(topic, "chat.")] = true
+		case topic != "":
+			if named == "" || topic < named {
+				named = topic
+			}
+		}
+		if h := r.Msg.FromTaskHex; h != "" {
+			if len(h) > 8 {
+				h = h[:8]
+			}
+			parties[h] = true
+		}
+	}
+	if named != "" {
+		return named
+	}
+	if len(parties) == 0 {
+		// Reachable: a chain whose messages carry neither a topic nor an
+		// attributable sender. Keyed apart from every real conversation rather
+		// than folded into one of them.
+		return "(unattributed)"
+	}
+	ids := make([]string, 0, len(parties))
+	for p := range parties {
+		ids = append(ids, p)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, "+")
+}
+
+// groupConversations reorders rows into conversation sections and stamps each
+// row with its key.
+//
+// A chain is not a conversation: an unanswered message is its own chain, and
+// so is one sent with --topic rather than --in-reply-to. Measured on a live
+// board, a two-party exchange five minutes long produced four chains and one
+// conversation. Without this layer those fragments interleave with every other
+// exchange's, ordered by seq, with nothing marking the boundary.
+//
+// Conversations are ordered by their most recent message, ASCENDING: this is a
+// transcript and the view it extends already reads forward in time. Chains
+// within one keep their relative order, and rows within a chain are untouched.
+func groupConversations(rows []ThreadRow, topicOf map[uint64]string) []ThreadRow {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	// Components over the rows that survived the filter — a chain whose other
+	// half was filtered out is a chain of what is left, not a dangling link.
+	comp := make(map[uint64]uint64, len(rows))
+	var find func(uint64) uint64
+	find = func(x uint64) uint64 {
+		for comp[x] != x {
+			comp[x] = comp[comp[x]]
+			x = comp[x]
+		}
+		return x
+	}
+	for _, r := range rows {
+		comp[r.Msg.Seq] = r.Msg.Seq
+	}
+	for _, r := range rows {
+		if r.Msg.InReplyTo == 0 {
+			continue
+		}
+		if _, ok := comp[r.Msg.InReplyTo]; !ok {
+			continue
+		}
+		if a, b := find(r.Msg.Seq), find(r.Msg.InReplyTo); a != b {
+			comp[a] = b
+		}
+	}
+
+	type chain struct {
+		rows   []ThreadRow
+		key    string
+		latest uint64 // ReceivedAtMs of its newest message
+	}
+	chains := map[uint64]*chain{}
+	var chainOrder []uint64
+	for _, r := range rows {
+		id := find(r.Msg.Seq)
+		c, ok := chains[id]
+		if !ok {
+			c = &chain{}
+			chains[id] = c
+			chainOrder = append(chainOrder, id)
+		}
+		c.rows = append(c.rows, r)
+		if r.Msg.ReceivedAtMs > c.latest {
+			c.latest = r.Msg.ReceivedAtMs
+		}
+	}
+
+	type conv struct {
+		key    string
+		latest uint64
+		chains []*chain
+	}
+	convs := map[string]*conv{}
+	var convOrder []string
+	for _, id := range chainOrder {
+		c := chains[id]
+		c.key = conversationKey(c.rows, topicOf)
+		v, ok := convs[c.key]
+		if !ok {
+			v = &conv{key: c.key}
+			convs[c.key] = v
+			convOrder = append(convOrder, c.key)
+		}
+		v.chains = append(v.chains, c)
+		if c.latest > v.latest {
+			v.latest = c.latest
+		}
+	}
+
+	// Ties broken by key so the order is total: two conversations can share a
+	// millisecond, and an unstable order moves sections under a reader between
+	// refreshes.
+	sort.SliceStable(convOrder, func(i, j int) bool {
+		a, b := convs[convOrder[i]], convs[convOrder[j]]
+		if a.latest != b.latest {
+			return a.latest < b.latest
+		}
+		return a.key < b.key
+	})
+
+	out := make([]ThreadRow, 0, len(rows))
+	for _, k := range convOrder {
+		for _, c := range convs[k].chains {
+			for _, r := range c.rows {
+				r.Conversation = k
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}
+
+// ConversationHeader is the one spelling of a conversation's section header.
+//
+// Participants are named `<agent>/<task8>` where the row data says who they
+// are. A party that only ever RECEIVED — it owns a chat.<id> topic and never
+// sent — has no agent profile anywhere in the messages, so it appears as the
+// bare id. That is missing information rather than a missing participant, and
+// leaving it out of the header would hide half of a one-way exchange.
+func ConversationHeader(rows []ThreadRow) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	key := rows[0].Conversation
+	agentOf := map[string]string{}
+	parties := map[string]bool{}
+	chains := map[uint64]bool{}
+	var first, last uint64
+	for _, r := range rows {
+		if h := r.Msg.FromTaskHex; h != "" {
+			if len(h) > 8 {
+				h = h[:8]
+			}
+			parties[h] = true
+			if a := r.Msg.FromAgentProfile; a != "" {
+				agentOf[h] = a
+			}
+		}
+		if strings.HasPrefix(r.Topic, "chat.") {
+			parties[strings.TrimPrefix(r.Topic, "chat.")] = true
+		}
+		root := r.Msg.Seq
+		if r.Msg.InReplyTo != 0 {
+			root = r.Msg.InReplyTo
+		}
+		chains[root] = true
+		if first == 0 || r.Msg.ReceivedAtMs < first {
+			first = r.Msg.ReceivedAtMs
+		}
+		if r.Msg.ReceivedAtMs > last {
+			last = r.Msg.ReceivedAtMs
+		}
+	}
+	names := make([]string, 0, len(parties))
+	for p := range parties {
+		if a := agentOf[p]; a != "" {
+			names = append(names, a+"/"+p)
+		} else {
+			names = append(names, p)
+		}
+	}
+	sort.Strings(names)
+
+	who := strings.Join(names, " ↔ ")
+	if !strings.Contains(key, "+") && !strings.HasPrefix(key, "(") {
+		// A named topic is the room; the participants are who showed up in it.
+		who = key + "  (" + strings.Join(names, ", ") + ")"
+	}
+	span := boardMsToRFC3339(first)[11:19]
+	if last != first {
+		span += "–" + boardMsToRFC3339(last)[11:19]
+	}
+	return fmt.Sprintf("%s   %d message(s)   %s", who, len(rows), span)
 }

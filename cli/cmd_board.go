@@ -460,13 +460,36 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 
 	mode := opts.Body
 
-	for _, r := range rows {
-		if keep != nil && !keep(r.Msg.Seq) {
-			continue
+	// The filter is applied FIRST so a section header describes what will
+	// actually print. Computing it from the unfiltered rows would announce
+	// participants whose messages the filter removed.
+	shown := rows
+	if keep != nil {
+		shown = make([]ThreadRow, 0, len(rows))
+		for _, r := range rows {
+			if keep(r.Msg.Seq) {
+				shown = append(shown, r)
+			}
 		}
+	}
+	// Rows arrive grouped by conversation, so the section a row belongs to
+	// changes exactly when its key does.
+	sectionOf := map[string][]ThreadRow{}
+	for _, r := range shown {
+		sectionOf[r.Conversation] = append(sectionOf[r.Conversation], r)
+	}
+	current := ""
+
+	for _, r := range shown {
 		if opts.JSON {
+			// No headers in JSON: the conversation key is a field on every
+			// record, which a consumer groups by without parsing anything.
 			emitThreadRowJSON(out, r, !opts.HeadersOnly)
 			continue
+		}
+		if r.Conversation != current {
+			current = r.Conversation
+			fmt.Fprintf(out, "\n%s\n", ConversationHeader(sectionOf[current]))
 		}
 		// re= only on replies; reply-to only when the sender declared one;
 		// ORPHAN only when it applies — the same "marker when it applies"
@@ -534,6 +557,10 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 		// size is carried even under --headers-only, where there is no body to
 		// measure: it is the one field a consumer of that form cannot derive.
 		"size": r.Size,
+		// The conversation this row's chain belongs to. Emitted so a consumer
+		// groups by the same key the text view sections on, rather than
+		// re-deriving a grouping that could disagree with it.
+		"conversation": r.Conversation,
 		"from": map[string]any{
 			"task_id":  r.Msg.FromTaskHex,
 			"hostname": r.Msg.FromHostname,

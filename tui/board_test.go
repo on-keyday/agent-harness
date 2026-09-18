@@ -345,9 +345,18 @@ func TestBoardModal_ChainsUsesTheSharedRenderer(t *testing.T) {
 	m := NewBoardModal()
 	m.Open()
 	m.SetSize(120, 40)
-	rows := []cli.ThreadRow{
-		{Msg: cli.BoardMessage{Seq: 1, Payload: []byte("root")}, Topic: "chat.aaaa", Size: 4},
-		{Msg: cli.BoardMessage{Seq: 2, InReplyTo: 1, Payload: []byte("reply")}, Topic: "chat.bbbb", Size: 5},
+	// Built through the real pipeline rather than by hand: production always
+	// feeds ApplyChains the output of SelectThreads, which stamps the
+	// conversation key, and a hand-made row set is a shape that never reaches
+	// it. The first version of this test made rows directly and could not see
+	// the section headers at all.
+	topicOf := map[uint64]string{1: "chat.aaaa", 2: "chat.bbbb"}
+	rows, err := cli.SelectThreads(cli.BuildThreads([]cli.BoardMessage{
+		{Seq: 1, FromTaskHex: "aaaa1111", Payload: []byte("root")},
+		{Seq: 2, InReplyTo: 1, FromTaskHex: "bbbb2222", Payload: []byte("reply")},
+	}, topicOf), topicOf, cli.ThreadFilter{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	m.ApplyChains(rows)
 
@@ -366,6 +375,12 @@ func TestBoardModal_ChainsUsesTheSharedRenderer(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("chain view missing %q:\n%s", want, view)
 		}
+	}
+	// The conversation section header. "The TUI inherits it because it draws
+	// RenderThreads" is a claim, and this is what holds it: a surface that
+	// stopped sharing the renderer would drop the sections silently.
+	if !strings.Contains(view, "message(s)") {
+		t.Errorf("chain view lost the conversation section header:\n%s", view)
 	}
 }
 

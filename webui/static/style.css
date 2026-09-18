@@ -2197,3 +2197,17 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   .board-chain-head { font-size: 0.76rem; }
   .board-chain-body { font-size: 0.76rem; }
 }
+
+/* A conversation's section header in the chain view. Set apart from the rows
+   rather than styled like one: it is the boundary between exchanges, which is
+   the thing the flat list could not show. */
+.board-chain-conv {
+  margin: 0.9rem 0 0.35rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid #3c3c3c;
+  color: #4ec9b0;
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.board-chain-conv:first-child { margin-top: 0; }

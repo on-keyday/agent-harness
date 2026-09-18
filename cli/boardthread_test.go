@@ -2,6 +2,7 @@ package cli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -181,5 +182,135 @@ func TestBuildThreadsDepthMarksForksNotReplies(t *testing.T) {
 	}
 	if g := TreePrefix(byseq[5].IsLast); g != "└─ " {
 		t.Errorf("last forked reply gutter = %q, want %q", g, "└─ ")
+	}
+}
+
+// msg is a terse BoardMessage for the grouping tests: seq, parent, sender, ms.
+func msg(seq, parent uint64, from string, ms uint64) BoardMessage {
+	return BoardMessage{Seq: seq, InReplyTo: parent, FromTaskHex: from, ReceivedAtMs: ms}
+}
+
+func group(t *testing.T, msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
+	t.Helper()
+	rows, err := SelectThreads(BuildThreads(msgs, topicOf), topicOf, ThreadFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+// TestConversationGrouping_TheMeasuredShape is the fixture the design spec was
+// written from: a two-party exchange five minutes long, on a live board, came
+// out as EIGHT messages in FOUR chains — two of them single unanswered status
+// messages, one a message sent with --topic rather than --in-reply-to. All of
+// it is one conversation.
+func TestConversationGrouping_TheMeasuredShape(t *testing.T) {
+	a, b := "70fbad4a", "c96af19d"
+	topicOf := map[uint64]string{
+		1: "chat." + b, 2: "chat." + a, 3: "chat." + a,
+		4: "chat." + b, 5: "chat." + a, 6: "chat." + a, 7: "chat." + a, 8: "chat." + b,
+	}
+	rows := group(t, []BoardMessage{
+		msg(1, 0, a, 100), // claude → pi
+		msg(2, 1, b, 110), // pi replies
+		msg(3, 0, b, 120), // pi, unanswered: its own chain
+		msg(4, 0, a, 130), // claude, sent with --topic: its own chain
+		msg(5, 4, b, 140), // pi, fork branch one
+		msg(6, 4, b, 150), // pi, fork branch two
+		msg(7, 0, b, 160), // pi, unanswered: its own chain
+		msg(8, 6, a, 170), // claude replies to branch two
+	}, topicOf)
+
+	if len(rows) != 8 {
+		t.Fatalf("rows = %d, want 8", len(rows))
+	}
+	keys := map[string]int{}
+	for _, r := range rows {
+		keys[r.Conversation]++
+	}
+	if len(keys) != 1 {
+		t.Fatalf("conversations = %d, want 1: %v", len(keys), keys)
+	}
+	if _, ok := keys["70fbad4a+c96af19d"]; !ok {
+		t.Errorf("conversation key = %v, want 70fbad4a+c96af19d", keys)
+	}
+}
+
+// TestConversationGrouping_SeparatesPeers: a supervisor talking to two workers
+// is two conversations, not one, even though it is in both.
+func TestConversationGrouping_SeparatesPeers(t *testing.T) {
+	sup, w1, w2 := "aaaaaaaa", "bbbbbbbb", "cccccccc"
+	topicOf := map[uint64]string{
+		1: "chat." + w1, 2: "chat." + sup,
+		3: "chat." + w2, 4: "chat." + sup,
+	}
+	rows := group(t, []BoardMessage{
+		msg(1, 0, sup, 100), msg(2, 1, w1, 110),
+		msg(3, 0, sup, 120), msg(4, 3, w2, 130),
+	}, topicOf)
+
+	got := map[string][]uint64{}
+	for _, r := range rows {
+		got[r.Conversation] = append(got[r.Conversation], r.Msg.Seq)
+	}
+	want := map[string][]uint64{
+		"aaaaaaaa+bbbbbbbb": {1, 2},
+		"aaaaaaaa+cccccccc": {3, 4},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("grouping = %v, want %v", got, want)
+	}
+}
+
+// TestConversationGrouping_NamedTopicIsTheRoom: a chain that touched a topic
+// which is not a chat.<id> keys on that topic — the sender declared a subject
+// with --reply-to, and that is the unit.
+func TestConversationGrouping_NamedTopicIsTheRoom(t *testing.T) {
+	a, b := "70fbad4a", "c96af19d"
+	topicOf := map[uint64]string{1: "chat." + b, 2: "rr.dec-019"}
+	rows := group(t, []BoardMessage{msg(1, 0, a, 100), msg(2, 1, b, 110)}, topicOf)
+	for _, r := range rows {
+		if r.Conversation != "rr.dec-019" {
+			t.Errorf("seq %d: conversation = %q, want rr.dec-019", r.Msg.Seq, r.Conversation)
+		}
+	}
+}
+
+// TestConversationGrouping_ReceiveOnlyPartyCounts: a party that never sent is
+// still a participant — it owns the topic the message landed on. Dropping it
+// would key a one-way exchange as if it had one participant.
+func TestConversationGrouping_ReceiveOnlyPartyCounts(t *testing.T) {
+	a, b := "70fbad4a", "c96af19d"
+	topicOf := map[uint64]string{1: "chat." + b}
+	rows := group(t, []BoardMessage{msg(1, 0, a, 100)}, topicOf)
+	if rows[0].Conversation != "70fbad4a+c96af19d" {
+		t.Errorf("conversation = %q, want both parties even though %s never sent",
+			rows[0].Conversation, b)
+	}
+	if h := ConversationHeader(rows); !strings.Contains(h, b) {
+		t.Errorf("header %q omits the party that only received", h)
+	}
+}
+
+// TestConversationGrouping_OrderIsMostRecentLast: sections follow their newest
+// message, not their first — a conversation that started early and is still
+// going belongs at the bottom, where a transcript's freshest lines are.
+func TestConversationGrouping_OrderIsMostRecentLast(t *testing.T) {
+	a, b, c := "aaaaaaaa", "bbbbbbbb", "cccccccc"
+	topicOf := map[uint64]string{1: "chat." + b, 2: "chat." + c, 3: "chat." + b}
+	rows := group(t, []BoardMessage{
+		msg(1, 0, a, 100), // a↔b starts first
+		msg(2, 0, a, 200), // a↔c is one message, in the middle
+		msg(3, 0, a, 300), // a↔b speaks again, most recently
+	}, topicOf)
+	var order []string
+	for _, r := range rows {
+		if len(order) == 0 || order[len(order)-1] != r.Conversation {
+			order = append(order, r.Conversation)
+		}
+	}
+	want := []string{"aaaaaaaa+cccccccc", "aaaaaaaa+bbbbbbbb"}
+	if !reflect.DeepEqual(order, want) {
+		t.Errorf("section order = %v, want %v (oldest activity first)", order, want)
 	}
 }

@@ -1702,6 +1702,11 @@ func harnessBoardThread(this js.Value, args []js.Value) any {
 					"isLast":    isLast,
 					"gutter":    cli.TreePrefix(r.IsLast),
 					"orphan":    r.Orphan,
+					// Which conversation this row's chain belongs to. The
+					// browser sections on it and looks its header up below; it
+					// derives neither, for the same reason it does not walk the
+					// reply links.
+					"conversation": r.Conversation,
 					// Always populated, so a zero here means a zero-byte
 					// publish rather than a field nobody filled in.
 					"size": float64(r.Size),
@@ -1727,9 +1732,29 @@ func harnessBoardThread(this js.Value, args []js.Value) any {
 					}(),
 				})
 			}
+			// One header per conversation, rendered by cli.ConversationHeader —
+			// the same spelling the CLI and TUI print. Sent as a list rather
+			// than stamped on a row so the browser cannot show two different
+			// headers for one section.
+			secRows := map[string][]cli.ThreadRow{}
+			var secOrder []string
+			for _, r := range rows {
+				if _, ok := secRows[r.Conversation]; !ok {
+					secOrder = append(secOrder, r.Conversation)
+				}
+				secRows[r.Conversation] = append(secRows[r.Conversation], r)
+			}
+			convs := make([]any, 0, len(secOrder))
+			for _, k := range secOrder {
+				convs = append(convs, map[string]any{
+					"key":    k,
+					"header": cli.ConversationHeader(secRows[k]),
+				})
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
-				"window": cli.ThreadWindowOperator,
-				"rows":   out,
+				"window":        cli.ThreadWindowOperator,
+				"rows":          out,
+				"conversations": convs,
 			}))
 		}()
 		return nil
