@@ -193,9 +193,30 @@ second to the first.
 **Obligation 1 — a body drawn on a terminal must not control it.** Printing a
 body means handing an untrusted peer's bytes to a terminal.
 `tui/rawforward.go:74` already decided what to do, and its comment says the
-WebUI pane decided the same: keep `\n` and `\t`, replace every byte below 0x20,
-`0x7f`, and `0x80`–`0x9f`. C1 is in that set because `U+009B` is CSI — a
-terminal honouring 8-bit controls acts on it the way it acts on `ESC [`.
+WebUI pane decided the same: keep `\n` and `\t`, replace everything below
+`U+0020`, `U+007F`, and `U+0080`–`U+009F`. C1 is in that set because `U+009B`
+is CSI — a terminal honouring 8-bit controls acts on it the way it acts on
+`ESC [`.
+
+**Those are code points, not bytes, and the distinction is the whole
+correctness of the helper.** `sanitizeOutput` scans with `strings.Map`, which
+iterates runes. UTF-8 continuation bytes occupy `0x80`–`0xBF`, so a byte-wise
+scan of the same numeric range shreds ordinary text: 日 is `E6 97 A5` and its
+middle byte sits inside C1, emoji and Cyrillic likewise. Measured on the first
+implementation of this helper, which was byte-wise because an earlier draft of
+this section said "byte": `日本語のメッセージ` came out as
+`\xe6\x97\xa5\xe6\x9c\xac…` and `done ✅ shipped 🚀` as
+`done \xe2\x9c\x85 shipped \xf0\x9f\x9a\x80`. The same inputs pass through the
+rune-based rule untouched.
+
+A byte-wise scan also fails in the other direction: it lets `0xFF` and every
+other byte at `0xA0` or above through unescaped, so an invalid byte still
+reaches the terminal.
+
+The payload is untrusted and may not be valid UTF-8, so the helper decodes it
+rune by rune and takes two paths: a decoded rune is judged against the code
+point set above, and a byte that does not begin a valid sequence is escaped as
+itself. Valid text survives; controls and invalid bytes do not.
 `cli/cmd_board.go:287` does not apply it: `out.Write(m.Payload)` sends raw
 bytes, so a message carrying `ESC [ 2 J` clears the operator's screen today.
 
@@ -286,8 +307,14 @@ Go unit tests on `BuildThreads`, mirroring `cli/tasktree_test.go` and
 Plus, for the two obligations in the payload section — the second is the one
 that needs a test most, because nothing about it is visible when it breaks:
 
-- the escape helper pins the byte set (C0 except `\n`/`\t`, `0x7f`,
-  `0x80`–`0x9f`), including inside an indented JSON body carrying `U+009B`
+- the escape helper pins the code-point set (C0 except `\n`/`\t`, `U+007F`,
+  `U+0080`–`U+009F`), including inside an indented JSON body carrying `U+009B`
+- **the helper leaves valid multi-byte text byte-identical** — Japanese, emoji,
+  Cyrillic and accented Latin, each asserted equal to its input. This is the
+  regression test for the byte-wise first implementation; without it, a helper
+  that shreds every non-ASCII message still passes every other test here
+- an invalid byte (`0xFF`, a lone `0x9B`) is escaped rather than passed through,
+  which a byte-wise scan gets wrong in the opposite direction
 - `board read` and both new verbs, with stdout NOT a character device, emit the
   published bytes **byte-for-byte** — asserted by comparing against the
   published payload, for a body containing ESC, CR, `U+009B` and a non-UTF-8
