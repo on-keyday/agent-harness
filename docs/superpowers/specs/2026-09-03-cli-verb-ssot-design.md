@@ -879,6 +879,37 @@ is the same answer as "this is the zero value", so a sixth type would silently
 stop printing defaults for every flag using it.
 `TestEveryNonZeroDefaultIsPrinted` is the other half.
 
+**On a laddered flag that note is the ladder's BOTTOM tier, not the answer**
+(found reviewing the rule above, after it landed). `Flag.Resolve` (D7) reaches
+the declared `Default` only once every tier answers empty — flag, env,
+workspace config, then `Default` — so `(default X)` there describes the case
+where nothing above it answered. `prune-local --repo` is the only flag in the
+table carrying both a non-zero `Default` and tiers above it, and it printed
+`(default ".")` while `HARNESS_REPO_PATH` — set in every runner-spawned task,
+which makes `"."` precisely the case that never happens there — decided which
+repo the verb removes worktrees from. Measured with `prune-local --before
+100000h` against `env -u HARNESS_REPO_PATH`: two directories, one help line.
+
+The repair is in the prose, not the renderer. That flag's `Help` names its
+tiers, so the note reads as the bottom of a stated ladder, and
+`TestLadderTiersAreNamedWhenADefaultIsPrinted` fails when a laddered flag
+prints a default without naming what preempts it. Two alternatives were
+rejected, both for reasons worth keeping:
+
+- **Suppressing the note whenever `len(Flag.Resolve) > 0.`** The other thirteen
+  laddered flags declare a ZERO default, so the rule would have had one live
+  subject and would silently stop printing the day one of them is given a real
+  default — the failure the `reflect.Value.IsZero` choice above exists to avoid.
+  It also hides a true statement: with an empty ladder the declared default is
+  what the operator gets, unlike a sentinel, which never reaches the program.
+- **Naming the tiers in the shared `repoHelp`.** `Flag.Help` has no per-surface
+  form, and the TUI and WebUI have no env or workspace tier at all (see
+  `Flag.Resolve`'s doc comment), so that would state an env variable on two
+  surfaces that never read one. `prune-local` being CLI-only is what makes the
+  prose unambiguous where it is written. The three spawn verbs' `--repo` keeps
+  its `Notes` parenthetical, which carries the same cross-surface imprecision
+  and predates this.
+
 Two things came out with it:
 
 - **The duplication D12 could not see.** Two dozen `Notes` lines began with a

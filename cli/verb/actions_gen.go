@@ -345,7 +345,7 @@ type PruneAction struct {
 // PruneLocalAction is built by: prune-local.
 type PruneLocalAction struct {
 	ActionMarker
-	// repo to prune
+	// repo to prune; when not given, HARNESS_REPO_PATH, then the workspace config's repo
 	Repo string
 	// remove worktrees older than this (ignored when TASK_IDs are passed)
 	Before time.Duration

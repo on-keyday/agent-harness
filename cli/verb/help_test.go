@@ -161,6 +161,56 @@ func TestEveryNonZeroDefaultIsPrinted(t *testing.T) {
 	}
 }
 
+// A printed default on a LADDERED flag is the ladder's BOTTOM tier, not the
+// answer, so every tier above it must be named beside the flag.
+//
+// Resolve (build.go) reaches the declared Default only after each tier answers
+// empty: flag, then env, then the workspace config, then Default. `prune-local
+// --repo` is the only flag in the table with both a non-zero Default and tiers
+// above it, and its block read `(default ".")` while HARNESS_REPO_PATH — set in
+// every runner-spawned task, so "." is the case that never happens there —
+// decided which repo the verb removes worktrees from. Measured 2026-09-18 with
+// `prune-local --before 100000h` against `env -u HARNESS_REPO_PATH`: two
+// different directories, one help line.
+//
+// The obligation is on the PROSE, deliberately. Nothing here asks whether the
+// note was printed, so the check cannot be met by changing the renderer.
+// Suppressing the note for any laddered flag was the first fix and was wrong:
+// the thirteen others declare a ZERO default, so it would have been a rule with
+// one live subject that silently stops printing the day one of them is given a
+// real default — the failure the reflect-over-type-switch choice above exists to
+// avoid. HelpBlock carrying Help verbatim is held by
+// TestHelpBlockNamesEveryFlagOfItsSurface, so the declaration is what to read.
+func TestLadderTiersAreNamedWhenADefaultIsPrinted(t *testing.T) {
+	for _, v := range Verbs {
+		for _, f := range v.Flags {
+			if len(f.Resolve) == 0 || defaultNote(f) == "" {
+				continue
+			}
+			for _, tr := range f.Resolve {
+				var tier, want string
+				switch {
+				case tr.Env != "":
+					tier, want = "env "+tr.Env, tr.Env
+				case tr.Workspace != "":
+					// The SOURCE, not the key: the key here is "repo", a word
+					// every second line of this table already contains.
+					tier, want = "workspace key "+tr.Workspace, "workspace"
+				default:
+					// SurfaceContext is a dropdown or a session field, not a
+					// name an operator can look up and set.
+					continue
+				}
+				if !strings.Contains(f.Help, want) {
+					t.Errorf("%s: --%s prints %q, but its %s tier preempts that default and "+
+						"is not named in the flag's Help: %q",
+						v.FlagSetName(), f.Name, strings.TrimSpace(defaultNote(f)), tier, f.Help)
+				}
+			}
+		}
+	}
+}
+
 // A ZERO default is a sentinel in this table and must not be printed.
 // `session send --settle-ms` declares 0 and waits 1500ms once --snapshot
 // follows; `git log --max` declares 0 and fetches 100. "(default 0)" would

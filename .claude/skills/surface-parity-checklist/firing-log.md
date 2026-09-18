@@ -2001,3 +2001,32 @@ needed), 37, 39.
    the TUI rendered it through `ErrorStyle` behind an `error: ` prefix and the
    WebUI threw it as an `Error`. The operator who asked what a flag does was
    told they had made a mistake.
+
+**missed: 24 — and the walk that was skipped is the mechanism.** The follow-up
+commit twenty-five minutes later (`1a539a68`, "print a flag's default when it is
+not a sentinel") added `(default X)` to that same block and ran NO walk — it is
+absent from this log. It reads as a continuation of the change above, so the
+trigger did not feel like it fired again; what it actually did was put a new
+operator-visible statement on three surfaces.
+
+Item 24 is the one that would have asked. `Flag.Resolve` (D7) reaches the
+declared `Default` only after env and the workspace config answer empty, so the
+printed note is the ladder's BOTTOM tier — "same option, other path", where the
+path is the environment the process runs in. `prune-local --repo` is the only
+flag with both a non-zero `Default` and tiers above it, and it printed
+`(default ".")` while `HARNESS_REPO_PATH`, set in every runner-spawned task,
+decided which repo that verb removes worktrees from. Item 24 reads `done` above
+because it was asked of `Flag.Help`, which has no per-path semantics; nobody
+re-asked it of `Flag.Default`, which does.
+
+Two things this says about the list rather than about the diff:
+
+- **A continuation commit is a new walk.** "Same surface, one commit later" is
+  where the trigger fails in practice, and this is the second time the log has
+  recorded a skip of that shape. The cheap version is to re-read only the items
+  the first walk marked `done` for a DIFFERENT field, and ask them of the new
+  one.
+- **Item 24's wording says "multi-path verb", which reads as sub-verbs.** A
+  resolution ladder is a per-path axis too, and nothing in the item's text
+  reaches it. Fixed by naming the ladder in item 24 rather than by adding a
+  number: it is the same question.

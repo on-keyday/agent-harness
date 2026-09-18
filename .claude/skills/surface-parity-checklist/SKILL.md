@@ -28,6 +28,14 @@ A walk that skips numbers or collapses into "surfaces covered" is invalid —
 the summary sentence is exactly where discretionary omission hides. If an
 item is expensive, say so and mark it; do not silently drop it.
 
+**A continuation commit is a new walk.** Where the trigger fails in practice
+is "same surface, one commit later": the second change reads as finishing the
+first, so nothing feels like it fired again. When that is the shape, re-read
+the items the first walk marked `done` and ask each one of the NEW field.
+Item 24 read `done` for `Flag.Help`, which has no per-path semantics, and was
+never re-asked of `Flag.Default`, which does — twenty-five minutes and one
+commit later, with no entry in the log.
+
 Items S1–S6 (agent-launch parity) are a SEPARATE list with its own trigger,
 kept out of 1–39 on purpose: they are `n/a` for almost every field change,
 and a list that trains you to type `n/a` is how the walk decays. Walk them
@@ -136,6 +144,16 @@ whole snapshot.
     down, not implied. The incident: spawn options on the resume path — a
     zero value that means "default" on create means "overwrite with
     default" on resume unless a presence bit says otherwise.
+    **A resolution ladder is a path too.** `Flag.Resolve` consults env and the
+    workspace config BEFORE falling back to the declared `Default`, so the
+    "path" can be the environment the process runs in rather than a sub-verb.
+    `prune-local --repo` printed `(default ".")` in its help while
+    `HARNESS_REPO_PATH` — set in every runner-spawned task, so `"."` is the
+    case that never happens there — decided which repo that verb removes
+    worktrees from. "Multi-path verb" read as sub-verbs and nothing in this
+    item's wording reached the ladder (2026-09-18). A flag with a ladder and a
+    non-zero `Default` must name its tiers where it states the default;
+    `cli/verb`'s `TestLadderTiersAreNamedWhenADefaultIsPrinted` holds that.
 25. Presence — can the wire tell "not given" from "given the zero value"?
     If not and the difference matters (resume, set-style RPCs), add a
     presence bit — reserved bits in an existing byte first (`scope_present`
@@ -417,4 +435,5 @@ cannot answer about itself: which items keep getting missed (their wording is
 wrong, not the walker), and which never fire at all (dead weight, and the
 `n/a` reflex is how the walk decays). It also records **walks that were
 skipped**, which is a fact about when the trigger fails to fire in practice
-rather than on paper — that has already happened twice.
+rather than on paper — that has already happened three times, the last one a
+continuation commit on a surface the previous commit had just walked.

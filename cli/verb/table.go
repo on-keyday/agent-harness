@@ -1655,7 +1655,7 @@ var Verbs = []VerbSpec{
 		Path: []string{"prune-local"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
-			"remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)",
+			"remove worktrees in <repo>/.harness-worktrees/",
 			"with no ids: time-based, removes entries older than --before",
 			"with ids: removes only those (refuses active tasks unless --force)",
 		},
@@ -1667,7 +1667,17 @@ var Verbs = []VerbSpec{
 			Reason: "a bare prune-local removes every worktree older than the default; say which"}},
 		Args: []Arg{{Name: "task-id", Type: ArgTaskID, Variadic: true, Field: "TaskIDs", WidensIfUnset: true}},
 		Flags: []Flag{
-			{Name: "repo", Type: FlagString, Default: ".", Field: "Repo", Help: "repo to prune",
+			{Name: "repo", Type: FlagString, Default: ".", Field: "Repo",
+				// The ladder is named HERE because the "(default \".\")" the block
+				// prints is its BOTTOM tier, not the answer: this is the only flag in
+				// the table with both a non-zero Default and tiers above it, so it is
+				// the only one where the note alone reads as the whole story. Inside a
+				// runner-spawned task HARNESS_REPO_PATH is always set, so "." is
+				// precisely the case that never happens there -- on the verb that
+				// removes worktrees. Stated in the Help rather than the shared
+				// repoHelp because this verb is CLI-only: Flag.Help has no per-surface
+				// form, and the TUI and WebUI have no env or workspace tier at all.
+				Help:    "repo to prune; when not given, HARNESS_REPO_PATH, then the workspace config's repo",
 				Resolve: []Tier{{Env: "HARNESS_REPO_PATH"}, {Workspace: "repo"}}},
 			{Name: "before", Type: FlagDuration, Default: 7 * 24 * time.Hour, Field: "Before",
 				Help: "remove worktrees older than this (ignored when TASK_IDs are passed)"},
