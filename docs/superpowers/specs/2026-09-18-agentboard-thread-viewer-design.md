@@ -325,12 +325,36 @@ that needs a test most, because nothing about it is visible when it breaks:
 
 ## Risks
 
-**Orphans are the normal case, not an edge case.** With a 30-minute TTL, a chain
-older than the window has lost its root, so the view will frequently show
-orphan-rooted fragments. Hiding them would empty the view during ordinary
-operation; marking them is what keeps it legible. Each surface states the window
-(64 per topic, 30 minutes) so an empty view reads as "nothing recent" rather
-than "broken".
+**Orphans are the normal case, not an edge case.** A chain whose root is outside
+the window renders as an orphan-rooted fragment, and that happens often. Hiding
+them would empty the view during ordinary operation; marking them is what keeps
+it legible.
+
+**The window is not 30 minutes, and an earlier draft of this section said it
+was.** Found by running the verb against a live board rather than the
+in-process one the unit tests use. Three bounds apply, and the first is the one
+that usually bites:
+
+1. **A topic dies with its last subscriber.** `Board.Revoke`
+   (`agentboard/board.go:154`), called on `TaskFinished`, deletes every topic
+   only that task subscribed — retained messages included. A worker's
+   `chat.<short-id>` is subscribed by exactly that task, so a finished worker
+   takes its whole side of every conversation with it, at once. The one
+   carve-out is deliberate and documented in that function: a topic still
+   holding a **retracted** message survives to the TTL instead, because
+   otherwise finishing a task would destroy the audit trail `retract` exists to
+   keep, including entries the operator had not read.
+2. **30 minutes after the last publish**, for a topic that outlived its
+   subscribers under that carve-out.
+3. **64 messages per topic**, within a living topic.
+
+What this means for the view, stated plainly on each surface rather than
+discovered: between two tasks that are both still running — the case this
+feature was asked for — the chain is whole, because both topics live as long as
+their tasks. Once a participant finishes, its side is gone immediately and what
+remains renders as orphans. This view shows conversations that are still
+happening; it is not a post-mortem tool, and D2 keeps changing that out of
+scope.
 
 **`agent thread` shows a partial conversation by design.** A task sees its own
 subscribed topics. The view says so rather than implying it is the whole
