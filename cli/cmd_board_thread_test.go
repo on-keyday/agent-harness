@@ -155,6 +155,26 @@ func TestBoardThread_TaskFilterUnionsIds(t *testing.T) {
 	}
 }
 
+// A --task naming a task that matches NOTHING is an empty result, never a
+// silent fall-back to unfiltered — the gap the agent face's test caught in
+// SelectThreads; pinned here so the operator face cannot regress either.
+func TestBoardThread_TaskFilterMatchingNothingIsEmpty(t *testing.T) {
+	srv, peerCID := startOperatorServerE2E(t)
+	seedThreadChain(t, srv, true)
+
+	var out bytes.Buffer
+	if err := runBoardThread(t, peerCID, &out, "--task", strings.Repeat("f", 32)); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, "root from A") || strings.Contains(got, "c talks to himself") {
+		t.Errorf("a non-matching --task printed the unfiltered board:\n%s", got)
+	}
+	if !strings.Contains(got, "last subscriber task finishes") {
+		t.Errorf("empty result lost the window line:\n%s", got)
+	}
+}
+
 // A --seq naming a message outside the visible set is an ERROR that names
 // the seq — an empty result and a bad argument must not look the same.
 func TestBoardThread_SeqOutsideVisibleSetIsError(t *testing.T) {

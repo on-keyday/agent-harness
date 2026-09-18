@@ -1,6 +1,10 @@
 package cli
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // ThreadRow is one board message placed in its reply chain, flattened into the
 // order a renderer draws it in.
@@ -30,6 +34,11 @@ type ThreadRow struct {
 	// root rather than hidden: a tree view re-orders a listing, it never
 	// filters one.
 	Orphan bool
+	// Size is the PUBLISHED byte count, known to faces that collect metadata
+	// without carrying payloads (the agent face under --headers-only; the
+	// ListRetained metas carry Size but no body). Zero means "read
+	// len(Msg.Payload) instead", which is the board face's always-true case.
+	Size int
 }
 
 // BuildThreads arranges messages under the messages they reply to, across
@@ -121,6 +130,135 @@ func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
 				row.Topic = topicOf[m.Seq]
 			}
 			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// ThreadFilter carries the two selector axes both faces of the thread view
+// share. They compose as an AND when both are set.
+type ThreadFilter struct {
+	// Tasks: keep a chain if ANY message in it was sent by a named task OR
+	// sits on that task's own inbound topic (chat.<id8>). Repeating the flag
+	// UNIONS — two ids give the pair's exchange plus anything either had with
+	// a third party, because a filter that dropped the third party would hide
+	// the fact that the conversation was not private.
+	Tasks []string
+	// Seq: keep only the chain containing it. 0 = no selection.
+	Seq uint64
+}
+
+// SeqNotVisibleError reports a --seq that names no message in the input set.
+// The two faces render it differently — the operator reads "not in the
+// visible set", the agent reads "not readable from this task" — so callers
+// match on the type and word it for their reader; the default text is the
+// operator's.
+type SeqNotVisibleError struct {
+	Seq uint64
+}
+
+func (e *SeqNotVisibleError) Error() string {
+	return fmt.Sprintf("board thread: seq %d is not in the visible set (its topic may have died with its last subscriber task, or it rotated out of a topic's 64-message ring)", e.Seq)
+}
+
+// SelectThreads filters rows produced by BuildThreads to the chains the
+// filter selects, returning them in BuildThreads order.
+//
+// Chains, not messages, are the unit: a reply links messages into one chain,
+// and keep/drop applies to the whole of it. The chain id is the component
+// root under a union over the in_reply_to links, so a malformed cycle still
+// lands every member in one component instead of looping.
+//
+// A Seq that names no message in the input is a *SeqNotVisibleError, not an
+// empty result — the same distinction board read draws when a topic holds
+// messages but none reply to the requested seq. An empty result and a bad
+// argument must not look the same. A Seq whose chain involves no named task
+// is an empty result: the chain exists, the filter just does not select it.
+func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) ([]ThreadRow, error) {
+	comp := make(map[uint64]uint64, len(rows))
+	var find func(uint64) uint64
+	find = func(x uint64) uint64 {
+		for comp[x] != x {
+			comp[x] = comp[comp[x]]
+			x = comp[x]
+		}
+		return x
+	}
+	for _, r := range rows {
+		comp[r.Msg.Seq] = r.Msg.Seq
+	}
+	for _, r := range rows {
+		if r.Msg.InReplyTo != 0 {
+			if _, parentVisible := comp[r.Msg.InReplyTo]; parentVisible {
+				rp, rt := find(r.Msg.Seq), find(r.Msg.InReplyTo)
+				if rp != rt {
+					comp[rp] = rt
+				}
+			}
+		}
+	}
+
+	keepComp := map[uint64]bool{}
+	haveTasks := false
+	for _, t := range f.Tasks {
+		id := strings.ToLower(strings.TrimSpace(t))
+		if id == "" {
+			continue
+		}
+		haveTasks = true
+		prefix := id
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		chatTopic := "chat." + prefix
+		for _, r := range rows {
+			if r.Msg.FromTaskHex == id || (topicOf != nil && topicOf[r.Msg.Seq] == chatTopic) {
+				keepComp[find(r.Msg.Seq)] = true
+			}
+		}
+	}
+
+	if f.Seq != 0 {
+		want, found := comp[f.Seq]
+		if !found {
+			return nil, &SeqNotVisibleError{Seq: f.Seq}
+		}
+		if haveTasks && !keepComp[want] {
+			// AND of the two axes: the chain exists but involves no named
+			// task. An empty result is the honest answer — the bad argument
+			// is the error above, not this.
+			return nil, nil
+		}
+		return rowsOfChain(rows, find, want), nil
+	}
+	if haveTasks {
+		// --task names at least one task. An empty keepComp here means the
+		// named tasks match NOTHING in the visible set — an empty result,
+		// never "everything": a filter that matched nothing must not fall
+		// back to unfiltered, or `--task <mistyped>` would silently print
+		// the whole board.
+		if len(keepComp) == 0 {
+			return nil, nil
+		}
+		out := make([]ThreadRow, 0, len(rows))
+		for _, r := range rows {
+			if keepComp[find(r.Msg.Seq)] {
+				out = append(out, r)
+			}
+		}
+		return out, nil
+	}
+	return rows, nil
+}
+
+// rowsOfChain keeps only the rows whose chain root is want. The rows arrive
+// in pre-order, so a chain's members are contiguous except for unrelated
+// roots interleaved by seq; filtering by component id preserves their order.
+func rowsOfChain(rows []ThreadRow, find func(uint64) uint64, want uint64) []ThreadRow {
+	out := make([]ThreadRow, 0, len(rows))
+	for _, r := range rows {
+		if find(r.Msg.Seq) == want {
+			out = append(out, r)
 		}
 	}
 	return out

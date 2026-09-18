@@ -18,7 +18,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// AgentAction is built by: agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent topics, agent unsubscribe, agent wait.
+// AgentAction is built by: agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
 type AgentAction struct {
 	ActionMarker
 	// server ConnectionID (env: HARNESS_SERVER_CID)
@@ -38,8 +38,14 @@ type AgentAction struct {
 	Timeout time.Duration
 	// this agent's own chat.<short-id> topic
 	Self bool
-	// drop one message by seq; omitted drops the topic's retained buffer
+	// only the chain containing this seq; one outside what this task can see is an error, not an empty res…
 	Seq uint64
+	// keep chains involving ANY named task (repeatable, 32-hex id); a task matches what it sent and what l…
+	Tasks []string
+	// print rows without bodies
+	HeadersOnly bool
+	// print the body bytes unescaped even on a terminal
+	Raw bool
 }
 
 // AgentSendAction is built by: agent dispatch, agent send.
@@ -2750,6 +2756,17 @@ func init() {
 			a.Self = b.Bool("self")
 			return a, nil
 		},
+		"agent thread\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "thread"
+			a.ServerCID = b.Str("server-cid")
+			a.Seq = uint64Of(b.Flags["seq"])
+			a.Tasks = stringsOf(b.Custom["task"])
+			a.HeadersOnly = b.Bool("headers-only")
+			a.Raw = b.Bool("raw")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"agent purge\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "purge"
@@ -2885,6 +2902,7 @@ const (
 	CmdAgentTopics            = "agent topics"
 	CmdAgentSubscriptions     = "agent subscriptions"
 	CmdAgentRetained          = "agent retained"
+	CmdAgentThread            = "agent thread"
 	CmdAgentPurge             = "agent purge"
 	CmdAgentRead              = "agent read"
 	CmdAgentRetract           = "agent retract"
@@ -4946,6 +4964,30 @@ func ParseCmdAgentRetained(sf Surface, args []string, ctx map[string]string) (Ag
 	return a, nil
 }
 
+func ParseCmdAgentThread(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "thread")
+	if !ok {
+		return zero, fmt.Errorf("agent thread: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
+	return a, nil
+}
+
 func ParseCmdAgentPurge(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "purge")
@@ -5175,6 +5217,8 @@ type CLIDispatch[R any] interface {
 	AgentSubscriptions(AgentAction) R
 	// agent retained
 	AgentRetained(AgentAction) R
+	// agent thread
+	AgentThread(AgentAction) R
 	// agent purge
 	AgentPurge(AgentAction) R
 	// agent read
@@ -5636,6 +5680,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.AgentRetained(a), true, nil
+	case CmdAgentThread:
+		a, perr := ParseCmdAgentThread(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AgentThread(a), true, nil
 	case CmdAgentPurge:
 		a, perr := ParseCmdAgentPurge(CLI, args, ctx)
 		if perr != nil {
@@ -5856,6 +5906,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.AgentSubscriptions(a), true
 		case "retained":
 			return h.AgentRetained(a), true
+		case "thread":
+			return h.AgentThread(a), true
 		case "purge":
 			return h.AgentPurge(a), true
 		case "read":
@@ -6325,6 +6377,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdAgentRetained:
 			a, perr := ParseCmdAgentRetained(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentThread:
+			a, perr := ParseCmdAgentThread(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

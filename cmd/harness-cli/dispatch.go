@@ -540,6 +540,9 @@ func (h cliVerbs) AgentSend(a verb.AgentSendAction) error {
 func (h cliVerbs) AgentDispatch(a verb.AgentSendAction) error {
 	return agent.DispatchWith(h.ctx, a, os.Stdin, os.Stdout)
 }
+func (h cliVerbs) AgentThread(a verb.AgentAction) error {
+	return agent.ThreadWith(h.ctx, a, os.Stdout)
+}
 func (h cliVerbs) AgentInbox(a verb.AgentAction) error {
 	return agent.InboxWith(h.ctx, a, os.Stdout)
 }

@@ -321,84 +321,19 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			msgs = append(msgs, tmsgs...)
 		}
 
-		// A reply links messages into CHAINS, and --task / --seq pick chains,
-		// not messages: keep or drop a chain whole. Component id = the
-		// chain's root seq, computed by a union over the in_reply_to links so
-		// a malformed cycle still lands every member in one component
-		// instead of looping.
-		comp := make(map[uint64]uint64, len(msgs))
-		var find func(uint64) uint64
-		find = func(x uint64) uint64 {
-			for comp[x] != x {
-				comp[x] = comp[comp[x]]
-				x = comp[x]
-			}
-			return x
+		// Chains, not messages, are the unit the selectors pick: the shared
+		// SelectThreads owns the union-find, the --task semantics and the
+		// --seq error, and the agent face (cli/agent/thread.go) calls the
+		// same function. A second copy here would be the second way to
+		// flatten the graph this design exists to prevent.
+		rows, serr := SelectThreads(BuildThreads(msgs, topicOf), topicOf, ThreadFilter{
+			Tasks: ba.Tasks,
+			Seq:   ba.Seq,
+		})
+		if serr != nil {
+			return serr
 		}
-		for _, m := range msgs {
-			comp[m.Seq] = m.Seq
-		}
-		for _, m := range msgs {
-			if m.InReplyTo != 0 {
-				if _, parentVisible := comp[m.InReplyTo]; parentVisible {
-					rp, rt := find(m.Seq), find(m.InReplyTo)
-					if rp != rt {
-						comp[rp] = rt
-					}
-				}
-			}
-		}
-
-		// --task: a chain is kept if ANY message in it was sent by a named
-		// task OR sits on that task's own inbound topic (chat.<id8>). Both
-		// halves matter: the first finds what it said, the second what was
-		// said to it. Repeating the flag UNIONS — two ids give the pair's
-		// exchange plus anything either had with a third party, because a
-		// filter that dropped the third party would hide the fact that the
-		// conversation was not private. With no --task, every chain is kept.
-		keepComp := map[uint64]bool{}
-		for _, t := range ba.Tasks {
-			id := strings.ToLower(strings.TrimSpace(t))
-			if id == "" {
-				continue
-			}
-			prefix := id
-			if len(prefix) > 8 {
-				prefix = prefix[:8]
-			}
-			chatTopic := "chat." + prefix
-			for _, m := range msgs {
-				if m.FromTaskHex == id || topicOf[m.Seq] == chatTopic {
-					keepComp[find(m.Seq)] = true
-				}
-			}
-		}
-
-		rows := BuildThreads(msgs, topicOf)
-
-		// keep answers: does THIS message's chain survive the filters? With
-		// no --task, every chain survives.
-		keep := func(seq uint64) bool {
-			return len(keepComp) == 0 || keepComp[find(seq)]
-		}
-		// --seq: the chain containing N. A seq outside the visible set is an
-		// ERROR naming the seq — the same distinction board read draws when a
-		// topic holds messages but none reply to the requested seq. An empty
-		// result and a bad argument must not look the same.
-		if ba.Seq != 0 {
-			want, found := comp[ba.Seq]
-			if !found {
-				return fmt.Errorf("board thread: seq %d is not in the visible set (its topic may have died with its last subscriber task, or it rotated out of a topic's 64-message ring)", ba.Seq)
-			}
-			keep = func(seq uint64) bool {
-				// AND of the two axes: the chain must be THE one containing
-				// the seq and, when --task was given, involve a named task.
-				// The second half failing is an empty result, not an error —
-				// the chain exists, the filter just does not select it.
-				return find(seq) == want && (len(keepComp) == 0 || keepComp[want])
-			}
-		}
-		return renderThreadRows(out, ba, rows, keep)
+		return renderThreadRows(out, ba, rows)
 
 	case verb.SubSubscribers:
 		// Optional <topic>: with it, only the tasks a publish to that topic
@@ -488,38 +423,60 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 	return nil
 }
 
-// renderThreadRows draws the rows BuildThreads produced, dropping any whose
-// chain the --seq / --task filters did not select. It is the single rendering
-// both of `board thread` and of every later caller of the assembly.
+// renderThreadRows is the operator face's call into RenderThreads; the two
+// faces share one renderer so their rows cannot drift.
+func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) error {
+	return RenderThreads(out, rows, ThreadRenderOptions{
+		JSON:        ba.JSON,
+		HeadersOnly: ba.HeadersOnly,
+		Raw:         ba.Raw,
+		Window:      threadWindowOperator,
+	}, nil)
+}
+
+// threadWindowOperator is the window statement the operator face prints. The
+// wording is deliberate: it must not promise a duration the board does not
+// honour. A topic dies when its last subscriber task finishes (Board.Revoke),
+// and each topic holds at most the last 64 messages — the TTL exists but
+// rarely fires first.
+const threadWindowOperator = "board thread: shows what is still on the board — a topic dies when its last subscriber task finishes, and holds at most the last 64 messages; ORPHAN marks a reply whose parent is outside that set"
+
+// ThreadRenderOptions carries what the two faces of the thread view may
+// differ on: output mode, body suppression, escaping, and the window
+// statement — the agent face's says which topics it can see, the operator
+// face's says which it cannot see past.
+type ThreadRenderOptions struct {
+	JSON        bool
+	HeadersOnly bool
+	Raw         bool
+	Window      string
+}
+
+// RenderThreads draws the rows BuildThreads and SelectThreads produced.
 //
 // The window line is the spec's Risks requirement in visible form: an empty
 // view must read as "nothing recent" rather than "broken", so the retention
-// window (64 per topic, 30 minutes) and the orphan rule are stated once,
-// above the rows. In --json mode the line cannot join the feed (it would
-// corrupt one-record-per-line framing), so it goes to stderr instead.
-func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow, keep func(seq uint64) bool) error {
-	// The wording is deliberate: it must not promise a duration the board
-	// does not honour. A topic dies when its last subscriber task finishes
-	// (Board.Revoke), and each topic holds at most the last 64 messages —
-	// the TTL exists but rarely fires first.
-	window := "board thread: shows what is still on the board — a topic dies when its last subscriber task finishes, and holds at most the last 64 messages; ORPHAN marks a reply whose parent is outside that set"
-	if ba.JSON {
-		fmt.Fprintln(os.Stderr, window)
+// bounds are stated once, above the rows. In --json mode the line cannot join
+// the feed (it would corrupt one-record-per-line framing), so it goes to
+// stderr instead.
+func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, keep func(seq uint64) bool) error {
+	if opts.JSON {
+		fmt.Fprintln(os.Stderr, opts.Window)
 	} else {
-		fmt.Fprintln(out, window)
+		fmt.Fprintln(out, opts.Window)
 	}
 
 	// The body mode is judged ONCE, from the real destination — the same
 	// gate and the same reasoning as board read's.
 	destFile, _ := out.(*os.File)
-	mode := bodyModeFor(destFile, ba.Raw)
+	mode := bodyModeFor(destFile, opts.Raw)
 
 	for _, r := range rows {
-		if !keep(r.Msg.Seq) {
+		if keep != nil && !keep(r.Msg.Seq) {
 			continue
 		}
-		if ba.JSON {
-			emitThreadRowJSON(out, r, !ba.HeadersOnly)
+		if opts.JSON {
+			emitThreadRowJSON(out, r, !opts.HeadersOnly)
 			continue
 		}
 		// re= only on replies; reply-to only when the sender declared one;
@@ -542,12 +499,19 @@ func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow, keep
 			marker += fmt.Sprintf(" RETRACTED at=%s by=%s",
 				boardMsToRFC3339(r.Msg.RetractedAtMs), RetractedByLabel(r.Msg))
 		}
+		size := len(r.Msg.Payload)
+		if r.Size != 0 {
+			// A face that collected metadata without carrying the body knows
+			// the published size from it; len(Payload) would print 0 and
+			// claim a zero-byte message was published.
+			size = r.Size
+		}
 		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
 			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
 			boardTaskShort(r.Msg.FromTaskHex), r.Msg.FromHostname,
-			boardAgentOrDash(r.Msg.FromAgentProfile), len(r.Msg.Payload),
+			boardAgentOrDash(r.Msg.FromAgentProfile), size,
 			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
-		if !ba.HeadersOnly {
+		if !opts.HeadersOnly {
 			writeBoardBody(out, r.Msg.Payload, mode)
 		}
 	}
