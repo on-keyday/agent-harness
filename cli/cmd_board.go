@@ -388,7 +388,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if ba.Seq != 0 {
 			want, found := comp[ba.Seq]
 			if !found {
-				return fmt.Errorf("board thread: seq %d is not in the visible set (the board keeps the last 64 messages per topic for 30 minutes)", ba.Seq)
+				return fmt.Errorf("board thread: seq %d is not in the visible set (its topic may have died with its last subscriber task, or it rotated out of a topic's 64-message ring)", ba.Seq)
 			}
 			keep = func(seq uint64) bool {
 				// AND of the two axes: the chain must be THE one containing
@@ -498,7 +498,11 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 // above the rows. In --json mode the line cannot join the feed (it would
 // corrupt one-record-per-line framing), so it goes to stderr instead.
 func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow, keep func(seq uint64) bool) error {
-	window := "board thread: window = last 64 messages per topic, 30 minutes; ORPHAN marks a reply whose parent is outside that window"
+	// The wording is deliberate: it must not promise a duration the board
+	// does not honour. A topic dies when its last subscriber task finishes
+	// (Board.Revoke), and each topic holds at most the last 64 messages —
+	// the TTL exists but rarely fires first.
+	window := "board thread: shows what is still on the board — a topic dies when its last subscriber task finishes, and holds at most the last 64 messages; ORPHAN marks a reply whose parent is outside that set"
 	if ba.JSON {
 		fmt.Fprintln(os.Stderr, window)
 	} else {

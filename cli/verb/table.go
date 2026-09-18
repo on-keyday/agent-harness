@@ -1049,8 +1049,9 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"print retained messages arranged by reply chain, across topics (cap: board_observe).",
 			"Roots in seq order; ORPHAN marks a reply whose parent is outside the visible set —",
-			"shown at root, never hidden. The board keeps the last 64 messages per topic for",
-			"30 minutes, so an empty view reads as nothing recent, not broken.",
+			"shown at root, never hidden. A topic leaves the board when its last subscriber task",
+			"finishes, and each topic holds at most the last 64 messages — so this view shows",
+			"conversations that are still happening, not post-mortems.",
 		},
 		CmdlineSurfaces: CLI,
 		NoModalSurface: "the TUI chain view (plan Task 8) and WebUI tab (plan Task 7) of " +

@@ -96,7 +96,7 @@ func TestBoardThread_JoinsAcrossTopics(t *testing.T) {
 		}
 	}
 	// The window line is what makes an empty view legible; it must be there.
-	if !strings.Contains(got, "last 64 messages per topic, 30 minutes") {
+	if !strings.Contains(got, "a topic dies when its last subscriber task finishes") {
 		t.Errorf("window statement missing:\n%s", got)
 	}
 	// Order: the three bodies must appear in seq order.
