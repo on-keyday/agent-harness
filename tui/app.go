@@ -762,6 +762,14 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.ApplyMessages(msg.Topic, msg.Msgs, msg.Subs, msg.Found)
 		return a, nil
 
+	case BoardChainsMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("chains: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.ApplyChains(msg.Rows)
+		return a, nil
+
 	case BoardSubscribersMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("subscribers: " + msg.Err.Error())

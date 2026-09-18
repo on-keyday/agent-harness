@@ -235,7 +235,7 @@ func (a *App) inChat(msg tea.KeyMsg) tea.Cmd {
 // table/viewport navigation itself.
 func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc {
-		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers {
+		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers || m == boardChains {
 			a.boardModal.PopToTopics()
 			return nil
 		}
@@ -266,10 +266,18 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 				return DoBoardSubscribers(a.client, topic)
 			}
 			return nil
+		case modalKeys.BoardChains:
+			// No topic argument: the chain view reads every topic, because a
+			// conversation is split across them.
+			return DoBoardChains(a.client)
 		}
 	} else if a.boardModal.Mode() == boardSubscribers {
 		if msg.String() == modalKeys.BoardSubscribers {
 			return DoBoardSubscribers(a.client, a.boardModal.CurTopic())
+		}
+	} else if a.boardModal.Mode() == boardChains {
+		if msg.String() == modalKeys.BoardChains {
+			return DoBoardChains(a.client)
 		}
 	} else {
 		// boardMessages mode

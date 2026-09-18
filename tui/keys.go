@@ -119,6 +119,7 @@ type modalKeyMap struct {
 	BoardPurgeMsg    string
 	BoardRetractMsg  string
 	BoardSubscribers string
+	BoardChains      string
 	GitSetBase       string
 	GitStatus        string
 	GitNextFile      string
@@ -152,13 +153,17 @@ var modalKeys = modalKeyMap{
 	// the topic they take.
 	BoardRetractMsg:  "w",
 	BoardSubscribers: "s",
-	GitSetBase:       "B",
-	GitStatus:        "s",
-	GitNextFile:      "n",
-	GitPrevFile:      "N",
-	GitSubmodule:     "m",
-	GitUp:            "backspace",
-	GitOpenFile:      "o",
+	// `c` opens the chain view. Its own letter rather than a mode of Enter:
+	// Enter drills into ONE topic, and the chain view is the opposite move —
+	// it reads every topic at once because a conversation spans them.
+	BoardChains:  "c",
+	GitSetBase:   "B",
+	GitStatus:    "s",
+	GitNextFile:  "n",
+	GitPrevFile:  "N",
+	GitSubmodule: "m",
+	GitUp:        "backspace",
+	GitOpenFile:  "o",
 	// Same letter and the same reasoning as ForwardTap: the trsf columns are a
 	// READING of the rows already on screen, not a stronger form of anything
 	// beside it.

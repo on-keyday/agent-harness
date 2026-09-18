@@ -9,20 +9,26 @@ import (
 	"unicode/utf8"
 )
 
-// bodyMode says what happens to payload bytes on the way out. It exists so
+// BodyMode says what happens to payload bytes on the way out. It exists so
 // the decision is made in one place and travels as one value: a pair of bools
 // at each call site can be swapped without the compiler noticing, and a swap
 // here corrupts extracted bytes while leaving nothing on screen to notice.
-type bodyMode int
+//
+// It is exported because a caller that is not writing to a file — the TUI,
+// which renders into a viewport — cannot be judged by BodyModeFor and has to
+// say what it wants. For that caller the answer is always BodyEscaped: a
+// bordered panel is repainted over by a stray ESC, which is the same reason
+// tui/rawforward.go sanitizes what it draws.
+type BodyMode int
 
 const (
-	// bodyExact is the zero value ON PURPOSE. A mode nobody set yields the
+	// BodyExact is the zero value ON PURPOSE. A mode nobody set yields the
 	// published bytes, so a forgotten assignment fails toward a visible
 	// problem (an ESC reaching a terminal) rather than an invisible one
 	// (a file whose bytes are not the message).
-	bodyExact bodyMode = iota
-	// bodyEscaped renders every terminal-steering byte as a visible escape.
-	bodyEscaped
+	BodyExact BodyMode = iota
+	// BodyEscaped renders every terminal-steering byte as a visible escape.
+	BodyEscaped
 )
 
 // EscapeForTerminal returns b with every terminal-steering CODE POINT
@@ -87,17 +93,17 @@ func IsTTY(f *os.File) bool {
 	return st.Mode()&os.ModeCharDevice != 0
 }
 
-// bodyModeFor is the ONLY place the destination is judged.
+// BodyModeFor is the ONLY place the destination is judged.
 //
 // raw always wins: --raw exists so an operator reading interactively can copy
-// exact bytes without redirecting. A non-character device yields bodyExact
+// exact bytes without redirecting. A non-character device yields BodyExact
 // regardless — that is obligation 2, the data path; escaping it would corrupt
 // every `board read > out` and `| jq` extraction, invisibly.
-func bodyModeFor(out *os.File, raw bool) bodyMode {
+func BodyModeFor(out *os.File, raw bool) BodyMode {
 	if raw || out == nil || !IsTTY(out) {
-		return bodyExact
+		return BodyExact
 	}
-	return bodyEscaped
+	return BodyEscaped
 }
 
 // writeBoardBody prints one message body to w. It is the single
@@ -105,18 +111,18 @@ func bodyModeFor(out *os.File, raw bool) bodyMode {
 // keeps cmd_board.go's existing JSON-indent behaviour: a body that parses as
 // JSON is indented, anything else is written as stored.
 //
-// bodyExact writes the published bytes (indented for JSON — that transform
-// was already the contract — but no escaping). bodyEscaped runs the result
+// BodyExact writes the published bytes (indented for JSON — that transform
+// was already the contract — but no escaping). BodyEscaped runs the result
 // through EscapeForTerminal. The JSON case needs the escape pass in both
 // modes' terms: encoding/json escapes C0 inside strings but leaves C1 raw, so
 // an indented body would still hand a terminal a live U+009B.
-func writeBoardBody(w io.Writer, payload []byte, mode bodyMode) {
+func writeBoardBody(w io.Writer, payload []byte, mode BodyMode) {
 	if json.Valid(payload) {
 		var buf bytes.Buffer
 		_ = json.Indent(&buf, payload, "", "  ")
 		payload = buf.Bytes()
 	}
-	if mode == bodyEscaped {
+	if mode == BodyEscaped {
 		fmt.Fprintln(w, EscapeForTerminal(payload))
 		return
 	}

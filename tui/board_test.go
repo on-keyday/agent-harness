@@ -337,3 +337,57 @@ func TestBoardModalMessagesNameWhoRetracted(t *testing.T) {
 		t.Errorf("message-mode footer does not advertise the retract key\n%s", view)
 	}
 }
+
+// TestBoardModal_ChainsUsesTheSharedRenderer pins that the TUI draws the CLI's
+// output rather than a second rendering of the same rows. If this ever needs a
+// TUI-specific expectation, that is the signal the two surfaces have drifted.
+func TestBoardModal_ChainsUsesTheSharedRenderer(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	rows := []cli.ThreadRow{
+		{Msg: cli.BoardMessage{Seq: 1, Payload: []byte("root")}, Topic: "chat.aaaa", Size: 4},
+		{Msg: cli.BoardMessage{Seq: 2, InReplyTo: 1, Payload: []byte("reply")}, Topic: "chat.bbbb", Size: 5},
+	}
+	m.ApplyChains(rows)
+
+	if m.Mode() != boardChains {
+		t.Fatalf("mode = %v, want boardChains", m.Mode())
+	}
+	view := m.View()
+	// The window statement is the CLI's constant, not a string retyped here.
+	// Asserted by its TAIL: it is wrapped to the panel width, so the whole
+	// sentence never appears on one line — and the tail is exactly the part
+	// that was being truncated away before it was wrapped.
+	if !strings.Contains(view, "ORPHAN marks a reply") {
+		t.Errorf("chain view lost the end of the window statement:\n%s", view)
+	}
+	for _, want := range []string{"#1", "#2", "re=1", "topic=chat.aaaa", "topic=chat.bbbb", "2 rows"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("chain view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// TestBoardModal_ChainsEscapesBodies is the panel-integrity half: a body from an
+// untrusted peer must not reach the viewport with a live control sequence, or
+// it repaints over the border — the reason sanitizeOutput exists for the raw
+// pane. RenderThreads cannot judge a viewport by its type, so ApplyChains says
+// BodyEscaped explicitly; this is what would catch that line being dropped.
+func TestBoardModal_ChainsEscapesBodies(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplyChains([]cli.ThreadRow{
+		{Msg: cli.BoardMessage{Seq: 1, Payload: []byte("clear:\x1b[2J bell:\x07")}, Topic: "chat.aaaa", Size: 18},
+	})
+	view := m.View()
+	for _, raw := range []string{"\x1b[2J", "\x07"} {
+		if strings.Contains(view, raw) {
+			t.Errorf("a raw control sequence %q reached the viewport:\n%q", raw, view)
+		}
+	}
+	if !strings.Contains(view, `\x1b`) {
+		t.Errorf("the escape is not visible either:\n%s", view)
+	}
+}

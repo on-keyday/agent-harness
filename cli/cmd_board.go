@@ -240,11 +240,11 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		shown := 0
 		// The body mode is judged ONCE, from the real destination, before the
 		// loop: stdout is os.Stdout in the generated dispatch, and a test's
-		// bytes.Buffer is not an *os.File at all. Both fail toward bodyExact —
+		// bytes.Buffer is not an *os.File at all. Both fail toward BodyExact —
 		// the mode nobody set yields the published bytes, which is obligation
 		// 2: escaping a redirect would corrupt extraction invisibly.
 		destFile, _ := out.(*os.File)
-		mode := bodyModeFor(destFile, ba.Raw)
+		mode := BodyModeFor(destFile, ba.Raw)
 		for _, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
@@ -407,10 +407,14 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 // renderThreadRows is the operator face's call into RenderThreads; the two
 // faces share one renderer so their rows cannot drift.
 func renderThreadRows(out io.Writer, ba verb.BoardAction, rows []ThreadRow) error {
+	// The destination is judged here, where it is still a file, and travels as
+	// a mode. Obligation 2 of the spec's payload section lives in this line:
+	// a redirected `board thread > out` must carry the published bytes.
+	destFile, _ := out.(*os.File)
 	return RenderThreads(out, rows, ThreadRenderOptions{
 		JSON:        ba.JSON,
 		HeadersOnly: ba.HeadersOnly,
-		Raw:         ba.Raw,
+		Body:        BodyModeFor(destFile, ba.Raw),
 		Window:      ThreadWindowOperator,
 	}, nil)
 }
@@ -432,8 +436,12 @@ const ThreadWindowOperator = "board thread: shows what is still on the board —
 type ThreadRenderOptions struct {
 	JSON        bool
 	HeadersOnly bool
-	Raw         bool
-	Window      string
+	// Body is stated by the caller rather than derived here: RenderThreads
+	// writes to an io.Writer, and a viewport is not a file, so a destination
+	// test at this level would silently answer BodyExact for the one surface
+	// that must always escape.
+	Body   BodyMode
+	Window string
 }
 
 // RenderThreads draws the rows BuildThreads and SelectThreads produced.
@@ -450,10 +458,7 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 		fmt.Fprintln(out, opts.Window)
 	}
 
-	// The body mode is judged ONCE, from the real destination — the same
-	// gate and the same reasoning as board read's.
-	destFile, _ := out.(*os.File)
-	mode := bodyModeFor(destFile, opts.Raw)
+	mode := opts.Body
 
 	for _, r := range rows {
 		if keep != nil && !keep(r.Msg.Seq) {

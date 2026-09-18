@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -103,10 +104,11 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 		}
 	}
 
+	destFile, _ := stdout.(*os.File)
 	return cli.RenderThreads(stdout, rows, cli.ThreadRenderOptions{
 		JSON:        a.JSON,
 		HeadersOnly: a.HeadersOnly,
-		Raw:         a.Raw,
+		Body:        cli.BodyModeFor(destFile, a.Raw),
 		Window:      ThreadWindowAgent,
 	}, nil)
 }

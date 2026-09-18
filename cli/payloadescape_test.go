@@ -86,7 +86,7 @@ func TestEscapeForTerminalEscapesInvalidBytes(t *testing.T) {
 func TestBoardReadRedirectedIsByteExact(t *testing.T) {
 	body := []byte("x\x1b[2J\r\u009b\xff\xfe binary")
 	var buf bytes.Buffer // not a character device
-	writeBoardBody(&buf, body, bodyExact)
+	writeBoardBody(&buf, body, BodyExact)
 	if !bytes.Equal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), body) {
 		t.Errorf("redirected output altered the bytes:\n got %q\nwant %q", buf.Bytes(), body)
 	}
@@ -95,7 +95,7 @@ func TestBoardReadRedirectedIsByteExact(t *testing.T) {
 func TestBoardReadRawIsByteExactOnATerminal(t *testing.T) {
 	body := []byte("x\x1b[2J\xff")
 	var buf bytes.Buffer
-	writeBoardBody(&buf, body, bodyExact)
+	writeBoardBody(&buf, body, BodyExact)
 	if !bytes.Equal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), body) {
 		t.Errorf("--raw altered the bytes: %q", buf.Bytes())
 	}
@@ -103,7 +103,7 @@ func TestBoardReadRawIsByteExactOnATerminal(t *testing.T) {
 
 func TestBoardReadTerminalIsEscaped(t *testing.T) {
 	var buf bytes.Buffer
-	writeBoardBody(&buf, []byte("x\x1b[2J"), bodyEscaped)
+	writeBoardBody(&buf, []byte("x\x1b[2J"), BodyEscaped)
 	if bytes.Contains(buf.Bytes(), []byte{0x1b}) {
 		t.Errorf("a terminal got a raw ESC: %q", buf.Bytes())
 	}
@@ -116,7 +116,7 @@ func TestBoardReadTerminalIsEscaped(t *testing.T) {
 // through untouched.
 func TestJSONBodyC1IsEscapedForTerminal(t *testing.T) {
 	var buf bytes.Buffer
-	writeBoardBody(&buf, []byte("{\"k\":\"a\u009bb\"}"), bodyEscaped)
+	writeBoardBody(&buf, []byte("{\"k\":\"a\u009bb\"}"), BodyEscaped)
 	if bytes.Contains(buf.Bytes(), []byte{0xc2, 0x9b}) {
 		t.Errorf("C1 survived into terminal output: %q", buf.Bytes())
 	}
@@ -125,7 +125,7 @@ func TestJSONBodyC1IsEscapedForTerminal(t *testing.T) {
 	}
 }
 
-// bodyModeFor is the ONLY place the destination is judged; these pin its
+// BodyModeFor is the ONLY place the destination is judged; these pin its
 // table. A zero-byte body through the exact mode round-trips unchanged.
 func TestBodyModeFor(t *testing.T) {
 	regular, err := os.CreateTemp(t.TempDir(), "notachrdev")
@@ -137,17 +137,17 @@ func TestBodyModeFor(t *testing.T) {
 		t.Skip("temp file is unexpectedly a character device")
 	}
 
-	// A non-character device yields bodyExact regardless of raw: a pipe or
+	// A non-character device yields BodyExact regardless of raw: a pipe or
 	// redirect gets the published bytes even if the operator typed --raw.
-	if got := bodyModeFor(regular, false); got != bodyExact {
-		t.Errorf("regular file, raw=false: mode = %v, want bodyExact", got)
+	if got := BodyModeFor(regular, false); got != BodyExact {
+		t.Errorf("regular file, raw=false: mode = %v, want BodyExact", got)
 	}
-	if got := bodyModeFor(regular, true); got != bodyExact {
-		t.Errorf("regular file, raw=true: mode = %v, want bodyExact", got)
+	if got := BodyModeFor(regular, true); got != BodyExact {
+		t.Errorf("regular file, raw=true: mode = %v, want BodyExact", got)
 	}
 
-	// /dev/null is a character device; --raw yields bodyExact even for a
-	// terminal, no-raw yields bodyEscaped.
+	// /dev/null is a character device; --raw yields BodyExact even for a
+	// terminal, no-raw yields BodyEscaped.
 	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		t.Skipf("cannot open %s: %v", os.DevNull, err)
@@ -156,19 +156,19 @@ func TestBodyModeFor(t *testing.T) {
 	if st, _ := null.Stat(); st.Mode()&os.ModeCharDevice == 0 {
 		t.Skipf("%s is unexpectedly not a character device", os.DevNull)
 	}
-	if got := bodyModeFor(null, true); got != bodyExact {
-		t.Errorf("terminal, raw=true: mode = %v, want bodyExact", got)
+	if got := BodyModeFor(null, true); got != BodyExact {
+		t.Errorf("terminal, raw=true: mode = %v, want BodyExact", got)
 	}
-	if got := bodyModeFor(null, false); got != bodyEscaped {
-		t.Errorf("terminal, raw=false: mode = %v, want bodyEscaped", got)
+	if got := BodyModeFor(null, false); got != BodyEscaped {
+		t.Errorf("terminal, raw=false: mode = %v, want BodyEscaped", got)
 	}
 }
 
 // A nil *os.File (a non-file io.Writer type-asserted at the call site) fails
-// toward bodyExact: escaping requires proof of a terminal, not the absence
+// toward BodyExact: escaping requires proof of a terminal, not the absence
 // of one.
 func TestBodyModeForNilFileIsExact(t *testing.T) {
-	if got := bodyModeFor(nil, false); got != bodyExact {
-		t.Errorf("nil file: mode = %v, want bodyExact", got)
+	if got := BodyModeFor(nil, false); got != BodyExact {
+		t.Errorf("nil file: mode = %v, want BodyExact", got)
 	}
 }

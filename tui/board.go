@@ -108,6 +108,31 @@ func DoBoardRead(c *cli.Client, topic string) tea.Cmd {
 }
 
 // BoardSubscribersMsg carries the result of DoBoardSubscribers for one topic.
+// BoardChainsMsg carries the assembled reply chains back to the App.
+type BoardChainsMsg struct {
+	Rows []cli.ThreadRow
+	Err  error
+}
+
+// DoBoardChains collects every topic the operator can see and assembles the
+// chains across them.
+//
+// It calls the *With variant against the App's long-lived client, like every
+// other Do* here, and the collection itself is cli.CollectThreadsWith — the
+// same function the WebUI's wasm bridge calls. The CLI reaches it through the
+// fresh-dial wrapper. One collection, three surfaces.
+func DoBoardChains(c *cli.Client) tea.Cmd {
+	return func() tea.Msg {
+		// Longer than the 15s its siblings use, deliberately: every other Do*
+		// here is one round trip, while this is BoardTopics plus one BoardRead
+		// per topic.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rows, err := cli.CollectThreadsWith(ctx, c, cli.ThreadFilter{})
+		return BoardChainsMsg{Rows: rows, Err: err}
+	}
+}
+
 type BoardSubscribersMsg struct {
 	Topic string
 	Rows  []cli.BoardSubscriberRow
@@ -162,6 +187,12 @@ const (
 	// boardSubscribers shows which tasks would receive a publish to the
 	// selected topic.
 	boardSubscribers
+	// boardChains shows every reply chain on the board, across topics. It is
+	// the other view of the same data: topic mode answers "what is on this
+	// topic", this one follows in_reply_to, which a topic-keyed view
+	// structurally cannot — each agent receives on its own chat.<short-id>, so
+	// an exchange is split across at least two topics.
+	boardChains
 )
 
 // BoardModal is a two-mode overlay that mirrors ConnsModal's structure for the
@@ -193,7 +224,10 @@ type BoardModal struct {
 	// msgSubs is the subscriber set for curTopic, captured with the messages so
 	// each row can report how many subscribers have been handed it.
 	msgSubs []cli.BoardSubscriberRow
-	status  string // one-line error / confirmation rendered below the table
+	// chainRows is how many rows the chain view is showing; the rows themselves
+	// live in the content viewport as rendered text.
+	chainRows int
+	status    string // one-line error / confirmation rendered below the table
 }
 
 // Column positions in the topics table. boardTopicToRow builds its row in this
@@ -330,6 +364,33 @@ func (m *BoardModal) ApplySubscribers(topic string, rows []cli.BoardSubscriberRo
 	m.subRows = make([]cli.BoardSubscriberRow, len(rows))
 	copy(m.subRows, rows)
 	m.mode = boardSubscribers
+	m.status = ""
+}
+
+// ApplyChains renders the chains into the content viewport and switches to
+// chain mode.
+//
+// The rendering is cli.RenderThreads — the CLI's own — rather than a second
+// drawing routine here: the gutter, the header fields and the window statement
+// then cannot drift between the two surfaces. BodyEscaped is stated rather than
+// derived, because a viewport is not a file and a stray ESC repaints over the
+// panel border (the reason sanitizeOutput exists in rawforward.go).
+func (m *BoardModal) ApplyChains(rows []cli.ThreadRow) {
+	m.chainRows = len(rows)
+	var buf strings.Builder
+	// Window is empty here and drawn by View instead. The viewport does not
+	// wrap, so the statement was being cut at the panel border — and the half
+	// it lost was the half that explains ORPHAN. Same sentence, same constant,
+	// placed where it can be wrapped to the panel width.
+	_ = cli.RenderThreads(&buf, rows, cli.ThreadRenderOptions{
+		Body: cli.BodyEscaped,
+	}, nil)
+	if len(rows) == 0 {
+		buf.WriteString("\n(nothing on the board within that window)\n")
+	}
+	m.content.SetContent(buf.String())
+	m.content.GotoTop()
+	m.mode = boardChains
 	m.status = ""
 }
 
@@ -518,6 +579,11 @@ func (m BoardModal) Update(msg tea.Msg) (BoardModal, tea.Cmd) {
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
+
+	case boardChains:
+		var cmd tea.Cmd
+		m.content, cmd = m.content.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -535,7 +601,7 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  s: subscribers  r: refresh  x: purge topic  Esc: close")
+		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  r: refresh  x: purge topic  Esc: close")
 		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
 
 	case boardMessages:
@@ -613,6 +679,13 @@ func (m BoardModal) View() string {
 		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
 		footer := FooterStyle.Render("s: refresh  Esc: back")
 		return box.Render(header + "\n" + list.String() + statusLine + "\n" + footer)
+	case boardChains:
+		header := HeaderStyle.Render(fmt.Sprintf("reply chains across every topic (%d rows)", m.chainRows))
+		// Wrapped, not truncated: an operator reading "nothing here" needs the
+		// whole sentence to know whether that is the window or a fault.
+		window := MutedStyle.Width(m.content.Width).Render(cli.ThreadWindowOperator)
+		footer := FooterStyle.Render(scrollHint + " · c: refresh  Esc: back")
+		return box.Render(header + "\n" + window + "\n" + m.content.View() + statusLine + "\n" + footer)
 	}
 	return box.Render("(unknown board mode)")
 }
