@@ -264,9 +264,8 @@ harness-cli agent send --topic chat.<short-id> --data '...' --no-retire-on-reply
 
 The delivery mark only governs what the HOOK hands you next; the message itself
 stays in the server's per-topic ring buffer (default 64 entries) until it
-rotates out, the topic TTL-expires, or the task that exclusively subscribes it
-ends. A plain `agent inbox` therefore still shows it, marked or not. To drop a
-payload from the **server side** entirely:
+rotates out or the topic TTL-expires. A plain `agent inbox` therefore still
+shows it, marked or not. To drop a payload from the **server side** entirely:
 
 ```bash
 harness-cli agent purge --topic chat.<short-id>            # whole topic ring
@@ -821,6 +820,14 @@ Limits worth knowing before you rely on it:
   server restart, which drops every subscription and re-seeds only
   `chat.<short-id>`. Per-subject topics are exactly the ones not re-seeded, so
   re-read `agent subscriptions` rather than assuming yours is still there.
+- When the last task subscribing a topic finishes, the topic is dropped at
+  once **if it holds nothing**. A topic that still holds messages — live or
+  withdrawn — is kept and ages out under the TTL above instead, so a finished
+  worker's `chat.<short-id>` remains readable by the operator. One consequence
+  for you: a task resumed under the same id meets a ring that survived, with a
+  delivery position that did not, so messages it already handled can arrive
+  again. `retract` the ones that are spent (see above) and a resumed peer will
+  not redo them.
 - Past **1024** topics the board evicts the least recently published one —
   which is exactly a quiet per-subject topic.
 - A single message is capped at **1 MiB** by default

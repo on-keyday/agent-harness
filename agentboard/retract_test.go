@@ -250,10 +250,12 @@ func TestRetract_SurvivesSubscriberRevoke(t *testing.T) {
 	}
 }
 
-// TestRevoke_StillDropsEmptyTopics is the other half: the exemption is narrow.
-// A topic with nothing withdrawn in it still follows its last subscriber out,
-// exactly as before.
-func TestRevoke_StillDropsEmptyTopics(t *testing.T) {
+// TestRevoke_KeepsTopicHoldingLiveMessages replaces a test that asserted the
+// opposite. Until 2026-09-18 a topic was dropped with its last subscriber
+// unless its WITHDRAWN list was non-empty, so an unanswered instruction — the
+// operator's only record of what a finished worker was told — went with the
+// task. See Amendment 2026-09-18d.
+func TestRevoke_KeepsTopicHoldingLiveMessages(t *testing.T) {
 	b := newRetractBoard(t)
 	worker := taskIDFromByte(3)
 	var rid protocol.RunnerID
@@ -266,9 +268,48 @@ func TestRevoke_StillDropsEmptyTopics(t *testing.T) {
 
 	b.Revoke(rid, worker)
 
-	if _, found := b.ListRetained(self); found {
-		t.Error("a topic with no withdrawn messages must still be dropped with its last subscriber")
+	msgs, found := b.ListRetained(self)
+	if !found {
+		t.Fatal("topic gone: a live message an operator has not read must outlive the task that was its only subscriber")
 	}
+	if len(msgs) != 1 || string(msgs[0].Payload) != "read and done" {
+		t.Errorf("retained = %d message(s) %q, want 1 %q", len(msgs), payloadsOf(msgs), "read and done")
+	}
+}
+
+// TestRevoke_StillDropsTrulyEmptyTopics is the other half, and the reason the
+// condition is "empty" rather than "always keep": a topic holding nothing is
+// pure garbage and still follows its last subscriber out. An exemption that
+// quietly stopped collecting garbage would be its own defect.
+func TestRevoke_StillDropsTrulyEmptyTopics(t *testing.T) {
+	b := newRetractBoard(t)
+	worker := taskIDFromByte(3)
+	var rid protocol.RunnerID
+	b.RegisterTask(rid, worker, [16]byte{}, "")
+	self := SelfTopic(worker)
+
+	seq, _, err := b.Send(self, []byte("read and done"), testRid, taskIDFromByte(1), "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty it without deleting it: PurgeSeq leaves the topic in place.
+	if removed, found := b.PurgeSeq(self, seq); !removed || !found {
+		t.Fatalf("PurgeSeq(%d) = (removed %v, found %v), want (true, true)", seq, removed, found)
+	}
+
+	b.Revoke(rid, worker)
+
+	if _, found := b.ListRetained(self); found {
+		t.Error("a topic holding nothing at all must still be dropped with its last subscriber")
+	}
+}
+
+func payloadsOf(msgs []RetainedMessage) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, string(m.Payload))
+	}
+	return out
 }
 
 // TestRetract_KeptTopicStillTTLEvicts is the other end of the Revoke

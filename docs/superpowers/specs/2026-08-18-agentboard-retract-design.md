@@ -134,7 +134,8 @@ bound this is a theoretical figure that is nowhere near reached.
 
 Eviction: the withdrawn list is FIFO at its own cap. TTL eviction and
 whole-topic purge delete the topic outright, taking both lists. (Revoke —
-the last-subscriber path — does not; see Amendment 2026-08-18b.)
+the last-subscriber path — does not; see Amendment 2026-08-18b, widened to
+every non-empty topic by Amendment 2026-09-18d.)
 
 ### 2. Wire schema
 
@@ -493,11 +494,18 @@ shape or age. A topic with nothing withdrawn in it still follows its last
 subscriber out exactly as before — tested both ways, since an exemption
 that quietly stopped collecting garbage would be its own defect.
 
+*(REVERSED by Amendment 2026-09-18d — the exemption now covers any topic
+that still holds something readable. Note that this "Decision" carries no
+Decided-by: it was the implementer's own, unlike Amendment 2026-08-28c's,
+which names the operator and the date.)*
+
 ## Testing (amendment b)
 
 `agentboard/retract_test.go`: a retracted message survives its topic's last
 subscriber being revoked; a topic with no withdrawn messages is still
-dropped by the same Revoke.
+dropped by the same Revoke. *(The second test was rewritten by Amendment
+2026-09-18d; a topic with no withdrawn messages but a live one is now kept,
+and the drop is pinned with a genuinely empty topic instead.)*
 
 ---
 
@@ -644,3 +652,98 @@ at parity with its siblings where it is absent.
    kind of caller, because a task granted `purge` is not an operator.
 6. A zero caller id is **accepted** on this path and still refused on the
    authorship path.
+
+---
+
+# Amendment 2026-09-18d — a topic holding anything readable outlives its last subscriber
+
+**DECIDED (operator, 2026-09-18).** This is a REVERSAL. It replaces Amendment
+2026-08-18b's narrow exemption, which is left in place above with a pointer
+here rather than edited, so the position that was held remains auditable.
+
+## The position this replaces
+
+18b: in `Revoke`, a topic whose last subscriber is leaving is dropped **only
+if its withdrawn list is empty**. Its Decision section calls that narrow
+exemption deliberate, "keyed on *is there anything to audit*".
+
+## The facts that moved it
+
+1. **The deletion it exempts from was never argued.** `git log -S` puts the
+   immediate eviction at `024b5685` (2026-04-29), whose entire commit message
+   is `feat: implement immediate eviction of orphaned topics in Revoke
+   method` — no body, no rationale, nothing naming what it protects. 18b
+   carved an exemption out of a rule that had never stated its own cost.
+
+2. **18b's rescuing argument does not distinguish the two lists.** It rescues
+   withdrawn messages because they would vanish "including the ones an
+   operator had not read yet". That sentence is equally true of a live
+   message. The premise that a live message is not "something to audit" is
+   assumed and never argued.
+
+3. **The line it actually drew was "was this answered", which is backwards.**
+   Amendment 2026-08-18 retires a message when it is answered, so a worker's
+   `chat.<short-id>` accumulates withdrawn entries exactly when the worker
+   replied. Under 18b that topic survived. A worker that was given an
+   instruction and never answered it left a topic with nothing withdrawn —
+   which was deleted. The operator therefore kept the conversations that had
+   already resolved and lost the ones that had not, which is the opposite of
+   what an operator wants after a worker dies.
+
+4. **What the deletion buys is bounded and small.** `evictExpiredTopics` has
+   no subscriber condition and keys on last publish
+   (`TestRetract_KeptTopicStillTTLEvicts` pins it), and `MaxTopics` eviction
+   still applies — 1024 topics × 64 entries with the shipped defaults. So
+   immediate deletion saves at most one TTL period of memory, at the price of
+   operator-visible data that cannot be recovered.
+
+Each of these is an input rather than decoration: had 024b5685 recorded a
+bound that the TTL does not already provide, fact 4 would fail and the narrow
+exemption would be right.
+
+## Rule
+
+In `Revoke`, a topic whose last subscriber is leaving is dropped **only if it
+holds nothing at all** — live ring empty *and* withdrawn list empty
+(`topic.isEmpty`). Anything still readable keeps the topic, which then ages
+out under the normal TTL.
+
+Unchanged from 18b, and for the reason 18b gave: **not** applied to
+`evictOldestTopicLocked`. That path runs under `MaxTopics` pressure where
+something has to go, and a rule able to refuse every candidate would turn a
+full board into a permanent publish failure.
+
+## Consequence, stated because it is a behaviour change
+
+`Revoke` destroys the `taskState`, and the per-(task, topic) delivery marks
+live on it (`taskState.shown`). Previously the topic went with them. Now the
+topic survives, so a task id that registers again — a `--resume`d task — gets
+a fresh `shown` of 0 against a ring that still holds its old messages, and is
+re-delivered them.
+
+That is consistent with the model the base spec already states rather than a
+new hazard: an un-retracted message is by definition one nobody marked spent,
+and a reply retires it automatically. A supervisor that wants an instruction
+not to come back after a restart already has `retract`, which is what it is
+for.
+
+## Testing (amendment d)
+
+`agentboard/retract_test.go`:
+- `TestRevoke_KeepsTopicHoldingLiveMessages` — a live message an operator has
+  not read outlives the task that was its only subscriber. Replaces
+  `TestRevoke_StillDropsEmptyTopics`, which asserted the opposite; the old
+  test's name said "empty" while its topic held a live message, which is the
+  same conflation this amendment removes.
+- `TestRevoke_StillDropsTrulyEmptyTopics` — the garbage collection still
+  happens, pinned with a topic emptied via `PurgeSeq` so it is genuinely
+  empty rather than merely un-withdrawn.
+- `TestRetract_SurvivesSubscriberRevoke` and
+  `TestRetract_KeptTopicStillTTLEvicts` are unchanged and still pass: the
+  widened rule is a superset of 18b's, and the TTL still collects what it
+  keeps.
+
+`agentboard/board_test.go`: `TestBoard_RevokeEvictsOrphanedTopics` now
+distinguishes three topics in one run — one kept because another task still
+subscribes it, one kept because it still holds a message, one dropped because
+it holds nothing.

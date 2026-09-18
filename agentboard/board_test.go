@@ -264,9 +264,10 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	}
 }
 
-// TestBoard_RevokeEvictsOrphanedTopics verifies that Revoke immediately removes
-// topics that are no longer subscribed by any remaining task, while preserving
-// topics that other tasks are still subscribed to.
+// TestBoard_RevokeEvictsOrphanedTopics verifies that Revoke removes a topic
+// that is no longer subscribed by any remaining task AND holds nothing, while
+// preserving both a topic another task still subscribes to and one that still
+// holds messages an operator could read (Amendment 2026-09-18d).
 func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
@@ -279,16 +280,24 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	c1 := b.Attach(rid1, tid1, "host1", "")
 	c2 := b.Attach(rid2, tid2, "host2", "")
 
-	_ = b.Subscribe(c1, "chat.task1")   // exclusive to task1
+	_ = b.Subscribe(c1, "chat.task1")   // exclusive to task1, keeps its message
+	_ = b.Subscribe(c1, "spent.topic")  // exclusive to task1, emptied before Revoke
 	_ = b.Subscribe(c1, "shared.topic") // shared
 	_ = b.Subscribe(c2, "shared.topic") // shared
 
-	// Publish to both topics so they exist in b.topics.
+	// Publish to each topic so they exist in b.topics.
 	if _, _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	spentSeq, _, err := b.Send("spent.topic", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := b.Send("shared.topic", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
+	}
+	if removed, found := b.PurgeSeq("spent.topic", spentSeq); !removed || !found {
+		t.Fatalf("PurgeSeq = (removed %v, found %v), want (true, true)", removed, found)
 	}
 
 	b.Detach(c1)
@@ -300,8 +309,11 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 		names[ts.Name] = true
 	}
 
-	if names["chat.task1"] {
-		t.Error("chat.task1 should have been evicted after Revoke (no remaining subscribers)")
+	if !names["chat.task1"] {
+		t.Error("chat.task1 still holds a message an operator can read; it must outlive its last subscriber")
+	}
+	if names["spent.topic"] {
+		t.Error("spent.topic holds nothing and must still be evicted after Revoke")
 	}
 	if !names["shared.topic"] {
 		t.Error("shared.topic should still be present (task2 is still subscribed)")

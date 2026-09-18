@@ -163,17 +163,33 @@ func (b *Board) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
 			if !ok || b.anyTaskMatchesLocked(p) {
 				continue
 			}
-			// A topic still holding WITHDRAWN messages outlives its last
-			// subscriber. Otherwise the audit trail retract exists to preserve
-			// would vanish at exactly the moment it matters most: a worker's
-			// chat.<short-id> is subscribed by that one task, so finishing the
-			// task destroyed every instruction it had retracted — including the
-			// ones an operator had not read yet. TTL still takes it, which is
-			// the bound the operator already lives with.
+			// A topic that still holds ANYTHING readable outlives its last
+			// subscriber; only one holding nothing follows the task out. A
+			// worker's chat.<short-id> is subscribed by that one task, so
+			// finishing the task used to destroy everything said to it —
+			// including messages an operator had not read yet.
+			//
+			// This condition was `hasRetracted()` until 2026-09-18, which
+			// rescued a withdrawn message and dropped a live one. The rescuing
+			// argument — the operator had not read it yet — never distinguished
+			// the two, and the line it actually drew was "was this answered",
+			// since a reply auto-retires the message it answers. See Amendment
+			// 2026-09-18d.
+			//
+			// Keeping them is bounded by the machinery that already bounds the
+			// board: the TTL sweep keys on last publish and has no subscriber
+			// condition (TestRetract_KeptTopicStillTTLEvicts), and MaxTopics
+			// eviction still applies. Immediate deletion was buying at most one
+			// TTL period of memory at the price of operator-visible data.
+			//
+			// Still deliberately NOT applied to evictOldestTopicLocked: that
+			// runs under MaxTopics pressure where something has to go, and a
+			// rule able to refuse every candidate would turn a full board into
+			// a permanent publish failure.
 			//
 			// Lock order is b.mu -> t.mu; no topic method reaches back into the
 			// board, so the nesting cannot invert.
-			if t.hasRetracted() {
+			if !t.isEmpty() {
 				continue
 			}
 			delete(b.topics, p)

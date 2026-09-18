@@ -203,12 +203,25 @@ func (t *topic) snapshotRetracted() []RetainedMessage {
 	return out
 }
 
-// hasRetracted reports whether the topic still holds withdrawn messages. Revoke
-// uses it to decide whether a topic may follow its last subscriber out.
+// hasRetracted reports whether the topic still holds withdrawn messages.
 func (t *topic) hasRetracted() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.retracted) > 0
+}
+
+// isEmpty reports whether the topic holds no messages at all — neither live nor
+// withdrawn. Revoke uses it to decide whether a topic may follow its last
+// subscriber out.
+//
+// Both lists are consulted because together they are "what an operator can
+// still read": `board read` renders the live ring and the withdrawn list side
+// by side, the latter stamped RETRACTED. A topic with either is still
+// answering a question; only one with neither is pure garbage.
+func (t *topic) isEmpty() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.ring) == 0 && len(t.retracted) == 0
 }
 
 // retractedCount is the number of withdrawn messages held for operator audit.
