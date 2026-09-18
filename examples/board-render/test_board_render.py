@@ -122,6 +122,74 @@ class NestingTest(unittest.TestCase):
         self.assertEqual(headers[0], "#7 chat.abc12345  from=claude@gmkhost task=70fbad4a  in-reply-to=#9")
 
 
+class SanitizationTest(unittest.TestCase):
+    """Pins the terminal-safety invariant: a body arrives from an untrusted
+    peer, so no C0 control byte (except \n and \t) and no \x7f may reach
+    stdout, whatever the body holds."""
+
+    def test_ansi_escapes_in_payload_text_render_as_visible_escapes(self) -> None:
+        out, _, _ = render(record(payload_text="\x1b[31mRED\x1b[0m\x1b[2Jcleared\x7f\r"))
+        for ch in out:
+            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
+                            f"raw control byte {ch!r} reached stdout")
+        self.assertIn("\\x1b[31mRED\\x1b[0m\\x1b[2Jcleared", out)
+        self.assertIn("\\x7f", out)
+        self.assertIn("\\x0d", out)
+
+    def test_ansi_escapes_in_decoded_payload_b64_render_as_visible_escapes(self) -> None:
+        raw = "\x1b[31mRED\x1b[0m\x1b[2Jcleared"
+        out, _, _ = render(record(payload_b64=base64.b64encode(raw.encode()).decode()))
+        for ch in out:
+            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
+                            f"raw control byte {ch!r} reached stdout")
+        self.assertIn("\\x1b[2Jcleared", out)
+
+    def test_newline_and_tab_stay_verbatim_in_bodies(self) -> None:
+        out, _, _ = render(record(payload_text="a\tb\nc"))
+        self.assertIn("    a\tb\n    c", out)
+        self.assertNotIn("\\x09", out)
+        self.assertNotIn("\\x0a", out)
+
+    def test_json_body_path_escapes_control_chars_via_json_dumps(self) -> None:
+        # json.dumps escapes control chars inside strings, so the payload path
+        # is safe without extra sanitization; this pins that assumption.
+        out, _, _ = render(record(payload={"msg": "\x1b[2Jcleared"}))
+        self.assertIn("\\u001b[2Jcleared", out)
+        for ch in out:
+            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
+                            f"raw control byte {ch!r} reached stdout")
+
+    def test_header_fields_are_sanitized(self) -> None:
+        rec = record(seq=1)
+        rec["from"]["hostname"] = "h\x1b[2J"
+        rec["from"]["agent"] = "a\x1b[0m"
+        rec["topic"] = "t\x1b"
+        out, _, _ = render(rec)
+        for ch in out:
+            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
+                            f"raw control byte {ch!r} reached stdout")
+        self.assertIn("\\x1b", out)
+
+
+class EmptyBodyTest(unittest.TestCase):
+    """Rule 5: an empty selected body must render <empty body>, not silence.
+    The production form is payload_b64 == "" (zero-byte payload as emitted by
+    cli/agent/json_emit.go), but an empty payload_text or no body key at all
+    must render the same."""
+
+    def test_empty_payload_b64_renders_empty_body_marker(self) -> None:
+        out, _, _ = render(record(payload_b64=""))
+        self.assertIn("    <empty body>", out)
+
+    def test_empty_payload_text_renders_empty_body_marker(self) -> None:
+        out, _, _ = render(record(payload_text=""))
+        self.assertIn("    <empty body>", out)
+
+    def test_no_body_key_at_all_renders_empty_body_marker(self) -> None:
+        out, _, _ = render(record())
+        self.assertIn("    <empty body>", out)
+
+
 class MalformedInputTest(unittest.TestCase):
     def test_malformed_line_goes_to_stderr_others_render_exit_is_1(self) -> None:
         lines = [

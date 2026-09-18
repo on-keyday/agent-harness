@@ -27,16 +27,38 @@ DEPTH_INDENT = "  "         # +2 spaces per nesting level for in-stream replies
 HEX_BYTES_PER_LINE = 16
 HEX_DUMP_MAX_BYTES = 64
 
+# C0 control bytes a body is allowed to carry verbatim; everything else
+# (including \x7f) is rendered as a visible \xNN escape so a hostile body can
+# neither repaint nor erase the reader's terminal.
+VERBATIM_CONTROLS = {"\n", "\t"}
+
+
+def _sanitize(text: str) -> str:
+    r"""Make control characters visible instead of sending them to the terminal.
+
+    Every C0 byte other than newline and tab, plus DEL (\x7f), renders as its
+    literal \xNN escape. This applies to body text AND header fields: a body
+    arrives from an untrusted peer, and the renderer's whole job is to make
+    those bytes safe to read.
+    """
+    return "".join(
+        ch if ch in VERBATIM_CONTROLS
+        else f"\\x{ord(ch):02x}" if ord(ch) < 0x20 or ord(ch) == 0x7F
+        else ch
+        for ch in text
+    )
+
 
 def _header(rec: dict) -> str:
     sender = rec.get("from") or {}
-    agent = sender.get("agent") or ""
-    hostname = sender.get("hostname", "")
-    task_id = str(sender.get("task_id", ""))
-    line = f"#{rec.get('seq', 0)} {rec.get('topic', '')}  from={agent or '?'}@{hostname} task={task_id[:8]}"
+    agent = _sanitize(str(sender.get("agent") or ""))
+    hostname = _sanitize(str(sender.get("hostname", "")))
+    task_id = _sanitize(str(sender.get("task_id", "")))
+    topic = _sanitize(str(rec.get("topic", "")))
+    line = f"#{rec.get('seq', 0)} {topic}  from={agent or '?'}@{hostname} task={task_id[:8]}"
     reply_to_topic = rec.get("reply_to_topic")
     if reply_to_topic:
-        line += f"  reply-to={reply_to_topic}"
+        line += f"  reply-to={_sanitize(str(reply_to_topic))}"
     in_reply_to = rec.get("in_reply_to", 0)
     if in_reply_to:
         line += f"  in-reply-to=#{in_reply_to}"
@@ -58,14 +80,16 @@ def _body_text(rec: dict) -> str:
     if "payload" in rec:
         return json.dumps(rec["payload"], indent=2, ensure_ascii=False)
     if "payload_text" in rec:
-        return rec["payload_text"]
+        return _sanitize(rec["payload_text"])
     if "payload_b64" in rec:
         try:
             data = base64.b64decode(rec["payload_b64"])
         except (binascii.Error, ValueError):
             return "<empty body>"
+        if not data:
+            return "<empty body>"
         try:
-            return data.decode("utf-8")
+            return _sanitize(data.decode("utf-8"))
         except UnicodeDecodeError:
             dump = "\n".join(_hex_dump(data))
             return f"<non-text body: {len(data)} bytes>\n{dump}"
@@ -109,7 +133,10 @@ def render_lines(lines: list[str]) -> tuple[str, list[str], int]:
 
         pad = DEPTH_INDENT * depth
         out.append(pad + _header(rec))
-        out.extend(_indent_block(_body_text(rec), pad + BODY_INDENT))
+        body = _body_text(rec)
+        if not body:
+            body = "<empty body>"
+        out.extend(_indent_block(body, pad + BODY_INDENT))
 
     return "\n".join(out) + ("\n" if out else ""), err, 1 if err else 0
 
