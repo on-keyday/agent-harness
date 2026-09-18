@@ -216,7 +216,7 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 		gutter = make([]string, len(treeRows))
 		for i, r := range treeRows {
 			ordered[i] = r.Task
-			gutter[i] = cli.TreePrefix(r)
+			gutter[i] = cli.TreePrefix(r.IsLast)
 			if r.Orphan {
 				gutter[i] += "\u2020"
 			}
