@@ -124,7 +124,27 @@ func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
 			out[len(out)-1].Topic = topicOf[m.Seq]
 		}
 		kids := children[m.Seq]
+		// Indent marks a FORK, not a reply. A message with exactly one reply is
+		// a continuation and keeps its parent's depth; only where a message was
+		// answered more than once does the view step right.
+		//
+		// The alternative — depth = reply count — is what this had first, and
+		// it does not survive the shape agent conversations actually take.
+		// Measured on the live board, 2026-09-18, on a supervisor/worker
+		// exchange: 31 messages, maximum depth 17, and ZERO messages with more
+		// than one reply. Fifty-one columns of gutter were spent encoding
+		// nothing, because a strictly linear back-and-forth has nothing to
+		// encode. cli/tasktree.go can indent per level because a spawn tree is
+		// shallow by construction; a reply chain is as deep as the
+		// conversation is long.
+		//
+		// No linkage is lost: every row carries re=<parent seq>, which names
+		// the parent exactly, where the gutter could only ever imply it.
 		for i, k := range kids {
+			if len(kids) == 1 {
+				walk(k, isLast)
+				continue
+			}
 			walk(k, append(isLast, i == len(kids)-1))
 		}
 	}

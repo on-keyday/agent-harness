@@ -23,8 +23,15 @@ func TestBuildThreadsOrphanKeepsChildren(t *testing.T) {
 	if !rows[0].Orphan || rows[0].Depth != 0 {
 		t.Errorf("row 0 = {orphan:%v depth:%d}, want {true 0}", rows[0].Orphan, rows[0].Depth)
 	}
-	if rows[1].Depth != 1 {
-		t.Errorf("row 1 depth = %d, want 1: an orphan keeps its own children", rows[1].Depth)
+	// Depth 0, not 1: the orphan has exactly one reply, so that reply is a
+	// continuation rather than a fork. What this test is about is that the
+	// child is KEPT and follows its parent — an orphan is re-rooted, never
+	// pruned. See TestBuildThreadsDepthMarksForksNotReplies for the rule.
+	if rows[1].Depth != 0 {
+		t.Errorf("row 1 depth = %d, want 0: a lone reply is a continuation", rows[1].Depth)
+	}
+	if rows[1].Msg.Seq != 21 || rows[1].Msg.InReplyTo != 20 {
+		t.Errorf("an orphan lost its own child: row 1 = %+v", rows[1].Msg)
 	}
 }
 
@@ -41,8 +48,11 @@ func TestBuildThreadsSpansTopics(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("topics = %v, want %v", got, want)
 	}
-	if rows[2].Depth != 2 {
-		t.Errorf("depth = %d, want 2", rows[2].Depth)
+	// A linear chain is flat: each message has exactly one reply, so nothing
+	// forks and nothing indents. The chain is still ordered and each row still
+	// names its parent in InReplyTo.
+	if rows[2].Depth != 0 {
+		t.Errorf("depth = %d, want 0: a linear chain does not indent", rows[2].Depth)
 	}
 }
 
@@ -137,5 +147,39 @@ func TestBuildThreadsSizeIsPopulated(t *testing.T) {
 		if got := r.Size; got != want[r.Msg.Seq] {
 			t.Errorf("seq %d: Size = %d, want %d", r.Msg.Seq, got, want[r.Msg.Seq])
 		}
+	}
+}
+
+// TestBuildThreadsDepthMarksForksNotReplies pins what the gutter means. An
+// earlier version indented per reply, which measured 17 levels deep on a real
+// 31-message exchange that contained no forks at all.
+func TestBuildThreadsDepthMarksForksNotReplies(t *testing.T) {
+	// 1 -> 2 -> 3 is linear; 3 is answered TWICE, by 4 and 5.
+	rows := BuildThreads([]BoardMessage{
+		{Seq: 1},
+		{Seq: 2, InReplyTo: 1},
+		{Seq: 3, InReplyTo: 2},
+		{Seq: 4, InReplyTo: 3},
+		{Seq: 5, InReplyTo: 3},
+	}, nil)
+	want := map[uint64]int{1: 0, 2: 0, 3: 0, 4: 1, 5: 1}
+	for _, r := range rows {
+		if got := r.Depth; got != want[r.Msg.Seq] {
+			t.Errorf("seq %d: depth = %d, want %d", r.Msg.Seq, got, want[r.Msg.Seq])
+		}
+	}
+	// The two forked replies get a gutter; the linear run gets none.
+	byseq := map[uint64]ThreadRow{}
+	for _, r := range rows {
+		byseq[r.Msg.Seq] = r
+	}
+	if g := TreePrefix(byseq[2].IsLast); g != "" {
+		t.Errorf("a continuation drew a gutter: %q", g)
+	}
+	if g := TreePrefix(byseq[4].IsLast); g != "├─ " {
+		t.Errorf("first forked reply gutter = %q, want %q", g, "├─ ")
+	}
+	if g := TreePrefix(byseq[5].IsLast); g != "└─ " {
+		t.Errorf("last forked reply gutter = %q, want %q", g, "└─ ")
 	}
 }
