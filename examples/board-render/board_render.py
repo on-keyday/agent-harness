@@ -28,22 +28,25 @@ HEX_BYTES_PER_LINE = 16
 HEX_DUMP_MAX_BYTES = 64
 
 # C0 control bytes a body is allowed to carry verbatim; everything else
-# (including \x7f) is rendered as a visible \xNN escape so a hostile body can
-# neither repaint nor erase the reader's terminal.
+# (including \x7f and the C1 range U+0080-U+009F) is rendered as a visible
+# \xNN escape so a hostile body can neither repaint nor erase the reader's
+# terminal. C1 is included because U+009B is CSI: a terminal honouring 8-bit
+# controls treats it exactly like ESC-[, so it must not be left to the emulator.
 VERBATIM_CONTROLS = {"\n", "\t"}
 
 
 def _sanitize(text: str) -> str:
     r"""Make control characters visible instead of sending them to the terminal.
 
-    Every C0 byte other than newline and tab, plus DEL (\x7f), renders as its
-    literal \xNN escape. This applies to body text AND header fields: a body
+    Every C0 byte other than newline and tab, DEL (\x7f), and the C1 range
+    (U+0080-U+009F, e.g. U+009B = CSI) renders as its literal \xNN escape. This
+    applies to body text AND header fields: a body
     arrives from an untrusted peer, and the renderer's whole job is to make
     those bytes safe to read.
     """
     return "".join(
         ch if ch in VERBATIM_CONTROLS
-        else f"\\x{ord(ch):02x}" if ord(ch) < 0x20 or ord(ch) == 0x7F
+        else f"\\x{ord(ch):02x}" if ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F
         else ch
         for ch in text
     )
@@ -78,7 +81,10 @@ def _body_text(rec: dict) -> str:
         return (f"<body omitted: {rec.get('payload_bytes', 0)} bytes"
                 f" - run: {rec.get('read_with', '')}>")
     if "payload" in rec:
-        return json.dumps(rec["payload"], indent=2, ensure_ascii=False)
+        # json.dumps escapes C0 inside strings, but with ensure_ascii=False it
+        # leaves C1 (U+0080-U+009F) raw - so the rendered JSON still goes
+        # through _sanitize to keep the terminal-safety invariant unconditional.
+        return _sanitize(json.dumps(rec["payload"], indent=2, ensure_ascii=False))
     if "payload_text" in rec:
         return _sanitize(rec["payload_text"])
     if "payload_b64" in rec:

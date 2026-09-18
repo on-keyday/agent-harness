@@ -21,6 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import board_render  # noqa: E402
 
 
+def assert_terminal_safe(out: str, testcase: unittest.TestCase) -> None:
+    """The terminal-safety invariant: no C0 other than \n/\t, no DEL, no C1."""
+    for ch in out:
+        testcase.assertTrue(
+            ch in "\n\t" or not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F),
+            f"raw control byte {ch!r} reached stdout")
+
+
 def record(**overrides) -> dict:
     """A minimal valid record; tests override fields on top of it."""
     rec = {
@@ -129,9 +137,7 @@ class SanitizationTest(unittest.TestCase):
 
     def test_ansi_escapes_in_payload_text_render_as_visible_escapes(self) -> None:
         out, _, _ = render(record(payload_text="\x1b[31mRED\x1b[0m\x1b[2Jcleared\x7f\r"))
-        for ch in out:
-            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
-                            f"raw control byte {ch!r} reached stdout")
+        assert_terminal_safe(out, self)
         self.assertIn("\\x1b[31mRED\\x1b[0m\\x1b[2Jcleared", out)
         self.assertIn("\\x7f", out)
         self.assertIn("\\x0d", out)
@@ -139,10 +145,19 @@ class SanitizationTest(unittest.TestCase):
     def test_ansi_escapes_in_decoded_payload_b64_render_as_visible_escapes(self) -> None:
         raw = "\x1b[31mRED\x1b[0m\x1b[2Jcleared"
         out, _, _ = render(record(payload_b64=base64.b64encode(raw.encode()).decode()))
-        for ch in out:
-            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
-                            f"raw control byte {ch!r} reached stdout")
+        assert_terminal_safe(out, self)
         self.assertIn("\\x1b[2Jcleared", out)
+
+    def test_c1_controls_render_as_visible_escapes(self) -> None:
+        # U+0085 (NEL) breaks lines and U+009B (CSI) is ESC-[ for terminals
+        # honouring 8-bit controls; both must be escaped, not left raw.
+        out, _, _ = render(record(payload_text="a\u0085b\u009b8mc\u009d"))
+        assert_terminal_safe(out, self)
+        self.assertIn("a\\x85b\\x9b8mc\\x9d", out)
+
+        out, _, _ = render(record(payload_b64=base64.b64encode("x\u009by".encode()).decode()))
+        assert_terminal_safe(out, self)
+        self.assertIn("x\\x9by", out)
 
     def test_newline_and_tab_stay_verbatim_in_bodies(self) -> None:
         out, _, _ = render(record(payload_text="a\tb\nc"))
@@ -150,14 +165,13 @@ class SanitizationTest(unittest.TestCase):
         self.assertNotIn("\\x09", out)
         self.assertNotIn("\\x0a", out)
 
-    def test_json_body_path_escapes_control_chars_via_json_dumps(self) -> None:
-        # json.dumps escapes control chars inside strings, so the payload path
-        # is safe without extra sanitization; this pins that assumption.
-        out, _, _ = render(record(payload={"msg": "\x1b[2Jcleared"}))
-        self.assertIn("\\u001b[2Jcleared", out)
-        for ch in out:
-            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
-                            f"raw control byte {ch!r} reached stdout")
+    def test_json_body_path_control_chars_are_escaped(self) -> None:
+        # json.dumps escapes C0 inside strings, but leaves C1 raw with
+        # ensure_ascii=False - so the rendered JSON goes through the sanitizer
+        # too. C0 appears as json's \u001b, raw C1 as \x9b.
+        out, _, _ = render(record(payload={"msg": "\x1b[2Jcleared\u009b8m"}))
+        self.assertIn("\\u001b[2Jcleared\\x9b8m", out)
+        assert_terminal_safe(out, self)
 
     def test_header_fields_are_sanitized(self) -> None:
         rec = record(seq=1)
@@ -165,9 +179,7 @@ class SanitizationTest(unittest.TestCase):
         rec["from"]["agent"] = "a\x1b[0m"
         rec["topic"] = "t\x1b"
         out, _, _ = render(rec)
-        for ch in out:
-            self.assertTrue(ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F),
-                            f"raw control byte {ch!r} reached stdout")
+        assert_terminal_safe(out, self)
         self.assertIn("\\x1b", out)
 
 
