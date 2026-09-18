@@ -32,15 +32,51 @@ func TestEscapeForTerminalKeepsNewlineAndTab(t *testing.T) {
 	}
 }
 
-// TestEscapeForTerminalLeavesHighBytesAlone pins what the helper does NOT
-// escape: 0xA0 and above pass through unchanged, so a non-UTF-8 run's bytes
-// stay identifiable and valid UTF-8 outside C1 is untouched. (0x97 inside
-// 日本's UTF-8 IS in the C1 range and IS escaped — that is the byte set.)
+// U+00A0 and above pass through unchanged even though their UTF-8 encoding
+// contains bytes a byte-wise scanner would flag — the code-point rule.
 func TestEscapeForTerminalLeavesHighBytesAlone(t *testing.T) {
-	in := []byte{0xe6, 0xb0, 0xb4, 0xff, 0xfe, 'x'} // 水's bytes + non-UTF-8 run
-	got := EscapeForTerminal(in)
-	if !strings.Contains(got, "\xe6\xb0\xb4") || !strings.Contains(got, "\xff\xfex") {
-		t.Errorf("0xA0+ bytes were altered: %q", got)
+	in := []byte("\u6c34\u2020\uFFFD") // 水, †, replacement char: all ≥ U+00A0
+	if got := EscapeForTerminal(in); !bytes.Equal([]byte(got), in) {
+		t.Errorf("0xA0+ code points were altered: %q", got)
+	}
+}
+
+// TestEscapeForTerminalLeavesMultibyteTextAlone pins the rule the helper
+// exists to respect: the set is CODE POINTS, not bytes. UTF-8 continuation
+// bytes occupy 0x80-0xBF, so a byte-wise scan lands its C1 arm inside ordinary
+// text — Japanese, emoji, Cyrillic, accented Latin. Each of these must come
+// back byte-identical.
+func TestEscapeForTerminalLeavesMultibyteTextAlone(t *testing.T) {
+	for _, in := range []string{
+		"日本語のメッセージ",
+		"done ✅ shipped 🚀",
+		"привет",
+		"café crème",
+		"ok 日 ok",
+	} {
+		if got := EscapeForTerminal([]byte(in)); got != in {
+			t.Errorf("multibyte text was shredded:\n in  %q\n out %q", in, got)
+		}
+	}
+}
+
+// U+009B as a code point (C2 9B in UTF-8) is escaped, and so is a lone 0x9b
+// byte that never began a valid sequence — a terminal honouring 8-bit
+// controls treats both as CSI.
+func TestEscapeForTerminalEscapesC1CodePointAndLoneByte(t *testing.T) {
+	if got := EscapeForTerminal([]byte("a\u009bb")); !strings.Contains(got, `\x9b`) {
+		t.Errorf("U+009B code point not escaped: %q", got)
+	}
+	if got := EscapeForTerminal([]byte{'a', 0x9b, 'b'}); !strings.Contains(got, `\x9b`) {
+		t.Errorf("lone 0x9b byte not escaped: %q", got)
+	}
+}
+
+// 0xff is not a valid UTF-8 start byte; an invalid byte reaches the terminal
+// as its visible escape, never raw.
+func TestEscapeForTerminalEscapesInvalidBytes(t *testing.T) {
+	if got := EscapeForTerminal([]byte{'a', 0xff, 'b'}); !strings.Contains(got, `\xff`) {
+		t.Errorf("0xff not escaped: %q", got)
 	}
 }
 

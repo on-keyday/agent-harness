@@ -183,6 +183,18 @@ class SanitizationTest(unittest.TestCase):
         self.assertIn("\\x1b", out)
 
 
+    def test_multibyte_text_comes_back_identical(self) -> None:
+        """The control set is CODE POINTS, not bytes (same rule as
+        cli.EscapeForTerminal on the Go side). Python iterates a str by code
+        point, so ordinary multibyte text must come back byte-identical; this
+        pins it so a future byte-oriented rewrite fails here."""
+        for text in ("日本語のメッセージ", "done ✅ shipped 🚀", "привет", "café crème"):
+            self.assertEqual(board_render._sanitize(text), text)
+
+    def test_c1_code_point_is_escaped(self) -> None:
+        self.assertIn("\\x9b", board_render._sanitize("a\u009bb"))
+
+
 class EmptyBodyTest(unittest.TestCase):
     """Rule 5: an empty selected body must render <empty body>, not silence.
     The production form is payload_b64 == "" (zero-byte payload as emitted by

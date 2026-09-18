@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"unicode/utf8"
 )
 
 // bodyMode says what happens to payload bytes on the way out. It exists so
@@ -24,12 +25,21 @@ const (
 	bodyEscaped
 )
 
-// EscapeForTerminal returns b with every byte that can steer a terminal
-// rendered as a visible \xNN escape: C0 except \n and \t, 0x7f, and C1
-// (0x80-0x9f — U+009B is CSI, and a terminal honouring 8-bit controls acts on
-// it the way it acts on ESC [). Everything at 0xA0 and above passes through
-// unchanged. It is byte-based, like tui/rawforward.go's decision, because the
-// input is untrusted bytes and not known-good text.
+// EscapeForTerminal returns b with every terminal-steering CODE POINT
+// rendered as a visible \xNN escape: C0 except \n and \t, U+007F, and C1
+// (U+0080-U+009F — U+009B is CSI, and a terminal honouring 8-bit controls
+// acts on it the way it acts on ESC [). Everything from U+00A0 up passes
+// through unchanged, so ordinary multibyte text — Japanese, emoji, Cyrillic,
+// accented Latin — comes back byte-identical: their UTF-8 continuation bytes
+// sit in 0x80-0xBF, and scanning BYTES would land the C1 arm inside them.
+// The scan is therefore rune-wise, the same choice sanitizeOutput in
+// tui/rawforward.go makes with strings.Map; the two differ only in the
+// replacement (see below) and in the invalid-byte case, which sanitizeOutput
+// never sees because strings.Map already turned it into U+FFFD.
+//
+// A byte that does not begin a valid UTF-8 sequence (utf8.DecodeRune reports
+// RuneError with size 1) is escaped as itself, so an invalid byte reaches the
+// terminal visibly, never raw.
 //
 // The escape spelling is \xNN rather than sanitizeOutput's "." for the reason
 // the spec gives: a bordered panel must preserve the column count, so it maps
@@ -38,15 +48,29 @@ const (
 func EscapeForTerminal(b []byte) string {
 	var sb bytes.Buffer
 	sb.Grow(len(b))
-	for _, c := range b {
-		switch {
-		case c == '\n' || c == '\t' || c >= 0xA0:
-			sb.WriteByte(c)
-		case c < 0x20 || c >= 0x7f: // 0x7f through 0x9f, plus the C0 controls
-			fmt.Fprintf(&sb, "\\x%02x", c)
-		default:
-			sb.WriteByte(c)
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			// Not a valid UTF-8 sequence start: the byte itself is what the
+			// reader needs to see. \n and \t stay verbatim even here.
+			c := b[i]
+			if c == '\n' || c == '\t' {
+				sb.WriteByte(c)
+			} else {
+				fmt.Fprintf(&sb, "\\x%02x", c)
+			}
+			i++
+			continue
 		}
+		switch {
+		case r == '\n' || r == '\t' || r >= 0xA0:
+			sb.WriteRune(r)
+		case r < 0x20 || r >= 0x7f: // C0 (minus \n/\t), U+007F, and the C1 range
+			fmt.Fprintf(&sb, "\\x%02x", r)
+		default:
+			sb.WriteRune(r)
+		}
+		i += size
 	}
 	return sb.String()
 }
