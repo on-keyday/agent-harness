@@ -1057,8 +1057,8 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "the TUI chain view (plan Task 8) and WebUI tab (plan Task 7) of " +
 			"docs/superpowers/plans/2026-09-18-agentboard-thread-viewer.md do not exist yet; until " +
 			"they land, the command line is the only way in",
-		Action:          "BoardAction",
-		Const:           map[string]string{"Sub": "thread"},
+		Action: "BoardAction",
+		Const:  map[string]string{"Sub": "thread"},
 		Flags: []Flag{
 			{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq",
 				Help: "only the chain containing this seq; a seq outside the visible set is an error, not an empty result"},
