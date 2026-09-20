@@ -32,8 +32,12 @@ jobs:
       - name: make vet
         run: make vet
 
-      - name: go test
-        run: go test ./... -count=1
+      # -race here, not just in one-off plan checklists: the runner, server and
+      # board keep gaining hand-written concurrency, and a race check that ran
+      # once during development guards nothing added after it. Unit tests only
+      # for now — the integration job is left unraced to keep its 600s budget.
+      - name: go test (-race)
+        run: go test ./... -race -count=1
 
       - name: wasm-check (cli + transport + harness-webui-wasm under GOOS=js)
         run: make wasm-check
