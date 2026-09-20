@@ -2119,9 +2119,23 @@ def send_targets() -> dict:
 TOOL_NOTE = ("(memviewer からのツール送信 — 返信先はありません。"
              "board に送り返さず、自分の会話で答えてください)")
 
+# The comment is the ONLY part of the message a human wrote; every other line
+# is generated here. Unmarked they run together, and the recipient cannot see
+# where the operator's words stop: the 2026-09-20 send put a one-line comment
+# between the header and a bare `index:` row, and the reader had to guess
+# whether `index:`/`desc:`/`file:` were part of what was said. Two delimiters
+# cost two lines and remove the guess.
+#
+# The closer is emitted even when nothing follows it, so the extent is read
+# off the message rather than inferred from whether a later block happens to
+# be attached — with both checkboxes off there is no later block at all.
+COMMENT_OPEN = "--- ここから操作者 (人間) が書いたコメント ---"
+COMMENT_CLOSE = "--- 操作者のコメントここまで ---"
+
 
 def compose(mem: Memory, ix: dict | None, comment: str, meta: bool, body: bool) -> str:
-    """The message text. Comment FIRST: it is the thing being said.
+    """The message text. Comment FIRST, and fenced: it is the thing being said,
+    and the only part of the message that is not machine-generated.
 
     Takes the Memory read fresh from disk, never text posted by the page. The
     page sends identifiers; the content comes from the file. That keeps the
@@ -2132,7 +2146,8 @@ def compose(mem: Memory, ix: dict | None, comment: str, meta: bool, body: bool) 
     attached the tail is thousands of bytes away, and past the inline limit it
     is not in the recipient's wake context at all.
     """
-    out = [f"[memviewer] {mem.name}", TOOL_NOTE, "", comment.strip(), ""]
+    out = [f"[memviewer] {mem.name}", TOOL_NOTE, "",
+           COMMENT_OPEN, comment.strip(), COMMENT_CLOSE, ""]
     if meta:
         out.append(f"index: {ix['title']} — {ix['hook']}" if ix else "index: (MEMORY.md に行が無い)")
         if mem.description:
