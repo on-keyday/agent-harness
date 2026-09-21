@@ -24,6 +24,7 @@ description. No operator-visible behaviour changes.
 | U8 | Refusals that are **not** capability answers keep their own enums: `ReadSeqStatus.not_found`, `RetractStatus.not_found`, `SendStatus`'s frame and size arms. Those merge two cases deliberately, to avoid an enumeration oracle; `PermissionDenied` does not express that. | author, from `agentboard.bgn:419` |
 | U9 | The schema change lands whole, in one commit with the server and client migration. Per-verb staging would require both frame families alive at once. | author, from `feedback_no_split_schemas` |
 | U10 | `board_send`, the agentboard send capability, is **out of scope here** and gets its own spec after this lands. Sequencing chosen because `PermissionDenied` then answers its denial with no new status values. | operator, 2026-09-22 |
+| U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. A push path, if built, appends a kind at that point; reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris — which is how this spec first described it. The intent it held is restated under "What is deleted" so it survives the value. | author, from `2026-04-28-agent-comms-design.md:187` |
 
 ## Problem
 
@@ -72,9 +73,18 @@ two callers differ in.
   Go-only enum duplicating the first four values of
   `protocol.ClientHelloStatus`, and `clientHelloStatusFromBoard`
   (`agent_handler.go:139`) exists to convert between them.
-- `AgentMessageKind.deliver` (value 9) appears only in generated code. No
-  hand-written line reads it; deliveries ride `WaitResponse` / `InboxResponse`
-  as `DeliveredMessage` lists.
+
+One thing in the same area is **not** on that list, and the distinction is
+load-bearing. `AgentMessageKind.deliver` (value 9) is a slot reserved in the
+2026-04-28 design for a
+server → agent push of new messages on a subscribed topic, deferred out of v1
+in favour of `wait`'s long-poll (`2026-04-28-agent-comms-design.md:125`,
+`:187`) and named there as the v2 answer to a measured cost: the inbox hook
+dials a fresh connection every turn (`:468`). `git log -S
+AgentMessageKind_Deliver`, excluding the generated file, returns no commit —
+no hand-written line has ever read it. What it reserves is an intent, and the
+per-turn dial it was meant to remove is still there in
+`cli/agent/conn.go`'s `ConnectAgent`.
 
 ### Half of this migration already happened
 
@@ -148,8 +158,9 @@ written (inline vs the central `requiredCap`). Both are removed by the merge.
 ## What is deleted
 
 - `appwire.AppKind_AgentMessage` (0x44) retires. The value is not reused.
-- `agentboard.bgn`'s wire formats and the `AgentMessage` envelope, including
-  the dead `deliver` value.
+- `agentboard.bgn`'s wire formats and the `AgentMessage` envelope.
+- The reserved `deliver` slot, under U11 — with the push path it reserves
+  written down here rather than carried as an unused enum value.
 - `agentboard`'s `RunnerID` / `TaskID`, and with them `ids.go`'s paired
   helpers and the uncalled `formatIP`.
 - `HelloStatus` and `clientHelloStatusFromBoard`; `Registry.Validate` returns
@@ -252,10 +263,18 @@ Testing section.
   `BoardMessageRow` will sit in one file describing one board and look
   redundant. The "What is preserved" section is written to be the answer a
   future reader finds; the field-set test is what fails if they merge anyway.
-- **Scope contraction.** The Problem statement names four maintenance costs
-  (`ids.go`, `formatIP`, `HelloStatus`, `deliver`). An implementation that
-  moves the frames and leaves those in place has not finished; each is listed
-  in "What is deleted" so the two sections cover the same scope.
+- **Scope contraction.** The Problem statement names three maintenance costs
+  (`ids.go`'s paired helpers, the uncalled `formatIP`, `HelloStatus`). An
+  implementation that moves the frames and leaves those in place has not
+  finished; each is listed in "What is deleted" so the two sections cover the
+  same scope.
+- **Deleting a reservation as if it were debris.** `deliver` was described as
+  dead in this spec's first draft and is not: it holds a design intent from
+  2026-04-28 whose motivating cost — a fresh dial per inbox hook — is still
+  present. U11 removes the value and keeps the intent in prose. The failure
+  this guards against is the one `feedback_doc_fixed_to_match_code_erases_intent`
+  names: an unused declaration is evidence about a plan, and deleting it
+  silently destroys the only record.
 
 ## Completion
 
