@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -265,5 +266,110 @@ func TestAgentsMirrorHasNoExtraSkills(t *testing.T) {
 		}
 		t.Errorf(".agents/skills/%s is not an embedded skill: remove it, or add it to "+
 			"runner/agentskills if agents in other repos are meant to have it", e.Name())
+	}
+}
+
+// plainScalarProblem reports WHY a frontmatter value would be read differently
+// by frontmatterField (which returns the rest of the line verbatim) and by a
+// real YAML parser, or "" when the two agree.
+//
+// The fix for any of these is to rewrite the value, never to quote it:
+// frontmatterField does not strip quotes, so a quoted value reaches
+// `harness-cli skill ls` with the quotes attached.
+func plainScalarProblem(value string) string {
+	switch {
+	case value == "":
+		return "empty"
+	case strings.Contains(value, ": ") || strings.HasSuffix(value, ":"):
+		return "a colon here opens a nested mapping and YAML refuses the whole file (an em dash reads the same)"
+	case strings.Contains(value, " #"):
+		return `" #" opens a YAML comment: YAML truncates the value there and frontmatterField does not`
+	case strings.ContainsAny(value[:1], "'\"[]{}&*!|>%@`"):
+		return "leading YAML indicator " + value[:1] + ": frontmatterField keeps it verbatim while YAML gives it a meaning"
+	}
+	return ""
+}
+
+// frontmatterLines returns the top-level lines between the opening and closing
+// `---`. Indented and comment lines are skipped — frontmatterField matches on a
+// line prefix, so a nested value is invisible to it either way.
+func frontmatterLines(md []byte) []string {
+	s := string(md)
+	if !strings.HasPrefix(s, "---\n") && !strings.HasPrefix(s, "---\r\n") {
+		return nil
+	}
+	var out []string
+	for _, raw := range strings.Split(s, "\n")[1:] {
+		line := strings.TrimRight(raw, "\r")
+		if line == "---" {
+			break
+		}
+		if line == "" || line[0] == ' ' || line[0] == '\t' || line[0] == '#' {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// TestFrontmatterFieldsArePlainScalars pins a contract frontmatterField has
+// always depended on and never stated: it hands back the rest of the line
+// untouched, so a value means the same thing to it and to a YAML parser only
+// while it stays a PLAIN scalar.
+//
+// It exists because the contract was implicit and broke silently.
+// harness-cli-from-a-tool's description carried "the additive part: the send
+// call" — a colon-space inside an unquoted value. Go's scanner returned the
+// line and every other test in this file passed, while a strict YAML loader
+// rejected the file outright ("mapping values are not allowed here"), so on a
+// runtime that parses frontmatter properly the skill did not load AT ALL.
+// Found 2026-09-22 on a live peer whose runtime loads frontmatter through a
+// strict YAML parser: its session listed the file under "[Skill conflicts]".
+// Claude Code tolerates it, which is why nothing on this side had noticed —
+// and why the guards here were blind to it. TestDescription and
+// TestMirrorsMatchEmbeddedSkills both read the file through frontmatterField,
+// the same lenient scanner the bug lives under.
+func TestFrontmatterFieldsArePlainScalars(t *testing.T) {
+	// The checker must catch the shape that got through, and the silent
+	// variants beside it — a lint that cannot fail is not a guard.
+	for _, bad := range []string{
+		"A recipe for the additive part: the send call",
+		"a value ending in a colon:",
+		"a value with a trailing # comment",
+		`"quoted, so YAML strips what frontmatterField keeps"`,
+		"",
+	} {
+		if plainScalarProblem(bad) == "" {
+			t.Errorf("plainScalarProblem(%q) reported no problem, want one", bad)
+		}
+	}
+	if why := plainScalarProblem("Use when talking to other agents — prose, an em dash, no indicators"); why != "" {
+		t.Errorf("plainScalarProblem(plain prose) = %q, want no problem", why)
+	}
+
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	for _, n := range names {
+		b, err := Skill(n)
+		if err != nil {
+			t.Fatalf("Skill(%q): %v", n, err)
+		}
+		lines := frontmatterLines(b)
+		if len(lines) == 0 {
+			t.Errorf("%s: no frontmatter — Description() and every consumer of it read empty", n)
+			continue
+		}
+		for _, line := range lines {
+			key, value, ok := strings.Cut(line, ":")
+			if !ok {
+				t.Errorf("%s: frontmatter line is not `key: value`, so frontmatterField cannot read it:\n    %s", n, line)
+				continue
+			}
+			if why := plainScalarProblem(strings.TrimSpace(value)); why != "" {
+				t.Errorf("%s: frontmatter %q is not a plain scalar — %s:\n    %s", n, key, why, line)
+			}
+		}
 	}
 }

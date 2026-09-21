@@ -1,6 +1,6 @@
 ---
 name: harness-cli-from-a-tool
-description: Use when bolting harness-cli onto a tool you already have — adding a "send this to an agent" button to a viewer, a dashboard, a dispatch script. A recipe for the additive part: the send call, getting a destination list, the three fields to read back, the size ceiling that fails silently, cleanup, waiting for a peer without holding your tool open, and what to tell the human when the handshake is rejected (which rejections mean restart me, and the one that must not). Everything about the agentboard itself is the harness-cli skill; read that for anything this does not cover.
+description: Use when bolting harness-cli onto a tool you already have — adding a "send this to an agent" button to a viewer, a dashboard, a dispatch script. A recipe for the additive part — the send call, getting a destination list, the three fields to read back, the size ceiling that fails silently, cleanup, waiting for a peer without holding your tool open, and what to tell the human when the handshake is rejected (which rejections mean restart me, and the one that must not). Everything about the agentboard itself is the harness-cli skill; read that for anything this does not cover.
 ---
 
 # Bolting harness-cli onto your own tool
