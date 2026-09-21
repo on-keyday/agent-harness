@@ -16,13 +16,13 @@ func mkProtoTid(b byte) protocol.TaskID {
 	return t
 }
 
-// Local agentboard.RunnerID over the same 16 bytes — what Hello actually carries.
-func mkBoardRid(b byte) RunnerID {
-	return RunnerID{Id: [16]byte{b}}
+// Local protocol.RunnerID over the same 16 bytes — what Hello actually carries.
+func mkBoardRid(b byte) protocol.RunnerID {
+	return protocol.RunnerID{Id: [16]byte{b}}
 }
 
-func mkBoardTid(b byte) TaskID {
-	var t TaskID
+func mkBoardTid(b byte) protocol.TaskID {
+	var t protocol.TaskID
 	t.Id[0] = b
 	return t
 }
@@ -33,7 +33,7 @@ func TestRegistry_RegisterProtoValidateBoard(t *testing.T) {
 	ticket[0] = 0xAA
 	r.Register(mkProtoRid(1), mkProtoTid(1), ticket)
 
-	// Hello arrives with agentboard.RunnerID/TaskID (same logical id, different Go type)
+	// Hello arrives with protocol.RunnerID/protocol.TaskID (same logical id, different Go type)
 	if status := r.Validate(mkBoardRid(1), mkBoardTid(1), ticket); status != HelloStatusOk {
 		t.Errorf("matching ticket → status=%v, want ok", status)
 	}

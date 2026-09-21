@@ -188,19 +188,19 @@ func TestTryDispatch_SendError(t *testing.T) {
 	}
 }
 
-// boardRunnerID builds an agentboard.RunnerID from a connection ID string so
+// boardRunnerID builds an protocol.RunnerID from a connection ID string so
 // tests can call board.Registry().Validate without going through the protocol
 // wire. It derives the identity the same way makeProtoRunnerID does, so a test
 // that registers by connection-id string and validates by identity agrees with
 // itself — the server itself derives nothing from an address any more.
-func boardRunnerID(t *testing.T, connIDStr string) agentboard.RunnerID {
+func boardRunnerID(t *testing.T, connIDStr string) protocol.RunnerID {
 	t.Helper()
-	return boardRunnerIDFromProto(makeProtoRunnerID(t, connIDStr))
+	return makeProtoRunnerID(t, connIDStr)
 }
 
-// boardTaskID converts a hex task ID string to agentboard.TaskID.
-func boardTaskID(taskIDHex string) agentboard.TaskID {
-	var tid agentboard.TaskID
+// boardTaskID converts a hex task ID string to protocol.TaskID.
+func boardTaskID(taskIDHex string) protocol.TaskID {
+	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
 	return tid

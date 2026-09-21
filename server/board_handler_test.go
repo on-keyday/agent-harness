@@ -141,11 +141,11 @@ func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
 	var bystander protocol.TaskID
 	bystander.Id[0] = 2
 
-	c := h.Board.Attach(boardRunnerIDFromProto(rid), boardTaskIDFromProto(listener), "host-A", "claude")
+	c := h.Board.Attach(rid, listener, "host-A", "claude")
 	if err := h.Board.Subscribe(c, "rr.dec-019"); err != nil {
 		t.Fatal(err)
 	}
-	h.Board.Attach(boardRunnerIDFromProto(rid), boardTaskIDFromProto(bystander), "host-B", "codex")
+	h.Board.Attach(rid, bystander, "host-B", "codex")
 
 	h.handleBoardSubscribers(conn, 1, "")
 	allResp := lastTaskControlResponse(t, conn)

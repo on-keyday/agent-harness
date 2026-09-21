@@ -7,12 +7,17 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// Aliases for shorter usage at call sites; map to brgen-generated HelloStatus_*.
+// Aliases for shorter usage at call sites.
+//
+// They name protocol.ClientHelloStatus values now. The board used to declare a
+// HelloStatus enum of its own, carrying the same four meanings, with a
+// conversion function on the server between them -- one of several types that
+// existed only because a second .bgn file cannot reference the first one's.
 const (
-	HelloStatusOk             = HelloStatus_Ok
-	HelloStatusBadTicket      = HelloStatus_BadTicket
-	HelloStatusUnknownTask    = HelloStatus_UnknownTask
-	HelloStatusRunnerMismatch = HelloStatus_RunnerMismatch
+	HelloStatusOk             = protocol.ClientHelloStatus_Ok
+	HelloStatusBadTicket      = protocol.ClientHelloStatus_BadTicket
+	HelloStatusUnknownTask    = protocol.ClientHelloStatus_UnknownTask
+	HelloStatusRunnerMismatch = protocol.ClientHelloStatus_RunnerMismatch
 )
 
 type ticketKey struct {
@@ -57,12 +62,12 @@ func (r *registry) Ticket(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte,
 	return t, ok
 }
 
-// Validate is called from the agent_message Hello handler with the
-// agentboard.RunnerID/TaskID types decoded off the wire.
-func (r *registry) Validate(rid RunnerID, tid TaskID, ticket [16]byte) HelloStatus {
+// Validate is called from the ClientHello path with the identity the agent
+// presented.
+func (r *registry) Validate(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) protocol.ClientHelloStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	want, ok := r.tickets[ticketKey{runner: runnerIDStringBoard(rid), task: hexTaskIDBoard(tid)}]
+	want, ok := r.tickets[ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}]
 	if !ok {
 		return HelloStatusUnknownTask
 	}

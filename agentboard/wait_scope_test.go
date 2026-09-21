@@ -9,11 +9,11 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// boardTaskIDFromByte builds a distinct agentboard.TaskID so two taskStates can
+// boardTaskIDFromByte builds a distinct protocol.TaskID so two taskStates can
 // coexist on one board. Named apart from retract_test.go's taskIDFromByte,
 // which returns the protocol.TaskID that Send wants; Attach wants this one.
-func boardTaskIDFromByte(b byte) TaskID {
-	var t TaskID
+func boardTaskIDFromByte(b byte) protocol.TaskID {
+	var t protocol.TaskID
 	t.Id[0] = b
 	return t
 }
@@ -21,7 +21,7 @@ func boardTaskIDFromByte(b byte) TaskID {
 func TestBoard_WaitLeavesNoSubscriptionBehind(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -40,7 +40,7 @@ func TestBoard_WaitLeavesNoSubscriptionBehind(t *testing.T) {
 func TestBoard_WaitStillReceivesWithoutPriorSubscribe(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 
 	go func() {
@@ -65,7 +65,7 @@ func TestBoard_WaitStillReceivesWithoutPriorSubscribe(t *testing.T) {
 func TestBoard_WaitEndsWhenConnectionDetaches(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 
 	done := make(chan struct{})
 	go func() {
@@ -91,7 +91,7 @@ func TestBoard_WaitEndsWhenConnectionDetaches(t *testing.T) {
 func TestBoard_DetachTwiceIsSafe(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	b.Detach(conn)
 	b.Detach(conn) // must not panic on a second close
 }
@@ -105,9 +105,9 @@ func TestBoard_SendSkipsWakeForTheTaskWaitingOnThatTopic(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	waiter := b.Attach(RunnerID{}, boardTaskIDFromByte(1), "host-a", "")
+	waiter := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(1), "host-a", "")
 	defer b.Detach(waiter)
-	bystander := b.Attach(RunnerID{}, boardTaskIDFromByte(2), "host-b", "")
+	bystander := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(2), "host-b", "")
 	defer b.Detach(bystander)
 	_ = b.Subscribe(bystander, "topic/shared")
 
@@ -145,7 +145,7 @@ func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	conn := b.Attach(RunnerID{}, boardTaskIDFromByte(3), "host-c", "")
+	conn := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(3), "host-c", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/other")
 
@@ -181,7 +181,7 @@ func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
 func TestBoard_WaitFiltersByInReplyTo(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/replies")
 
@@ -212,7 +212,7 @@ func TestBoard_WaitFiltersByInReplyTo(t *testing.T) {
 func TestBoard_WaitWithoutFilterAcceptsAnything(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 
 	if _, _, err := b.Send("topic/any", []byte("a reply"), testRid, testTid, "h", "", 7); err != nil {
@@ -237,7 +237,7 @@ func TestBoard_WaitWithoutFilterAcceptsAnything(t *testing.T) {
 func TestBoard_WaitReturnsAlreadyRetainedAtOnce(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 
 	var first uint64

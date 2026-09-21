@@ -263,9 +263,7 @@ func New(cfg Config) *Server {
 		// the fleet's server-first deploy rule needs to be answerable at all.
 		ServerRevision: stamp.Revision,
 		ServerDirty:    stamp.Modified,
-		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
-			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
-		},
+		OnAgentHello:   s.establishAgentIdentity,
 		// The board identity OnAgentHello established, read back per request by
 		// the agent_* task-control kinds. Gated on helloed, not on state being
 		// non-nil: getOrCreateAgentConn mints an empty entry for whatever
@@ -1272,9 +1270,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		if s.Board == nil {
 			return protocol.PskAuthStatus_Ok // no board → degrade to ok (test wiring)
 		}
-		rid := boardRunnerIDFromProto(info.RunnerId)
-		tid := boardTaskIDFromProto(info.TaskId)
-		status := s.Board.Registry().Validate(rid, tid, info.AuthTicket)
+		status := s.Board.Registry().Validate(info.RunnerId, info.TaskId, info.AuthTicket)
 		if status == agentboard.HelloStatusOk {
 			return protocol.PskAuthStatus_Ok
 		}

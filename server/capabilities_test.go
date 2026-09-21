@@ -984,10 +984,10 @@ func makeTestAgentConn(t *testing.T, caps protocol.Capability) (*Server, *agentC
 	tasks.mu.Unlock()
 
 	// Build agentboard RunnerID/TaskID and Attach to get a ConnState.
-	var boardRID agentboard.RunnerID
+	var boardRID protocol.RunnerID
 	boardRID.Id = [16]byte{1}
 
-	var boardTID agentboard.TaskID
+	var boardTID protocol.TaskID
 	copy(boardTID.Id[:], protoTID.Id[:])
 
 	state := board.Attach(boardRID, boardTID, "testhost", "")

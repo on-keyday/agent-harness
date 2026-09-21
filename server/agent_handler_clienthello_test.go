@@ -138,11 +138,16 @@ func TestEstablishAgentIdentity_NilBoard(t *testing.T) {
 	}
 }
 
-// TestClientHelloStatusFromBoard verifies the four-way mapping.
-func TestClientHelloStatusFromBoard(t *testing.T) {
+// TestBoardHelloStatusAliasesAreTheProtocolValues replaces
+// TestClientHelloStatusFromBoard, which checked a four-way conversion between
+// two enums carrying the same four meanings. The board's enum is gone and its
+// aliases name protocol's values directly, so what is left to assert is that
+// they still name the RIGHT ones — a rename on either side would otherwise
+// change what a bad ticket is reported as, silently.
+func TestBoardHelloStatusAliasesAreTheProtocolValues(t *testing.T) {
 	cases := []struct {
-		in  agentboard.HelloStatus
-		out protocol.ClientHelloStatus
+		alias protocol.ClientHelloStatus
+		want  protocol.ClientHelloStatus
 	}{
 		{agentboard.HelloStatusOk, protocol.ClientHelloStatus_Ok},
 		{agentboard.HelloStatusBadTicket, protocol.ClientHelloStatus_BadTicket},
@@ -150,9 +155,8 @@ func TestClientHelloStatusFromBoard(t *testing.T) {
 		{agentboard.HelloStatusRunnerMismatch, protocol.ClientHelloStatus_RunnerMismatch},
 	}
 	for _, c := range cases {
-		got := clientHelloStatusFromBoard(c.in)
-		if got != c.out {
-			t.Errorf("clientHelloStatusFromBoard(%v) = %v, want %v", c.in, got, c.out)
+		if c.alias != c.want {
+			t.Errorf("alias = %v, want %v", c.alias, c.want)
 		}
 	}
 }

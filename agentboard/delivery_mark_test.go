@@ -1,6 +1,7 @@
 package agentboard
 
 import (
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"testing"
 	"time"
 )
@@ -14,7 +15,7 @@ func newMarkBoard(t *testing.T) *Board {
 
 func TestBoard_InboxAdvanceReturnsEachMessageOnce(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/mark")
 
@@ -43,7 +44,7 @@ func TestBoard_InboxAdvanceReturnsEachMessageOnce(t *testing.T) {
 // another, and the hook never delivered it.
 func TestBoard_InboxAdvanceIsPerTopic(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/quiet")
 	_ = b.Subscribe(conn, "topic/busy")
@@ -71,7 +72,7 @@ func TestBoard_InboxAdvanceIsPerTopic(t *testing.T) {
 
 func TestBoard_InboxDoesNotMoveTheMark(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/plain")
 
@@ -94,7 +95,7 @@ func TestBoard_InboxDoesNotMoveTheMark(t *testing.T) {
 // advances it runs in one of those.
 func TestBoard_InboxAdvanceMarkIsPerTaskNotPerConnection(t *testing.T) {
 	b := newMarkBoard(t)
-	first := b.Attach(RunnerID{}, boardTaskIDFromByte(9), "h", "")
+	first := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(9), "h", "")
 	_ = b.Subscribe(first, "topic/reconnect")
 	if _, _, err := b.Send("topic/reconnect", []byte("m"), testRid, testTid, "h", "", 0); err != nil {
 		t.Fatal(err)
@@ -104,7 +105,7 @@ func TestBoard_InboxAdvanceMarkIsPerTaskNotPerConnection(t *testing.T) {
 	}
 	b.Detach(first)
 
-	second := b.Attach(RunnerID{}, boardTaskIDFromByte(9), "h", "")
+	second := b.Attach(protocol.RunnerID{}, boardTaskIDFromByte(9), "h", "")
 	defer b.Detach(second)
 	if adv := b.InboxAdvance(second); len(adv) != 0 {
 		t.Fatalf("a new connection for the same task re-delivered %+v", adv)
@@ -115,7 +116,7 @@ func TestBoard_InboxAdvanceMarkIsPerTaskNotPerConnection(t *testing.T) {
 // used to be a file on the runner host that no surface showed.
 func TestBoard_ListSubscribersCarriesShownAndPending(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/watched")
 
@@ -158,7 +159,7 @@ func TestBoard_ListSubscribersCarriesShownAndPending(t *testing.T) {
 // exists to tell it apart from "subscribed, everything read".
 func TestBoard_ListSubscribersShowsUnpublishedTopic(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/silent")
 
@@ -176,7 +177,7 @@ func TestBoard_ListSubscribersShowsUnpublishedTopic(t *testing.T) {
 // and marking happen under one acquisition of the task's lock.
 func TestBoard_InboxAdvanceIsAtomic(t *testing.T) {
 	b := newMarkBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/race")
 

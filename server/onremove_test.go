@@ -287,7 +287,7 @@ func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
 		t.Errorf("subscribers after disconnect = %d, want 0 — the taskState leaked", got)
 	}
 	if st := board.Registry().Validate(
-		boardRunnerIDFromProto(rid), boardTaskIDFromProto(tid), [16]byte{1},
+		rid, tid, [16]byte{1},
 	); st == agentboard.HelloStatusOk {
 		t.Error("the auth ticket still validates after the runner disconnected")
 	}

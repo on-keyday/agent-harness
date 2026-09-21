@@ -14,10 +14,8 @@ import (
 func newAgentTaskHandler(t *testing.T) (*TaskHandler, *fakeConn, *agentboard.ConnState) {
 	t.Helper()
 	h, conn := newBoardTestHandler(t)
-	// Attach still takes the board's OWN id copies; Send takes protocol's.
-	// That split is what this migration removes in its last task.
-	var rid agentboard.RunnerID
-	var tid agentboard.TaskID
+	var rid protocol.RunnerID
+	var tid protocol.TaskID
 	rid.Id[0], tid.Id[0] = 0xAA, 0xBB
 	st := h.Board.Attach(rid, tid, "testhost", "bash")
 	h.BoardConnState = func(ConnHandle) *agentboard.ConnState { return st }

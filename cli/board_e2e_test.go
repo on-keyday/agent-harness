@@ -192,8 +192,8 @@ func TestClientBoard_Subscribers(t *testing.T) {
 	var first protocol.TaskID
 	first.Id[0] = 0xaa
 
-	boardRid := agentboard.RunnerID{Id: rid.Id}
-	var secondBoard, firstBoard agentboard.TaskID
+	boardRid := protocol.RunnerID{Id: rid.Id}
+	var secondBoard, firstBoard protocol.TaskID
 	secondBoard.Id = second.Id
 	firstBoard.Id = first.Id
 

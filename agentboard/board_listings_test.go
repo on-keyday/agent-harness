@@ -8,16 +8,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func toAgentboardRunnerID(r protocol.RunnerID) RunnerID {
-	return RunnerID{Id: r.Id}
-}
-
-func toAgentboardTaskID(t protocol.TaskID) TaskID {
-	var out TaskID
-	copy(out.Id[:], t.Id[:])
-	return out
-}
-
 func TestBoard_ListTopics_Empty(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
@@ -70,9 +60,9 @@ func TestBoard_ListTopics_AfterSends(t *testing.T) {
 func TestBoard_ListSubscriptions(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
 	defer b.Close()
-	var rid RunnerID
+	var rid protocol.RunnerID
 	rid.Id = [16]byte{1}
-	var tid TaskID
+	var tid protocol.TaskID
 	tid.Id[0] = 1
 	c := b.Attach(rid, tid, "host", "")
 	if err := b.Subscribe(c, "alpha/x"); err != nil {
@@ -126,9 +116,9 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 		return t
 	}
 
-	cA := b.Attach(toAgentboardRunnerID(mkRid(1)), toAgentboardTaskID(mkTid(0xAA)), "host-A", "")
-	cB := b.Attach(toAgentboardRunnerID(mkRid(2)), toAgentboardTaskID(mkTid(0xBB)), "host-B", "")
-	cC := b.Attach(toAgentboardRunnerID(mkRid(3)), toAgentboardTaskID(mkTid(0xCC)), "host-C", "") // does not subscribe
+	cA := b.Attach(mkRid(1), mkTid(0xAA), "host-A", "")
+	cB := b.Attach(mkRid(2), mkTid(0xBB), "host-B", "")
+	cC := b.Attach(mkRid(3), mkTid(0xCC), "host-C", "") // does not subscribe
 
 	if err := b.Subscribe(cA, "topic/x"); err != nil {
 		t.Fatal(err)
@@ -175,7 +165,7 @@ func TestBoard_ListSubscribers_NoFilter(t *testing.T) {
 
 	var attached protocol.TaskID
 	attached.Id[0] = 2
-	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(attached), "host-A", "claude")
+	c := b.Attach(rid, attached, "host-A", "claude")
 	if err := b.Subscribe(c, "rr.dec-019"); err != nil {
 		t.Fatal(err)
 	}
@@ -210,14 +200,14 @@ func TestBoard_ListSubscribers_FilterMatchesDelivery(t *testing.T) {
 	var bystander protocol.TaskID
 	bystander.Id[0] = 2
 
-	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(listener), "host-A", "claude")
+	c := b.Attach(rid, listener, "host-A", "claude")
 	if err := b.Subscribe(c, "rr.dec-019"); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.Subscribe(c, "other"); err != nil {
 		t.Fatal(err)
 	}
-	b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(bystander), "host-B", "claude")
+	b.Attach(rid, bystander, "host-B", "claude")
 
 	rows := b.ListSubscribers("rr.dec-019")
 	if len(rows) != 1 {

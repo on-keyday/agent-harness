@@ -14,7 +14,7 @@ var testTid protocol.TaskID
 func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "topic/foo"); err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/bar")
 
@@ -53,7 +53,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 func TestBoard_WaitTimesOut(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/quiet")
 
@@ -81,7 +81,7 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	rid, tid := RunnerID{}, TaskID{}
+	rid, tid := protocol.RunnerID{}, protocol.TaskID{}
 
 	// Connection 1: subscribe.
 	c1 := b.Attach(rid, tid, "test-host", "")
@@ -125,7 +125,7 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "agent-host", "")
+	c := b.Attach(rid, tid, "agent-host", "")
 	defer b.Detach(c)
 	msgs, _ := b.Inbox(c, 0)
 	if len(msgs) != 1 || string(msgs[0].Payload) != "hello" {
@@ -157,7 +157,7 @@ func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
 	b.RegisterTask(rid1, tid, ticket1, "")
 	b.RegisterTask(rid2, tid, ticket2, "")
 
-	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2", "")
+	c2 := b.Attach(rid2, tid, "host2", "")
 	defer b.Detach(c2)
 	if _, _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", "", 0); err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 
 	// Agent hello: Attach carries the real hostname and the profile resolved
 	// at hello time, overwriting both seeds.
-	sender := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "real-host", "claude")
+	sender := b.Attach(rid, tid, "real-host", "claude")
 	defer b.Detach(sender)
 
 	// This is exactly what server agent_handler.go does on a Send RPC: it
@@ -215,7 +215,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	rrid.Id = [16]byte{8}
 	var rtid protocol.TaskID
 	rtid.Id[0] = 0xcc
-	recv := b.Attach(toAgentboardRunnerID(rrid), toAgentboardTaskID(rtid), "recv-host", "")
+	recv := b.Attach(rrid, rtid, "recv-host", "")
 	defer b.Detach(recv)
 	if err := b.Subscribe(recv, "chat.attr-test"); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	rid, tid := RunnerID{}, TaskID{}
+	rid, tid := protocol.RunnerID{}, protocol.TaskID{}
 
 	c1 := b.Attach(rid, tid, "test-host", "")
 	_ = b.Subscribe(c1, "topic/scoped")
@@ -272,10 +272,10 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	var rid1, rid2 RunnerID
+	var rid1, rid2 protocol.RunnerID
 	rid1.Id = [16]byte{1}
 	rid2.Id = [16]byte{1}
-	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
+	tid1, tid2 := protocol.TaskID{Id: [16]byte{1}}, protocol.TaskID{Id: [16]byte{2}}
 
 	c1 := b.Attach(rid1, tid1, "host1", "")
 	c2 := b.Attach(rid2, tid2, "host2", "")
@@ -331,10 +331,10 @@ func TestBoard_SendReportsDeliveredTo(t *testing.T) {
 	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	var rid1, rid2 RunnerID
+	var rid1, rid2 protocol.RunnerID
 	rid1.Id = [16]byte{1}
 	rid2.Id = [16]byte{1}
-	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
+	tid1, tid2 := protocol.TaskID{Id: [16]byte{1}}, protocol.TaskID{Id: [16]byte{2}}
 	c1 := b.Attach(rid1, tid1, "host1", "")
 	c2 := b.Attach(rid2, tid2, "host2", "")
 	pRid, pTid := protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1)
@@ -382,10 +382,10 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	var pubRid, subRid RunnerID
+	var pubRid, subRid protocol.RunnerID
 	pubRid.Id = [16]byte{1}
 	subRid.Id = [16]byte{2}
-	var pubTid, subTid TaskID
+	var pubTid, subTid protocol.TaskID
 	pubTid.Id[0] = 0xaa
 	subTid.Id[0] = 0xbb
 
@@ -438,7 +438,7 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "chat.poison"); err != nil {
 		t.Fatal(err)
@@ -490,7 +490,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "chat.mix"); err != nil {
 		t.Fatal(err)
@@ -547,14 +547,14 @@ func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 }
 
 // protoRunnerIDFromBoard / protoTaskIDFromBoard are test-only helpers to
-// bridge the agentboard.RunnerID/TaskID (Hello-side) and protocol.RunnerID/
-// TaskID (server-dispatch side). The two have the same field shape; both
+// bridge the protocol.RunnerID/protocol.TaskID (Hello-side) and protocol.RunnerID/
+// protocol.TaskID (server-dispatch side). The two have the same field shape; both
 // stringify identically via the runnerIDString*/hexTaskID* helpers.
-func protoRunnerIDFromBoard(r RunnerID) protocol.RunnerID {
+func protoRunnerIDFromBoard(r protocol.RunnerID) protocol.RunnerID {
 	return protocol.RunnerID{Id: r.Id}
 }
 
-func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
+func protoTaskIDFromBoard(t protocol.TaskID) protocol.TaskID {
 	var p protocol.TaskID
 	copy(p.Id[:], t.Id[:])
 	return p
@@ -585,7 +585,7 @@ func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
 func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	// Boot 1: publish enough to advance a consumer cursor to a high value.
 	b1 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
-	c1 := b1.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	c1 := b1.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	_ = b1.Subscribe(c1, "chat.task")
 	var cursor uint64
 	for i := 0; i < 56; i++ {
@@ -605,7 +605,7 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	// as empty — the bug.
 	b2 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024, SeqSeed: cursor + 1000})
 	defer b2.Close()
-	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	c2 := b2.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	_ = b2.Subscribe(c2, "chat.task")
 	newSeq, _, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "", 0)
 	if err != nil {
@@ -630,7 +630,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	first := b.Attach(RunnerID{}, TaskID{}, "test-host", "codex")
+	first := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "codex")
 	if err := b.Subscribe(first, "topic/resumed"); err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +646,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	// Same (rid, tid) returns under a different profile, as --resume does.
 	// Detach preserves the taskState, so this re-attach overwrites identity
 	// in place — precisely the case a read-time lookup would get wrong.
-	second := b.Attach(RunnerID{}, TaskID{}, "test-host", "claude")
+	second := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "claude")
 	defer b.Detach(second)
 	rid, tid, host, profile = second.Identity()
 	if profile != "claude" {

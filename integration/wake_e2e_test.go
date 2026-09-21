@@ -177,7 +177,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	// --- Positive path: synthesise a subscriber and publish ---------------
 	//
 	// Build the real TaskID from the hex string returned by OpenInteractive.
-	var realTid agentboard.TaskID
+	var realTid protocol.TaskID
 	rawTid, err := hex.DecodeString(taskID)
 	if err != nil || len(rawTid) != 16 {
 		t.Fatalf("decode task id %q: %v (len=%d)", taskID, err, len(rawTid))
@@ -187,7 +187,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	// Synthesise a RunnerID.  The value is arbitrary because emitTaskWake (the
 	// server's onDeliver hook) ignores the RunnerID from the callback and
 	// resolves the runner exclusively via the TaskID.
-	var fakeRid agentboard.RunnerID
+	var fakeRid protocol.RunnerID
 	fakeRid.Id = [16]byte{1}
 
 	// Attach the synthetic identity to create a taskState in the board.

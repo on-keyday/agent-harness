@@ -57,20 +57,16 @@ func (s *Server) removeAgentConn(cid objproto.ConnectionID) {
 	}
 }
 
-
-
 // establishAgentIdentity validates an agent's credential (from ClientHello) and,
 // on success, attaches the per-connID agentConn used by every agentboard handler
 // (ac.helloed gate + ac.state.Identity()). Reuses Registry.Validate + Board.Attach
 // unchanged — the single place agent identity is established, for both
 // task-control ops and agentboard messaging on the same connection.
-func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInfo) agentboard.HelloStatus {
+func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
 	if s.Board == nil {
 		return agentboard.HelloStatusOk // attribution-only degrade (test wiring)
 	}
-	rid := boardRunnerIDFromProto(info.RunnerId)
-	tid := boardTaskIDFromProto(info.TaskId)
-	status := s.Board.Registry().Validate(rid, tid, info.AuthTicket)
+	status := s.Board.Registry().Validate(info.RunnerId, info.TaskId, info.AuthTicket)
 	if status == agentboard.HelloStatusOk {
 		// The agent profile is authority-side data: read it from the task
 		// record, never from the agent's own hello. Empty when the store has
@@ -84,22 +80,9 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 		}
 		ac := s.getOrCreateAgentConn(conn)
 		ac.helloed = true
-		ac.state = s.Board.Attach(rid, tid, string(info.Hostname), profile)
+		ac.state = s.Board.Attach(info.RunnerId, info.TaskId, string(info.Hostname), profile)
 	}
 	return status
-}
-
-func clientHelloStatusFromBoard(s agentboard.HelloStatus) protocol.ClientHelloStatus {
-	switch s {
-	case agentboard.HelloStatusBadTicket:
-		return protocol.ClientHelloStatus_BadTicket
-	case agentboard.HelloStatusUnknownTask:
-		return protocol.ClientHelloStatus_UnknownTask
-	case agentboard.HelloStatusRunnerMismatch:
-		return protocol.ClientHelloStatus_RunnerMismatch
-	default:
-		return protocol.ClientHelloStatus_Ok
-	}
 }
 
 // resolveReplyTarget maps a send request's (topic, in_reply_to) to the topic
@@ -188,7 +171,6 @@ func retireRepliedParent(b *agentboard.Board, parentSeq uint64, replier protocol
 			"replier", hex.EncodeToString(replier.Id[:]))
 	}
 }
-
 
 // payloadReadChunk is the per-ReadDirect ceiling, and so the slack above max
 // that a body can occupy before the limit is noticed.
@@ -298,22 +280,6 @@ func flushDeliveredPayloads(pending []pendingPayload) {
 // with "not yours" into one NotFound: a distinguishable refusal would still
 // answer "does seq N exist?" for every seq.
 
-
-
-// protoToAgentboardRunnerID converts a protocol.RunnerID (stored in
-// RetainedMessage) to agentboard.RunnerID (the type carried in
-// DeliveredMessage) — two distinct Go types over the same 16 opaque bytes.
-//
-// It used to copy four address fields and substitute a placeholder IPv4 for a
-// zero sender, because the board's schema refused ip_addr_len == 0 and the
-// encoder asserted on it. Both the constraint and the placeholder are gone: a
-// zero identity now copies as a zero identity, which is what an absent sender
-// should look like.
-
-// protoToAgentboardTaskID converts a protocol.TaskID to agentboard.TaskID.
-
-
-
 // agentHandleInboxAdvance serves the read that moves the task's delivery mark.
 // Only the runner-injected UserPromptSubmit hook sends it.
 //
@@ -322,8 +288,6 @@ func flushDeliveredPayloads(pending []pendingPayload) {
 // topic), so the client neither asserts one nor is told one. Board.InboxAdvance
 // collects and marks under a single acquisition of the task's lock, so nothing
 // is returned here without also having been recorded as delivered.
-
-
 
 // agentHandlePurge destroys a topic's retained-message ring. Gated by
 // Capability_Purge (distinct from Prune): purge drops live retained messages on

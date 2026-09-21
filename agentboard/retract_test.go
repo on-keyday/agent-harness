@@ -8,7 +8,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// taskIDFromByte builds a distinct TaskID for author-vs-other tests.
+// taskIDFromByte builds a distinct protocol.TaskID for author-vs-other tests.
 func taskIDFromByte(b byte) protocol.TaskID {
 	var t protocol.TaskID
 	t.Id[0] = b
@@ -31,7 +31,7 @@ func newRetractBoard(t *testing.T) *Board {
 func TestRetract_LeavesEveryAgentFacingPath(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "t.retract"); err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestRetract_LeavesEveryAgentFacingPath(t *testing.T) {
 func TestRetract_OperatorStillSees(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.audit")
 	seq, _, err := b.Send("t.audit", []byte("what was said"), testRid, author, "test-host", "", 0)
@@ -102,7 +102,7 @@ func TestRetract_OperatorStillSees(t *testing.T) {
 func TestRetract_AuthorshipIsTheGate(t *testing.T) {
 	b := newRetractBoard(t)
 	author, other := taskIDFromByte(1), taskIDFromByte(2)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.auth")
 	seq, _, err := b.Send("t.auth", []byte("not yours"), testRid, author, "test-host", "", 0)
@@ -135,7 +135,7 @@ func TestRetract_AuthorshipIsTheGate(t *testing.T) {
 func TestRetract_DoesNotConsumeLiveCapacity(t *testing.T) {
 	b := newRetractBoard(t) // RingN = 4
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.cap")
 
@@ -173,7 +173,7 @@ func TestRetract_DoesNotConsumeLiveCapacity(t *testing.T) {
 func TestRetract_WithdrawnListIsBounded(t *testing.T) {
 	b := newRetractBoard(t) // RingN = 4
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.bound")
 
@@ -201,7 +201,7 @@ func TestRetract_WithdrawnListIsBounded(t *testing.T) {
 func TestRetract_PurgeStillReaches(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.purge")
 	seq, _, err := b.Send("t.purge", []byte("secret"), testRid, author, "test-host", "", 0)
@@ -400,7 +400,7 @@ func TestRetract_EmptiedWithdrawnListLeavesNoLiveTopic(t *testing.T) {
 func TestRetract_IsIdempotentAndBlind(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.twice")
 	seq, _, err := b.Send("t.twice", []byte("once"), testRid, author, "test-host", "", 0)
@@ -431,7 +431,7 @@ func TestForceRetract_WithdrawsSomebodyElsesMessage(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
 	operator := taskIDFromByte(2)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.force")
 	seq, _, err := b.Send("t.force", []byte("inconvenient"), testRid, author, "test-host", "", 0)
@@ -481,7 +481,7 @@ func TestForceRetract_WithdrawsSomebodyElsesMessage(t *testing.T) {
 func TestRetract_RecordsAuthorProvenance(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(7)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.prov")
 	seq, _, err := b.Send("t.prov", []byte("mine"), testRid, author, "test-host", "", 0)
@@ -509,7 +509,7 @@ func TestRetract_RecordsAuthorProvenance(t *testing.T) {
 // would be an author match against nobody, which is a different question.
 func TestForceRetract_OperatorClientHasNoTaskID(t *testing.T) {
 	b := newRetractBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.opclient")
 	seq, _, err := b.Send("t.opclient", []byte("x"), testRid, taskIDFromByte(1), "test-host", "", 0)
@@ -536,7 +536,7 @@ func TestForceRetract_NotFoundCases(t *testing.T) {
 	b := newRetractBoard(t)
 	author := taskIDFromByte(1)
 	operator := taskIDFromByte(2)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.nf")
 	seq, _, err := b.Send("t.nf", []byte("x"), testRid, author, "test-host", "", 0)
@@ -565,7 +565,7 @@ func TestForceRetract_NotFoundCases(t *testing.T) {
 // force-retract does may put a message beyond its reach.
 func TestForceRetract_PurgeStillReaches(t *testing.T) {
 	b := newRetractBoard(t)
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.forcepurge")
 	seq, _, err := b.Send("t.forcepurge", []byte("secret"), testRid, taskIDFromByte(1), "test-host", "", 0)

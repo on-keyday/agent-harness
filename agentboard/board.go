@@ -116,8 +116,8 @@ func (b *Board) SetOnDeliver(fn func(protocol.RunnerID, protocol.TaskID)) {
 // and agentProfile are captured into the taskState so Board.Send can attach sender
 // attestation to every message published by this (rid, tid). agentProfile is the
 // server-resolved agent profile for the task; empty means "not attributed".
-func (b *Board) Attach(rid RunnerID, tid TaskID, hostname, agentProfile string) *ConnState {
-	key := ticketKey{runner: runnerIDStringBoard(rid), task: hexTaskIDBoard(tid)}
+func (b *Board) Attach(rid protocol.RunnerID, tid protocol.TaskID, hostname, agentProfile string) *ConnState {
+	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
 	b.mu.Lock()
 	ts, ok := b.tasks[key]
 	if !ok {
@@ -125,12 +125,7 @@ func (b *Board) Attach(rid RunnerID, tid TaskID, hostname, agentProfile string) 
 		b.tasks[key] = ts
 	}
 	b.mu.Unlock()
-	// Convert agentboard.RunnerID / TaskID → protocol.RunnerID / TaskID for identity storage.
-	var protoRid protocol.RunnerID
-	protoRid.Id = rid.Id
-	var protoTid protocol.TaskID
-	copy(protoTid.Id[:], tid.Id[:])
-	ts.setIdentity(protoRid, protoTid, hostname, agentProfile)
+	ts.setIdentity(rid, tid, hostname, agentProfile)
 	c := newConnState(ts)
 	ts.attachConn(c)
 	return c

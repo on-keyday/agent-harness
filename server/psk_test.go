@@ -588,7 +588,7 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 		Tasks:    tasks,
 		Registry: NewRegistry(),
 		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
-			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
+			return s.establishAgentIdentity(conn, info)
 		},
 	}
 
@@ -880,8 +880,8 @@ func TestPSKGate_AgentboardFullValidation(t *testing.T) {
 	g := newPSKGate(psk)
 	// Wire the same ticket validation logic as Server.handleConnection.
 	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
-		rid := boardRunnerIDFromProto(info.RunnerId)
-		tid := boardTaskIDFromProto(info.TaskId)
+		rid := info.RunnerId
+		tid := info.TaskId
 		s := board.Registry().Validate(rid, tid, info.AuthTicket)
 		if s == agentboard.HelloStatusOk {
 			return protocol.PskAuthStatus_Ok
@@ -939,8 +939,8 @@ func TestPSKGate_AgentboardBadTicket_NoPrincipal(t *testing.T) {
 	psk := []byte("s3cr3t-full")
 	g := newPSKGate(psk)
 	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
-		rid := boardRunnerIDFromProto(info.RunnerId)
-		tid := boardTaskIDFromProto(info.TaskId)
+		rid := info.RunnerId
+		tid := info.TaskId
 		s := board.Registry().Validate(rid, tid, info.AuthTicket)
 		if s == agentboard.HelloStatusOk {
 			return protocol.PskAuthStatus_Ok
