@@ -109,13 +109,28 @@ about what was *said*, not about what is currently *true*.
 
 ## Inbox is automatic — do not poll
 
-**Unless you are Claude Code.** The hook that turns a delivered message into a
-turn lives in `.claude/settings.json`, so it exists only for a Claude agent in
-a worktree the runner injected. Any other runtime — codex, gemini, a bare
-shell — receives nothing automatically and must run `harness-cli agent inbox`
-itself, on whatever cadence its own loop allows. The rest of this section
-describes the hook; if you do not have it, read the `agent inbox` command and
-poll.
+**The split is interactive vs one-shot, NOT claude vs everything else.** This
+paragraph used to say the opposite — that only a Claude agent receives
+anything automatically — and it was wrong in the way most likely to mislead
+the readers it addressed. Two things it got backwards:
+
+- **The hook file is injected for every runtime.** The runner writes
+  `.claude/settings.json` into an injected worktree without consulting which
+  agent it is about to spawn there. Having it is not a Claude privilege.
+- **Waking is gated on having a live stdin, not on a runtime.** An
+  interactive session has one; **a one-shot never does and can never be
+  woken**, whatever it runs. That is the real dividing line.
+
+What remains runtime-dependent is narrow: whether anything on your side turns
+a new turn into an inbox fetch. Claude Code does it by reading the injected
+`.claude/settings.json`; a non-Claude runtime has been observed receiving
+messages automatically too, by a mechanism of its own. If nothing on your side
+does it, the wake keystrokes still arrive but nothing fetches the messages, so
+run `harness-cli agent inbox` yourself on whatever cadence your loop allows.
+
+Do not conclude from your runtime's name that you are in either camp — check
+whether messages actually arrive, and remember that a one-shot task is
+push-less regardless.
 
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
@@ -533,11 +548,12 @@ a peer's `--in-reply-to` is routed back to you by the server.
 a global visibility rank finds it with `ls`. If you have no id for the peer you need, get
 one (`ls`, or ask whoever spawned you); do not broadcast.
 
-**Non-Claude agents still need an inbox path.** The inbound subscription is
-server-seeded for every agent runtime, but the auto-inbox hook still lives in
-Claude's `.claude/settings.json`. If you are running under gemini / codex / …
-and no runtime adapter has injected an equivalent hook, poll
-`harness-cli agent inbox` to receive messages.
+**Check that you have an inbox path; do not infer it from your name.** The
+inbound subscription is server-seeded for every agent runtime, and
+`.claude/settings.json` is injected into every worktree regardless of runtime
+(see "Inbox is automatic"). Whether the hook in it fires depends on whether
+your runtime reads that file, which at least one non-Claude runtime does. If
+messages do not arrive on their own, poll `harness-cli agent inbox`.
 
 ## Reaching another agent — id-directed first
 
@@ -551,9 +567,11 @@ Every delivered message carries `from.agent`: the agent profile the sending
 task was running under at publish time (`"claude"`, `"codex"`, …), attested by
 the server — the sender cannot set it, and it is frozen per message, so a task
 resumed under a different runtime does not relabel what it already sent. Check
-it before assuming your reply will be read: the auto-inbox hook lives in
-Claude's `.claude/settings.json`, so a peer whose `from.agent` is not `claude`
-may only see your message when it polls `harness-cli agent inbox` itself. An
+it before assuming your reply is read promptly — but do not read it as a
+verdict: the injected hook fires for any runtime that reads
+`.claude/settings.json`, and a one-shot task of ANY runtime, Claude included,
+is push-less because it has no stdin writer to wake. What `from.agent` tells
+you is which runtime answered, not whether it was pushed. An
 empty `from.agent` means the server could not attribute a runtime — a
 server-originated message such as an `await-idle` notification, identifiable
 by `from.hostname == "server"`.
@@ -714,19 +732,20 @@ profile the task runs under — `claude` / `gemini` / `codex` / `bash` …), wit
 instructions + this skill. Injection is **cross-tool** — `AGENTS.md`/`GEMINI.md`/
 `CLAUDE.md` pointers plus the skill under both `.claude/skills/` and
 `.agents/skills/` — so `+skills` means a skill-aware peer regardless of agent.
-The one claude-only piece is the **auto-inbox hook** (`.claude/settings.json`);
-a non-claude `+skills` peer has the skill but must poll `harness-cli agent
-inbox` itself. So:
+`.claude/settings.json` rides the same injection, so a `+skills` peer has the
+hook FILE whatever its runtime; whether that runtime reads it is the part the
+marker cannot tell you. So:
 
-- `agent=claude+skills` — a conventional, skill-following peer with the
-  auto-inbox hook (it auto-receives your messages).
-- `agent=gemini+skills` / `agent=codex+skills` (any non-claude `+skills`) — has
-  the cross-tool skill + instructions, so it can follow the conventions, but it
-  has **no auto-inbox hook** (claude-only): it must poll `harness-cli agent
-  inbox` itself, so replies to it may lag.
+- `agent=<anything>+skills` — a skill-following peer that was given the hook
+  file. It receives automatically if its runtime reads that file, which Claude
+  Code does and at least one other runtime does. Do not assume from the name.
 - `agent=claude` (no `+skills`), or `agent=bash` — the assigned runner declares
-  no injection: no skill and no inbox hook (e.g. a `--no-worktree` runner
-  without force-inject).
+  no injection: no skill and no hook file (e.g. a `--no-worktree` runner
+  without force-inject). This peer polls or hears nothing.
+
+Neither line is about being woken. **A one-shot task of any runtime cannot be
+woken at all** — it has no stdin writer — so `submit`-created peers read their
+inbox once at turn start and then only if they ask.
 
 The marker rides on the **task**, not on the RUNNERS section — which matters
 because `ls` withholds RUNNERS entirely from a caller whose visibility rank is
@@ -746,8 +765,10 @@ the bare `agent` name, so a script never has to parse the suffix off a string.
   The injection write itself is non-fatal, so `+skills` alongside a worktree
   with no `.claude/skills/` is a reachable state. If you are asking about your
   OWN worktree, look at the directory instead — that is an observation.
-- **It says nothing further about the auto-inbox hook** beyond the
-  claude/non-claude split above.
+- **It does not tell you whether the peer is actually pushed.** The marker
+  covers the hook FILE being injected; whether the peer's runtime reads it,
+  and whether the peer is interactive at all (a one-shot cannot be woken),
+  are both invisible here.
 
 Behaviour is still the final word (does it complete the handshake?). This
 narrows the guess; it does not remove it. In particular, never conclude "no
