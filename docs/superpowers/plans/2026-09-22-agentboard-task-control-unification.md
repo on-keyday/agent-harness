@@ -248,27 +248,80 @@ git commit -m "feat(schema): task-control kinds and formats for the agent board 
 
 - [ ] **Step 1: Capture the frozen output baseline (C5)**
 
-Bring up a dummy harness and record every agent subcommand's output to the
-scratchpad — not the repo.
+The agent verbs need a real task's `HARNESS_*`, so the capture runs as a
+bash-profile oneshot — that profile runs its prompt as a shell command with
+exactly that environment, which is the only way to exercise them without
+minting a ticket by hand.
 
 ```bash
-scripts/dummy-harness.sh up
-# from inside a task on that instance, for each verb:
-harness-cli agent subscribe --topic chat.deadbeef
-harness-cli agent subscriptions
-harness-cli agent send --topic chat.deadbeef --data 'hello'
-harness-cli agent inbox --json
-harness-cli agent retained --topic chat.deadbeef
-harness-cli agent read <seq>
-harness-cli agent thread --json
-harness-cli agent retract <seq>
-harness-cli agent topics
-harness-cli agent purge --topic chat.deadbeef
-harness-cli agent unsubscribe --topic chat.deadbeef
+scripts/dummy-harness.sh up --detach --agent fake --name base
+eval "$(scripts/dummy-harness.sh env --name base)"   # exports CID, REPO, TMP, BIN
 ```
 
-Redirect each to `$SCRATCH/baseline/<verb>.txt` with stderr kept
-(`feedback_never_suppress_stderr_when_driving`) and the exit code appended.
+Write this to `$TMP/capture.sh`. Every line keeps stderr and records the exit
+code (`feedback_never_suppress_stderr_when_driving`), and the cases are chosen
+so the capture doubles as Task 13's edge-case table:
+
+```bash
+H=harness-cli
+T="chat.${HARNESS_TASK_ID:0:8}"
+run() { echo "### $* ###"; "$@" 2>&1; echo "rc=$?"; }
+
+run $H agent subscriptions
+run $H agent send --topic "$T" --data 'hello-baseline'
+SEQ=$($H agent send --topic "$T" --data 'second-baseline' 2>/dev/null | sed -n 's/.*"seq":\([0-9]*\).*/\1/p')
+echo "### captured seq=$SEQ ###"
+run $H agent inbox --json
+run $H agent retained --self
+run $H agent read "$SEQ"
+run $H agent thread --json
+run $H agent topics                              # denied: board_observe
+run $H agent purge --self --seq "$SEQ"           # denied: purge
+run $H agent retract 999999                      # not_found
+run $H agent subscribe --topic chat.deadbeef
+run $H agent subscriptions
+run $H agent unsubscribe --topic chat.deadbeef
+run $H agent send --topic chat.nobodyhome --data 'orphan'   # delivered_to 0
+run $H agent send --topic "$T" --data -                     # bytes 0, source stdin
+run $H agent send --in-reply-to 999999 --data 'bad parent'  # unknown_in_reply_to
+echo "### DONE ###"
+```
+
+```bash
+ID=$(bin/harness-cli --server-cid "$CID" submit --repo "$REPO" --agent bash \
+        --task "bash $TMP/capture.sh" 2>/dev/null | tail -1)
+bin/harness-cli --server-cid "$CID" logs "$ID" > $SCRATCH/baseline/raw.txt
+```
+
+- [ ] **Step 1b: Normalize it, so a later instance is comparable**
+
+Seqs carry the server's boot time, task and runner ids are minted per run, and
+the connection-id log lines change every invocation. Without this the diff is
+100% noise. `$SCRATCH/normalize.sed`:
+
+```sed
+/INFO new active connection added/d
+/INFO active connection closed/d
+/INFO sent handshake removed/d
+s/[0-9]\{16,\}/SEQ/g
+s/\b[0-9a-f]\{32\}\b/TASKID/g
+s/chat\.[0-9a-f]\{8\}/chat.SHORT/g
+s/"hostname":"[^"]*"/"hostname":"HOST"/g
+s/"from_hostname":"[^"]*"/"from_hostname":"HOST"/g
+s/"received_at":"[^"]*"/"received_at":"TS"/g
+s/[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9:]*Z/TS/g
+```
+
+`sed -f normalize.sed raw.txt > norm.txt` → 52 lines, 17 sections.
+
+**The comparison runs ONCE, in Task 13, not once per task.** Each migration
+task's own signal is its unit tests; re-running a dummy instance per verb costs
+a build and a fleet bring-up to re-observe what the suite already covers. What
+the baseline catches — a JSON field quietly renamed, a denial that changed
+shape, an exit code that moved — is only visible across the WHOLE migration
+anyway, because the last task deletes the old path. (Amends the per-task
+"verify against the baseline" steps below: those now mean "the unit tests for
+this verb pass"; the byte comparison is Task 13 Step 2b.)
 
 - [ ] **Step 2: Add the hook field**
 
@@ -1060,6 +1113,23 @@ Expected: PASS, having exercised a real rejection. Per the spec's Risks, the
 subject here is an OLD peer sending `AppKind` 0x44 at a server that no longer
 routes it — confirm the run shows that peer failing recoverably, not merely
 that the new pair works.
+
+- [ ] **Step 2b: The baseline comparison, once, for every verb**
+
+Re-run Task 2's capture against a FRESH instance built from the migrated
+tree, normalize it the same way, and diff:
+
+```bash
+scripts/dummy-harness.sh up --detach --agent fake --name after
+# ... same submit, same logs ...
+sed -f $SCRATCH/normalize.sed after-raw.txt > after-norm.txt
+diff $SCRATCH/baseline/norm.txt after-norm.txt
+```
+
+Expected: the ONLY differences are the two denial lines (U7 changes their
+shape). Every other section — including `delivered_to:0`, `bytes:0` with
+`source:stdin`, the `unknown_in_reply_to` sentence and every exit code — is
+byte-identical.
 
 - [ ] **Step 2: Dummy-harness E2E, every verb in the spelling the help prints**
 
