@@ -290,13 +290,16 @@ Testing section.
   implementation that moves the frames and leaves those in place has not
   finished; each is listed in "What is deleted" so the two sections cover the
   same scope.
-- **Deleting a reservation as if it were debris.** `deliver` was described as
-  dead in this spec's first draft and is not: it holds a design intent from
-  2026-04-28 whose motivating cost — a fresh dial per inbox hook — is still
-  present. U11 removes the value and keeps the intent in prose. The failure
-  this guards against is the one `feedback_doc_fixed_to_match_code_erases_intent`
-  names: an unused declaration is evidence about a plan, and deleting it
-  silently destroys the only record.
+- **Deleting a declaration whose reason lives somewhere else.** This spec's
+  first draft called `deliver` dead because nothing referenced it. Nothing
+  referencing a value says it is unused; it does not say why it is there. The
+  reason was two specs away, and reading it changed what the deletion has to
+  carry — first into "a deferred plan", then, once `TaskWake` was found, into
+  "a plan that shipped elsewhere plus a cost no push can fix". Both revisions
+  came from outside this file. The check that generalises:
+  `git log -S '<name>'` before building on OR removing a declaration, per
+  `feedback_doc_fixed_to_match_code_erases_intent`'s first rule — it is what
+  established here that no hand-written line had ever read the value.
 
 ## Completion
 
