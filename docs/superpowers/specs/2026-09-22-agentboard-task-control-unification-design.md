@@ -40,6 +40,22 @@ description. No operator-visible behaviour changes.
 | denial | `PermissionDeniedResponse{requested_kind, required_cap}` | a `denied` value per response enum |
 | identity | `protocol.RunnerID` / `protocol.TaskID` | its own `RunnerID` / `TaskID`, hand-copied |
 
+**The hand-copying was forced, not chosen.** A `.bgn` file declares one Go
+package (`config.go.package`) and **there is no import directive** — `grep -rn
+'^import\|^include' --include=*.bgn` over the repo's five schema files returns
+nothing. So the moment the board got its own schema file it could no longer
+name a `runner/protocol` type, and every shared type had to be written out
+again. The 2026-04-28 design did not ask for that: its identity section says
+`identity = (runner_id: protocol.RunnerID, task_id: protocol.TaskID)`, and the
+first commit of `agentboard.bgn` (`f0931594`) nonetheless declared a local
+`RunnerID` copying the address-shaped body of the day (`transport_len` /
+`ip_addr_len` / `port` / `unique_number`).
+
+Nothing in the Go layer enforces the split: package `agentboard` **already
+imports `runner/protocol`** in six non-test files (`board.go`, `ids.go`,
+`conn.go`, `registry.go`, `taskstate.go`, `topic.go`). The separation exists
+only in the generated wire schema, which is what this spec removes.
+
 ### The duplication already diverged, and it is observable
 
 `agent topics` and `board topics` read the same source
@@ -228,6 +244,44 @@ already passed to receive any row at all.
   `openDeliveredPayloadStream` / `flushDeliveredPayloads` move with the
   handlers, not into them.
 
+## Schema mechanics
+
+**No name collides.** Every format moving out of `agentboard.bgn` was checked
+against `message.bgn` — `SendRequest`, `SendResponse`, `SubscribeRequest`,
+`UnsubscribeRequest`, `SubscribeResponse`, `DeliveredMessage`, `WaitRequest`,
+`WaitResponse`, `InboxRequest`, `InboxResponse`, `InboxAdvanceRequest`,
+`TopicSummary`, `SubscriptionSummary`, `PurgeRequest`, `RetainedMeta`,
+`ReadSeqRequest`, `RetractRequest`, `ListRetainedRequest`, `ListTopicsRequest`,
+`ListSubscriptionsRequest` — and none is declared there. The two that would
+have collided, `RunnerID` and `TaskID`, are the two being deleted in favour of
+protocol's.
+
+**Append only.** `TaskControlKind` is a positional `:u8` with 34 values.
+Inserting renumbers every later value, which a version-skewed peer decodes as
+a different verb — silently. The twelve go at the end, as `list_conns` did and
+as `inbox_advance` did in the enum being retired (its own comment states the
+rule).
+
+**No disk axis.** `server/wal.go`'s `WALEvent` is JSON with named fields, and
+where it stores an enum it stores the NUMBER deliberately ("so the wire format
+is stable across schema renames", `wal.go:42`). Neither `TaskControlKind` nor
+`AppKind` appears anywhere in `server/wal*.go`, and the board itself is
+in-memory — a server restart drops every retained message. So no persisted
+record has to be read back through a changed format. This paragraph exists
+because `project_wal_persists_wire_bytes_schema_skew` requires the question to
+be answered before any `.bgn` change, not because the answer here is
+interesting.
+
+**The general `.bgn` doctrine is not restated here.** Landing procedure
+(server restarted before the fleet, `scripts/wire-skew-check.sh` run
+unconditionally with a negative control) is `implementation-pitfalls`
+Pitfall 10; the regen-churn rule (accept the churn, review the `.bgn` and the
+call sites, verify the generated half by build/vet/test and the new symbols)
+is `feedback_bgn_is_defined_over_handwritten_switch`. Both apply unchanged.
+What is specific to this change is that it **retires** an `AppKind` rather
+than only adding fields, so the skew check's subject is a peer that still
+SENDS 0x44 and a server that no longer routes it.
+
 ## Surfaces
 
 | Surface | Change |
@@ -272,11 +326,12 @@ Testing section.
 
 ## Risks
 
-- **Wire break across the fleet.** Retiring an `AppKind` and appending twelve
-  kinds is a decode change on a path `harness-cli` speaks from every runner
-  host. The retry guard landed at `9f164ca1`, so a skewed peer is expected to
-  reconnect rather than exit; `wire-skew-check.sh` is what proves that for
-  this change rather than assuming it. Restart the server before the fleet.
+- **Wire break across the fleet.** Retiring an `AppKind` is a decode change
+  on a path `harness-cli` speaks from every runner host. Procedure is
+  Pitfall 10's, unmodified; what this change adds to its subject is that an
+  old peer does not merely send an unknown FIELD, it sends an unroutable
+  KIND — 0x44 with nothing listening. The skew run must show that peer
+  failing recoverably, not merely that the new pair works.
 - **Nineteen client files, no behaviour change to anchor review.** A dropped
   field in a request build produces a working command with a missing
   argument. Mitigation: item 28a's discipline — count the request
