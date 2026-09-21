@@ -51,6 +51,12 @@ type chainEndpoint struct {
 
 // startMutualEndpoint builds a Mutual-mode WS endpoint listening on addr.
 // Returns the endpoint and a cleanup func.
+// relayOpaqueKind is an app-kind byte this relay must forward WITHOUT routing.
+// 0x44 is the retired agent_message kind: nothing decodes it any more, which is
+// exactly the property these tests want — they assert the bytes arrive
+// verbatim, not that anything acts on them.
+const relayOpaqueKind = byte(0x44)
+
 func startMutualEndpoint(t *testing.T, name, addr, wsPath string) chainEndpoint {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -386,7 +392,7 @@ func TestChainedRelayPOC_3hop(t *testing.T) {
 	}
 	t.Logf("server end-to-end conn: cid=%v", serverE2EConn.ConnectionID())
 
-	payload := []byte{byte(appwire.AppKind_AgentMessage), 0xAA, 0xBB, 0xCC, 0xDD}
+	payload := []byte{relayOpaqueKind, 0xAA, 0xBB, 0xCC, 0xDD}
 	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
 		t.Fatalf("initiator SendMessage: %v", err)
 	}
@@ -395,7 +401,7 @@ func TestChainedRelayPOC_3hop(t *testing.T) {
 		t.Fatalf("server ReceiveMessage: %v", err)
 	}
 	if len(msg.Data) < 5 ||
-		msg.Data[0] != byte(appwire.AppKind_AgentMessage) ||
+		msg.Data[0] != relayOpaqueKind ||
 		msg.Data[1] != 0xAA || msg.Data[2] != 0xBB || msg.Data[3] != 0xCC || msg.Data[4] != 0xDD {
 		t.Fatalf("unexpected payload at server: % x", msg.Data)
 	}
@@ -453,7 +459,7 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 		t.Fatal("server did not receive end-to-end conn (4-hop chain broken)")
 	}
 
-	payload := []byte{byte(appwire.AppKind_AgentMessage), 0x11, 0x22, 0x33, 0x44}
+	payload := []byte{relayOpaqueKind, 0x11, 0x22, 0x33, 0x44}
 	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
 		t.Fatalf("initiator SendMessage: %v", err)
 	}
@@ -462,7 +468,7 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 		t.Fatalf("server ReceiveMessage: %v", err)
 	}
 	if len(msg.Data) < 5 ||
-		msg.Data[0] != byte(appwire.AppKind_AgentMessage) ||
+		msg.Data[0] != relayOpaqueKind ||
 		msg.Data[1] != 0x11 || msg.Data[2] != 0x22 || msg.Data[3] != 0x33 || msg.Data[4] != 0x44 {
 		t.Fatalf("unexpected payload at server: % x", msg.Data)
 	}

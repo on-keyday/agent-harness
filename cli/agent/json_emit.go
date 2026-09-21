@@ -8,7 +8,7 @@ import (
 	"io"
 	"unicode/utf8"
 
-	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // emitMessageLine writes one JSON-Lines record describing a delivered
@@ -27,7 +27,7 @@ import (
 // in_reply_to is emitted on every record, 0 when the message is not a reply,
 // for the same reason the from block is unconditional: a consumer can address
 // the field without probing for it.
-func emitMessageLine(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
+func emitMessageLine(w io.Writer, m protocol.DeliveredMessage, payload []byte) {
 	emitMessageRecord(w, m, payload, false)
 }
 
@@ -42,7 +42,7 @@ const hookInlineLimit = 64 * 1024
 // decline a payload — their output is spliced into the agent's next prompt, so
 // an inlined body is spent context whether the agent wanted it or not. Past
 // the limit the record describes the message and says how to fetch it instead.
-func emitMessageLineForHook(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
+func emitMessageLineForHook(w io.Writer, m protocol.DeliveredMessage, payload []byte) {
 	emitMessageRecord(w, m, payload, true)
 }
 
@@ -66,7 +66,7 @@ func emitMessageLineForHook(w io.Writer, m agentboard.DeliveredMessage, payload 
 // every caller was unpacking the same nine, several of them adjacent strings,
 // and reply_to_topic would have made a tenth that a misordered call site could
 // not fail to compile on.
-func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byte, forHook bool) {
+func emitMessageRecord(w io.Writer, m protocol.DeliveredMessage, payload []byte, forHook bool) {
 	seq := m.Seq
 	rec := map[string]any{
 		"seq":         seq,
@@ -121,9 +121,9 @@ func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byt
 	fmt.Fprintln(w, string(line))
 }
 
-// boardRunnerIDString renders an agentboard.RunnerID as the 32-hex identity,
+// boardRunnerIDString renders an protocol.RunnerID as the 32-hex identity,
 // which is also what HARNESS_RUNNER_ID and cliopts carry. It used to assemble
 // "transport:ip:port-unique" by hand, because the identity was an address.
-func boardRunnerIDString(r agentboard.RunnerID) string {
+func boardRunnerIDString(r protocol.RunnerID) string {
 	return hex.EncodeToString(r.Id[:])
 }

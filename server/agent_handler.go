@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -59,52 +57,7 @@ func (s *Server) removeAgentConn(cid objproto.ConnectionID) {
 	}
 }
 
-func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
-	if s.Board == nil {
-		return // agentboard not configured; ignore.
-	}
-	msg := &agentboard.AgentMessage{}
-	if _, err := msg.Decode(payload); err != nil {
-		slog.Warn("agent_message decode", "err", err)
-		return
-	}
-	ac := s.getOrCreateAgentConn(conn)
-	switch msg.Kind {
-	case agentboard.AgentMessageKind_Send:
-		s.agentHandleSend(conn, ac, msg.Send())
-	case agentboard.AgentMessageKind_Subscribe:
-		s.agentHandleSubscribe(conn, ac, msg.Subscribe())
-	case agentboard.AgentMessageKind_Unsubscribe:
-		s.agentHandleUnsubscribe(conn, ac, msg.Unsubscribe())
-	case agentboard.AgentMessageKind_Wait:
-		go s.agentHandleWait(conn, ac, msg.Wait())
-	case agentboard.AgentMessageKind_Inbox:
-		s.agentHandleInbox(conn, ac, msg.Inbox())
-	case agentboard.AgentMessageKind_InboxAdvance:
-		s.agentHandleInboxAdvance(conn, ac, msg.InboxAdvance())
-	case agentboard.AgentMessageKind_ListTopics:
-		s.agentHandleListTopics(conn, ac, msg.ListTopics())
-	case agentboard.AgentMessageKind_ListSubscriptions:
-		s.agentHandleListSubscriptions(conn, ac, msg.ListSubscriptions())
-	case agentboard.AgentMessageKind_Purge:
-		s.agentHandlePurge(conn, ac, msg.Purge())
-	case agentboard.AgentMessageKind_ListRetained:
-		s.agentHandleListRetained(conn, ac, msg.ListRetained())
-	case agentboard.AgentMessageKind_ReadSeq:
-		s.agentHandleReadSeq(conn, ac, msg.ReadSeq())
-	case agentboard.AgentMessageKind_Retract:
-		s.agentHandleRetract(conn, ac, msg.Retract())
-	}
-}
 
-func (s *Server) sendAgent(conn ConnHandle, msg *agentboard.AgentMessage) {
-	data, err := msg.Append([]byte{byte(appwire.AppKind_AgentMessage)})
-	if err != nil {
-		slog.Warn("agent_message encode", "err", err)
-		return
-	}
-	_, _, _ = conn.SendMessage(data)
-}
 
 // establishAgentIdentity validates an agent's credential (from ClientHello) and,
 // on success, attaches the per-connID agentConn used by every agentboard handler
@@ -213,18 +166,22 @@ func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (st
 // Retraction goes through the same authorship-gated primitive an explicit
 // retract uses, with the PARENT'S author as the actor — the author authorised
 // it by publishing without the opt-out.
-func (s *Server) retireRepliedParent(parentSeq uint64, replier protocol.TaskID) {
-	if parentSeq == 0 || replier.Id == ([16]byte{}) {
+// A free function rather than a method: both frame families answer the same
+// send during the migration, and a second copy of this rule is the one thing
+// that must not exist — it is the difference between a peer re-reading a spent
+// instruction after a context reset and not.
+func retireRepliedParent(b *agentboard.Board, parentSeq uint64, replier protocol.TaskID) {
+	if parentSeq == 0 || replier.Id == ([16]byte{}) || b == nil {
 		return
 	}
-	m, ok := s.Board.Retained(parentSeq)
+	m, ok := b.Retained(parentSeq)
 	if !ok || m.NoRetireOnReply {
 		return
 	}
 	if m.Topic != agentboard.SelfTopic(replier) || m.FromTask.Id == replier.Id {
 		return
 	}
-	if topic, retired := s.Board.RetractSeq(parentSeq, m.FromTask); retired {
+	if topic, retired := b.RetractSeq(parentSeq, m.FromTask); retired {
 		slog.Info("agentboard: parent retired by reply",
 			"seq", parentSeq, "topic", topic,
 			"author", hex.EncodeToString(m.FromTask.Id[:]),
@@ -232,81 +189,6 @@ func (s *Server) retireRepliedParent(parentSeq uint64, replier protocol.TaskID) 
 	}
 }
 
-func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.SendRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	// Payload arrives on a client-initiated send-stream; read it before
-	// publishing. Spawn a goroutine so the receive loop stays responsive.
-	go func() {
-		payload, err := readAgentPayloadStream(conn, r.PayloadStreamId, s.Board.MaxPayload())
-		if err != nil {
-			slog.Warn("agent_handler: read payload stream failed", "request_id", r.RequestId, "err", err)
-			status := agentboard.SendStatus_BadFrame
-			if errors.Is(err, errPayloadTooLarge) {
-				status = agentboard.SendStatus_PayloadTooLarge
-			}
-			resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-			resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: status})
-			s.sendAgent(conn, resp)
-			return
-		}
-		fromRid, fromTid, fromHost, fromProfile := ac.state.Identity()
-		destTopic, ok := resolveReplyTarget(s.Board, string(r.Topic), r.InReplyTo)
-		if !ok {
-			resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-			resp.SetSendResponse(agentboard.SendResponse{
-				RequestId: r.RequestId,
-				Status:    agentboard.SendStatus_UnknownInReplyTo,
-				Seq:       0,
-			})
-			s.sendAgent(conn, resp)
-			return
-		}
-		var sendOpts []agentboard.SendOption
-		if r.NoRetireOnReply() {
-			sendOpts = append(sendOpts, agentboard.NoRetireOnReply())
-		}
-		// Where the SENDER wants replies to this message to go. Recorded on the
-		// retained entry and read back by resolveReplyTarget, so the replier
-		// needs no knowledge of it.
-		if len(r.ReplyToTopic) > 0 {
-			sendOpts = append(sendOpts, agentboard.WithReplyTo(string(r.ReplyToTopic)))
-		}
-		seq, deliveredTo, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo, sendOpts...)
-		var status agentboard.SendStatus
-		switch sendErr {
-		case nil:
-			status = agentboard.SendStatus_Ok
-			// Only after the reply is safely on the board: if the publish
-			// failed, the acknowledgement never happened and the parent must
-			// stay where the recipient can still act on it.
-			if r.InReplyTo != 0 {
-				s.retireRepliedParent(r.InReplyTo, fromTid)
-			}
-		case agentboard.ErrPayloadTooLarge:
-			status = agentboard.SendStatus_PayloadTooLarge
-		case agentboard.ErrTooManyTopics:
-			status = agentboard.SendStatus_TooManyTopics
-		default:
-			status = agentboard.SendStatus_BadFrame
-		}
-		// deliveredTo rides along so `ok` stops covering both "everyone got it"
-		// and "nobody holds this topic". Clamped like every other u16 count on
-		// this wire; zero only ever means zero subscribers, never an error.
-		if deliveredTo > 65535 {
-			deliveredTo = 65535
-		}
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-		resp.SetSendResponse(agentboard.SendResponse{
-			RequestId:   r.RequestId,
-			Status:      status,
-			Seq:         seq,
-			DeliveredTo: uint16(deliveredTo),
-		})
-		s.sendAgent(conn, resp)
-	}()
-}
 
 // payloadReadChunk is the per-ReadDirect ceiling, and so the slack above max
 // that a body can occupy before the limit is noticed.
@@ -415,74 +297,8 @@ func flushDeliveredPayloads(pending []pendingPayload) {
 // entire board, and seqs are global and consecutive. It also merges "gone"
 // with "not yours" into one NotFound: a distinguishable refusal would still
 // answer "does seq N exist?" for every seq.
-func (s *Server) agentHandleReadSeq(conn ConnHandle, ac *agentConn, r *agentboard.ReadSeqRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	notFound := func() {
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeqResponse}
-		resp.SetReadSeqResponse(agentboard.ReadSeqResponse{
-			RequestId: r.RequestId,
-			Status:    agentboard.ReadSeqStatus_NotFound,
-		})
-		s.sendAgent(conn, resp)
-	}
 
-	m, ok := s.Board.Retained(r.Seq)
-	if !ok || !s.Board.Subscribes(ac.state, m.Topic) {
-		notFound()
-		return
-	}
 
-	stream, streamID, werr := openDeliveredPayloadStream(conn)
-	if werr != nil {
-		slog.Warn("agent_handler: read deliver stream", "seq", m.Seq, "err", werr)
-		notFound()
-		return
-	}
-	dm := agentboard.DeliveredMessage{
-		Seq:             m.Seq,
-		InReplyTo:       m.InReplyTo,
-		PayloadStreamId: streamID,
-		FromRunnerId:    protoToAgentboardRunnerID(m),
-		FromTaskId:      protoToAgentboardTaskID(m),
-	}
-	dm.SetTopic([]byte(m.Topic))
-	dm.SetFromHostname([]byte(m.FromHostname))
-	dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
-	dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-
-	rr := agentboard.ReadSeqResponse{RequestId: r.RequestId, Status: agentboard.ReadSeqStatus_Ok}
-	rr.SetMsgs([]agentboard.DeliveredMessage{dm})
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeqResponse}
-	resp.SetReadSeqResponse(rr)
-	s.sendAgent(conn, resp)
-	go flushDeliveredPayloads([]pendingPayload{{stream: stream, payload: m.Payload}})
-}
-
-func (s *Server) agentHandleSubscribe(conn ConnHandle, ac *agentConn, r *agentboard.SubscribeRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	err := s.Board.Subscribe(ac.state, string(r.Pattern))
-	status := agentboard.SubscribeStatus_Ok
-	if err != nil {
-		status = agentboard.SubscribeStatus_BadPattern
-	}
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SubscribeResponse}
-	resp.SetSubscribeResponse(agentboard.SubscribeResponse{RequestId: r.RequestId, Status: status})
-	s.sendAgent(conn, resp)
-}
-
-func (s *Server) agentHandleUnsubscribe(conn ConnHandle, ac *agentConn, r *agentboard.UnsubscribeRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	s.Board.Unsubscribe(ac.state, string(r.Pattern))
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SubscribeResponse}
-	resp.SetSubscribeResponse(agentboard.SubscribeResponse{RequestId: r.RequestId, Status: agentboard.SubscribeStatus_Ok})
-	s.sendAgent(conn, resp)
-}
 
 // protoToAgentboardRunnerID converts a protocol.RunnerID (stored in
 // RetainedMessage) to agentboard.RunnerID (the type carried in
@@ -493,109 +309,10 @@ func (s *Server) agentHandleUnsubscribe(conn ConnHandle, ac *agentConn, r *agent
 // encoder asserted on it. Both the constraint and the placeholder are gone: a
 // zero identity now copies as a zero identity, which is what an absent sender
 // should look like.
-func protoToAgentboardRunnerID(r agentboard.RetainedMessage) agentboard.RunnerID {
-	var out agentboard.RunnerID
-	out.Id = r.FromRunner.Id
-	return out
-}
 
 // protoToAgentboardTaskID converts a protocol.TaskID to agentboard.TaskID.
-func protoToAgentboardTaskID(r agentboard.RetainedMessage) agentboard.TaskID {
-	var out agentboard.TaskID
-	copy(out.Id[:], r.FromTask.Id[:])
-	return out
-}
 
-func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.WaitRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.TimeoutMs)*time.Millisecond)
-	defer cancel()
-	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since, r.InReplyTo)
-	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
-	pending := make([]pendingPayload, 0, len(msgs))
-	for _, m := range msgs {
-		stream, streamID, werr := openDeliveredPayloadStream(conn)
-		if werr != nil {
-			slog.Warn("agent_handler: wait deliver stream", "seq", m.Seq, "err", werr)
-			continue
-		}
-		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
-		dm := agentboard.DeliveredMessage{
-			Seq:             m.Seq,
-			InReplyTo:       m.InReplyTo,
-			PayloadStreamId: streamID,
-			FromRunnerId:    protoToAgentboardRunnerID(m),
-			FromTaskId:      protoToAgentboardTaskID(m),
-		}
-		dm.SetTopic([]byte(m.Topic))
-		dm.SetFromHostname([]byte(m.FromHostname))
-		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		delivered = append(delivered, dm)
-	}
-	var to uint8
-	if timedOut {
-		to = 1
-	}
-	next := r.Since
-	for _, m := range msgs {
-		if m.Seq > next {
-			next = m.Seq
-		}
-	}
-	wr := agentboard.WaitResponse{
-		RequestId:  r.RequestId,
-		TimedOut:   to,
-		NextCursor: next,
-	}
-	wr.SetMsgs(delivered)
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_WaitResponse}
-	resp.SetWaitResponse(wr)
-	s.sendAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
-}
 
-func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.InboxRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	msgs, next := s.Board.Inbox(ac.state, r.Since)
-	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
-	pending := make([]pendingPayload, 0, len(msgs))
-	for _, m := range msgs {
-		stream, streamID, werr := openDeliveredPayloadStream(conn)
-		if werr != nil {
-			slog.Warn("agent_handler: inbox deliver stream", "seq", m.Seq, "err", werr)
-			continue
-		}
-		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
-		dm := agentboard.DeliveredMessage{
-			Seq:             m.Seq,
-			InReplyTo:       m.InReplyTo,
-			PayloadStreamId: streamID,
-			FromRunnerId:    protoToAgentboardRunnerID(m),
-			FromTaskId:      protoToAgentboardTaskID(m),
-		}
-		dm.SetTopic([]byte(m.Topic))
-		dm.SetFromHostname([]byte(m.FromHostname))
-		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		delivered = append(delivered, dm)
-	}
-	ir := agentboard.InboxResponse{
-		RequestId:  r.RequestId,
-		NextCursor: next,
-	}
-	ir.SetMsgs(delivered)
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxResponse}
-	resp.SetInboxResponse(ir)
-	s.sendAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
-}
 
 // agentHandleInboxAdvance serves the read that moves the task's delivery mark.
 // Only the runner-injected UserPromptSubmit hook sends it.
@@ -605,161 +322,12 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 // topic), so the client neither asserts one nor is told one. Board.InboxAdvance
 // collects and marks under a single acquisition of the task's lock, so nothing
 // is returned here without also having been recorded as delivered.
-func (s *Server) agentHandleInboxAdvance(conn ConnHandle, ac *agentConn, r *agentboard.InboxAdvanceRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	msgs := s.Board.InboxAdvance(ac.state)
-	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
-	pending := make([]pendingPayload, 0, len(msgs))
-	for _, m := range msgs {
-		stream, streamID, werr := openDeliveredPayloadStream(conn)
-		if werr != nil {
-			slog.Warn("agent_handler: inbox_advance deliver stream", "seq", m.Seq, "err", werr)
-			continue
-		}
-		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
-		dm := agentboard.DeliveredMessage{
-			Seq:             m.Seq,
-			InReplyTo:       m.InReplyTo,
-			PayloadStreamId: streamID,
-			FromRunnerId:    protoToAgentboardRunnerID(m),
-			FromTaskId:      protoToAgentboardTaskID(m),
-		}
-		dm.SetTopic([]byte(m.Topic))
-		dm.SetFromHostname([]byte(m.FromHostname))
-		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		delivered = append(delivered, dm)
-	}
-	out := agentboard.InboxAdvanceResponse{RequestId: r.RequestId}
-	out.SetMsgs(delivered)
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxAdvanceResponse}
-	resp.SetInboxAdvanceResponse(out)
-	s.sendAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
-}
 
-func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agentboard.ListTopicsRequest) {
-	if !ac.helloed || req == nil {
-		return
-	}
 
-	// Gate: callers without Capability_BoardObserve do not get the topic list.
-	// This prevents agents from enumerating OTHER agents' board topics. It is a
-	// verb permission, not the task-visibility axis: the board is keyed by
-	// topic, which the task hierarchy does not contain, so no task scope can
-	// bound it.
-	//
-	// The refusal is carried as Status_Denied, not as the empty list alone: an
-	// empty list is also the honest answer for a board with no topics, and a
-	// confined agent debugging "my messages aren't arriving" read the collapsed
-	// form as "nobody is subscribed". Topics stays empty either way — Status is
-	// the only thing that separates the two.
-	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_BoardObserve) {
-		slog.Warn("agentHandleListTopics: caller lacks board_observe; denying",
-			"task_id", func() string {
-				_, tid, _, _ := ac.state.Identity()
-				return hex.EncodeToString(tid.Id[:])
-			}())
-		out := agentboard.ListTopicsResponse{
-			RequestId: req.RequestId,
-			Status:    agentboard.ListTopicsStatus_Denied,
-		}
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
-		resp.SetListTopicsResponse(out)
-		s.sendAgent(conn, resp)
-		return
-	}
-
-	rows := s.Board.ListTopics()
-
-	out := agentboard.ListTopicsResponse{
-		RequestId: req.RequestId,
-		Status:    agentboard.ListTopicsStatus_Ok,
-	}
-	for _, r := range rows {
-		ts := agentboard.TopicSummary{
-			LastSeq:               r.LastSeq,
-			LastPublishedAtUnixMs: uint64(r.LastPublishedAt.UnixMilli()),
-		}
-		ts.SetName([]byte(r.Name))
-		// MsgCount: clamp to u16
-		if r.MsgCount > 65535 {
-			ts.MsgCount = 65535
-		} else {
-			ts.MsgCount = uint16(r.MsgCount)
-		}
-		out.Topics = append(out.Topics, ts)
-	}
-	out.TopicsLen = uint16(len(out.Topics))
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
-	resp.SetListTopicsResponse(out)
-	s.sendAgent(conn, resp)
-}
-
-func (s *Server) agentHandleListSubscriptions(conn ConnHandle, ac *agentConn, req *agentboard.ListSubscriptionsRequest) {
-	if !ac.helloed || req == nil {
-		return
-	}
-	patterns := s.Board.ListSubscriptions(ac.state)
-	out := agentboard.ListSubscriptionsResponse{RequestId: req.RequestId}
-	for _, p := range patterns {
-		ss := agentboard.SubscriptionSummary{}
-		ss.SetPattern([]byte(p))
-		out.Subscriptions = append(out.Subscriptions, ss)
-	}
-	out.SubscriptionsLen = uint16(len(out.Subscriptions))
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptionsResponse}
-	resp.SetListSubscriptionsResponse(out)
-	s.sendAgent(conn, resp)
-}
 
 // agentHandlePurge destroys a topic's retained-message ring. Gated by
 // Capability_Purge (distinct from Prune): purge drops live retained messages on
 // a possibly-shared topic, so a confined task must be granted it explicitly.
-func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.PurgeRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	reply := func(status agentboard.PurgeStatus, purged uint16) {
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_PurgeResponse}
-		resp.SetPurgeResponse(agentboard.PurgeResponse{RequestId: r.RequestId, Status: status, Purged: purged})
-		s.sendAgent(conn, resp)
-	}
-
-	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_Purge) {
-		_, tid, _, _ := ac.state.Identity()
-		slog.Warn("agentHandlePurge: caller lacks Purge cap; denying",
-			"task_id", hex.EncodeToString(tid.Id[:]), "topic", string(r.Topic))
-		reply(agentboard.PurgeStatus_Denied, 0)
-		return
-	}
-
-	// seq == 0 → whole topic; seq > 0 → drop just that one retained message.
-	if r.Seq == 0 {
-		purged, found := s.Board.PurgeTopic(string(r.Topic))
-		if !found {
-			reply(agentboard.PurgeStatus_NotFound, 0)
-			return
-		}
-		n := purged
-		if n > 65535 {
-			n = 65535
-		}
-		reply(agentboard.PurgeStatus_Ok, uint16(n))
-		return
-	}
-
-	removed, found := s.Board.PurgeSeq(string(r.Topic), r.Seq)
-	if !found || !removed {
-		// Topic gone, or no retained message carried that seq.
-		reply(agentboard.PurgeStatus_NotFound, 0)
-		return
-	}
-	reply(agentboard.PurgeStatus_Ok, 1)
-}
 
 // agentHandleRetract withdraws one message the CALLER published. The withdrawn
 // message leaves every agent-facing path (deliver / inbox / wait / read_seq /
@@ -776,25 +344,6 @@ func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.
 //
 // Both failure modes answer not_found — see RetractStatus in agentboard.bgn
 // for why "not yours" must not be distinguishable.
-func (s *Server) agentHandleRetract(conn ConnHandle, ac *agentConn, r *agentboard.RetractRequest) {
-	if !ac.helloed || r == nil {
-		return
-	}
-	reply := func(status agentboard.RetractStatus) {
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_RetractResponse}
-		resp.SetRetractResponse(agentboard.RetractResponse{RequestId: r.RequestId, Status: status})
-		s.sendAgent(conn, resp)
-	}
-
-	_, tid, _, _ := ac.state.Identity()
-	topic, ok := s.Board.RetractSeq(r.Seq, tid)
-	if !ok {
-		reply(agentboard.RetractStatus_NotFound)
-		return
-	}
-	slog.Info("agent retract", "task_id", hex.EncodeToString(tid.Id[:]), "seq", r.Seq, "topic", topic)
-	reply(agentboard.RetractStatus_Ok)
-}
 
 // agentHandleListRetained returns a topic's retained ring as metadata only (no
 // payload bytes). It is the content-blind targeting step for a seq-scoped
@@ -808,42 +357,3 @@ func (s *Server) agentHandleRetract(conn ConnHandle, ac *agentConn, r *agentboar
 // and reading inbox/wait — metadata is a strict subset of that content — so a
 // cap here would gate a read more tightly than the content it summarizes, for
 // no gain. Destruction (purge) still needs Capability_Purge; reading does not.
-func (s *Server) agentHandleListRetained(conn ConnHandle, ac *agentConn, req *agentboard.ListRetainedRequest) {
-	if !ac.helloed || req == nil {
-		return
-	}
-	out := agentboard.ListRetainedResponse{RequestId: req.RequestId}
-	send := func() {
-		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListRetainedResponse}
-		resp.SetListRetainedResponse(out)
-		s.sendAgent(conn, resp)
-	}
-
-	msgs, found := s.Board.ListRetained(string(req.Topic))
-	if !found {
-		out.Status = agentboard.PurgeStatus_NotFound
-		send()
-		return
-	}
-	out.Status = agentboard.PurgeStatus_Ok
-	for _, m := range msgs {
-		size := len(m.Payload)
-		if size > 0xffffffff {
-			size = 0xffffffff
-		}
-		meta := agentboard.RetainedMeta{
-			Seq:              m.Seq,
-			InReplyTo:        m.InReplyTo,
-			FromRunner:       protoToAgentboardRunnerID(m),
-			FromTask:         protoToAgentboardTaskID(m),
-			Size:             uint32(size),
-			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
-		}
-		meta.SetFromHostname([]byte(m.FromHostname))
-		meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
-		meta.SetReplyToTopic([]byte(m.ReplyToTopic))
-		out.Metas = append(out.Metas, meta)
-	}
-	out.MetasLen = uint16(len(out.Metas))
-	send()
-}

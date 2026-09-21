@@ -302,6 +302,67 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 	}
 }
 
+// TaskControlResult is BeginTaskControl's answer: exactly one of Resp or Err.
+type TaskControlResult struct {
+	Resp *protocol.TaskControlResponse
+	Err  error
+}
+
+// BeginTaskControl is RoundTripTaskControl split in two: it assigns the id,
+// sends the request, and hands back the channel the answer will arrive on.
+//
+// It exists for the one request shape a single round trip cannot express — a
+// request whose BODY follows it on a client-initiated stream. `agent send`
+// names its payload stream in the request, so the request must reach the wire
+// BEFORE the body is written: until the server has read it nobody is draining
+// that stream, and a body past the peer's receive window then blocks forever
+// with the request still unsent. Awaiting the response first would deadlock;
+// writing the body first re-creates exactly that hang.
+//
+// The returned channel is buffered and always receives exactly once, so a
+// caller that stops waiting leaks nothing. On a send failure the pending entry
+// is reclaimed here and no channel is returned at all.
+func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan TaskControlResult, error) {
+	c.mu.Lock()
+	id := c.nextReq
+	c.nextReq++
+	ch := make(chan taskControlResult, 1)
+	c.pending[id] = ch
+	c.mu.Unlock()
+
+	req.RequestId = id
+	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("send: %w", err)
+	}
+
+	out := make(chan TaskControlResult, 1)
+	go func() {
+		r := <-ch
+		// The same PermissionDenied translation RoundTripTaskControl applies,
+		// and for its reason: a caller of either entry point sees ONE error
+		// type for a refusal, so no caller has to recognise the response kind
+		// itself — which is what kept two hand-written capability names in the
+		// agent CLI.
+		if r.err == nil && r.resp != nil &&
+			r.resp.Kind == protocol.TaskControlKind_PermissionDenied &&
+			req.Kind != protocol.TaskControlKind_PermissionDenied {
+			if pd := r.resp.PermissionDenied(); pd != nil {
+				out <- TaskControlResult{Err: &CapabilityDeniedError{
+					RequestedKind: pd.RequestedKind,
+					RequiredCap:   pd.RequiredCap,
+				}}
+				return
+			}
+		}
+		out <- TaskControlResult{Resp: r.resp, Err: r.err}
+	}()
+	return out, nil
+}
+
 // Close tears down the underlying peer.Conn (best-effort wire-level Close
 // + objproto connection shutdown). It does NOT touch the objproto.Endpoint,
 // and that is the ownership rule rather than a gap: the Endpoint is

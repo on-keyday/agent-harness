@@ -2,15 +2,12 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"strconv"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Read is the entry for `harness-cli agent read <seq>`: one retained message,
@@ -38,56 +35,36 @@ func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 		return fmt.Errorf("seq must be a positive integer, got %q", fmt.Sprint(a.Seq))
 	}
 
-	conn, cerr := ConnectAgent(ctx, Flags{ServerCID: *serverCID})
+	c, cerr := connectClient(ctx, *serverCID)
 	if cerr != nil {
 		return cerr
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ReadSeqResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ReadSeqResponse {
-			r := msg.ReadSeqResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentReadSeq}
+	req.SetAgentReadSeq(protocol.AgentReadSeqRequest{Seq: seq})
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeq}
-	if !msg.SetReadSeq(agentboard.ReadSeqRequest{RequestId: reqID, Seq: seq}) {
-		return errors.New("agent: SetReadSeq failed")
-	}
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		if r.Status != agentboard.ReadSeqStatus_Ok || len(r.Msgs) == 0 {
-			return fmt.Errorf("seq %d is not readable: it has rotated out of its topic's ring "+
-				"(64 messages) or its 30-minute TTL, was purged, or is on a topic this task "+
-				"does not subscribe to", seq)
-		}
-		m := r.Msgs[0]
-		payload, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
-		if perr != nil {
-			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-		}
-		emitMessageLine(stdout, m, payload)
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentReadSeq); err != nil {
+		return err
 	}
+	r := resp.AgentReadSeq()
+	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok || len(r.Msgs) == 0 {
+		// One sentence for four causes, because the server deliberately merges
+		// them: distinguishing "not on a topic you subscribe to" from "gone"
+		// would answer "does seq N exist?" for every seq on every ring.
+		return fmt.Errorf("seq %d is not readable: it has rotated out of its topic's ring "+
+			"(64 messages) or its 30-minute TTL, was purged, or is on a topic this task "+
+			"does not subscribe to", seq)
+	}
+	m := r.Msgs[0]
+	payload, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
+	if perr != nil {
+		return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+	}
+	emitMessageLine(stdout, m, payload)
+	return nil
 }

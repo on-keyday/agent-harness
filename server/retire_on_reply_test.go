@@ -55,7 +55,7 @@ func TestRetireOnReply_PointToPoint(t *testing.T) {
 	f := newRetireFixture(t)
 	seq := f.send(t, f.selfTopic)
 
-	f.srv.retireRepliedParent(seq, f.recipient)
+	retireRepliedParent(f.srv.Board, seq, f.recipient)
 
 	if n := f.live(f.selfTopic); n != 0 {
 		t.Errorf("live ring = %d after the recipient replied, want 0", n)
@@ -75,7 +75,7 @@ func TestRetireOnReply_OptOut(t *testing.T) {
 	f := newRetireFixture(t)
 	seq := f.send(t, f.selfTopic, agentboard.NoRetireOnReply())
 
-	f.srv.retireRepliedParent(seq, f.recipient)
+	retireRepliedParent(f.srv.Board, seq, f.recipient)
 
 	if n := f.live(f.selfTopic); n != 1 {
 		t.Errorf("live ring = %d, want the opted-out message still there", n)
@@ -90,7 +90,7 @@ func TestRetireOnReply_SharedTopicNeverFires(t *testing.T) {
 	f := newRetireFixture(t)
 	seq := f.send(t, "t.broadcast")
 
-	f.srv.retireRepliedParent(seq, f.recipient)
+	retireRepliedParent(f.srv.Board, seq, f.recipient)
 
 	if n := f.live("t.broadcast"); n != 1 {
 		t.Errorf("live ring = %d, want a shared-topic message untouched by one reply", n)
@@ -112,7 +112,7 @@ func TestRetireOnReply_SelfReplyDoesNotFire(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f.srv.retireRepliedParent(seq, f.author)
+	retireRepliedParent(f.srv.Board, seq, f.author)
 
 	if n := f.live(ownTopic); n != 1 {
 		t.Errorf("live ring = %d, want a self-reply to leave the message alone", n)
@@ -126,21 +126,21 @@ func TestRetireOnReply_UnknownParentIsNoOp(t *testing.T) {
 	f := newRetireFixture(t)
 	seq := f.send(t, f.selfTopic)
 
-	f.srv.retireRepliedParent(seq+9999, f.recipient)
+	retireRepliedParent(f.srv.Board, seq+9999, f.recipient)
 	if n := f.live(f.selfTopic); n != 1 {
 		t.Errorf("live ring = %d after retiring an unknown seq, want 1 untouched", n)
 	}
 
 	// Idempotent: retiring twice is the second one finding nothing live.
-	f.srv.retireRepliedParent(seq, f.recipient)
-	f.srv.retireRepliedParent(seq, f.recipient)
+	retireRepliedParent(f.srv.Board, seq, f.recipient)
+	retireRepliedParent(f.srv.Board, seq, f.recipient)
 	if withdrawn, _ := f.board.ListRetracted(f.selfTopic); len(withdrawn) != 1 {
 		t.Errorf("withdrawn = %d after two retires, want exactly 1", len(withdrawn))
 	}
 
 	// A zero replier id (an unauthenticated connection) matches nobody.
 	seq2 := f.send(t, f.selfTopic)
-	f.srv.retireRepliedParent(seq2, protocol.TaskID{})
+	retireRepliedParent(f.srv.Board, seq2, protocol.TaskID{})
 	if n := f.live(f.selfTopic); n != 1 {
 		t.Errorf("live ring = %d, want a zero-id replier to retire nothing", n)
 	}

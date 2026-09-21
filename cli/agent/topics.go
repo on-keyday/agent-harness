@@ -6,12 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"time"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Topics fetches the board-wide topic list and emits one JSON Lines record per topic.
@@ -28,65 +26,50 @@ func Topics(ctx context.Context, args []string, stdout io.Writer) error {
 func TopicsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	serverCID := &a.ServerCID
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ListTopicsResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ListTopicsResponse {
-			r := msg.ListTopicsResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	// board_topics, not a verb of this face's own. The agent-side list_topics it
+	// replaces read the same Board.ListTopics(), clamped msg_count the same way
+	// and was gated on the same bit — it differed only in refusing with a status
+	// value instead of PermissionDenied, and in NOT carrying retracted_count.
+	// That second difference was drift, not policy: the same caller holding
+	// board_observe could already get the field by typing `board topics`.
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics}
+	req.SetBoardTopics(protocol.BoardTopicsRequest{})
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopics}
-	msg.SetListTopics(agentboard.ListTopicsRequest{RequestId: reqID})
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		// A denial arrives as *cli.CapabilityDeniedError, which names the
+		// missing bit through CapsLabel. This verb used to hold the name
+		// "board_observe" as a literal.
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		switch r.Status {
-		case agentboard.ListTopicsStatus_Ok:
-		case agentboard.ListTopicsStatus_Denied:
-			// Not an empty list: the caller may not enumerate the board at all.
-			// Same shape as purge.go's Denied arm — the status is what makes an
-			// empty result distinguishable from a refused one.
-			return errors.New("topics denied: requires capability \"board_observe\"")
-		default:
-			return fmt.Errorf("topics: unexpected status %v", r.Status)
-		}
-		for _, s := range r.Topics {
-			rec := map[string]any{
-				"name":              string(s.Name),
-				"last_seq":          s.LastSeq,
-				"last_published_at": time.UnixMilli(int64(s.LastPublishedAtUnixMs)).UTC().Format(time.RFC3339),
-				"msg_count":         s.MsgCount,
-			}
-			line, _ := json.Marshal(rec)
-			fmt.Fprintln(stdout, string(line))
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_BoardTopics); err != nil {
+		return err
 	}
+	r := resp.BoardTopics()
+	if r == nil {
+		return errors.New("topics: response variant is nil")
+	}
+	for _, s := range r.Topics {
+		rec := map[string]any{
+			"name":              string(s.Name),
+			"last_seq":          s.LastSeq,
+			"last_published_at": time.UnixMilli(int64(s.LastPublishedAtUnixMs)).UTC().Format(time.RFC3339),
+			"msg_count":         s.MsgCount,
+			// Withdrawn messages, counted separately and never folded into
+			// msg_count: msg_count answers "how much would a subscriber
+			// receive". Printed unconditionally, including at zero — gating a
+			// field on its VALUE makes "none withdrawn" and "not reported"
+			// the same row.
+			"retracted_count": s.RetractedCount,
+		}
+		line, _ := json.Marshal(rec)
+		fmt.Fprintln(stdout, string(line))
+	}
+	return nil
 }

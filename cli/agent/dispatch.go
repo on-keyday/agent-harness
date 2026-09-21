@@ -6,13 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"time"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Dispatch publishes to --topic and blocks until a message ANSWERING that
@@ -115,75 +114,60 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 		return err
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	selfTid, err := cliopts.ResolveTaskID("")
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	c, err := connectClient(ctx, *serverCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
 
-	sendID := rand.Uint32()
-	waitID := rand.Uint32()
-	sendCh := make(chan agentboard.SendResponse, 1)
-	waitCh := make(chan agentboard.WaitResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		switch msg.Kind {
-		case agentboard.AgentMessageKind_SendResponse:
-			r := msg.SendResponse()
-			if r != nil && r.RequestId == sendID {
-				select {
-				case sendCh <- *r:
-				default:
-				}
-			}
-		case agentboard.AgentMessageKind_WaitResponse:
-			r := msg.WaitResponse()
-			if r != nil && r.RequestId == waitID {
-				select {
-				case waitCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-
-	// Send: payload travels on a client-initiated send-stream (UDP MTU fix).
-	sendStream := conn.PC().Transport().CreateSendStream()
+	// Send: the payload travels on a client-initiated send-stream (UDP MTU).
+	sendStream := c.Transport().CreateSendStream()
 	if sendStream == nil {
 		return errors.New("agent: failed to allocate payload stream")
 	}
-	if werr := sendStream.AppendData(false, payload); werr != nil {
-		return fmt.Errorf("agent: payload stream write: %w", werr)
-	}
-	if werr := sendStream.AppendData(true); werr != nil {
-		return fmt.Errorf("agent: payload stream EOF: %w", werr)
-	}
-	sr := agentboard.SendRequest{RequestId: sendID, PayloadStreamId: uint64(sendStream.ID())}
+	sr := protocol.AgentSendRequest{PayloadStreamId: uint64(sendStream.ID())}
 	sr.SetTopic([]byte(*topic))
 	if *replyTo != "" {
 		if !sr.SetReplyToTopic([]byte(*replyTo)) {
 			return errors.New("agent: --reply-to too long")
 		}
 	}
-	sendMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
-	if !sendMsg.SetSend(sr) {
-		return errors.New("agent: SetSend failed")
+	sendReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+	sendReq.SetAgentSend(sr)
+	// Announce BEFORE writing the body, as `agent send` does and for its
+	// reason: the request names the stream, so until the server has read it
+	// nobody drains that stream and a body past the peer's receive window
+	// blocks forever. This path used to write the whole body first, which is
+	// the same deadlock waiting for a large enough payload.
+	sendCh, berr := c.BeginTaskControl(sendReq)
+	if berr != nil {
+		return berr
 	}
-	if err := conn.SendRaw(sendMsg); err != nil {
-		return err
+	if werr := sendStream.AppendDataContext(ctx, false, payload); werr != nil {
+		return fmt.Errorf("agent: payload stream write: %w", werr)
 	}
+	if werr := sendStream.AppendDataContext(ctx, true); werr != nil {
+		return fmt.Errorf("agent: payload stream EOF: %w", werr)
+	}
+
 	var publishedSeq uint64
 	select {
-	case r := <-sendCh:
-		if r.Status != agentboard.SendStatus_Ok {
+	case res := <-sendCh:
+		if res.Err != nil {
+			return res.Err
+		}
+		if kerr := expectKind(res.Resp, protocol.TaskControlKind_AgentSend); kerr != nil {
+			return kerr
+		}
+		r := res.Resp.AgentSend()
+		if r == nil {
+			return errors.New("agent: send response variant is nil")
+		}
+		if r.Status != protocol.SendStatus_Ok {
 			return fmt.Errorf("send failed: %v (%d bytes from %s)", r.Status, len(payload), source)
 		}
 		publishedSeq = r.Seq
@@ -211,8 +195,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 
 	// Wait for the reply on OUR own topic — where the server routes it — above
 	// our own publish, and only for messages answering that seq.
-	wr := agentboard.WaitRequest{
-		RequestId: waitID,
+	wr := protocol.AgentWaitRequest{
 		Since:     publishedSeq,
 		TimeoutMs: uint32(remaining.Milliseconds()),
 		InReplyTo: publishedSeq,
@@ -221,32 +204,34 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	// purpose: the removed --reply-topic set only the wait, so a peer answering
 	// with --in-reply-to had its reply routed to our own inbox while this call
 	// waited out its timeout somewhere else.
-	waitOn := agentboard.SelfTopic(conn.TaskID())
+	waitOn := SelfTopic(selfTid)
 	if *replyTo != "" {
 		waitOn = *replyTo
 	}
 	wr.SetPattern([]byte(waitOn))
-	waitMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Wait}
-	if !waitMsg.SetWait(wr) {
-		return errors.New("agent: SetWait failed")
-	}
-	if err := conn.SendRaw(waitMsg); err != nil {
+	waitReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentWait}
+	waitReq.SetAgentWait(wr)
+
+	waitResp, err := c.RoundTripTaskControl(ctx, waitReq)
+	if err != nil {
 		return err
 	}
-	select {
-	case r := <-waitCh:
-		for _, m := range r.Msgs {
-			payload, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
-			if perr != nil {
-				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-			}
-			emitMessageLine(stdout, m, payload)
-		}
-		if r.TimedOut == 1 && len(r.Msgs) == 0 {
-			return errors.New("dispatch reply timeout")
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(waitResp, protocol.TaskControlKind_AgentWait); err != nil {
+		return err
 	}
+	r := waitResp.AgentWait()
+	if r == nil {
+		return errors.New("agent: wait response variant is nil")
+	}
+	for _, m := range r.Msgs {
+		body, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
+		if perr != nil {
+			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+		}
+		emitMessageLine(stdout, m, body)
+	}
+	if r.TimedOut == 1 && len(r.Msgs) == 0 {
+		return errors.New("dispatch reply timeout")
+	}
+	return nil
 }

@@ -1020,38 +1020,20 @@ func TestAgentCallerCaps(t *testing.T) {
 	}
 }
 
-// TestTopicsGated verifies the InfoGlobal gate on agentHandleListTopics:
-//   - caller without InfoGlobal → Status_Denied and zero topics.
-//   - caller with InfoGlobal → Status_Ok and topics returned (Board has one
-//     published topic).
+// TestTopicsGated verifies the board_observe gate on board_topics FROM A TASK
+// PRINCIPAL — the case the agent face used to answer with a status value of its
+// own.
 //
-// Status is asserted here, not only through the CLI: zero topics is also the
-// honest answer for an empty board, so the status byte is the only thing on
-// the wire that separates "refused" from "nothing to show".
+//   - caller without board_observe → PermissionDenied naming the bit.
+//   - caller with it → rows, and retracted_count among them.
+//
+// The refusal must not be an empty list: zero topics is also the honest answer
+// for an empty board, so a collapsed form makes a confined agent debugging
+// "my messages aren't arriving" read the denial as "nobody is subscribed".
+// PermissionDenied is what separates them now; the old path used
+// ListTopicsStatus_Denied, and the two are the same statement on one frame
+// family instead of two.
 func TestTopicsGated(t *testing.T) {
-	// Helper: decode the ListTopicsResponse from the last sent agent message.
-	decodeListTopicsResp := func(t *testing.T, conn *fakeConn) *agentboard.ListTopicsResponse {
-		t.Helper()
-		msgs := conn.Sent()
-		if len(msgs) == 0 {
-			t.Fatal("no messages sent")
-		}
-		raw := msgs[len(msgs)-1]
-		if len(raw) < 2 {
-			t.Fatalf("message too short: %d bytes", len(raw))
-		}
-		var msg agentboard.AgentMessage
-		if err := msg.DecodeExact(raw[1:]); err != nil {
-			t.Fatalf("DecodeExact AgentMessage: %v", err)
-		}
-		r := msg.ListTopicsResponse()
-		if r == nil {
-			t.Fatal("ListTopicsResponse() returned nil")
-		}
-		return r
-	}
-
-	// Publish a topic so the board is non-empty for the InfoGlobal case.
 	publishToBoard := func(t *testing.T, board *agentboard.Board) {
 		t.Helper()
 		var fromRID protocol.RunnerID
@@ -1061,36 +1043,34 @@ func TestTopicsGated(t *testing.T) {
 		_, _, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost", "", 0)
 	}
 
-	// Case 1: no InfoGlobal → zero topics.
-	t.Run("no_board_observe_zero_topics", func(t *testing.T) {
-		s, ac := makeTestAgentConn(t, protocol.Capability_Spawn) // no InfoGlobal
-		publishToBoard(t, s.Board)
-		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-1")}
-		req := &agentboard.ListTopicsRequest{RequestId: 1}
-		s.agentHandleListTopics(conn, ac, req)
-		resp := decodeListTopicsResp(t, conn)
-		if resp.Status != agentboard.ListTopicsStatus_Denied {
-			t.Errorf("expected Status_Denied without InfoGlobal, got %v", resp.Status)
-		}
-		if resp.TopicsLen != 0 || len(resp.Topics) != 0 {
-			t.Errorf("expected 0 topics without InfoGlobal, got TopicsLen=%d Topics=%v",
-				resp.TopicsLen, resp.Topics)
-		}
+	t.Run("no_board_observe_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_Spawn) // no board_observe
+		h.Board = newTestBoard(t)
+		publishToBoard(t, h.Board)
+
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 1}
+		req.SetBoardTopics(protocol.BoardTopicsRequest{})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+
+		assertPermissionDenied(t, conn, 1, protocol.Capability_BoardObserve)
 	})
 
-	// Case 2: with InfoGlobal → topics returned.
 	t.Run("board_observe_sees_topics", func(t *testing.T) {
-		s, ac := makeTestAgentConn(t, protocol.Capability_BoardObserve)
-		publishToBoard(t, s.Board)
-		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-2")}
-		req := &agentboard.ListTopicsRequest{RequestId: 2}
-		s.agentHandleListTopics(conn, ac, req)
-		resp := decodeListTopicsResp(t, conn)
-		if resp.Status != agentboard.ListTopicsStatus_Ok {
-			t.Errorf("expected Status_Ok with InfoGlobal, got %v", resp.Status)
+		h, conn := makeAgentConn(t, protocol.Capability_BoardObserve)
+		h.Board = newTestBoard(t)
+		publishToBoard(t, h.Board)
+
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics, RequestId: 2}
+		req.SetBoardTopics(protocol.BoardTopicsRequest{})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+
+		resp := lastTaskControlResponse(t, conn)
+		if resp.Kind != protocol.TaskControlKind_BoardTopics {
+			t.Fatalf("kind = %v, want board_topics", resp.Kind)
 		}
-		if resp.TopicsLen == 0 {
-			t.Error("expected non-zero topics with InfoGlobal")
+		bt := resp.BoardTopics()
+		if bt == nil || bt.TopicsLen == 0 {
+			t.Fatalf("topics = %+v, want at least one", bt)
 		}
 	})
 }

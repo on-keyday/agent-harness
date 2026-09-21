@@ -53,7 +53,6 @@ type ConnHandle interface {
 type Dispatcher struct {
 	OnRunnerControl func(ConnHandle, []byte) // payload is everything after the kind byte
 	OnTaskControl   func(ConnHandle, []byte)
-	OnAgentMessage  func(ConnHandle, []byte) // payload is the full AgentMessage bytes (kind byte stripped)
 
 	// OnTelemetryResponse receives a peer's answer to a question this server
 	// asked it. The only server -> peer request direction there is; see
@@ -97,10 +96,6 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	case appwire.AppKind_TaskControl:
 		if d.OnTaskControl != nil {
 			d.OnTaskControl(conn, payload)
-		}
-	case appwire.AppKind_AgentMessage:
-		if d.OnAgentMessage != nil {
-			d.OnAgentMessage(conn, payload)
 		}
 	case appwire.AppKind_Telemetry:
 		// The ANSWER to something this server asked. The request travels the

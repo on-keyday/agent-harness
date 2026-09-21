@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Wait blocks until a matching message arrives on the given topic, or until
@@ -59,65 +57,44 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 		return errors.New("--topic required")
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.WaitResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_WaitResponse {
-			r := msg.WaitResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-
-	wr := agentboard.WaitRequest{
-		RequestId: reqID,
+	wr := protocol.AgentWaitRequest{
 		Since:     *since,
 		TimeoutMs: uint32(timeout.Milliseconds()),
 		InReplyTo: *inReplyTo,
 	}
 	wr.SetPattern([]byte(*topic))
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentWait}
+	req.SetAgentWait(wr)
 
-	waitMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Wait}
-	if !waitMsg.SetWait(wr) {
-		return errors.New("agent: SetWait failed")
-	}
-	if err := conn.SendRaw(waitMsg); err != nil {
+	// The round trip blocks for as long as the server holds the long poll. That
+	// is the shape, not a stall: the answer is delayed on purpose, the same way
+	// await_idle's is.
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		for _, m := range r.Msgs {
-			payload, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
-			if perr != nil {
-				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-			}
-			emitMessageLine(stdout, m, payload)
-		}
-		if r.TimedOut == 1 && len(r.Msgs) == 0 {
-			return errors.New("timeout")
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentWait); err != nil {
+		return err
 	}
+	r := resp.AgentWait()
+	if r == nil {
+		return errors.New("agent: wait response variant is nil")
+	}
+	for _, m := range r.Msgs {
+		payload, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
+		if perr != nil {
+			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+		}
+		emitMessageLine(stdout, m, payload)
+	}
+	if r.TimedOut == 1 && len(r.Msgs) == 0 {
+		return errors.New("timeout")
+	}
+	return nil
 }

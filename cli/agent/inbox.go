@@ -5,11 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Inbox returns the JSON-Lines dump of messages on subscribed topics.
@@ -52,93 +50,82 @@ func InboxWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 	inReplyTo := &a.InReplyTo
 	_ = asJSON // currently always JSON Lines
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	// Both response kinds carry the same body, so one channel of messages
-	// serves either read; which one arrives is decided by what was sent.
-	respCh := make(chan []agentboard.DeliveredMessage, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		switch msg.Kind {
-		case agentboard.AgentMessageKind_InboxResponse:
-			if r := msg.InboxResponse(); r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- r.Msgs:
-				default:
-				}
-			}
-		case agentboard.AgentMessageKind_InboxAdvanceResponse:
-			if r := msg.InboxAdvanceResponse(); r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- r.Msgs:
-				default:
-				}
-			}
-		}
-	})
-
-	var msg *agentboard.AgentMessage
+	// The advancing read is its own KIND, not a flag on the plain one. Only the
+	// runner-injected hook may send it, and a kind selected by
+	// --user-prompt-submit-hook — whose output is a hook envelope — makes that
+	// the shape of the CLI rather than an instruction in a skill file.
+	kind := protocol.TaskControlKind_AgentInbox
+	req := &protocol.TaskControlRequest{Kind: kind}
 	if *promptHook {
-		msg = &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxAdvance}
-		msg.SetInboxAdvance(agentboard.InboxAdvanceRequest{RequestId: reqID})
+		kind = protocol.TaskControlKind_AgentInboxAdvance
+		req.Kind = kind
+		req.SetAgentInboxAdvance(protocol.AgentInboxAdvanceRequest{})
 	} else {
-		msg = &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Inbox}
-		msg.SetInbox(agentboard.InboxRequest{RequestId: reqID, Since: *since})
+		req.SetAgentInbox(protocol.AgentInboxRequest{Since: *since})
 	}
-	if err := conn.SendRaw(msg); err != nil {
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case msgs := <-respCh:
-		// Fetch all payloads up front so a write-time decode error doesn't
-		// leave half the inbox emitted.
-		payloads := make([][]byte, len(msgs))
-		for i, m := range msgs {
-			p, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
-			if perr != nil {
-				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-			}
-			payloads[i] = p
-		}
-		// Only the hook mode gets the inline guard: its output is spliced into
-		// the agent's next prompt, so an oversize body is context the agent
-		// never agreed to spend. A plain read hands the record to a caller that
-		// can redirect it, and `agent read <seq>` is where the guarded record
-		// points for the full body.
-		emit := emitMessageLine
-		if *promptHook {
-			emit = emitMessageLineForHook
-		}
-		var body bytes.Buffer
-		for i, m := range msgs {
-			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
-				continue
-			}
-			emit(&body, m, payloads[i])
-		}
-		if *promptHook {
-			emitUserPromptSubmitHookOutput(stdout, body.String())
-			return nil
-		}
-		if _, err := stdout.Write(body.Bytes()); err != nil {
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, kind); err != nil {
+		return err
 	}
+	// Both answers carry the same row type under their own union field, so the
+	// accessor has to follow the kind that was asked for.
+	var msgs []protocol.DeliveredMessage
+	if *promptHook {
+		r := resp.AgentInboxAdvance()
+		if r == nil {
+			return fmt.Errorf("inbox: advance response variant is nil")
+		}
+		msgs = r.Msgs
+	} else {
+		r := resp.AgentInbox()
+		if r == nil {
+			return fmt.Errorf("inbox: response variant is nil")
+		}
+		msgs = r.Msgs
+	}
+
+	// Fetch all payloads up front so a write-time decode error doesn't leave
+	// half the inbox emitted.
+	payloads := make([][]byte, len(msgs))
+	for i, m := range msgs {
+		p, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
+		if perr != nil {
+			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+		}
+		payloads[i] = p
+	}
+	// Only the hook mode gets the inline guard: its output is spliced into the
+	// agent's next prompt, so an oversize body is context the agent never agreed
+	// to spend. A plain read hands the record to a caller that can redirect it,
+	// and `agent read <seq>` is where the guarded record points for the full
+	// body.
+	emit := emitMessageLine
+	if *promptHook {
+		emit = emitMessageLineForHook
+	}
+	var body bytes.Buffer
+	for i, m := range msgs {
+		if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+			continue
+		}
+		emit(&body, m, payloads[i])
+	}
+	if *promptHook {
+		emitUserPromptSubmitHookOutput(stdout, body.String())
+		return nil
+	}
+	if _, err := stdout.Write(body.Bytes()); err != nil {
+		return err
+	}
+	return nil
 }

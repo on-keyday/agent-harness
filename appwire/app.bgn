@@ -13,7 +13,10 @@ enum AppKind:
     task_control = 0x41
     relay_control = 0x42
     runner_control = 0x43
-    agent_message = 0x44
+    # 0x44 is RETIRED, not free. It carried the agentboard's agent face, whose
+    # verbs are TaskControlKinds now. A peer built before that change still
+    # sends this byte, so giving it an unrelated meaning would decode as that
+    # unrelated thing rather than failing.
     psk_auth = 0x45
     agent_proxy_control = 0x46
     dial_greeting = 0x47

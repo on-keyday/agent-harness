@@ -788,6 +788,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	// is keyed to the caller's own subscriptions or authorship, which is the
 	// line drawn in TaskControlKind's own comment. board_topics and
 	// board_purge, the two that ARE gated, are ordinary entries above.
+	case protocol.TaskControlKind_AgentSend:
+		asend := req.AgentSend()
+		if asend == nil {
+			slog.Error("TaskHandler: AgentSend variant is nil")
+			return
+		}
+		h.handleAgentSend(conn, req.RequestId, asend)
+
 	case protocol.TaskControlKind_AgentSubscribe:
 		as := req.AgentSubscribe()
 		if as == nil {
@@ -810,6 +818,56 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		h.handleAgentListSubscriptions(conn, req.RequestId)
+
+	case protocol.TaskControlKind_AgentWait:
+		aw := req.AgentWait()
+		if aw == nil {
+			slog.Error("TaskHandler: AgentWait variant is nil")
+			return
+		}
+		// On its own goroutine: this one blocks for the caller's whole timeout,
+		// and the receive loop must stay free for every other request on the
+		// connection.
+		go h.handleAgentWait(conn, req.RequestId, aw)
+
+	case protocol.TaskControlKind_AgentInbox:
+		ai := req.AgentInbox()
+		if ai == nil {
+			slog.Error("TaskHandler: AgentInbox variant is nil")
+			return
+		}
+		h.handleAgentInbox(conn, req.RequestId, ai)
+
+	case protocol.TaskControlKind_AgentInboxAdvance:
+		if req.AgentInboxAdvance() == nil {
+			slog.Error("TaskHandler: AgentInboxAdvance variant is nil")
+			return
+		}
+		h.handleAgentInboxAdvance(conn, req.RequestId)
+
+	case protocol.TaskControlKind_AgentListRetained:
+		alr := req.AgentListRetained()
+		if alr == nil {
+			slog.Error("TaskHandler: AgentListRetained variant is nil")
+			return
+		}
+		h.handleAgentListRetained(conn, req.RequestId, alr)
+
+	case protocol.TaskControlKind_AgentReadSeq:
+		ars := req.AgentReadSeq()
+		if ars == nil {
+			slog.Error("TaskHandler: AgentReadSeq variant is nil")
+			return
+		}
+		h.handleAgentReadSeq(conn, req.RequestId, ars)
+
+	case protocol.TaskControlKind_AgentRetract:
+		art := req.AgentRetract()
+		if art == nil {
+			slog.Error("TaskHandler: AgentRetract variant is nil")
+			return
+		}
+		h.handleAgentRetract(conn, req.RequestId, art)
 
 	case protocol.TaskControlKind_RestoreTasks:
 		// Operator-identity gate, like SetCaps below; deliberately NOT in

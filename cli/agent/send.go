@@ -7,12 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand"
 	"time"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // sendTargetArgs validates the destination pair and returns the topic to put on
@@ -68,46 +67,23 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 		return err
 	}
 
-	conn, cerr := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, cerr := connectClient(ctx, *serverCID)
 	if cerr != nil {
 		return cerr
 	}
-	defer conn.Close()
-
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.SendResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_SendResponse {
-			r := msg.SendResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	defer c.Close()
 
 	// Allocate a client-initiated send-stream for the payload; the server
 	// reads from the matching receive stream until EOF and treats those
 	// bytes as the publish body. Streaming the payload (instead of stuffing
 	// it into the SendRequest envelope) keeps the envelope inside path MTU
 	// on UDP transport.
-	stream := conn.PC().Transport().CreateSendStream()
+	stream := c.Transport().CreateSendStream()
 	if stream == nil {
 		return errors.New("agent: failed to allocate payload stream")
 	}
 
-	req := agentboard.SendRequest{RequestId: reqID, PayloadStreamId: uint64(stream.ID()), InReplyTo: *inReplyTo}
+	req := protocol.AgentSendRequest{PayloadStreamId: uint64(stream.ID()), InReplyTo: *inReplyTo}
 	// Negative on the wire too, so the zero value means the default. Only set
 	// it when the caller asked to opt out.
 	if *noRetireOnReply {
@@ -125,10 +101,8 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 		}
 	}
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
-	if !msg.SetSend(req) {
-		return errors.New("agent: SetSend failed")
-	}
+	tcReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+	tcReq.SetAgentSend(req)
 	// The request goes out BEFORE the body. It names the stream id, so until
 	// the server has it, nobody drains the payload stream: AppendData blocks
 	// once the send buffer fills (1MB) and stays blocked once the peer's
@@ -137,9 +111,15 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 	// server a reader — which is also what lets it stop an over-long body
 	// mid-flight instead of discovering the length after the fact. The server
 	// polls briefly for the stream to become visible, so arriving first is
-	// expected (server/agent_handler.go, readAgentPayloadStream).
-	if err := conn.SendRaw(msg); err != nil {
-		return err
+	// expected (server/agent_taskcontrol.go, readAgentPayloadStream).
+	//
+	// BeginTaskControl rather than RoundTripTaskControl for exactly that
+	// ordering: a round trip would block for the response before this body
+	// could be written, which is the deadlock stated above with the steps
+	// swapped.
+	respCh, sendErr := c.BeginTaskControl(tcReq)
+	if sendErr != nil {
+		return sendErr
 	}
 
 	// AppendDataContext, not AppendData: the latter passes context.Background()
@@ -178,13 +158,23 @@ const payloadErrGrace = 2 * time.Second
 
 // sendResult renders a SendResponse: the ok line on stdout, or the error the
 // status stands for. n and source describe the body that was published.
-func sendResult(resp agentboard.SendResponse, inReplyTo uint64, n int, source string, stdout io.Writer) error {
-	if resp.Status == agentboard.SendStatus_UnknownInReplyTo {
+func sendResult(r cli.TaskControlResult, inReplyTo uint64, n int, source string, stdout io.Writer) error {
+	if r.Err != nil {
+		return r.Err
+	}
+	if err := expectKind(r.Resp, protocol.TaskControlKind_AgentSend); err != nil {
+		return err
+	}
+	resp := r.Resp.AgentSend()
+	if resp == nil {
+		return errors.New("agent: send response variant is nil")
+	}
+	if resp.Status == protocol.SendStatus_UnknownInReplyTo {
 		return fmt.Errorf("send rejected: --in-reply-to %d is not on the board "+
 			"(evicted past the topic's ring or TTL, or purged). "+
 			"Drop --in-reply-to to send this as an ordinary message", inReplyTo)
 	}
-	if resp.Status != agentboard.SendStatus_Ok {
+	if resp.Status != protocol.SendStatus_Ok {
 		// The size belongs on the rejection too: PayloadTooLarge is the status
 		// whose only remedy is splitting the body, and the sender cannot pick a
 		// split without knowing what it just tried to publish.

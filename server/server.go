@@ -397,7 +397,6 @@ func New(cfg Config) *Server {
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
-		OnAgentMessage:  s.handleAgentMessage,
 		// The reverse direction: a peer answering something this server asked
 		// it. See server/telemetry.go.
 		OnTelemetryResponse:  s.deliverTelemetryResponse,

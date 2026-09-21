@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Thread is the entry for `harness-cli agent thread`: the calling task's side
@@ -40,14 +38,14 @@ func Thread(ctx context.Context, args []string, stdout io.Writer) error {
 // ThreadWith is Thread for a caller that already has the parsed action --
 // the generated CLI dispatch, which parses from the declaration itself.
 func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
-	conn, err := ConnectAgent(ctx, Flags{ServerCID: a.ServerCID})
+	c, err := connectClient(ctx, a.ServerCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
 	// 1. The topic set: what THIS task subscribes to. No enumeration.
-	topics, err := listSubscribedTopics(ctx, conn)
+	topics, err := listSubscribedTopics(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -60,7 +58,7 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	topicOf := make(map[uint64]string)
 	sizes := make(map[uint64]int) // seq -> published size, from the metas
 	for _, topic := range topics {
-		metas, tsizes, err := retainedMetas(ctx, conn, topic)
+		metas, tsizes, err := retainedMetas(ctx, c, topic)
 		if err != nil {
 			return err
 		}
@@ -96,7 +94,7 @@ func ThreadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	// --headers-only skips the fetches.
 	if !a.HeadersOnly {
 		for i := range rows {
-			payload, err := fetchBody(ctx, conn, rows[i].Msg.Seq)
+			payload, err := fetchBody(ctx, c, rows[i].Msg.Seq)
 			if err != nil {
 				return err
 			}
@@ -128,159 +126,103 @@ const ThreadWindowAgent = "agent thread: shows what is still on the board on the
 // The patterns are concrete topic names (the seeded chat.<short-id> plus
 // anything the task subscribed to); a wildcard pattern would under-report
 // here, and ListRetained per concrete name is how the messages are collected.
-func listSubscribedTopics(ctx context.Context, conn *Conn) ([]string, error) {
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ListSubscriptionsResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ListSubscriptionsResponse {
-			r := msg.ListSubscriptionsResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptions}
-	msg.SetListSubscriptions(agentboard.ListSubscriptionsRequest{RequestId: reqID})
-	if err := conn.SendRaw(msg); err != nil {
+func listSubscribedTopics(ctx context.Context, c *cli.Client) ([]string, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListSubscriptions}
+	req.SetAgentListSubscriptions(protocol.AgentListSubscriptionsRequest{})
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return nil, err
 	}
-	select {
-	case r := <-respCh:
-		out := make([]string, 0, len(r.Subscriptions))
-		for _, s := range r.Subscriptions {
-			out = append(out, string(s.Pattern))
-		}
-		return out, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentListSubscriptions); err != nil {
+		return nil, err
 	}
+	r := resp.AgentListSubscriptions()
+	if r == nil {
+		return nil, errors.New("agent: subscriptions response variant is nil")
+	}
+	out := make([]string, 0, len(r.Subscriptions))
+	for _, sub := range r.Subscriptions {
+		out = append(out, string(sub.Pattern))
+	}
+	return out, nil
 }
 
 // retainedMetas fetches one topic's retained ring as BoardMessages. The
-// payloads are NOT carried by ListRetained — they are fetched per seq by the
+// payloads are NOT carried by list_retained — they are fetched per seq by the
 // caller, through the same scoped read `agent read` uses. Retracted messages
 // never appear here: agent-facing paths drop them the moment their author
 // calls retract, so the agent face shows what the task can actually see.
-func retainedMetas(ctx context.Context, conn *Conn, topic string) ([]cli.BoardMessage, map[uint64]int, error) {
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ListRetainedResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ListRetainedResponse {
-			r := msg.ListRetainedResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListRetained}
-	req := agentboard.ListRetainedRequest{RequestId: reqID}
-	req.SetTopic([]byte(topic))
-	msg.SetListRetained(req)
-	if err := conn.SendRaw(msg); err != nil {
+func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.BoardMessage, map[uint64]int, error) {
+	lr := protocol.AgentListRetainedRequest{}
+	lr.SetTopic([]byte(topic))
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListRetained}
+	req.SetAgentListRetained(lr)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return nil, nil, err
 	}
-	select {
-	case r := <-respCh:
-		switch r.Status {
-		case agentboard.PurgeStatus_NotFound:
-			// An absent topic is a normal answer (it may have died with its
-			// last subscriber); it contributes no messages.
-			return nil, nil, nil
-		case agentboard.PurgeStatus_Ok:
-			out := make([]cli.BoardMessage, 0, len(r.Metas))
-			sizes := make(map[uint64]int, len(r.Metas))
-			for _, m := range r.Metas {
-				out = append(out, cli.BoardMessage{
-					Seq:              m.Seq,
-					InReplyTo:        m.InReplyTo,
-					FromTaskHex:      hexTask(m.FromTask),
-					FromHostname:     string(m.FromHostname),
-					FromAgentProfile: string(m.FromAgentProfile),
-					ReplyToTopic:     string(m.ReplyToTopic),
-					ReceivedAtMs:     m.ReceivedAtUnixMs,
-				})
-				// The published size is known here and only here: ListRetained
-				// carries metadata, not payloads. It rides separately so the
-				// renderer can state it even when the body is never fetched
-				// (--headers-only).
-				sizes[m.Seq] = int(m.Size)
-			}
-			return out, sizes, nil
-		default:
-			return nil, nil, fmt.Errorf("retained %s: unexpected status %v", topic, r.Status)
+	if err := expectKind(resp, protocol.TaskControlKind_AgentListRetained); err != nil {
+		return nil, nil, err
+	}
+	r := resp.AgentListRetained()
+	if r == nil {
+		return nil, nil, errors.New("agent: retained response variant is nil")
+	}
+	switch r.Status {
+	case protocol.BoardStatus_NotFound:
+		// An absent topic is a normal answer (it may have died with its last
+		// subscriber); it contributes no messages.
+		return nil, nil, nil
+	case protocol.BoardStatus_Ok:
+		out := make([]cli.BoardMessage, 0, len(r.Metas))
+		sizes := make(map[uint64]int, len(r.Metas))
+		for _, m := range r.Metas {
+			out = append(out, cli.BoardMessage{
+				Seq:              m.Seq,
+				InReplyTo:        m.InReplyTo,
+				FromTaskHex:      hexTask(m.FromTask),
+				FromHostname:     string(m.FromHostname),
+				FromAgentProfile: string(m.FromAgentProfile),
+				ReplyToTopic:     string(m.ReplyToTopic),
+				ReceivedAtMs:     m.ReceivedAtUnixMs,
+			})
+			// The published size is known here and only here: list_retained
+			// carries metadata, not payloads. It rides separately so the
+			// renderer can state it even when the body is never fetched
+			// (--headers-only).
+			sizes[m.Seq] = int(m.Size)
 		}
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
+		return out, sizes, nil
+	default:
+		return nil, nil, fmt.Errorf("retained %s: unexpected status %v", topic, r.Status)
 	}
 }
 
-// fetchBody reads one message's payload through the read path — scoped to
-// the topics this task subscribes to, so it needs no capability either.
-func fetchBody(ctx context.Context, conn *Conn, seq uint64) ([]byte, error) {
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ReadSeqResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ReadSeqResponse {
-			r := msg.ReadSeqResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeq}
-	if !msg.SetReadSeq(agentboard.ReadSeqRequest{RequestId: reqID, Seq: seq}) {
-		return nil, errors.New("agent: SetReadSeq failed")
-	}
-	if err := conn.SendRaw(msg); err != nil {
+// fetchBody reads one message's payload through the read path — scoped to the
+// topics this task subscribes to, so it needs no capability either.
+func fetchBody(ctx context.Context, c *cli.Client, seq uint64) ([]byte, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentReadSeq}
+	req.SetAgentReadSeq(protocol.AgentReadSeqRequest{Seq: seq})
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return nil, err
 	}
-	select {
-	case r := <-respCh:
-		if r.Status != agentboard.ReadSeqStatus_Ok || len(r.Msgs) == 0 {
-			return nil, fmt.Errorf("seq %d: no readable body (it rotated out, or sits on a topic this task does not subscribe to)", seq)
-		}
-		payload, err := conn.FetchDeliveredPayload(ctx, r.Msgs[0].PayloadStreamId)
-		if err != nil {
-			return nil, fmt.Errorf("fetch payload seq=%d: %w", seq, err)
-		}
-		return payload, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentReadSeq); err != nil {
+		return nil, err
 	}
+	r := resp.AgentReadSeq()
+	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok || len(r.Msgs) == 0 {
+		return nil, fmt.Errorf("seq %d: no readable body (it rotated out, or sits on a topic this task does not subscribe to)", seq)
+	}
+	payload, ferr := fetchDeliveredPayload(ctx, c.Transport(), r.Msgs[0].PayloadStreamId)
+	if ferr != nil {
+		return nil, fmt.Errorf("fetch payload seq=%d: %w", seq, ferr)
+	}
+	return payload, nil
 }
 
 // hexTask renders a TaskID the way BoardMessage exposes it.
-func hexTask(t agentboard.TaskID) string {
+func hexTask(t protocol.TaskID) string {
 	const digits = "0123456789abcdef"
 	out := make([]byte, 0, len(t.Id)*2)
 	for _, b := range t.Id {

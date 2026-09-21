@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestEmitMessageLine_InReplyToAlwaysPresent(t *testing.T) {
-	rid := agentboard.RunnerID{Id: [16]byte{1, 2, 3, 4}}
-	var tid agentboard.TaskID
+	rid := protocol.RunnerID{Id: [16]byte{1, 2, 3, 4}}
+	var tid protocol.TaskID
 
 	for _, tc := range []struct {
 		name string
@@ -37,8 +37,8 @@ func TestEmitMessageLine_InReplyToAlwaysPresent(t *testing.T) {
 }
 
 // mkTestRid builds a RunnerID for emit tests.
-func mkTestRid() agentboard.RunnerID {
-	rid := agentboard.RunnerID{Id: [16]byte{1, 2, 3, 4}}
+func mkTestRid() protocol.RunnerID {
+	rid := protocol.RunnerID{Id: [16]byte{1, 2, 3, 4}}
 	return rid
 }
 
@@ -50,7 +50,7 @@ func mkTestRid() agentboard.RunnerID {
 func TestEmitMessageLineForHook_OmitsBodyPastInlineLimit(t *testing.T) {
 	var buf bytes.Buffer
 	payload := bytes.Repeat([]byte("x"), hookInlineLimit+1)
-	emitMessageLineForHook(&buf, mkDM(500, "chat.abc", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), payload)
+	emitMessageLineForHook(&buf, mkDM(500, "chat.abc", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), payload)
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -78,7 +78,7 @@ func TestEmitMessageLineForHook_OmitsBodyPastInlineLimit(t *testing.T) {
 // boundary it was given: everything that fits today must still arrive inline.
 func TestEmitMessageLineForHook_InlinesAtTheLimit(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), hookInlineLimit))
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), hookInlineLimit))
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -102,7 +102,7 @@ func TestEmitMessageRecord_ProseIsReadable(t *testing.T) {
 	const prose = "指示: X を実装して\nY は触らないこと"
 	for _, tc := range []struct {
 		name    string
-		emit    func(io.Writer, agentboard.DeliveredMessage, []byte)
+		emit    func(io.Writer, protocol.DeliveredMessage, []byte)
 		wantB64 bool
 	}{
 		// The plain read is where `read_with` points and where an exact-bytes
@@ -114,7 +114,7 @@ func TestEmitMessageRecord_ProseIsReadable(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			tc.emit(&buf, mkDM(7, "chat.abc", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte(prose))
+			tc.emit(&buf, mkDM(7, "chat.abc", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), []byte(prose))
 
 			var rec map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -139,7 +139,7 @@ func TestEmitMessageRecord_ProseIsReadable(t *testing.T) {
 // rendering of one message.
 func TestEmitMessageLineForHook_JSONBodyDropsB64(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte(`{"kind":"review"}`))
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), []byte(`{"kind":"review"}`))
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -161,7 +161,7 @@ func TestEmitMessageLineForHook_JSONBodyDropsB64(t *testing.T) {
 // no payload at all.
 func TestEmitMessageLineForHook_BinaryKeepsB64(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte{0xff, 0xfe, 0x00, 0x01})
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), []byte{0xff, 0xfe, 0x00, 0x01})
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -180,7 +180,7 @@ func TestEmitMessageLineForHook_BinaryKeepsB64(t *testing.T) {
 // too, the pointer would lead nowhere and the body would be unreachable.
 func TestEmitMessageLine_NeverOmitsRegardlessOfSize(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLine(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), 4*hookInlineLimit))
+	emitMessageLine(&buf, mkDM(7, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), 4*hookInlineLimit))
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -193,8 +193,8 @@ func TestEmitMessageLine_NeverOmitsRegardlessOfSize(t *testing.T) {
 
 // mkDM builds a DeliveredMessage for the emit tests, which used to pass these
 // as positional arguments.
-func mkDM(seq uint64, topic string, rid agentboard.RunnerID, tid agentboard.TaskID, host, profile string, inReplyTo uint64, replyTo string) agentboard.DeliveredMessage {
-	m := agentboard.DeliveredMessage{Seq: seq, InReplyTo: inReplyTo, FromRunnerId: rid, FromTaskId: tid}
+func mkDM(seq uint64, topic string, rid protocol.RunnerID, tid protocol.TaskID, host, profile string, inReplyTo uint64, replyTo string) protocol.DeliveredMessage {
+	m := protocol.DeliveredMessage{Seq: seq, InReplyTo: inReplyTo, FromRunnerId: rid, FromTaskId: tid}
 	m.SetTopic([]byte(topic))
 	m.SetFromHostname([]byte(host))
 	m.SetFromAgentProfile([]byte(profile))
@@ -207,8 +207,8 @@ func mkDM(seq uint64, topic string, rid agentboard.RunnerID, tid agentboard.Task
 // a reader checking for the key is checking the thing that matters.
 func TestEmitMessageLine_ReplyToTopic(t *testing.T) {
 	var withIt, without bytes.Buffer
-	emitMessageLine(&withIt, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, "rr.dec-019"), []byte("hi"))
-	emitMessageLine(&without, mkDM(8, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte("hi"))
+	emitMessageLine(&withIt, mkDM(7, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, "rr.dec-019"), []byte("hi"))
+	emitMessageLine(&without, mkDM(8, "t", mkTestRid(), protocol.TaskID{}, "h", "claude", 0, ""), []byte("hi"))
 
 	var got map[string]any
 	if err := json.Unmarshal(withIt.Bytes(), &got); err != nil {

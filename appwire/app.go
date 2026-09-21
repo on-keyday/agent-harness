@@ -13,7 +13,6 @@ const (
 	AppKind_TaskControl       AppKind = 65
 	AppKind_RelayControl      AppKind = 66
 	AppKind_RunnerControl     AppKind = 67
-	AppKind_AgentMessage      AppKind = 68
 	AppKind_PskAuth           AppKind = 69
 	AppKind_AgentProxyControl AppKind = 70
 	AppKind_DialGreeting      AppKind = 71
@@ -31,8 +30,6 @@ func (e AppKind) String() string {
 		return "RelayControl"
 	case AppKind_RunnerControl:
 		return "RunnerControl"
-	case AppKind_AgentMessage:
-		return "AgentMessage"
 	case AppKind_PskAuth:
 		return "PskAuth"
 	case AppKind_AgentProxyControl:

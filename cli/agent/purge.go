@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Purge is the entry for `harness-cli agent purge`. It destroys a topic's
@@ -48,60 +46,44 @@ func PurgeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 		return errors.New("--topic or --self required")
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.PurgeResponse, 1)
-	conn.SetOnControl(func(k appwire.AppKind, p []byte) {
-		if k != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_PurgeResponse {
-			r := msg.PurgeResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	// board_purge, not a verb of this face's own: the two handlers branched
+	// identically on the same Board.PurgeTopic / PurgeSeq calls, clamped the
+	// same way, and required the same bit. What differed was the status enum's
+	// name and where the capability check was written.
+	pr := protocol.BoardPurgeRequest{Seq: *seq}
+	pr.SetTopic([]byte(*topic))
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardPurge}
+	req.SetBoardPurge(pr)
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Purge}
-	req := agentboard.PurgeRequest{RequestId: reqID, Seq: *seq}
-	req.SetTopic([]byte(*topic))
-	msg.SetPurge(req)
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		// A denial arrives as *cli.CapabilityDeniedError, naming the bit via
+		// CapsLabel. This verb used to hold the name "purge" as a literal.
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		switch r.Status {
-		case agentboard.PurgeStatus_Ok:
-			fmt.Fprintf(stdout, "{\"status\":\"ok\",\"topic\":%q,\"purged\":%d}\n", *topic, r.Purged)
-			return nil
-		case agentboard.PurgeStatus_NotFound:
-			// Idempotent: nothing matched (topic never created / already evicted,
-			// or --seq named a message no longer in the ring). Not an error.
-			fmt.Fprintf(stdout, "{\"status\":\"not_found\",\"topic\":%q,\"purged\":0}\n", *topic)
-			return nil
-		case agentboard.PurgeStatus_Denied:
-			return errors.New("purge denied: requires capability \"purge\"")
-		default:
-			return fmt.Errorf("purge: unexpected status %v", r.Status)
-		}
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_BoardPurge); err != nil {
+		return err
+	}
+	r := resp.BoardPurge()
+	if r == nil {
+		return errors.New("purge: response variant is nil")
+	}
+	switch r.Status {
+	case protocol.BoardStatus_Ok:
+		fmt.Fprintf(stdout, "{\"status\":\"ok\",\"topic\":%q,\"purged\":%d}\n", *topic, r.Purged)
+		return nil
+	case protocol.BoardStatus_NotFound:
+		// Idempotent: nothing matched (topic never created / already evicted, or
+		// --seq named a message no longer in the ring). Not an error.
+		fmt.Fprintf(stdout, "{\"status\":\"not_found\",\"topic\":%q,\"purged\":0}\n", *topic)
+		return nil
+	default:
+		return fmt.Errorf("purge: unexpected status %v", r.Status)
 	}
 }

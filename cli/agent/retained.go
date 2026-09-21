@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Retained is the entry for `harness-cli agent retained`. It lists a topic's
@@ -52,85 +50,64 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 		return errors.New("--topic or --self required")
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ListRetainedResponse, 1)
-	conn.SetOnControl(func(k appwire.AppKind, p []byte) {
-		if k != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ListRetainedResponse {
-			r := msg.ListRetainedResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	lr := protocol.AgentListRetainedRequest{}
+	lr.SetTopic([]byte(*topic))
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListRetained}
+	req.SetAgentListRetained(lr)
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListRetained}
-	req := agentboard.ListRetainedRequest{RequestId: reqID}
-	req.SetTopic([]byte(*topic))
-	msg.SetListRetained(req)
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		switch r.Status {
-		case agentboard.PurgeStatus_NotFound:
-			// Exit 0 — an absent topic is a normal answer, not an error. But
-			// say WHICH nothing this is: "no such topic" and "topic with an
-			// empty ring" both print nothing on stdout and share an exit code,
-			// so a typo'd topic name is indistinguishable from a quiet one.
-			// The wire already separates them (Status); only this rendering
-			// collapsed them. Diagnostics go to stderr so `agent retained
-			// --topic T | jq` stays a clean JSON-Lines stream — the same split
-			// cli/cmd_board.go uses for `board read`.
-			fmt.Fprintf(os.Stderr, "agent retained: topic %q is not on the board (never published, or evicted / purged)\n", *topic)
+	if err := expectKind(resp, protocol.TaskControlKind_AgentListRetained); err != nil {
+		return err
+	}
+	r := resp.AgentListRetained()
+	if r == nil {
+		return fmt.Errorf("retained: response variant is nil")
+	}
+	switch r.Status {
+	case protocol.BoardStatus_NotFound:
+		// Exit 0 — an absent topic is a normal answer, not an error. But say
+		// WHICH nothing this is: "no such topic" and "topic with an empty ring"
+		// both print nothing on stdout and share an exit code, so a typo'd topic
+		// name is indistinguishable from a quiet one. The wire already separates
+		// them (Status); only this rendering collapsed them. Diagnostics go to
+		// stderr so `agent retained --topic T | jq` stays a clean JSON-Lines
+		// stream — the same split cli/cmd_board.go uses for `board read`.
+		fmt.Fprintf(os.Stderr, "agent retained: topic %q is not on the board (never published, or evicted / purged)\n", *topic)
+		return nil
+	case protocol.BoardStatus_Ok:
+		if len(r.Metas) == 0 {
+			fmt.Fprintf(os.Stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
 			return nil
-		case agentboard.PurgeStatus_Ok:
-			if len(r.Metas) == 0 {
-				fmt.Fprintf(os.Stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
-				return nil
-			}
-			for _, m := range r.Metas {
-				// Marshalled rather than Fprintf'd: %q renders a GO string
-				// literal, which is not JSON for every input, and this line
-				// gained an optional field. A struct keeps the field ORDER the
-				// documented sample shows, which a map would sort away.
-				line, _ := json.Marshal(retainedLine{
-					Seq:          m.Seq,
-					InReplyTo:    m.InReplyTo,
-					FromTask:     hex.EncodeToString(m.FromTask.Id[:]),
-					FromHostname: string(m.FromHostname),
-					FromAgent:    string(m.FromAgentProfile),
-					ReplyToTopic: string(m.ReplyToTopic),
-					Size:         m.Size,
-					ReceivedAtMs: m.ReceivedAtUnixMs,
-				})
-				fmt.Fprintln(stdout, string(line))
-			}
-			return nil
-		default:
-			return fmt.Errorf("retained: unexpected status %v", r.Status)
 		}
-	case <-ctx.Done():
-		return ctx.Err()
+		for _, m := range r.Metas {
+			// Marshalled rather than Fprintf'd: %q renders a GO string literal,
+			// which is not JSON for every input, and this line gained an optional
+			// field. A struct keeps the field ORDER the documented sample shows,
+			// which a map would sort away.
+			line, _ := json.Marshal(retainedLine{
+				Seq:          m.Seq,
+				InReplyTo:    m.InReplyTo,
+				FromTask:     hex.EncodeToString(m.FromTask.Id[:]),
+				FromHostname: string(m.FromHostname),
+				FromAgent:    string(m.FromAgentProfile),
+				ReplyToTopic: string(m.ReplyToTopic),
+				Size:         m.Size,
+				ReceivedAtMs: m.ReceivedAtUnixMs,
+			})
+			fmt.Fprintln(stdout, string(line))
+		}
+		return nil
+	default:
+		return fmt.Errorf("retained: unexpected status %v", r.Status)
 	}
 }
 

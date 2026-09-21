@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"strconv"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Retract is the entry for `harness-cli agent retract <seq>`: withdraw ONE
@@ -50,59 +48,39 @@ func RetractWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) erro
 		return fmt.Errorf("seq must be a positive integer, got %q", fmt.Sprint(a.Seq))
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.RetractResponse, 1)
-	conn.SetOnControl(func(k appwire.AppKind, p []byte) {
-		if k != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_RetractResponse {
-			r := msg.RetractResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentRetract}
+	req.SetAgentRetract(protocol.AgentRetractRequest{Seq: seq})
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Retract}
-	msg.SetRetract(agentboard.RetractRequest{RequestId: reqID, Seq: seq})
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		switch r.Status {
-		case agentboard.RetractStatus_Ok:
-			fmt.Fprintf(stdout, "{\"status\":\"ok\",\"seq\":%d}\n", seq)
-			return nil
-		case agentboard.RetractStatus_NotFound:
-			// Idempotent, and deliberately blind: "no live message with that
-			// seq" (never published, rotated out, already retracted, purged)
-			// and "published by somebody else" are one answer. seq is
-			// board-global and consecutive, so separating them would confirm
-			// the existence of any seq on any topic the caller cannot name.
-			fmt.Fprintf(stdout, "{\"status\":\"not_found\",\"seq\":%d}\n", seq)
-			return nil
-		default:
-			return fmt.Errorf("retract: unexpected status %v", r.Status)
-		}
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentRetract); err != nil {
+		return err
+	}
+	r := resp.AgentRetract()
+	if r == nil {
+		return fmt.Errorf("retract: response variant is nil")
+	}
+	switch r.Status {
+	case protocol.AgentRetractStatus_Ok:
+		fmt.Fprintf(stdout, "{\"status\":\"ok\",\"seq\":%d}\n", seq)
+		return nil
+	case protocol.AgentRetractStatus_NotFound:
+		// Idempotent, and deliberately blind: "no live message with that seq"
+		// (never published, rotated out, already retracted, purged) and
+		// "published by somebody else" are one answer. seq is board-global and
+		// consecutive, so separating them would confirm the existence of any
+		// seq on any topic the caller cannot name.
+		fmt.Fprintf(stdout, "{\"status\":\"not_found\",\"seq\":%d}\n", seq)
+		return nil
+	default:
+		return fmt.Errorf("retract: unexpected status %v", r.Status)
 	}
 }
