@@ -1,5 +1,30 @@
 # Agentboard → task-control unification Implementation Plan
 
+> **EXECUTED 2026-09-22, landed as dbbbbc64.** The checkboxes below are left
+> unticked because three things were done differently, and a field of ticks
+> would hide that:
+>
+> 1. **Legacy handlers were deleted per verb, not in Task 11.** Keeping both
+>    bodies alive until a final sweep is a window in which one can be fixed and
+>    the other not, and the window bought nothing. Each legacy handler and
+>    dispatch case went in the same step that wired its replacement. This
+>    immediately caught a real half-wiring the plan's own C4 would have caught
+>    later: `dispatch.go` builds a send request too, and migrating only
+>    `send.go` left it calling a handler that no longer existed.
+> 2. **Tasks 3–10 collapsed into fewer commits.** The per-verb granularity was
+>    for test signal, and `cli/agent`'s existing E2E suite gives that for every
+>    verb at once against a real server. It is what went red on the
+>    half-wiring above.
+> 3. **One baseline comparison, in Task 13** (as amended in Task 2 Step 1b),
+>    not one per task.
+>
+> Result: 17 commits, 24 packages green under `make test`, and the baseline
+> diff clean except the two denial lines U7 changes. Task 14's fleet restart is
+> NOT done — the server runs on another host. Until it restarts, every agent
+> verb on the fleet hangs: the new `harness-cli` sends kinds the old server
+> drops in silence. Measured, not predicted (`harness-cli agent subscriptions`
+> against the live server, killed at 25 s).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Delete the second description of the agentboard from the wire — fold
