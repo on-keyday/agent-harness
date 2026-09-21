@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -104,6 +105,24 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 		if d.OnTelemetryResponse != nil {
 			d.OnTelemetryResponse(payload)
 		}
+	default:
+		// An unroutable kind used to be dropped in silence, which is the worst
+		// shape a version skew can take: the peer's command waits out its own
+		// timeout and nothing anywhere says why. The case that makes this
+		// concrete is 0x44, the retired agent_message kind -- a harness-cli
+		// built before the agent verbs moved to task control still sends it,
+		// and the answer it needs is "your binary is older than this server",
+		// which only a line like this can give.
+		//
+		// The conn guard is not defensive clutter: this arm exists FOR
+		// unexpected input, so it must not itself be a way to crash the
+		// server.
+		cid := "<none>"
+		if conn != nil {
+			cid = conn.ConnectionID().String()
+		}
+		slog.Warn("dispatch: unroutable app kind; dropping",
+			"kind", fmt.Sprintf("0x%02x", byte(kind)), "bytes", len(msg), "cid", cid)
 	}
 }
 

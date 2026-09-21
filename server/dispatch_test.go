@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/on-keyday/objtrsf/objproto"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -104,6 +105,16 @@ func TestDispatchUnknownKind(t *testing.T) {
 	}
 	if taskControlCalled {
 		t.Error("expected OnTaskControl to NOT be called for unknown kind")
+	}
+
+	// 0x44 is the retired agent_message kind. A harness-cli older than the
+	// move to task control still sends it, and this is the exact byte that
+	// reaches a new server — it must be dropped the same way, and dropping it
+	// must not panic on the way to the log line that makes it diagnosable.
+	d.Dispatch(&fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9990-1")},
+		[]byte{0x44, 0x01, 0x02})
+	if runnerControlCalled || taskControlCalled {
+		t.Error("the retired agent_message kind reached a handler")
 	}
 }
 
