@@ -310,6 +310,11 @@
         <button type="button" id="board-view-topics" class="board-view-btn is-active">Topics</button>
         <button type="button" id="board-view-chains" class="board-view-btn">Chains</button>
         <button id="board-refresh-btn">↻ Refresh</button>
+        <!-- Chains only: the export is the CONVERSATIONS as one sheet, which is
+             what this view assembles. Hidden in the Topics view rather than
+             disabled — there it would answer a question nobody asked. -->
+        <button type="button" id="board-export-btn" hidden
+                title="いま表示している会話を1枚にして開く（コピー／ダウンロードはそこから）">⭳ Export</button>
       </div>
       <div id="board-topics-view">
         <div id="board-topics"></div>
@@ -521,6 +526,29 @@
     <button id="session-preview-close" class="preview-close" aria-label="Close" autofocus>✕</button>
   </div>
   <div id="session-preview-body" class="preview-body session-preview-body"></div>
+</dialog>
+<!-- Board export modal: the chains view as ONE sheet, so the operator SEES what
+     they are about to take before taking it. That is also why Copy lives here
+     rather than on the panel: a copy button with nothing on screen to compare
+     against gives no way to tell a successful copy from a silent failure.
+     Copy and Download both act on whatever the Text/JSON toggle is showing, so
+     what is saved is what is displayed. Body-level for the same top-layer
+     reason as file-preview-modal above. -->
+<dialog id="board-export-modal" class="preview-modal">
+  <div class="preview-header">
+    <span id="board-export-title" class="preview-title">Board chains</span>
+    <button type="button" id="board-export-text" class="preview-toggle is-active">Text</button>
+    <button type="button" id="board-export-json" class="preview-toggle">JSON</button>
+    <button type="button" id="board-export-copy" class="preview-toggle preview-copy"
+            title="表示中のものをクリップボードへ">⧉ Copy</button>
+    <button type="button" id="board-export-download" class="preview-toggle"
+            title="表示中のものをファイルに保存">⭳ Download</button>
+    <!-- autofocus on ✕ for the session-preview reason: showModal() otherwise
+         focuses the first control, and a stray Enter would flip the format
+         rather than close. -->
+    <button id="board-export-close" class="preview-close" aria-label="Close" autofocus>✕</button>
+  </div>
+  <div id="board-export-body" class="preview-body"></div>
 </dialog>
 <!-- Session grid modal: at-a-glance live monitor of multiple interactive
      sessions at once, each cell its own read-only view-attach pane (shares

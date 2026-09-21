@@ -793,6 +793,31 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .preview-toggle:hover { background: #3a3a3a; }
 .preview-toggle[hidden] { display: none; }
+/* A preview-header button that is one of a SET, where which one is chosen has
+   to stay visible — the board export's Text / JSON pair. Same blue the board's
+   own Topics / Chains toggle uses, because it is the same kind of choice in
+   the same panel; a second palette for it would read as a different control. */
+.preview-toggle.is-active {
+  background: #094771;
+  border-color: #0e639c;
+}
+/* The export sheet WRAPS, unlike every other .preview-body pre. A file preview
+   is a source view, where a line is a line and horizontal scrolling is the
+   honest rendering; this is a document put on screen to be READ before it is
+   taken, and its first line — the retention statement — is long enough that
+   `pre` cut it off mid-sentence at desktop width. Wrapping is a display
+   choice only: textContent is unchanged, so Copy and Download still carry the
+   exact bytes. `anywhere` so an unbroken token (a 19-digit seq, a base64 body)
+   breaks instead of forcing the whole sheet sideways.
+
+   Selected as `.preview-body pre.board-export-sheet`, not `.board-export-sheet`
+   alone: the rule it overrides is `.preview-body pre`, which is one class plus
+   one element and therefore wins against a bare class. Matching its shape and
+   adding the class beats it on specificity without reaching for !important. */
+.preview-body pre.board-export-sheet {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* The right-hand group used to be anchored by margin-left:auto on .preview-toggle
  * and again on .preview-copy, with a comment claiming the second was "a harmless
  * no-op". It is not: flexbox splits free space EQUALLY between every auto margin,

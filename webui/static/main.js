@@ -1978,13 +1978,21 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   });
 
-  let filePreviewCopyTimer = null;
-  function flashCopyLabel(label) {
-    filePreviewCopy.textContent = label;
-    if (filePreviewCopyTimer) clearTimeout(filePreviewCopyTimer);
-    filePreviewCopyTimer = setTimeout(() => {
-      if (!filePreviewCopy.hidden) filePreviewCopy.textContent = "Copy";
+  // flashButtonLabel swaps a button's label for a moment, then restores it.
+  // The timer hangs off the element so two buttons flashing at once cannot
+  // cancel each other — which a single module-level timer did when this was
+  // specific to the file preview's Copy button.
+  function flashButtonLabel(btn, label, restore) {
+    if (!btn) return;
+    btn.textContent = label;
+    if (btn._flashTimer) clearTimeout(btn._flashTimer);
+    btn._flashTimer = setTimeout(() => {
+      if (!btn.hidden) btn.textContent = restore;
     }, 1800);
+  }
+
+  function flashCopyLabel(label) {
+    flashButtonLabel(filePreviewCopy, label, "Copy");
   }
 
   // writeClipboardText copies text in a way that also works over plain http.
@@ -5586,6 +5594,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (boardChainsViewEl) boardChainsViewEl.hidden = name !== "chains";
     if (boardViewTopicsBtn) boardViewTopicsBtn.classList.toggle("is-active", name === "topics");
     if (boardViewChainsBtn) boardViewChainsBtn.classList.toggle("is-active", name === "chains");
+    // Export belongs to the chains view: what it produces is the conversations
+    // as one sheet, which the topic view does not assemble.
+    if (boardExportBtn) boardExportBtn.hidden = name !== "chains";
     if (name === "chains") renderBoardChains();
     else renderBoardTopics();
   }
@@ -5610,6 +5621,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // are rows: it is what tells a reader that an ORPHAN is the retention
     // window, not a broken view.
     if (boardChainsWindowEl) boardChainsWindowEl.textContent = (res && res.window) || "";
+    // Stash what this paint was built from. The export modal renders from it
+    // rather than fetching again, so the sheet is this view, not a later one.
+    lastBoardThread = res || null;
+    if (boardExportBtn) boardExportBtn.disabled = !lastBoardThread;
     const rows = (res && res.rows) || [];
     if (!rows.length) {
       boardChainsRowsEl.textContent = "(nothing on the board within that window)";
@@ -5683,6 +5698,126 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
       boardChainsRowsEl.appendChild(row);
     }
+  }
+
+  // ---- Board export -------------------------------------------------------
+  //
+  // The sheet is built from lastBoardThread — the SAME response the chains view
+  // was painted from — rather than a fetch at button-press time. The board
+  // moves on its own, so a second fetch could hand the operator a document that
+  // is not what they were looking at when they pressed export.
+  //
+  // Its `text` arrives already rendered by Go (cli.RenderThreads), so the sheet
+  // and the saved file are byte-for-byte `harness-cli board thread`. Rebuilding
+  // that layout in JS would be a second implementation of one grammar, free to
+  // drift the next time the row format grows.
+  let lastBoardThread = null;
+  let boardExportFormat = "text";
+
+  const boardExportBtn      = document.getElementById("board-export-btn");
+  const boardExportModal    = document.getElementById("board-export-modal");
+  const boardExportTitle    = document.getElementById("board-export-title");
+  const boardExportTextBtn  = document.getElementById("board-export-text");
+  const boardExportJsonBtn  = document.getElementById("board-export-json");
+  const boardExportCopyBtn  = document.getElementById("board-export-copy");
+  const boardExportDlBtn    = document.getElementById("board-export-download");
+  const boardExportCloseBtn = document.getElementById("board-export-close");
+  const boardExportBody     = document.getElementById("board-export-body");
+
+  // What the sheet currently shows, which is also exactly what Copy and
+  // Download act on — so "what I saw" and "what I took" cannot differ.
+  function boardExportPayload() {
+    if (!lastBoardThread) return { text: "", ext: "txt", mime: "text/plain" };
+    if (boardExportFormat === "json") {
+      return {
+        text: JSON.stringify({
+          window: lastBoardThread.window || "",
+          conversations: lastBoardThread.conversations || [],
+          rows: lastBoardThread.rows || [],
+        }, null, 2),
+        ext: "json",
+        mime: "application/json",
+      };
+    }
+    return { text: lastBoardThread.text || "", ext: "txt", mime: "text/plain" };
+  }
+
+  function renderBoardExport() {
+    if (!boardExportBody) return;
+    const p = boardExportPayload();
+    boardExportBody.innerHTML = "";
+    const pre = document.createElement("pre");
+    pre.className = "board-export-sheet";
+    pre.textContent = p.text;
+    boardExportBody.appendChild(pre);
+    if (boardExportTextBtn) boardExportTextBtn.classList.toggle("is-active", boardExportFormat === "text");
+    if (boardExportJsonBtn) boardExportJsonBtn.classList.toggle("is-active", boardExportFormat === "json");
+    if (boardExportTitle) {
+      const convs = (lastBoardThread && lastBoardThread.conversations || []).length;
+      const msgs  = (lastBoardThread && lastBoardThread.rows || []).length;
+      boardExportTitle.textContent =
+        `Board chains — ${convs} conversation${convs === 1 ? "" : "s"}, ${msgs} message${msgs === 1 ? "" : "s"}`;
+    }
+  }
+
+  // downloadText saves a string as a file. Blob + object URL rather than a
+  // data: URI: a board with 64 messages per topic across many topics is well
+  // past what a URL length is safe for. The URL is revoked on the next tick,
+  // not immediately — Firefox cancels an in-flight download if it is revoked
+  // in the same task.
+  function downloadText(name, mime, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime + ";charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  // Colons are not usable in a filename on every platform this gets saved to,
+  // so the timestamp is the compact ISO form: sorts, and says UTC out loud.
+  function exportStamp() {
+    return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  }
+
+  if (boardExportBtn) {
+    boardExportBtn.addEventListener("click", () => {
+      if (!lastBoardThread) return;
+      renderBoardExport();
+      if (boardExportModal && !boardExportModal.open) boardExportModal.showModal();
+    });
+  }
+  if (boardExportTextBtn) boardExportTextBtn.addEventListener("click", () => { boardExportFormat = "text"; renderBoardExport(); });
+  if (boardExportJsonBtn) boardExportJsonBtn.addEventListener("click", () => { boardExportFormat = "json"; renderBoardExport(); });
+  if (boardExportCloseBtn) boardExportCloseBtn.addEventListener("click", () => boardExportModal && boardExportModal.close());
+  if (boardExportModal) {
+    boardExportModal.addEventListener("click", (ev) => {
+      if (ev.target === boardExportModal) boardExportModal.close();
+    });
+  }
+  if (boardExportCopyBtn) {
+    boardExportCopyBtn.addEventListener("click", async () => {
+      const p = boardExportPayload();
+      if (await writeClipboardText(p.text)) {
+        flashButtonLabel(boardExportCopyBtn, "Copied ✓", "⧉ Copy");
+        return;
+      }
+      // Both clipboard paths failed (plain http with execCommand disabled, or
+      // a permission refusal). Select the sheet so the operator can copy it by
+      // hand rather than being told nothing happened.
+      const node = boardExportBody.querySelector("pre") || boardExportBody;
+      selectNodeText(node);
+      flashButtonLabel(boardExportCopyBtn, "Selected ✓", "⧉ Copy");
+    });
+  }
+  if (boardExportDlBtn) {
+    boardExportDlBtn.addEventListener("click", () => {
+      const p = boardExportPayload();
+      downloadText(`board-chains-${exportStamp()}.${p.ext}`, p.mime, p.text);
+      flashButtonLabel(boardExportDlBtn, "Saved ✓", "⭳ Download");
+    });
   }
 
   if (boardViewTopicsBtn) boardViewTopicsBtn.addEventListener("click", () => setBoardView("topics"));

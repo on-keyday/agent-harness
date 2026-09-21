@@ -1646,7 +1646,8 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 // harnessBoardThread returns the agentboard's reply chains, already assembled
 // and ordered.
 //
-//	harness.boardThread() -> Promise<{window, rows: [{seq, inReplyTo, topic,
+//	harness.boardThread() -> Promise<{window, text, conversations, rows:
+//	                                   [{seq, inReplyTo, topic, conversation,
 //	                                   depth, isLast, orphan, gutter, size, body,
 //	                                   from{...}, retracted, retractedAtMs,
 //	                                   retractedBy}]}>
@@ -1751,10 +1752,32 @@ func harnessBoardThread(this js.Value, args []js.Value) any {
 					"header": cli.ConversationHeader(secRows[k]),
 				})
 			}
+			// `text` is the whole board as ONE sheet, rendered by the same
+			// cli.RenderThreads the CLI prints through — so what the export
+			// modal shows, and what it saves, is byte-for-byte
+			// `harness-cli board thread`.
+			//
+			// It rides THIS response rather than a second bridge call on
+			// purpose: the modal must show what the view was painted from, and
+			// a fetch at button-press time could answer with a board that has
+			// moved. One fetch, both forms.
+			//
+			// BodyEscaped, not BodyExact: this is a browser, so there is no
+			// byte-extraction path to protect here (that is `--json` on the
+			// CLI) and a raw control byte has no business reaching the DOM.
+			var sheet strings.Builder
+			if rerr := cli.RenderThreads(&sheet, rows, cli.ThreadRenderOptions{
+				Body:   cli.BodyEscaped,
+				Window: cli.ThreadWindowOperator,
+			}, nil); rerr != nil {
+				rejectErr(reject, fmt.Errorf("boardThread: render: %w", rerr))
+				return
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"window":        cli.ThreadWindowOperator,
 				"rows":          out,
 				"conversations": convs,
+				"text":          sheet.String(),
 			}))
 		}()
 		return nil
