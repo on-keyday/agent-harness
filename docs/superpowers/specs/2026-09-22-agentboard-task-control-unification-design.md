@@ -22,7 +22,8 @@ description. No operator-visible behaviour changes.
 | U6 | `read_seq` stays its own kind. It is one seq scoped to the caller's subscriptions; `board_read` is a whole topic behind `board_observe`. | author |
 | U7 | Capability denials answer with `PermissionDenied`. `ListTopicsStatus.denied` and `PurgeStatus.denied` are deleted, with the two hardcoded capability-name strings in the CLI. | operator, 2026-09-22 |
 | U8 | Refusals that are **not** capability answers keep their own enums: `ReadSeqStatus.not_found`, `RetractStatus.not_found`, `SendStatus`'s frame and size arms. Those merge two cases deliberately, to avoid an enumeration oracle; `PermissionDenied` does not express that. | author, from `agentboard.bgn:419` |
-| U9 | The schema change lands whole, in one commit with the server and client migration. Per-verb staging would require both frame families alive at once. | author, from `feedback_no_split_schemas` |
+| U9 | The **schema** lands whole in one step — all twelve kinds and every format, before anything dispatches them. The **server and client** then migrate one verb group at a time, with both frame families alive inside the branch, and the old family is deleted last. | author, from `feedback_no_split_schemas` + the review-signal risk below |
+| U9a | **Reverses U9's first draft**, which said schema and migration land in one commit because staging would need both families alive at once. That cost is worth paying: this is a 19-file rewrite with no behaviour change, so a dropped request field produces a working command with a missing argument and nothing in a single diff distinguishes it. Three rules bind different axes and all three hold — the `.bgn` is written once, complete, and never patched by a later task (`feedback_no_split_schemas`, whose incident is a copy-pasted partial schema reaching production); the verb-migration rule is stated once in the plan's Global Constraints rather than re-derived per verb (`feedback_carry_invariants_across_surfaces`); and every commit leaves each verb it touches wired at ALL its call sites, never half (`feedback_enumerate_all_callsites_when_intercepting`). Landing is still one unit. | author, 2026-09-22 |
 | U10 | `board_send`, the agentboard send capability, is **out of scope here** and gets its own spec after this lands. Sequencing chosen because `PermissionDenied` then answers its denial with no new status values. | operator, 2026-09-22 |
 | U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. The push it reserved exists as `RunnerRequestType.TaskWake`, terminating at the runner; the dial cost it was also meant to answer comes from the inbox path being a process per turn, which no push can remove. Reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris — which is how this spec's first draft read it. Both halves are recorded in Problem so they survive the value. | author, from `2026-04-28-agent-comms-design.md:187`/`:468`, `2026-04-29-agent-wake-and-origin-design.md`, `runner/connect.go:776` |
 
@@ -213,7 +214,13 @@ written (inline vs the central `requiredCap`). Both are removed by the merge.
 - `cli/agent/conn.go`'s `Conn` wrapper, `SendRaw` and the per-subcommand
   `SetOnControl` + request-id demux: replaced by `RoundTripTaskControl`, the
   helper `cli/board.go:313` already uses for the operator half of these very
-  verbs.
+  verbs. **No handshake is lost with it.** `ConnectAgent` performs no special
+  hello: `buildMergedClientHello` (`cli/psk.go:115`) upgrades the kind to
+  Agent and attaches `AgentInfo` whenever `HARNESS_TASK_ID` /
+  `HARNESS_RUNNER_ID` are populated, which `cli/agent/conn.go:190` records in
+  its own comment. Every `harness-cli` invocation from inside a task is
+  already agent-identified on its ordinary client connection; the wrapper
+  exists solely to own the `AgentMessage` demux.
 
 ## What is preserved, and how it is checked
 
