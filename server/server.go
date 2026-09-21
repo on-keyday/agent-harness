@@ -266,6 +266,18 @@ func New(cfg Config) *Server {
 		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
 			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
 		},
+		// The board identity OnAgentHello established, read back per request by
+		// the agent_* task-control kinds. Gated on helloed, not on state being
+		// non-nil: getOrCreateAgentConn mints an empty entry for whatever
+		// connection asks, so an entry with no Attach behind it is a connection
+		// that never proved it was an agent.
+		BoardConnState: func(conn ConnHandle) *agentboard.ConnState {
+			ac := s.getOrCreateAgentConn(conn)
+			if ac == nil || !ac.helloed {
+				return nil
+			}
+			return ac.state
+		},
 		// allowed is the caller's effective target set, or nil for an operator
 		// (and anyone whose base is global). Prune is the one kind whose
 		// self-restriction lived only in prose: the supervising-workers skill

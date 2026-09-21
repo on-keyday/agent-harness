@@ -197,6 +197,23 @@ type TaskHandler struct {
 	// not established (minimal test wiring); ClientHello falls back to Ok.
 	OnAgentHello func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus
 
+	// BoardConnState resolves the agentboard ConnState for a connection, or
+	// nil when that connection never completed an agent ClientHello. Wired by
+	// Server.New; nil in tests that do not exercise an agent verb.
+	//
+	// It exists because the agent_* kinds need the caller's BOARD identity —
+	// which subscriptions are its own, which messages it authored — and that
+	// lives on the Server, in the per-connID agentConns map, while this
+	// handler holds no *Server by design. Every other cross-boundary need on
+	// this struct is a function field (OnAgentHello immediately above,
+	// ConnListFn, DropConnsForPrincipal); this follows them rather than
+	// introducing a back-reference.
+	//
+	// Read it through boardState, never directly: a nil hook and a
+	// non-agent connection are the same answer to a handler, and one place
+	// deciding that is why no verb has to.
+	BoardConnState func(conn ConnHandle) *agentboard.ConnState
+
 	// DropConnsForPrincipal, when non-nil, closes every live connection whose
 	// principal is the given task, and returns how many it closed. Wired by
 	// Server to reach activeConns. set_caps calls it when a re-grant removes
