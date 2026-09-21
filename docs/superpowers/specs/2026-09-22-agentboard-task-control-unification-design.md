@@ -24,7 +24,7 @@ description. No operator-visible behaviour changes.
 | U8 | Refusals that are **not** capability answers keep their own enums: `ReadSeqStatus.not_found`, `RetractStatus.not_found`, `SendStatus`'s frame and size arms. Those merge two cases deliberately, to avoid an enumeration oracle; `PermissionDenied` does not express that. | author, from `agentboard.bgn:419` |
 | U9 | The schema change lands whole, in one commit with the server and client migration. Per-verb staging would require both frame families alive at once. | author, from `feedback_no_split_schemas` |
 | U10 | `board_send`, the agentboard send capability, is **out of scope here** and gets its own spec after this lands. Sequencing chosen because `PermissionDenied` then answers its denial with no new status values. | operator, 2026-09-22 |
-| U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. A push path, if built, appends a kind at that point; reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris — which is how this spec first described it. The intent it held is restated under "What is deleted" so it survives the value. | author, from `2026-04-28-agent-comms-design.md:187` |
+| U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. Its delivery half was superseded by the PTY wake a day after it was reserved; its remaining half is a dial-per-hook cost that an enum value does not address. A push path, if built, appends a kind then — reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris, which is how this spec's first draft read it. Both halves are recorded in Problem so they survive the value. | author, from `2026-04-28-agent-comms-design.md:187`/`:468` and `2026-04-29-agent-wake-and-origin-design.md` |
 
 ## Problem
 
@@ -76,15 +76,30 @@ two callers differ in.
 
 One thing in the same area is **not** on that list, and the distinction is
 load-bearing. `AgentMessageKind.deliver` (value 9) is a slot reserved in the
-2026-04-28 design for a
-server → agent push of new messages on a subscribed topic, deferred out of v1
-in favour of `wait`'s long-poll (`2026-04-28-agent-comms-design.md:125`,
-`:187`) and named there as the v2 answer to a measured cost: the inbox hook
-dials a fresh connection every turn (`:468`). `git log -S
-AgentMessageKind_Deliver`, excluding the generated file, returns no commit —
-no hand-written line has ever read it. What it reserves is an intent, and the
-per-turn dial it was meant to remove is still there in
-`cli/agent/conn.go`'s `ConnectAgent`.
+2026-04-28 design for a server → agent push of new messages on a subscribed
+topic, deferred out of v1 in favour of `wait`'s long-poll
+(`2026-04-28-agent-comms-design.md:125`, `:187`). `git log -S
+AgentMessageKind_Deliver`, excluding the generated file, returns no commit:
+no hand-written line has ever read it.
+
+It was reserved against two things, and only one of them is still open.
+
+- **An idle agent not learning that a message arrived.** Solved the NEXT DAY
+  by a different mechanism: `2026-04-29-agent-wake-and-origin-design.md`
+  opens on exactly this ("No real-time delivery to idle agents") and answers
+  it with the runner typing a synthetic prompt into the session's PTY. That
+  spec never names `deliver`, so the slot was not retired — it was left
+  behind.
+- **A fresh dial per inbox hook** (`2026-04-28-agent-comms-design.md:468`,
+  which named a long-lived connection carrying `deliver` as the v2 answer).
+  Still open, and the wake did not narrow it: a wake fires
+  `UserPromptSubmit`, which runs `harness-cli agent inbox`, which dials
+  through `ConnectAgent` in `cli/agent/conn.go`. The one place a connection
+  is held open is `wait` / `dispatch`, and those are bounded to scripts
+  outside an agent turn by design.
+
+So what the value reserves is a solved problem plus an unsolved cost, and
+the unsolved cost is not a reason to keep an enum value.
 
 ### Half of this migration already happened
 
@@ -159,8 +174,8 @@ written (inline vs the central `requiredCap`). Both are removed by the merge.
 
 - `appwire.AppKind_AgentMessage` (0x44) retires. The value is not reused.
 - `agentboard.bgn`'s wire formats and the `AgentMessage` envelope.
-- The reserved `deliver` slot, under U11 — with the push path it reserves
-  written down here rather than carried as an unused enum value.
+- The reserved `deliver` slot, under U11 — with both halves of what it
+  reserved recorded in Problem rather than carried as an unused enum value.
 - `agentboard`'s `RunnerID` / `TaskID`, and with them `ids.go`'s paired
   helpers and the uncalled `formatIP`.
 - `HelloStatus` and `clientHelloStatusFromBoard`; `Registry.Validate` returns
