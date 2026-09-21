@@ -472,3 +472,36 @@ claude が起動時にこの settings を pickup し、毎 user prompt 直前に
 ## 14. Out of scope (再掲)
 
 §2 のとおり、MCP, per-publish retain flag, persistent agent identity, cross-host 偽装防御以上の crypto はすべて v2 以降。
+
+## Amendment — 2026-09-22: the AgentMessage kind is retired
+
+§6.1 が新設した `wire.ApplicationPayloadKind = AgentMessage` (appwire 0x44) と、
+§6.2 の `agentboard.bgn` は削除された。agent 面の verb は `TaskControlKind` の値
+になり、board は wire 上で 1 回だけ記述される。経緯と決定は
+`2026-09-22-agentboard-task-control-unification-design.md`。
+
+この spec の記述で**結果が変わったもの**だけを挙げる:
+
+- **§5.1 の identity は実装で写しになっていた。** `identity = (runner_id:
+  protocol.RunnerID, task_id: protocol.TaskID)` と書かれていたが、最初の commit
+  (`f0931594`) は `agentboard.bgn` に当時の address 形の `RunnerID` を丸写しした。
+  `.bgn` は 1 file = 1 Go package で import 指令を持たないため、schema を分けた
+  時点で protocol の型を名指しできなくなったのが理由。今は本当に protocol の型
+  で、写しは消えた。
+- **§6.2 の `Deliver` は一度も実装されなかった。** 予約していた 2 つのうち、
+  「idle な agent に届かない」は翌日の `2026-04-29-agent-wake-and-origin-design.md`
+  が別機構で解いた — `RunnerRequestType.TaskWake` を runner の常時接続に push し、
+  runner が PTY に合成 prompt を書く。server→peer の push は存在するが、終端が
+  agent ではなく runner で、運ぶのは task id であって本文ではない。
+- **§13 の「1 hook ごとに peer.Dial する」は残っている。** ただし `Deliver` push
+  はその答えにならない。dial が起きるのは transport に push が無いからではなく
+  **inbox 経路が turn ごとにプロセスを起こすから**で、接続を保持する常駐が agent
+  側に無い以上、push には終端がない。解くなら agent 側常駐 helper という別設計。
+- **§9.2 の cursor file は無くなっている。** 位置は server 側 (`taskState.shown`,
+  topic ごと) にあり、`--since-last` / `--commit` は
+  `--user-prompt-submit-hook` という 1 つの kind に置き換わった。
+
+変わっていないもの: topic の ring と TTL、auth ticket の流れ (§6.3)、
+`HARNESS_AUTH_TICKET` が env-only であること、そして agentboard が pubsub とは
+別 component であること (§4 の判断は今も有効で、統合したのは task_control との
+間の重複であって pubsub との境界ではない)。

@@ -219,8 +219,8 @@ Read what it shows you carefully, because it is bounded by what YOU can see:
 
 The operator's counterpart is `board thread`, which reads every topic on the
 board. It needs `board_observe`, so do not reach for it from a confined task:
-it will be denied, and the denial says `BoardTopics requires capability
-board_observe` rather than naming this verb.
+it will be denied, and the denial names the KIND the request carried
+(`BoardTopics`) rather than the verb you typed.
 
 ## Withdrawing a message you sent (`agent retract`)
 
@@ -510,9 +510,12 @@ harness-cli agent topics          # JSON Lines: topics that have been PUBLISHED
                                   # to — not every topic. A subscribed name with
                                   # nothing published yet is absent, which is the
                                   # state a freshly seeded chat.<short-id> is in.
-                                  # Carries no subscriber count either; that is
-                                  # `board topics`. Both need board_observe, and
-                                  # without it: an error, not an empty board.
+                                  # It IS `board topics` now — the same request,
+                                  # so the same rows, including retracted_count.
+                                  # Needs board_observe, and without it: an
+                                  # error, not an empty board. Subscriber counts
+                                  # are still `board subscribers`, a different
+                                  # verb.
 
 # Shorthand for "subscribe to my own inbound topic" — derives
 # chat.<first-8-hex-of-HARNESS_TASK_ID>. The server normally seeds this
@@ -939,10 +942,12 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
   connection INFO lines to stderr on completely successful calls, so a
   non-empty stderr is not a failure — and `2>/dev/null` throws the real
   diagnosis away, because a capability denial arrives on that same stream
-  mixed in with the INFO. The denial text is not uniform either
-  (`topics denied: requires capability "board_observe"` from the agent
-  surface, `permission denied: BoardTopics requires capability board_observe`
-  from the board one), so matching on the string breaks on one of them.
+  mixed in with the INFO. There is now ONE denial wording —
+  `permission denied: <kind> requires capability <cap>` — where there used to
+  be one per surface, because every refusal is the same response carrying the
+  missing bit rather than a status value each verb rendered its own way. Still
+  read the exit code rather than the string: the kind and cap in it are the
+  schema's names, and the schema is what may be renamed.
 - Long-lived subscriptions: register once with `subscribe`, then rely on the
   inbox hook to deliver. Don't `wait` in a loop. (See also "Async by default".)
 - If `harness-cli` is missing or the auth ticket is unset, you are running
