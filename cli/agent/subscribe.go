@@ -5,17 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind agentboard.AgentMessageKind) error {
+func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, remove bool) error {
 	sub := "subscribe"
-	if kind == agentboard.AgentMessageKind_Unsubscribe {
+	if remove {
 		sub = "unsubscribe"
 	}
 	// The --self / --topic exclusion lives in the verb's Build now, so both
@@ -24,12 +22,12 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 	if perr != nil {
 		return perr
 	}
-	return subscribeOrUnsubWith(ctx, a, stdout, kind)
+	return subscribeOrUnsubWith(ctx, a, stdout, remove)
 }
 
 // subscribeOrUnsubWith is subscribeOrUnsub for a caller that already has the
 // parsed action -- the generated CLI dispatch.
-func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Writer, kind agentboard.AgentMessageKind) error {
+func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Writer, remove bool) error {
 	serverCID, pattern, self := &a.ServerCID, &a.Topic, &a.Self
 	if *self {
 		tid, err := cliopts.ResolveTaskID("")
@@ -43,77 +41,65 @@ func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Wri
 		return errors.New("--topic or --self required")
 	}
 
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, *serverCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.SubscribeResponse, 1)
-	conn.SetOnControl(func(k appwire.AppKind, p []byte) {
-		if k != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_SubscribeResponse {
-			r := msg.SubscribeResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
-
-	msg := &agentboard.AgentMessage{Kind: kind}
-	if kind == agentboard.AgentMessageKind_Subscribe {
-		req := agentboard.SubscribeRequest{RequestId: reqID}
-		req.SetPattern([]byte(*pattern))
-		msg.SetSubscribe(req)
+	kind := protocol.TaskControlKind_AgentSubscribe
+	req := &protocol.TaskControlRequest{Kind: kind}
+	if remove {
+		kind = protocol.TaskControlKind_AgentUnsubscribe
+		req.Kind = kind
+		ur := protocol.AgentUnsubscribeRequest{}
+		ur.SetPattern([]byte(*pattern))
+		req.SetAgentUnsubscribe(ur)
 	} else {
-		req := agentboard.UnsubscribeRequest{RequestId: reqID}
-		req.SetPattern([]byte(*pattern))
-		msg.SetUnsubscribe(req)
+		sr := protocol.AgentSubscribeRequest{}
+		sr.SetPattern([]byte(*pattern))
+		req.SetAgentSubscribe(sr)
 	}
-	if err := conn.SendRaw(msg); err != nil {
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		if r.Status != agentboard.SubscribeStatus_Ok {
-			return fmt.Errorf("subscribe failed: %v", r.Status)
-		}
-		fmt.Fprintln(stdout, `{"status":"ok"}`)
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, kind); err != nil {
+		return err
 	}
+	// Same format, different union field per kind — read the one that matches
+	// the kind asked for, or the variant accessor returns nil.
+	r := resp.AgentSubscribe()
+	if remove {
+		r = resp.AgentUnsubscribe()
+	}
+	if r == nil {
+		return errors.New("agent: subscribe response variant is nil")
+	}
+	if r.Status != protocol.SubscribeStatus_Ok {
+		return fmt.Errorf("subscribe failed: %v", r.Status)
+	}
+	fmt.Fprintln(stdout, `{"status":"ok"}`)
+	return nil
 }
 
 // Subscribe is the entry for `harness-cli agent subscribe`.
 func Subscribe(ctx context.Context, args []string, stdout io.Writer) error {
-	return subscribeOrUnsub(ctx, args, stdout, agentboard.AgentMessageKind_Subscribe)
+	return subscribeOrUnsub(ctx, args, stdout, false)
 }
 
 // Unsubscribe is the entry for `harness-cli agent unsubscribe`.
 func Unsubscribe(ctx context.Context, args []string, stdout io.Writer) error {
-	return subscribeOrUnsub(ctx, args, stdout, agentboard.AgentMessageKind_Unsubscribe)
+	return subscribeOrUnsub(ctx, args, stdout, true)
 }
 
 // SubscribeWith and UnsubscribeWith are Subscribe / Unsubscribe for a caller
 // that already has the parsed action -- the generated CLI dispatch.
 func SubscribeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
-	return subscribeOrUnsubWith(ctx, a, stdout, agentboard.AgentMessageKind_Subscribe)
+	return subscribeOrUnsubWith(ctx, a, stdout, false)
 }
 
 func UnsubscribeWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
-	return subscribeOrUnsubWith(ctx, a, stdout, agentboard.AgentMessageKind_Unsubscribe)
+	return subscribeOrUnsubWith(ctx, a, stdout, true)
 }

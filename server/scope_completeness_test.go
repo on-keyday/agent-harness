@@ -97,10 +97,28 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_TrsfState: infoScoped,
 	// permission_denied is a RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: noTarget,
+	// The agentboard's agent face, noTarget for the same reason the board_*
+	// kinds above are: these address TOPICS, and a topic has no owner the task
+	// hierarchy contains, so no scope can bound one.
+	//
+	// That is not the same as unbounded. Each is bounded by the caller's own
+	// board state instead -- its subscription set (inbox, wait, read_seq,
+	// list_retained) or its authorship (retract). That is a narrower set than
+	// any scope could express, and one the caller cannot widen by naming an id.
+	protocol.TaskControlKind_AgentSend:              noTarget,
+	protocol.TaskControlKind_AgentSubscribe:         noTarget,
+	protocol.TaskControlKind_AgentUnsubscribe:       noTarget,
+	protocol.TaskControlKind_AgentListSubscriptions: noTarget,
+	protocol.TaskControlKind_AgentWait:              noTarget,
+	protocol.TaskControlKind_AgentInbox:             noTarget,
+	protocol.TaskControlKind_AgentInboxAdvance:      noTarget,
+	protocol.TaskControlKind_AgentListRetained:      noTarget,
+	protocol.TaskControlKind_AgentReadSeq:           noTarget,
+	protocol.TaskControlKind_AgentRetract:           noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_TrsfState); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentRetract); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -115,13 +133,15 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// trsf_state is the last kind; if the enum grows past it the loop above stops
-// short and silently covers nothing new. It has caught two appends now:
-// restore_tasks, when the bound was open_forward_tap, and trsf_state.
-func TestTrsfStateIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_TrsfState) + 1)
+// agent_retract is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught three appends now:
+// restore_tasks, when the bound was open_forward_tap; trsf_state; and the ten
+// agent_* kinds, which arrived together and would otherwise have dispatched
+// with whatever gate their neighbours happened to have.
+func TestAgentRetractIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentRetract) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after trsf_state (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after agent_retract (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

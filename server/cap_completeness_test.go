@@ -95,10 +95,32 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// because it also carries the power to make the server dial a NEW runner,
 	// which has no business travelling with a read-only diagnostic.
 	protocol.TaskControlKind_TrsfState: capNone,
+	// The agentboard's agent face. None takes a bit, and that is the line
+	// TaskControlKind's own comment draws rather than an omission: each is
+	// keyed to the caller's OWN subscriptions or to a message it published. A
+	// board verb that reaches topics the caller need not subscribe to is a
+	// board_* kind and does take one -- board_topics and board_purge, above,
+	// which these used to duplicate.
+	//
+	// agent_retract is the one worth stating on its own, because it destroys
+	// something and still takes no bit: its gate is AUTHORSHIP, inside
+	// Board.RetractSeq, which matches the stored message's FromTask against
+	// the caller's authenticated id. board_retract is the same action WITHOUT
+	// that check, which is why that one is gated on purge.
+	protocol.TaskControlKind_AgentSend:              capNone,
+	protocol.TaskControlKind_AgentSubscribe:         capNone,
+	protocol.TaskControlKind_AgentUnsubscribe:       capNone,
+	protocol.TaskControlKind_AgentListSubscriptions: capNone,
+	protocol.TaskControlKind_AgentWait:              capNone,
+	protocol.TaskControlKind_AgentInbox:             capNone,
+	protocol.TaskControlKind_AgentInboxAdvance:      capNone,
+	protocol.TaskControlKind_AgentListRetained:      capNone,
+	protocol.TaskControlKind_AgentReadSeq:           capNone,
+	protocol.TaskControlKind_AgentRetract:           capNone,
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_TrsfState); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentRetract); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

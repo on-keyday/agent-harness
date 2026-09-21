@@ -3,13 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 
-	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Subscriptions fetches the calling task's subscription pattern list and emits
@@ -25,52 +24,30 @@ func Subscriptions(ctx context.Context, args []string, stdout io.Writer) error {
 // SubscriptionsWith is Subscriptions for a caller that already has the parsed action --
 // the generated CLI dispatch, which parses from the declaration itself.
 func SubscriptionsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
-	serverCID := &a.ServerCID
-
-	conn, err := ConnectAgent(ctx, Flags{
-		ServerCID: *serverCID,
-	})
+	c, err := connectClient(ctx, a.ServerCID)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	reqID := rand.Uint32()
-	respCh := make(chan agentboard.ListSubscriptionsResponse, 1)
-	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(p); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_ListSubscriptionsResponse {
-			r := msg.ListSubscriptionsResponse()
-			if r != nil && r.RequestId == reqID {
-				select {
-				case respCh <- *r:
-				default:
-				}
-			}
-		}
-	})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentListSubscriptions}
+	req.SetAgentListSubscriptions(protocol.AgentListSubscriptionsRequest{})
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptions}
-	msg.SetListSubscriptions(agentboard.ListSubscriptionsRequest{RequestId: reqID})
-	if err := conn.SendRaw(msg); err != nil {
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
 		return err
 	}
-
-	select {
-	case r := <-respCh:
-		for _, s := range r.Subscriptions {
-			rec := map[string]any{"pattern": string(s.Pattern)}
-			line, _ := json.Marshal(rec)
-			fmt.Fprintln(stdout, string(line))
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := expectKind(resp, protocol.TaskControlKind_AgentListSubscriptions); err != nil {
+		return err
 	}
+	r := resp.AgentListSubscriptions()
+	if r == nil {
+		return errors.New("agent: subscriptions response variant is nil")
+	}
+	for _, s := range r.Subscriptions {
+		rec := map[string]any{"pattern": string(s.Pattern)}
+		line, _ := json.Marshal(rec)
+		fmt.Fprintln(stdout, string(line))
+	}
+	return nil
 }

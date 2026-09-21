@@ -784,6 +784,33 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleTrsfState(conn, req.RequestId, cid, ts)
 
+	// The agentboard's agent face. None of these appears in requiredCap: each
+	// is keyed to the caller's own subscriptions or authorship, which is the
+	// line drawn in TaskControlKind's own comment. board_topics and
+	// board_purge, the two that ARE gated, are ordinary entries above.
+	case protocol.TaskControlKind_AgentSubscribe:
+		as := req.AgentSubscribe()
+		if as == nil {
+			slog.Error("TaskHandler: AgentSubscribe variant is nil")
+			return
+		}
+		h.handleAgentSubscribe(conn, req.RequestId, string(as.Pattern), false)
+
+	case protocol.TaskControlKind_AgentUnsubscribe:
+		au := req.AgentUnsubscribe()
+		if au == nil {
+			slog.Error("TaskHandler: AgentUnsubscribe variant is nil")
+			return
+		}
+		h.handleAgentSubscribe(conn, req.RequestId, string(au.Pattern), true)
+
+	case protocol.TaskControlKind_AgentListSubscriptions:
+		if req.AgentListSubscriptions() == nil {
+			slog.Error("TaskHandler: AgentListSubscriptions variant is nil")
+			return
+		}
+		h.handleAgentListSubscriptions(conn, req.RequestId)
+
 	case protocol.TaskControlKind_RestoreTasks:
 		// Operator-identity gate, like SetCaps below; deliberately NOT in
 		// requiredCap, for the same self-amplification reason.
