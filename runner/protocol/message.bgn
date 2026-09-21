@@ -502,6 +502,40 @@ enum TaskControlKind:
                             # server one, which has no principal task to project
                             # from, or a data-plane one.
 
+    # --- agentboard, agent face (folded in from the retired AgentMessageKind) ---
+    #
+    # Each verb below is keyed to the CALLER's own subscriptions, or to a
+    # message the caller published, and takes NO capability. That is the line
+    # the agent_ prefix draws, and it is where the gates already sat: of the
+    # twelve verbs on the retired enum, exactly two were capability-gated --
+    # list_topics (board_observe) and purge (purge) -- and those two are not
+    # here, because they are board_topics and board_purge, which they
+    # duplicated. A verb that reaches topics the caller need not subscribe to
+    # is a board_ kind and takes a bit; a future verb is named by that test,
+    # not by which CLI noun it sits under.
+    #
+    # Appended, like every block above: this enum is a positional :u8, so an
+    # insertion renumbers every later value and a version-skewed peer decodes
+    # a different verb -- silently.
+    agent_send              # publish to a topic, or reply to a retained message
+    agent_subscribe         # add one exact-match topic to my subscription set
+    agent_unsubscribe       # remove one
+    agent_list_subscriptions
+    agent_wait              # long-poll one topic; answers with what is already
+                            # above the cursor before it blocks at all
+    agent_inbox             # read every subscribed topic; moves no position
+    agent_inbox_advance     # read AND record as delivered. One caller by
+                            # design: the UserPromptSubmit hook the runner
+                            # injects. A separate kind rather than a flag on
+                            # agent_inbox so "do not pass this by hand" is the
+                            # shape of the CLI rather than a line in a skill.
+    agent_list_retained     # one named topic's ring as METADATA only
+    agent_read_seq          # one retained message, inside my subscriptions
+    agent_retract           # withdraw one message I published. Gated on
+                            # AUTHORSHIP, not a capability -- distinct from
+                            # board_retract, which skips that check on the
+                            # purge bit and is recorded as by=purge_cap.
+
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
 # operator surfaces use cli/tui/webui and carry no agent_info.
@@ -1245,6 +1279,336 @@ format BoardRetractRequest:
 format BoardRetractResponse:
     request_id :u32
     status :BoardStatus
+# --- agentboard, agent face -------------------------------------------------
+#
+# These formats were agentboard/agentboard.bgn, a second description of the
+# board carried on its own AppKind with its own envelope, status vocabulary and
+# copies of RunnerID / TaskID. They moved here verbatim; the identity fields now
+# resolve to this file's own types, and AgentListRetainedResponse.status, which
+# reused the agent-side PurgeStatus, is BoardStatus (identical values).
+#
+# The rows are deliberately NOT merged with the operator ones above.
+# BoardMessageRow carries shown_to, the retracted trio and reply_to_topic;
+# DeliveredMessage and RetainedMeta must not, because a withdrawn message
+# leaves every agent-facing path and a shared row would hand it back.
+
+format AgentSendRequest:
+    request_id :u32
+    # in_reply_to is the seq of the message this one answers; 0 = not a reply.
+    # The server resolves it against the retained rings at publish time and
+    # rejects the send when it cannot (SendStatus.unknown_in_reply_to), so a
+    # non-zero value on a delivered message always denotes a real message.
+    in_reply_to :u64
+    topic_len :u16
+    topic :[topic_len]u8
+    # An empty topic is meaningful only on a reply: the server then derives the
+    # destination from the parent's authenticated sender (its chat.<short-id>).
+    topic_len != 0 || in_reply_to != 0
+    # payload_stream_id references a client-initiated trsf send-stream
+    # carrying the message payload; the server reads from the matching
+    # receive stream until EOF and decodes the bytes as the publish body.
+    # Streamed instead of inline so multi-KB payloads don't blow path MTU
+    # on UDP. See docs/superpowers/specs/2026-05-09-udp-dualstack-design.md
+    # §12.1.
+    payload_stream_id :u64
+    # no_retire_on_reply suppresses the reply-retire rule for THIS message:
+    # normally, when the task a point-to-point message was addressed to
+    # replies to it, the server retracts the original on the author's behalf
+    # (see AgentRetractRequest). A reply is proof the instruction was handled, and
+    # retracting it there is what stops a recipient whose context is reset
+    # from re-reading and re-doing it — without the author having to remember
+    # to withdraw it.
+    #
+    # The bit is NEGATIVE so that its zero value is the default behaviour, the
+    # same reason ScopeBase.subtree is 0: a caller that sets no bits, and a
+    # struct nobody filled in, must both mean "retire on reply". Set it for a
+    # message that has to survive being answered — a standing instruction, or
+    # anything whose reply is an acknowledgement rather than a completion.
+    #
+    # The rule fires only when the parent sits on the REPLIER's own
+    # chat.<short-id>, i.e. it was addressed to them specifically. A publish to
+    # a shared topic is never auto-retired however this bit is set, because one
+    # subscriber's reply says nothing about whether the others have read it.
+    no_retire_on_reply :u1
+    reserved :u7
+    # reply_to_topic is where a reply to THIS message is routed. Empty = the
+    # sender's own chat.<short-id>, which is what every message did before this
+    # field existed and what one still does when it says nothing.
+    #
+    # It is the SENDER declaring a destination, not the replier choosing one: a
+    # peer answers with --in-reply-to alone and never has to know the topic
+    # exists. The alternative was a `reply_topic` field in the PAYLOAD, which
+    # only works on a peer that reads the convention — and the convention is
+    # documented in a skill file such a peer has by definition not been given.
+    #
+    # Appended, not inserted: this is a REQUEST, so the skew that matters is a
+    # new client against an old server. The old server stops before these bytes
+    # and routes replies the way it always did, which is a degrade rather than
+    # a decode failure.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
+
+enum SendStatus:
+    :u8
+    ok
+    payload_too_large
+    too_many_topics
+    bad_frame
+    unknown_in_reply_to
+
+format AgentSendResponse:
+    request_id :u32
+    status :SendStatus
+    seq :u64
+    # delivered_to is how many subscribers the publish matched at send time.
+    # Without it `ok` covers both "everyone got it" and "nobody is listening",
+    # and the sender cannot tell them apart: the retained ring accepts the
+    # message either way, and the one command that would answer the question
+    # (board subscribers) needs board_observe, which a confined task lacks. A
+    # typo'd or stale chat.<short-id> is the common way to land on zero.
+    #
+    # It counts the PUBLISHER too when the publisher subscribes to the target
+    # topic — sending to your own chat.<short-id> is a deliberate self-ping and
+    # reports 1. Clamped to u16.
+    #
+    # This is a weak enumeration signal (publish to a name, learn whether
+    # anyone holds it), accepted on the same ground list_retained is ungated:
+    # subscribe takes no capability, so whoever knows a topic name can already
+    # subscribe and read its payloads via inbox. It reveals nothing to someone
+    # who cannot name the topic, so it is not a discovery sweep.
+    delivered_to :u16
+
+format AgentSubscribeRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+format AgentUnsubscribeRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+enum SubscribeStatus:
+    :u8
+    ok
+    bad_pattern
+
+format AgentSubscribeResponse:
+    request_id :u32
+    status :SubscribeStatus
+
+format DeliveredMessage:
+    seq :u64
+    # in_reply_to is the seq of the message this one answers, 0 when it is not
+    # a reply. Server-validated at publish time — see AgentSendRequest.in_reply_to.
+    in_reply_to :u64
+    topic_len :u16
+    topic :[topic_len]u8
+    # payload_stream_id references a server-initiated trsf send-stream
+    # carrying the delivered payload; agent reads from the matching
+    # receive stream until EOF. See AgentSendRequest.payload_stream_id for the
+    # rationale (UDP MTU; streamed instead of inline).
+    payload_stream_id :u64
+    from_runner_id :RunnerID
+    from_task_id :TaskID
+    from_hostname_len :u8
+    from_hostname :[from_hostname_len]u8
+    # from_agent_profile is the agent profile name the sending task was running
+    # under AT PUBLISH TIME (e.g. "claude" / "codex"), resolved server-side from
+    # the task record — the agent does not supply it. Frozen per message because
+    # a task's profile is per-open: `session new --resume` reuses a task id (and
+    # so its chat.<short-id> topic) under a different runtime, so resolving it at
+    # read time would misattribute everything already in the ring. Empty means
+    # the server could not attribute a runtime (e.g. a server-originated
+    # publish, which carries from_hostname "server"); it never means "runner
+    # default".
+    from_agent_profile_len :u8
+    from_agent_profile :[from_agent_profile_len]u8
+    # reply_to_topic is where a reply to THIS message is routed — the
+    # destination its SENDER declared with AgentSendRequest.reply_to_topic. Empty
+    # means the sender declared none, so a reply goes to its own
+    # chat.<short-id>. Echoed for the same reason in_reply_to is: the routing
+    # decision is the server's and is otherwise unobservable, which makes a
+    # misrouted reply undiagnosable from either end. A replier needs it for
+    # nothing — --in-reply-to alone lands correctly — but a replier that adds
+    # its own --topic silently overrides this, and it cannot decline to do that
+    # without being able to see it.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
+
+format AgentWaitRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+    since :u64
+    timeout_ms :u32
+    # in_reply_to, when non-zero, filters the wait: only a message whose
+    # in_reply_to equals this satisfies it, and a non-matching publish on the
+    # topic does not end the wait. Zero means no filter.
+    #
+    # This is what tells a reply apart from unrelated traffic. `dispatch` sets
+    # it to the seq its own publish returned, so a message already retained on
+    # the topic — or an answer to somebody else's question — cannot be mistaken
+    # for the answer to this one.
+    in_reply_to :u64
+
+format AgentWaitResponse:
+    request_id :u32
+    timed_out :u8
+    next_cursor :u64
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+format AgentInboxRequest:
+    request_id :u32
+    since :u64
+
+format AgentInboxResponse:
+    request_id :u32
+    next_cursor :u64
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+# AgentInboxAdvanceRequest asks for the messages on this task's subscribed topics
+# that the automatic injection path has not yet been given, and records them as
+# given. It carries NO cursor, in either direction: the position is the
+# server's (taskState.shown, per topic), so a caller has none to assert and
+# none to write back.
+#
+# It exists as a separate kind from AgentInboxRequest rather than a flag on it
+# because only one caller may ever send it — the UserPromptSubmit hook the
+# runner injects. As a flag, "do not pass this by hand" was an instruction in
+# the skill file; as a kind selected by --user-prompt-submit-hook, whose output
+# is a hook envelope, it is the shape of the CLI.
+#
+# A plain AgentInboxRequest reads the same topics idempotently and moves nothing.
+format AgentInboxAdvanceRequest:
+    request_id :u32
+
+format AgentInboxAdvanceResponse:
+    request_id :u32
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+format AgentListSubscriptionsRequest:
+    request_id :u32
+
+format AgentSubscriptionSummary:
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+format AgentListSubscriptionsResponse:
+    request_id :u32
+    subscriptions_len :u16
+    subscriptions :[subscriptions_len]AgentSubscriptionSummary
+
+# AgentListRetainedRequest enumerates a topic's retained ring as METADATA ONLY — no
+# payload bytes cross the wire. This is the content-blind way to identify which
+# retained message to purge (by seq / sender / size / time) without ingesting a
+# payload that might itself trip a moderation gate. No cap gate (helloed only),
+# like inbox/wait: it is a keyed read of an already-named topic (not a discovery
+# sweep — that is list_topics), and everything it surfaces is a strict subset of
+# what subscribing + inbox already returns uncapped. Destruction (purge) needs
+# Capability.purge; this read does not. Single named topic, not a board sweep.
+format AgentListRetainedRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+# RetainedMeta is one retained-ring entry without its payload: just enough to
+# decide what to purge. size is the payload length in bytes.
+format RetainedMeta:
+    seq :u64
+    # in_reply_to is the seq of the message this one answers, 0 when it is not
+    # a reply. Server-validated at publish time — see AgentSendRequest.in_reply_to.
+    in_reply_to :u64
+    from_runner :RunnerID
+    from_task :TaskID
+    from_hostname_len :u8
+    from_hostname :[from_hostname_len]u8
+    # See DeliveredMessage.from_agent_profile.
+    from_agent_profile_len :u8
+    from_agent_profile :[from_agent_profile_len]u8
+    size :u32
+    received_at_unix_ms :u64
+    # See DeliveredMessage.reply_to_topic. Present here because choosing what
+    # to purge and diagnosing where an answer went are the same read.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
+
+format AgentListRetainedResponse:
+    request_id :u32
+    status :BoardStatus
+    metas_len :u16
+    metas :[metas_len]RetainedMeta
+
+# AgentReadSeqRequest fetches ONE retained message by seq. It exists because the
+# inbox hooks stop inlining a large body and hand back a pointer instead;
+# without it that pointer has to say `inbox --since <seq-1>`, which re-reads
+# every later message too — and inbox fetches every payload in the batch
+# before emitting any, so the bytes are transferred and then discarded.
+format AgentReadSeqRequest:
+    request_id :u32
+    seq :u64
+
+enum AgentReadSeqStatus:
+    :u8
+    ok
+    # not_found deliberately merges "no longer on the board" with "on a topic
+    # this task does not subscribe to". Separating them would answer "does seq
+    # N exist?" for every seq, which is an enumeration oracle over every ring:
+    # subscribing needs a topic NAME, and that requirement is what keeps the
+    # rings from being browsable. A status that leaks existence walks around it.
+    not_found
+
+format AgentReadSeqResponse:
+    request_id :u32
+    status :AgentReadSeqStatus
+    # 1 on ok, 0 otherwise. A count rather than a bare DeliveredMessage
+    # because the layout is fixed: an absent message would still have to
+    # encode one, with a payload_stream_id pointing at nothing. Mirrors
+    # AgentWaitResponse / AgentInboxResponse so the body rides the same stream path.
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+# AgentRetractRequest withdraws ONE message the CALLER published, named by its
+# board-global seq. Withdrawal is a LOGICAL delete: the message leaves every
+# agent-facing path (deliver / inbox / wait / read_seq / list_retained) but
+# stays readable on the operator surfaces (harness-cli board read, TUI, WebUI)
+# until it ages out like anything else. That asymmetry is the point — an agent
+# can withdraw a stale instruction in seconds without shrinking the window a
+# human has to audit what was said.
+#
+# The problem it solves: a task whose context was reset re-reads a topic's
+# retained ring and re-executes instructions it already carried out. The
+# knowledge that an instruction is spent lives with its SENDER, not with the
+# reset recipient, so the withdrawal has to be the sender's to make.
+#
+# No capability gate. The gate is AUTHORSHIP — the server compares the stored
+# message's from_task against the caller's authenticated task id and refuses
+# otherwise, so a retract can never destroy something the caller did not write.
+# Capability.purge stays the gate for board_purge, which erases the bytes for
+# real; that remains the escape hatch for a payload which must not survive at
+# all (a leaked credential), and it reaches retracted messages too.
+format AgentRetractRequest:
+    request_id :u32
+    seq :u64
+
+enum AgentRetractStatus:
+    :u8
+    ok
+    # not_found deliberately merges "no live message carries that seq" (never
+    # published, rotated out of its ring, already retracted, purged) with
+    # "published by somebody else", exactly as AgentReadSeqStatus.not_found merges
+    # its two cases. seq is board-global and consecutive, so a separate
+    # "not yours" answer would confirm the existence of any seq on any ring —
+    # an enumeration oracle over topics the caller can neither name nor read.
+    not_found
+
+format AgentRetractResponse:
+    request_id :u32
+    status :AgentRetractStatus
+
 
 format OpenInteractiveRequest:
     repo_path_len :u16
@@ -1526,6 +1890,16 @@ format TaskControlRequest:
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapRequest
         TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksRequest
         TaskControlKind.trsf_state            => trsf_state            :TrsfStateRequest
+        TaskControlKind.agent_send               => agent_send               :AgentSendRequest
+        TaskControlKind.agent_subscribe          => agent_subscribe          :AgentSubscribeRequest
+        TaskControlKind.agent_unsubscribe        => agent_unsubscribe        :AgentUnsubscribeRequest
+        TaskControlKind.agent_list_subscriptions => agent_list_subscriptions :AgentListSubscriptionsRequest
+        TaskControlKind.agent_wait               => agent_wait               :AgentWaitRequest
+        TaskControlKind.agent_inbox              => agent_inbox              :AgentInboxRequest
+        TaskControlKind.agent_inbox_advance      => agent_inbox_advance      :AgentInboxAdvanceRequest
+        TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedRequest
+        TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqRequest
+        TaskControlKind.agent_retract            => agent_retract            :AgentRetractRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1582,6 +1956,19 @@ format TaskControlResponse:
         TaskControlKind.open_forward_tap      => open_forward_tap      :OpenForwardTapResponse
         TaskControlKind.restore_tasks         => restore_tasks         :RestoreTasksResponse
         TaskControlKind.trsf_state            => trsf_state            :TrsfStateResponse
+        TaskControlKind.agent_send               => agent_send               :AgentSendResponse
+        TaskControlKind.agent_subscribe          => agent_subscribe          :AgentSubscribeResponse
+        # agent_unsubscribe answers with AgentSubscribeResponse: the two verbs
+        # share one status enum, and a second identical format would be a
+        # format to keep in step for no reader's benefit.
+        TaskControlKind.agent_unsubscribe        => agent_unsubscribe        :AgentSubscribeResponse
+        TaskControlKind.agent_list_subscriptions => agent_list_subscriptions :AgentListSubscriptionsResponse
+        TaskControlKind.agent_wait               => agent_wait               :AgentWaitResponse
+        TaskControlKind.agent_inbox              => agent_inbox              :AgentInboxResponse
+        TaskControlKind.agent_inbox_advance      => agent_inbox_advance      :AgentInboxAdvanceResponse
+        TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedResponse
+        TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqResponse
+        TaskControlKind.agent_retract            => agent_retract            :AgentRetractResponse
 
 enum SetCapsStatus:
     :u8
