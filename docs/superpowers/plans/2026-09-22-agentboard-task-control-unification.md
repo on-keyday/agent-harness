@@ -18,12 +18,25 @@
 > 3. **One baseline comparison, in Task 13** (as amended in Task 2 Step 1b),
 >    not one per task.
 >
-> Result: 17 commits, 24 packages green under `make test`, and the baseline
-> diff clean except the two denial lines U7 changes. Task 14's fleet restart is
-> NOT done — the server runs on another host. Until it restarts, every agent
-> verb on the fleet hangs: the new `harness-cli` sends kinds the old server
-> drops in silence. Measured, not predicted (`harness-cli agent subscriptions`
-> against the live server, killed at 25 s).
+> Result: 24 packages green under `make test`, and the baseline diff clean
+> except the two denial lines U7 changes.
+>
+> **The skew between the two restarts was real and was measured, both ways.**
+> `make build` in the main checkout replaces the `harness-cli` every task on
+> the host runs, so between that and the server restart the new client was
+> talking kinds the old server drops in silence: `harness-cli agent
+> subscriptions` against the live server hung and was killed at 25 s. After
+> the operator restarted it (server now reports `e13dadaf`) the same command
+> answers immediately. That is Pitfall 10's server-first rule in its concrete
+> form for this change — not a wipe, but a fleet-wide hang for the duration.
+>
+> Verified on the LIVE fleet afterwards, which is stronger than the dummy:
+> send → read → retained → retract, `agent topics` carrying `retracted_count`
+> (a field the agent face did not have before the merge), the retract
+> asymmetry (gone from `agent retained`, `RETRACTED … by=author` on `board
+> read`, `shown_to=1/1`), and the whole wake path — a self-ping travelled
+> `agent_send` → board → `TaskWake` → runner → PTY → the hook's
+> `agent_inbox_advance` → back into the agent's context.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
