@@ -35,7 +35,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
 )
