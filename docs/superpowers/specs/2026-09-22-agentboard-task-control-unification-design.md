@@ -24,7 +24,7 @@ description. No operator-visible behaviour changes.
 | U8 | Refusals that are **not** capability answers keep their own enums: `ReadSeqStatus.not_found`, `RetractStatus.not_found`, `SendStatus`'s frame and size arms. Those merge two cases deliberately, to avoid an enumeration oracle; `PermissionDenied` does not express that. | author, from `agentboard.bgn:419` |
 | U9 | The schema change lands whole, in one commit with the server and client migration. Per-verb staging would require both frame families alive at once. | author, from `feedback_no_split_schemas` |
 | U10 | `board_send`, the agentboard send capability, is **out of scope here** and gets its own spec after this lands. Sequencing chosen because `PermissionDenied` then answers its denial with no new status values. | operator, 2026-09-22 |
-| U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. Its delivery half was superseded by the PTY wake a day after it was reserved; its remaining half is a dial-per-hook cost that an enum value does not address. A push path, if built, appends a kind then — reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris, which is how this spec's first draft read it. Both halves are recorded in Problem so they survive the value. | author, from `2026-04-28-agent-comms-design.md:187`/`:468` and `2026-04-29-agent-wake-and-origin-design.md` |
+| U11 | The reserved `deliver` slot is **not** carried into `TaskControlKind`. The push it reserved exists as `RunnerRequestType.TaskWake`, terminating at the runner; the dial cost it was also meant to answer comes from the inbox path being a process per turn, which no push can remove. Reserving a slot in an append-safe enum buys nothing, and an unused value invites being read as debris — which is how this spec's first draft read it. Both halves are recorded in Problem so they survive the value. | author, from `2026-04-28-agent-comms-design.md:187`/`:468`, `2026-04-29-agent-wake-and-origin-design.md`, `runner/connect.go:776` |
 
 ## Problem
 
@@ -82,24 +82,31 @@ topic, deferred out of v1 in favour of `wait`'s long-poll
 AgentMessageKind_Deliver`, excluding the generated file, returns no commit:
 no hand-written line has ever read it.
 
-It was reserved against two things, and only one of them is still open.
+It was reserved against two things. Neither is a reason to keep it.
 
-- **An idle agent not learning that a message arrived.** Solved the NEXT DAY
-  by a different mechanism: `2026-04-29-agent-wake-and-origin-design.md`
-  opens on exactly this ("No real-time delivery to idle agents") and answers
-  it with the runner typing a synthetic prompt into the session's PTY. That
-  spec never names `deliver`, so the slot was not retired — it was left
-  behind.
+- **An idle agent not learning that a message arrived.** Built, the NEXT DAY,
+  as a push — just not this one. `2026-04-29-agent-wake-and-origin-design.md`
+  opens on exactly this problem ("No real-time delivery to idle agents"), and
+  what shipped is `RunnerRequestType.TaskWake`: the server pushes over the
+  **runner's** long-lived control connection and the runner writes a
+  synthetic prompt into the session's PTY (`runner/connect.go:776` →
+  `Session.WakeStdin`). The server-initiated push exists; it terminates at
+  the runner and carries a task id rather than a body. That spec never names
+  `deliver`, so the slot was left behind rather than retired.
 - **A fresh dial per inbox hook** (`2026-04-28-agent-comms-design.md:468`,
   which named a long-lived connection carrying `deliver` as the v2 answer).
-  Still open, and the wake did not narrow it: a wake fires
-  `UserPromptSubmit`, which runs `harness-cli agent inbox`, which dials
-  through `ConnectAgent` in `cli/agent/conn.go`. The one place a connection
-  is held open is `wait` / `dispatch`, and those are bounded to scripts
-  outside an agent turn by design.
+  The cost is real and still present, but `deliver` was never a fix for it.
+  The dial happens because the inbox path is **a process per turn** — the
+  hook runs `harness-cli agent inbox`, which dials through `ConnectAgent`
+  (`cli/agent/conn.go`) and exits — not because the transport lacks a push.
+  An agent-terminated push needs something resident on the agent side to
+  receive it, and there is nothing: every `harness-cli agent` invocation is
+  a short-lived subprocess. Removing that cost is a different design (a
+  resident agent-side helper), and it would not reuse this value.
 
-So what the value reserves is a solved problem plus an unsolved cost, and
-the unsolved cost is not a reason to keep an enum value.
+`wait` / `dispatch` are the one path that does hold a connection open, and
+they are bounded to scripts outside an agent turn by design — the agent
+itself is told not to call them.
 
 ### Half of this migration already happened
 
