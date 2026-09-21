@@ -144,3 +144,47 @@ one.
 **Why deferred.** The cost is a few duplicated lines per worktree. Changing it
 touches what every agent on every runtime reads first, which is not a change to
 make for tidiness while the reported hazard turns out not to exist.
+
+---
+
+## Somewhere to read which MODEL a task runs
+
+**What.** `ls` attests the agent *profile* (`agent=claude|pi|agy`), never the
+model behind it. Today the only source is what the agent says about itself, and
+that was wrong the first time it mattered: a peer's message header said
+"claude-backed" while its own footer read `z-ai/glm-5.3-flash`. A port to read
+the value from would be useful. Nothing says it has to be the screen.
+
+**Evidence** (2026-09-22, `harness-cli session snapshot --rows 45 --cols 160
+<task-id>`, bottom row):
+
+```
+pi        z-ai/glm-5.3-flash • high
+agy       Gemini 3.8 Flash · medium
+claude    ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt
+```
+
+Two of three print it; the fleet's default prints it nowhere on screen. And
+`cli/detect_rules.json`, which is already per-agent screen rules as data, holds
+exactly one rule set (`agent: claude`) — so the machinery exists for the runtime
+with no model on screen, and not for the two that have one.
+
+**The one route for Claude Code, and what it costs.** Its statusLine command is
+handed `model.id` on stdin (an id, not a display name), so the harness could
+have the value by owning that command rather than scraping a footer. The cost is
+measured, by configuring one and taking it away again:
+
+```
+no statusline     interrupt_hint_working  matched=true
+statusline        matched=FALSE — prompt_box_idle (950) fires on a working session
+removed again     matched=true
+```
+
+Documented rather than incidental: "With a custom status line configured, Claude
+Code stops showing most of the footer's keyboard hints, including `esc to
+interrupt`" (code.claude.com/docs/en/statusline). So taking this route means
+editing `detect_rules.json` in the same change.
+
+**Why deferred.** Wanted, not needed — nothing is blocked on it today. And a
+one-shot task has no PTY and no statusline, so this route cannot cover
+`submit`-created tasks at all.
