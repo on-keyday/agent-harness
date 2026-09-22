@@ -146,8 +146,18 @@ func TestUsageNamesItsVerb(t *testing.T) {
 		if len(v.Args) == 0 && v.Trailing == nil {
 			fs := v.NewFlagSet(flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
-			if _, err := v.Parse(fs, nil); err != nil {
-				t.Errorf("%s: takes no positionals but the bare form fails: %v", v.FlagSetName(), err)
+			// Whatever the cross-flag rules demand, the way
+			// TestUsagePositionalsParse already supplies it. "No positionals"
+			// was standing in for "requires nothing", and AtLeastOne makes
+			// that substitution false: `board purge-thread` declares no
+			// positional and still refuses the bare line, deliberately -- a
+			// selector-less thread purge is every conversation on the board.
+			// Parsing the RULE-SATISFYING minimal form keeps the check (the
+			// verb's own smallest call must work) instead of skipping the
+			// verbs that have rules.
+			sat, satPositionals := satisfying(v, nil, false)
+			if _, err := v.Parse(fs, append(sat, satPositionals...)); err != nil {
+				t.Errorf("%s: takes no positionals but its minimal form fails: %v", v.FlagSetName(), err)
 			}
 		}
 	}

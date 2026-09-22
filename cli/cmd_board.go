@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -398,6 +399,46 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			status = "not_found"
 		}
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"purged\":%d}\n", status, topic, purged)
+
+	case verb.SubRetractThread, verb.SubPurgeThread:
+		// ONE dialed client for the whole run. The package-level BoardRetract /
+		// BoardPurge helpers used by the two cases above dial per call, which
+		// is right for a verb that touches one message and wrong here: a
+		// conversation is tens of them, so that would be tens of handshakes.
+		c, derr := Dial(ctx, cid, protocol.ClientKind_Cli)
+		if derr != nil {
+			return derr
+		}
+		defer c.Close()
+
+		op := ThreadRetract
+		if ba.Sub == verb.SubPurgeThread {
+			op = ThreadPurge
+		}
+		res, ferr := FanoutThread(ctx, c, op, ThreadFilter{
+			Tasks:        ba.Tasks,
+			Seq:          ba.Seq,
+			Conversation: ba.Conversation,
+		})
+		if ferr != nil {
+			return ferr
+		}
+		if ba.JSON {
+			for _, row := range res.Rows {
+				b, merr := json.Marshal(row)
+				if merr != nil {
+					return merr
+				}
+				fmt.Fprintf(out, "%s\n", b)
+			}
+		} else {
+			fmt.Fprintf(out, "thread: %s\n%s\n", res.Header, res.Summary())
+		}
+		// The partial result is printed BEFORE the error that stopped the run,
+		// so what completed is on screen next to the reason the rest is not.
+		if res.Err != nil {
+			return res.Err
+		}
 
 	default:
 		return fmt.Errorf("unknown board subcommand: %q", ba.Sub)

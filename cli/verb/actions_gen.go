@@ -72,7 +72,7 @@ type AgentSendAction struct {
 	Timeout time.Duration
 }
 
-// BoardAction is built by: board purge, board read, board retract, board subscribers, board thread, board topics.
+// BoardAction is built by: board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -1633,6 +1633,24 @@ func init() {
 			}
 			return a, nil
 		},
+		"board retract-thread\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "retract-thread"
+			a.Seq = uint64Of(b.Flags["seq"])
+			a.Tasks = stringsOf(b.Custom["task"])
+			a.Conversation = b.Str("conversation")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"board purge-thread\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "purge-thread"
+			a.Seq = uint64Of(b.Flags["seq"])
+			a.Tasks = stringsOf(b.Custom["task"])
+			a.Conversation = b.Str("conversation")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"submit\x00cli": func(b Bound) (Action, error) {
 			a := SpawnAction{}
 			a.Kind = "submit"
@@ -2850,6 +2868,8 @@ const (
 	CmdBoardSubscribers       = "board subscribers"
 	CmdBoardRetract           = "board retract"
 	CmdBoardPurge             = "board purge"
+	CmdBoardRetractThread     = "board retract-thread"
+	CmdBoardPurgeThread       = "board purge-thread"
 	CmdSubmit                 = "submit"
 	CmdInteractive            = "interactive"
 	CmdSessionNew             = "session new"
@@ -2936,6 +2956,7 @@ const (
 	SubLs              = "ls"
 	SubNotifyWatch     = "notify-watch"
 	SubPurge           = "purge"
+	SubPurgeThread     = "purge-thread"
 	SubQuit            = "quit"
 	SubRead            = "read"
 	SubReconnect       = "reconnect"
@@ -2944,6 +2965,7 @@ const (
 	SubResize          = "resize"
 	SubRetained        = "retained"
 	SubRetract         = "retract"
+	SubRetractThread   = "retract-thread"
 	SubRm              = "rm"
 	SubRun             = "run"
 	SubSave            = "save"
@@ -3763,6 +3785,48 @@ func ParseCmdBoardPurge(sf Surface, args []string, ctx map[string]string) (Board
 	sp, ok := Lookup("board", "purge")
 	if !ok {
 		return zero, fmt.Errorf("board purge: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardRetractThread(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "retract-thread")
+	if !ok {
+		return zero, fmt.Errorf("board retract-thread: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardPurgeThread(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "purge-thread")
+	if !ok {
+		return zero, fmt.Errorf("board purge-thread: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -5138,6 +5202,10 @@ type CLIDispatch[R any] interface {
 	BoardRetract(BoardAction) R
 	// board purge
 	BoardPurge(BoardAction) R
+	// board retract-thread
+	BoardRetractThread(BoardAction) R
+	// board purge-thread
+	BoardPurgeThread(BoardAction) R
 	// submit
 	Submit(SpawnAction) R
 	// interactive
@@ -5437,6 +5505,18 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardPurge(a), true, nil
+	case CmdBoardRetractThread:
+		a, perr := ParseCmdBoardRetractThread(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardRetractThread(a), true, nil
+	case CmdBoardPurgeThread:
+		a, perr := ParseCmdBoardPurgeThread(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardPurgeThread(a), true, nil
 	case CmdSubmit:
 		a, perr := ParseCmdSubmit(CLI, args, ctx)
 		if perr != nil {
@@ -5812,6 +5892,10 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardRetract(a), true
 		case "purge":
 			return h.BoardPurge(a), true
+		case "retract-thread":
+			return h.BoardRetractThread(a), true
+		case "purge-thread":
+			return h.BoardPurgeThread(a), true
 		}
 	case SpawnAction:
 		switch a.Kind {
@@ -6134,6 +6218,18 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardPurge:
 			a, perr := ParseCmdBoardPurge(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardRetractThread:
+			a, perr := ParseCmdBoardRetractThread(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardPurgeThread:
+			a, perr := ParseCmdBoardPurgeThread(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

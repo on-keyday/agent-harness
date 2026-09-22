@@ -1152,6 +1152,87 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"board purge chat.abcd1234", "board purge chat.abcd1234 --seq 42"},
 	},
+	// --- board, thread-scoped ---
+	//
+	// Neither takes a <topic>, which is the visible difference from the two
+	// verbs above and the whole reason these exist: a conversation spans
+	// topics by construction -- each agent receives on its own
+	// chat.<short-id> -- so naming one topic cannot select one conversation.
+	//
+	// Both carry AtLeastOne. `board thread` with no selector prints every
+	// chain on the board, and a destructive twin inheriting that default
+	// means "destroy the board": the --seq-left-at-zero shape recorded on
+	// `board purge` above, which destroyed two messages on a live board, one
+	// step wider. prune already answers this the same way.
+	{
+		Path: []string{"board", "retract-thread"},
+		Notes: []string{
+			"withdraw every message in ONE conversation from every agent-facing path,",
+			"across all the topics it spans. They stay readable to the operator marked",
+			"RETRACTED, exactly as `board retract` leaves one (cap: purge).",
+			"No <topic>: a conversation spans topics, so naming one cannot select it.",
+			"A selector is REQUIRED -- run `board thread` with the same selector first to",
+			"see what this will reach.",
+		},
+		CmdlineSurfaces: CLI,
+		ModalSurfaces: []ModalSurface{
+			// w on the highlighted conversation in the chains list.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-chains-view"},
+		},
+		Action: "BoardAction",
+		Const:  map[string]string{"Sub": "retract-thread"},
+		AtLeastOne: []Rule{{Flags: []string{"seq", "task", "conversation"},
+			Reason: "a bare retract-thread would withdraw every conversation on the board; say which"}},
+		Flags: []Flag{
+			{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq",
+				Help: "the chain containing this seq -- NARROWER than a conversation, so this can leave a thread half-withdrawn"},
+			{Name: "task", Type: FlagString, Custom: argListValue, Field: "Tasks",
+				Help: "conversations involving ANY named task (repeatable, 32-hex id); repeating UNIONS, so this also reaches what either task discussed with a third party"},
+			{Name: "conversation", Type: FlagString, Default: "", Field: "Conversation",
+				Help: "the key `board thread` prints in each section header -- the unit the views group by"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
+		Examples: []string{
+			"board thread --conversation 60542da9+70fbad4a",
+			"board retract-thread --conversation 60542da9+70fbad4a",
+			"board retract-thread --task aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	},
+	{
+		Path: []string{"board", "purge-thread"},
+		Notes: []string{
+			"destroy every message in ONE conversation, across all the topics it spans,",
+			"operator view included (cap: purge). It reaches messages retract-thread",
+			"already withdrew, which is how the two are meant to be used in order.",
+			"No <topic> and a REQUIRED selector, for the same reasons as retract-thread.",
+			"Irreversible, and the board is the only copy: `board thread` with the same",
+			"selector prints what this removes, and the WebUI chains view can export it.",
+		},
+		CmdlineSurfaces: CLI,
+		ModalSurfaces: []ModalSurface{
+			// X on the highlighted conversation in the chains list.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-chains-view"},
+		},
+		Action: "BoardAction",
+		Const:  map[string]string{"Sub": "purge-thread"},
+		AtLeastOne: []Rule{{Flags: []string{"seq", "task", "conversation"},
+			Reason: "a bare purge-thread would destroy every conversation on the board; say which"}},
+		Flags: []Flag{
+			{Name: "seq", Type: FlagUint64, Default: uint64(0), Field: "Seq",
+				Help: "the chain containing this seq -- NARROWER than a conversation, so this can leave a thread half-destroyed"},
+			{Name: "task", Type: FlagString, Custom: argListValue, Field: "Tasks",
+				Help: "conversations involving ANY named task (repeatable, 32-hex id); repeating UNIONS, so this also reaches what either task discussed with a third party"},
+			{Name: "conversation", Type: FlagString, Default: "", Field: "Conversation",
+				Help: "the key `board thread` prints in each section header -- the unit the views group by"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines instead of text"},
+		},
+		Examples: []string{
+			"board thread --conversation 60542da9+70fbad4a",
+			"board purge-thread --conversation 60542da9+70fbad4a",
+		},
+	},
 	// --- spawning: submit / interactive / session new ---
 	//
 	// One shape, three verbs. The inventory found the TUI's submit had no
