@@ -287,6 +287,23 @@ stop showing the message, exactly as if you had retracted it. The operator's
 for your own retract, `by=purge_cap:<task-id>` (or `by=purge_cap:operator`) for
 this one.
 
+**A whole conversation can go at once.** `board retract-thread` and
+`board purge-thread` take the same `purge` bit and act on every message of one
+conversation, across each topic it spans — so an exchange you have been having
+can empty in a single operator action, your side and the peer's together. It is
+how a finished discussion is cleared: withdrawn first so a resumed peer cannot
+re-read spent instructions and redo them, destroyed later once whatever was
+worth keeping has been exported.
+
+**Read that as housekeeping, not as a fault, and do not re-send.** An exchange
+that vanishes is the one case where "the board lost my messages" and "somebody
+tidied up" look identical from in here, and re-sending a cleared conversation is
+the wrong repair for both. The one thing that IS distinguishable without asking:
+a **server restart** also empties the board, and it changes the high bits of
+every new `seq` (`seq >> 20` is the server's boot time in Unix ms), so a fresh
+seq whose prefix matches what you saw before means the server never went away —
+and that the emptiness was somebody's decision.
+
 ### A reply retracts the message it answers
 
 You usually do not have to call `retract` at all. **When you reply to a

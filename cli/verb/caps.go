@@ -92,8 +92,10 @@ func CapDescription(c protocol.Capability) string {
 		return "list board topics, read a topic's retained messages, and list its subscribers; " +
 			"NOT required to send, subscribe, or read your own inbox"
 	case protocol.Capability_Purge:
-		return "destroy an agentboard topic's retained-message buffer (agent purge / board purge), " +
-			"or withdraw one message from every agent path while leaving it readable to the operator (board retract)"
+		return "destroy an agentboard topic's retained-message buffer (agent purge / board purge) " +
+			"or every message of one conversation, across each topic it spans (board purge-thread); " +
+			"or withdraw messages from every agent path while leaving them readable to the operator " +
+			"(board retract, board retract-thread)"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:

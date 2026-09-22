@@ -909,7 +909,16 @@ topic it landed on.
 bin/harness-cli board thread                                   # every chain
 bin/harness-cli board thread --seq 42                          # one chain
 bin/harness-cli board thread --task <32-hex> --task <32-hex>   # a pair's exchange
+bin/harness-cli board thread --conversation 60542da9+70fbad4a  # one conversation
 ```
+
+**A chain is not a conversation, and `--conversation` is the one selector that
+says so.** An unanswered publish is its own chain, and so is one sent with
+`--topic` rather than `--in-reply-to`; measured on a live board, a two-party
+exchange five minutes long was four chains and one conversation. `--seq` picks
+one of those chains and `--task` unions in whatever either party discussed with
+a third — the key printed in each section header is the unit the view groups by
+and the export sheet contains.
 
 The TUI opens it with `c` on the board modal's topic list, the WebUI with the
 **Chains** toggle in the Board tab — both beside the topic view rather than
@@ -929,6 +938,53 @@ except newline and tab, DEL, and C1 — because the bytes come from a peer and
 `ESC [ 2 J` clears a screen. Redirected or piped output is byte-exact instead,
 and `--json` always is: the CLI is a data path as well as a display, and
 escaping an extraction would corrupt it where nobody would see.
+
+### Clearing a finished conversation
+
+The same selectors that name a conversation for reading name it for clearing,
+across every topic it spans. Two verbs, because the operator's two moments are
+not the same one: withdraw when the discussion ends so a resumed peer cannot
+re-read it and act on it again, then destroy it once whatever was worth keeping
+has been taken out.
+
+```bash
+bin/harness-cli board thread          --conversation 60542da9+70fbad4a   # look
+bin/harness-cli board retract-thread  --conversation 60542da9+70fbad4a   # agents lose it
+bin/harness-cli board purge-thread    --conversation 60542da9+70fbad4a   # bytes gone
+```
+
+Both are gated on `purge` — no new bit, since `board retract` and `board purge`
+already reach the same messages one at a time — and **neither takes a `<topic>`
+argument**: a conversation spans topics by construction, so naming one cannot
+select one conversation. **A selector is required.** `board thread` with none
+prints every chain on the board, and a destructive twin inheriting that default
+would mean the whole board; the refusal names the three flags rather than
+assuming one.
+
+Retract alone does not clear a screen. A withdrawn message leaves every
+agent-facing path and stays on the operator surfaces marked `RETRACTED` —
+deliberately, so an agent cannot shrink the audit window — which is what makes
+"withdraw now, export later, purge after" a workflow rather than a data loss.
+`purge-thread` reaches the messages `retract-thread` already withdrew, and the
+board is the only copy: the WebUI chains view has an **Export** button, and
+`board thread` with the same selector prints exactly what will be removed.
+
+The result names the conversation and then counts every outcome, zeros
+included — a thread arrives half-withdrawn in normal operation, because
+replying to a message withdraws it, so `already-withdrawn` is a category of its
+own rather than a failure:
+
+```
+thread: claude/70fbad4a ↔ agy/60542da9   10 message(s)   14:47:09–15:03:57
+  retracted 5   already-withdrawn 5   not-found 0   failed 0   skipped 0
+```
+
+In the TUI both are on the chains list inside the board modal — `w` retracts
+the highlighted conversation, `X` purges it, the same letters that mean retract
+and purge on one message in the topic view. In the WebUI they are buttons on
+each conversation's header in the Chains view, beside nothing else that
+destroys: the Export modal stays export-only, because what it holds is
+everything currently displayed rather than one thread.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms
