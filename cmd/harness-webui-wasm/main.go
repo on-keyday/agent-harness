@@ -146,6 +146,8 @@ func main() {
 		"boardThread":        js.FuncOf(harnessBoardThread),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
+		"boardRetractThread": js.FuncOf(harnessBoardThreadOp(cli.ThreadRetract, "boardRetractThread")),
+		"boardPurgeThread":   js.FuncOf(harnessBoardThreadOp(cli.ThreadPurge, "boardPurgeThread")),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
 		"parseCommand":       js.FuncOf(harnessParseCommand),
@@ -1889,6 +1891,79 @@ func harnessBoardRetract(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardThreadOp runs one thread-scoped destructive verb over ONE
+// conversation, across every topic it spans.
+//
+// The key is the one this page was GIVEN — every chain row carries its
+// `conversation`, stamped by SelectThreads in Go — and it is passed straight
+// back. The browser never constructs or re-derives a key: a mirrored
+// implementation of conversationKey here would be free to disagree about which
+// exchange a message belongs to, and would have no way to fail loudly when the
+// grammar grows.
+//
+// The work is cli.FanoutThread, the same function the CLI verbs and the TUI
+// action call, so this surface cannot grow its own partitioning. That matters
+// on the retract path specifically: a message the caller already knows is
+// withdrawn must not be asked about, because the server collapses
+// already-withdrawn into the same not-found a missing message gets.
+//
+//	harness.boardRetractThread(key) -> Promise<{header, rows:[{seq,topic,outcome}], summary, stoppedBy}>
+//	harness.boardPurgeThread(key)   -> same shape
+func harnessBoardThreadOp(op cli.ThreadOp, name string) func(js.Value, []js.Value) any {
+	return func(this js.Value, args []js.Value) any {
+		executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+			resolve := promiseArgs[0]
+			reject := promiseArgs[1]
+			go func() {
+				c, err := currentClient()
+				if err != nil {
+					rejectErr(reject, err)
+					return
+				}
+				if len(args) < 1 || args[0].Type() != js.TypeString || args[0].String() == "" {
+					// No selector is the whole-board form the CLI declares
+					// unreachable; this surface must not be the one that offers
+					// it.
+					rejectErr(reject, fmt.Errorf("%s: a conversation key is required", name))
+					return
+				}
+				key := args[0].String()
+				res, ferr := cli.FanoutThread(rootCtx, c, op, cli.ThreadFilter{Conversation: key})
+				if ferr != nil {
+					rejectErr(reject, fmt.Errorf("%s: %w", name, ferr))
+					return
+				}
+				rows := make([]any, 0, len(res.Rows))
+				for _, r := range res.Rows {
+					rows = append(rows, map[string]any{
+						// Decimal string for the same reason boardRead's seqs
+						// are: a board seq exceeds JS's 2^53 safe range.
+						"seq":     strconv.FormatUint(r.Seq, 10),
+						"topic":   r.Topic,
+						"outcome": r.Outcome,
+					})
+				}
+				// stoppedBy is the error that ended the run, reported ALONGSIDE
+				// the partial result rather than instead of it: what completed
+				// is the useful half, and the run is idempotent.
+				stoppedBy := ""
+				if res.Err != nil {
+					stoppedBy = res.Err.Error()
+				}
+				resolve.Invoke(js.ValueOf(map[string]any{
+					"header":    res.Header,
+					"rows":      rows,
+					"summary":   res.Summary(),
+					"stoppedBy": stoppedBy,
+				}))
+			}()
+			return nil
+		})
+		defer executor.Release()
+		return js.Global().Get("Promise").New(executor)
+	}
 }
 
 // harnessForwardKill closes one registered port forward. Unlike board seq

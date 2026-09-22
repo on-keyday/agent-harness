@@ -5601,6 +5601,50 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     else renderBoardTopics();
   }
 
+  // boardConvActionBtn builds one thread-scoped destructive button.
+  //
+  // The key is the one the row was GIVEN — Go stamped it on every row — and it
+  // goes straight back to the bridge. Nothing here constructs or parses a
+  // conversation key: a second implementation in JS would be free to disagree
+  // with the Go one about which exchange a message belongs to.
+  //
+  // Both confirm first, matching the topic purge button beside them. Retract is
+  // confirmed too, not only purge: it reaches every message of an exchange
+  // across several topics, which is a larger move than the one-message ⊘ even
+  // though what it leaves behind is the same.
+  function boardConvActionBtn(key, kind) {
+    const purge = kind === "purge";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "board-chain-conv-btn";
+    btn.textContent = purge ? "🗑 purge thread" : "⊘ retract thread";
+    btn.title = purge
+      ? "この会話のメッセージを全トピックから破棄する（operator の表示からも消える・取り消し不可）"
+      : "この会話のメッセージを全トピックで撤回する（agent には届かなくなり、ここには残る）";
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const what = purge
+        ? `Destroy every message of this conversation?\n\n${key}\n\nThis cannot be undone and the board is the only copy — Export first if you want to keep it.`
+        : `Withdraw every message of this conversation from the agents?\n\n${key}\n\nThey stay readable here.`;
+      if (!window.confirm(what)) return;
+      btn.disabled = true;
+      try {
+        const res = purge
+          ? await window.harness.boardPurgeThread(key)
+          : await window.harness.boardRetractThread(key);
+        // The summary carries every category with its count, zeros included, so
+        // the line says what happened rather than only that something did.
+        appendCmdOutput(`board ${kind}-thread: ${res.header}\n${res.summary}`);
+        if (res.stoppedBy) appendCmdOutput(`board ${kind}-thread stopped: ${res.stoppedBy}`);
+        await renderBoardChains();
+      } catch (err) {
+        appendCmdOutput(`board ${kind}-thread: ${err.message}`);
+        btn.disabled = false;
+      }
+    });
+    return btn;
+  }
+
   // renderBoardChains paints the rows the bridge returns.
   async function renderBoardChains() {
     if (!boardChainsRowsEl) return;
@@ -5643,7 +5687,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         currentConv = r.conversation;
         const h = document.createElement("div");
         h.className = "board-chain-conv";
-        h.textContent = headerOf.get(currentConv) || currentConv;
+        const label = document.createElement("span");
+        label.className = "board-chain-conv-label";
+        label.textContent = headerOf.get(currentConv) || currentConv;
+        h.appendChild(label);
+        // Scoped to THIS conversation, never to what the view is showing:
+        // harness.boardThread() takes no selector and returns every
+        // conversation on the board, so a button acting on "what is displayed"
+        // would be the whole-board form the CLI declares unreachable. That is
+        // also why these live here and not in the Export modal, whose content
+        // is the whole sheet.
+        h.appendChild(boardConvActionBtn(currentConv, "retract"));
+        h.appendChild(boardConvActionBtn(currentConv, "purge"));
         boardChainsRowsEl.appendChild(h);
       }
       const row = document.createElement("div");
