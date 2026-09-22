@@ -308,8 +308,9 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		// reaches the same SelectThreads by its own collection route, which is
 		// the only part that differs between the two faces.
 		rows, serr := CollectThreads(ctx, cid, ThreadFilter{
-			Tasks: ba.Tasks,
-			Seq:   ba.Seq,
+			Tasks:        ba.Tasks,
+			Seq:          ba.Seq,
+			Conversation: ba.Conversation,
 		})
 		if serr != nil {
 			return serr

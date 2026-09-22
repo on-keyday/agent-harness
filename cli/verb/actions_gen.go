@@ -87,6 +87,8 @@ type BoardAction struct {
 	Seq uint64
 	// keep chains involving ANY named task (repeatable, 32-hex id); a task matches what it sent and what l…
 	Tasks []string
+	// only this conversation, by the key printed in each section header; COARSER than --seq, which is one …
+	Conversation string
 	// print rows without bodies
 	HeadersOnly bool
 }
@@ -1598,6 +1600,7 @@ func init() {
 			a.Sub = "thread"
 			a.Seq = uint64Of(b.Flags["seq"])
 			a.Tasks = stringsOf(b.Custom["task"])
+			a.Conversation = b.Str("conversation")
 			a.HeadersOnly = b.Bool("headers-only")
 			a.Raw = b.Bool("raw")
 			a.JSON = b.Bool("json")
