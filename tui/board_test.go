@@ -383,6 +383,17 @@ func TestBoardModal_ChainsUsesTheSharedRenderer(t *testing.T) {
 	if !strings.Contains(view, "message(s)") {
 		t.Errorf("chain detail lost the conversation header:\n%s", view)
 	}
+	// The fixed line above it is the KEY, not that header again. Printing the
+	// header twice is what the first version did, and it reached a screen
+	// before a test noticed -- so the assertion is that the two lines say
+	// DIFFERENT things.
+	if !strings.Contains(view, "conversation: "+rows[0].Conversation) {
+		t.Errorf("chain detail does not name the selector key:\n%s", view)
+	}
+	if strings.Count(view, "message(s)") != 1 {
+		t.Errorf("the conversation header appears %d times, want 1:\n%s",
+			strings.Count(view, "message(s)"), view)
+	}
 
 	// The window statement and the row count belong to the LIST -- it is the
 	// view that answers "is this everything". Asserted by the statement's TAIL:
@@ -523,4 +534,56 @@ func TestBoardModal_ChainListAdvertisesItsKeys(t *testing.T) {
 			t.Errorf("chain list footer does not advertise %q:\n%s", want, view)
 		}
 	}
+}
+
+// TestBoardModal_ActionStatusSurvivesItsRefresh pins the defect the live run
+// found: every destructive action here sets a result line and then re-reads
+// from the server, and the Apply* that lands was clearing the status — so the
+// summary the operator is meant to read was on screen for one round trip and
+// then gone. Both the per-message and the thread-scoped paths had it.
+func TestBoardModal_ActionStatusSurvivesItsRefresh(t *testing.T) {
+	rows := chainFixture(t)
+
+	t.Run("chains", func(t *testing.T) {
+		m := NewBoardModal()
+		m.Open()
+		m.SetSize(120, 40)
+		m.ApplyChains(rows)
+		m.SetStatusAfterRefresh("retract-thread:  retracted 2   already-withdrawn 0")
+		// The refresh the action schedules.
+		m.ApplyChains(rows)
+		if !strings.Contains(m.View(), "already-withdrawn 0") {
+			t.Errorf("the action's result did not survive its own refresh:\n%s", m.View())
+		}
+		// And it is consumed, not sticky: the NEXT refresh clears it, or a
+		// stale summary would outlive the state it described.
+		m.ApplyChains(rows)
+		if strings.Contains(m.View(), "already-withdrawn 0") {
+			t.Errorf("the status is sticky; it must be consumed by the refresh it waited for:\n%s", m.View())
+		}
+	})
+
+	t.Run("messages", func(t *testing.T) {
+		m := NewBoardModal()
+		m.Open()
+		m.SetSize(120, 40)
+		m.ApplyMessages("chat.aaaaaaaa", []cli.BoardMessage{{Seq: 1, Payload: []byte("x")}}, nil, true)
+		m.SetStatusAfterRefresh("retracted #1 (still readable here)")
+		m.ApplyMessages("chat.aaaaaaaa", []cli.BoardMessage{{Seq: 1, Payload: []byte("x")}}, nil, true)
+		if !strings.Contains(m.View(), "retracted #1") {
+			t.Errorf("the per-message result did not survive its refresh:\n%s", m.View())
+		}
+	})
+
+	t.Run("plain SetStatus is still cleared by a refresh", func(t *testing.T) {
+		m := NewBoardModal()
+		m.Open()
+		m.SetSize(120, 40)
+		m.ApplyChains(rows)
+		m.SetStatus("transient")
+		m.ApplyChains(rows)
+		if strings.Contains(m.View(), "transient") {
+			t.Errorf("SetStatus must NOT survive a refresh; only SetStatusAfterRefresh does:\n%s", m.View())
+		}
+	})
 }

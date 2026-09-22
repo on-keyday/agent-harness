@@ -281,6 +281,22 @@ type BoardModal struct {
 	chainCursor int
 	chainRows   int
 	status      string // one-line error / confirmation rendered below the table
+	// pendingStatus is a status line that must SURVIVE the refresh an action
+	// schedules.
+	//
+	// Every destructive action here sets its result and then re-reads from the
+	// server, because only the server knows what the rows look like now — and
+	// the Apply* that lands clears the status. The result the operator is meant
+	// to read was therefore on screen for exactly one round trip. Held here and
+	// consumed by the Apply*, rather than fixed in each handler, because both
+	// the per-message and the thread-scoped paths had it.
+	pendingStatus string
+}
+
+// takePendingStatus installs a status set before a refresh was scheduled.
+func (m *BoardModal) takePendingStatus() {
+	m.status = m.pendingStatus
+	m.pendingStatus = ""
 }
 
 // Column positions in the topics table. boardTopicToRow builds its row in this
@@ -384,7 +400,7 @@ func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow, subs map[string]int) 
 	}
 	m.subs = subs
 	m.rebuildTopicsRows()
-	m.status = ""
+	m.takePendingStatus()
 }
 
 // ApplyMessages populates message-drilldown mode with the given messages for
@@ -405,7 +421,7 @@ func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, subs [
 	// render the content viewport, so setting it and returning early wrote to
 	// something nobody could see.
 	m.mode = boardMessages
-	m.status = ""
+	m.takePendingStatus()
 	m.updateContentFromCursor()
 }
 
@@ -450,7 +466,7 @@ func (m *BoardModal) ApplyChains(rows []cli.ThreadRow) {
 		m.chainCursor = 0
 	}
 	m.mode = boardChainList
-	m.status = ""
+	m.takePendingStatus()
 }
 
 // OpenSelectedConversation renders the highlighted conversation into the
@@ -530,6 +546,12 @@ func (m *BoardModal) SelectedMsgSeq() uint64 {
 // SetStatus sets the status line text. Used by the App to relay RPC errors or
 // purge confirmations.
 func (m *BoardModal) SetStatus(s string) { m.status = s }
+
+// SetStatusAfterRefresh is SetStatus for a caller that is about to schedule a
+// re-read. The line is held until the Apply* lands and installed there, so an
+// action's result outlives the refresh it triggers rather than being cleared
+// by it.
+func (m *BoardModal) SetStatusAfterRefresh(s string) { m.pendingStatus = s }
 
 // rebuildTopicsRows translates rowTopics into bubbles/table rows.
 // Mirrors ConnsModal.rebuildRows.
@@ -828,11 +850,17 @@ func (m BoardModal) View() string {
 		return box.Render(header + "\n" + window + "\n" + list.String() + statusLine + "\n" + footer)
 
 	case boardChains:
-		title := ""
+		// The KEY, not the header. RenderThreads already prints the
+		// participant/count/time header as its section line inside the
+		// viewport, so repeating it here was the same sentence twice — caught
+		// on screen, not by a test. What is worth a fixed line instead is the
+		// selector: this is the string `board thread --conversation` and both
+		// thread-scoped verbs take, and it scrolls out of reach otherwise.
+		key := ""
 		if conv, ok := m.selectedConv(); ok {
-			title = conv.Header
+			key = conv.Key
 		}
-		header := HeaderStyle.Render(title)
+		header := HeaderStyle.Render("conversation: " + key)
 		footer := FooterStyle.Render(scrollHint + " · w: retract thread  X: purge thread  c: refresh  Esc: back")
 		return box.Render(header + "\n" + m.content.View() + statusLine + "\n" + footer)
 	}

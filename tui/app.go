@@ -787,7 +787,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetStatus("purge: not found")
 			return a, nil
 		}
-		a.boardModal.SetStatus(fmt.Sprintf("purged %d msg(s)", msg.Purged))
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("purged %d msg(s)", msg.Purged))
 		// Kick the relevant refresh so the view reflects the deletion.
 		if msg.Seq == 0 {
 			return a, DoBoardTopics(a.client)
@@ -803,7 +803,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetStatus("retract: not found")
 			return a, nil
 		}
-		a.boardModal.SetStatus(fmt.Sprintf("retracted #%d (still readable here)", msg.Seq))
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("retracted #%d (still readable here)", msg.Seq))
 		// Re-read rather than edit the local copy: the message stays in this
 		// view, moved to the withdrawn list, and only the server knows what it
 		// looks like now.
@@ -822,7 +822,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Result.Err != nil {
 			status += "  stopped: " + msg.Result.Err.Error()
 		}
-		a.boardModal.SetStatus(status)
+		a.boardModal.SetStatusAfterRefresh(status)
 		// Re-collect rather than edit the local copy. After a retract the rows
 		// are still here, marked; after a purge they are gone -- and which of
 		// those happened is the server's to say.
