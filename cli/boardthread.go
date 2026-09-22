@@ -175,8 +175,8 @@ func BuildThreads(msgs []BoardMessage, topicOf map[uint64]string) []ThreadRow {
 	return out
 }
 
-// ThreadFilter carries the two selector axes both faces of the thread view
-// share. They compose as an AND when both are set.
+// ThreadFilter carries the selector axes both faces of the thread view share.
+// They compose as an AND when more than one is set.
 type ThreadFilter struct {
 	// Tasks: keep a chain if ANY message in it was sent by a named task OR
 	// sits on that task's own inbound topic (chat.<id8>). Repeating the flag
@@ -186,6 +186,16 @@ type ThreadFilter struct {
 	Tasks []string
 	// Seq: keep only the chain containing it. 0 = no selection.
 	Seq uint64
+	// Conversation: keep only the rows grouping keyed to this string.
+	//
+	// A conversation is COARSER than a chain — the measurement in
+	// groupConversations' comment is four chains and one conversation for a
+	// five-minute two-party exchange — so this is the only selector that names
+	// the unit the views group by, the section headers print, and the export
+	// sheet contains. "" = no selection.
+	//
+	// Applied AFTER grouping, because grouping is what assigns the key.
+	Conversation string
 }
 
 // SeqNotVisibleError reports a --seq that names no message in the input set.
@@ -201,8 +211,64 @@ func (e *SeqNotVisibleError) Error() string {
 	return fmt.Sprintf("board thread: seq %d is not in the visible set (its topic may have died with its last subscriber task, or it rotated out of a topic's 64-message ring)", e.Seq)
 }
 
-// SelectThreads filters rows produced by BuildThreads to the chains the
-// filter selects, returning them in BuildThreads order.
+// ConversationNotVisibleError reports a --conversation that names no
+// conversation in the input set.
+//
+// It is an error and not an empty result, matching SeqNotVisibleError rather
+// than --task: the key is copied out of a listing, and on the destructive
+// verbs an empty result reads as "already cleared" — the state the caller is
+// driving toward, so the one wrong conclusion the failure produces is the one
+// they are looking for. A key that names a real conversation which the OTHER
+// axes then exclude stays an empty result, because that is the AND of the axes
+// and not a bad argument.
+type ConversationNotVisibleError struct {
+	Key string
+}
+
+func (e *ConversationNotVisibleError) Error() string {
+	return fmt.Sprintf("board thread: conversation %q is not in the visible set (a conversation key is derived from its participants, so it changes when a party is a fresh task; re-read it from `board thread`)", e.Key)
+}
+
+// SelectThreads filters rows produced by BuildThreads to the chains the filter
+// selects, groups them into conversation sections, and — when the filter names
+// a conversation — keeps only that one.
+//
+// Grouping runs once, here, rather than at each of selectChains' exits: it is
+// what stamps ThreadRow.Conversation, so a Conversation filter has nothing to
+// match against before it has run.
+func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) ([]ThreadRow, error) {
+	picked, err := selectChains(rows, topicOf, f)
+	if err != nil {
+		return nil, err
+	}
+	grouped := groupConversations(picked, topicOf)
+	if f.Conversation == "" {
+		return grouped, nil
+	}
+	kept := make([]ThreadRow, 0, len(grouped))
+	for _, r := range grouped {
+		if r.Conversation == f.Conversation {
+			kept = append(kept, r)
+		}
+	}
+	if len(kept) == 0 {
+		// Two different nothings. "This conversation exists, the other axes
+		// excluded it" is the AND of the axes — the same empty result --seq
+		// gives — while "no such conversation" is a bad argument. Telling them
+		// apart costs one more grouping pass over the UNFILTERED rows, on the
+		// path that is already returning nothing.
+		for _, r := range groupConversations(rows, topicOf) {
+			if r.Conversation == f.Conversation {
+				return nil, nil
+			}
+		}
+		return nil, &ConversationNotVisibleError{Key: f.Conversation}
+	}
+	return kept, nil
+}
+
+// selectChains applies the chain-level axes (--seq, --task) and returns the
+// surviving rows UNGROUPED, in BuildThreads order.
 //
 // Chains, not messages, are the unit: a reply links messages into one chain,
 // and keep/drop applies to the whole of it. The chain id is the component
@@ -214,7 +280,7 @@ func (e *SeqNotVisibleError) Error() string {
 // messages but none reply to the requested seq. An empty result and a bad
 // argument must not look the same. A Seq whose chain involves no named task
 // is an empty result: the chain exists, the filter just does not select it.
-func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) ([]ThreadRow, error) {
+func selectChains(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) ([]ThreadRow, error) {
 	comp := make(map[uint64]uint64, len(rows))
 	var find func(uint64) uint64
 	find = func(x uint64) uint64 {
@@ -269,7 +335,7 @@ func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) 
 			// is the error above, not this.
 			return nil, nil
 		}
-		return groupConversations(rowsOfChain(rows, find, want), topicOf), nil
+		return rowsOfChain(rows, find, want), nil
 	}
 	if haveTasks {
 		// --task names at least one task. An empty keepComp here means the
@@ -286,9 +352,9 @@ func SelectThreads(rows []ThreadRow, topicOf map[uint64]string, f ThreadFilter) 
 				out = append(out, r)
 			}
 		}
-		return groupConversations(out, topicOf), nil
+		return out, nil
 	}
-	return groupConversations(rows, topicOf), nil
+	return rows, nil
 }
 
 // rowsOfChain keeps only the rows whose chain root is want. The rows arrive
