@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -360,27 +361,43 @@ func TestBoardModal_ChainsUsesTheSharedRenderer(t *testing.T) {
 	}
 	m.ApplyChains(rows)
 
+	// The list is where ApplyChains lands now; the renderer runs on the way
+	// into ONE conversation, which is also the selection the destructive keys
+	// act on.
+	if m.Mode() != boardChainList {
+		t.Fatalf("mode after ApplyChains = %v, want boardChainList", m.Mode())
+	}
+	m.OpenSelectedConversation()
 	if m.Mode() != boardChains {
 		t.Fatalf("mode = %v, want boardChains", m.Mode())
 	}
 	view := m.View()
-	// The window statement is the CLI's constant, not a string retyped here.
-	// Asserted by its TAIL: it is wrapped to the panel width, so the whole
-	// sentence never appears on one line — and the tail is exactly the part
-	// that was being truncated away before it was wrapped.
-	if !strings.Contains(view, "ORPHAN marks a reply") {
-		t.Errorf("chain view lost the end of the window statement:\n%s", view)
-	}
-	for _, want := range []string{"#1", "#2", "re=1", "topic=chat.aaaa", "topic=chat.bbbb", "2 rows"} {
+	for _, want := range []string{"#1", "#2", "re=1", "topic=chat.aaaa", "topic=chat.bbbb"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("chain view missing %q:\n%s", want, view)
+			t.Errorf("chain detail missing %q:\n%s", want, view)
 		}
 	}
-	// The conversation section header. "The TUI inherits it because it draws
-	// RenderThreads" is a claim, and this is what holds it: a surface that
-	// stopped sharing the renderer would drop the sections silently.
+	// The conversation header. "The TUI inherits it because it draws the CLI's
+	// spelling" is a claim, and this is what holds it: a surface that started
+	// naming conversations its own way would drift silently.
 	if !strings.Contains(view, "message(s)") {
-		t.Errorf("chain view lost the conversation section header:\n%s", view)
+		t.Errorf("chain detail lost the conversation header:\n%s", view)
+	}
+
+	// The window statement and the row count belong to the LIST -- it is the
+	// view that answers "is this everything". Asserted by the statement's TAIL:
+	// it is wrapped to the panel width, so the whole sentence never appears on
+	// one line, and the tail is the part that was being truncated away before
+	// it was wrapped.
+	m.PopToChainList()
+	list := m.View()
+	if !strings.Contains(list, "ORPHAN marks a reply") {
+		t.Errorf("chain list lost the end of the window statement:\n%s", list)
+	}
+	for _, want := range []string{"2 rows", "message(s)"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("chain list missing %q:\n%s", want, list)
+		}
 	}
 }
 
@@ -396,6 +413,9 @@ func TestBoardModal_ChainsEscapesBodies(t *testing.T) {
 	m.ApplyChains([]cli.ThreadRow{
 		{Msg: cli.BoardMessage{Seq: 1, Payload: []byte("clear:\x1b[2J bell:\x07")}, Topic: "chat.aaaa", Size: 18},
 	})
+	// The bodies are drawn in the detail, so that is where the escaping has to
+	// hold.
+	m.OpenSelectedConversation()
 	view := m.View()
 	for _, raw := range []string{"\x1b[2J", "\x07"} {
 		if strings.Contains(view, raw) {
@@ -404,5 +424,103 @@ func TestBoardModal_ChainsEscapesBodies(t *testing.T) {
 	}
 	if !strings.Contains(view, `\x1b`) {
 		t.Errorf("the escape is not visible either:\n%s", view)
+	}
+}
+
+// chainFixture builds two conversations through the real pipeline, because
+// SelectThreads is what stamps the conversation key and a hand-made ThreadRow
+// is a shape production never produces.
+func chainFixture(t *testing.T) []cli.ThreadRow {
+	t.Helper()
+	topicOf := map[uint64]string{
+		1: "chat.aaaaaaaa", 2: "chat.bbbbbbbb",
+		3: "chat.cccccccc", 4: "chat.dddddddd",
+	}
+	rows, err := cli.SelectThreads(cli.BuildThreads([]cli.BoardMessage{
+		{Seq: 1, FromTaskHex: "bbbbbbbb", ReceivedAtMs: 100, Payload: []byte("A-side")},
+		{Seq: 2, InReplyTo: 1, FromTaskHex: "aaaaaaaa", ReceivedAtMs: 200, Payload: []byte("A-reply")},
+		{Seq: 3, FromTaskHex: "dddddddd", ReceivedAtMs: 300, Payload: []byte("B-side")},
+		{Seq: 4, InReplyTo: 3, FromTaskHex: "cccccccc", ReceivedAtMs: 400, Payload: []byte("B-reply")},
+	}, topicOf), topicOf, cli.ThreadFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+// TestBoardModal_ThreadActionsScopeToTheHighlightedConversation is the
+// surface-parity invariant, not presentation: no surface may offer a wider
+// destructive form than the CLI allows. The CLI requires a selector; this list
+// requires a selection, and what the key acts on must be the highlighted row
+// and nothing else.
+func TestBoardModal_ThreadActionsScopeToTheHighlightedConversation(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplyChains(chainFixture(t))
+
+	if len(m.chainConvs) != 2 {
+		t.Fatalf("grouped into %d conversation(s), want 2", len(m.chainConvs))
+	}
+	first := m.SelectedConversationKey()
+	if first == "" {
+		t.Fatal("nothing selected after ApplyChains; the first row must be")
+	}
+	if first != m.chainConvs[0].Key {
+		t.Errorf("selected %q, want the first row's %q", first, m.chainConvs[0].Key)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	second := m.SelectedConversationKey()
+	if second != m.chainConvs[1].Key {
+		t.Errorf("after ↓ selected %q, want the second row's %q", second, m.chainConvs[1].Key)
+	}
+	if second == first {
+		t.Fatal("the cursor did not move; the fixture does not exercise the scoping")
+	}
+
+	// Past the end it stays put rather than wrapping onto the first one — a
+	// destructive key must never act on a row the cursor appears to have left.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.SelectedConversationKey(); got != second {
+		t.Errorf("cursor moved past the last row: %q", got)
+	}
+}
+
+// TestBoardModal_NoConversationNoSelector: with nothing on the board the key
+// has nothing to act on, and "" is what tells the caller to do nothing. A
+// destructive verb reaching the server with no selector is the whole-board form
+// the CLI declares unreachable.
+func TestBoardModal_NoConversationNoSelector(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplyChains(nil)
+
+	if got := m.SelectedConversationKey(); got != "" {
+		t.Errorf("SelectedConversationKey() = %q on an empty board, want \"\"", got)
+	}
+	// And the view says so rather than looking like a loading state.
+	if !strings.Contains(m.View(), "nothing on the board") {
+		t.Errorf("empty chain list does not say it is empty:\n%s", m.View())
+	}
+}
+
+// TestBoardModal_ChainListAdvertisesItsKeys: the footer is the only place these
+// two keys are discoverable, and they are the destructive pair.
+func TestBoardModal_ChainListAdvertisesItsKeys(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplyChains(chainFixture(t))
+	view := m.View()
+	for _, want := range []string{
+		modalKeys.BoardRetractMsg + ": retract thread",
+		modalKeys.BoardPurgeMsg + ": purge thread",
+		"Enter: open",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("chain list footer does not advertise %q:\n%s", want, view)
+		}
 	}
 }

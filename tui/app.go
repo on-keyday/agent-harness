@@ -809,6 +809,25 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// looks like now.
 		return a, DoBoardRead(a.client, msg.Topic)
 
+	case BoardThreadOpMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus(msg.Verb + "-thread: " + msg.Err.Error())
+			return a, nil
+		}
+		// Summary() carries every category with its count, zeros included, so
+		// the status line says what happened rather than only that something
+		// did. A run that stopped reports what completed first and the reason
+		// after it -- the partial result is the useful half.
+		status := msg.Verb + "-thread:" + msg.Result.Summary()
+		if msg.Result.Err != nil {
+			status += "  stopped: " + msg.Result.Err.Error()
+		}
+		a.boardModal.SetStatus(status)
+		// Re-collect rather than edit the local copy. After a retract the rows
+		// are still here, marked; after a purge they are gone -- and which of
+		// those happened is the server's to say.
+		return a, DoBoardChains(a.client)
+
 	case LogChunkMsg:
 		if msg.TaskID == a.logs.TaskID() {
 			a.logs.Append(msg.Chunk)

@@ -174,6 +174,40 @@ func DoBoardRetract(c *cli.Client, topic string, seq uint64) tea.Cmd {
 	}
 }
 
+// BoardThreadOpMsg carries the result of a thread-scoped retract or purge.
+// Verb is "retract" or "purge", for the status line.
+type BoardThreadOpMsg struct {
+	Verb   string
+	Key    string
+	Result cli.ThreadFanoutResult
+	Err    error
+}
+
+// DoBoardThreadOp runs one thread-scoped destructive verb over the long-lived
+// client.
+//
+// The work is cli.FanoutThread — the same function the CLI verbs and the wasm
+// bridge call. A loop here would be free to disagree with it about the one
+// thing that matters: an already-withdrawn message must not be asked about on
+// the retract path, because the server's answer for it is the same not-found a
+// missing message gets, and reporting a handled message as a failure is how
+// this reads as broken when it worked.
+//
+// Longer than the 15s its per-message siblings use: this is a collection over
+// every topic plus one call per message in the conversation.
+func DoBoardThreadOp(c *cli.Client, op cli.ThreadOp, key string) tea.Cmd {
+	verb := "retract"
+	if op == cli.ThreadPurge {
+		verb = "purge"
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		res, err := cli.FanoutThread(ctx, c, op, cli.ThreadFilter{Conversation: key})
+		return BoardThreadOpMsg{Verb: verb, Key: key, Result: res, Err: err}
+	}
+}
+
 // ---- BoardModal ----
 
 // boardMode is the internal mode of the BoardModal.
@@ -187,13 +221,30 @@ const (
 	// boardSubscribers shows which tasks would receive a publish to the
 	// selected topic.
 	boardSubscribers
-	// boardChains shows every reply chain on the board, across topics. It is
+	// boardChainList lists the CONVERSATIONS on the board, one row each. It is
 	// the other view of the same data: topic mode answers "what is on this
 	// topic", this one follows in_reply_to, which a topic-keyed view
 	// structurally cannot — each agent receives on its own chat.<short-id>, so
 	// an exchange is split across at least two topics.
+	//
+	// A list rather than the scrolled dump it used to be, because every other
+	// view in this modal is list → detail (topics → Enter → messages) and this
+	// one had no cursor at all — which is also why it had no way to act on ONE
+	// conversation. The list supplies the selection the destructive actions
+	// need, and removes the asymmetry, in the same move.
+	boardChainList
+	// boardChains shows the chains of ONE conversation, the detail half of
+	// boardChainList.
 	boardChains
 )
+
+// boardConv is one conversation in the chain list: the key rows are grouped by,
+// the header spelling shared with the CLI, and the rows themselves.
+type boardConv struct {
+	Key    string
+	Header string
+	Rows   []cli.ThreadRow
+}
 
 // BoardModal is a two-mode overlay that mirrors ConnsModal's structure for the
 // table-based list (topic mode) and uses a viewport.Model (mirroring LogsModel)
@@ -224,10 +275,12 @@ type BoardModal struct {
 	// msgSubs is the subscriber set for curTopic, captured with the messages so
 	// each row can report how many subscribers have been handed it.
 	msgSubs []cli.BoardSubscriberRow
-	// chainRows is how many rows the chain view is showing; the rows themselves
-	// live in the content viewport as rendered text.
-	chainRows int
-	status    string // one-line error / confirmation rendered below the table
+	// chainRows is how many rows the last chain collection returned, across
+	// every conversation — the number the list header reports.
+	chainConvs  []boardConv
+	chainCursor int
+	chainRows   int
+	status      string // one-line error / confirmation rendered below the table
 }
 
 // Column positions in the topics table. boardTopicToRow builds its row in this
@@ -367,30 +420,88 @@ func (m *BoardModal) ApplySubscribers(topic string, rows []cli.BoardSubscriberRo
 	m.status = ""
 }
 
-// ApplyChains renders the chains into the content viewport and switches to
-// chain mode.
+// ApplyChains groups the collected rows into conversations and switches to the
+// chain LIST.
+//
+// Grouping is not redone here: SelectThreads already stamped every row with its
+// Conversation key and returned them in conversation order, so this only has to
+// cut the slice where the key changes. Re-deriving it would be a second opinion
+// about which exchange a message belongs to, which is exactly what stamping the
+// key on the row exists to prevent.
+func (m *BoardModal) ApplyChains(rows []cli.ThreadRow) {
+	m.chainRows = len(rows)
+	m.chainConvs = nil
+	for i := 0; i < len(rows); {
+		j := i
+		for j < len(rows) && rows[j].Conversation == rows[i].Conversation {
+			j++
+		}
+		seg := rows[i:j]
+		m.chainConvs = append(m.chainConvs, boardConv{
+			Key: seg[0].Conversation,
+			// The CLI's own spelling, so the two surfaces cannot name the same
+			// conversation differently.
+			Header: cli.ConversationHeader(seg),
+			Rows:   seg,
+		})
+		i = j
+	}
+	if m.chainCursor >= len(m.chainConvs) {
+		m.chainCursor = 0
+	}
+	m.mode = boardChainList
+	m.status = ""
+}
+
+// OpenSelectedConversation renders the highlighted conversation into the
+// content viewport and descends into the detail view.
 //
 // The rendering is cli.RenderThreads — the CLI's own — rather than a second
 // drawing routine here: the gutter, the header fields and the window statement
 // then cannot drift between the two surfaces. BodyEscaped is stated rather than
 // derived, because a viewport is not a file and a stray ESC repaints over the
 // panel border (the reason sanitizeOutput exists in rawforward.go).
-func (m *BoardModal) ApplyChains(rows []cli.ThreadRow) {
-	m.chainRows = len(rows)
+func (m *BoardModal) OpenSelectedConversation() {
+	conv, ok := m.selectedConv()
+	if !ok {
+		return
+	}
 	var buf strings.Builder
 	// Window is empty here and drawn by View instead. The viewport does not
 	// wrap, so the statement was being cut at the panel border — and the half
 	// it lost was the half that explains ORPHAN. Same sentence, same constant,
 	// placed where it can be wrapped to the panel width.
-	_ = cli.RenderThreads(&buf, rows, cli.ThreadRenderOptions{
+	_ = cli.RenderThreads(&buf, conv.Rows, cli.ThreadRenderOptions{
 		Body: cli.BodyEscaped,
 	}, nil)
-	if len(rows) == 0 {
-		buf.WriteString("\n(nothing on the board within that window)\n")
-	}
 	m.content.SetContent(buf.String())
 	m.content.GotoTop()
 	m.mode = boardChains
+	m.status = ""
+}
+
+func (m *BoardModal) selectedConv() (boardConv, bool) {
+	if m.chainCursor < 0 || m.chainCursor >= len(m.chainConvs) {
+		return boardConv{}, false
+	}
+	return m.chainConvs[m.chainCursor], true
+}
+
+// SelectedConversationKey is what the thread-scoped actions act on. Empty when
+// nothing is highlighted, which the caller must treat as "do nothing": a
+// destructive verb with no selector is the whole-board form the CLI refuses to
+// have, and this surface must not be the one that offers it.
+func (m *BoardModal) SelectedConversationKey() string {
+	conv, ok := m.selectedConv()
+	if !ok {
+		return ""
+	}
+	return conv.Key
+}
+
+// PopToChainList returns from one conversation to the list of them.
+func (m *BoardModal) PopToChainList() {
+	m.mode = boardChainList
 	m.status = ""
 }
 
@@ -580,6 +691,23 @@ func (m BoardModal) Update(msg tea.Msg) (BoardModal, tea.Cmd) {
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
 
+	case boardChainList:
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.Type {
+			case tea.KeyUp:
+				if m.chainCursor > 0 {
+					m.chainCursor--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.chainCursor < len(m.chainConvs)-1 {
+					m.chainCursor++
+				}
+				return m, nil
+			}
+		}
+		return m, nil
+
 	case boardChains:
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
@@ -679,13 +807,34 @@ func (m BoardModal) View() string {
 		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
 		footer := FooterStyle.Render("s: refresh  Esc: back")
 		return box.Render(header + "\n" + list.String() + statusLine + "\n" + footer)
-	case boardChains:
-		header := HeaderStyle.Render(fmt.Sprintf("reply chains across every topic (%d rows)", m.chainRows))
+	case boardChainList:
+		var list strings.Builder
+		for i, conv := range m.chainConvs {
+			cursor := "  "
+			if i == m.chainCursor {
+				cursor = "> "
+			}
+			list.WriteString(cursor + conv.Header + "\n")
+		}
+		if len(m.chainConvs) == 0 {
+			list.WriteString("  (nothing on the board within that window)\n")
+		}
+		header := HeaderStyle.Render(fmt.Sprintf("conversations across every topic (%d, %d rows)",
+			len(m.chainConvs), m.chainRows))
 		// Wrapped, not truncated: an operator reading "nothing here" needs the
 		// whole sentence to know whether that is the window or a fault.
 		window := MutedStyle.Width(m.content.Width).Render(cli.ThreadWindowOperator)
-		footer := FooterStyle.Render(scrollHint + " · c: refresh  Esc: back")
-		return box.Render(header + "\n" + window + "\n" + m.content.View() + statusLine + "\n" + footer)
+		footer := FooterStyle.Render("↑/↓ select · Enter: open · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		return box.Render(header + "\n" + window + "\n" + list.String() + statusLine + "\n" + footer)
+
+	case boardChains:
+		title := ""
+		if conv, ok := m.selectedConv(); ok {
+			title = conv.Header
+		}
+		header := HeaderStyle.Render(title)
+		footer := FooterStyle.Render(scrollHint + " · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		return box.Render(header + "\n" + m.content.View() + statusLine + "\n" + footer)
 	}
 	return box.Render("(unknown board mode)")
 }

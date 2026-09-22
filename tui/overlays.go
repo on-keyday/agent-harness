@@ -235,7 +235,13 @@ func (a *App) inChat(msg tea.KeyMsg) tea.Cmd {
 // table/viewport navigation itself.
 func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc {
-		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers || m == boardChains {
+		// The chain view is list -> detail like the topic one, so Esc walks back
+		// one level rather than all the way out.
+		if a.boardModal.Mode() == boardChains {
+			a.boardModal.PopToChainList()
+			return nil
+		}
+		if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers || m == boardChainList {
 			a.boardModal.PopToTopics()
 			return nil
 		}
@@ -275,9 +281,29 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		if msg.String() == modalKeys.BoardSubscribers {
 			return DoBoardSubscribers(a.client, a.boardModal.CurTopic())
 		}
-	} else if a.boardModal.Mode() == boardChains {
-		if msg.String() == modalKeys.BoardChains {
+	} else if m := a.boardModal.Mode(); m == boardChainList || m == boardChains {
+		// w / X keep the meanings the modal already established -- withdraw and
+		// destroy -- at the scope the view is a view of. Here that is one
+		// CONVERSATION, which is why the key reads the selection rather than a
+		// topic: a destructive verb with no selector is the whole-board form the
+		// CLI refuses to have, and no surface may offer a wider one than it.
+		if m == boardChainList && msg.Type == tea.KeyEnter {
+			a.boardModal.OpenSelectedConversation()
+			return nil
+		}
+		switch msg.String() {
+		case modalKeys.BoardChains:
 			return DoBoardChains(a.client)
+		case modalKeys.BoardRetractMsg:
+			if key := a.boardModal.SelectedConversationKey(); key != "" {
+				return DoBoardThreadOp(a.client, cli.ThreadRetract, key)
+			}
+			return nil
+		case modalKeys.BoardPurgeMsg:
+			if key := a.boardModal.SelectedConversationKey(); key != "" {
+				return DoBoardThreadOp(a.client, cli.ThreadPurge, key)
+			}
+			return nil
 		}
 	} else {
 		// boardMessages mode
