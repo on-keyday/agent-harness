@@ -95,7 +95,14 @@ when their trigger fires, with the same three verdicts.
     no elision).
 13. `whoami` — `cli/whoami.go` (both the operator and task branches).
 14. `session ls` — JSON rows in `cli/` session listing.
-15. `caps` catalog — `cli/caps.go` `WriteCaps` + SCOPE section.
+15. `caps` catalog — **`cli/verb/caps.go`** `CapDescription` + `WriteCaps` +
+    SCOPE section. (`cli/grammar.go` forwards to both; `cli/caps.go`, which
+    this item named until 2026-09-22, does not exist.) `CapDescription`
+    ENUMERATES the verbs each bit authorizes, so a new verb gated on an
+    existing capability fires this item even when no field, row or dialog
+    changes anywhere — which is the shape that makes it easy to miss: a
+    feature-shaped reading of "does this change a display surface?" answers
+    no, and only the mechanical 1–39 walk asks.
 16. TUI task table — `tui/tasks.go` `SetRows` columns.
 17. TUI task detail popup (`d`) — `tui/detail.go` `formatTaskDetail` —
     **this one had no scope line for a full release**.

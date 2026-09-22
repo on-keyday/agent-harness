@@ -379,9 +379,17 @@ or detail sheet, or the wasm snapshot conversion changes.
 
 38. **n/a** — `tui/pane_streamer.go` and the WebUI session preview render a
     session's screen. This feature is about board messages and touches neither.
-39. **pending** — explicitly an end-of-feature check. It is the last box in
-    Completion, to be walked against the Surfaces table above once the code
-    exists, with the result recorded in `firing-log.md`.
+39. **done** (2026-09-22, after the code landed) — the Surfaces table above
+    walked row by row against the code, and every row built:
+    `board retract-thread` / `board purge-thread` and `board thread
+    --conversation` in `cli/verb/table.go`; the TUI's `boardChainList` +
+    `SelectedConversationKey` in `tui/board.go` and `tui/overlays.go`; the
+    WebUI's `boardConvActionBtn` on `.board-chain-conv` in
+    `webui/static/main.js`; `harness.boardRetractThread` /
+    `boardPurgeThread` in `cmd/harness-webui-wasm/main.go`. The **Export
+    modal** row says *unchanged*, which a build cannot demonstrate — checked
+    by diff instead: of its ten references in `main.js`, this change touches
+    zero.
 
 **Documentation surfaces**
 
@@ -400,3 +408,69 @@ or detail sheet, or the wasm snapshot conversion changes.
 **S1–S6** — **n/a**, trigger did not fire: no agent is added, renamed or
 removed; no bin path, argv template, log format, config directory, credential
 mode, egress domain, launch env or server addressing changes.
+
+---
+
+# Amendment A (2026-09-22) — an unknown conversation key is an error
+
+The spec did not settle what a `--conversation` key naming nothing should do,
+and the implementation could not avoid deciding: `SelectThreads` already holds
+both answers side by side, each with a stated reason. A `--seq` that names no
+visible message is a `*SeqNotVisibleError` — *"an empty result and a bad
+argument must not look the same"* — while `--task` matching nothing is an empty
+result, because *"a filter that matched nothing must not fall back to
+unfiltered"*.
+
+It lands on `--seq`'s side, as `*cli.ConversationNotVisibleError`. The key is
+copied out of a listing, and on a destructive verb an empty result reads as
+**"already cleared"** — the state the caller is driving toward — so the one
+wrong conclusion the failure produces is the one they are looking for.
+
+A key that names a real conversation which the OTHER axes then exclude stays an
+empty result: that is the AND of the axes, which `--seq` already answers the
+same way, and not a bad argument.
+
+# Amendment B (2026-09-22) — the two verbs partition already-withdrawn messages OPPOSITELY
+
+The design said the fan-out skips a message the caller already knows is
+withdrawn. That is right for retract and **wrong for purge**, and the plan
+carried the error until the tests caught it.
+
+`withdrawLocked` moves a message out of `topic.ring` into `topic.retracted`,
+and `removeSeq` scans both. Purge reaching a withdrawn message is therefore not
+an edge case — it is exactly how stage 2 clears what stage 1 withdrew, which is
+the workflow this feature exists for. Skipping withdrawn rows on the purge path
+would have left `purge-thread` unable to finish a thread that `retract-thread`
+had just processed, reporting every message as `not-found` while changing
+nothing.
+
+`ThreadOp.skipsWithdrawn()` is where the two verbs differ, and
+`TestFanoutPurgeReachesAlreadyWithdrawn` plus the two-stage e2e are what hold
+it.
+
+One consequence for the reporting: the category set comes from the **op**, not
+from the outcomes a run happened to produce. A set derived from the rows drops
+`retracted 0` on a run where every message was already withdrawn — precisely
+the run where a reader most needs to see that nothing new was withdrawn.
+
+# Amendment C (2026-09-22) — the synopsis does not render `AtLeastOne`, and that is a decision
+
+Declaring the two verbs failed `cli/verb`'s `TestUsageNamesItsVerb`: they
+declare no positional, and its check reads *"no positionals ⇒ the bare form
+must parse"*. No verb had been in that position before — the four verbs
+carrying a rule all have positionals, and the one Args-less candidate (`caps
+set-defaults`) records in its own comment that it deliberately has no rule.
+
+The first fix considered was to render the rule in the synopsis
+(`(--seq | --task | --conversation)`). That is wrong twice over, and both
+reasons were already in the repo:
+`TestUsagePositionalsParse` requires every non-`Required` flag to be bracketed,
+which such a group breaks; and its own comment states the decision —
+*"those are rules the synopsis does not render, not positional shapes it gets
+wrong"*.
+
+What was actually wrong is the check's stand-in: "declares no positional" meant
+"requires nothing", and `AtLeastOne` makes that false. It now parses the
+rule-satisfying minimal form via `satisfying(v, nil, false)`, the way
+`TestUsagePositionalsParse` already does — so the check survives rather than
+being skipped for the verbs that have rules.

@@ -2148,3 +2148,86 @@ is what that entry's own closing note says to do. S1–S6 `n/a`.
 renderer" is a claim about a code path, and a passing test suite does not check
 it — the assertion has to exist. Writing it cost one line and immediately found
 that the test around it was fictional.
+
+## 2026-09-22 — thread-scoped retract / purge on the agentboard
+
+Two new destructive verbs (`board retract-thread` / `board purge-thread`), a
+third selector (`--conversation`) on the read verb, a TUI chain view rebuilt as
+list → detail, and two WebUI buttons. S1–S6 `n/a` — no agent touched.
+
+**done:** 1, 2, 3, 4, 6, 8, 10, 15, 24, 27, 28a, 29, 30, 31, 32, 33, 34a, 35,
+36, 37, 39.
+
+- **1** — two `VerbSpec` rows plus `--conversation` on `board thread`. Adding
+  the option was one declaration, not three edits, and the generated
+  `BoardAction` picked the field up from `Field:` alone.
+- **1 (the item's own machinery bit back, usefully)** — declaring a verb with
+  **no positional and a real `AtLeastOne`** broke `TestUsageNamesItsVerb`,
+  whose bare-form check reads "no positionals ⇒ requires nothing". **No verb
+  had ever been in that position**: the four verbs carrying a rule all have
+  positionals, and the one Args-less candidate (`caps set-defaults`) records in
+  its own comment that it deliberately has no rule. The fix was NOT to render
+  the rule in the synopsis — `TestUsagePositionalsParse` requires every
+  non-Required flag to be bracketed, and its comment already states the
+  decision, *"those are rules the synopsis does not render"* — but to satisfy
+  the rules the way the sibling test already does.
+- **15** — the one display item that fired. `CapDescription` enumerates the
+  verbs the `purge` bit authorizes, so two more forms means the sentence
+  understated what granting it hands over. 11–14 and 16–23 are `n/a` (no task
+  or runner field), and **only walking 1–39 mechanically found 15** — a
+  feature-shaped reading of "does this change a display surface?" answers no.
+- **15 (the item's PATH is stale)** — it says `cli/caps.go`, which does not
+  exist. `CapDescription` / `WriteCaps` live in `cli/verb/caps.go`, with thin
+  forwarders in `cli/grammar.go`. Cost one failed edit. **Fixed in the
+  checklist text in the same commit**, along with the reason the item is easy
+  to skip: `CapDescription` enumerates the verbs a bit authorizes, so a new
+  verb gated on an EXISTING capability fires item 15 even when no field, row or
+  dialog changes anywhere.
+- **24** — `--conversation` is reachable from three verbs and means the same on
+  all three by construction (one `SelectThreads` call). What needed writing
+  down is the OTHER flag: `--seq` also means the same everywhere, but on a read
+  a narrower selection is a smaller view, while on a destroy it is a
+  half-cleared thread. Both help strings say so.
+- **27 / 28a** — one fan-out helper (`cli.FanoutThread`) reached by the CLI
+  verbs, the TUI action and the wasm bridge. Pinned by
+  `TestThreadDestructionCallSitesArePinned`, which fails when a new file calls
+  the per-seq client methods. Its first version matched on the bare method name
+  and swept in the generated verb dispatch and the wire response accessors —
+  an expected set full of unrelated files, which is how a guard trains its
+  readers to skip it. Matching the call SHAPE (`…, topic, seq)`) cut it to four.
+- **31** — the item this feature's reporting turns on. The summary prints every
+  category with its count, zeros included, and the category set comes from the
+  **op** rather than from the outcomes seen: a set derived from the rows drops
+  `retracted 0` on a run where every message was already withdrawn, which is
+  exactly the run where a reader needs to see that nothing new was.
+- **32** — the conversation key is produced in Go and handed to the browser,
+  which passes back the string it was given. No JS-side `conversationKey`, for
+  the `scopeSpecJS` reason.
+- **34a** — the WebUI control is an action button among action buttons, and
+  the operator never types a conversation key in the browser.
+- **39** — the spec's Surfaces table, walked row by row. Every row built. The
+  one row a build cannot demonstrate is **Export modal: unchanged**, so it was
+  checked by diff instead: of its ten references in `main.js`, the change
+  touches zero.
+
+**omitted:**
+
+- **34 — no varying column set, stated as a decision rather than assumed.** The
+  TUI chain list renders as text lines, not a `table.Model`. If a later change
+  reaches for one, this item fires and the `applyColumns` shape applies.
+- **4 — the key pair is not under `keys_test`'s rule.** The board modal's keys
+  are dispatched inside `tui/board.go`, not `mainKeyMap`, so the map/binding
+  pairing test does not reach them. Covered instead by a footer assertion in
+  `tui/board_test.go`, which is what makes the two keys discoverable at all.
+- **6 / js-test — the WebUI button has no unit test.** `node --test` only
+  reaches what lives outside the page's IIFE, and this is a DOM function;
+  `preview_test.mjs` says as much in its own header. Verified in a browser
+  instead rather than hoisting a DOM function out for testability.
+
+**The lesson this one paid for:** *a test that fails on a new declaration is
+worth reading twice before it is "fixed".* The first reading — "the synopsis
+omits `AtLeastOne`, so let it render it" — would have broken a second invariant
+and reversed a decision already written down in the neighbouring test's
+comment. The item that actually needed changing was the one whose CONDITION had
+silently become a proxy: "declares no positional" had been standing in for
+"requires nothing" since before any verb could make the two differ.
