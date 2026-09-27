@@ -2871,7 +2871,7 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{
-				"status":       awaitIdleStatusStr(resp.Status),
+				"status":       cli.AwaitIdleStatusString(resp.Status),
 				"lastOutputAt": float64(resp.LastOutputAt),
 			}))
 		}()
@@ -2879,24 +2879,6 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
-}
-
-// awaitIdleStatusStr renders the AwaitIdleStatus enum for the JS side.
-func awaitIdleStatusStr(s protocol.AwaitIdleStatus) string {
-	switch s {
-	case protocol.AwaitIdleStatus_Fired:
-		return "fired"
-	case protocol.AwaitIdleStatus_Armed:
-		return "armed"
-	case protocol.AwaitIdleStatus_SessionStopped:
-		return "session_stopped"
-	case protocol.AwaitIdleStatus_NotFound:
-		return "not_found"
-	case protocol.AwaitIdleStatus_BadRequest:
-		return "bad_request"
-	default:
-		return fmt.Sprintf("unknown(%d)", int(s))
-	}
 }
 
 // harnessWatchNotifications starts a notification-watch goroutine. Events are

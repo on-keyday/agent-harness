@@ -712,7 +712,7 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 		return err
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"status":         awaitIdleStatusStr(resp.Status),
+		"status":         cli.AwaitIdleStatusString(resp.Status),
 		"last_output_at": resp.LastOutputAt,
 	})
 	switch resp.Status {
@@ -723,26 +723,6 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	}
 	os.Exit(1) // not_found / bad_request
 	return nil
-}
-
-// awaitIdleStatusStr renders the wire enum in the snake_case the schema uses
-// (the generated String() is CamelCase, which would JSON-encode as
-// "SessionStopped").
-func awaitIdleStatusStr(s protocol.AwaitIdleStatus) string {
-	switch s {
-	case protocol.AwaitIdleStatus_Fired:
-		return "fired"
-	case protocol.AwaitIdleStatus_Armed:
-		return "armed"
-	case protocol.AwaitIdleStatus_SessionStopped:
-		return "session_stopped"
-	case protocol.AwaitIdleStatus_NotFound:
-		return "not_found"
-	case protocol.AwaitIdleStatus_BadRequest:
-		return "bad_request"
-	default:
-		return s.String()
-	}
 }
 
 // waitStreamCompleted blocks until s reports its data fully sent and
