@@ -250,6 +250,14 @@ bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
 bin/harness-cli interactive --repo /abs/path/to/repo
+# Hear when a session goes quiet. The default long-polls; --topic / --notify
+# arm a server-side watcher and return its watcher_id at once. An armed watcher
+# can be listed and taken back: an agent sees the ones it armed, the operator
+# all of them. A killed one delivers nothing, and a caller still blocked on it
+# gets "cancelled" (exit 4). TUI: `I`; WebUI: the Connections tab.
+bin/harness-cli session await-idle <task-id> [--topic T | --notify]
+bin/harness-cli session await-idle ls [--task <task-id>] [--json]
+bin/harness-cli session await-idle kill <watcher-id>
 
 # 5b. Event-stream sessions (TaskKind stream): same lifecycle as a PTY session,
 # but the data plane is structured agent events (NDJSON from the profile's
@@ -1112,7 +1120,7 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ session stream attach / file {ls,push,pull,delete} / git / exec
+/ session await-idle [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / workspace {save,apply,ls,show}
@@ -1322,7 +1330,8 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
 - **Notifications** — the live notification feed (ring backlog + live),
   plus a form to post one by hand (level / title / body).
 - **Connections** — the radial topology (desktop) or grouped list
-  (mobile), the port-forward and running-exec lists, Raw connect, and a
+  (mobile), the port-forward, running-exec and armed await-idle watcher
+  lists, Raw connect, and a
   collapsed **trsf — transport state** panel: the same connections'
   cwnd / srtt / loss and where each run loop's time goes, with its own
   target and interval pickers. It is read only while expanded, so a

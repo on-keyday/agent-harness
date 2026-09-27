@@ -189,6 +189,8 @@ harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; s
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
 harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
 harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends"
+harness-cli session await-idle ls                # the watchers you have armed
+harness-cli session await-idle kill <watcher-id> # disarm one
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
 
@@ -213,7 +215,8 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
     `{"status":"fired",...}` (exit 3 = session ended first). Fine for shell
     scripts; **never use this blocking form from an agent turn** (same rule
     as `agent wait`).
-  - `--topic T`: replies `armed` immediately; on fire the server publishes
+  - `--topic T`: replies `armed` immediately, with the `watcher_id` that
+    `session await-idle kill` takes; on fire the server publishes
     `{"kind":"session_idle","task":"<32-hex>","status":"fired"|"session_stopped"}`
     to T. THE agent pattern: arm with your own `chat.<short-id>`, end the
     turn, and the fire wakes you via the inbox hook — replaces snapshot
@@ -233,10 +236,11 @@ egress.
 worker runs `agent send` *during* its turn, so its reply reaches you while the
 PTY is still emitting; the idle fire lands ~3s later and, per the paragraph
 above, cannot even say which kind of "waiting for input" it found. Two wakes
-for one event, the second one strictly weaker. And **an armed watcher cannot be
-disarmed** — `await-idle` takes only `--threshold-ms` / `--notify` / `--topic`,
-and the server-side watcher ends by firing or by the session stopping — so
-noticing that the reply came first does not get the wake back.
+for one event, the second one strictly weaker. If you armed one anyway and the
+reply arrived first, `harness-cli session await-idle kill <watcher_id>`
+disarms it — nothing is published for a killed watcher. `session await-idle ls`
+shows what you have armed (yours only; the operator sees everyone's). A
+redundant fire costs one extra wake, so this is tidiness, not damage control.
 
 Arm it when **no reply is coming**:
 
