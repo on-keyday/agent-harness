@@ -2231,3 +2231,69 @@ and reversed a decision already written down in the neighbouring test's
 comment. The item that actually needed changing was the one whose CONDITION had
 silently become a proxy: "declares no positional" had been standing in for
 "requires nothing" since before any verb could make the two differ.
+
+## 2026-09-28 — await-idle watchers get an id, a list and a kill
+
+Two new sub-verbs (`session await-idle ls` / `kill`) on a verb that already
+existed, a watcher id on every arm, a `cancelled` status, a TUI modal (`I`) and
+a WebUI panel. Walked 1–39 before implementation (the spec carries the walk)
+and item 39 after a live run on all three UIs. S1–S6 `n/a`.
+
+**done:** 1, 4, 6, 7, 8, 10, 24, 25, 27, 28a, 29, 30, 31, 32, 33, 34a, 35, 36,
+37, 39.
+
+- **1** — two rows, and the first depth-2 verb-and-parent in the table
+  (`session await-idle <task>` beside `session await-idle ls`). Routing it was
+  untested ground; `ParseCLICommand` / `ParseTUICommand` already match
+  longest-first, and a test now pins the four spellings on both grammars.
+- **1 (the table's invariants shaped the commits)** —
+  `TestEveryVerbHasASurfaceVerdict` requires a verb's modal surfaces to exist
+  the moment the verb is declared, and `TestModalSurfaceEntryPointsExist`
+  checks the files. So the verb rows, the TUI modal and the WebUI panel landed
+  as ONE commit instead of the plan's three. Declaring the verb with a false
+  `NoModalSurface` to keep the commits small was the other way out; the
+  invariant is the reason not to.
+- **7 (the item's text was stale)** — it named a `WEBUI_DISPATCH` map and a
+  startup assertion in `main.js`. Neither exists: dispatch is declared as
+  `WebUIDispatch` on the row and `TestEveryWebUIVerbDeclaresDispatch` enforces
+  it. Fixed in the checklist text in the same commit, as item 15's stale path
+  was on 2026-09-22.
+- **25** — `watcher_id` 0 means "none" with no presence bit, because the
+  registry counts from 1 (the exec registry's line).
+- **28a** — `AwaitIdleListRequest` / `AwaitIdleKillRequest` are built in the
+  two client methods only; TUI and wasm go through the `*With` forms.
+- **31** — `no armed watchers` on every surface when empty.
+- **32** — the snake_case status renderer existed TWICE (CLI and wasm) and the
+  copies already disagreed on an unknown value. Collapsed onto
+  `cli.AwaitIdleStatusString`; the new `cancelled` reached one function.
+- **36** — `supervising-workers` said "an armed watcher cannot be disarmed".
+  True when written, false now; replaced with the kill procedure.
+- **39** — every Surfaces row driven live against a dummy harness: CLI arm
+  prints `watcher_id`, `ls`/`--json`, kill, stale kill exits 1, a killed
+  blocking arm prints `cancelled` and exits 4, SIGINT on a blocking arm drops
+  its watcher (listed while blocked, gone after — the positive control), a
+  killed board watcher publishes nothing after the session idles; TUI `W`
+  result names the watcher, `I` modal, `x`/`y`, cmdline `ls`/`kill`; WebUI
+  panel at desktop and 390px (no page overflow), kill via the confirm dialog,
+  command input arm/`ls`/`kill`.
+
+**omitted:**
+
+- **34** — fixed column set in the TUI modal, stated as a decision.
+- **15** — no capability gates either verb, so `CapDescription` names nothing
+  new; `notify`'s line is unchanged because arming with `--notify` is.
+
+**What the walk did not produce and the code reading did:** the
+scope-completeness table (`kindTargetClass`) asked "does this kind name a
+task?" of the two new kinds, and answering it honestly added a conjunct to the
+authorization — an agent's own watcher on a task its scope no longer covers is
+now hidden, like every other surface hides that task. Recorded in the spec as
+a claude decision not yet seen by the operator. And
+`TestAgentRetractIsStillTheLastKind` (renamed `…AwaitIdleKill…`) did its job:
+appending two kinds would otherwise have left both completeness loops stopping
+short of them.
+
+**The Standing tallies table above is stale** — it was not updated by the
+2026-09-17, 09-18 (×2) or 09-22 entries (row 39 still reads 5 `done`), so it is
+not bumped here either: a partial update would make it look reconciled. It
+needs one pass against the entries, not another increment.

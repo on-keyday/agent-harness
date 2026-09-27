@@ -354,7 +354,16 @@ C, embedding them in `session ls`, was rejected).
 **Live surfaces and the spec's own table**
 
 38. **n/a** — no screen-rendering change.
-39. **pending** — end-of-feature check; last box in Completion.
+39. **done** (2026-09-28, after the code landed on the branch) — every row of
+    the Surfaces table driven live against a dummy harness built from this
+    tree: CLI (arm prints `watcher_id`; `ls` / `--json`; `kill`, a stale kill
+    exits 1; a killed blocking arm prints `cancelled`, exit 4; SIGINT on a
+    blocking arm drops its watcher), TUI (`W` names the watcher; `I` modal,
+    `x`/`y`; cmdline `ls` / `kill`), TUI cmdline, WebUI (panel on the 接続 tab
+    at desktop and 390px with no page overflow; kill through the confirm
+    dialog), WebUI cmdline (arm / `ls` / `kill`), wasm bridge (every WebUI
+    row above goes through it). A killed board watcher published nothing after
+    the session idled.
 
 **Documentation surfaces**
 

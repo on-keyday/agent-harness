@@ -74,10 +74,14 @@ when their trigger fires, with the same three verdicts.
 6. WebUI controls — `webui/index.html` + `webui/static/main.js` (chips via
    `buildCapChips`, checklists via `buildTaskChecklist`, dialogs via
    `<dialog class="picker-modal …">`).
-7. WebUI dispatch coverage — `WEBUI_DISPATCH` in `main.js` must name every
-   path `harness.pathsForSurface("webui")` returns; a startup assertion
-   throws otherwise, so a verb declared for the WebUI with no case fails at
-   load rather than telling whoever types it first that it is unknown.
+7. WebUI dispatch coverage — every path typable in the WebUI declares a
+   `WebUIDispatch{Fn: …}` on its row in `cli/verb/table.go` (the page's
+   dispatch map is generated from those), and `main.js`'s case for the family
+   must route the new sub-path to it. `cli/verb`'s
+   `TestEveryWebUIVerbDeclaresDispatch` fails on a missing declaration. (Until
+   2026-09-28 this item named a `WEBUI_DISPATCH` map and a startup assertion in
+   `main.js`; both had moved to the declaration, and the stale path cost a
+   grep.)
 8. Actions that carry values across the wasm bridge — `Bound` crosses
    generically (flags, args, trail, custom), but an action whose `Build`
    INTERPRETS its positionals needs its own bridge function; `harness.parseGit`
