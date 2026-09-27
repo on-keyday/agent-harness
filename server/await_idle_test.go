@@ -56,7 +56,7 @@ func TestSessionMux_IdleWatcherFiresAfterQuiescence(t *testing.T) {
 
 	var fired atomic.Int32
 	var gotStopped atomic.Bool
-	mux.ArmIdleWatcher(50*time.Millisecond, func(stopped bool, lo int64) {
+	mux.ArmIdleWatcher(50*time.Millisecond, nil, func(stopped bool, lo int64) {
 		gotStopped.Store(stopped)
 		if lo == 0 {
 			t.Error("fired with lastOutput=0")
@@ -88,7 +88,7 @@ func TestSessionMux_IdleWatcherFiresImmediatelyWhenAlreadyIdle(t *testing.T) {
 
 	fired := make(chan bool, 1)
 	start := time.Now()
-	mux.ArmIdleWatcher(50*time.Millisecond, func(stopped bool, _ int64) {
+	mux.ArmIdleWatcher(50*time.Millisecond, nil, func(stopped bool, _ int64) {
 		fired <- stopped
 	})
 	select {
@@ -113,7 +113,7 @@ func TestSessionMux_IdleWatcherSessionStopped(t *testing.T) {
 
 	// No output ever (lastOutput==0): the watcher must wait, not fire.
 	fired := make(chan bool, 1)
-	mux.ArmIdleWatcher(10*time.Millisecond, func(stopped bool, _ int64) {
+	mux.ArmIdleWatcher(10*time.Millisecond, nil, func(stopped bool, _ int64) {
 		fired <- stopped
 	})
 	select {

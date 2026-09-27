@@ -1077,7 +1077,9 @@ const idleWatchTick = 500 * time.Millisecond
 //     then for the idle edge (arming during process boot means the caller
 //     wants the boot turn's end, not an instant fire);
 //   - one-shot: the watcher is gone after firing either way.
-func (m *SessionMux) ArmIdleWatcher(threshold time.Duration, fn func(stopped bool, lastOutputUnixNano int64)) {
+//
+// A closed stop ends the watcher without calling fn; a nil stop never fires.
+func (m *SessionMux) ArmIdleWatcher(threshold time.Duration, stop <-chan struct{}, fn func(stopped bool, lastOutputUnixNano int64)) {
 	go func() {
 		t := time.NewTicker(idleWatchTick)
 		defer t.Stop()
@@ -1094,6 +1096,10 @@ func (m *SessionMux) ArmIdleWatcher(threshold time.Duration, fn func(stopped boo
 			select {
 			case <-m.ctx.Done():
 				fn(true, m.lastOutput.Load())
+				return
+			case <-stop:
+				// Killed or its requester went away. Whoever closed stop owns
+				// what is sent; this goroutine only leaves.
 				return
 			case <-t.C:
 			}

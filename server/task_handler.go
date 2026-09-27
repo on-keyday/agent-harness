@@ -78,6 +78,10 @@ type TaskHandler struct {
 	// different questions and are listed and killed by different verbs.
 	execRunsOnce sync.Once
 	execRuns     *execRegistry
+	// idleWatchersOnce / idleWatcherReg are the same lazy pair for armed
+	// await-idle watchers; see idleWatchers().
+	idleWatchersOnce sync.Once
+	idleWatcherReg   *idleWatcherRegistry
 
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
 	// with all-zero counts. Server.New wires this to a closure that dispatches

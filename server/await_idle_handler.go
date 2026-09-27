@@ -42,13 +42,13 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		return
 	}
 	requestID := req.RequestId
-	respond := func(status protocol.AwaitIdleStatus, lastOutputUnixNano int64) {
+	respond := func(status protocol.AwaitIdleStatus, lastOutputUnixNano int64, watcherID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: requestID}
 		lo := uint64(0)
 		if lastOutputUnixNano > 0 {
 			lo = uint64(lastOutputUnixNano)
 		}
-		resp.SetAwaitIdle(protocol.AwaitIdleResponse{Status: status, LastOutputAt: lo})
+		resp.SetAwaitIdle(protocol.AwaitIdleResponse{Status: status, LastOutputAt: lo, WatcherId: watcherID})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
@@ -64,7 +64,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// for the same answer, since a narrowed exec_view would refuse here while
 	// `ls` kept answering.
 	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_None, hex.EncodeToString(ai.TaskId.Id[:])) {
-		respond(protocol.AwaitIdleStatus_NotFound, 0)
+		respond(protocol.AwaitIdleStatus_NotFound, 0, 0)
 		return
 	}
 
@@ -88,18 +88,18 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		}
 	case protocol.AwaitIdleSink_Board:
 		if topic == "" || h.Board == nil {
-			respond(protocol.AwaitIdleStatus_BadRequest, 0)
+			respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
 			return
 		}
 	default:
-		respond(protocol.AwaitIdleStatus_BadRequest, 0)
+		respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
 		return
 	}
 
 	taskIDHex := hex.EncodeToString(ai.TaskId.Id[:])
 	mux := h.sessionMux(taskIDHex)
 	if mux == nil {
-		respond(protocol.AwaitIdleStatus_NotFound, 0)
+		respond(protocol.AwaitIdleStatus_NotFound, 0, 0)
 		return
 	}
 
@@ -113,26 +113,49 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	requesterConnID := conn.ConnectionID().String()
 	requester := h.lookupPrincipal(requesterConnID)
 
+	w := &idleWatcher{
+		taskIDHex:  taskIDHex,
+		sink:       ai.Sink,
+		topic:      topic,
+		threshold:  threshold,
+		requester:  requester,
+		clientCID:  requesterConnID,
+		clientKind: h.lookupClientKind(requesterConnID),
+		stop:       make(chan struct{}),
+	}
+	// Registered BEFORE arming: an already-idle session fires on the first
+	// check, and the fire must find its own entry to remove.
+	id := h.idleWatchers().add(w)
+
+	var deliver func(stopped bool, lo int64)
 	switch ai.Sink {
 	case protocol.AwaitIdleSink_Reply:
-		mux.ArmIdleWatcher(threshold, func(stopped bool, lo int64) {
+		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.LastOutputUnixNano(), id) }
+		deliver = func(stopped bool, lo int64) {
 			st := protocol.AwaitIdleStatus_Fired
 			if stopped {
 				st = protocol.AwaitIdleStatus_SessionStopped
 			}
-			respond(st, lo)
-		})
+			respond(st, lo, id)
+		}
 	case protocol.AwaitIdleSink_Notify:
-		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano())
-		mux.ArmIdleWatcher(threshold, func(stopped bool, lo int64) {
+		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
+		deliver = func(stopped bool, lo int64) {
 			h.fireIdleNotify(taskIDHex, requesterConnID, stopped, lo)
-		})
+		}
 	case protocol.AwaitIdleSink_Board:
-		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano())
-		mux.ArmIdleWatcher(threshold, func(stopped bool, lo int64) {
+		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
+		deliver = func(stopped bool, lo int64) {
 			h.fireIdleBoard(topic, taskIDHex, requester, stopped, lo)
-		})
+		}
 	}
+	mux.ArmIdleWatcher(threshold, w.stop, func(stopped bool, lo int64) {
+		// A kill or a teardown that removed it first owns the outcome.
+		if _, still := h.idleWatchers().remove(id); !still {
+			return
+		}
+		deliver(stopped, lo)
+	})
 }
 
 // fireIdleNotify delivers a fired idle watcher through the notify path: the
