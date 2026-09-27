@@ -151,6 +151,10 @@ format AwaitIdleListRequest:
 format AwaitIdleListResponse:
     stream_id :u64            # rows on their own send stream; 0 on failure
 
+format AwaitIdleListBody:     # what that stream carries until EOF
+    watchers_len :u16
+    watchers :[watchers_len]AwaitIdleWatcherInfo
+
 format AwaitIdleWatcherInfo:
     watcher_id     :u64
     task_id        :TaskID
@@ -167,8 +171,13 @@ format AwaitIdleWatcherInfo:
 format AwaitIdleKillRequest:
     watcher_id :u64
 
+enum AwaitIdleKillStatus:
+    :u8
+    ok = 0
+    not_found = 1             # unknown, already ended, or not the caller's
+
 format AwaitIdleKillResponse:
-    status :AwaitIdleKillStatus   # ok | not_found
+    status :AwaitIdleKillStatus
 ```
 
 plus `TaskControlKind.await_idle_list` / `await_idle_kill` and their `match`
