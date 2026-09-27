@@ -14,6 +14,7 @@ armed watcher is invisible and irrevocable from the moment the request returns.
 | A reply-sink watcher is dropped when its requester's connection closes | claude, approved by operator 2026-09-28 |
 | The sub-verb is `kill`, not `cancel`, to match `exec kill` / `forward kill` | claude, approved by operator 2026-09-28 |
 | The 🔔 button does not show a live "armed" state; the list panel answers "did I arm it" | claude, approved by operator 2026-09-28 |
+| An agent's list/kill also requires the target task to be visible to it (found reading the scope-completeness table, after the design was approved) | claude, 2026-09-28 — **not yet seen by the operator** |
 
 ## Problem
 
@@ -88,17 +89,28 @@ One predicate, used by both the list and the kill:
 
 ```go
 func (h *TaskHandler) idleWatcherVisibleTo(connID string, w *idleWatcher) bool {
-	p := h.lookupPrincipal(connID)
-	return p.Id == ([16]byte{}) || p == w.requester
+	all, allowed := h.visibleToCaller(connID)
+	if all {
+		return true // the operator: principal zero
+	}
+	return h.lookupPrincipal(connID) == w.requester && allowed[w.taskIDHex]
 }
 ```
 
-This deliberately differs from the exec and forward siblings, which bound by
-task **visibility** (`visibleToCaller`). The unit here is who armed it: a
-worker that can see its supervisor's task must not be able to strip the
-supervisor's insurance on it. A kill the predicate refuses returns
-`not_found`, as `handleExecRunKill` does, so the reply does not confirm that
-someone else's watcher exists.
+Two conjuncts. **Armed by the caller** is the operator's decision and the
+reason this differs from the exec and forward siblings, which bound by
+visibility alone: a worker that can see its supervisor's task must not be able
+to strip the supervisor's insurance on it. **Target still visible** is the
+sibling rule kept: arming already required the target to be in scope
+(`handleAwaitIdle`'s `inScope`), and a later `caps set` can narrow that, after
+which the repo reports the task as absent everywhere else. Without it the
+watcher would be the one surface still naming a task the caller can no longer
+see. A kill the predicate refuses returns `not_found`, as `handleExecRunKill`
+does, so the reply does not confirm that someone else's watcher exists.
+
+Completeness tables: `await_idle_list` is `infoScoped` /
+`capNone`; `await_idle_kill` is `targetGated` / `capNone` (its target is found
+through the registry, as `exec_run_kill`'s is, and no capability bit is read).
 
 No capability is added. Listing reveals only watchers the caller armed itself
 (or, for the operator, everything the operator can already observe); killing
@@ -181,6 +193,13 @@ recorded.
 | WebUI cmdline | unchanged | `session await-idle ls` | `session await-idle kill <id>...` |
 | wasm bridge | `harness.awaitIdle` returns `watcherId` | `harness.awaitIdleList(taskFilterHex?)` | `harness.awaitIdleKill(id)` |
 
+**Freshness.** Watchers get no push subscription, like forwards and unlike
+execs (`execs.status`). The WebUI panel rides the snapshot poll, as
+`#exec-list` does ("Execs ride the same poll as forwards" in
+`cmd/harness-webui-wasm/main.go`): one more list call per poll, the snapshot
+key `idle_watchers`. The TUI modal is `ForwardsModal`-shaped — fetched on open
+and after a kill, no `ApplyEvent`.
+
 **CLI output.**
 
 - `ls` human rows: `<id>  <task8>  sink=<reply|notify|board>[ topic=<t>]  threshold=<ms>ms  armed=<age>  by=<operator|task8>`.
@@ -208,7 +227,8 @@ children is checked in `cli/verb` rather than assumed.
    `-race`.
 2. Authorization: operator lists/kills an agent's watcher; agent A lists
    neither B's nor the operator's, and a kill of B's returns `not_found` with
-   B's watcher still armed afterwards.
+   B's watcher still armed afterwards. An agent whose scope no longer covers
+   the target does not list its own watcher on it.
 3. Teardown: closing the arming connection removes its reply-sink watcher
    and leaves its board/notify watchers in `ls`.
 4. Reply-sink kill: the blocked caller receives `cancelled` and its
@@ -271,8 +291,10 @@ Walked 2026-09-28, before implementation.
 5. **n/a** — no picker; the modal is a list with a cursor.
 6. **done** — `#await-idle-list` in `webui/index.html` beside `#exec-list`,
    rendered in `main.js` the way the exec list is.
-7. **done** — both paths are declared for WebUI, so `WEBUI_DISPATCH` gains
-   `awaitIdleList` / `awaitIdleKill`; the startup assertion fails otherwise.
+7. **done** — both rows declare `WebUIDispatch{Fn: "awaitIdleList"}` /
+   `{Fn: "awaitIdleKill"}` in `cli/verb/table.go` (the dispatch map is now
+   declared there, not in `main.js`, which this checklist item still names),
+   and `main.js`'s `session` case routes `b.path[2]` to them.
 8. **done** — `Build` does not interpret positionals beyond `ArgUint`; the
    generic `Bound` crossing suffices for the cmdline. The panel calls the two
    bridge functions directly.
