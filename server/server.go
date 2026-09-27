@@ -1258,6 +1258,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		if s.taskHandler != nil {
 			s.taskHandler.DropPortForwardsForConn(session.ConnectionID().String())
 			s.taskHandler.DropExecRunsForConn(session.ConnectionID().String())
+			s.taskHandler.DropIdleWatchersForConn(session.ConnectionID().String())
 		}
 	}()
 

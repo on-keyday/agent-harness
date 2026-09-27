@@ -570,6 +570,28 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_AwaitIdleList:
+		// No capability: bounded inside the handler by idleWatcherVisibleTo.
+		al := req.AwaitIdleList()
+		if al == nil {
+			slog.Error("TaskHandler: AwaitIdleList variant is nil")
+			return
+		}
+		h.handleAwaitIdleList(conn, req.RequestId, cid, al.TaskId)
+
+	case protocol.TaskControlKind_AwaitIdleKill:
+		// No capability, and gated inline for exec_run_kill's reason: the
+		// target is only known after the registry lookup.
+		ak := req.AwaitIdleKill()
+		if ak == nil {
+			slog.Error("TaskHandler: AwaitIdleKill variant is nil")
+			return
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdleKill, RequestId: req.RequestId}
+		resp.SetAwaitIdleKill(h.handleAwaitIdleKill(cid, ak))
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_OpenPortForward:
 		pf := req.OpenPortForward()
 		if pf == nil {

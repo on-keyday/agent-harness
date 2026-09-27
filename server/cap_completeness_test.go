@@ -79,6 +79,11 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_ListConns:        capNone,
 	protocol.TaskControlKind_ListPortForwards: capNone,
 	protocol.TaskControlKind_ExecRunList:      capNone,
+	// await_idle_list / await_idle_kill read no capability bit: they reveal
+	// and end only what the caller armed (the operator: everything), and
+	// arming needed none either.
+	protocol.TaskControlKind_AwaitIdleList: capNone,
+	protocol.TaskControlKind_AwaitIdleKill: capNone,
 	// await_idle reports last_output_at, which `ls` already hands to any caller
 	// that can see the task; its one side effect, sink=notify, is gated on
 	// notify inside the handler.
@@ -120,7 +125,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentRetract); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AwaitIdleKill); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

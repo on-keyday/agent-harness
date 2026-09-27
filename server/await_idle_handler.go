@@ -123,6 +123,12 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		clientKind: h.lookupClientKind(requesterConnID),
 		stop:       make(chan struct{}),
 	}
+	// Set before add publishes w: a kill from another connection may read it
+	// the moment the entry is in the registry. w.id is read at call time,
+	// which is after add assigned it.
+	if ai.Sink == protocol.AwaitIdleSink_Reply {
+		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.LastOutputUnixNano(), w.id) }
+	}
 	// Registered BEFORE arming: an already-idle session fires on the first
 	// check, and the fire must find its own entry to remove.
 	id := h.idleWatchers().add(w)
@@ -130,7 +136,6 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	var deliver func(stopped bool, lo int64)
 	switch ai.Sink {
 	case protocol.AwaitIdleSink_Reply:
-		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.LastOutputUnixNano(), id) }
 		deliver = func(stopped bool, lo int64) {
 			st := protocol.AwaitIdleStatus_Fired
 			if stopped {

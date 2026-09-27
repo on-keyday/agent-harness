@@ -55,6 +55,8 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// forward id.
 	protocol.TaskControlKind_OpenExecRun: targetGated,
 	protocol.TaskControlKind_ExecRunKill: targetGated,
+	// The watcher resolves to a task; idleWatcherVisibleTo gates it.
+	protocol.TaskControlKind_AwaitIdleKill: targetGated,
 	// prune names a set of tasks, or sweeps by age; filtered to the caller's
 	// scope in the PruneFn closure.
 	protocol.TaskControlKind_PruneTasks: targetGated,
@@ -67,6 +69,8 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// the reason await_idle needs none: gating a fact `ls` already hands out
 	// would make the direct path cost more authority than polling for it.
 	protocol.TaskControlKind_ExecRunList: infoScoped,
+	// Filtered by idleWatcherVisibleTo, which includes visibleToCaller.
+	protocol.TaskControlKind_AwaitIdleList: infoScoped,
 
 	protocol.TaskControlKind_ClientHello: noTarget,
 	protocol.TaskControlKind_Notify:      noTarget,
@@ -118,7 +122,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentRetract); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AwaitIdleKill); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -133,15 +137,16 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// agent_retract is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught three appends now:
-// restore_tasks, when the bound was open_forward_tap; trsf_state; and the ten
+// await_idle_kill is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught four appends now:
+// restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
-// with whatever gate their neighbours happened to have.
-func TestAgentRetractIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentRetract) + 1)
+// with whatever gate their neighbours happened to have; and the two
+// await_idle_* kinds.
+func TestAwaitIdleKillIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AwaitIdleKill) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after agent_retract (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after await_idle_kill (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}
