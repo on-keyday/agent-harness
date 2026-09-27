@@ -535,6 +535,11 @@ enum TaskControlKind:
                             # AUTHORSHIP, not a capability -- distinct from
                             # board_retract, which skips that check on the
                             # purge bit and is recorded as by=purge_cap.
+    await_idle_list         # appended: enumerate armed await-idle watchers.
+                            # No capability. An agent sees the ones it armed on
+                            # tasks still visible to it; the operator sees all.
+    await_idle_kill         # appended: disarm one watcher by id. Same predicate
+                            # as await_idle_list; anything else is not_found.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1841,6 +1846,7 @@ enum AwaitIdleStatus:
     session_stopped = 2       # session ended before the idle edge
     not_found = 3             # unknown task id or no live session mux
     bad_request = 4           # e.g. sink=board with empty topic, unknown sink
+    cancelled = 5             # killed via await_idle_kill before it fired
 
 format AwaitIdleRequest:
     task_id :TaskID
@@ -1852,6 +1858,44 @@ format AwaitIdleRequest:
 format AwaitIdleResponse:
     status :AwaitIdleStatus
     last_output_at :u64       # unix nanos at decision time (0 if none)
+    watcher_id :u64           # the registry id; 0 for not_found / bad_request
+
+format AwaitIdleListRequest:
+    task_id :TaskID           # all-zero = every watcher visible to the caller
+
+# Rows travel on their own send stream, as ExecRunListResponse's do: a row
+# carries a topic of up to 64KiB, and a control message must fit one datagram.
+format AwaitIdleListResponse:
+    stream_id :u64            # server-initiated send-stream carrying
+                              # AwaitIdleListBody until EOF. 0 = none allocated.
+
+format AwaitIdleListBody:
+    watchers_len :u16
+    watchers :[watchers_len]AwaitIdleWatcherInfo
+
+format AwaitIdleWatcherInfo:
+    watcher_id     :u64
+    task_id        :TaskID
+    sink           :AwaitIdleSink
+    topic_len      :u16
+    topic          :[topic_len]u8     # sink=board only; empty otherwise
+    threshold_ms   :u32               # after the server default is applied
+    armed_unix_ms  :u64
+    requester      :TaskID            # the arming principal; zero = operator
+    origin_kind    :ClientKind
+    origin_cid_len :u8
+    origin_cid     :[origin_cid_len]u8  # ConnectionID canonical String()
+
+format AwaitIdleKillRequest:
+    watcher_id :u64
+
+enum AwaitIdleKillStatus:
+    :u8
+    ok = 0
+    not_found = 1             # unknown, already ended, or not the caller's
+
+format AwaitIdleKillResponse:
+    status :AwaitIdleKillStatus
 
 format TaskControlRequest:
     kind :TaskControlKind
@@ -1900,6 +1944,8 @@ format TaskControlRequest:
         TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedRequest
         TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqRequest
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractRequest
+        TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListRequest
+        TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1969,6 +2015,8 @@ format TaskControlResponse:
         TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedResponse
         TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqResponse
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractResponse
+        TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListResponse
+        TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillResponse
 
 enum SetCapsStatus:
     :u8
