@@ -22,6 +22,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.detail.IsOpen() }, (*App).inDetail},
 	{func(a *App) bool { return a.connsModal.IsOpen() }, (*App).inConnsModal},
 	{func(a *App) bool { return a.execsModal.IsOpen() }, (*App).inExecsModal},
+	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
 	// Opened from the forwards pane and drawn over it, so it comes first.
 	{func(a *App) bool { return a.forwardTap.IsOpen() }, (*App).inForwardTap},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
@@ -138,6 +139,35 @@ func (a *App) inExecsModal(msg tea.KeyMsg) tea.Cmd {
 	}
 	var cmd tea.Cmd
 	a.execsModal, cmd = a.execsModal.Update(msg)
+	return cmd
+}
+
+// Armed await-idle watcher list: inExecsModal's keys, against
+// DoIdleWatcherKill.
+func (a *App) inIdleWatchersModal(msg tea.KeyMsg) tea.Cmd {
+	if a.idleWatchersModal.IsConfirming() {
+		switch msg.String() {
+		case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
+			if id, ok := a.idleWatchersModal.ConfirmKill(); ok {
+				return DoIdleWatcherKill(a.client, id)
+			}
+			return nil
+		case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
+			a.idleWatchersModal.CancelKillConfirm()
+			return nil
+		}
+		return nil
+	}
+	if msg.Type == tea.KeyEsc {
+		a.idleWatchersModal.Close()
+		return nil
+	}
+	if msg.String() == modalKeys.ForwardKill {
+		a.idleWatchersModal.BeginKillConfirm()
+		return nil
+	}
+	var cmd tea.Cmd
+	a.idleWatchersModal, cmd = a.idleWatchersModal.Update(msg)
 	return cmd
 }
 

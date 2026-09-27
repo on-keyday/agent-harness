@@ -681,6 +681,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderTrsfTargets(conns);
     renderForwardList(snap.forwards || []);
     renderExecList(snap.execs || []);
+    renderIdleWatcherList(snap.idle_watchers || []);
   };
 
   // --- Raw connect pane -------------------------------------------------------
@@ -1235,6 +1236,59 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           refreshSnapshot();
         } catch (err) {
           appendCmdOutput(`exec kill error: ${err.message}`);
+          kill.disabled = false;
+        }
+      });
+      row.appendChild(kill);
+      host.appendChild(row);
+    }
+  }
+
+  // renderIdleWatcherList draws one row per armed await-idle watcher this
+  // operator can see, each with a kill button — renderExecList's shape and
+  // CSS, because `session await-idle ls` / `kill` is the same list-and-kill
+  // pair. It is the answer to "did I arm one on that task?".
+  function renderIdleWatcherList(watchers) {
+    const host = document.getElementById("await-idle-list");
+    if (!host) return;
+    host.textContent = "";
+    if (!watchers.length) {
+      const empty = document.createElement("div");
+      empty.className = "forward-list-empty";
+      empty.textContent = "armed な watcher はありません";
+      host.appendChild(empty);
+      return;
+    }
+    const now = Date.now();
+    for (const w of watchers) {
+      const row = document.createElement("div");
+      row.className = "exec-row";
+      const taskShort = w.task ? w.task.slice(0, 8) + "…" : "-";
+      const age = w.armed_unix_ms
+        ? `${Math.max(0, Math.round((now - w.armed_unix_ms) / 1000))}s`
+        : "-";
+      const sink = w.sink === "board" ? `board ${w.topic}` : w.sink;
+      for (const text of [`#${w.watcher_id}`, taskShort, sink, `${w.threshold_ms}ms`, age, `by ${w.by}`]) {
+        const cell = document.createElement("span");
+        cell.className = "forward-cell";
+        cell.textContent = text;
+        row.appendChild(cell);
+      }
+      const kill = document.createElement("button");
+      kill.type = "button";
+      kill.className = "btn-danger";
+      kill.textContent = "kill";
+      kill.addEventListener("click", async () => {
+        // Confirmed: the operator sees every agent's watchers, so this row
+        // may be someone else's insurance.
+        if (!window.confirm(`Kill await-idle watcher #${w.watcher_id} on ${taskShort}?`)) return;
+        kill.disabled = true;
+        try {
+          await window.harness.awaitIdleKill(w.watcher_id);
+          appendCmdOutput(`killed await-idle watcher #${w.watcher_id}`);
+          refreshSnapshot();
+        } catch (err) {
+          appendCmdOutput(`await-idle kill error: ${err.message}`);
           kill.disabled = false;
         }
       });
@@ -4292,7 +4346,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (!currentSessionTaskId) { flash("🔔 セッション未接続"); return; }
       try {
         const r = await window.harness.awaitIdle({ taskId: currentSessionTaskId, sink: "notify" });
-        flash(r.status === "armed" ? "🔔 armed ✓" : `🔔 ${r.status}`);
+        flash(r.status === "armed" ? `🔔 armed #${r.watcherId} ✓` : `🔔 ${r.status}`);
       } catch (e) {
         console.error("awaitIdle:", e);
         flash("🔔 error");
@@ -4686,7 +4740,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       notify.addEventListener("click", async () => {
         try {
           const r = await window.harness.awaitIdle({ taskId: id, sink: "notify" });
-          appendCmdOutput(`await-idle ${id.slice(0, 12)}: ${r.status}`, true);
+          appendCmdOutput(`await-idle ${id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
         } catch (e) {
           appendCmdOutput(`await-idle: ${e.message}`, true);
         }
@@ -5074,7 +5128,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       addItem("🔔 idleで通知", "", async () => {
         try {
           const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
-          appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}`, true);
+          appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
         } catch (e) {
           appendCmdOutput(`await-idle: ${e.message}`, true);
         }
@@ -7025,16 +7079,37 @@ async function runVerbCommandDispatch(tokens, ctx) {
       // `session await-idle` is the canonical path on every surface; the
       // WebUI's old top-level `await-idle` spelling is gone (D16).
       if (tokens[1] === "await-idle") {
+        const b = parseOrHelp(ctx, ["session", "await-idle", ...tokens.slice(2)], {});
+        const sub = b.path.length > 2 ? b.path[2] : "arm";
+        if (sub === "ls") {
+          const ws = await ctx.harness.awaitIdleList(b.flags.task || undefined);
+          out = ws.length
+            ? (b.flags.json
+                ? ws.map((w) => JSON.stringify(w)).join("\n")
+                : ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}  by ${w.by}`).join("\n"))
+            : "(no armed watchers)";
+          break;
+        }
+        if (sub === "kill") {
+          // Every id, even after one fails, as `exec kill`.
+          const failed = [];
+          for (const id of b.args) {
+            try { await ctx.harness.awaitIdleKill(Number(id)); }
+            catch (e) { failed.push(`${id}: ${e.message}`); }
+          }
+          if (failed.length) throw new Error(`await-idle kill: ${failed.join("; ")}`);
+          out = `killed await-idle watcher ${b.args.join(", ")}`;
+          break;
+        }
         // Parsed by the shared declaration, which also refuses --notify
         // with --topic: two sinks for one fire.
-        const b = parseOrHelp(ctx, ["session", "await-idle", ...tokens.slice(2)], {});
         const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
         if (sink === "reply") ctx.echo("await-idle: waiting for the session to go idle…");
         const r = await ctx.harness.awaitIdle({
           taskId: b.args[0], thresholdMs: b.flags["threshold-ms"] || 0,
           sink, topic: b.flags.topic || undefined,
         });
-        out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}`;
+        out = `await-idle ${b.args[0].slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`;
         break;
       }
       if (tokens[1] !== "stream") {

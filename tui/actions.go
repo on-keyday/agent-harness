@@ -98,6 +98,17 @@ func (a *App) onExecs(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoExecRunList(a.client, "", false), true
 }
 
+// `I` opens the armed await-idle watcher list.
+func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("watchers: not connected"))
+		return nil, true
+	}
+	a.idleWatchersModal.SetSize(a.width, a.height)
+	a.idleWatchersModal.Open()
+	return DoIdleWatcherList(a.client, "", false), true
+}
+
 // `g` opens the live session viewer grid: a full-screen overlay
 // tiling read-only PaneStreamers for the live interactive sessions,
 // replacing the task-list view (task-list model state is preserved

@@ -393,6 +393,7 @@ type AwaitIdleResultMsg struct {
 	TaskID       string
 	Status       protocol.AwaitIdleStatus
 	LastOutputAt uint64
+	WatcherID    uint64
 	Err          error
 }
 
@@ -405,7 +406,46 @@ func DoAwaitIdle(ctx context.Context, c *cli.Client, taskID string, thresholdMs 
 		if err != nil {
 			return AwaitIdleResultMsg{TaskID: taskID, Err: err}
 		}
-		return AwaitIdleResultMsg{TaskID: taskID, Status: resp.Status, LastOutputAt: resp.LastOutputAt}
+		return AwaitIdleResultMsg{TaskID: taskID, Status: resp.Status, LastOutputAt: resp.LastOutputAt, WatcherID: resp.WatcherId}
+	}
+}
+
+// IdleWatcherListMsg carries a watcher listing. ToCmdresult marks the cmdline
+// path, whose text belongs in the result pane — see ExecRunListMsg.
+type IdleWatcherListMsg struct {
+	Watchers    []protocol.AwaitIdleWatcherInfo
+	Err         error
+	ToCmdresult bool
+}
+
+// IdleWatcherKillMsg carries the outcome of one watcher kill.
+type IdleWatcherKillMsg struct {
+	WatcherID uint64
+	Err       error
+}
+
+// DoIdleWatcherList fetches the armed watchers over the persistent client.
+func DoIdleWatcherList(c *cli.Client, taskFilter string, toCmdresult bool) tea.Cmd {
+	return func() tea.Msg {
+		if c == nil {
+			return IdleWatcherListMsg{Err: fmt.Errorf("not connected to server"), ToCmdresult: toCmdresult}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ws, err := c.AwaitIdleListWith(ctx, taskFilter)
+		return IdleWatcherListMsg{Watchers: ws, Err: err, ToCmdresult: toCmdresult}
+	}
+}
+
+// DoIdleWatcherKill disarms one watcher by id.
+func DoIdleWatcherKill(c *cli.Client, id uint64) tea.Cmd {
+	return func() tea.Msg {
+		if c == nil {
+			return IdleWatcherKillMsg{WatcherID: id, Err: fmt.Errorf("not connected to server")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return IdleWatcherKillMsg{WatcherID: id, Err: c.AwaitIdleKillWith(ctx, id)}
 	}
 }
 

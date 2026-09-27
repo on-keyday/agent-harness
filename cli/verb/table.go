@@ -2176,7 +2176,7 @@ var Verbs = []VerbSpec{
 		},
 		Notes: []string{
 			"one-shot: fire when the session's PTY output goes quiescent.",
-			"default long-polls; --notify/--topic arm a server-side sink and return",
+			"default long-polls; --notify/--topic arm a server-side sink and return. Every arm prints its watcher_id; see `session await-idle ls` / `kill`",
 		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "await-idle"},
@@ -2190,6 +2190,52 @@ var Verbs = []VerbSpec{
 			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "fire via an agentboard publish to this topic"},
 		},
 		Examples: []string{"session await-idle aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
+	{
+		Path:          []string{"session", "await-idle", "ls"},
+		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleList"},
+		SurfaceNotes: map[Surface][]string{
+			TUI:   {"list the armed await-idle watchers (I opens the list; x kills a row)"},
+			WebUI: {"list the armed await-idle watchers / kill one"},
+		},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/idlewatchersmodal.go:IdleWatchersModal"},
+			{Surface: WebUI, At: "webui/index.html#await-idle-list"},
+		},
+		Notes: []string{
+			"list armed watchers: an agent sees the ones it armed, the operator every one; --task filters, --json emits JSON lines",
+		},
+		Action:          "SessionAction",
+		Const:           map[string]string{"Sub": "await-idle-ls"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Flags: []Flag{
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only watchers on this task id"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason:   "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per watcher"},
+		},
+		Examples: []string{"session await-idle ls", "session await-idle ls --json"},
+	},
+	{
+		Path:          []string{"session", "await-idle", "kill"},
+		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleKill"},
+		SurfaceNotes:  map[Surface][]string{TUI: {"disarm one watcher"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/idlewatchersmodal.go:IdleWatchersModal"},
+			// Each row of the watcher list carries its own kill button.
+			{Surface: WebUI, At: "webui/index.html#await-idle-list"},
+		},
+		Notes: []string{
+			"disarm one or more watchers by id (from `session await-idle ls`, or the `watcher_id` an arm printed); nothing is delivered for a killed watcher, except `cancelled` to a caller still blocked on it",
+		},
+		// At least one id, as `exec kill`: none is a mistyped line.
+		MinArgs:         1,
+		Action:          "SessionAction",
+		Const:           map[string]string{"Sub": "await-idle-kill"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "watcher-id", Type: ArgUint, Variadic: true, Field: "WatcherIDs"}},
+		Examples:        []string{"session await-idle kill 3"},
 	},
 	{
 		Path: []string{"session", "resize"}, CmdlineSurfaces: CLI,

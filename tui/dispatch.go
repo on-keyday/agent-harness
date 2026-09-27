@@ -570,6 +570,29 @@ func (h tuiVerbs) SessionAwaitIdle(v verb.SessionAction) tea.Cmd {
 	return DoAwaitIdle(a.appCtx, a.client, full, uint32(v.ThresholdMs), sink, v.Topic)
 }
 
+func (h tuiVerbs) SessionAwaitIdleLs(v verb.SessionAction) tea.Cmd {
+	a := h.a
+	// TaskFilter narrows a listing, as `exec ls --task` does.
+	filter := ""
+	if v.TaskFilter != "" {
+		full, errStr := a.resolveTaskIDPrefix(v.TaskFilter)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render("await-idle ls: " + errStr))
+			return nil
+		}
+		filter = full
+	}
+	return DoIdleWatcherList(a.client, filter, true)
+}
+
+func (h tuiVerbs) SessionAwaitIdleKill(v verb.SessionAction) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, id := range v.WatcherIDs {
+		cmds = append(cmds, DoIdleWatcherKill(h.a.client, id))
+	}
+	return tea.Batch(cmds...)
+}
+
 // --- ssh-gateway and workspace -----------------------------------------
 //
 // Both still route through one helper each, because their inner switches are

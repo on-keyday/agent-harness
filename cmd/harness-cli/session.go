@@ -714,12 +714,15 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
 		"status":         cli.AwaitIdleStatusString(resp.Status),
 		"last_output_at": resp.LastOutputAt,
+		"watcher_id":     resp.WatcherId,
 	})
 	switch resp.Status {
 	case protocol.AwaitIdleStatus_Fired, protocol.AwaitIdleStatus_Armed:
 		return nil
 	case protocol.AwaitIdleStatus_SessionStopped:
 		os.Exit(3) // distinct from fired so scripts can branch
+	case protocol.AwaitIdleStatus_Cancelled:
+		os.Exit(4) // killed via `session await-idle kill`; distinct from fired and session_stopped
 	}
 	os.Exit(1) // not_found / bad_request
 	return nil

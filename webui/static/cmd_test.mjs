@@ -506,3 +506,11 @@ test("an undeclared flag is still an error", async () => {
   assert.ok(err, `an undeclared flag must fail, got out=${out}`);
   assert.doesNotMatch(String(err), /\nflags:\n/, "and must not print the block");
 });
+
+test("session await-idle kill acts on every id; ls asks the bridge", async () => {
+  const k = await run("session await-idle kill 3 4");
+  eq(named(k.calls, "awaitIdleKill").map((c) => c[1]), [3, 4]);
+  const l = await run("session await-idle ls");
+  eq(named(l.calls, "awaitIdleList").length, 1);
+  assert.match(String(l.out), /no armed watchers/);
+});

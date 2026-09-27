@@ -127,6 +127,8 @@ func main() {
 		"execRun":            js.FuncOf(harnessExecRun),
 		"execRunList":        js.FuncOf(harnessExecRunList),
 		"execRunKill":        js.FuncOf(harnessExecRunKill),
+		"awaitIdleList":      js.FuncOf(harnessAwaitIdleList),
+		"awaitIdleKill":      js.FuncOf(harnessAwaitIdleKill),
 		"execArgvText":       js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"help":               js.FuncOf(harnessHelp),
@@ -1344,13 +1346,34 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"command":         cli.ExecRunArgvString(e.Argv),
 				})
 			}
+			// Watchers ride the same poll as execs and forwards: a shared
+			// server-side registry with no push subscription.
+			watcherInfos, wErr := c.AwaitIdleListWith(rootCtx, "")
+			if wErr != nil {
+				slog.Warn("snapshot: AwaitIdleListWith failed (watchers will be empty)", "err", wErr)
+			}
+			idleWatchers := make([]any, 0, len(watcherInfos))
+			for i := range watcherInfos {
+				w := &watcherInfos[i]
+				idleWatchers = append(idleWatchers, map[string]any{
+					"watcher_id":   float64(w.WatcherId),
+					"task":         hex.EncodeToString(w.TaskId.Id[:]),
+					"sink":         cli.AwaitIdleSinkString(w.Sink),
+					"topic":        string(w.Topic),
+					"threshold_ms": float64(w.ThresholdMs),
+					// RAW, for the exec rows' reason: the page re-renders per poll.
+					"armed_unix_ms": float64(w.ArmedUnixMs),
+					"by":            cli.AwaitIdleWatcherBy(w),
+				})
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
-				"runners":  runners,
-				"tasks":    tasks,
-				"taskTree": taskTree,
-				"conns":    conns,
-				"forwards": forwards,
-				"execs":    execs,
+				"runners":       runners,
+				"tasks":         tasks,
+				"taskTree":      taskTree,
+				"conns":         conns,
+				"forwards":      forwards,
+				"execs":         execs,
+				"idle_watchers": idleWatchers,
 			}))
 		}()
 		return nil
@@ -2831,7 +2854,7 @@ func harnessSendNotification(this js.Value, args []js.Value) any {
 // immediately with status "armed".
 //
 //	harness.awaitIdle({taskId: "...", thresholdMs?: N, sink?: "reply"|"notify"|"board", topic?: "..."})
-//	  -> Promise<{status: string, lastOutputAt: number}>
+//	  -> Promise<{status: string, lastOutputAt: number, watcherId: number}>
 func harnessAwaitIdle(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -2873,6 +2896,7 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"status":       cli.AwaitIdleStatusString(resp.Status),
 				"lastOutputAt": float64(resp.LastOutputAt),
+				"watcherId":    float64(resp.WatcherId),
 			}))
 		}()
 		return nil
@@ -3869,6 +3893,81 @@ func harnessExecRunKill(this js.Value, args []js.Value) any {
 			}
 			id := uint64(args[0].Float())
 			if err := c.ExecRunKillWith(rootCtx, id); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(float64(id))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessAwaitIdleList lists the armed await-idle watchers this caller may see.
+//
+//	harness.awaitIdleList(taskFilterHex?) -> Promise<[{watcherId, taskId, sink, topic, thresholdMs, armedUnixMs, by, originKind, originCid}]>
+func harnessAwaitIdleList(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			filter := ""
+			if len(args) > 0 && args[0].Truthy() {
+				filter = args[0].String()
+			}
+			ws, err := c.AwaitIdleListWith(rootCtx, filter)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows := make([]any, 0, len(ws))
+			for i := range ws {
+				w := &ws[i]
+				rows = append(rows, map[string]any{
+					"watcherId":   float64(w.WatcherId),
+					"taskId":      hex.EncodeToString(w.TaskId.Id[:]),
+					"sink":        cli.AwaitIdleSinkString(w.Sink),
+					"topic":       string(w.Topic),
+					"thresholdMs": float64(w.ThresholdMs),
+					"armedUnixMs": float64(w.ArmedUnixMs),
+					"by":          cli.AwaitIdleWatcherBy(w),
+					"originKind":  w.OriginKind.String(),
+					"originCid":   string(w.OriginCid),
+				})
+			}
+			resolve.Invoke(js.ValueOf(rows))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessAwaitIdleKill disarms one watcher by id.
+//
+//	harness.awaitIdleKill(watcherId) -> Promise<watcherId>
+func harnessAwaitIdleKill(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("awaitIdleKill: missing watcherId arg"))
+				return
+			}
+			id := uint64(args[0].Float())
+			if err := c.AwaitIdleKillWith(rootCtx, id); err != nil {
 				rejectErr(reject, err)
 				return
 			}

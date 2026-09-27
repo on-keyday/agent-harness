@@ -99,6 +99,8 @@ type App struct {
 	forwardTap     ForwardTapView
 	forwardTapStop context.CancelFunc
 	execsModal     ExecsModal
+	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
+	idleWatchersModal IdleWatchersModal
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -334,38 +336,39 @@ func New(cfg Config) *App {
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
-		server:          cfg.Server,
-		principal:       principalLabel(),
-		defaultRepo:     cfg.DefaultRepo,
-		workspaceFile:   cfg.WorkspaceFile,
-		workspacePath:   cfg.WorkspacePath,
-		configPath:      cfg.ConfigPath,
-		runners:         NewRunners(),
-		tasks:           NewTasks(),
-		detail:          NewDetailPopup(),
-		logs:            NewLogs(),
-		notify:          NewNotify(),
-		cmdresult:       NewCmdResult(),
-		cmdline:         cmd,
-		cmdHistoryIndex: -1,
-		popup:           NewPopup(cfg.DefaultRepo),
-		filepicker:      NewFilePicker(),
-		fileEditor:      NewFileEdit(),
-		connsModal:      NewConnsModal(),
-		forwardsModal:   NewForwardsModal(),
-		execsModal:      NewExecsModal(),
-		rawModal:        NewRawConnectModal(),
-		boardModal:      NewBoardModal(),
-		gitModal:        NewGitModal(),
-		grid:            NewGridModel(),
-		focus:           focusTasks,
-		connected:       false,
-		status:          "connecting…",
-		tasksByID:       map[string]protocol.TaskInfo{},
-		actRecvAt:       map[string]time.Time{},
-		activeForwards:  map[int]*PortForwardSession{},
-		sessionCaps:     protocol.Capability_None,
-		sessionScope:    protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
+		server:            cfg.Server,
+		principal:         principalLabel(),
+		defaultRepo:       cfg.DefaultRepo,
+		workspaceFile:     cfg.WorkspaceFile,
+		workspacePath:     cfg.WorkspacePath,
+		configPath:        cfg.ConfigPath,
+		runners:           NewRunners(),
+		tasks:             NewTasks(),
+		detail:            NewDetailPopup(),
+		logs:              NewLogs(),
+		notify:            NewNotify(),
+		cmdresult:         NewCmdResult(),
+		cmdline:           cmd,
+		cmdHistoryIndex:   -1,
+		popup:             NewPopup(cfg.DefaultRepo),
+		filepicker:        NewFilePicker(),
+		fileEditor:        NewFileEdit(),
+		connsModal:        NewConnsModal(),
+		forwardsModal:     NewForwardsModal(),
+		execsModal:        NewExecsModal(),
+		idleWatchersModal: NewIdleWatchersModal(),
+		rawModal:          NewRawConnectModal(),
+		boardModal:        NewBoardModal(),
+		gitModal:          NewGitModal(),
+		grid:              NewGridModel(),
+		focus:             focusTasks,
+		connected:         false,
+		status:            "connecting…",
+		tasksByID:         map[string]protocol.TaskInfo{},
+		actRecvAt:         map[string]time.Time{},
+		activeForwards:    map[int]*PortForwardSession{},
+		sessionCaps:       protocol.Capability_None,
+		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
 	a.tasks.Focus()
 	if cfg.WorkspaceName != "" {
@@ -706,6 +709,32 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case IdleWatcherListMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("await-idle ls: %v", msg.Err)))
+			return a, nil
+		}
+		a.idleWatchersModal.ApplySnapshot(msg.Watchers)
+		if msg.ToCmdresult {
+			for _, line := range cli.AwaitIdleWatcherLines(msg.Watchers) {
+				a.cmdresult.Append(line)
+			}
+		}
+		return a, nil
+
+	case IdleWatcherKillMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("await-idle kill %d: %v", msg.WatcherID, msg.Err)))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("killed await-idle watcher %d", msg.WatcherID)))
+		// A killed row must leave the list, and only a fresh fetch can say so
+		// — watchers have no push subscription.
+		if a.idleWatchersModal.IsOpen() {
+			return a, DoIdleWatcherList(a.client, "", false)
+		}
+		return a, nil
+
 	case ConnStatusMsg:
 		a.connsModal.ApplyEvent(msg.Event)
 		return a, nil
@@ -984,7 +1013,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.cmdresult.Append(OKStyle.Render(line))
 		case protocol.AwaitIdleStatus_Armed:
-			a.cmdresult.Append(OKStyle.Render("await-idle " + short + ": armed"))
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("await-idle %s: armed (watcher %d)", short, msg.WatcherID)))
+		case protocol.AwaitIdleStatus_Cancelled:
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("await-idle %s: cancelled (watcher %d killed)", short, msg.WatcherID)))
 		case protocol.AwaitIdleStatus_SessionStopped:
 			a.cmdresult.Append(WarnStyle.Render("await-idle " + short + ": session stopped before going idle"))
 		case protocol.AwaitIdleStatus_NotFound:
@@ -1442,6 +1473,7 @@ func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.forwardsModal.SetSize(a.width, a.height)
 	a.forwardTap.SetSize(a.width, a.height)
 	a.execsModal.SetSize(a.width, a.height)
+	a.idleWatchersModal.SetSize(a.width, a.height)
 	a.boardModal.SetSize(a.width, a.height)
 	a.gitModal.SetSize(a.width, a.height)
 	a.grid.SetSize(a.width, a.height)
@@ -1777,6 +1809,9 @@ func (a *App) View() string {
 	}
 	if a.execsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.execsModal.View())
+	}
+	if a.idleWatchersModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())
 	}
 	if a.forwardTap.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardTap.View())

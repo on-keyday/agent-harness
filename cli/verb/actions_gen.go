@@ -443,7 +443,7 @@ type ServerDialRunnerAction struct {
 	RunnerCID string
 }
 
-// SessionAction is built by: session attach, session await-idle, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
+// SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
 type SessionAction struct {
 	ActionMarker
 	// ms to let the line drain to the runner before detaching
@@ -462,6 +462,9 @@ type SessionAction struct {
 	Notify bool
 	// fire via an agentboard publish to this topic
 	Topic string
+	// only watchers on this task id
+	TaskFilter string
+	WatcherIDs []uint64
 	// new PTY size as ROWSxCOLS (e.g. 40x150)
 	Size string
 	// ms to wait for the server to echo the new size back — that echo is the acknowledgement
@@ -2562,6 +2565,62 @@ func init() {
 			}
 			return a, nil
 		},
+		"session await-idle ls\x00cli": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"session await-idle ls\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-ls"
+			a.TaskFilter = b.Str("task")
+			return a, nil
+		},
+		"session await-idle ls\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"session await-idle kill\x00cli": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("session await-idle kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
+		"session await-idle kill\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("session await-idle kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
+		"session await-idle kill\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "await-idle-kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("session await-idle kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
 		"session resize\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "resize"
@@ -2912,6 +2971,8 @@ const (
 	CmdSessionLs              = "session ls"
 	CmdSessionKill            = "session kill"
 	CmdSessionAwaitIdle       = "session await-idle"
+	CmdSessionAwaitIdleLs     = "session await-idle ls"
+	CmdSessionAwaitIdleKill   = "session await-idle kill"
 	CmdSessionResize          = "session resize"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
@@ -2943,6 +3004,8 @@ const (
 	SubApply           = "apply"
 	SubAttach          = "attach"
 	SubAwaitIdle       = "await-idle"
+	SubAwaitIdleKill   = "await-idle-kill"
+	SubAwaitIdleLs     = "await-idle-ls"
 	SubCaps            = "caps"
 	SubClear           = "clear"
 	SubDetach          = "detach"
@@ -4737,6 +4800,48 @@ func ParseCmdSessionAwaitIdle(sf Surface, args []string, ctx map[string]string) 
 	return a, nil
 }
 
+func ParseCmdSessionAwaitIdleLs(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "await-idle", "ls")
+	if !ok {
+		return zero, fmt.Errorf("session await-idle ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SessionAction)
+	return a, nil
+}
+
+func ParseCmdSessionAwaitIdleKill(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "await-idle", "kill")
+	if !ok {
+		return zero, fmt.Errorf("session await-idle kill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SessionAction)
+	return a, nil
+}
+
 func ParseCmdSessionResize(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "resize")
@@ -5262,6 +5367,10 @@ type CLIDispatch[R any] interface {
 	SessionKill(SessionAction) R
 	// session await-idle
 	SessionAwaitIdle(SessionAction) R
+	// session await-idle ls
+	SessionAwaitIdleLs(SessionAction) R
+	// session await-idle kill
+	SessionAwaitIdleKill(SessionAction) R
 	// session resize
 	SessionResize(SessionAction) R
 	// session snapshot
@@ -5685,6 +5794,18 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionAwaitIdle(a), true, nil
+	case CmdSessionAwaitIdleLs:
+		a, perr := ParseCmdSessionAwaitIdleLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionAwaitIdleLs(a), true, nil
+	case CmdSessionAwaitIdleKill:
+		a, perr := ParseCmdSessionAwaitIdleKill(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionAwaitIdleKill(a), true, nil
 	case CmdSessionResize:
 		a, perr := ParseCmdSessionResize(CLI, args, ctx)
 		if perr != nil {
@@ -5922,6 +6043,10 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionKill(a), true
 		case "await-idle":
 			return h.SessionAwaitIdle(a), true
+		case "await-idle-ls":
+			return h.SessionAwaitIdleLs(a), true
+		case "await-idle-kill":
+			return h.SessionAwaitIdleKill(a), true
 		case "resize":
 			return h.SessionResize(a), true
 		case "snapshot":
@@ -6402,6 +6527,18 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdSessionAwaitIdleLs:
+			a, perr := ParseCmdSessionAwaitIdleLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAwaitIdleKill:
+			a, perr := ParseCmdSessionAwaitIdleKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdSessionResize:
 			a, perr := ParseCmdSessionResize(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -6628,6 +6765,10 @@ type TUIDispatch[R any] interface {
 	SessionKill(SessionAction) R
 	// session await-idle
 	SessionAwaitIdle(SessionAction) R
+	// session await-idle ls
+	SessionAwaitIdleLs(SessionAction) R
+	// session await-idle kill
+	SessionAwaitIdleKill(SessionAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -6995,6 +7136,18 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionAwaitIdle(a), true, nil
+	case CmdSessionAwaitIdleLs:
+		a, perr := ParseCmdSessionAwaitIdleLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionAwaitIdleLs(a), true, nil
+	case CmdSessionAwaitIdleKill:
+		a, perr := ParseCmdSessionAwaitIdleKill(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionAwaitIdleKill(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -7140,6 +7293,10 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionKill(a), true
 		case "await-idle":
 			return h.SessionAwaitIdle(a), true
+		case "await-idle-ls":
+			return h.SessionAwaitIdleLs(a), true
+		case "await-idle-kill":
+			return h.SessionAwaitIdleKill(a), true
 		case "stream-attach":
 			return h.SessionStreamAttach(a), true
 		case "stream-interrupt":
@@ -7555,6 +7712,18 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionAwaitIdle:
 			a, perr := ParseCmdSessionAwaitIdle(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAwaitIdleLs:
+			a, perr := ParseCmdSessionAwaitIdleLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionAwaitIdleKill:
+			a, perr := ParseCmdSessionAwaitIdleKill(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

@@ -641,6 +641,37 @@ func (h cliVerbs) SessionKill(a verb.SessionAction) error {
 func (h cliVerbs) SessionAwaitIdle(a verb.SessionAction) error {
 	return runSessionAwaitIdleWith(h.cid(), a)
 }
+func (h cliVerbs) SessionAwaitIdleLs(a verb.SessionAction) error {
+	ws, err := cli.AwaitIdleList(h.ctx, h.cid(), a.TaskFilter)
+	if err != nil {
+		return err
+	}
+	if a.JSON {
+		for i := range ws {
+			fmt.Println(cli.AwaitIdleWatcherJSONLine(&ws[i]))
+		}
+		return nil
+	}
+	for _, line := range cli.AwaitIdleWatcherLines(ws) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// SessionAwaitIdleKill tries every id even after one fails — the shape
+// ExecKill records the reason for.
+func (h cliVerbs) SessionAwaitIdleKill(a verb.SessionAction) error {
+	var failed error
+	for _, id := range a.WatcherIDs {
+		if err := cli.AwaitIdleKill(h.ctx, h.cid(), id); err != nil {
+			fmt.Fprintf(os.Stderr, "await-idle kill %d: %v\n", id, err)
+			failed = err
+			continue
+		}
+		fmt.Printf("killed await-idle watcher %d\n", id)
+	}
+	return failed
+}
 func (h cliVerbs) SessionResize(a verb.SessionAction) error {
 	return runSessionResizeWith(h.cid(), a)
 }

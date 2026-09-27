@@ -37,6 +37,7 @@ type mainKeyMap struct {
 	Tree            string
 	Forwards        string
 	Execs           string
+	IdleWatchers    string
 	FilePicker      string
 	Git             string
 	LogFilter       string
@@ -73,6 +74,7 @@ var mainKeys = mainKeyMap{
 	Tree:            "T",
 	Forwards:        "f",
 	Execs:           "e",
+	IdleWatchers:    "I",
 	FilePicker:      "F",
 	Git:             "G",
 	LogFilter:       "/",
@@ -270,6 +272,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
 	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
+	{Keys: []string{mainKeys.IdleWatchers}, Scope: scopeGlobal, Do: (*App).onIdleWatchers, Short: "I watchers", Long: "armed await-idle watchers (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},
 }
