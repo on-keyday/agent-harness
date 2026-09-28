@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -30,6 +31,8 @@ import (
 var (
 	listen               = flag.String("listen", "127.0.0.1:8539", "WebSocket listen host:port (use :8539 to dual-stack on all interfaces; loopback by default; empty disables WS leg, requires --udp-listen)")
 	udpListen            = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
+	tlsCert              = flag.String("tls-cert", "", "PEM certificate for the --listen WebSocket/WebUI listener; with --tls-key the server serves wss:// and https:// (clients do not verify it: objproto authenticates the peer)")
+	tlsKey               = flag.String("tls-key", "", "PEM private key for --tls-cert")
 	dataDir              = flag.String("data-dir", "./harness-data", "persistent data dir")
 	taskRetain           = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
 	holdWindow           = flag.Duration("hold-window", 90*time.Second, "after a DELIBERATE shutdown, how long a runner keeps its tasks' children alive with no server so this server's successor can re-adopt them; 0 disables holding (a deliberate shutdown then kills every task, as a crash does)")
@@ -112,6 +115,27 @@ func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, err
 		file = filepath.Join(dataDir, operatorPSKFileName)
 	}
 	return resolvePSK(val, file)
+}
+
+// loadListenTLS turns --tls-cert / --tls-key into the listener's TLS config,
+// or nil for plaintext. It runs before the listener starts: the listen call
+// runs in a goroutine, so a bad certificate left to ListenAndServeTLS would
+// surface only after startup.
+func loadListenTLS(certFile, keyFile, wsListen string) (*tls.Config, error) {
+	if certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New("--tls-cert and --tls-key must be given together")
+	}
+	if wsListen == "" {
+		return nil, errors.New("--tls-cert/--tls-key need --listen: TLS applies only to the WebSocket listener")
+	}
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load --tls-cert/--tls-key: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}, nil
 }
 
 func main() {
@@ -200,6 +224,11 @@ func main() {
 		slog.Error("operator-PSK setup failed", "err", err)
 		os.Exit(1)
 	}
+	listenTLS, err := loadListenTLS(strings.TrimSpace(*tlsCert), strings.TrimSpace(*tlsKey), strings.TrimSpace(*listen))
+	if err != nil {
+		slog.Error("TLS setup failed", "err", err)
+		os.Exit(1)
+	}
 	if *permitNoOperatorPSK && len(operatorPSKBytes) > 0 {
 		slog.Warn("--dangerously-permit-no-operator-psk has no effect: an operator PSK was supplied and is enforced")
 	}
@@ -230,6 +259,7 @@ func main() {
 	s := server.New(server.Config{
 		Addr:                 strings.TrimSpace(*listen),
 		UDPAddr:              strings.TrimSpace(*udpListen),
+		TLS:                  listenTLS,
 		DataDir:              *dataDir,
 		TaskRetention:        *taskRetain,
 		HoldWindow:           *holdWindow,
