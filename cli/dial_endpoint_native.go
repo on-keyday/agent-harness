@@ -24,6 +24,7 @@ func BuildClientEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, erro
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 			Logger: slog.Default(),
 			Path:   WebSocketPath,
+			TLS:    ClientTLSConfig(),
 			Mode:   objproto.EndpointModeClient,
 		})
 		if err != nil {

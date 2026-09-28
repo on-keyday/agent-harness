@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ import (
 type Config struct {
 	Addr          string        // host:port for the WebSocket listener; empty disables the WS leg (UDPAddr must then be set)
 	UDPAddr       string        // host:port for the UDP listener; empty disables the UDP leg. Combine with Addr for ws+udp dualstack.
+	TLS           *tls.Config   // non-nil: the WS/WebUI listener serves wss:// and https:// with it; nil: plaintext
 	DataDir       string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
 	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
@@ -954,10 +956,17 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		serverDone chan error
 	)
 	if mux != nil && httpAddr != "" {
-		httpServer = &http.Server{Addr: httpAddr, Handler: mux}
+		httpServer = &http.Server{Addr: httpAddr, Handler: mux, TLSConfig: s.cfg.TLS}
 		serverDone = make(chan error, 1)
 		go func() {
-			if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			var err error
+			if s.cfg.TLS != nil {
+				// Certificates come from TLSConfig, so no file arguments.
+				err = httpServer.ListenAndServeTLS("", "")
+			} else {
+				err = httpServer.ListenAndServe()
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				serverDone <- err
 				return
 			}

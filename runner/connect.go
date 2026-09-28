@@ -929,6 +929,7 @@ func buildRunnerEndpoint(cfg Config, legs endpointLegs) (objproto.Endpoint, erro
 			WS: transport.WebSocketConfig{
 				Logger: cfg.Logger,
 				Path:   cli.WebSocketPath,
+				TLS:    cli.ClientTLSConfig(),
 				Mode:   objproto.EndpointModeMutual,
 			},
 		})
@@ -940,6 +941,7 @@ func buildRunnerEndpoint(cfg Config, legs endpointLegs) (objproto.Endpoint, erro
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
 			Path:   cli.WebSocketPath,
+			TLS:    cli.ClientTLSConfig(),
 			Mode:   objproto.EndpointModeMutual,
 		})
 		if err != nil {
