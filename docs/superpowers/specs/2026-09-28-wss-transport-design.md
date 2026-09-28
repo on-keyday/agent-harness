@@ -153,8 +153,10 @@ harness:
    `crypto/x509` (IP SAN 127.0.0.1); no certificate is committed. It starts the
    server with `TLS` and checks that:
    - a `cli.Client` and a runner connect over `wss:`;
-   - a task's agent receives a `HARNESS_SERVER_CID` starting with `wss:`, and a
-     harness-cli connects with it.
+   - a task's agent receives a `HARNESS_SERVER_CID` starting with `wss:`.
+   That an agent-side harness-cli connects with that CID is checked in the
+   dummy-harness E2E below, through the `bash` profile: a Go test's fake agent
+   has no auth ticket to run harness-cli with.
    The flag validation in `main` (cert without key; TLS flags with an empty
    `--listen`) gets its own test.
 2. Verify with the make targets, not an ad-hoc `go build ./...`.
@@ -162,6 +164,8 @@ harness:
    - create an IP-SAN self-signed pair with `openssl` in a scratch directory;
    - start the server with `--tls-cert` / `--tls-key` and connect a runner and
      the CLI over `wss:`;
+   - submit a `bash`-profile task that runs `harness-cli ls`, and check that it
+     succeeds with the `wss:` `HARNESS_SERVER_CID` it was given;
    - open `https://127.0.0.1:<port>` in Playwright (`ignoreHTTPSErrors`) and
      check that the WebUI connects over wss and lists tasks; keep the
      screenshot;
