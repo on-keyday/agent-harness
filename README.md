@@ -134,7 +134,12 @@ AES-128-GCM) from the companion module
 underlays — **WebSocket** (default, `--listen host:port` on the server)
 and **UDP** (`--udp-listen host:port`, which uses objtrsf's own
 QUIC-like layering in `trsf`). Both can run simultaneously
-(WS+UDP dualstack) on a single server. The `trsf`
+(WS+UDP dualstack) on a single server. The WebSocket underlay can run
+over TLS: start the server with `--tls-cert FILE --tls-key FILE` (PEM)
+and address it as `wss:HOST:PORT-*`. The WebUI on the same listener is
+then served over `https://`. Clients do not verify the certificate,
+because objproto's PSK handshake already authenticates the peer. TLS
+here is for browsers, not security. The `trsf`
 stream-multiplexing layer carries control / data frames on top of
 either. PSK pre-authentication gates incoming connections before the
 secure session starts. The server takes the PSK via `--psk` (or env
@@ -160,8 +165,10 @@ handed that file's contents through the client-side `HARNESS_OPERATOR_PSK`
 runs without one — operator surfaces are then validated against `--psk`,
 which every agent also holds, and the server says so at startup. Server and runner can
 run on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
-ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
-runner / clients dial; the transport prefix selects the underlay.
+ConnectionID (`ws:host:port-id`, `wss:host:port-id` or `udp:host:port-id`)
+that the runner / clients dial; the transport prefix selects the underlay.
+A `ws:` dial at a server started with `--tls-cert` does not connect, nor
+does a `wss:` dial at one without it: nothing falls back between the two.
 
 **`agent-runner --server-cid` additionally takes a comma-separated list**,
 tried in order until one answers and re-tried from the top on every
@@ -191,6 +198,8 @@ bin/harness-server --listen :8539 --data-dir ./harness-data
 # Optional: add UDP underlay alongside WS (or use UDP only by leaving --listen
 # empty — but UDP-only disables the WebUI).
 # bin/harness-server --listen :8539 --udp-listen :8540 --data-dir ./harness-data
+# Optional: serve wss:// and an https:// WebUI (then dial 'wss:HOSTNAME:8539-*').
+# bin/harness-server --listen :8539 --tls-cert cert.pem --tls-key key.pem --data-dir ./harness-data
 
 # 2. Start a runner. --roots is a comma-separated list of repo paths this
 # runner is allowed to serve (matched verbatim against submit --repo).
@@ -1312,7 +1321,8 @@ embedded into the server binary via `webui.FS` (an `embed.FS`). When
 - `GET /ws` — the WebSocket endpoint the WASM client dials over
   `objproto`
 
-So pointing a browser at `http://server-host:port/` gives you the
+So pointing a browser at `http://server-host:port/` (`https://` when the
+server has `--tls-cert`) gives you the
 same submit / list / cancel / interactive surface as the CLI and TUI,
 plus a **Host pin** dropdown for routing to a specific runner by
 hostname. The xterm-based interactive view splices the runner's PTY

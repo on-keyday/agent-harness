@@ -26,10 +26,15 @@ green result there says nothing about your code.
 ## The script
 
 ```
-scripts/dummy-harness.sh up [--agent claude|fake] [--model NAME] [--detach] [--name N]
+scripts/dummy-harness.sh up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--tls]
 scripts/dummy-harness.sh env  [--name N]     # eval this
 scripts/dummy-harness.sh down [--name N]
 ```
+
+`--tls` serves `wss://` and an `https://` WebUI with a throwaway self-signed
+certificate for 127.0.0.1 (needs `openssl`); the instance's `CID` is then
+`wss:`. Chromium's certificate interstitial takes `thisisunsafe` typed on the
+page.
 
 Loopback only, ephemeral port, fresh PSK, temp data dir; `down` removes all of
 it. The WebUI is served from `webui/` on disk, not from the server binary's

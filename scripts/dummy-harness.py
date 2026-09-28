@@ -26,13 +26,16 @@ then the page looks like the change did not work.
 
 Usage:
   scripts/dummy-harness.py up [--agent claude|fake] [--model NAME] [--detach] [--name N] [--udp]
-                              [--server-arg=--flag ...] [-- <extra agent-runner flags>]
+                              [--tls] [--server-arg=--flag ...] [-- <extra agent-runner flags>]
   scripts/dummy-harness.py env  [--name N]   # print `export` lines for an instance
   scripts/dummy-harness.py down [--name N]
 
 Flags after `--` go to agent-runner verbatim, appended last. The runner here
 defaults to --no-worktree, which switches skill/settings injection OFF; add
 `-- --force-inject-harness-settings` when the check needs them injected.
+
+--tls serves wss:// and an https:// WebUI with a throwaway self-signed
+certificate for 127.0.0.1 (needs openssl); the instance's CID is then wss:.
 
 --name lets independent instances coexist. That is not a nicety: checking
 what a client does when its server restarts needs the window you are
@@ -384,8 +387,26 @@ def cmd_down(name: str) -> int:
     return 0
 
 
-def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: list[str],
-           server_args: list[str]) -> int:
+def make_loopback_cert(tmp: Path) -> tuple[Path, Path]:
+    """A throwaway self-signed pair for 127.0.0.1, for `up --tls`. Clients do
+    not verify it (cli.ClientTLSConfig); a browser needs its warning clicked
+    through once, or `thisisunsafe` typed on Chromium's interstitial."""
+    openssl = shutil.which("openssl")
+    if not openssl:
+        setup_err("--tls needs openssl on PATH to mint a throwaway certificate")
+    cert, key = tmp / "tls-cert.pem", tmp / "tls-key.pem"
+    subprocess.run(
+        [openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+         "-nodes", "-days", "1", "-subj", "/CN=harness-dummy",
+         "-addext", "subjectAltName=IP:127.0.0.1",
+         "-keyout", str(key), "-out", str(cert)],
+        check=True, capture_output=True,
+    )
+    return cert, key
+
+
+def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool,
+           extra: list[str], server_args: list[str]) -> int:
     if agent not in ("claude", "fake"):
         die(f"unknown --agent: {agent} (want claude or fake)")
 
@@ -400,7 +421,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: li
     port = pick_port()
     udp_port = pick_port()
     psk = "dummy-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
-    cid = f"ws:127.0.0.1:{port}-*"
+    cid = f"{'wss' if tls else 'ws'}:127.0.0.1:{port}-*"
     # --udp points the RUNNER at the UDP leg while the client keeps the ws one,
     # which is the mixed-transport pair the live fleet actually has: a udp TUI
     # against ws runners, or a ws WebUI against udp runners. The data plane has
@@ -411,6 +432,9 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: li
     data = tmp / "data"
     repo.mkdir(parents=True)
     data.mkdir(parents=True)
+    if tls:
+        cert, key = make_loopback_cert(tmp)
+        server_args = server_args + ["--tls-cert", str(cert), "--tls-key", str(key)]
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     subprocess.run(
         ["git", "-C", str(repo), "-c", "user.email=dummy@example.invalid",
@@ -533,7 +557,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, extra: li
     }, indent=2), encoding="utf-8")
 
     me = Path(__file__).name
-    print(f"dummy-harness: up  name={name}  agent={agent}  port={port}  repo={repo}")
+    print(f"dummy-harness: up  name={name}  agent={agent}  port={port}  tls={tls}  repo={repo}")
     print(f"dummy-harness: eval \"$(scripts/{me} env)\" to drive it; 'scripts/{me} down' to stop")
 
     if detach:
@@ -564,6 +588,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--udp", action="store_true",
                    help="run the runner over the UDP leg while the client keeps ws, "
                         "so the pair is mixed-transport (the server is dualstack either way)")
+    p.add_argument("--tls", action="store_true",
+                   help="serve wss:// + https:// with a throwaway self-signed cert (needs openssl)")
     # Everything after a literal `--` goes to agent-runner verbatim, appended
     # last so it overrides the defaults built above. Needed for runner flags this
     # script has no opinion about — e.g. --agentskills-dir, or
@@ -579,7 +605,7 @@ def main(argv: list[str]) -> int:
         die(f"unknown flag: {unknown[0]}")
 
     if args.sub == "up":
-        return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, extra,
+        return cmd_up(args.name, args.agent, args.model, args.detach, args.udp, args.tls, extra,
                       args.server_arg)
     if args.sub == "env":
         return cmd_env(args.name)
