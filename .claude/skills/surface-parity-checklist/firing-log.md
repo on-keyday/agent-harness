@@ -2297,3 +2297,56 @@ short of them.
 2026-09-17, 09-18 (×2) or 09-22 entries (row 39 still reads 5 `done`), so it is
 not bumped here either: a partial update would make it look reconciled. It
 needs one pass against the entries, not another increment.
+
+## 2026-09-28 — wss: TLS on the WebSocket underlay
+
+`harness-server --tls-cert/--tls-key`, `cli.ClientTLSConfig()` at the native
+dial sites, and objtrsf choosing ws/wss per connection from the CID transport.
+Two daemon flags and a CID grammar that already existed, so most of 1–23 have
+no surface to reach. S1–S6 walked because the trigger names "the server's
+addressing".
+
+**done:** 2, 24, 28a, 33, 35, 36, 39, S5.
+
+- **2** — the flag rules live in one function, `loadListenTLS`, not in a
+  surface. It is exercised through the built binary as well as through unit
+  tests: its tests call the function, which is one layer below argv
+  (Pitfall 13).
+- **24** — the option's meaning is written down per leg: TLS covers the WS/WebUI
+  listener, a UDP-only server refuses the flags, and in dualstack the UDP leg is
+  untouched. The server's OWN WS leg still dials listen-mode runners over `ws:`.
+  That is the path the per-connection scheme exists to keep working.
+- **28a** — counted: `WebSocketConfig{` has exactly 8 non-test sites, the
+  spec's table. `TLS:` is set at the 3 native dial sites; the other 5 are
+  unchanged by design.
+- **33** — one flag without the other, TLS flags with no `--listen`, and a `wss:`
+  dial without a TLS config all ERROR. The last is the one that mattered:
+  before this change it went out in plaintext, and its HandshakeAck then came
+  back labelled `ws` and matched nothing. An objtrsf test pins "zero requests
+  reached the server".
+- **35** — README: the transport paragraph, the ConnectionID forms (plus the
+  sentence that ws and wss never fall back to each other), the Quick start, and
+  the WebUI URL.
+- **36** — the `dummy-harness` skill gains `--tls`. No agent-facing skill lists
+  CID transports; grepped `*.md`, the Go help strings,
+  `scripts/sandbox/README.md` and `probe.sh`.
+- **39** — the spec's §3 site table, row by row. The wasm row ("none; the
+  browser does TLS") is the one a unit test cannot show, and it was shown live:
+  over https the page connected with `cid=wss:127.0.0.1:…` in its console, and
+  `isSecureContext` was true.
+- **S5** — the podman wrapper maps every transport but `udp` to tcp
+  (`agent-in-podman.sh`), and `probe.sh` peels `HARNESS_SERVER_CID` with the
+  same transport-agnostic substring ops, so `wss:` keeps the carve-out. The
+  agent-side half was checked live: a `bash`-profile task was handed
+  `wss:127.0.0.1:…`, and its own `harness-cli ls` succeeded.
+
+**omitted:** 1 — `harness-server` builds its flags with the stdlib `flag`
+package, not a `cli/verb` row, the same as every other daemon flag. `--server-cid`
+already accepted `wss`, so no grammar changed.
+
+**What the walk did not catch and the live run nearly produced:** a wrong
+defect report. The https WebUI "showed no tasks", but that was a probe error:
+`innerText` skips hidden nodes, and the list defaults to Active. A plaintext
+control instance, set up the same way, read the same, and that is what kept the
+report from being filed. When a live check on the changed path looks wrong,
+run the unchanged path through the same probe before attributing the result.
