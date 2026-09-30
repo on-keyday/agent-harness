@@ -2500,3 +2500,25 @@ driven rather than unit-tested):**
   followers never got the same treatment. Carrying that invariant to the
   sibling surfaces is `feedback_carry_invariants_across_surfaces`, applied
   late.
+
+## 2026-09-30 — the WebUI task sheet had no action for a live stream task
+
+Operator report: a stream session driven from the TUI could not be opened from
+the WebUI's task list. The sheet offers Reattach / preview / the grid toggle /
+idle-notify only when `t.kind === "Interactive"`, and nothing for the stream
+kind. The chat was reachable only from the notification feed's actions and by
+typing `session stream attach <id>`.
+
+**done:** 6, 21, 39.
+
+- **6 / 21** — `💬 チャット` and `🔔 idleで通知` on the sheet for a live stream
+  task. The sheet now gates on `isStreamKind` / `isPTYKind`, the same helpers
+  the feed's actions use, instead of a bare kind literal.
+- **39** — driven in a browser at 1280px and 390px: the sheet shows both
+  items, the chat opens with the stream's history, and there is no page
+  overflow.
+
+**missed:** **21**, in the WebUI increment of the event-stream work. The feed
+got the chat action and the task sheet, which is its sibling for the same
+task, did not. That is 34a's "carried, but not to the sibling" shape on an
+action list rather than a form.

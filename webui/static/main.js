@@ -5075,9 +5075,30 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
+    // The idle-notify item is shared by both live kinds: await-idle watches
+    // output quiescence, which a stream session has as much as a PTY one.
+    const addIdleNotify = () => addItem("🔔 idleで通知", "", async () => {
+      try {
+        const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
+        appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
+      } catch (e) {
+        appendCmdOutput(`await-idle: ${e.message}`, true);
+      }
+    });
+    const liveSession = t.status === "Running" || t.status === "Detached";
+
+    // A live event-stream session: the chat is this kind's Reattach — turns
+    // and approvals — and there is no terminal to preview or tile. Until this
+    // was added the sheet offered a stream task nothing at all, so the only way
+    // to open its chat was typing `session stream attach <id>`.
+    if (isStreamKind(t) && liveSession) {
+      addItem("💬 チャット", "", () => openChatFor(t.id));
+      addIdleNotify();
+    }
+
     // Reattach / Preview / grid-include toggle / idle-notify — live interactive
     // session only. Order: Reattach first, then Preview, then the grid toggle.
-    if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
+    if (isPTYKind(t) && liveSession) {
       addItem("↪ Reattach", "", () => reattachTo(t.id));
       addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
       // Grid include/exclude toggle (default included). Updates its own label in
@@ -5099,14 +5120,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         paintGridToggle();
       });
       sheet.appendChild(gridToggle);
-      addItem("🔔 idleで通知", "", async () => {
-        try {
-          const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
-          appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
-        } catch (e) {
-          appendCmdOutput(`await-idle: ${e.message}`, true);
-        }
-      });
+      addIdleNotify();
     }
 
     // Working-set grids — NOT gated on this task being a live interactive
