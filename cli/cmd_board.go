@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -48,16 +47,17 @@ func boardHostOrDash(h string) string {
 
 // emitBoardMessageJSON writes one JSON-Lines record for a retained board
 // message. It mirrors the `agent inbox --json` record shape where the fields
-// overlap — seq, in_reply_to, topic, from{...}, payload_b64, and payload (the
-// body embedded raw only when it is valid JSON) — so the two feeds parse the
-// same way, and carries the operator-only columns board read's text row shows:
+// overlap — seq, in_reply_to, topic, from{...}, and the body fields, which
+// both write through PutPayloadFields — so the two feeds parse the same way,
+// and carries the operator-only columns board read's text row shows:
 // reply_to_topic, received_at (epoch-ms + RFC3339), shown_to (delivery marks,
 // derived from subs exactly as the text row is, so they cannot drift), and the
-// retracted trio. payload_b64 always holds
-// the exact bytes. A BoardMessage exposes its sender as a task hex string with
-// no RunnerID, so from omits runner_id rather than emit an empty one; agent is
-// left as the raw profile ("" = server could not attribute a runtime), not the
-// "-" the text view substitutes.
+// retracted trio. payload_b64 always holds the exact bytes: this record is
+// read by a script or an operator, never spliced into a prompt. A
+// BoardMessage exposes its sender as a task hex string with no RunnerID, so
+// from omits runner_id rather than emit an empty one; agent is left as the raw
+// profile ("" = server could not attribute a runtime), not the "-" the text
+// view substitutes.
 func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []BoardSubscriberRow) {
 	shownN, shownTotal := ShownTo(subs, topic, m.Seq)
 	rec := map[string]any{
@@ -74,17 +74,14 @@ func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []Bo
 			"hostname": m.FromHostname,
 			"agent":    m.FromAgentProfile,
 		},
-		"payload_b64": base64.StdEncoding.EncodeToString(m.Payload),
 	}
+	PutPayloadFields(rec, m.Payload, false)
 	// retracted_at_ms is emitted only when the message is withdrawn: a 0 epoch
 	// timestamp on every live line reads as "retracted at 1970", not "not
 	// retracted". retracted (the bool) is always present for addressability.
 	if m.Retracted {
 		rec["retracted_at_ms"] = m.RetractedAtMs
 		rec["retracted_by"] = RetractedByLabel(m)
-	}
-	if len(m.Payload) > 0 && json.Valid(m.Payload) {
-		rec["payload"] = json.RawMessage(m.Payload)
 	}
 	line, _ := json.Marshal(rec)
 	fmt.Fprintln(out, string(line))
@@ -577,10 +574,10 @@ func boardTaskShort(hex string) string {
 
 // emitThreadRowJSON writes one JSON-Lines record for a chain row. The record
 // mirrors `board read --json`'s shape where the fields overlap (seq,
-// in_reply_to, topic, reply_to_topic, received_at, retracted, from,
-// payload_b64) so the two feeds parse the same way, and adds the chain
-// placement: depth, is_last (the gutter flags per level, for a renderer that
-// wants them) and orphan. seq and in_reply_to are JSON numbers here — the
+// in_reply_to, topic, reply_to_topic, received_at, retracted, from, and the
+// PutPayloadFields body) so the two feeds parse the same way, and adds the
+// chain placement: depth, is_last (the gutter flags per level, for a renderer
+// that wants them) and orphan. seq and in_reply_to are JSON numbers here — the
 // same choice emitBoardMessageJSON makes; the decimal-string rule (D6) is the
 // wasm boundary's, where a JS float64 would silently corrupt the ~1.9e18 seq.
 // includeBody=false (--headers-only) omits the body, in either form.
@@ -615,10 +612,7 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 		rec["retracted_by"] = RetractedByLabel(r.Msg)
 	}
 	if includeBody {
-		rec["payload_b64"] = base64.StdEncoding.EncodeToString(r.Msg.Payload)
-		if len(r.Msg.Payload) > 0 && json.Valid(r.Msg.Payload) {
-			rec["payload"] = json.RawMessage(r.Msg.Payload)
-		}
+		PutPayloadFields(rec, r.Msg.Payload, false)
 	}
 	line, _ := json.Marshal(rec)
 	fmt.Fprintln(out, string(line))

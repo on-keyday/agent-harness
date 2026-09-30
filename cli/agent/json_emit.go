@@ -1,21 +1,18 @@
 package agent
 
 import (
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"unicode/utf8"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // emitMessageLine writes one JSON-Lines record describing a delivered
-// message. payload_b64 echoes the exact bytes so the consumer can recover
-// them, and the body is additionally rendered readably: embedded raw under
-// "payload" when the bytes parse as JSON, or decoded into "payload_text" when
-// they are merely valid UTF-8.
+// message. The body fields are cli.PutPayloadFields': payload_b64 with the
+// exact bytes, plus "payload" or "payload_text" when the bytes are readable.
 //
 // The from block carries server-attested sender info (RunnerID, TaskID,
 // hostname, agent profile). It is always present, even for legacy messages
@@ -50,17 +47,10 @@ func emitMessageLineForHook(w io.Writer, m protocol.DeliveredMessage, payload []
 // whose output is spliced into the agent's next prompt, and it changes the
 // body twice over: an over-limit body is replaced by its size and a command
 // that re-reads it, and payload_b64 is dropped whenever a readable rendering
-// was emitted alongside it.
-//
-// The readable rendering is the point, not an ergonomic extra. Base64 is a
-// body no reader can read: a model handed nothing else does not shell out to
-// decode it, it "reads" the blob and confabulates — a wrong instruction rather
-// than a missing one. A JSON payload always had "payload"; a prose one had
-// nothing until payload_text, and prose is what a relayed human instruction
-// is. Dropping payload_b64 under forHook then also recovers the inflation it
-// costs (4/3, or 7/3 when a JSON body is embedded raw as well); the exact
-// bytes stay reachable through the plain read and `agent read <seq>`, neither
-// of which is spliced into anyone's context.
+// was emitted alongside it (cli.PutPayloadFields). That drop recovers the
+// inflation a second copy costs (4/3, or 7/3 when a JSON body is embedded raw
+// as well); the exact bytes stay reachable through the plain read and `agent
+// read <seq>`, neither of which is spliced into anyone's context.
 //
 // It takes the whole DeliveredMessage rather than its fields one at a time:
 // every caller was unpacking the same nine, several of them adjacent strings,
@@ -99,24 +89,7 @@ func emitMessageRecord(w io.Writer, m protocol.DeliveredMessage, payload []byte,
 		fmt.Fprintln(w, string(line))
 		return
 	}
-	readable := false
-	switch {
-	case len(payload) == 0:
-		// Nothing to render: payload_b64 "" already says the same nothing, and
-		// keeping it there leaves one field a consumer can always address.
-	case json.Valid(payload):
-		rec["payload"] = json.RawMessage(payload)
-		readable = true
-	case utf8.Valid(payload):
-		// json.Marshal escapes every byte below 0x20, so a body carrying
-		// newlines or ANSI sequences can neither break the one-record-per-line
-		// framing nor reach a terminal raw.
-		rec["payload_text"] = string(payload)
-		readable = true
-	}
-	if !forHook || !readable {
-		rec["payload_b64"] = base64.StdEncoding.EncodeToString(payload)
-	}
+	cli.PutPayloadFields(rec, payload, forHook)
 	line, _ := json.Marshal(rec)
 	fmt.Fprintln(w, string(line))
 }

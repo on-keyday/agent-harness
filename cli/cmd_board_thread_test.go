@@ -262,6 +262,9 @@ func TestBoardThread_JSON(t *testing.T) {
 	if _, ok := recs[0]["payload_b64"]; !ok {
 		t.Errorf("payload_b64 missing:\n%v", recs[0])
 	}
+	if recs[0]["payload_text"] != "root from A" {
+		t.Errorf("payload_text = %v, want the prose body:\n%v", recs[0]["payload_text"], recs[0])
+	}
 }
 
 // An orphan is marked on the row, not hidden — and shown at root.

@@ -245,7 +245,8 @@ func TestAgentThread_HeadersOnlyKeepsSizes(t *testing.T) {
 	}
 }
 
-// --json emits the chain record: placement fields plus the body as b64.
+// --json emits the chain record: placement fields plus the body, readable as
+// payload_text (the seeded bodies are prose) and exact as payload_b64.
 func TestAgentThread_JSON(t *testing.T) {
 	addr := freePortE2E(t)
 	board, _ := startServerE2E(t, addr)
@@ -261,7 +262,7 @@ func TestAgentThread_JSON(t *testing.T) {
 	// (cli.BuildThreads, TestBuildThreadsDepthMarksForksNotReplies). This
 	// asserted "depth":1 until 2026-09-18, when the rule changed; what the test
 	// is actually for is that the placement fields reach the JSON at all.
-	for _, want := range []string{`"depth":0`, `"orphan":false`, `"payload_b64":`, `"is_last":`, `"size":`} {
+	for _, want := range []string{`"depth":0`, `"orphan":false`, `"payload_b64":`, `"payload_text":"root: the question"`, `"is_last":`, `"size":`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("json record missing %s:\n%s", want, got)
 		}

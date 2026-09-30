@@ -90,6 +90,29 @@ func TestEmitBoardMessageJSON(t *testing.T) {
 		}
 	})
 
+	t.Run("UTF-8 prose payload is readable as payload_text", func(t *testing.T) {
+		payload := []byte("line one\n日本語 \x1b[31mred")
+		var buf bytes.Buffer
+		emitBoardMessageJSON(&buf, "t", BoardMessage{Seq: 1, Payload: payload}, nil)
+
+		var rec map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+			t.Fatalf("not valid JSON: %v", err)
+		}
+		if rec["payload_text"] != string(payload) {
+			t.Fatalf("payload_text = %v, want %q", rec["payload_text"], payload)
+		}
+		if _, ok := rec["payload"]; ok {
+			t.Fatalf("payload (raw) must be omitted for a non-JSON body")
+		}
+		if rec["payload_b64"] != base64.StdEncoding.EncodeToString(payload) {
+			t.Fatalf("payload_b64 must still carry the exact bytes")
+		}
+		if bytes.Count(buf.Bytes(), []byte("\n")) != 1 {
+			t.Fatalf("a newline in the body broke the one-record-per-line framing:\n%s", buf.String())
+		}
+	})
+
 	t.Run("non-JSON payload omits the raw payload field", func(t *testing.T) {
 		payload := []byte("not json \x00 bytes")
 		var buf bytes.Buffer
@@ -101,6 +124,9 @@ func TestEmitBoardMessageJSON(t *testing.T) {
 		}
 		if _, ok := rec["payload"]; ok {
 			t.Fatalf("payload (raw) must be omitted for a non-JSON body")
+		}
+		if _, ok := rec["payload_text"]; !ok {
+			t.Fatalf("payload_text must be present: NUL is still valid UTF-8")
 		}
 		b64, ok := rec["payload_b64"]
 		if !ok {
