@@ -250,3 +250,59 @@ same power as a runner, across the whole fleet and not only on its own host,
 because the PSK reaches every runner's queue. A fix worth doing would be an
 enrollment step that the server grants behind a capability, so that `--caps`
 can withhold it. Even that closes the path only once agents run in a sandbox.
+
+---
+
+## What the task log is for, now that oneshot is unused
+
+**What.** `task.<id>.log` (the `logs` verb, the TUI logs pane, the WebUI log
+view) has two writers, and neither one is a use anyone relies on today:
+
+- **oneshot** (`runner/session.go` `handleAssign`): the agent's stdout and
+  stderr, one line each. That is what the log was built for (the v1 spec's
+  "拾う"), and it is only worth something when a PROGRAM consumes the result.
+  Nothing in the current workflow does. It is not even the only record for
+  claude. `-p` writes a session transcript by default: the Agent SDK
+  sessions page (code.claude.com/docs/en/agent-sdk/sessions) names
+  `persistSession: false` / `CLAUDE_CODE_SKIP_PROMPT_HISTORY` as the way to
+  STOP that, and the oneshot preset argv sets neither. This is read from the
+  docs, not observed on a oneshot task. Whether codex keeps its own session
+  record is unchecked.
+- **stream** (`runner/session.go` `LogSink` → `runner/streamtask.go`
+  `streamTap`): each event rendered to one line, with tool arguments and
+  results truncated at 200 bytes (`agentlog.maxFieldBytes`). It is a lossy
+  copy. The full history is claude's own transcript on the runner host, and
+  since the transcript replay
+  (`docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md`)
+  a resumed session shows that history in the chat itself.
+
+The interactive (PTY) kind does not write to the log.
+
+**Evidence** (2026-09-30):
+
+- `ls --json` listed 33 retained tasks, all of them `interactive`.
+- `grep -rn 'topics.TaskLog(' runner/ server/` (non-test) finds the log
+  written in `handleAssign` and in the stream `LogSink` only.
+
+**The one concrete use left.** What no transcript records: an agent's
+stderr, and failures on the harness side. When nobody is attached, a stream
+agent's stderr (`streamTap.Stderr` → `[err]…`) and the adapter's own failure
+(`[err]adapter: …`) land only in this log. The oneshot path tags stderr as
+`[err]` in the same way. So the log is the one place to diagnose a task that
+died unattended.
+
+**What would have to move if stream stopped writing to the log.**
+
+- The TUI follows a stream task THROUGH the log: `session stream attach` in
+  the TUI cmdline switches to the logs pane (`tui/dispatch.go`
+  `SessionStreamAttach`, and `tui/taskaction.go` says "the logs pane IS the
+  follower"). It would have to follow through the chat's attach instead,
+  which reads the server's ring (about 1 MiB).
+- The diagnostics above need somewhere else to go.
+
+**Why deferred.** It is the same decision as whether oneshot stays: the log is
+oneshot's output channel, and its value rises and falls with whether anything
+consumes oneshot results. Deciding the log's fate apart from oneshot's would
+decide half of one question. It came up while building the transcript replay,
+which leaves the log exactly as it was, apart from not writing replayed
+history into it.
