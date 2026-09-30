@@ -2350,3 +2350,86 @@ defect report. The https WebUI "showed no tasks", but that was a probe error:
 control instance, set up the same way, read the same, and that is what kept the
 report from being filed. When a live check on the changed path looks wrong,
 run the unchanged path through the same probe before attributing the result.
+
+## 2026-09-30 (pre-landing) — a resumed stream session replays the agent's transcript
+
+The adapter reads claude's session transcript on `--resume-conversation` and
+emits it as `replay`-marked events before the live ones. Two additions to the
+neutral vocabulary (`user_text`, `Event.replay`) and one to `agentlog`
+(`KindUserText`, plus decoding of string content). No flag, no wire field, no
+task field. The operator decided that there is no switch
+(spec §Decisions taken with the operator), which is why 1–9 have nothing to
+reach.
+
+**done:** 10, 24, 25, 29, 31, 35, 37, 39.
+
+- **10** — result rendering stays shared: the runner tap, `session stream
+  attach` and the TUI chat all render through `streamagent.RenderText`, which
+  now prefixes `ReplayPrefix`. So the three Go surfaces cannot word a replayed
+  line differently.
+- **24** — `--resume-conversation` now has a written meaning per kind. On a
+  STREAM resume it replays. On a PTY resume nothing new happens, because
+  claude's own TUI already redraws. Oneshot has no chat to replay into. All in
+  the spec's Problem section and §Not in this design.
+- **25** — `replay` has no presence bit, and needs none: absent and false both
+  mean "live", which is exactly what an old adapter's events are.
+- **29** — the opening bracket names what was kept and what there was (`last N
+  of M events`), rather than only announcing that a replay happened.
+- **31** — nothing is silent. A resume that finds no transcript emits ONE
+  warning saying why. The bracket's `M` is the pre-bound total, so a bounded
+  replay says it was bounded. The task log keeps the two bracket lines, so the
+  durable record still shows that a replay happened.
+- **35** — README §5b.
+- **37** — the new spec, plus an Amendment on the event-stream spec. It says
+  outright that §2's "every new field bumps `protocol_version`" rule was
+  departed from, and why.
+- **39** — the new spec's §5 Surfaces table, walked row by row:
+  - runner task log: `TestStreamTaskDoesNotLogReplayedHistory`, whose negative
+    control went red with the filter removed
+  - `session stream attach`: driven live on a dummy harness, PTY → stream route
+  - TUI chat: unit test only (see omitted)
+  - WebUI chat: driven live in a browser, same session
+  - wasm, `snapshot --raw`, the live panes: unchanged, as the table says
+  - README: done
+
+**omitted:**
+
+- **32 — the JS chat renderer is still a mirror.** `chatRenderEvent` was
+  already one ("the JS side of `streamagent.RenderText`"), and this change
+  extends it with the `↺` prefix and a `user_text` case rather than replacing
+  it with a bridge export of `RenderText`. The item says to export the Go
+  serializer instead of mirroring it. Doing that means routing every chat line
+  through wasm, which is a separate change. What this change did do: it split
+  the JS text half out into `chatEventLine`, so a live and a replayed event
+  are worded by one function, and it put a comment on `ReplayPrefix` naming the
+  JS site. It also fixed a drift the mirror already had: JS rendered `raw` as
+  the event's JSON, while Go renders its text.
+- **39's TUI chat row — not driven live.** The change there is `eventStyle`
+  (muted for replay, `OKStyle` for `user_text`) and the text comes from
+  `RenderText`, so `TestChatRendersAReplayedConversation` covers the lines and
+  the styles. What it does not cover is `r` opening the chat on a resumed task.
+  That path is unchanged by this diff, but by Pitfall 13's rule it is a layer
+  the test does not enter.
+- **36** — no agent-facing skill describes what `session stream attach`
+  prints (grepped `runner/agentskills/*/SKILL.md`: only `--resume-conversation`
+  as a spawn flag). An agent following a resumed stream task meets lines the
+  brackets describe themselves.
+- **S3 — sandboxed agents.** Under `agent-in-podman.sh` claude writes its
+  transcript inside the container, so the adapter, which runs on the host,
+  finds nothing and emits the §3.7 warning. The mount would be the wrapper's
+  agent-table business. It is recorded in the spec's "Not in this design"
+  rather than built here.
+
+Everything unlisted was `n/a`: no flag or option (1–9, 26–28a), no task or
+runner field (11–23), no varying column set (34/34a), and no screen (38 — the
+kind has none). S1, S2, S4–S6 `n/a`: no agent added or renamed, no bin, argv
+template, credential mode, egress or launch-env change. The adapter gained a
+behaviour, not a flag.
+
+**What the walk did not produce and the live run did:** the dummy harness's
+claude profile carries no `--agent-stream-adapter`, so on a stock
+`dummy-harness.sh up --agent claude` every stream task fails with "no stream
+adapter configured". The script's `-- <extra agent-runner flags>` route
+worked around it. It is the same gap the 2026-08-21 preset entry closed for
+`--agents claude`, one consumer over. Not fixed here; recorded so the next
+stream E2E does not rediscover it.
