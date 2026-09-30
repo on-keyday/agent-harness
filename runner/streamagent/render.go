@@ -111,6 +111,9 @@ func RenderText(m Msg) (line string, ok bool) {
 		if m.Request == nil {
 			return "", false
 		}
+		if qs := m.Request.Questions; len(qs) > 0 {
+			return QuestionSummary(*m.Request), true
+		}
 		return fmt.Sprintf("⏸ approval needed: %s (%s)", m.Request.Tool, m.Request.ID), true
 	case KindResolved:
 		if m.Resolved == nil {

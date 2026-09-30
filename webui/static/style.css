@@ -2122,6 +2122,12 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 12px;
 }
 .chat-approval .chat-approval-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+/* A question request: one fieldset per question, then a freeform reply. */
+.chat-approval fieldset.chat-question { border: 1px solid #444; border-radius: 4px; margin: 6px 0; padding: 4px 8px 8px; }
+.chat-approval .chat-question legend { color: #d4d4d4; padding: 0 4px; }
+.chat-approval .chat-question-opt { display: block; margin: 3px 0; overflow-wrap: anywhere; }
+.chat-approval .chat-question-other,
+.chat-approval .chat-question-reply { display: block; width: 100%; box-sizing: border-box; margin: 4px 0; background: #1e1e1e; color: #d4d4d4; border: 1px solid #555; border-radius: 3px; padding: 4px; font: inherit; }
 
 .chat-input-row { display: flex; gap: 6px; margin-top: 6px; align-items: flex-start; }
 .chat-input-row textarea {

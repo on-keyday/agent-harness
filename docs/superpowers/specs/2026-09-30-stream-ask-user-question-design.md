@@ -2,8 +2,9 @@
 
 Date: 2026-09-30
 
-**Status: READY FOR A PLAN.** Every design point below is marked DECIDED,
-including the one taken with the operator. Nothing here is implemented.
+**Status: IMPLEMENTED.** Every design point below is marked DECIDED,
+including the one taken with the operator. §Implementation notes at the end
+records the deviations and the live verification.
 
 Builds on [`2026-08-20-event-stream-agent-design.md`](2026-08-20-event-stream-agent-design.md)
 (the stream kind, its adapter, the neutral protocol, and the approval path).
@@ -201,3 +202,51 @@ The TUI draws it and the WebUI gets it through the bridge, the same rule
   2026-09-30c, landed): an answered question has to end on the stream. Without
   it a reattach would ask the operator the same question again. The adapter's
   `Resolved` line for an answer carries `behavior: allow`.
+
+## Implementation notes
+
+- **Where the code lives.**
+  - The neutral types are `Request.Questions`, `Question`, `Option`, and
+    `Response.Answers` / `Reply` (`runner/streamagent/proto.go`).
+  - The adapter side is `questionsOf`, `resolveAnswers` and `answeredInput`,
+    plus the pending table, which is now a struct (`pendingRequest`) holding
+    the vendor id, the input, the questions and the raw suggestions.
+  - The shared helpers are `QuestionSummary`, `QuestionComplete` and
+    `AnswerResponse` (`display.go`), and `cli.ParseAnswers` /
+    `Client.StreamAnswer`.
+  - The wasm bridge gained `streamAnswer`, `questionSummary` and
+    `questionComplete`.
+- **Deviation from §3's single renderer.** The TUI draws the option rows
+  itself, because the selection marks are its own state. The WebUI draws the
+  options from the request's structure as controls. What IS shared through Go
+  is:
+  - the notice line (`QuestionSummary`, which the WebUI reaches over the
+    bridge);
+  - the rule that enables send (`QuestionComplete`, same);
+  - the answer builder;
+  - the `KEY=VALUE` grammar.
+  A shared "option line" renderer would have had no second consumer.
+- **Found and fixed on the way: accepting a suggestion did nothing.**
+  - `Response.AcceptSuggestion` reached the adapter from the TUI digits,
+    `approve --suggestion` and the WebUI's ＋ buttons.
+  - The adapter never read it, so "stop asking" was a plain allow.
+  - Now the adapter keeps each request's `permission_suggestions` verbatim
+    and echoes the chosen one back in `updatedPermissions`. That is the
+    documented "Approve and remember" shape.
+  - Pinned by `TestAnAcceptedSuggestionIsEchoedAsUpdatedPermissions`, whose
+    negative control goes red.
+- **Also retired: the `originalInput` placeholder.** A plain allow now echoes
+  the request's real input. It used to echo `{}`.
+- **Verified live** (dummy harness, Opus 5.5, 2026-09-30). The agent was
+  prompted to call `AskUserQuestion` with a single-select Color question and
+  a multi-select Size question, and each surface answered one round:
+  - **CLI**: `session stream answer … --answer Color=Blue --answer Size=Small
+    --answer Size=Huge`. The tool result read `"…color…"="Blue",
+    "…sizes…"="Small,Huge"`, and the agent quoted both choices back.
+  - **TUI chat**: `1`, `tab`, `2`, `3`, `enter`. The block showed `(•) Red`
+    and `[x] Large` / `[x] Huge`. The agent replied "Red" and "Large,Huge".
+  - **WebUI chat**: real clicks on Blue and Small, and "Tiny" typed into
+    Size's その他. 送信 stayed disabled until both questions were answered.
+    The agent replied "Blue" and "Small,Tiny", and noted Tiny as a custom
+    answer.
+

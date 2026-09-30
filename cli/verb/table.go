@@ -2389,6 +2389,36 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"session stream approve aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa req-1 --allow"},
 	},
+	{
+		Path: []string{"session", "stream", "answer"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "streamAnswer"},
+		SurfaceNotes:  map[Surface][]string{TUI: {"answer a question the agent is blocked on (the chat answers it with keys)"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#chat-approval"},
+		},
+		Notes: []string{
+			"answer a QUESTION request (claude's AskUserQuestion) the agent is blocked on. A tool approval is `approve`; answers sent to one are refused",
+			"KEY is the question's text or its header; VALUE is an option's label, or free text in place of one. Repeat --answer with the same KEY to pick several on a multi-select question",
+			"the adapter checks every KEY against the request and refuses one that names no question, leaving the request pending",
+		},
+		Action: "SessionAction",
+		Const:  map[string]string{"Sub": "stream-answer"},
+		// An answer with nothing in it is the failure this verb exists to
+		// replace: an allow that answered no question.
+		AtLeastOne: []Rule{{Flags: []string{"answer", "reply"}}},
+		Args: []Arg{
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"},
+			{Name: "request-id", Type: ArgString, Field: "RequestID"},
+		},
+		Flags: []Flag{
+			{Name: "answer", Type: FlagString, Custom: argListValue, Field: "Answers",
+				Help: "KEY=VALUE: KEY is a question's text or header, VALUE a label or free text (repeatable; the first '=' splits)"},
+			{Name: "reply", Type: FlagString, Default: "", Field: "Reply",
+				Help: "a freeform reply that answers none of the questions in particular"},
+			{Name: "flush-ms", Type: FlagUint, Default: uint(400), Field: "FlushMs", Help: "ms to let the line drain"},
+		},
+		Examples: []string{"session stream answer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa req-1 --answer Format=Summary"},
+	},
 
 	// --- the agent-runtime verbs ---
 	//

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +129,36 @@ func (c *Client) StreamFinish(ctx context.Context, taskIDHex string, flush time.
 	return c.writeStreamMsg(ctx, taskIDHex, streamagent.Msg{
 		Kind: streamagent.KindFinish, Finish: &streamagent.Finish{},
 	}, flush)
+}
+
+// StreamAnswer answers a pending QUESTION request. answers is keyed by a
+// question's text or header; the adapter resolves and validates the keys.
+func (c *Client) StreamAnswer(ctx context.Context, taskIDHex, requestID string, answers map[string][]string, reply string, flush time.Duration) error {
+	if requestID == "" {
+		return fmt.Errorf("answer: a request id is required — it is what makes a stale answer a refusal rather than a misapplied one")
+	}
+	if len(answers) == 0 && strings.TrimSpace(reply) == "" {
+		return fmt.Errorf("answer: nothing to send — give at least one --answer or a --reply")
+	}
+	r := streamagent.AnswerResponse(requestID, answers, reply)
+	return c.writeStreamMsg(ctx, taskIDHex, streamagent.Msg{Kind: streamagent.KindResponse, Response: &r}, flush)
+}
+
+// ParseAnswers reads `--answer KEY=VALUE` specs, the one grammar every command
+// line uses. The FIRST '=' splits, so a label may contain '='; a KEY may not.
+// Repeating a KEY adds a value, which is how a multi-select question is
+// answered from a command line.
+func ParseAnswers(specs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, s := range specs {
+		k, v, ok := strings.Cut(s, "=")
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if !ok || k == "" || v == "" {
+			return nil, fmt.Errorf("--answer %q: want KEY=VALUE (KEY a question's text or header)", s)
+		}
+		out[k] = append(out[k], v)
+	}
+	return out, nil
 }
 
 // StreamLine is one line read off an event-stream task. Decoded=false with Raw

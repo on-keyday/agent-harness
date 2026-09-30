@@ -152,3 +152,18 @@ func TestLineDisplayEscapesANonProtocolLine(t *testing.T) {
 		t.Fatalf("tone %q, want raw", d.Tone)
 	}
 }
+
+func TestParseAnswers(t *testing.T) {
+	got, err := ParseAnswers([]string{"Format=Summary", "Sections=Intro", "Sections=a=b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got["Format"], "|") != "Summary" || strings.Join(got["Sections"], "|") != "Intro|a=b" {
+		t.Fatalf("got %v", got)
+	}
+	for _, bad := range []string{"noequals", "=value", "key="} {
+		if _, err := ParseAnswers([]string{bad}); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+}

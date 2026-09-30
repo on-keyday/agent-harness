@@ -2,6 +2,7 @@ package streamagent
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Tone is what a chat surface should make a line LOOK like, decided once here
@@ -150,4 +151,43 @@ func RenderExit(ex Exit) (string, Tone) {
 		return fmt.Sprintf("agent exited: code=%d err=%s", ex.Code, ex.Err), ToneErr
 	}
 	return fmt.Sprintf("agent exited: code=%d", ex.Code), ToneMuted
+}
+
+// QuestionSummary is a question request's one-line form, for the task log and
+// the chats' notice line: the first question, how many more, and the id.
+func QuestionSummary(r Request) string {
+	if len(r.Questions) == 0 {
+		return ""
+	}
+	q := r.Questions[0]
+	s := "❓ question: "
+	if q.Header != "" {
+		s += q.Header + ": "
+	}
+	s += q.Question
+	if n := len(r.Questions) - 1; n > 0 {
+		s += fmt.Sprintf(" (+%d more)", n)
+	}
+	return s + " (" + r.ID + ")"
+}
+
+// QuestionComplete reports whether answers settle every question of r, or a
+// freeform reply stands in for all of them. It is what BOTH chats gate their
+// send on, so neither can send a half-answered question the other would not.
+func QuestionComplete(r Request, answers map[string][]string, reply string) bool {
+	if strings.TrimSpace(reply) != "" {
+		return true
+	}
+	for _, q := range r.Questions {
+		if len(answers[q.Question]) == 0 {
+			return false
+		}
+	}
+	return len(r.Questions) > 0
+}
+
+// AnswerResponse is the one builder of a question's answer, keyed by question
+// text. The adapter also accepts a header as the key, for a typed command line.
+func AnswerResponse(id string, answers map[string][]string, reply string) Response {
+	return Response{ID: id, Behavior: BehaviorAllow, Answers: answers, Reply: reply}
 }

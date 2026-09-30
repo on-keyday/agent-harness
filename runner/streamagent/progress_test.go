@@ -14,7 +14,7 @@ func progressAdapter(t *testing.T) (*claudeAdapter, *bytes.Buffer, *time.Time) {
 	var out bytes.Buffer
 	now := time.Unix(1000, 0)
 	a := &claudeAdapter{w: NewWriter(&out), now: func() time.Time { return now },
-		pending: map[string]string{}, interrupts: map[string]struct{}{}}
+		pending: map[string]pendingRequest{}, interrupts: map[string]struct{}{}}
 	return a, &out, &now
 }
 

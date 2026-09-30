@@ -443,7 +443,7 @@ type ServerDialRunnerAction struct {
 	RunnerCID string
 }
 
-// SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session resize, session snapshot, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
+// SessionAction is built by: session attach, session await-idle, session await-idle kill, session await-idle ls, session kill, session ls, session resize, session snapshot, session stream answer, session stream approve, session stream attach, session stream finish, session stream interrupt, session stream turn.
 type SessionAction struct {
 	ActionMarker
 	// ms to let the line drain to the runner before detaching
@@ -502,6 +502,10 @@ type SessionAction struct {
 	// accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop …
 	Suggestion uint
 	RequestID  string
+	// KEY=VALUE: KEY is a question's text or header, VALUE a label or free text (repeatable; the first '='…
+	Answers []string
+	// a freeform reply that answers none of the questions in particular
+	Reply string
 }
 
 // SessionExecAction is built by: session exec.
@@ -2780,6 +2784,48 @@ func init() {
 			}
 			return a, nil
 		},
+		"session stream answer\x00cli": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-answer"
+			a.Answers = stringsOf(b.Custom["answer"])
+			a.Reply = b.Str("reply")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
+		"session stream answer\x00tui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-answer"
+			a.Answers = stringsOf(b.Custom["answer"])
+			a.Reply = b.Str("reply")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
+		"session stream answer\x00webui": func(b Bound) (Action, error) {
+			a := SessionAction{}
+			a.Sub = "stream-answer"
+			a.Answers = stringsOf(b.Custom["answer"])
+			a.Reply = b.Str("reply")
+			a.FlushMs = uintOf(b.Flags["flush-ms"])
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.RequestID = b.Args[1]
+			}
+			return a, nil
+		},
 		"agent inbox\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "inbox"
@@ -2979,6 +3025,7 @@ const (
 	CmdSessionStreamInterrupt = "session stream interrupt"
 	CmdSessionStreamFinish    = "session stream finish"
 	CmdSessionStreamApprove   = "session stream approve"
+	CmdSessionStreamAnswer    = "session stream answer"
 	CmdAgentInbox             = "agent inbox"
 	CmdAgentWait              = "agent wait"
 	CmdAgentSubscribe         = "agent subscribe"
@@ -3039,6 +3086,7 @@ const (
 	SubStart           = "start"
 	SubStatus          = "status"
 	SubStop            = "stop"
+	SubStreamAnswer    = "stream-answer"
 	SubStreamApprove   = "stream-approve"
 	SubStreamAttach    = "stream-attach"
 	SubStreamFinish    = "stream-finish"
@@ -4968,6 +5016,27 @@ func ParseCmdSessionStreamApprove(sf Surface, args []string, ctx map[string]stri
 	return a, nil
 }
 
+func ParseCmdSessionStreamAnswer(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
+	var zero SessionAction
+	sp, ok := Lookup("session", "stream", "answer")
+	if !ok {
+		return zero, fmt.Errorf("session stream answer: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(SessionAction)
+	return a, nil
+}
+
 func ParseCmdAgentInbox(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "inbox")
@@ -5383,6 +5452,8 @@ type CLIDispatch[R any] interface {
 	SessionStreamFinish(SessionAction) R
 	// session stream approve
 	SessionStreamApprove(SessionAction) R
+	// session stream answer
+	SessionStreamAnswer(SessionAction) R
 	// agent inbox
 	AgentInbox(AgentAction) R
 	// agent wait
@@ -5842,6 +5913,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionStreamApprove(a), true, nil
+	case CmdSessionStreamAnswer:
+		a, perr := ParseCmdSessionStreamAnswer(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionStreamAnswer(a), true, nil
 	case CmdAgentInbox:
 		a, perr := ParseCmdAgentInbox(CLI, args, ctx)
 		if perr != nil {
@@ -6059,6 +6136,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionStreamFinish(a), true
 		case "stream-approve":
 			return h.SessionStreamApprove(a), true
+		case "stream-answer":
+			return h.SessionStreamAnswer(a), true
 		}
 	case NotifyAction:
 		return h.Notify(a), true
@@ -6575,6 +6654,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdSessionStreamAnswer:
+			a, perr := ParseCmdSessionStreamAnswer(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdAgentInbox:
 			a, perr := ParseCmdAgentInbox(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -6777,6 +6862,8 @@ type TUIDispatch[R any] interface {
 	SessionStreamFinish(SessionAction) R
 	// session stream approve
 	SessionStreamApprove(SessionAction) R
+	// session stream answer
+	SessionStreamAnswer(SessionAction) R
 }
 
 // DispatchTUI parses one command line and hands it to the matching method.
@@ -7172,6 +7259,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionStreamApprove(a), true, nil
+	case CmdSessionStreamAnswer:
+		a, perr := ParseCmdSessionStreamAnswer(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.SessionStreamAnswer(a), true, nil
 	}
 	return r, false, nil
 }
@@ -7305,6 +7398,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.SessionStreamFinish(a), true
 		case "stream-approve":
 			return h.SessionStreamApprove(a), true
+		case "stream-answer":
+			return h.SessionStreamAnswer(a), true
 		}
 	case NotifyAction:
 		return h.Notify(a), true
@@ -7748,6 +7843,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionStreamApprove:
 			a, perr := ParseCmdSessionStreamApprove(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdSessionStreamAnswer:
+			a, perr := ParseCmdSessionStreamAnswer(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

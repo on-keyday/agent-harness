@@ -2522,3 +2522,65 @@ typing `session stream attach <id>`.
 got the chat action and the task sheet, which is its sibling for the same
 task, did not. That is 34a's "carried, but not to the sibling" shape on an
 action list rather than a form.
+
+## 2026-09-30 — the stream chat, four increments in one sitting
+
+Four increments, each landed on its own, all driven live against real claude
+on a dummy harness:
+
+1. `resolved`: a request's end is on the stream.
+2. the progress heartbeat.
+3. a sent turn on the stream, plus thinking summaries.
+4. answering AskUserQuestion.
+
+They are recorded together because they share every surface and one lesson.
+
+**done:** 1, 3, 7, 8, 10, 24, 28a, 29, 31, 32, 33, 35, 37, 39.
+
+- **1** — `session stream answer`: one row, `AtLeastOne(answer, reply)`, and
+  `--answer` repeatable through `argListValue`. The generated dispatch made
+  all three command lines demand a handler.
+- **3 / 7 / 8** — the TUI cmdline and the WebUI `runCmd` reach it through the
+  declaration. The bridge gained `streamAnswer` (it takes the chat's answer
+  object OR the command line's specs) and two Go helpers for the page.
+- **10 / 32** — every new wording or rule lives once in Go:
+  - the question notice (`QuestionSummary`)
+  - the send gate (`QuestionComplete`)
+  - the answer builder
+  - the `KEY=VALUE` grammar (`cli.ParseAnswers`)
+  - the progress status (`ProgressStatus`)
+
+  The page calls the bridge for each instead of re-deriving it.
+- **24** — `--answer` on a tool approval is REFUSED by the adapter, not
+  dropped. The same goes for answers on a deny, and for a key that names no
+  question; the request stays pending in each case.
+- **28a** — the answer `Response` has one builder (`AnswerResponse`), used by
+  the TUI, the CLI, the TUI cmdline and the bridge.
+- **31** — `thinking… 0 tokens` prints its zero, and `resolved` makes an
+  answered request visibly END on every surface rather than silently vanish
+  from one.
+- **33** — every refusal is an error the operator reads: an empty answer, an
+  unknown key, answers on an approval, and a suggestion index out of range.
+- **39** — each spec's Surfaces table, walked against the code, plus live
+  runs:
+  - the CLI, TUI and WebUI all answered a two-question AskUserQuestion, and
+    the agent quoted each answer back;
+  - the heartbeat was sampled on the TUI and the WebUI chat;
+  - a CLI-sent turn appeared in the TUI chat.
+
+**missed (found by driving the feature, not by the walk):**
+
+- **24, one layer down: `AcceptSuggestion` was accepted on the wire and
+  ignored by the adapter.** Three surfaces sent it — the TUI digits,
+  `approve --suggestion` and the WebUI's ＋ buttons — and the adapter never
+  read it. Every item that asks about a surface said `done` for the
+  suggestion when it shipped, because each surface did send it. No item asks
+  whether the far end USES a field the surfaces send.
+  - General form, for a second instance to count against: **a field every
+    surface fills and nothing consumes reads as a finished feature on every
+    surface walk.** 28a counts request builds; the consumer is the other
+    end of the same wire.
+- **The sent turn lived only in the chat that sent it.** Each chat echoed
+  locally, so the WebUI and the TUI each showed only their own turns. No item
+  asks whether an operator's own input is visible to the OTHER operator
+  surfaces — 38 is about screens, 11–23 about fields.

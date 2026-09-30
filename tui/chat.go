@@ -63,7 +63,14 @@ const (
 	// result, so it is composed deliberately, not typed into the turn box by
 	// accident.
 	chatModeDenyReason
+	// chatModeQuestionText collects free text for the current question, and
+	// chatModeQuestionReply a freeform reply that answers none in particular.
+	chatModeQuestionText
+	chatModeQuestionReply
 )
+
+// questionHint is the key row of a pending question.
+const questionHint = "tab next · 1-9 pick · o other · r reply · enter send · d deny · esc leave"
 
 // ChatLineMsg is one line off the stream, delivered by the pump goroutine.
 type ChatLineMsg struct {
@@ -102,6 +109,125 @@ type ChatModel struct {
 	busy    bool
 	elapsed int
 	status  string
+
+	// The answer being built for a pending QUESTION request (pending with
+	// Questions): which question has focus, the options picked per question,
+	// free text per question, and a freeform reply.
+	qCur   int
+	qSel   map[int]map[int]bool
+	qText  map[int]string
+	qReply string
+}
+
+func (m ChatModel) isQuestion() bool {
+	return m.pending != nil && len(m.pending.Questions) > 0
+}
+
+func (m *ChatModel) resetQuestion() {
+	m.qCur, m.qSel, m.qText, m.qReply = 0, map[int]map[int]bool{}, map[int]string{}, ""
+}
+
+// questionAnswers is the answer as the protocol carries it: question text →
+// the picked labels in option order, then any free text.
+func (m ChatModel) questionAnswers() map[string][]string {
+	out := map[string][]string{}
+	if !m.isQuestion() {
+		return out
+	}
+	for i, q := range m.pending.Questions {
+		var vals []string
+		for j, o := range q.Options {
+			if m.qSel[i][j] {
+				vals = append(vals, o.Label)
+			}
+		}
+		if t := strings.TrimSpace(m.qText[i]); t != "" {
+			vals = append(vals, t)
+		}
+		if len(vals) > 0 {
+			out[q.Question] = vals
+		}
+	}
+	return out
+}
+
+// pickOption toggles option j of the current question; on a single-select
+// question it replaces the choice, free text included.
+func (m *ChatModel) pickOption(j int) {
+	q := m.pending.Questions[m.qCur]
+	if j < 0 || j >= len(q.Options) {
+		return
+	}
+	sel := m.qSel[m.qCur]
+	if sel == nil {
+		sel = map[int]bool{}
+		m.qSel[m.qCur] = sel
+	}
+	if q.MultiSelect {
+		sel[j] = !sel[j]
+		return
+	}
+	m.qSel[m.qCur] = map[int]bool{j: true}
+	delete(m.qText, m.qCur)
+}
+
+// buildQuestionAnswer answers the pending question, or returns nil (with the
+// reason on the status line) while it is not yet complete.
+func (m *ChatModel) buildQuestionAnswer() *streamagent.Msg {
+	if !m.isQuestion() {
+		return nil
+	}
+	answers := m.questionAnswers()
+	if !streamagent.QuestionComplete(*m.pending, answers, m.qReply) {
+		m.status = "answer every question (or r for a reply) · " + questionHint
+		return nil
+	}
+	resp := streamagent.AnswerResponse(m.pending.ID, answers, m.qReply)
+	var parts []string
+	for _, q := range m.pending.Questions {
+		if v := answers[q.Question]; len(v) > 0 {
+			key := q.Header
+			if key == "" {
+				key = q.Question
+			}
+			parts = append(parts, key+"="+strings.Join(v, ", "))
+		}
+	}
+	if m.qReply != "" {
+		parts = append(parts, "reply: "+m.qReply)
+	}
+	m.appendStyled(OKStyle, "▶ answered: "+strings.Join(parts, "; "))
+	m.pending = nil
+	m.resetQuestion()
+	m.busy = true
+	m.elapsed = 0
+	m.status = "resuming…"
+	return &streamagent.Msg{Kind: streamagent.KindResponse, Response: &resp}
+}
+
+// enterQuestionEditor swaps the input for the free-text or reply editor,
+// prefilled with what was typed before.
+func (m *ChatModel) enterQuestionEditor(mode chatMode) {
+	m.mode = mode
+	ti := textinput.New()
+	if mode == chatModeQuestionReply {
+		ti.Prompt = "reply ▶ "
+		ti.Placeholder = "a reply that answers none of the questions in particular"
+		ti.SetValue(m.qReply)
+	} else {
+		q := m.pending.Questions[m.qCur]
+		label := q.Header
+		if label == "" {
+			label = "other"
+		}
+		ti.Prompt = label + " ▶ "
+		ti.Placeholder = "your own answer to: " + q.Question
+		ti.SetValue(m.qText[m.qCur])
+	}
+	ti.Width = m.inputWidth()
+	ti.Focus()
+	m.input = ti
+	m.status = "enter keeps it · esc goes back"
 }
 
 func NewChatModel() ChatModel { return ChatModel{} }
@@ -148,6 +274,7 @@ func (m *ChatModel) Open(ctx context.Context, c *cli.Client, program *tea.Progra
 	m.lines = nil
 	m.scroll = 0
 	m.pending = nil
+	m.resetQuestion()
 	m.busy = false
 	m.elapsed = 0
 	m.mode = chatModeNormal
@@ -298,6 +425,12 @@ func (m *ChatModel) applyLine(line cli.StreamLine) {
 		req := *line.Msg.Request
 		m.pending = &req
 		m.busy = false
+		if len(req.Questions) > 0 {
+			m.resetQuestion()
+			m.appendStyled(WarnStyle, streamagent.QuestionSummary(req))
+			m.status = questionHint
+			return
+		}
 		m.appendStyled(WarnStyle, "⚑ approval needed: "+req.Tool+"  ("+req.ID+")")
 		m.status = "a allow · d deny · esc leave"
 		return
@@ -326,6 +459,7 @@ func (m *ChatModel) applyLine(line cli.StreamLine) {
 			m.cancelSubMode()
 		}
 		m.pending = nil
+		m.resetQuestion()
 		m.status = ""
 	}
 }
@@ -420,7 +554,9 @@ func (m *ChatModel) enterDenyReason() {
 func (m *ChatModel) cancelSubMode() {
 	m.mode = chatModeNormal
 	m.restoreInput()
-	if m.pending != nil {
+	if m.isQuestion() {
+		m.status = questionHint
+	} else if m.pending != nil {
 		m.status = "a allow · d deny · esc leave"
 	} else {
 		m.status = ""
@@ -492,7 +628,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		if m.mode == chatModeDenyReason {
+		if m.mode != chatModeNormal {
 			m.cancelSubMode()
 			return m, nil
 		}
@@ -532,6 +668,27 @@ func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
+		switch m.mode {
+		case chatModeQuestionText:
+			m.qText[m.qCur] = strings.TrimSpace(m.input.Value())
+			if !m.pending.Questions[m.qCur].MultiSelect && m.qText[m.qCur] != "" {
+				delete(m.qSel, m.qCur) // single-select: the text IS the choice
+			}
+			m.cancelSubMode()
+			return m, nil
+		case chatModeQuestionReply:
+			m.qReply = strings.TrimSpace(m.input.Value())
+			m.cancelSubMode()
+			return m, nil
+		case chatModeNormal:
+			if m.isQuestion() {
+				if out := m.buildQuestionAnswer(); out != nil {
+					m.send(out)
+					return m, chatTickCmd()
+				}
+				return m, nil
+			}
+		}
 		if m.mode == chatModeDenyReason {
 			reason := strings.TrimSpace(m.input.Value())
 			out := m.buildApproval(streamagent.BehaviorDeny, reason)
@@ -556,6 +713,26 @@ func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 	// While a request is pending the letters are DECISIONS, not text: the
 	// operator is answering, not composing. Only in the normal mode — the deny
 	// editor needs its letters.
+	if m.isQuestion() && m.mode == chatModeNormal {
+		n := len(m.pending.Questions)
+		switch {
+		case msg.Type == tea.KeyTab:
+			m.qCur = (m.qCur + 1) % n
+		case msg.Type == tea.KeyShiftTab:
+			m.qCur = (m.qCur + n - 1) % n
+		case msg.String() == "o":
+			m.enterQuestionEditor(chatModeQuestionText)
+		case msg.String() == "r":
+			m.enterQuestionEditor(chatModeQuestionReply)
+		case msg.String() == "d":
+			m.enterDenyReason()
+		case len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9':
+			m.pickOption(int(msg.String()[0] - '1'))
+		}
+		// Every other key is swallowed: a plain allow would answer the question
+		// with nothing, which is the failure this view exists to prevent.
+		return m, nil
+	}
 	if m.pending != nil && m.mode == chatModeNormal {
 		switch msg.String() {
 		case "a":
@@ -587,6 +764,9 @@ func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 func (m ChatModel) pendingBlock(budget int) []chatLine {
 	if m.pending == nil {
 		return nil
+	}
+	if m.isQuestion() {
+		return m.questionBlock(budget)
 	}
 	out := []chatLine{
 		{},
@@ -622,6 +802,59 @@ func (m ChatModel) pendingBlock(budget int) []chatLine {
 		keep := out[:budget-2]
 		out = append(keep,
 			chatLine{text: "  … (input truncated to fit; `session snapshot --raw` shows it whole)", style: MutedStyle},
+			out[len(out)-1])
+	}
+	return out
+}
+
+// questionBlock renders a pending question: every question with its options
+// marked, the focused one highlighted, free text and a reply shown as typed,
+// and the key row. Clipped like the approval block — never the key row.
+func (m ChatModel) questionBlock(budget int) []chatLine {
+	out := []chatLine{{}, {text: "❓ " + m.pending.ID, style: WarnStyle}}
+	for i, q := range m.pending.Questions {
+		head := q.Question
+		if q.Header != "" {
+			head = q.Header + ": " + q.Question
+		}
+		mark, st := "  ", lipgloss.NewStyle()
+		if i == m.qCur {
+			mark, st = "▸ ", FocusedStyle
+		}
+		kind := "pick one"
+		if q.MultiSelect {
+			kind = "pick any"
+		}
+		out = append(out, chatLine{text: mark + head + "  (" + kind + ")", style: st})
+		for j, o := range q.Options {
+			box := "( )"
+			if q.MultiSelect {
+				box = "[ ]"
+			}
+			if m.qSel[i][j] {
+				box = "(•)"
+				if q.MultiSelect {
+					box = "[x]"
+				}
+			}
+			line := fmt.Sprintf("    %d %s %s", j+1, box, o.Label)
+			if o.Description != "" {
+				line += " — " + o.Description
+			}
+			out = append(out, chatLine{text: line})
+		}
+		if t := m.qText[i]; t != "" {
+			out = append(out, chatLine{text: "    other: " + t, style: OKStyle})
+		}
+	}
+	if m.qReply != "" {
+		out = append(out, chatLine{text: "  reply: " + m.qReply, style: OKStyle})
+	}
+	out = append(out, chatLine{text: "  " + questionHint, style: FocusedStyle})
+	if budget > 0 && len(out) > budget {
+		keep := out[:budget-2]
+		out = append(keep,
+			chatLine{text: "  … (questions truncated to fit; enlarge the terminal)", style: MutedStyle},
 			out[len(out)-1])
 	}
 	return out

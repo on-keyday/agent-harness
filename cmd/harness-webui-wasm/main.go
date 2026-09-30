@@ -100,6 +100,9 @@ func main() {
 		"streamStop":         js.FuncOf(harnessStreamStop),
 		"streamTurn":         js.FuncOf(harnessStreamTurn),
 		"streamApprove":      js.FuncOf(harnessStreamApprove),
+		"streamAnswer":       js.FuncOf(harnessStreamAnswer),
+		"questionSummary":    js.FuncOf(harnessQuestionSummary),
+		"questionComplete":   js.FuncOf(harnessQuestionComplete),
 		"streamInterrupt":    js.FuncOf(harnessStreamInterrupt),
 		"streamFinish":       js.FuncOf(harnessStreamFinish),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
@@ -4096,6 +4099,89 @@ func harnessStreamApprove(this js.Value, args []js.Value) any {
 		}
 		return a[0].String(), streamagent.Msg{Kind: streamagent.KindResponse, Response: &resp}, nil
 	})
+}
+
+// harnessStreamAnswer answers a pending question request.
+//
+//	await harness.streamAnswer(taskIDHex, requestID, answers, reply)
+//
+// answers is either an object {<question text or header>: [labels...]} — the
+// chat's form — or an array of "KEY=VALUE" specs — the command line's, parsed
+// by the same cli.ParseAnswers the CLI and TUI use.
+func harnessStreamAnswer(this js.Value, args []js.Value) any {
+	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
+		if len(a) < 3 {
+			return "", streamagent.Msg{}, errors.New("streamAnswer: want (taskIDHex, requestID, answers[, reply])")
+		}
+		reqID := a[1].String()
+		if reqID == "" {
+			return "", streamagent.Msg{}, errors.New("answer: a request id is required")
+		}
+		answers := map[string][]string{}
+		switch v := a[2]; {
+		case v.InstanceOf(js.Global().Get("Array")):
+			specs := make([]string, v.Length())
+			for i := range specs {
+				specs[i] = v.Index(i).String()
+			}
+			parsed, err := cli.ParseAnswers(specs)
+			if err != nil {
+				return "", streamagent.Msg{}, err
+			}
+			answers = parsed
+		case v.Type() == js.TypeObject:
+			keys := js.Global().Get("Object").Call("keys", v)
+			for i := 0; i < keys.Length(); i++ {
+				k := keys.Index(i).String()
+				vals := v.Get(k)
+				for j := 0; j < vals.Length(); j++ {
+					if s := strings.TrimSpace(vals.Index(j).String()); s != "" {
+						answers[k] = append(answers[k], s)
+					}
+				}
+			}
+		}
+		reply := ""
+		if len(a) > 3 && a[3].Truthy() {
+			reply = a[3].String()
+		}
+		if len(answers) == 0 && strings.TrimSpace(reply) == "" {
+			return "", streamagent.Msg{}, errors.New("answer: nothing to send — pick an answer or write a reply")
+		}
+		r := streamagent.AnswerResponse(reqID, answers, reply)
+		return a[0].String(), streamagent.Msg{Kind: streamagent.KindResponse, Response: &r}, nil
+	})
+}
+
+// harnessQuestionSummary is streamagent.QuestionSummary for the page: the
+// notice line a question request gets, worded in Go like the TUI's.
+//
+//	harness.questionSummary(requestJSON) -> string
+func harnessQuestionSummary(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return ""
+	}
+	var r streamagent.Request
+	if json.Unmarshal([]byte(args[0].String()), &r) != nil {
+		return ""
+	}
+	return streamagent.QuestionSummary(r)
+}
+
+// harnessQuestionComplete is streamagent.QuestionComplete for the page, so the
+// WebUI enables its send on exactly the rule the TUI does.
+//
+//	harness.questionComplete(requestJSON, answersJSON, reply) -> bool
+func harnessQuestionComplete(this js.Value, args []js.Value) any {
+	if len(args) < 3 {
+		return false
+	}
+	var r streamagent.Request
+	var answers map[string][]string
+	if json.Unmarshal([]byte(args[0].String()), &r) != nil || json.Unmarshal([]byte(args[1].String()), &answers) != nil {
+		return false
+	}
+	return streamagent.QuestionComplete(r, answers, args[2].String())
 }
 
 // await harness.streamInterrupt(taskIDHex)

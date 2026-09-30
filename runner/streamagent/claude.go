@@ -145,7 +145,7 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 	closeAgentIn := func() { closeOnce.Do(func() { _ = stdin.Close() }) }
 	a := &claudeAdapter{w: w, agentIn: stdin, agentInClose: closeAgentIn,
 		nonce:   newRunNonce(),
-		pending: map[string]string{}, interrupts: map[string]struct{}{}}
+		pending: map[string]pendingRequest{}, interrupts: map[string]struct{}{}}
 
 	_ = w.Hello(Hello{
 		Protocol:     ProtocolVersion,
@@ -232,10 +232,10 @@ type claudeAdapter struct {
 	dec          agentlog.Decoder
 
 	mu sync.Mutex
-	// pending maps OUR request id to the vendor's. The runner never sees the
-	// vendor id, so a vendor that changes its correlation scheme stops at this
-	// map rather than reaching the runner.
-	pending map[string]string
+	// pending maps OUR request id to what answering it needs. The runner never
+	// sees the vendor id, so a vendor that changes its correlation scheme stops
+	// at this map rather than reaching the runner.
+	pending map[string]pendingRequest
 	// interrupts are the ids of control_requests WE sent, so their receipts can
 	// be recognised. Without this the receipt falls through to the agentlog
 	// decoder and surfaces as a raw event carrying vendor JSON — which is
@@ -466,17 +466,100 @@ func (a *claudeAdapter) checkReplayedSession(live string) {
 // controlRequest is the can_use_tool payload. Fields beyond these are ignored
 // here and preserved only where they are actionable (Input).
 type controlRequest struct {
-	Subtype     string          `json:"subtype"`
-	ToolName    string          `json:"tool_name"`
-	DisplayName string          `json:"display_name"`
-	Description string          `json:"description"`
-	Input       json.RawMessage `json:"input"`
-	ToolUseID   string          `json:"tool_use_id"`
-	Suggestions []struct {
-		Type        string `json:"type"`
-		Mode        string `json:"mode"`
-		Destination string `json:"destination"`
-	} `json:"permission_suggestions"`
+	Subtype     string            `json:"subtype"`
+	ToolName    string            `json:"tool_name"`
+	DisplayName string            `json:"display_name"`
+	Description string            `json:"description"`
+	Input       json.RawMessage   `json:"input"`
+	ToolUseID   string            `json:"tool_use_id"`
+	Suggestions []json.RawMessage `json:"permission_suggestions"`
+}
+
+// pendingRequest is what answering one request needs: the vendor's id, the
+// tool's input (echoed on an allow — the vendor reads a missing input as an
+// empty one), the questions it asks (for a question tool) and its
+// suggestions verbatim (a suggestion is accepted by echoing it back).
+type pendingRequest struct {
+	vendorID    string
+	input       json.RawMessage
+	questions   []Question
+	suggestions []json.RawMessage
+}
+
+// askUserQuestionTool is claude's clarifying-question tool. It is recognised
+// HERE and nowhere else: the neutral request carries its questions as
+// Request.Questions, so no client needs this name or its input shape.
+const askUserQuestionTool = "AskUserQuestion"
+
+// questionsOf decodes AskUserQuestion's input. A shape it cannot read yields
+// nil, and the request stays an ordinary approval — the pre-existing behaviour
+// — rather than a question no surface can render.
+func questionsOf(input json.RawMessage) []Question {
+	var in struct {
+		Questions []struct {
+			Question    string `json:"question"`
+			Header      string `json:"header"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if json.Unmarshal(input, &in) != nil || len(in.Questions) == 0 {
+		return nil
+	}
+	var out []Question
+	for _, q := range in.Questions {
+		if q.Question == "" || len(q.Options) == 0 {
+			return nil
+		}
+		nq := Question{Question: q.Question, Header: q.Header, MultiSelect: q.MultiSelect}
+		for _, o := range q.Options {
+			nq.Options = append(nq.Options, Option{Label: o.Label, Description: o.Description})
+		}
+		out = append(out, nq)
+	}
+	return out
+}
+
+// resolveAnswers maps each answer key — a question's text, or its header — to
+// the question's text, and shapes the value the way the vendor documents: a
+// multi-select question takes the label list, a single-select one the label
+// (several are joined with ", "). A key that names no question is an error:
+// an answer aimed at something that is not there must not be applied to
+// something that is.
+func resolveAnswers(qs []Question, answers map[string][]string) (map[string]any, error) {
+	out := map[string]any{}
+	for key, vals := range answers {
+		var q *Question
+		for i := range qs {
+			if qs[i].Question == key {
+				q = &qs[i]
+				break
+			}
+		}
+		if q == nil {
+			for i := range qs {
+				if qs[i].Header != "" && qs[i].Header == key {
+					q = &qs[i]
+					break
+				}
+			}
+		}
+		if q == nil {
+			return nil, fmt.Errorf("answer names no question of this request: %q", key)
+		}
+		if len(vals) == 0 {
+			continue
+		}
+		if q.MultiSelect {
+			out[q.Question] = append([]string(nil), vals...)
+		} else {
+			out[q.Question] = strings.Join(vals, ", ")
+		}
+	}
+	return out, nil
 }
 
 // handleControlRequest reports whether the line was consumed as a request.
@@ -501,8 +584,13 @@ func (a *claudeAdapter) handleControlRequest(v vendorLine) bool {
 	}
 
 	id := a.mintRequestID()
+	var questions []Question
+	if cr.ToolName == askUserQuestionTool {
+		questions = questionsOf(cr.Input)
+	}
 	a.mu.Lock()
-	a.pending[id] = v.RequestID
+	a.pending[id] = pendingRequest{vendorID: v.RequestID, input: cr.Input,
+		questions: questions, suggestions: cr.Suggestions}
 	a.mu.Unlock()
 
 	req := Request{
@@ -512,8 +600,15 @@ func (a *claudeAdapter) handleControlRequest(v vendorLine) bool {
 		Description: cr.Description,
 		Input:       cr.Input,
 		ToolUseID:   cr.ToolUseID,
+		Questions:   questions,
 	}
-	for _, s := range cr.Suggestions {
+	for _, raw := range cr.Suggestions {
+		var s struct {
+			Type        string `json:"type"`
+			Mode        string `json:"mode"`
+			Destination string `json:"destination"`
+		}
+		_ = json.Unmarshal(raw, &s)
 		req.Suggestions = append(req.Suggestions, Suggestion{
 			Type: s.Type, Mode: s.Mode, Destination: s.Destination,
 		})
@@ -621,15 +716,36 @@ func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 }
 
 func (a *claudeAdapter) answer(r Response) error {
+	// Validated BEFORE the request is taken out of the table: a refused answer
+	// leaves it pending, answerable by a corrected one.
 	a.mu.Lock()
-	vendorID, ok := a.pending[r.ID]
-	if ok {
-		delete(a.pending, r.ID)
-	}
-	a.mu.Unlock()
+	p, ok := a.pending[r.ID]
 	if !ok {
+		a.mu.Unlock()
 		return fmt.Errorf("no pending request %q (already answered, or never issued)", r.ID)
 	}
+	answering := len(r.Answers) > 0 || r.Reply != ""
+	var answers map[string]any
+	switch {
+	case answering && len(p.questions) == 0:
+		a.mu.Unlock()
+		return fmt.Errorf("request %q asks no question; answers and a reply mean nothing on a tool approval", r.ID)
+	case answering && r.Behavior == BehaviorDeny:
+		a.mu.Unlock()
+		return fmt.Errorf("request %q: answers ride an allow, not a deny", r.ID)
+	case answering:
+		var err error
+		if answers, err = resolveAnswers(p.questions, r.Answers); err != nil {
+			a.mu.Unlock()
+			return fmt.Errorf("request %q: %w", r.ID, err)
+		}
+	}
+	if r.AcceptSuggestion != nil && (*r.AcceptSuggestion < 0 || *r.AcceptSuggestion >= len(p.suggestions)) {
+		a.mu.Unlock()
+		return fmt.Errorf("request %q has no suggestion %d", r.ID, *r.AcceptSuggestion)
+	}
+	delete(a.pending, r.ID)
+	a.mu.Unlock()
 
 	inner := map[string]any{}
 	switch r.Behavior {
@@ -641,12 +757,25 @@ func (a *claudeAdapter) answer(r Response) error {
 		}
 	default:
 		inner["behavior"] = "allow"
-		// Always send updatedInput. Omitting it is not "unchanged" — the
-		// vendor reads a missing input as an empty one.
-		if len(r.UpdatedInput) > 0 {
+		// Always send updatedInput. Omitting it is not "unchanged" -- the
+		// vendor reads a missing input as an empty one -- so an allow with no
+		// rewrite echoes the request's own input.
+		switch {
+		case len(r.UpdatedInput) > 0:
 			inner["updatedInput"] = json.RawMessage(r.UpdatedInput)
-		} else {
-			inner["updatedInput"] = json.RawMessage(a.originalInput(r.ID))
+		case answering:
+			inner["updatedInput"] = answeredInput(p.input, answers, r.Reply)
+		case len(p.input) > 0:
+			inner["updatedInput"] = p.input
+		default:
+			inner["updatedInput"] = json.RawMessage(`{}`)
+		}
+		// Accepting a suggestion is echoing it back verbatim in
+		// updatedPermissions (code.claude.com/docs/en/agent-sdk/user-input,
+		// "Approve and remember"). This was accepted on the wire and silently
+		// dropped here until 2026-09-30.
+		if r.AcceptSuggestion != nil {
+			inner["updatedPermissions"] = []json.RawMessage{p.suggestions[*r.AcceptSuggestion]}
 		}
 	}
 
@@ -654,7 +783,7 @@ func (a *claudeAdapter) answer(r Response) error {
 		"type": "control_response",
 		"response": map[string]any{
 			"subtype":    "success", // reports the TRANSPORT, not the verdict
-			"request_id": vendorID,
+			"request_id": p.vendorID,
 			"response":   inner,
 		},
 	}
@@ -671,11 +800,23 @@ func (a *claudeAdapter) answer(r Response) error {
 	return nil
 }
 
-// originalInput is a placeholder for the skeleton: the adapter keeps only the
-// id mapping so far, so an allow with no UpdatedInput echoes an empty object.
-// Storing the original input alongside the id is the next step and is left
-// visible rather than hidden behind a nil.
-func (a *claudeAdapter) originalInput(string) []byte { return []byte(`{}`) }
+// answeredInput is AskUserQuestion's updatedInput: the tool's own input with
+// `answers` (and `response`, for a freeform reply) added, which is the shape
+// the vendor documents -- the original questions ride along unchanged.
+func answeredInput(input json.RawMessage, answers map[string]any, reply string) json.RawMessage {
+	obj := map[string]json.RawMessage{}
+	_ = json.Unmarshal(input, &obj)
+	if len(answers) > 0 {
+		b, _ := json.Marshal(answers)
+		obj["answers"] = b
+	}
+	if reply != "" {
+		b, _ := json.Marshal(reply)
+		obj["response"] = b
+	}
+	b, _ := json.Marshal(obj)
+	return b
+}
 
 // sendInterrupt asks the agent to abandon its running turn. Measured shape:
 // a control_request of subtype "interrupt", answered with a receipt carrying

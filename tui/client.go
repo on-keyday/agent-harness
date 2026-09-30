@@ -302,6 +302,13 @@ func DoStreamWrite(c *cli.Client, v verb.SessionAction, resolved string) tea.Cmd
 				resp.AcceptSuggestion = &n
 			}
 			out.Err = c.StreamApprove(ctx, resolved, resp, flush)
+		case verb.SubStreamAnswer:
+			answers, err := cli.ParseAnswers(v.Answers)
+			if err != nil {
+				out.Err = err
+				break
+			}
+			out.Err = c.StreamAnswer(ctx, resolved, v.RequestID, answers, v.Reply, flush)
 		case verb.SubStreamInterrupt:
 			out.Err = c.StreamInterrupt(ctx, resolved, flush)
 		case verb.SubStreamFinish:

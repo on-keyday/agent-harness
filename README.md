@@ -308,6 +308,16 @@ bin/harness-cli session stream interrupt <task-id>   # abandon the running TURN
 bin/harness-cli session stream finish    <task-id>   # close its stdin: the turn
                                                  #  completes and the agent
                                                  #  exits 0 (not a kill)
+# A question the agent asks (claude's AskUserQuestion) is a request too, and is
+# answered rather than approved. KEY is the question's text or its header. VALUE
+# is an option label, or your own words. Repeat a KEY for a multi-select
+# question. --reply sends a freeform answer to none in particular.
+bin/harness-cli session stream answer <task-id> <request-id> \
+    --answer Format=Summary --answer Sections=Intro --answer Sections=Outro
+# In the TUI chat a question shows its options: tab moves between questions,
+# digits pick, o types your own answer, r a freeform reply, enter sends (only
+# once every question is answered), d declines. The WebUI chat shows radios or
+# checkboxes per question, with a free-text box for each.
 # In the TUI, `r` on a live stream task opens a chat screen that does all of the
 # above with keys: enter sends, a/d answer a pending approval (with the tool's
 # input shown whole), ctrl+x interrupts, ctrl+d finishes, esc leaves. Whether an

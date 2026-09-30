@@ -351,3 +351,61 @@ func TestChatAReplayedRequestThatWasResolvedIsNotPending(t *testing.T) {
 		t.Fatalf("an unrelated resolution cleared the pending request: %+v", m.pending)
 	}
 }
+
+func keyRunes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+// A question request is answered with keys: digits pick, tab moves, o writes
+// free text, enter sends — and enter refuses while a question is unanswered,
+// because a half answer is exactly the empty allow this view replaces.
+func TestChatAnswersAQuestionWithKeys(t *testing.T) {
+	m := openChat(t)
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-q-1","tool":"AskUserQuestion","questions":[`+
+		`{"question":"Format?","header":"Format","options":[{"label":"Summary"},{"label":"Detailed"}]},`+
+		`{"question":"Sections?","header":"Sections","multi_select":true,"options":[{"label":"Intro"},{"label":"Outro"}]}]}}`))
+	if !m.isQuestion() {
+		t.Fatal("the request did not become a pending question")
+	}
+	if !strings.Contains(transcript(m), "❓ question: Format: Format? (+1 more) (req-q-1)") {
+		t.Errorf("notice missing:\n%s", transcript(m))
+	}
+
+	m, _ = m.onKey(keyRunes("2")) // Format = Detailed
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.pending == nil {
+		t.Fatal("enter sent a half-answered question")
+	}
+
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.onKey(keyRunes("1")) // Sections += Intro
+	m, _ = m.onKey(keyRunes("o")) // + free text
+	m.input.SetValue("Appendix")
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != chatModeNormal {
+		t.Fatalf("the free-text editor did not close (mode %v)", m.mode)
+	}
+	got := m.questionAnswers()
+	if strings.Join(got["Format?"], ",") != "Detailed" || strings.Join(got["Sections?"], ",") != "Intro,Appendix" {
+		t.Fatalf("answers %v", got)
+	}
+	out := m.buildQuestionAnswer()
+	if out == nil || out.Response.ID != "req-q-1" || out.Response.Behavior != streamagent.BehaviorAllow {
+		t.Fatalf("built %+v", out)
+	}
+	b, err := cli.EncodeStreamMsg(*out)
+	if err != nil || !strings.Contains(string(b), `"answers":{`) {
+		t.Fatalf("encoded %s (%v)", b, err)
+	}
+	if m.pending != nil {
+		t.Fatal("the question is still pending after it was answered")
+	}
+}
+
+// A plain `a` must not answer a question: it would allow with nothing chosen.
+func TestChatPlainAllowDoesNotAnswerAQuestion(t *testing.T) {
+	m := openChat(t)
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-q-2","tool":"AskUserQuestion","questions":[{"question":"Q?","options":[{"label":"x"},{"label":"y"}]}]}}`))
+	m, _ = m.onKey(keyRunes("a"))
+	if m.pending == nil {
+		t.Fatal("`a` answered a question with nothing chosen")
+	}
+}

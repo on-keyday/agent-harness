@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"strings"
 
@@ -683,6 +684,20 @@ func (h cliVerbs) SessionStreamTurn(a verb.SessionAction) error {
 }
 func (h cliVerbs) SessionStreamApprove(a verb.SessionAction) error {
 	return runSessionStreamApproveWith(h.cid(), a)
+}
+
+func (h cliVerbs) SessionStreamAnswer(a verb.SessionAction) error {
+	answers, err := cli.ParseAnswers(a.Answers)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, h.cid(), protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.StreamAnswer(ctx, a.TaskID, a.RequestID, answers, a.Reply, time.Duration(a.FlushMs)*time.Millisecond)
 }
 func (h cliVerbs) SessionStreamInterrupt(a verb.SessionAction) error {
 	return runSessionStreamSimpleWith(h.cid(), a)

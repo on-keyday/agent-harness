@@ -219,6 +219,27 @@ type Request struct {
 	Input       json.RawMessage `json:"input,omitempty"`
 	ToolUseID   string          `json:"tool_use_id,omitempty"`
 	Suggestions []Suggestion    `json:"suggestions,omitempty"`
+	// Questions, when non-empty, makes this request a QUESTION to answer (with
+	// Response.Answers / Reply) rather than a tool to approve. The adapter
+	// fills it from a vendor tool that asks the user something — claude's
+	// AskUserQuestion — so no client needs that tool's name or input shape.
+	// Design: docs/superpowers/specs/2026-09-30-stream-ask-user-question-design.md.
+	Questions []Question `json:"questions,omitempty"`
+}
+
+// Question is one question of a question request: 2–4 options, one or many
+// of which may be chosen, or free text instead.
+type Question struct {
+	Question    string   `json:"question"`
+	Header      string   `json:"header,omitempty"`
+	Options     []Option `json:"options"`
+	MultiSelect bool     `json:"multi_select,omitempty"`
+}
+
+// Option is one choice. Label is what an answer names.
+type Option struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // Suggestion is a pre-canned answer the agent offers. The only kind observed is
@@ -261,6 +282,13 @@ type Response struct {
 	// one" and "stop asking" are different acts, and §3 wants them
 	// distinguishable even while one capability covers both.
 	AcceptSuggestion *int `json:"accept_suggestion,omitempty"`
+	// Answers answers a question request: key = a question's text or its
+	// header, value = the chosen labels, or free text in place of a label.
+	// Only meaningful with an allow on a request that carries Questions; the
+	// adapter refuses it anywhere else rather than dropping it.
+	Answers map[string][]string `json:"answers,omitempty"`
+	// Reply is a freeform reply that answers no one question in particular.
+	Reply string `json:"reply,omitempty"`
 }
 
 // Interrupt abandons the running turn. The agent survives and takes the next

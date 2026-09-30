@@ -537,6 +537,7 @@ func (h tuiVerbs) SessionStreamAttach(v verb.SessionAction) tea.Cmd {
 
 func (h tuiVerbs) SessionStreamTurn(v verb.SessionAction) tea.Cmd      { return h.streamWrite(v) }
 func (h tuiVerbs) SessionStreamApprove(v verb.SessionAction) tea.Cmd   { return h.streamWrite(v) }
+func (h tuiVerbs) SessionStreamAnswer(v verb.SessionAction) tea.Cmd    { return h.streamWrite(v) }
 func (h tuiVerbs) SessionStreamInterrupt(v verb.SessionAction) tea.Cmd { return h.streamWrite(v) }
 func (h tuiVerbs) SessionStreamFinish(v verb.SessionAction) tea.Cmd    { return h.streamWrite(v) }
 

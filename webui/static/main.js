@@ -3165,10 +3165,119 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // (this is the payload the log drops), and the choices as a button row —
   // buttons because that is this surface's native control, where the TUI uses
   // keys.
+  // chatShowQuestion renders a QUESTION request (the adapter filled
+  // req.questions): per question a radio row (pick one) or checkboxes (pick
+  // any) plus an "その他" text box, then a freeform reply and 送信 / 拒否. The
+  // controls are the kinds the page already uses; the wording of the notice
+  // and the rule that enables 送信 come from Go over the bridge.
+  const chatShowQuestion = (req) => {
+    chatApproval.replaceChildren();
+    const h = document.createElement("h3");
+    h.textContent = "❓ 質問に答えてください  (" + (req.id || "") + ")";
+    chatApproval.appendChild(h);
+    // Its own element, rebuilt on every render: listeners hang off it rather
+    // than off chatApproval, which outlives each render and would collect one
+    // stale set per call.
+    const form = document.createElement("div");
+    chatApproval.appendChild(form);
+    const rows = [];
+    req.questions.forEach((q, i) => {
+      const fs = document.createElement("fieldset");
+      fs.className = "chat-question";
+      const lg = document.createElement("legend");
+      lg.textContent = (q.header ? q.header + ": " : "") + q.question +
+        (q.multi_select ? "（複数選択）" : "（1つ選択）");
+      fs.appendChild(lg);
+      const boxes = [];
+      (q.options || []).forEach((o) => {
+        const lab = document.createElement("label");
+        lab.className = "chat-question-opt";
+        const inp = document.createElement("input");
+        inp.type = q.multi_select ? "checkbox" : "radio";
+        inp.name = "q-" + req.id + "-" + i;
+        inp.value = o.label;
+        lab.append(inp, " " + o.label);
+        if (o.description) {
+          const d = document.createElement("span");
+          d.className = "notify-meta";
+          d.textContent = " — " + o.description;
+          lab.appendChild(d);
+        }
+        fs.appendChild(lab);
+        boxes.push(inp);
+      });
+      const other = document.createElement("input");
+      other.type = "text";
+      other.placeholder = "その他（自分の言葉で答える）";
+      other.className = "chat-question-other";
+      fs.appendChild(other);
+      form.appendChild(fs);
+      rows.push({ q, boxes, other });
+    });
+    const reply = document.createElement("textarea");
+    reply.rows = 2;
+    reply.placeholder = "自由回答（どの質問にも当てはまらない返事）";
+    reply.className = "chat-question-reply";
+    form.appendChild(reply);
+    const answersOf = () => {
+      const out = {};
+      rows.forEach(({ q, boxes, other }) => {
+        const text = other.value.trim();
+        let vals = boxes.filter((b) => b.checked).map((b) => b.value);
+        if (text) vals = q.multi_select ? vals.concat([text]) : [text];
+        if (vals.length) out[q.question] = vals;
+      });
+      return out;
+    };
+    const btns = document.createElement("div");
+    btns.className = "chat-approval-btns";
+    const send = document.createElement("button");
+    send.type = "button";
+    send.textContent = "✔ 送信";
+    const refresh = () => {
+      send.disabled = !window.harness.questionComplete(
+        JSON.stringify(req), JSON.stringify(answersOf()), reply.value);
+    };
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", refresh);
+    send.addEventListener("click", () => chatSendAnswer(req, answersOf(), reply.value.trim()));
+    const deny = document.createElement("button");
+    deny.type = "button";
+    deny.textContent = "✘ 拒否";
+    deny.title = "質問に答えない。理由はエージェントに verbatim で届く";
+    deny.addEventListener("click", () => {
+      const reason = window.prompt("答えない理由（エージェントがそのまま読みます。空でも可）");
+      if (reason === null) return;
+      chatAnswer("deny", reason, -1);
+    });
+    btns.append(send, deny);
+    chatApproval.appendChild(btns);
+    refresh();
+    chatApproval.hidden = false;
+  };
+
+  const chatSendAnswer = async (req, answers, reply) => {
+    if (!chatPending || !chatTaskId || chatPending.id !== req.id) return;
+    chatPending = null;
+    chatShowApproval();
+    const parts = (req.questions || []).filter((q) => answers[q.question])
+      .map((q) => (q.header || q.question) + "=" + answers[q.question].join(", "));
+    if (reply) parts.push("reply: " + reply);
+    chatAppend("▶ 回答: " + parts.join("; "), "c-you");
+    chatBusy = true;
+    chatSetStatus("resuming…");
+    try {
+      await window.harness.streamAnswer(chatTaskId, req.id, answers, reply);
+    } catch (err) {
+      chatAppend("✗ 回答を送れませんでした: " + err.message, "c-err");
+    }
+  };
+
   const chatShowApproval = () => {
     if (!chatApproval) return;
     if (!chatPending) { chatApproval.hidden = true; chatApproval.replaceChildren(); return; }
     const req = chatPending;
+    if (req.questions && req.questions.length) { chatShowQuestion(req); return; }
     chatApproval.replaceChildren();
     const h = document.createElement("h3");
     h.textContent = "⚑ " + (req.tool || "?") + " を実行してよいか  (" + (req.id || "") + ")";
@@ -3245,7 +3354,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (msg.kind !== "request") return;
     chatPending = msg.request || null;
     chatBusy = false;
-    chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
+    if (chatPending && chatPending.questions && chatPending.questions.length) {
+      chatAppend(window.harness.questionSummary(JSON.stringify(chatPending)), "c-warn");
+    } else {
+      chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
+    }
     chatShowApproval();
   };
   window.harness_streamClosed = (taskID, err) => {
@@ -7157,6 +7270,12 @@ async function runVerbCommandDispatch(tokens, ctx) {
               sid, b.args[1], verdict, b.flags.message || "",
               b.set.suggestion ? b.flags.suggestion : -1);
             ctx.echo(`stream approve ${sid.slice(0, 8)} ${b.args[1]}: ${verdict}`);
+            break;
+          }
+          case "answer": {
+            const specs = (b.custom && b.custom["answer"]) || [];
+            await ctx.harness.streamAnswer(sid, b.args[1], specs, b.flags.reply || "");
+            ctx.echo(`stream answer ${sid.slice(0, 8)} ${b.args[1]}: sent`);
             break;
           }
           case "interrupt":
