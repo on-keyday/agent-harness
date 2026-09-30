@@ -224,6 +224,21 @@ its caps. This path gets a similar result without going near operator auth.
 - Not read: whether `Registry.Add` refuses a second entry with the same
   identity, and where an agent connection's caps come from after `Validate`.
 
+**Mostly a `submit` path.** The window described above exists only for
+`submit`-created (oneshot) tasks, and those are rare in practice: `ls --json`
+on 2026-09-30 showed 33 tasks, all 33 `interactive`. Interactive tasks never
+wait in a queue. `handleOpenInteractive` decides on a runner at the moment the
+task is opened, answers `AmbiguousRunner` or `RunnerBusy` straight away when
+it cannot, and otherwise assigns the task, mints the ticket and sends
+`OpenExec` itself, all without going through `Scheduler.Tick`. The remaining
+case is an impostor that is already registered when the task is opened. The
+open then comes back ambiguous and the operator picks from a list. The
+hostname and root shown for each candidate are whatever the runner declared,
+but each `RunnerCandidate` also carries the runner's `cid`, and the server
+observes that value itself. The rows can therefore be told apart, provided the
+operator knows the real runner's address. Not read: whether each UI's picker
+actually shows the `cid`.
+
 **Why deferred.** A separate runner secret would not be a boundary. Most of
 the fleet today runs agents outside a sandbox, under the runner's uid. On
 those hosts the agent can read everything the runner reads, including files
