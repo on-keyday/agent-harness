@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
@@ -220,11 +219,11 @@ func readClaudeTranscript(path string) (*transcriptReplay, error) {
 			if e.Kind == agentlog.KindRaw {
 				continue // not conversation; never show a transcript's JSON
 			}
-			ev := toNeutral(e)
+			ev := FromAgentlog(e)
 			ev.Replay = true
-			ev.Text = capBytes(ev.Text, replayTextCap)
-			ev.Args = capBytes(ev.Args, replayFieldCap)
-			ev.Result = capBytes(ev.Result, replayFieldCap)
+			ev.Text = agentlog.TruncateBytes(ev.Text, replayTextCap)
+			ev.Args = agentlog.TruncateBytes(ev.Args, replayFieldCap)
+			ev.Result = agentlog.TruncateBytes(ev.Result, replayFieldCap)
 			events = append(events, ev)
 		}
 	}
@@ -246,18 +245,6 @@ func readClaudeTranscript(path string) (*transcriptReplay, error) {
 	}
 	out.Events = events[start:]
 	return out, nil
-}
-
-// capBytes cuts s to at most n bytes on a rune boundary, marking the cut.
-func capBytes(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	cut := n
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "…"
 }
 
 // replayTranscript writes the replay for a resume in dir, before the agent

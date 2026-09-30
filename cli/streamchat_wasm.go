@@ -123,7 +123,7 @@ func streamChatPump(taskID string, sess *StreamSession, gen uint64) {
 	for {
 		line, err := sess.ReadLine()
 		if len(line.Raw) > 0 {
-			if !chatCall(gen, "harness_streamLine", taskID, string(line.Raw)) {
+			if !chatCall(gen, "harness_streamLine", taskID, string(line.Raw), displayForJS(line)) {
 				return
 			}
 		}
@@ -135,6 +135,26 @@ func streamChatPump(taskID string, sess *StreamSession, gen uint64) {
 			chatCall(gen, "harness_streamClosed", taskID, msg)
 			return
 		}
+	}
+}
+
+// displayForJS is streamagent.DisplayOf for the browser: the line, its tone
+// (the page maps it to a `c-<tone>` class) and what it does to the status line,
+// decided in Go so the WebUI chat and the TUI chat cannot classify one message
+// two ways. A line that is not the protocol displays escaped, like everywhere
+// else. null only for a decoded request, which the page renders from the raw
+// line's payload into its approval control.
+func displayForJS(line StreamLine) any {
+	d, ok := LineDisplay(line)
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"text":      d.Text,
+		"tone":      string(d.Tone),
+		"setStatus": d.SetStatus,
+		"status":    d.Status,
+		"idle":      d.Idle,
 	}
 }
 

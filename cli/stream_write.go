@@ -140,6 +140,26 @@ type StreamLine struct {
 	Decoded bool
 }
 
+// NotProtocolLine is how every follower shows a line that is not the adapter
+// protocol. The line comes from whoever can write the stream — `session send`
+// puts raw bytes there — so its terminal-steering bytes are escaped before it
+// reaches a terminal: unescaped, one line can take a TUI out of its alternate
+// screen, which is how a stray repaint once scrambled the chat.
+func NotProtocolLine(raw []byte) string {
+	return "(not the protocol) " + EscapeForTerminal(raw)
+}
+
+// LineDisplay is streamagent.DisplayOf for a line as read off the stream: a
+// line that is not the protocol displays as NotProtocolLine. The two chats
+// apply it — the TUI directly, the WebUI over the wasm bridge — so neither
+// words or escapes a line itself.
+func LineDisplay(l StreamLine) (streamagent.Display, bool) {
+	if !l.Decoded {
+		return streamagent.Display{Text: NotProtocolLine(l.Raw), Tone: streamagent.ToneRaw}, true
+	}
+	return streamagent.DisplayOf(l.Msg)
+}
+
 // decodeStreamLine never fails on content. The error return exists for the
 // shape callers expect and is always nil today; an undecodable line is data,
 // not a fault.

@@ -74,7 +74,7 @@ func (c *Client) SessionStreamAttach(ctx context.Context, taskIDHex string, out,
 func renderStreamLine(line []byte, out, errOut io.Writer) {
 	m, err := streamagent.DecodeMsg(line)
 	if err != nil {
-		fmt.Fprintf(out, "(not the protocol) %s\n", line)
+		fmt.Fprintln(out, NotProtocolLine(line))
 		return
 	}
 	if text, ok := streamagent.RenderText(m); ok {
@@ -89,11 +89,8 @@ func renderStreamLine(line []byte, out, errOut io.Writer) {
 		}
 	case streamagent.KindExit:
 		if m.Exit != nil {
-			if m.Exit.Err != "" {
-				fmt.Fprintf(out, "agent exited: code=%d err=%s\n", m.Exit.Code, m.Exit.Err)
-			} else {
-				fmt.Fprintf(out, "agent exited: code=%d\n", m.Exit.Code)
-			}
+			text, _ := streamagent.RenderExit(*m.Exit)
+			fmt.Fprintln(out, text)
 		}
 	}
 	// Client→adapter kinds (response/user/interrupt/finish) do not appear on

@@ -132,3 +132,23 @@ func TestDecodeStreamLineCopiesItsInput(t *testing.T) {
 		t.Errorf("Raw aliased the caller's buffer: %q", line.Raw)
 	}
 }
+
+// A line that is not the protocol is shown, never dropped — and never
+// verbatim: whoever can write the stream can put terminal-steering bytes on
+// it, and one unescaped `ESC [ ? 1049 l` takes a TUI out of its alternate
+// screen. Both chats and the CLI follow view go through this.
+func TestLineDisplayEscapesANonProtocolLine(t *testing.T) {
+	d, ok := LineDisplay(StreamLine{Raw: []byte("\x1b[?1049l{\"v\":1}\x9b2J")})
+	if !ok {
+		t.Fatal("a non-protocol line has no display")
+	}
+	if strings.ContainsAny(d.Text, "\x1b\u009b") {
+		t.Fatalf("terminal-steering bytes survived: %q", d.Text)
+	}
+	if want := `(not the protocol) \x1b[?1049l{"v":1}\x9b2J`; d.Text != want {
+		t.Fatalf("got %q, want %q", d.Text, want)
+	}
+	if d.Tone != streamagent.ToneRaw {
+		t.Fatalf("tone %q, want raw", d.Tone)
+	}
+}

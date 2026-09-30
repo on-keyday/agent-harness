@@ -102,6 +102,7 @@ func main() {
 		"streamApprove":      js.FuncOf(harnessStreamApprove),
 		"streamInterrupt":    js.FuncOf(harnessStreamInterrupt),
 		"streamFinish":       js.FuncOf(harnessStreamFinish),
+		"streamUserTurnLine": js.FuncOf(harnessStreamUserTurnLine),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
 		"previewInput":       js.FuncOf(harnessPreviewInput),
 		"cancel":             js.FuncOf(harnessCancel),
@@ -4049,6 +4050,16 @@ func streamWrite(args []js.Value, build func(args []js.Value) (string, streamage
 }
 
 // await harness.streamTurn(taskIDHex, text)
+// harnessStreamUserTurnLine is the chat's echo of a turn it sent:
+// streamagent.UserTurnLine, the same line a replayed user turn renders to, so
+// the page does not carry its own copy of the prefix.
+func harnessStreamUserTurnLine(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return ""
+	}
+	return streamagent.UserTurnLine(args[0].String())
+}
+
 func harnessStreamTurn(this js.Value, args []js.Value) any {
 	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
 		if len(a) < 2 {

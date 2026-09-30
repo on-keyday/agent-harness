@@ -155,18 +155,27 @@ func raw(line []byte) []Event {
 // progress feed, not a transcript.
 const maxFieldBytes = 200
 
-// truncate shortens s to at most maxFieldBytes bytes without splitting a rune,
-// appending an ellipsis when it cut anything.
-func truncate(s string) string {
-	if len(s) <= maxFieldBytes {
+// truncate shortens s to the log's field cap.
+func truncate(s string) string { return TruncateBytes(s, maxFieldBytes) }
+
+// TruncateBytes shortens s to at most n bytes without splitting a rune,
+// appending an ellipsis when it cut anything. Exported so a caller with a
+// different cap (the transcript replay's) shares the cut rather than copying it.
+func TruncateBytes(s string, n int) string {
+	if len(s) <= n {
 		return s
 	}
-	cut := maxFieldBytes
+	cut := n
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + "…"
 }
+
+// UserTurnPrefix leads a user's turn wherever one is shown: Render's
+// KindUserText line, a chat's echo of a turn it sent, and the TUI chat's own
+// input prompt.
+const UserTurnPrefix = "you ▶ "
 
 // Render formats one event as a single log line, without a trailing newline.
 // The format is identical for every agent.
@@ -215,7 +224,7 @@ func Render(e Event) string {
 	case KindUserText:
 		// The prefix both chat surfaces echo a sent turn with, so a replayed
 		// turn and a freshly typed one read alike.
-		return "you ▶ " + e.Text
+		return UserTurnPrefix + e.Text
 	default: // KindRaw, KindText
 		return e.Text
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
 
@@ -120,7 +121,7 @@ func (m ChatModel) TaskID() string { return m.taskID }
 // the input and does not put it back leaves the wrong prompt stuck forever.
 func (m *ChatModel) restoreInput() {
 	ti := textinput.New()
-	ti.Prompt = "you ▶ "
+	ti.Prompt = agentlog.UserTurnPrefix
 	ti.Placeholder = "message the agent…"
 	ti.Width = m.inputWidth()
 	ti.Focus()
@@ -285,17 +286,12 @@ func (m *ChatModel) appendStyled(st lipgloss.Style, l string) {
 
 // applyLine folds one stream line into the view.
 //
-// Events go through streamagent.RenderText — the SAME renderer the task log
-// uses, so the two cannot drift into two renderings of one event. The REQUEST
+// Every line but a request goes through cli.LineDisplay, whose event text is
+// streamagent.RenderText — the SAME renderer the task log uses. The REQUEST
 // case is the one that deliberately differs: RenderText's one-liner is a
 // notification, and this view needs the payload.
 func (m *ChatModel) applyLine(line cli.StreamLine) {
-	if !line.Decoded {
-		m.appendStyled(WarnStyle, "(not the protocol) "+string(line.Raw))
-		return
-	}
-	switch line.Msg.Kind {
-	case streamagent.KindRequest:
+	if line.Decoded && line.Msg.Kind == streamagent.KindRequest {
 		if line.Msg.Request == nil {
 			return
 		}
@@ -305,65 +301,42 @@ func (m *ChatModel) applyLine(line cli.StreamLine) {
 		m.appendStyled(WarnStyle, "⚑ approval needed: "+req.Tool+"  ("+req.ID+")")
 		m.status = "a allow · d deny · esc leave"
 		return
-	case streamagent.KindExit:
-		if line.Msg.Exit != nil {
-			if line.Msg.Exit.Err != "" {
-				m.appendStyled(ErrorStyle, fmt.Sprintf("agent exited: code=%d err=%s", line.Msg.Exit.Code, line.Msg.Exit.Err))
-			} else {
-				m.appendStyled(MutedStyle, fmt.Sprintf("agent exited: code=%d", line.Msg.Exit.Code))
-			}
-		}
+	}
+	// Everything but a request is decided once, in cli.LineDisplay: the line
+	// (a non-protocol one escaped), its tone, and what it does to the status
+	// line. The WebUI chat reads the same Display over the wasm bridge, so the
+	// two chats cannot classify one message two ways.
+	d, ok := cli.LineDisplay(line)
+	if !ok {
+		return
+	}
+	if d.Text != "" {
+		m.appendStyled(toneStyle(d.Tone), d.Text)
+	}
+	if d.SetStatus {
+		m.status = d.Status
+	}
+	if d.Idle {
 		m.busy = false
-		m.status = "session ended"
-		return
-	case streamagent.KindHello:
-		if h := line.Msg.Hello; h != nil {
-			m.status = fmt.Sprintf("attached · %s protocol %d", h.Vendor, h.Protocol)
-		}
-		return
-	}
-	if text, ok := streamagent.RenderText(line.Msg); ok {
-		m.appendStyled(eventStyle(line.Msg.Event), text)
-	}
-	if ev := line.Msg.Event; ev != nil {
-		switch ev.Kind {
-		case streamagent.EventFinish:
-			m.busy = false
-			m.status = ""
-		case streamagent.EventThinking:
-			m.status = "thinking…"
-		case streamagent.EventToolStart:
-			m.status = "running " + ev.Tool + "…"
-		}
 	}
 }
 
-// eventStyle paints an event by what it MEANS, so the agent's answer stays
-// visually primary and the machinery around it recedes — the one thing that
-// makes a streamed transcript readable rather than a wall.
-func eventStyle(ev *streamagent.Event) lipgloss.Style {
-	if ev == nil {
-		return MutedStyle
-	}
-	// Replayed history recedes behind the live session, whatever it says: it
-	// is context for the next turn, not the conversation in progress.
-	if ev.Replay {
-		return MutedStyle
-	}
-	switch ev.Kind {
-	case streamagent.EventText:
-		return lipgloss.NewStyle() // the answer: the only unmuted thing here
-	case streamagent.EventUserText:
-		return OKStyle // the style this view echoes its own sent turn in
-	case streamagent.EventError:
-		if ev.Warning {
-			return WarnStyle
-		}
+// toneStyle is this surface's paint for a streamagent.Tone. The WebUI's is the
+// `c-<tone>` CSS class; the classification itself lives in streamagent.
+func toneStyle(t streamagent.Tone) lipgloss.Style {
+	switch t {
+	case streamagent.ToneText:
+		return lipgloss.NewStyle()
+	case streamagent.ToneYou:
+		return OKStyle
+	case streamagent.ToneWarn:
+		return WarnStyle
+	case streamagent.ToneErr:
 		return ErrorStyle
-	default:
-		// session_start / thinking / tool_start / tool_end / finish: activity.
-		return MutedStyle
+	case streamagent.ToneRaw:
+		return WarnStyle
 	}
+	return MutedStyle
 }
 
 // buildApproval answers the pending request, clearing it. Returns nil when
@@ -562,7 +535,7 @@ func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 			return m, nil
 		}
 		m.input.SetValue("")
-		m.appendStyled(OKStyle, "you ▶ "+text)
+		m.appendStyled(toneStyle(streamagent.ToneYou), streamagent.UserTurnLine(text))
 		m.busy = true
 		m.elapsed = 0
 		m.status = ""

@@ -306,10 +306,27 @@ func TestChatRendersAReplayedConversation(t *testing.T) {
 		t.Errorf("a live event was marked as replayed:\n%s", body)
 	}
 	fg := func(s lipgloss.Style) string { return fmt.Sprint(s.GetForeground()) }
-	if got := eventStyle(&streamagent.Event{Kind: streamagent.EventText, Replay: true}); fg(got) != fg(MutedStyle) {
+	if got := toneStyle(streamagent.EventTone(&streamagent.Event{Kind: streamagent.EventText, Replay: true})); fg(got) != fg(MutedStyle) {
 		t.Errorf("a replayed answer is not muted: %v", got.GetForeground())
 	}
-	if got := eventStyle(&streamagent.Event{Kind: streamagent.EventUserText}); fg(got) != fg(OKStyle) {
+	if got := toneStyle(streamagent.EventTone(&streamagent.Event{Kind: streamagent.EventUserText})); fg(got) != fg(OKStyle) {
 		t.Errorf("a user turn is not in the echo style: %v", got.GetForeground())
+	}
+}
+
+// A replayed event describes the past, so it must not drive the status line.
+// Before DisplayOf decided this for both chats, a replayed `thinking` left the
+// TUI reading "thinking…" over a session that was idle.
+func TestChatReplayDoesNotDriveTheStatusLine(t *testing.T) {
+	m := openChat(t)
+	m.status = "attached"
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"thinking","replay":true}}`))
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"tool_start","tool":"Bash","replay":true}}`))
+	if m.status != "attached" {
+		t.Fatalf("a replayed event changed the status line to %q", m.status)
+	}
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"thinking"}}`))
+	if m.status != "thinking…" {
+		t.Fatalf("a live thinking event did not reach the status line: %q", m.status)
 	}
 }

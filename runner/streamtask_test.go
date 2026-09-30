@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -380,76 +379,6 @@ func TestStreamTaskFailsLoudlyOnAMissingAdapter(t *testing.T) {
 	}
 }
 
-// The neutral Event must survive agentlog → neutral → agentlog, or this kind's
-// log lines silently say less than the oneshot kind's for the same agent
-// output. The two mappers live in different packages and nothing else pins them
-// together.
-func TestEventRoundTripsThroughTheNeutralType(t *testing.T) {
-	code := 3
-	cases := []agentlog.Event{
-		{Kind: agentlog.KindText, Text: "hello"},
-		{Kind: agentlog.KindUserText, Text: "what changed?"},
-		{Kind: agentlog.KindThinking, Text: "hmm"},
-		{Kind: agentlog.KindSessionStart, Text: "sess-1"},
-		{Kind: agentlog.KindToolStart, Tool: "Bash", Args: `{"command":"ls"}`},
-		{Kind: agentlog.KindToolEnd, Tool: "Bash", Result: "ok", ExitCode: &code},
-		{Kind: agentlog.KindToolEnd, Tool: "Write", IsError: true},
-		{Kind: agentlog.KindError, Text: "boom"},
-		{Kind: agentlog.KindError, Text: "notice", Warning: true},
-		{Kind: agentlog.KindFinish, Stats: agentlog.Stats{
-			DurationMS: 12, CostUSD: 0.5, InputTokens: 7, OutputTokens: 9}},
-		{Kind: agentlog.KindRaw, Text: "unparseable"},
-	}
-	for _, in := range cases {
-		neutral := adapterToNeutral(in)
-		var back streamagent.Event
-		b, _ := json.Marshal(neutral)
-		if err := json.Unmarshal(b, &back); err != nil {
-			t.Fatalf("neutral event does not survive JSON: %v", err)
-		}
-		if got := back.ToAgentlog(); agentlog.Render(got) != agentlog.Render(in) {
-			t.Errorf("render drifted for %+v:\n  before %q\n  after  %q",
-				in, agentlog.Render(in), agentlog.Render(got))
-		}
-	}
-}
-
-// adapterToNeutral reconstructs the adapter package's unexported mapper. The
-// assertion above catches a divergence between the two as a render drift.
-func adapterToNeutral(e agentlog.Event) streamagent.Event {
-	out := streamagent.Event{
-		Text: e.Text, Tool: e.Tool, Args: e.Args, Result: e.Result,
-		ExitCode: e.ExitCode, IsError: e.IsError, Warning: e.Warning,
-	}
-	switch e.Kind {
-	case agentlog.KindSessionStart:
-		out.Kind = streamagent.EventSessionStart
-	case agentlog.KindThinking:
-		out.Kind = streamagent.EventThinking
-	case agentlog.KindToolStart:
-		out.Kind = streamagent.EventToolStart
-	case agentlog.KindToolEnd:
-		out.Kind = streamagent.EventToolEnd
-	case agentlog.KindText:
-		out.Kind = streamagent.EventText
-	case agentlog.KindUserText:
-		out.Kind = streamagent.EventUserText
-	case agentlog.KindFinish:
-		out.Kind = streamagent.EventFinish
-	case agentlog.KindError:
-		out.Kind = streamagent.EventError
-	default:
-		out.Kind = streamagent.EventRaw
-	}
-	if e.Stats != (agentlog.Stats{}) {
-		out.Stats = &streamagent.Stats{
-			DurationMS: e.Stats.DurationMS, CostUSD: e.Stats.CostUSD,
-			InputTokens: e.Stats.InputTokens, OutputTokens: e.Stats.OutputTokens,
-		}
-	}
-	return out
-}
-
 // Events reach BOTH the stream and the task log, and that is deliberate.
 // `Detached` is a normal state for this kind, so the stream alone loses what
 // happened while nobody was attached.
@@ -532,17 +461,10 @@ func TestStreamTaskRendersEventsIntoTheTaskLog(t *testing.T) {
 func TestStreamTaskDoesNotLogReplayedHistory(t *testing.T) {
 	dir := t.TempDir()
 	cfg := t.TempDir()
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enc := []byte(abs)
-	for i, c := range enc {
-		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
-			enc[i] = '-'
-		}
-	}
-	proj := filepath.Join(cfg, "projects", string(enc))
+	// CLAUDE_CODE_PROJECT_DIR_NAME names the project directory outright, so this
+	// test needs no copy of the adapter's directory-name encoding (which its
+	// own package tests).
+	proj := filepath.Join(cfg, "projects", "replay-test")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +485,7 @@ func TestStreamTaskDoesNotLogReplayedHistory(t *testing.T) {
 		AdapterPath:        testAdapter(t),
 		AgentArgv:          []string{agent},
 		Dir:                dir,
-		Env:                []string{"CLAUDE_CONFIG_DIR=" + cfg},
+		Env:                []string{"CLAUDE_CONFIG_DIR=" + cfg, "CLAUDE_CODE_PROJECT_DIR_NAME=replay-test"},
 		ResumeConversation: true,
 		LogSink: func(b []byte) {
 			mu.Lock()

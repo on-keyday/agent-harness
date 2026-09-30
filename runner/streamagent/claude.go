@@ -311,7 +311,7 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 		}
 	}
 	for _, e := range a.decoder().Decode(line) {
-		ev := toNeutral(e)
+		ev := FromAgentlog(e)
 		addClaudeExtras(&ev, v, line)
 		_ = a.w.Event(ev)
 	}
@@ -571,45 +571,6 @@ func (a *claudeAdapter) writeVendor(v any) error {
 	}
 	_, err = a.agentIn.Write(append(b, '\n'))
 	return err
-}
-
-// toNeutral maps agentlog's Event onto the wire type. Kept as an explicit
-// switch rather than an int cast so adding a Kind on either side is a compile
-// error rather than a silently mislabelled event.
-func toNeutral(e agentlog.Event) Event {
-	out := Event{
-		Text: e.Text, Tool: e.Tool, Args: e.Args, Result: e.Result,
-		ExitCode: e.ExitCode, IsError: e.IsError, Warning: e.Warning,
-	}
-	switch e.Kind {
-	case agentlog.KindRaw:
-		out.Kind = EventRaw
-	case agentlog.KindSessionStart:
-		out.Kind = EventSessionStart
-	case agentlog.KindThinking:
-		out.Kind = EventThinking
-	case agentlog.KindToolStart:
-		out.Kind = EventToolStart
-	case agentlog.KindToolEnd:
-		out.Kind = EventToolEnd
-	case agentlog.KindText:
-		out.Kind = EventText
-	case agentlog.KindUserText:
-		out.Kind = EventUserText
-	case agentlog.KindFinish:
-		out.Kind = EventFinish
-	case agentlog.KindError:
-		out.Kind = EventError
-	default:
-		out.Kind = EventRaw
-	}
-	if s := e.Stats; s != (agentlog.Stats{}) {
-		out.Stats = &Stats{
-			DurationMS: s.DurationMS, CostUSD: s.CostUSD,
-			InputTokens: s.InputTokens, OutputTokens: s.OutputTokens,
-		}
-	}
-	return out
 }
 
 // addClaudeExtras carries the vendor-specific detail §1 assigns to extras.

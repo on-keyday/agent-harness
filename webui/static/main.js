@@ -3141,54 +3141,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
   };
 
-  // chatRenderEvent is the JS side of streamagent.RenderText. It is a RENDERER,
-  // not a second parser: the shapes come from the adapter protocol's own JSON.
-  // Kept deliberately close to the Go one so the three surfaces read alike.
-  const chatRenderEvent = (ev) => {
-    if (!ev) return;
-    // A replayed event is the conversation a resume restored, shown again:
-    // it gets RenderText's ReplayPrefix and recedes behind the live session.
-    // It must not drive the status line either — it describes the past.
-    if (ev.replay) {
-      chatAppend("↺ " + chatEventLine(ev), "c-muted");
-      return;
-    }
-    switch (ev.kind) {
-      case "session_start": chatAppend(chatEventLine(ev), "c-muted"); break;
-      case "thinking":      chatAppend(chatEventLine(ev), "c-muted"); chatSetStatus("thinking…"); break;
-      case "tool_start":
-        chatAppend(chatEventLine(ev), "c-muted");
-        chatSetStatus("running " + (ev.tool || "") + "…");
-        break;
-      case "tool_end":      chatAppend(chatEventLine(ev), "c-muted"); break;
-      case "text":          chatAppend(chatEventLine(ev), "c-text"); break;
-      case "user_text":     chatAppend(chatEventLine(ev), "c-you"); break;
-      case "finish":        chatAppend(chatEventLine(ev), "c-muted"); chatBusy = false; chatSetStatus(""); break;
-      case "error":         chatAppend(chatEventLine(ev), ev.warning ? "c-warn" : "c-err"); break;
-      default:              chatAppend(chatEventLine(ev), "c-muted"); break;
-    }
-  };
-
-  // chatEventLine is the text half of chatRenderEvent, split out so a live
-  // and a replayed event word themselves the same way. Its cases mirror
-  // agentlog.Render.
-  const chatEventLine = (ev) => {
-    const trunc = (v, n) => {
-      const t = (v === undefined || v === null) ? "" : String(v);
-      return t.length > n ? t.slice(0, n) + "…" : t;
-    };
-    switch (ev.kind) {
-      case "session_start": return "▶ session " + (ev.text || "");
-      case "thinking":      return "· thinking";
-      case "tool_start":    return "→ " + (ev.tool || "") + ": " + trunc(ev.args, 200);
-      case "tool_end":      return "← " + trunc(ev.result, 200);
-      case "text":          return ev.text || "";
-      case "user_text":     return "you ▶ " + (ev.text || "");
-      case "finish":        return "✓ done";
-      case "error":         return (ev.warning ? "⚠ " : "✗ ") + (ev.text || "");
-      case "raw":           return ev.text || "";
-      default:              return JSON.stringify(ev);
-    }
+  // chatApplyDisplay applies a streamagent.Display the wasm pump decided in Go
+  // (cli/streamchat_wasm.go displayForJS): the line, its tone as a `c-<tone>`
+  // class, and what it does to the status line and busy state. The page no
+  // longer words or classifies an event itself — the TUI chat reads the same
+  // Display, so the two chats cannot drift apart again (they already had once:
+  // a replayed event drove the status line in one of them).
+  const chatApplyDisplay = (d) => {
+    if (!d) return false;
+    if (d.text) chatAppend(d.text, "c-" + (d.tone || "muted"));
+    if (d.setStatus) chatSetStatus(d.status || "");
+    if (d.idle) chatBusy = false;
+    return true;
   };
 
   // chatShowApproval renders the pending request: the tool, its input WHOLE
@@ -3262,37 +3226,21 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (taskID !== chatTaskId) return;
     chatSetStatus("attached");
   };
-  window.harness_streamLine = (taskID, line) => {
+  window.harness_streamLine = (taskID, line, display) => {
     if (taskID !== chatTaskId) return;
+    // Go decided this line's display (cli.LineDisplay over the bridge): the
+    // wording, the tone, the status-line effect, and — for a line that is not
+    // the protocol — the escaping. null means a decoded request, the one kind
+    // the page renders itself, because its payload and choices go into the
+    // approval control rather than onto a line.
+    if (chatApplyDisplay(display)) return;
     let msg = null;
-    try { msg = JSON.parse(line); } catch (_) {
-      // `session send` can lawfully put a non-protocol line on this stream. A
-      // follower that hides it cannot explain what the adapter does next.
-      chatAppend("(not the protocol) " + line, "c-raw");
-      return;
-    }
-    switch (msg.kind) {
-      case "hello":
-        chatSetStatus("attached · " + (msg.hello && msg.hello.vendor) + " protocol " + (msg.hello && msg.hello.protocol));
-        break;
-      case "event":
-        chatRenderEvent(msg.event);
-        break;
-      case "request":
-        chatPending = msg.request || null;
-        chatBusy = false;
-        chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
-        chatShowApproval();
-        break;
-      case "exit": {
-        const ex = msg.exit || {};
-        chatAppend("agent exited: code=" + ex.code + (ex.err ? " err=" + ex.err : ""), ex.err ? "c-err" : "c-muted");
-        chatBusy = false;
-        chatSetStatus("session ended");
-        break;
-      }
-      default: break; // client→adapter kinds do not appear on this direction
-    }
+    try { msg = JSON.parse(line); } catch (_) { return; }
+    if (msg.kind !== "request") return;
+    chatPending = msg.request || null;
+    chatBusy = false;
+    chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
+    chatShowApproval();
   };
   window.harness_streamClosed = (taskID, err) => {
     if (taskID !== chatTaskId) return;
@@ -3353,7 +3301,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const text = chatInput.value.trim();
     if (!text) return;
     chatInput.value = "";
-    chatAppend("you ▶ " + text, "c-you");
+    chatAppend(window.harness.streamUserTurnLine(text), "c-you");
     chatBusy = true;
     chatSetStatus("");
     try {
