@@ -2,8 +2,8 @@
 
 Date: 2026-09-30
 
-**Status: READY FOR A PLAN.** Every design point below is marked DECIDED. The
-one question left for the operator is at the end. Nothing here is implemented.
+**Status: READY FOR A PLAN.** Every design point below is marked DECIDED,
+including the one taken with the operator. Nothing here is implemented.
 
 Builds on [`2026-08-20-event-stream-agent-design.md`](2026-08-20-event-stream-agent-design.md)
 (the stream kind, its adapter, the neutral protocol, and the approval path).
@@ -182,10 +182,22 @@ The TUI draws it and the WebUI gets it through the bridge, the same rule
   Each time, the agent's next turn must quote the chosen labels back. That
   is what proves the answer reached the model and not just the wire.
 
-## Open question for the operator
+## Decisions taken with the operator
 
-1. **The TUI keys.** The proposal above is `tab` to move between questions,
-   digits to pick, `o` for free text, `r` for a freeform reply, `enter` to
-   send and `d` to deny. `r` means something different on the main screen
-   (reattach/resume). Inside the chat overlay it is free. If you would rather
-   keep `r` unused there, the alternative is `f` for the freeform reply.
+1. **The TUI keys — DECIDED (operator, 2026-09-30):**
+   - `tab` / `shift+tab`: move between questions
+   - digits: pick an option
+   - `o`: free text for the current question
+   - `r`: freeform reply
+   - `enter`: send
+   - `d`: deny
+
+   `r` means reattach/resume on the main screen, but it is free inside the
+   chat overlay, and the operator kept it.
+
+## Depends on
+
+- **`resolved`** (`2026-08-20-event-stream-agent-design.md` §Amendment
+  2026-09-30c, landed): an answered question has to end on the stream. Without
+  it a reattach would ask the operator the same question again. The adapter's
+  `Resolved` line for an answer carries `behavior: allow`.
