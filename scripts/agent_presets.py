@@ -358,6 +358,32 @@ def _has_flag(args: list[str], name: str) -> bool:
     return any(a == name or a.startswith(eq_prefix) for a in args)
 
 
+def agent_profiles_json(names: list[str]) -> str:
+    """The ``--agent-profiles`` JSON for preset *names*, in the wire shape
+    runner.ParseAgentProfilesJSON expects (runner/agent_profile.go): argv
+    fields as string arrays, split on whitespace (no template needs quoting).
+
+    Its own function so scripts/dummy-harness.py registers its extra profiles
+    from this table rather than from a copy of it. Raises KeyError for a name
+    that is not a preset; expand_agents_preset validates names first.
+    """
+    profiles = []
+    for n in names:
+        p = KNOWN_AGENT_PRESETS[n]
+        profiles.append(
+            {
+                "name": n,
+                "bin": p["bin"],
+                "oneshotArgv": p["oneshotArgv"].split(),
+                "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
+                "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
+                "logFormat": p["logFormat"],
+                "streamAdapter": p["streamAdapter"],
+            }
+        )
+    return json.dumps(profiles)
+
+
 def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]:
     """Expand ``--agents claude,codex`` into concrete agent-runner flags.
 
@@ -422,20 +448,6 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
 
     extra_names = names[1:]
     if extra_names:
-        profiles = []
-        for n in extra_names:
-            p = KNOWN_AGENT_PRESETS[n]
-            profiles.append(
-                {
-                    "name": n,
-                    "bin": p["bin"],
-                    "oneshotArgv": p["oneshotArgv"].split(),
-                    "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
-                    "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
-                    "logFormat": p["logFormat"],
-                    "streamAdapter": p["streamAdapter"],
-                }
-            )
-        out += ["--agent-profiles", json.dumps(profiles)]
+        out += ["--agent-profiles", agent_profiles_json(extra_names)]
 
     return out

@@ -89,7 +89,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # bootstrap. bash_bin comes from the preset table on purpose: a dummy instance
 # that resolved its shell differently from a real runner would pass checks the
 # thing it stands in for fails.
-from agent_presets import bash_bin  # noqa: E402  (path set above)
+from agent_presets import agent_profiles_json, bash_bin, expand_agents_preset  # noqa: E402  (path set above)
 from bootstrap import ensure_venv  # noqa: E402  (path set above)
 
 ensure_venv()
@@ -291,22 +291,6 @@ emit('{"type":"result","subtype":"success","duration_ms":2000,"total_cost_usd":0
 '''
 
 
-def bash_profile(bin_: str) -> str:
-    return json.dumps(
-        [
-            {
-                "name": "bash",
-                "bin": bin_,
-                "oneshotArgv": ["{args}", "-c", "{prompt}"],
-                "resumeOneshotArgv": ["{args}", "-c", "{prompt}"],
-                "resumeInteractiveArgv": ["{args}"],
-                "logFormat": "",
-            }
-        ],
-        separators=(",", ":"),
-    )
-
-
 def spawn(args: list[str], log: Path) -> subprocess.Popen:
     """Start a child with its output to log, in its own process group so a
     Ctrl-C in this terminal does not reach it before `down` can tear it down in
@@ -485,7 +469,9 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     # asked for. Said at `up` time because that is when it can still be fixed.
     bash = bash_bin()
     if bash:
-        runner_args += ["--agent-profiles", bash_profile(bash)]
+        # The preset table's own profile, not a copy: the dummy must launch the
+        # agents the way a real runner does, or it passes checks they fail.
+        runner_args += ["--agent-profiles", agent_profiles_json(["bash"])]
     else:
         sys.stderr.write(
             "dummy-harness: no POSIX bash found (Git for Windows not installed?). "
@@ -493,14 +479,12 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
             "documented in the dummy-harness skill are unavailable on it.\n"
         )
     if agent == "claude":
-        runner_args += [
-            "--agent-bin", "claude",
-            "--claude-args", f"--model {model}",
-            "--agent-oneshot-argv", "--output-format stream-json --verbose {args} -p {prompt}",
-            "--agent-resume-oneshot-argv", "--output-format stream-json --verbose {args} --continue -p {prompt}",
-            "--agent-resume-interactive-argv", "{args} --continue",
-            "--agent-log-format", "claude-stream-json",
-        ]
+        # Expanded from the preset table, exactly as `runner.sh up --agents
+        # claude` does. The hand-copied argv this replaced had drifted: it
+        # lacked the event-stream adapter, so every stream task on a claude
+        # dummy failed with "no stream adapter configured".
+        runner_args += expand_agents_preset("claude", [])
+        runner_args += ["--claude-args", f"--model {model}"]
     else:
         fake = tmp / "fake-claude.py"
         fake.write_text(FAKE_AGENT, encoding="utf-8")
