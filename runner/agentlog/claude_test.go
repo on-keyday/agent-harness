@@ -157,3 +157,34 @@ func TestClaudeDecoderDropsBlankLines(t *testing.T) {
 		t.Fatalf("whitespace line: got %+v, want zero events", evs)
 	}
 }
+
+// A typed prompt in a session transcript carries its content as a bare
+// string. Before claudeContent accepted that shape the whole line failed to
+// decode and came out as a raw event holding the vendor JSON.
+func TestClaudeDecoderStringContentIsAUserTurn(t *testing.T) {
+	d := NewDecoder("claude-stream-json")
+	evs := d.Decode([]byte(`{"type":"user","message":{"role":"user","content":"what changed?"},"uuid":"u1"}`))
+	if len(evs) != 1 || evs[0].Kind != KindUserText || evs[0].Text != "what changed?" {
+		t.Fatalf("got %+v, want one KindUserText", evs)
+	}
+	if got := Render(evs[0]); got != "you ▶ what changed?" {
+		t.Fatalf("Render = %q", got)
+	}
+	if evs := d.Decode([]byte(`{"type":"user","message":{"content":""}}`)); len(evs) != 0 {
+		t.Fatalf("empty string content: got %+v, want no events", evs)
+	}
+}
+
+// The speaker comes from the envelope: the same text block is the user's turn
+// under "user" and the agent's answer under "assistant".
+func TestClaudeDecoderTextSpeakerFollowsTheEnvelope(t *testing.T) {
+	d := NewDecoder("claude-stream-json")
+	user := d.Decode([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}`))
+	asst := d.Decode([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`))
+	if len(user) != 1 || user[0].Kind != KindUserText {
+		t.Fatalf("user text block: got %+v, want KindUserText", user)
+	}
+	if len(asst) != 1 || asst[0].Kind != KindText {
+		t.Fatalf("assistant text block: got %+v, want KindText", asst)
+	}
+}

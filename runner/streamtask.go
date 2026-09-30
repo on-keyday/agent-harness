@@ -211,7 +211,14 @@ func (s *streamTap) onAdapterLine(line []byte) {
 	// The display line comes from the SHARED renderer (events and requests),
 	// so this log and the CLI's `session stream attach` cannot drift into two
 	// renderings of one message.
-	if line, ok := streamagent.RenderText(m); ok {
+	// A replayed event is history the log either already holds (a stream task
+	// resumed as a stream) or is not where the operator reads it (a PTY task
+	// resumed as a stream). Only its bracket lines, EventRaw, are logged, so
+	// the log still records that a replay happened. Design:
+	// docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md §4.
+	replayed := m.Kind == streamagent.KindEvent && m.Event != nil &&
+		m.Event.Replay && m.Event.Kind != streamagent.EventRaw
+	if line, ok := streamagent.RenderText(m); ok && !replayed {
 		s.task.log("[out]" + line)
 	}
 	switch m.Kind {

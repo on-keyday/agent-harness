@@ -67,6 +67,10 @@ type ClaudeOpts struct {
 	// Prompt, when non-empty, is sent as the first user turn once the agent is
 	// up. Empty leaves the agent idle until the runner sends one.
 	Prompt string
+	// Getenv reads the environment the agent will run in, for locating its
+	// transcript on a resume. Nil means os.Getenv; a test points it at a
+	// scratch config dir so it never reads the real home directory.
+	Getenv func(string) string
 
 	Out    io.Writer // neutral NDJSON out (the runner's pipe)
 	In     io.Reader // neutral NDJSON in
@@ -133,6 +137,16 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 		Vendor:       "claude",
 		Capabilities: []string{CapApprovals, CapUserTurns, CapInterrupt},
 	})
+
+	// The replay is written BEFORE the stdout pump starts, so no live event
+	// can interleave with it. The agent's own output waits in its pipe.
+	if o.ResumeConversation {
+		getenv := o.Getenv
+		if getenv == nil {
+			getenv = os.Getenv
+		}
+		a.replayedSession = a.replayTranscript(getenv, o.Dir)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -222,6 +236,13 @@ type claudeAdapter struct {
 	// `req-1`, so the collision needs no imagination.
 	nonce    string
 	finished bool
+
+	// replayedSession is the transcript a resume replayed, checked once
+	// against the session the agent actually resumed (design §3.6). The file
+	// was chosen by the adapter's reading of `--continue`, so a disagreement is
+	// reported rather than left to show the wrong history silently.
+	replayedSession string
+	sessionChecked  bool
 }
 
 // newRunNonce is the per-run half of a request id. Random rather than a
@@ -279,6 +300,9 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 	}
 	var v vendorLine
 	if err := json.Unmarshal(line, &v); err == nil {
+		if v.Type == "system" && v.Subtype == "init" {
+			a.checkReplayedSession(v.SessionID)
+		}
 		if v.Type == "control_request" && a.handleControlRequest(v) {
 			return
 		}
@@ -290,6 +314,20 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 		ev := toNeutral(e)
 		addClaudeExtras(&ev, v, line)
 		_ = a.w.Event(ev)
+	}
+}
+
+// checkReplayedSession warns when the live session is not the one replayed.
+// Only the first init counts: an interrupt makes the agent emit another.
+func (a *claudeAdapter) checkReplayedSession(live string) {
+	if a.sessionChecked || a.replayedSession == "" || live == "" {
+		return
+	}
+	a.sessionChecked = true
+	if live != a.replayedSession {
+		_ = a.w.Event(Event{Kind: EventError, Warning: true,
+			Text: "the conversation shown above is session " + a.replayedSession +
+				", but the agent resumed session " + live})
 	}
 }
 
@@ -556,6 +594,8 @@ func toNeutral(e agentlog.Event) Event {
 		out.Kind = EventToolEnd
 	case agentlog.KindText:
 		out.Kind = EventText
+	case agentlog.KindUserText:
+		out.Kind = EventUserText
 	case agentlog.KindFinish:
 		out.Kind = EventFinish
 	case agentlog.KindError:

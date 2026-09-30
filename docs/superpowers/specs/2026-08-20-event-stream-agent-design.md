@@ -872,6 +872,36 @@ Not borrowed: its `edit` step (see above), and its client-side tool execution �
 kscale runs probes on the frontend, while every tool here runs in the agent's
 own worktree.
 
+## Amendment 2026-09-30: the neutral vocabulary grows a speaker and a replay mark
+
+Design:
+[`2026-09-30-stream-resume-transcript-replay-design.md`](2026-09-30-stream-resume-transcript-replay-design.md).
+A resumed stream session now replays the conversation the agent resumed, read
+from claude's own session transcript. Doing that needed two additions to the
+§1 vocabulary. Neither is speculative: each exists because a concrete surface
+could not show the replay without it.
+
+- **`user_text`**, a turn the user wrote. `agentlog` gains `KindUserText`,
+  and claude's decoder now reads a message whose `content` is a bare string.
+  That shape is what a typed prompt looks like in a transcript; before this
+  change such a line leaked out as a raw event carrying the vendor JSON.
+- **`Event.replay`**, which marks an event as history being shown again, as
+  opposed to something happening now.
+
+**This departs from §2's versioning rule.** §2 says the handshake's
+`protocol_version` exists because "the day the neutral event grows a field is
+the day every hand-written adapter breaks silently". Both fields were added
+WITHOUT a bump. `DecodeMsg` rejects every `v` other than its own, so a bump
+would make every reader that has not been upgraded drop every line of every
+stream. An additive field only makes an old reader show a replayed event as
+live, and `user_text` as raw text. The rule is restated on `ProtocolVersion`
+in `runner/streamagent/proto.go`: bump when the meaning of an existing field
+changes, and add without a bump when an old reader's default reading of the
+new field is safe.
+
+The last item of "Not in this design" still holds. Nothing new is persisted:
+the replay reads the vendor's record rather than a stored copy of this stream.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind

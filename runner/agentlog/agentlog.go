@@ -39,6 +39,12 @@ const (
 	// non-terminal diagnostic the agent logged while continuing (e.g.
 	// codex's "falling back to default model metadata" notice).
 	KindError
+	// KindUserText is a turn the USER wrote, as the agent recorded it. Text
+	// carries it. It is separate from KindText because a reader showing a
+	// conversation has to tell the two speakers apart, and nothing else in an
+	// event says who spoke. A live claude stream does not echo the user's
+	// turns back, so in practice this comes from a replayed transcript.
+	KindUserText
 )
 
 // Stats carries whatever the agent reported when its run finished. Fields the
@@ -59,7 +65,7 @@ type Stats struct {
 // tool_result carries only a boolean for tools that never ran a process.
 type Event struct {
 	Kind Kind
-	Text string // KindRaw, KindText, KindThinking, KindSessionStart (id), KindError (message)
+	Text string // KindRaw, KindText, KindUserText, KindThinking, KindSessionStart (id), KindError (message)
 	Tool string // KindToolStart, KindToolEnd
 	Args string // KindToolStart: the tool's input, rendered for a log line —
 	//                compact JSON where the agent reports structured input
@@ -206,6 +212,10 @@ func Render(e Event) string {
 			return "⚠ " + e.Text
 		}
 		return "✗ " + e.Text
+	case KindUserText:
+		// The prefix both chat surfaces echo a sent turn with, so a replayed
+		// turn and a freshly typed one read alike.
+		return "you ▶ " + e.Text
 	default: // KindRaw, KindText
 		return e.Text
 	}
@@ -223,14 +233,7 @@ type claudeEnvelope struct {
 
 	// assistant and user both carry a message with content blocks.
 	Message struct {
-		Content []struct {
-			Type    string          `json:"type"`
-			Text    string          `json:"text"`
-			Name    string          `json:"name"`
-			Input   json.RawMessage `json:"input"`
-			Content json.RawMessage `json:"content"`
-			IsError bool            `json:"is_error"`
-		} `json:"content"`
+		Content claudeContent `json:"content"`
 	} `json:"message"`
 
 	// result
@@ -238,6 +241,39 @@ type claudeEnvelope struct {
 	TotalCostUSD float64  `json:"total_cost_usd"`
 	IsError      bool     `json:"is_error"`
 	Errors       []string `json:"errors"` // set on SDKResultError; absent (nil) on SDKResultSuccess
+}
+
+type claudeBlock struct {
+	Type    string          `json:"type"`
+	Text    string          `json:"text"`
+	Name    string          `json:"name"`
+	Input   json.RawMessage `json:"input"`
+	Content json.RawMessage `json:"content"`
+	IsError bool            `json:"is_error"`
+}
+
+// claudeContent is a message's content, which claude writes in two shapes: an
+// array of blocks, or a bare string. A typed prompt in a session transcript is
+// the string form. Decoding it as an array alone failed the whole line and
+// leaked it as a raw event, vendor JSON and all. A string becomes one text
+// block, and an empty one becomes none.
+type claudeContent []claudeBlock
+
+func (c *claudeContent) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*c = nil
+		if s != "" {
+			*c = claudeContent{{Type: "text", Text: s}}
+		}
+		return nil
+	}
+	var blocks []claudeBlock
+	if err := json.Unmarshal(b, &blocks); err != nil {
+		return err
+	}
+	*c = blocks
+	return nil
 }
 
 type claudeStreamJSON struct{}
@@ -267,7 +303,11 @@ func (claudeStreamJSON) Decode(line []byte) []Event {
 				out = append(out, Event{Kind: KindThinking})
 			case "text":
 				if b.Text != "" {
-					out = append(out, Event{Kind: KindText, Text: b.Text})
+					k := KindText
+					if env.Type == "user" {
+						k = KindUserText
+					}
+					out = append(out, Event{Kind: k, Text: b.Text})
 				}
 			case "tool_use":
 				out = append(out, Event{Kind: KindToolStart, Tool: b.Name, Args: jsonToText(b.Input)})

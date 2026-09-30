@@ -3146,22 +3146,48 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Kept deliberately close to the Go one so the three surfaces read alike.
   const chatRenderEvent = (ev) => {
     if (!ev) return;
+    // A replayed event is the conversation a resume restored, shown again:
+    // it gets RenderText's ReplayPrefix and recedes behind the live session.
+    // It must not drive the status line either — it describes the past.
+    if (ev.replay) {
+      chatAppend("↺ " + chatEventLine(ev), "c-muted");
+      return;
+    }
+    switch (ev.kind) {
+      case "session_start": chatAppend(chatEventLine(ev), "c-muted"); break;
+      case "thinking":      chatAppend(chatEventLine(ev), "c-muted"); chatSetStatus("thinking…"); break;
+      case "tool_start":
+        chatAppend(chatEventLine(ev), "c-muted");
+        chatSetStatus("running " + (ev.tool || "") + "…");
+        break;
+      case "tool_end":      chatAppend(chatEventLine(ev), "c-muted"); break;
+      case "text":          chatAppend(chatEventLine(ev), "c-text"); break;
+      case "user_text":     chatAppend(chatEventLine(ev), "c-you"); break;
+      case "finish":        chatAppend(chatEventLine(ev), "c-muted"); chatBusy = false; chatSetStatus(""); break;
+      case "error":         chatAppend(chatEventLine(ev), ev.warning ? "c-warn" : "c-err"); break;
+      default:              chatAppend(chatEventLine(ev), "c-muted"); break;
+    }
+  };
+
+  // chatEventLine is the text half of chatRenderEvent, split out so a live
+  // and a replayed event word themselves the same way. Its cases mirror
+  // agentlog.Render.
+  const chatEventLine = (ev) => {
     const trunc = (v, n) => {
       const t = (v === undefined || v === null) ? "" : String(v);
       return t.length > n ? t.slice(0, n) + "…" : t;
     };
     switch (ev.kind) {
-      case "session_start": chatAppend("▶ session " + (ev.text || ""), "c-muted"); break;
-      case "thinking":      chatAppend("· thinking", "c-muted"); chatSetStatus("thinking…"); break;
-      case "tool_start":
-        chatAppend("→ " + (ev.tool || "") + ": " + trunc(ev.args, 200), "c-muted");
-        chatSetStatus("running " + (ev.tool || "") + "…");
-        break;
-      case "tool_end":      chatAppend("← " + trunc(ev.result, 200), "c-muted"); break;
-      case "text":          chatAppend(ev.text || "", "c-text"); break;
-      case "finish":        chatAppend("✓ done", "c-muted"); chatBusy = false; chatSetStatus(""); break;
-      case "error":         chatAppend((ev.warning ? "⚠ " : "✗ ") + (ev.text || ""), ev.warning ? "c-warn" : "c-err"); break;
-      default:              chatAppend(JSON.stringify(ev), "c-muted"); break;
+      case "session_start": return "▶ session " + (ev.text || "");
+      case "thinking":      return "· thinking";
+      case "tool_start":    return "→ " + (ev.tool || "") + ": " + trunc(ev.args, 200);
+      case "tool_end":      return "← " + trunc(ev.result, 200);
+      case "text":          return ev.text || "";
+      case "user_text":     return "you ▶ " + (ev.text || "");
+      case "finish":        return "✓ done";
+      case "error":         return (ev.warning ? "⚠ " : "✗ ") + (ev.text || "");
+      case "raw":           return ev.text || "";
+      default:              return JSON.stringify(ev);
     }
   };
 

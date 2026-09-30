@@ -29,6 +29,8 @@ func (e Event) ToAgentlog() agentlog.Event {
 		out.Kind = agentlog.KindToolEnd
 	case EventText:
 		out.Kind = agentlog.KindText
+	case EventUserText:
+		out.Kind = agentlog.KindUserText
 	case EventFinish:
 		out.Kind = agentlog.KindFinish
 	case EventError:
@@ -45,6 +47,10 @@ func (e Event) ToAgentlog() agentlog.Event {
 	return out
 }
 
+// ReplayPrefix marks a replayed event's display line. webui/static/main.js
+// chatRenderEvent writes the same prefix.
+const ReplayPrefix = "↺ "
+
 // RenderText is the one-line human rendering of an adapter→client message,
 // shared by the runner's task-log tap and the CLI's stream attach so the two
 // cannot drift. ok=false means the kind has no standalone display line here
@@ -56,7 +62,11 @@ func RenderText(m Msg) (line string, ok bool) {
 		if m.Event == nil {
 			return "", false
 		}
-		return agentlog.Render(m.Event.ToAgentlog()), true
+		line := agentlog.Render(m.Event.ToAgentlog())
+		if m.Event.Replay {
+			line = ReplayPrefix + line
+		}
+		return line, true
 	case KindRequest:
 		if m.Request == nil {
 			return "", false

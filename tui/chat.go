@@ -345,9 +345,16 @@ func eventStyle(ev *streamagent.Event) lipgloss.Style {
 	if ev == nil {
 		return MutedStyle
 	}
+	// Replayed history recedes behind the live session, whatever it says: it
+	// is context for the next turn, not the conversation in progress.
+	if ev.Replay {
+		return MutedStyle
+	}
 	switch ev.Kind {
 	case streamagent.EventText:
 		return lipgloss.NewStyle() // the answer: the only unmuted thing here
+	case streamagent.EventUserText:
+		return OKStyle // the style this view echoes its own sent turn in
 	case streamagent.EventError:
 		if ev.Warning {
 			return WarnStyle

@@ -2,9 +2,10 @@
 
 Date: 2026-09-30
 
-**Status: READY FOR A PLAN.** Every design point below is marked DECIDED.
-One open question is left for the operator (§Open questions). None of this
-has been implemented.
+**Status: IMPLEMENTED.** Every design point below is marked DECIDED,
+including the one taken with the operator (§Decisions taken with the
+operator). §Implementation notes at the end records where the code differs
+in detail from the text above, and what was measured.
 
 Builds on [`2026-08-20-event-stream-agent-design.md`](2026-08-20-event-stream-agent-design.md)
 (the stream kind, its adapter, and the neutral protocol).
@@ -289,10 +290,51 @@ The bracket lines still record in the log that a replay happened.
     it in `session stream attach` and in the TUI chat. Unit tests enter
     below both of these layers.
 
-## Open questions
+## Implementation notes
 
-1. **Replay on every resume, or behind an option?** (operator) This design
-   replays whenever `--resume-conversation` is set, and has no switch. A
-   switch would be one more flag across all three UIs (surface-parity items
-   1–9) for a behaviour whose only cost is up to 256 KiB of stream per
-   resume. The recommendation is no switch; say if you want one.
+- **Bracket wording.** The opening bracket reads `── previous conversation:
+  last <kept> of <total> events ──`. It says EVENTS rather than messages
+  because an event is what is counted: one transcript row can decode to more
+  than one event.
+- **Where the code lives.**
+  - `runner/streamagent/claude_transcript.go`: discovery, chain selection,
+    bounds, and the emit step.
+  - `runner/streamagent/claude.go`: the replay runs after `hello`, before
+    the stdout pump starts, together with the §3.6 session check.
+  - `runner/streamtask.go`: §4.
+  - `ClaudeOpts.Getenv`: lets a test point discovery at a scratch config
+    dir. The adapter binary passes nil, which means `os.Getenv`.
+- **The WebUI chat also renders `raw` events by their text now.** It used to
+  show the event object as JSON. The WebUI's text rendering is split out into
+  `chatEventLine`, so a live event and a replayed one word themselves the same
+  way. `raw` → text is what the Go renderer (`agentlog.Render`) already did.
+- **A test that the comment on `ToAgentlog` claimed, but that did not
+  exist.** "The round trip (agentlog → neutral → agentlog) is asserted in
+  this package's tests" was not true of `runner/streamagent`. The assertion
+  lives in `runner/streamtask_test.go`
+  (`TestEventRoundTripsThroughTheNeutralType`), which now includes
+  `KindUserText`.
+- **Measured against the real binary (claude `2.1.284`, 2026-09-30).**
+  - `claude -p "Remember the codeword PLUM-42. Reply only with: noted."` was
+    run in a scratch directory, and it wrote a 153 KB transcript. So `-p`
+    persists a session, as the SDK docs imply.
+  - Then `harness-stream-adapter --dir <scratch> --resume-conversation --
+    claude` was run with one user turn on stdin ("What was the codeword?").
+    Its output, in order:
+    1. `hello`
+    2. the opening bracket (`last 3 of 3 events`)
+    3. replayed `user_text` (the prompt), `thinking`, and `text` ("noted.")
+    4. `── resumed ──`
+    5. live `session_start` with the same session id as the transcript
+       file, so no mismatch warning fired
+    6. live `text` "PLUM-42"
+    7. `finish`, then `exit 0`
+
+## Decisions taken with the operator
+
+1. **Replay on every resume, with no switch — DECIDED (operator,
+   2026-09-30).** Whenever `--resume-conversation` is set, the replay
+   happens. This matches what claude's own interactive TUI does: resuming the
+   process redraws the earlier conversation, and nothing turns that off. So
+   the stream kind should behave the same way. There is no flag, so no
+   surface in items 1–9 of the surface-parity checklist changes.

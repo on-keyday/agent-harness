@@ -46,9 +46,19 @@ import (
 
 // ProtocolVersion is sent in the adapter's opening `hello` and checked by the
 // runner. §2 makes the adapter protocol a public contract — third-party
-// adapters are a first-class use — so the day the neutral event grows a field
-// is the day every hand-written adapter has to be able to fail loudly instead
-// of silently misreading.
+// adapters are a first-class use — so a change an old reader would silently
+// MISREAD has to fail loudly instead.
+//
+// This comment used to say that every new field on the neutral event must
+// bump the version. That was reversed on 2026-09-30, when `user_text` and
+// `replay` were added without a bump
+// (docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md
+// §2). DecodeMsg rejects every `v` other than its own, so a bump makes a
+// reader that has not been upgraded drop EVERY line of every stream, not only
+// the new ones. The rule is now: bump when the meaning of an existing field
+// changes, and add a field without a bump when an old reader's default
+// reading of it is safe. An old reader shows a replayed event as live and a
+// `user_text` event as raw text, and both of those are safe.
 const ProtocolVersion = 1
 
 // MsgKind discriminates one NDJSON line. A line has exactly one payload set;
@@ -141,6 +151,7 @@ const (
 	EventToolStart    EventKind = "tool_start"
 	EventToolEnd      EventKind = "tool_end"
 	EventText         EventKind = "text"
+	EventUserText     EventKind = "user_text"
 	EventFinish       EventKind = "finish"
 	EventError        EventKind = "error"
 )
@@ -156,6 +167,11 @@ type Event struct {
 	IsError  bool      `json:"is_error,omitempty"`
 	Warning  bool      `json:"warning,omitempty"`
 	Stats    *Stats    `json:"stats,omitempty"`
+	// Replay marks an event that happened BEFORE the agent process now
+	// running and is being shown again: a resumed session replays the
+	// agent's recorded conversation so the operator sees what the agent
+	// remembers. False on every live event.
+	Replay bool `json:"replay,omitempty"`
 	// Extras keys are vendor-namespaced ("claude.rate_limit.status"); a bare
 	// key is invalid. Values are strings only — wanting structure in a value is
 	// the signal to promote the field, not to embed JSON in it.

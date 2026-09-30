@@ -287,6 +287,13 @@ bin/harness-cli session await-idle kill <watcher-id>
 # writes; a runner configured by hand passes --agent-stream-adapter itself.
 # The adapter speaks claude's protocol specifically, so pointing that flag at
 # another agent's binary is not how that agent gains the kind.
+# Resuming one with --resume-conversation replays the conversation the agent
+# resumed first, read from claude's own session transcript on the runner host.
+# That covers a conversation begun as a PTY session too. The replay is bounded
+# (the most recent part), each replayed line is marked `↺`, it sits between
+# `── previous conversation … ──` and `── resumed ──`, and it is not written
+# into the task log again. If no transcript can be found, one warning says so
+# and the resume carries on.
 bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
 bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,

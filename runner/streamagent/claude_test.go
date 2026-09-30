@@ -159,7 +159,10 @@ func TestAdapterAppendsTheVendorFlags(t *testing.T) {
 func TestResumeConversationAppendsContinueAndNeverSessionID(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv")
 	agent := fakeAgent(t, argvFile, "cat > /dev/null\n")
-	runAdapter(t, agent, ClaudeOpts{ResumeConversation: true}, "")
+	// A scratch config dir: a resume now reads the agent's transcript, and a
+	// test must never find the real one.
+	runAdapter(t, agent, ClaudeOpts{ResumeConversation: true,
+		Getenv: envOf(map[string]string{"CLAUDE_CONFIG_DIR": t.TempDir()})}, "")
 
 	argv := readFile(t, argvFile)
 	if !strings.Contains(argv, "--continue") {

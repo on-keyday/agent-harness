@@ -388,6 +388,7 @@ func TestEventRoundTripsThroughTheNeutralType(t *testing.T) {
 	code := 3
 	cases := []agentlog.Event{
 		{Kind: agentlog.KindText, Text: "hello"},
+		{Kind: agentlog.KindUserText, Text: "what changed?"},
 		{Kind: agentlog.KindThinking, Text: "hmm"},
 		{Kind: agentlog.KindSessionStart, Text: "sess-1"},
 		{Kind: agentlog.KindToolStart, Tool: "Bash", Args: `{"command":"ls"}`},
@@ -431,6 +432,8 @@ func adapterToNeutral(e agentlog.Event) streamagent.Event {
 		out.Kind = streamagent.EventToolEnd
 	case agentlog.KindText:
 		out.Kind = streamagent.EventText
+	case agentlog.KindUserText:
+		out.Kind = streamagent.EventUserText
 	case agentlog.KindFinish:
 		out.Kind = streamagent.EventFinish
 	case agentlog.KindError:
@@ -518,5 +521,97 @@ func TestStreamTaskRendersEventsIntoTheTaskLog(t *testing.T) {
 	}
 	if strings.Contains(joined, `"kind":"event"`) {
 		t.Errorf("neutral JSON reached the log instead of a rendered line:\n%s", joined)
+	}
+}
+
+// A resume replays the agent's transcript onto the stream, but the task log
+// keeps only the two bracket lines: the history is either already in the log
+// (a stream task resumed as a stream) or not read there (a PTY task resumed
+// as a stream). Design:
+// docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md §4.
+func TestStreamTaskDoesNotLogReplayedHistory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := []byte(abs)
+	for i, c := range enc {
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+			enc[i] = '-'
+		}
+	}
+	proj := filepath.Join(cfg, "projects", string(enc))
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := `{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"remember the codeword"}}` + "\n" +
+		`{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"text","text":"history-answer"}]}}` + "\n"
+	if err := os.WriteFile(filepath.Join(proj, "s1.jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := fakeStreamAgent(t,
+		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"live-answer"}]}}'`+"\n"+
+			"cat > /dev/null\n")
+	stream, cl := newStreamPair()
+
+	var logged []string
+	var mu sync.Mutex
+	task := &StreamTask{
+		AdapterPath:        testAdapter(t),
+		AgentArgv:          []string{agent},
+		Dir:                dir,
+		Env:                []string{"CLAUDE_CONFIG_DIR=" + cfg},
+		ResumeConversation: true,
+		LogSink: func(b []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			logged = append(logged, strings.TrimRight(string(b), "\n"))
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- task.Run(ctx, stream) }()
+
+	var onStream strings.Builder
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(onStream.String(), "live-answer") && time.Now().Before(deadline) {
+		payload, err := cl.nextStdout()
+		if err != nil {
+			break
+		}
+		onStream.Write(payload)
+	}
+	_ = cl.finish()
+	go func() {
+		for {
+			if _, err := cl.nextStdout(); err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return")
+	}
+
+	if !strings.Contains(onStream.String(), "history-answer") {
+		t.Errorf("the replayed history never reached the stream:\n%s", onStream.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(logged, "\n")
+	if strings.Contains(joined, "history-answer") || strings.Contains(joined, "remember the codeword") {
+		t.Errorf("replayed history reached the task log:\n%s", joined)
+	}
+	if !strings.Contains(joined, "previous conversation") || !strings.Contains(joined, "resumed") {
+		t.Errorf("the replay's bracket lines are missing from the task log:\n%s", joined)
+	}
+	if !strings.Contains(joined, "live-answer") {
+		t.Errorf("the live event was not logged:\n%s", joined)
 	}
 }
