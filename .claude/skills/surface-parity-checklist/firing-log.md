@@ -2432,4 +2432,71 @@ claude profile carries no `--agent-stream-adapter`, so on a stock
 adapter configured". The script's `-- <extra agent-runner flags>` route
 worked around it. It is the same gap the 2026-08-21 preset entry closed for
 `--agents claude`, one consumer over. Not fixed here; recorded so the next
-stream E2E does not rediscover it.
+stream E2E does not rediscover it. (Fixed in the continuation walk below: the
+dummy now expands the preset instead of copying it.)
+
+## 2026-09-30 (continuation) — one display decision for both chats, and the TUI driven live
+
+The operator asked for the TUI to be driven for real and for everything
+shareable to be shared. This is a continuation of the walk above, run as a new
+walk per the skill's rule.
+
+**done:** 10, 24, 28, 31, 32, 37, 39.
+
+- **10 / 32** — the item this continuation exists for.
+  - `streamagent.DisplayOf` decides each message's line, tone and status
+    effect, and `cli.LineDisplay` adds the non-protocol case.
+  - The TUI and the WebUI both apply that Display. The WebUI gets it from Go
+    over the wasm pump, and its own renderer is deleted — the first walk's
+    `omitted: 32` is closed.
+  - Also collapsed into one place each: `RenderExit`, `UserTurnLine` (with a
+    bridge export for the page's echo), `agentlog.UserTurnPrefix`,
+    `agentlog.TruncateBytes`, and the agentlog → neutral mapper, which is now
+    exported and tested in place rather than through a hand-written copy in
+    the runner package.
+  - The dummy harness builds its profiles from `agent_presets.py`.
+- **24** — `NewSessionMux` takes the kind, and the gate has a written meaning
+  on every path that reads the terminal model:
+  - frame recording
+  - the control attach replay
+  - the observer replay
+  - the held capture written at shutdown
+  - the captured screen loaded at rebind
+  Each has a test for the stream kind.
+- **28** — the disk axis of that same gate. A held capture a PRE-FIX server
+  wrote for a stream session still contains a repaint, and without the
+  `loadScreen` gate the first attach after the upgrade restart would have
+  replayed a preamble built from it. Found while writing this entry, not by a
+  test. It now has one (`TestStreamSessionIgnoresACapturedScreen`), whose
+  negative control went red.
+- **31** — a line that is not the protocol is still shown, never dropped, but
+  now escaped (`cli.NotProtocolLine`).
+- **37** — Amendments on both specs.
+- **39** — the TUI row, recorded as `omitted` in the first walk, is now driven
+  live under `script(1)`: 0 NDJSON bytes and 0 "(not the protocol)" lines
+  reached the terminal, and the styles were right. The WebUI was re-driven
+  too, including a turn sent from the page.
+
+**omitted:** none new.
+
+**missed (both before this feature existed, and found only because 39 was
+driven rather than unit-tested):**
+
+- **The server wrote terminal bytes into a stream session.** Every attach
+  replay ended with a mode preamble and a screen repaint from a terminal
+  model the mux kept for EVERY kind. For the stream kind the repaint joined
+  the next NDJSON line, the TUI chat printed that line with its escapes, and
+  the escapes took the TUI out of its alternate screen. Reproduced with a TUI
+  built from `c0af1551`, before any of this work.
+  - No item asks it: 38 is about which screens RENDER state, not about a
+    server synthesizing a screen for a session that has none.
+  - General form, worth counting a second instance against: **a model the
+    server keeps for one kind, applied to every kind** — a "does this path
+    assume a PTY?" question, one layer below the surfaces.
+- **A follower printed a non-protocol line verbatim**, so anyone who can write
+  a stream could inject terminal escapes into an operator's TUI or CLI. Item
+  31 asks whether a value is SHOWN; nothing asks whether showing it is SAFE.
+  `board read` has escaped peer bytes since its own design, and the stream
+  followers never got the same treatment. Carrying that invariant to the
+  sibling surfaces is `feedback_carry_invariants_across_surfaces`, applied
+  late.

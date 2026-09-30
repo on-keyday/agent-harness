@@ -330,6 +330,76 @@ The bracket lines still record in the log that a replay happened.
     6. live `text` "PLUM-42"
     7. `finish`, then `exit 0`
 
+## Amendment 2026-09-30b: one display decision for every chat, and what a live TUI run found
+
+Asked for by the operator: drive the TUI for real, and share whatever can be
+shared.
+
+**What is now decided in one place.**
+
+- `streamagent.DisplayOf(Msg)` returns a `Display`: the line to append, its
+  `Tone` (text / you / muted / warn / err / raw), and whether it sets the
+  status line or ends the busy state.
+  - The TUI chat maps a Tone to a lipgloss style (`toneStyle`).
+  - The WebUI chat maps it to a `c-<tone>` class, and it receives the
+    `Display` from Go over the wasm pump (`displayForJS`).
+  - The page's own event renderer (`chatRenderEvent` / `chatEventLine`) is
+    deleted. That closes the JS-mirror omission recorded against
+    surface-parity item 32 in the first walk.
+- `cli.LineDisplay(StreamLine)` adds the one case `DisplayOf` cannot see: a
+  line that is not the protocol. It displays as `cli.NotProtocolLine`, which
+  escapes terminal-steering bytes with `cli.EscapeForTerminal`, the escaper
+  `board read` already uses. The TUI chat, the WebUI chat and `session stream
+  attach` all go through it.
+- The rest:
+  - `streamagent.RenderExit` is the one wording of an exit.
+  - `streamagent.UserTurnLine` is the one echo of a sent turn; the WebUI gets
+    it through the new `harness.streamUserTurnLine` bridge function.
+  - `agentlog.UserTurnPrefix` is the one `you ▶ `.
+  - `agentlog.TruncateBytes` replaced the transcript reader's own copy.
+  - `streamagent.FromAgentlog` (formerly the unexported `toNeutral`) lives
+    beside `ToAgentlog` in `render.go`. The round-trip test moved there from
+    the runner package, where it had tested a hand-written copy of the mapper.
+- `scripts/dummy-harness.py` builds its claude and bash profiles from
+  `scripts/agent_presets.py` (`expand_agents_preset`, and the new
+  `agent_profiles_json`) instead of hand-copied argv. The copy had lacked the
+  stream adapter, so every stream task on a claude dummy failed.
+
+**Two defects the live run found. Both predate this feature**; the first was
+reproduced with a TUI built from `c0af1551`, before any of this landed.
+
+1. **The server sent terminal bytes into an NDJSON stream.**
+   - The session mux keeps a terminal model (the mode tracker and a `vtgrid`
+     screen) for every session. Every attach replay ended with a synthesized
+     mode preamble and a screen repaint, and it did this for the stream kind
+     too. The repaint is a terminal program with no trailing newline, so the
+     chat's line reader joined it to the stream's next line.
+   - What the operator saw: on the first turn sent from the TUI chat, the
+     joined line displayed as "(not the protocol)". The escapes in it
+     (`ESC[?1049l` and others) took the TUI out of its alternate screen, and
+     the first live event (`session_start`) was lost inside that line.
+   - Fix: `NewSessionMux` takes the task's kind. For a kind that is not a
+     PTY, it does not feed the terminal model and `screenRepaint` returns
+     nothing. The attach path and the rebind path of a held session both pass
+     the kind.
+   - Pinned by `TestStreamSessionAttachCarriesNoSynthesisedFrames`, and its
+     negative control went red with the gate forced on.
+2. **The followers showed a non-protocol line verbatim.** That is a terminal
+   injection from anyone who can write the stream, since `session send` puts
+   raw bytes on it. Fixed by `cli.NotProtocolLine` above.
+
+**Verified live** on a dummy harness:
+- The PTY → stream route in the TUI chat, run under `script(1)`: the TUI
+  wrote 0 NDJSON bytes and 0 "(not the protocol)" lines to its terminal.
+  Replayed lines were `fg#8a8a8a`, the typed turn `fg#00d787`, `session_start`
+  was present, and the answer `FIG-77` was shown.
+- `session stream attach`: 0 ESC bytes in its output.
+- The WebUI chat, including a turn sent from the page: its echo came through
+  the bridge as `c-you`.
+
+**Deploy note.** Fix 1 is in `server/`, so it reaches the fleet only when the
+SERVER restarts. The runner and adapter halves are unaffected by the order.
+
 ## Decisions taken with the operator
 
 1. **Replay on every resume, with no switch — DECIDED (operator,

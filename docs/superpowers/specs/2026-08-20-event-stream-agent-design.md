@@ -902,6 +902,21 @@ new field is safe.
 The last item of "Not in this design" still holds. Nothing new is persisted:
 the replay reads the vendor's record rather than a stored copy of this stream.
 
+## Amendment 2026-09-30b: a stream session has no terminal model on the server
+
+The session mux kept a terminal model for this kind too: the mode tracker and
+the screen grid, fed from NDJSON. So every attach to a stream session ended
+with a synthesized mode preamble and a screen repaint. §3 decided that
+"terminal bytes and NDJSON are not distinguishable from the stream itself",
+and this was that case arriving from the server's side.
+
+The repaint had no trailing newline, so it joined the next NDJSON line, and a
+chat showed the result, escapes included. `NewSessionMux` now takes the task's
+kind, and a non-PTY kind gets neither the model nor its frames. Details and
+the live verification are in
+[`2026-09-30-stream-resume-transcript-replay-design.md`](2026-09-30-stream-resume-transcript-replay-design.md)
+§Amendment 2026-09-30b.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind
