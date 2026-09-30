@@ -105,6 +105,12 @@ const (
 	// every past request as waiting again, and a request answered from one
 	// client stayed open in every other chat.
 	KindResolved MsgKind = "resolved"
+	// KindProgress is a heartbeat while the agent generates: which phase it
+	// is in and how much it has produced so far. Adapter → runner. It is a
+	// message kind rather than an event kind so an older reader IGNORES it —
+	// an unknown event kind would render as a blank raw line, once a second.
+	// Design: docs/superpowers/specs/2026-09-30-stream-progress-design.md.
+	KindProgress MsgKind = "progress"
 )
 
 // Msg is one NDJSON line in either direction.
@@ -121,6 +127,7 @@ type Msg struct {
 	Finish    *Finish    `json:"finish,omitempty"`
 	Exit      *Exit      `json:"exit,omitempty"`
 	Resolved  *Resolved  `json:"resolved,omitempty"`
+	Progress  *Progress  `json:"progress,omitempty"`
 }
 
 // Hello opens the stream. Vendor and AgentVersion are descriptive; Protocol is
@@ -293,6 +300,23 @@ type UserTurn struct {
 type Resolved struct {
 	ID       string   `json:"id"`
 	Behavior Behavior `json:"behavior"`
+}
+
+// Progress phases.
+const (
+	PhaseThinking  = "thinking"
+	PhaseText      = "text"       // the answer being written
+	PhaseToolInput = "tool_input" // a tool call's arguments being written
+)
+
+// Progress is how far the phase in flight has got. Tokens is the agent's own
+// latest estimate for the phase (0 when it gave none); Chars counts what its
+// deltas carried, in runes. Both are totals for the phase, not increments.
+type Progress struct {
+	Phase  string `json:"phase"`
+	Tool   string `json:"tool,omitempty"`
+	Tokens int    `json:"tokens"`
+	Chars  int    `json:"chars"`
 }
 
 // Exit reports the agent process ending. The adapter sends it last, then

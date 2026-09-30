@@ -54,6 +54,13 @@ func DisplayOf(m Msg) (d Display, ok bool) {
 		}
 		return Display{SetStatus: true,
 			Status: fmt.Sprintf("attached · %s protocol %d", m.Hello.Vendor, m.Hello.Protocol)}, true
+	case KindProgress:
+		// The status line only: a heartbeat is not transcript. What completes
+		// arrives as its own event and supersedes it.
+		if m.Progress == nil {
+			return Display{}, false
+		}
+		return Display{SetStatus: true, Status: ProgressStatus(*m.Progress)}, true
 	case KindResolved:
 		if m.Resolved == nil {
 			return Display{}, false
@@ -107,6 +114,35 @@ func EventTone(e *Event) Tone {
 		return ToneErr
 	}
 	return ToneMuted // session_start / thinking / tool_start / tool_end / finish / raw
+}
+
+// ProgressStatus is the one wording of a progress heartbeat, shared by both
+// chats. The count is printed even at zero: "0 tokens" is a measurement, and
+// an elided one would read as "not reported".
+func ProgressStatus(p Progress) string {
+	switch p.Phase {
+	case PhaseThinking:
+		if p.Chars > 0 {
+			return fmt.Sprintf("thinking… %s tokens · %s chars", compactCount(p.Tokens), compactCount(p.Chars))
+		}
+		return fmt.Sprintf("thinking… %s tokens", compactCount(p.Tokens))
+	case PhaseToolInput:
+		return fmt.Sprintf("→ %s: writing input… %s chars", p.Tool, compactCount(p.Chars))
+	default:
+		return fmt.Sprintf("writing… %s chars", compactCount(p.Chars))
+	}
+}
+
+// compactCount renders n as 340, 1.2k, 12k.
+func compactCount(n int) string {
+	switch {
+	case n < 1000:
+		return fmt.Sprintf("%d", n)
+	case n < 10000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%dk", n/1000)
+	}
 }
 
 // RenderExit is the one wording of an agent's exit, shared by the chats and

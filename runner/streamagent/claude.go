@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
@@ -37,6 +39,11 @@ var vendorFlags = []string{
 	"--output-format", "stream-json",
 	"--verbose",
 	"--permission-prompt-tool", "stdio",
+	// The deltas the chats' progress heartbeat is made from. Without it
+	// nothing arrives until a whole block is done, and a long thinking phase
+	// cannot be told from a hung process. Measured 2026-09-30 with -p and
+	// stream-json. Not in `conflicting`: a duplicate boolean disables nothing.
+	"--include-partial-messages",
 }
 
 // conflicting flags a caller must not have set: each one either duplicates or
@@ -243,6 +250,116 @@ type claudeAdapter struct {
 	// reported rather than left to show the wrong history silently.
 	replayedSession string
 	sessionChecked  bool
+
+	// prog is the phase in flight, for the progress heartbeat (design:
+	// docs/superpowers/specs/2026-09-30-stream-progress-design.md §2). Only
+	// the stdout pump touches it, so it needs no lock.
+	prog     Progress
+	progOn   bool      // a phase is in flight
+	progLast time.Time // when the last heartbeat went out
+	now      func() time.Time
+}
+
+// progressInterval bounds the heartbeat: one per phase start, then at most one
+// a second while the phase keeps producing.
+const progressInterval = time.Second
+
+func (a *claudeAdapter) clock() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
+// progressStart begins a phase and announces it at once.
+func (a *claudeAdapter) progressStart(phase, tool string) {
+	a.prog = Progress{Phase: phase, Tool: tool, Tokens: a.prog.Tokens}
+	if phase != PhaseThinking {
+		a.prog.Tokens = 0 // a token estimate belongs to the thinking phase
+	}
+	a.progOn = true
+	a.progLast = a.clock()
+	_ = a.w.Progress(a.prog)
+}
+
+// progressTick announces the running totals, at most once per interval.
+func (a *claudeAdapter) progressTick() {
+	if !a.progOn {
+		return
+	}
+	if now := a.clock(); now.Sub(a.progLast) >= progressInterval {
+		a.progLast = now
+		_ = a.w.Progress(a.prog)
+	}
+}
+
+// streamEvent is the part of a partial-message line the heartbeat reads.
+type streamEvent struct {
+	Event struct {
+		Type         string `json:"type"`
+		ContentBlock struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		} `json:"content_block"`
+		Delta struct {
+			Type        string `json:"type"`
+			Text        string `json:"text"`
+			Thinking    string `json:"thinking"`
+			PartialJSON string `json:"partial_json"`
+		} `json:"delta"`
+	} `json:"event"`
+}
+
+// handleStreamEvent consumes one partial-message line. It never reaches the
+// agentlog decoder: the complete block arrives as its own assistant line, and
+// that is what becomes an event.
+func (a *claudeAdapter) handleStreamEvent(line []byte) {
+	var se streamEvent
+	if json.Unmarshal(line, &se) != nil {
+		return
+	}
+	e := se.Event
+	switch e.Type {
+	case "content_block_start":
+		switch e.ContentBlock.Type {
+		case "thinking", "redacted_thinking":
+			a.progressStart(PhaseThinking, "")
+		case "text":
+			a.progressStart(PhaseText, "")
+		case "tool_use", "server_tool_use":
+			a.progressStart(PhaseToolInput, e.ContentBlock.Name)
+		}
+	case "content_block_delta":
+		n := utf8.RuneCountInString(e.Delta.Text) +
+			utf8.RuneCountInString(e.Delta.Thinking) +
+			utf8.RuneCountInString(e.Delta.PartialJSON)
+		if n == 0 {
+			return // signature_delta and the like carry nothing to count
+		}
+		a.prog.Chars += n
+		a.progressTick()
+	case "content_block_stop":
+		a.progOn = false
+	}
+}
+
+// thinkingTokens takes claude's running estimate for the thinking phase. It
+// arrives during thinking with or without partial messages, and used to be
+// dropped because the decoder makes no event of a non-init system line.
+func (a *claudeAdapter) thinkingTokens(line []byte) {
+	var t struct {
+		Estimated int `json:"estimated_tokens"`
+	}
+	if json.Unmarshal(line, &t) != nil || t.Estimated <= 0 {
+		return
+	}
+	if !a.progOn || a.prog.Phase != PhaseThinking {
+		a.prog.Tokens = t.Estimated
+		a.progressStart(PhaseThinking, "")
+		return
+	}
+	a.prog.Tokens = t.Estimated
+	a.progressTick()
 }
 
 // newRunNonce is the per-run half of a request id. Random rather than a
@@ -302,6 +419,13 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 	if err := json.Unmarshal(line, &v); err == nil {
 		if v.Type == "system" && v.Subtype == "init" {
 			a.checkReplayedSession(v.SessionID)
+		}
+		if v.Type == "stream_event" {
+			a.handleStreamEvent(line)
+			return
+		}
+		if v.Type == "system" && v.Subtype == "thinking_tokens" {
+			a.thinkingTokens(line)
 		}
 		if v.Type == "control_request" && a.handleControlRequest(v) {
 			return

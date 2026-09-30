@@ -949,6 +949,22 @@ Verified on a dummy harness: a Write approval was raised, then answered with
 `session stream approve --allow`. `session stream attach` afterwards replayed
 the request line followed by `▶ <id>: allow`, and the file was written.
 
+## Amendment 2026-09-30d: a progress heartbeat
+
+The adapter now runs claude with `--include-partial-messages` and emits a
+`progress` message while a block is being generated: the phase, the running
+token and char totals, at most one a second. Before this, a chat showed
+nothing until a block completed.
+
+It is a MESSAGE kind, not an event kind, so an older reader ignores it. An
+unknown event kind would have rendered as a blank raw line, once a second.
+
+It also picks up `system/thinking_tokens`, which §1's neutrality table named
+and the adapter dropped.
+
+Design and measurements:
+[`2026-09-30-stream-progress-design.md`](2026-09-30-stream-progress-design.md).
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind

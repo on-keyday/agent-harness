@@ -61,6 +61,9 @@ func (w *Writer) Interrupt(i Interrupt) error {
 }
 func (w *Writer) Hello(h Hello) error { return w.Write(Msg{Kind: KindHello, Hello: &h}) }
 func (w *Writer) Exit(e Exit) error   { return w.Write(Msg{Kind: KindExit, Exit: &e}) }
+func (w *Writer) Progress(p Progress) error {
+	return w.Write(Msg{Kind: KindProgress, Progress: &p})
+}
 func (w *Writer) Resolved(r Resolved) error {
 	return w.Write(Msg{Kind: KindResolved, Resolved: &r})
 }
