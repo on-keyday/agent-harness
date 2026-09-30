@@ -95,10 +95,11 @@ func DisplayOf(m Msg) (d Display, ok bool) {
 }
 
 // EventTone paints an event by what it MEANS, so the agent's answer stays
-// primary and the machinery around it recedes. Replayed history recedes
-// whatever it says: it is context for the next turn, not the turn in progress.
+// primary and the machinery around it recedes. A replayed event is painted
+// like a live one, as claude's own UI shows a resumed conversation:
+// ReplayPrefix, not the color, marks it as history.
 func EventTone(e *Event) Tone {
-	if e == nil || e.Replay {
+	if e == nil {
 		return ToneMuted
 	}
 	switch e.Kind {

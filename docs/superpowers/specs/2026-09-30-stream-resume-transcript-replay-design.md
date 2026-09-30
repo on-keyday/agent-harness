@@ -408,3 +408,11 @@ SERVER restarts. The runner and adapter halves are unaffected by the order.
    process redraws the earlier conversation, and nothing turns that off. So
    the stream kind should behave the same way. There is no flag, so no
    surface in items 1–9 of the surface-parity checklist changes.
+2. **A replayed line keeps its live color — DECIDED (operator,
+   2026-09-30).** This reverses the "any `Replay` event → `MutedStyle`" /
+   `c-muted` rows of §5. Claude's own UI does not fade a resumed
+   conversation, and the faded history read as a different thing from the
+   same conversation. `streamagent.EventTone` no longer looks at `Replay`,
+   so a replayed answer is `text` and a replayed turn is `you` in both chats.
+   The `↺ ` prefix still marks a line as history, and a replayed event still
+   never drives the status line or the busy state (`DisplayOf`).

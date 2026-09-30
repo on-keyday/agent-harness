@@ -289,7 +289,8 @@ func TestChatScrollStaysAnchoredWhileStreaming(t *testing.T) {
 }
 
 // A resume replays the earlier conversation: the user's turns read like this
-// view's own echo, and everything replayed recedes behind the live session.
+// view's own echo, and a replayed line is painted like a live one: the ↺
+// prefix, not the color, marks it as history.
 func TestChatRendersAReplayedConversation(t *testing.T) {
 	m := openChat(t)
 	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"user_text","text":"earlier question","replay":true}}`))
@@ -306,8 +307,8 @@ func TestChatRendersAReplayedConversation(t *testing.T) {
 		t.Errorf("a live event was marked as replayed:\n%s", body)
 	}
 	fg := func(s lipgloss.Style) string { return fmt.Sprint(s.GetForeground()) }
-	if got := toneStyle(streamagent.EventTone(&streamagent.Event{Kind: streamagent.EventText, Replay: true})); fg(got) != fg(MutedStyle) {
-		t.Errorf("a replayed answer is not muted: %v", got.GetForeground())
+	if got := toneStyle(streamagent.EventTone(&streamagent.Event{Kind: streamagent.EventText, Replay: true})); fg(got) != fg(toneStyle(streamagent.ToneText)) {
+		t.Errorf("a replayed answer is not painted like a live one: %v", got.GetForeground())
 	}
 	if got := toneStyle(streamagent.EventTone(&streamagent.Event{Kind: streamagent.EventUserText})); fg(got) != fg(OKStyle) {
 		t.Errorf("a user turn is not in the echo style: %v", got.GetForeground())
