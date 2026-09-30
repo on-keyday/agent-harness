@@ -241,7 +241,7 @@ transformation of the data:
 |-------------|-----------|
 | stdout is a character device (`isTTY`) | escaped |
 | stdout redirected or piped | exact, unchanged |
-| `--json` (either verb, any destination) | exact, as `payload_b64` — already how `emitBoardMessageJSON` carries it (`cli/cmd_board.go:77`) |
+| `--json` (either verb, any destination) | exact, as `payload_b64` — already how `emitBoardMessageJSON` carries it (`cli/cmd_board.go:77`); a readable `payload` / `payload_text` is carried beside it since 2026-09-30 (Amendment E) |
 | `--raw` | exact, even on a terminal |
 
 `--raw` exists so an operator reading interactively can still copy exact bytes
@@ -322,7 +322,7 @@ that needs a test most, because nothing about it is visible when it breaks:
   run. This is the regression test for the defect this spec shipped in its
   first draft
 - `--raw` yields those same exact bytes when stdout IS a character device
-- `--json` carries the exact bytes as `payload_b64` in every case
+- `--json` carries the exact bytes as `payload_b64` in every case, and a readable form beside it when the bytes are JSON (`payload`) or valid UTF-8 (`payload_text`) — Amendment E
 
 ## Risks
 
@@ -448,3 +448,24 @@ Rule: `ThreadRenderOptions` carries an explicit `BodyMode`. The two CLI faces
 compute it from `os.Stdout` at their own call site, where it is still a file and
 where obligation 2 of the payload section lives; the TUI states `BodyEscaped`.
 `BodyMode` is exported for that reason alone.
+
+# Amendment E (2026-09-30) — one body-shaping function, on every JSON face
+
+`agent inbox --json` (63b24a19) rendered a non-JSON body as `payload_text`, so a
+prose instruction never reached a reader as base64 alone. The two board faces
+added later copied only `payload` and `payload_b64`, so `agent thread --json` —
+the record an agent actually reads — still handed a prose body over as a blob,
+and `board read` / `board thread` did the same for the operator.
+
+Measured on the live board: a 654-byte message whose sender's shell quoting had
+clipped it mid-JSON, plus two 2000-byte prose bodies, came back from `board
+thread --json` with `payload_b64` and nothing else.
+
+Rule: the classification lives in one function, `cli.PutPayloadFields`, which
+the agent record and both board emitters call. It writes `payload` (raw) when
+the bytes parse as JSON, `payload_text` when they are merely valid UTF-8, and
+`payload_b64` (exact) always for the board faces; the hook path drops
+`payload_b64` once a readable form exists, because that record is spliced into a
+prompt and a second copy of the body is spent context. The table row above and
+the `--json` bullet still hold: `payload_b64` remains the exact-bytes field in
+every case — the readable form is additive.
