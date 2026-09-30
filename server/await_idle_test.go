@@ -21,7 +21,7 @@ func TestSessionMux_LastOutputStampsOnOutputFramesOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	if got := mux.LastOutputUnixNano(); got != 0 {
@@ -48,7 +48,7 @@ func TestSessionMux_IdleWatcherFiresAfterQuiescence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("boot")))
@@ -79,7 +79,7 @@ func TestSessionMux_IdleWatcherFiresImmediatelyWhenAlreadyIdle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
@@ -109,7 +109,7 @@ func TestSessionMux_IdleWatcherSessionStopped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	// No output ever (lastOutput==0): the watcher must wait, not fire.
 	fired := make(chan bool, 1)
@@ -217,7 +217,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var target protocol.TaskID
 	target.Id[0] = 0xEE
@@ -275,7 +275,7 @@ func TestHandleAwaitIdle_NotifySinkArmsThenFires(t *testing.T) {
 
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xCC
@@ -314,7 +314,7 @@ func TestHandleAwaitIdle_BoardSinkPublishesOnFire(t *testing.T) {
 
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xDD
@@ -361,7 +361,7 @@ func TestHandleAwaitIdle_ReplyLongPollFires(t *testing.T) {
 
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xBB

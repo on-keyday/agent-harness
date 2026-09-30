@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // TestSessionMux_DetachReattach_ForwardsOutput exercises the user-reported
@@ -18,7 +20,7 @@ func TestSessionMux_DetachReattach_ForwardsOutput(t *testing.T) {
 	defer cancel()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task-X", runnerStream, NewRingBuffer(4096), SessionHooks{})
+	mux := NewSessionMux(ctx, "task-X", protocol.TaskKind_Interactive, runnerStream, NewRingBuffer(4096), SessionHooks{})
 	defer mux.Stop()
 
 	frameAlpha := makeWireFrame(1, []byte("alpha"))

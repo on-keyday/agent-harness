@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
@@ -60,7 +61,7 @@ func TestSessionMux_Observer_ReplayCapped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	// Fill the ring with ~300 KiB across many frames.
 	total := 0

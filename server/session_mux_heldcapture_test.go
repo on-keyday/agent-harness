@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/vtgrid"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
@@ -30,7 +31,7 @@ func TestHeldCaptureRoundTripsScreenAndSize(t *testing.T) {
 	defer cancel()
 
 	before := newFakeStream(t)
-	old := NewSessionMux(ctx, "task", before, NewRingBuffer(1<<20), SessionHooks{})
+	old := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, before, NewRingBuffer(1<<20), SessionHooks{})
 	if err := old.applyWinSizeFrame(makeWinSizeFrame(30, 100)); err != nil {
 		t.Fatalf("resize: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestHeldCaptureRoundTripsScreenAndSize(t *testing.T) {
 	// The next server: a fresh mux on a fresh stream, seeded from the capture
 	// alone. Nothing else carries session state across a restart.
 	after := newFakeStream(t)
-	fresh := NewSessionMux(ctx, "task", after, NewRingBuffer(1<<20), SessionHooks{})
+	fresh := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, after, NewRingBuffer(1<<20), SessionHooks{})
 	gotSize, gotScreen, err := fresh.loadHeldCapture(capture)
 	if err != nil {
 		t.Fatalf("loadHeldCapture: %v", err)
@@ -84,7 +85,7 @@ func TestHeldCaptureDoesNotEnterTheRing(t *testing.T) {
 	defer cancel()
 
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 	capture := append(makeWinSizeFrame(24, 80), makeWireFrame(4, []byte("\x1b[1;1Hrestored"))...)
 	if _, _, err := mux.loadHeldCapture(capture); err != nil {
 		t.Fatalf("loadHeldCapture: %v", err)
@@ -141,7 +142,7 @@ func TestAttachAfterCaptureShowsTheRestoredScreen(t *testing.T) {
 	defer cancel()
 
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 	capture := append(makeWinSizeFrame(24, 80), makeWireFrame(4, []byte("\x1b[1;1Hvisible-after-attach"))...)
 	if _, _, err := mux.loadHeldCapture(capture); err != nil {
 		t.Fatalf("loadHeldCapture: %v", err)

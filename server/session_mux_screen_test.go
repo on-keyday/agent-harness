@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // The grid is fed from the same frames the ring gets, and it exists before
@@ -16,7 +18,7 @@ func TestSessionMuxScreenIsFedFromRunnerPump(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	runner.QueueRead(makeWireFrame(1, []byte("\x1b[2J\x1b[1;1Hhello")))
 	waitFor(t, func() bool { return strings.Contains(string(mux.screenRepaint()), "hello") })
@@ -29,7 +31,7 @@ func TestSessionMuxScreenSurvivesRingEviction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(16), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(16), SessionHooks{})
 
 	drew := makeWireFrame(1, []byte("\x1b[2J\x1b[1;1Hgone-from-ring"))
 	runner.QueueRead(drew)
@@ -61,7 +63,7 @@ func TestSessionMuxScreenRepaintCarriesTitleTheRingEvicted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(16), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(16), SessionHooks{})
 
 	titled := makeWireFrame(1, []byte("\x1b]0;a session title\x07"))
 	runner.QueueRead(titled)
@@ -88,7 +90,7 @@ func TestSessionMuxScreenResizesFromBothEntryPoints(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	if cols, rows := mux.screenSize(); cols != 80 || rows != 24 {
 		t.Fatalf("a session with no size yet renders at %dx%d, want the 80x24 default", cols, rows)
@@ -117,7 +119,7 @@ func TestSessionMuxScreenIgnoresObserverResizeWhileControlHoldsTheSeat(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	if err := mux.applyWinSizeFrame(makeWinSizeFrame(30, 100)); err != nil {
 		t.Fatalf("control resize: %v", err)

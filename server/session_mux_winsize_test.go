@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
@@ -27,7 +28,7 @@ func TestSessionMux_AttachViewer_ReplaysWindowSize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	// Controlling client attaches and sends its terminal size; tuiPump forwards
 	// it to the runner and records it as lastWinSize.
@@ -61,7 +62,7 @@ func TestSessionMux_AttachViewer_NoSizeWhenNoneSeen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	pre := makeWireFrame(byte(frame.FrameType_Stdout), []byte("hello"))
 	runner.QueueRead(pre)
@@ -85,7 +86,7 @@ func TestSessionMux_CoWriter_ForwardsInputDropsResize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	cw := newFakeStream(t)
 	if err := mux.AttachCoWriter(ctx, cw, 0, false); err != nil {
@@ -117,7 +118,7 @@ func TestSessionMux_CoWriter_NoTakeoverNoSizeAuthority(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
@@ -151,7 +152,7 @@ func TestSessionMux_ControlResize_FansOutToViewer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
@@ -184,7 +185,7 @@ func TestSessionMux_ControlResize_FansOutToCoWriter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {

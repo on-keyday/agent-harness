@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // feedFrames queues each payload as its own frame and waits for the ring to
@@ -28,7 +30,7 @@ func TestReplayKeepsHistoryWhenTheEntrySurvives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	feedFrames(t, mux,
 		runner,
@@ -58,7 +60,7 @@ func TestReplayTrimsWhenTheRingStartsInsideAnEpisode(t *testing.T) {
 	defer cancel()
 	runner := newFakeStream(t)
 	// Big enough for the last few frames, small enough to evict the entry.
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(48), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(48), SessionHooks{})
 
 	feedFrames(t, mux,
 		runner,
@@ -84,7 +86,7 @@ func TestReplayTrimsWhenAnEarlierEpisodeStraddlesTheStart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(128), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(128), SessionHooks{})
 
 	feedFrames(t, mux,
 		runner,

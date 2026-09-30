@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -284,7 +285,7 @@ func TestSessionMux_AttachReplaysRingBuffer(t *testing.T) {
 	defer cancel()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task-abc", runnerStream, NewRingBuffer(64), SessionHooks{})
+	mux := NewSessionMux(ctx, "task-abc", protocol.TaskKind_Interactive, runnerStream, NewRingBuffer(64), SessionHooks{})
 
 	wire := makeWireFrame(1, []byte("preattach payload"))
 	runnerStream.QueueRead(wire)
@@ -306,7 +307,7 @@ func TestSessionMux_DetachKeepsRunnerStream(t *testing.T) {
 	defer cancel()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runnerStream, NewRingBuffer(128), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runnerStream, NewRingBuffer(128), SessionHooks{})
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
@@ -330,7 +331,7 @@ func TestSessionMux_AttachTakeover(t *testing.T) {
 	defer cancel()
 
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(32), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(32), SessionHooks{})
 
 	first := newFakeStream(t)
 	if err := mux.Attach(ctx, first); err != nil {
@@ -354,7 +355,7 @@ func TestSessionMux_AttachViewer_ReplaysThenStreams(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	pre := makeWireFrame(1, []byte("scrollback"))
 	runner.QueueRead(pre)
@@ -383,7 +384,7 @@ func TestSessionMux_FanOutWriterAndViewers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	writer := newFakeStream(t)
 	if err := mux.Attach(ctx, writer); err != nil {
@@ -411,7 +412,7 @@ func TestSessionMux_SlowViewerDroppedWithoutWedge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<20), SessionHooks{})
 
 	writer := newFakeStream(t)
 	if err := mux.Attach(ctx, writer); err != nil {
@@ -443,7 +444,7 @@ func TestSessionMux_ViewerInputDiscarded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	viewer := newFakeStream(t)
 	if err := mux.AttachViewer(ctx, viewer, 0, false); err != nil {
@@ -463,7 +464,7 @@ func TestSessionMux_ViewerDoesNotFireOnAttach(t *testing.T) {
 	var attaches int32
 	hooks := SessionHooks{OnAttach: func(string) { atomic.AddInt32(&attaches, 1) }}
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), hooks)
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), hooks)
 
 	v := newFakeStream(t)
 	if err := mux.AttachViewer(ctx, v, 0, false); err != nil {
@@ -484,7 +485,7 @@ func TestSessionMux_StopClosesViewers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	v := newFakeStream(t)
 	if err := mux.AttachViewer(ctx, v, 0, false); err != nil {
@@ -501,7 +502,7 @@ func TestSessionMux_TakeoverLeavesViewersStreaming(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	w1 := newFakeStream(t)
 	if err := mux.Attach(ctx, w1); err != nil {
@@ -541,7 +542,7 @@ func TestSessionMux_ActivityWatcherEdges(t *testing.T) {
 	defer cancel()
 
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task-act", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task-act", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	var mu sync.Mutex
 	var edges []bool

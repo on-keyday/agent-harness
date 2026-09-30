@@ -1559,7 +1559,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		parentCtx = context.Background()
 	}
 
-	mux := NewSessionMux(parentCtx, taskIDHex, runnerStream, NewRingBuffer(ringSize), hooks)
+	mux := NewSessionMux(parentCtx, taskIDHex, interactiveKind(req), runnerStream, NewRingBuffer(ringSize), hooks)
 	h.Sessions.Add(taskIDHex, mux)
 
 	if err := mux.Attach(parentCtx, tuiStream); err != nil {

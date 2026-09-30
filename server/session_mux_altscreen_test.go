@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // TestSessionMux_AttachAfterAltScreenExitSkipsEpisode is the regression for the
@@ -25,7 +27,7 @@ func TestSessionMux_AttachAfterAltScreenExitSkipsEpisode(t *testing.T) {
 	runner := newFakeStream(t)
 	// Small enough that the frame carrying ESC[?1049h is evicted, which is the
 	// precondition for the fragments to be dangerous at all.
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(64), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(64), SessionHooks{})
 
 	enter := makeWireFrame(1, []byte("\x1b[?1049hHTOP-EPISODE-CONTENT"))
 	mid := makeWireFrame(1, []byte("MORE-HTOP-FRAME-FRAGMENTS"))
@@ -66,7 +68,7 @@ func TestSessionMux_AttachWhileAltScreenLiveReplaysFull(t *testing.T) {
 	defer cancel()
 
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<16), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(1<<16), SessionHooks{})
 
 	pre := makeWireFrame(1, []byte("pre-htop scrollback "))
 	enter := makeWireFrame(1, []byte("\x1b[?1049hLIVE-HTOP-FRAME"))
@@ -107,7 +109,7 @@ func TestSessionMux_AttachLiveAltScreenReentersEvenIfEnterEvicted(t *testing.T) 
 	enter := makeWireFrame(1, []byte("\x1b[?1049hENTER"))        // establishing alt-enter
 	bulk := makeWireFrame(1, []byte("\x1b[10;5HFRAGMENTxxxxxx")) // mid-frame fragment, no 1049
 	// Ring holds exactly one of these frames → the alt-enter is evicted.
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(len(bulk)), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(len(bulk)), SessionHooks{})
 
 	runner.QueueRead(enter)
 	waitFor(t, func() bool { return mux.RingBufferLen() == len(enter) })

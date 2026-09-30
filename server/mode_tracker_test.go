@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
@@ -129,7 +130,7 @@ func TestSessionMux_AttachRestoresEvictedCursorMode(t *testing.T) {
 
 	runner := newFakeStream(t)
 	// Ring small enough that the bulk frame evicts the cursor-hide frame.
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(16), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(16), SessionHooks{})
 
 	hide := makeWireFrame(1, []byte("\x1b[?25l"))  // 6-byte payload → 11-byte frame
 	bulk := makeWireFrame(1, []byte("AAAAAAAAAA")) // 10-byte payload → 15-byte frame

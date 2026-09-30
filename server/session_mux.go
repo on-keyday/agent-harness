@@ -176,9 +176,12 @@ type SessionMux struct {
 	cancel context.CancelFunc
 
 	taskID string
-	runner trsf.BidirectionalStream
-	ring   *RingBuffer
-	modes  *modeTracker
+	// terminal is false for a session whose frames are not terminal output
+	// (the event-stream kind): see NewSessionMux.
+	terminal bool
+	runner   trsf.BidirectionalStream
+	ring     *RingBuffer
+	modes    *modeTracker
 
 	// screen is the session's terminal state as a grid, fed from the same
 	// frames the ring gets. It exists from the mux's first byte rather than
@@ -261,15 +264,24 @@ type SessionMux struct {
 // NewSessionMux creates a SessionMux and starts the runner pump goroutine.
 // parentCtx cancellation propagates to Stop. Hooks are installed before
 // runnerPump starts, eliminating any race window.
-func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
+//
+// kind decides whether the session has a TERMINAL. Only a PTY kind does: for
+// the event-stream kind the frames carry NDJSON, and the terminal model this
+// mux keeps for a PTY — the mode tracker and the screen grid, and the
+// preamble and repaint an attach is sent from them — has nothing to model.
+// Sending them anyway is not harmless: the repaint is a terminal program with
+// no trailing newline, so it arrived glued to the stream's next line, and the
+// chat that read it wrote its escapes straight to the operator's terminal.
+func NewSessionMux(parentCtx context.Context, taskID string, kind protocol.TaskKind, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
 	ctx, cancel := context.WithCancel(parentCtx)
 	m := &SessionMux{
-		ctx:    ctx,
-		cancel: cancel,
-		taskID: taskID,
-		runner: runner,
-		ring:   ring,
-		modes:  newModeTracker(),
+		ctx:      ctx,
+		cancel:   cancel,
+		taskID:   taskID,
+		terminal: protocol.IsPTYKind(kind),
+		runner:   runner,
+		ring:     ring,
+		modes:    newModeTracker(),
 		// 80x24 because the server has no size to use: the PTY's size reaches
 		// it only as a TerminalWindowSize frame — from the opener's
 		// applyInitialWindowSize, or from a client as it attaches — and the
@@ -341,10 +353,12 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	if len(frameBytes) >= frameHeaderSize {
 		switch frame.FrameType(frameBytes[0]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
-			m.modes.feed(frameBytes[frameHeaderSize:])
-			m.screenMu.Lock()
-			_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
-			m.screenMu.Unlock()
+			if m.terminal {
+				m.modes.feed(frameBytes[frameHeaderSize:])
+				m.screenMu.Lock()
+				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
+				m.screenMu.Unlock()
+			}
 			m.lastOutput.Store(time.Now().UnixNano())
 		}
 	}
@@ -389,7 +403,11 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 // before the mux joins the session registry, so no observer can attach against a
 // model that is still empty.
 func (m *SessionMux) loadScreen(b []byte) {
-	if len(b) == 0 {
+	// A session with no terminal models nothing, including a screen a
+	// previous server captured for it: a capture written before the stream
+	// kind stopped being modelled still carries a repaint, and feeding it here
+	// would hand every later attach a mode preamble built from it.
+	if len(b) == 0 || !m.terminal {
 		return
 	}
 	m.modes.feed(b)
@@ -890,7 +908,13 @@ func (m *SessionMux) applyWinSizeFrame(fb []byte) error {
 
 // screenRepaint returns the bytes that reconstruct the session's current screen
 // on an observer, whatever state that observer is in.
+//
+// Nil for a session with no terminal: even a blank grid repaints as a
+// clear-screen program, which is exactly what must not reach an NDJSON reader.
 func (m *SessionMux) screenRepaint() []byte {
+	if !m.terminal {
+		return nil
+	}
 	m.screenMu.Lock()
 	defer m.screenMu.Unlock()
 	return m.screen.Repaint()

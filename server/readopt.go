@@ -200,7 +200,13 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 			continue
 		}
 		hooks := s.taskHandler.sessionHooks()
-		mux := NewSessionMux(parentCtx, taskID, runnerStream, NewRingBuffer(ringSize), hooks)
+		// The kind is the task's own record: a held stream task comes back as a
+		// stream session, with no terminal model to rebuild.
+		kind := protocol.TaskKind_Interactive
+		if t, ok := s.tasks.Get(taskID); ok {
+			kind = t.Kind
+		}
+		mux := NewSessionMux(parentCtx, taskID, kind, runnerStream, NewRingBuffer(ringSize), hooks)
 
 		// The capture goes in BEFORE the registry insert and before the runner
 		// is told to resume, and both orderings are load-bearing. Registry

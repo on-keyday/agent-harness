@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
@@ -16,7 +17,7 @@ func TestObserverCountsSplitsViewersFromCowriters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	for i := 0; i < 2; i++ {
 		if err := mux.AttachViewer(ctx, newFakeStream(t), 0, false); err != nil {
@@ -43,7 +44,7 @@ func TestControlAttachIsNotCountedAsObserver(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	if err := mux.Attach(ctx, newFakeStream(t)); err != nil {
 		t.Fatalf("Attach: %v", err)
@@ -65,7 +66,7 @@ func TestViewerDoesNotOccupyControlSlot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	if err := mux.AttachViewer(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
@@ -84,7 +85,7 @@ func TestObserverCountsDropWithTheStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 
 	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
@@ -110,7 +111,7 @@ func TestObserverHookFiresOnAttachAndDetach(t *testing.T) {
 
 	var mu sync.Mutex
 	var fired []string
-	mux := NewSessionMux(ctx, "task-obs", runner, NewRingBuffer(256), SessionHooks{
+	mux := NewSessionMux(ctx, "task-obs", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{
 		OnObservers: func(id string) {
 			mu.Lock()
 			fired = append(fired, id)
@@ -159,7 +160,7 @@ func TestObserverHookIsNotCalledUnderTheMuxLock(t *testing.T) {
 
 	done := make(chan struct{}, 4)
 	var mux *SessionMux
-	mux = NewSessionMux(ctx, "task-lock", runner, NewRingBuffer(256), SessionHooks{
+	mux = NewSessionMux(ctx, "task-lock", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{
 		OnObservers: func(string) {
 			// Re-entering the mux is exactly what a publishing hook does
 			// (the server reads ObserverCounts to fill the event).
@@ -197,7 +198,7 @@ func TestObserverResizeIgnoredWithoutTheCapability(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "t", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	s := newFakeStream(t)
@@ -220,7 +221,7 @@ func TestObserverResizeAppliedWhenNoControlAttached(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "t", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	s := newFakeStream(t)
@@ -246,7 +247,7 @@ func TestObserverResizeIgnoredWhileControlAttached(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "t", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	if err := mux.Attach(ctx, newFakeStream(t)); err != nil {

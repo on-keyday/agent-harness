@@ -1197,7 +1197,7 @@ func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
 	ring := NewRingBuffer(4096)
 	// Pre-populate the ring with some data so replay_bytes is non-zero.
 	ring.Append([]byte("hello from runner"))
-	mux := NewSessionMux(context.Background(), id, runnerStream, ring, SessionHooks{})
+	mux := NewSessionMux(context.Background(), id, protocol.TaskKind_Interactive, runnerStream, ring, SessionHooks{})
 	h.Sessions.Add(id, mux)
 	defer func() {
 		runnerStream.CloseRead()
@@ -1260,7 +1260,7 @@ func TestHandleAttachSession_ReportsStreamKind(t *testing.T) {
 	h.Tasks.mu.Unlock()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(context.Background(), id, runnerStream, NewRingBuffer(4096), SessionHooks{})
+	mux := NewSessionMux(context.Background(), id, protocol.TaskKind_Interactive, runnerStream, NewRingBuffer(4096), SessionHooks{})
 	h.Sessions.Add(id, mux)
 	defer func() {
 		runnerStream.CloseRead()
@@ -1295,7 +1295,7 @@ func TestHandleAttachSession_ViewMode_NoWriterTakeover(t *testing.T) {
 	runnerStream := newFakeStream(t)
 	ring := NewRingBuffer(4096)
 	ring.Append([]byte("hello from runner"))
-	mux := NewSessionMux(context.Background(), id, runnerStream, ring, SessionHooks{})
+	mux := NewSessionMux(context.Background(), id, protocol.TaskKind_Interactive, runnerStream, ring, SessionHooks{})
 	h.Sessions.Add(id, mux)
 	defer func() {
 		runnerStream.CloseRead()

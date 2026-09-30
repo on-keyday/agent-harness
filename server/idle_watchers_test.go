@@ -16,7 +16,7 @@ func TestSessionMux_IdleWatcherStopChannelEndsWithoutFiring(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 
 	stop := make(chan struct{})
@@ -56,7 +56,7 @@ func TestHandleAwaitIdle_BoardArmCarriesIdAndFireDeregisters(t *testing.T) {
 	defer cancel()
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xDD
@@ -180,7 +180,7 @@ func TestHandleAwaitIdle_ReplyKilledAnswersCancelled(t *testing.T) {
 	defer cancel()
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xBB
@@ -217,7 +217,7 @@ func TestHandleAwaitIdle_BoardKilledPublishesNothing(t *testing.T) {
 	defer cancel()
 	runner := newFakeStream(t)
 	reg := NewSessionRegistry()
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 	defer mux.Stop()
 	var tid protocol.TaskID
 	tid.Id[0] = 0xDD
@@ -246,7 +246,7 @@ func TestIdleWatcher_FireKillRaceHasOneWinner(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		runner := newFakeStream(t)
 		reg := NewSessionRegistry()
-		mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+		mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(256), SessionHooks{})
 		var tid protocol.TaskID
 		tid.Id[0] = 0xBB
 		reg.Add("bb000000000000000000000000000000", mux)
