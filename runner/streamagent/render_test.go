@@ -54,7 +54,7 @@ func TestDisplayOf(t *testing.T) {
 		{"answer", Msg{Kind: KindEvent, Event: &Event{Kind: EventText, Text: "hi"}},
 			Display{Text: "hi", Tone: ToneText}},
 		{"user turn", Msg{Kind: KindEvent, Event: &Event{Kind: EventUserText, Text: "q"}},
-			Display{Text: UserTurnLine("q"), Tone: ToneYou}},
+			Display{Text: agentlog.UserTurnPrefix + "q", Tone: ToneYou}},
 		{"thinking drives the status", Msg{Kind: KindEvent, Event: &Event{Kind: EventThinking}},
 			Display{Text: "· thinking", Tone: ToneMuted, SetStatus: true, Status: "thinking…"}},
 		{"finish clears it and goes idle", Msg{Kind: KindEvent, Event: &Event{Kind: EventFinish}},
@@ -78,12 +78,5 @@ func TestDisplayOf(t *testing.T) {
 	}
 	if _, ok := DisplayOf(Msg{Kind: KindRequest, Request: &Request{ID: "r"}}); ok {
 		t.Error("a request has no display of its own: both chats render its payload")
-	}
-}
-
-func TestUserTurnLineMatchesAReplayedTurn(t *testing.T) {
-	replayed := agentlog.Render(Event{Kind: EventUserText, Text: "q"}.ToAgentlog())
-	if UserTurnLine("q") != replayed {
-		t.Fatalf("echo %q and replayed turn %q differ", UserTurnLine("q"), replayed)
 	}
 }

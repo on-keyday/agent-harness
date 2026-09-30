@@ -184,9 +184,12 @@ func Render(e Event) string {
 	case KindSessionStart:
 		return "▶ session " + e.Text
 	case KindThinking:
-		// Deliberately fixed: the Claude 5 family returns no thinking text at
-		// all (thinking.display defaults to "omitted" and the claude CLI has no
-		// flag to change it), so this is a liveness signal, not a content line.
+		// The text is a summary only when the agent was asked for one (the
+		// stream adapter asks, via --thinking-display summarized); without it
+		// Opus 4.7+ returns an empty block and this is a liveness line.
+		if t := strings.TrimSpace(e.Text); t != "" {
+			return "· thinking: " + t
+		}
 		return "· thinking"
 	case KindToolStart:
 		return "→ " + e.Tool + ": " + truncate(e.Args)
@@ -259,6 +262,9 @@ type claudeBlock struct {
 	Input   json.RawMessage `json:"input"`
 	Content json.RawMessage `json:"content"`
 	IsError bool            `json:"is_error"`
+	// Thinking is a thinking block's text: a summary, when the request asked
+	// for one, and empty when it did not (the default on Opus 4.7+).
+	Thinking string `json:"thinking"`
 }
 
 // claudeContent is a message's content, which claude writes in two shapes: an
@@ -307,9 +313,10 @@ func (claudeStreamJSON) Decode(line []byte) []Event {
 		for _, b := range env.Message.Content {
 			switch b.Type {
 			case "thinking":
-				// Keyed on the block's presence, not its content: every Claude 5
-				// model returns an empty thinking string.
-				out = append(out, Event{Kind: KindThinking})
+				// Keyed on the block's presence: the text is empty unless the
+				// request asked for a summary, and an empty block is still the
+				// signal that the agent thought.
+				out = append(out, Event{Kind: KindThinking, Text: b.Thinking})
 			case "text":
 				if b.Text != "" {
 					k := KindText

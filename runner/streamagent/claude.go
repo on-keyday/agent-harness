@@ -44,6 +44,14 @@ var vendorFlags = []string{
 	// cannot be told from a hung process. Measured 2026-09-30 with -p and
 	// stream-json. Not in `conflicting`: a duplicate boolean disables nothing.
 	"--include-partial-messages",
+	// Opus 4.7 and later return EMPTY thinking blocks unless the request asks
+	// for a summary (the Agent SDK's ThinkingConfig.display, whose API default
+	// is "omitted"). Measured 2026-09-30 on claude 2.1.285 / Opus 5.5 with -p
+	// and stream-json: 0 chars without it, a 283-char summary and 25 non-empty
+	// thinking deltas with it. The flag is NOT in `claude --help` or the CLI
+	// reference -- it was found in the binary -- so a claude that predates it
+	// may refuse to start; that is a loud failure at spawn, not a silent one.
+	"--thinking-display", "summarized",
 }
 
 // conflicting flags a caller must not have set: each one either duplicates or
@@ -686,11 +694,19 @@ func (a *claudeAdapter) sendInterrupt() error {
 	})
 }
 
+// sendUserTurn feeds a turn to the agent and then puts it on the stream the
+// server keeps. The agent does not echo a turn back under stream-json, so
+// without this line a turn existed only in the chat that sent it: another
+// client, a later reattach and the task log never saw who asked what.
 func (a *claudeAdapter) sendUserTurn(text string) error {
-	return a.writeVendor(map[string]any{
+	if err := a.writeVendor(map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": text},
-	})
+	}); err != nil {
+		return err
+	}
+	_ = a.w.Event(Event{Kind: EventUserText, Text: text})
+	return nil
 }
 
 func (a *claudeAdapter) writeVendor(v any) error {

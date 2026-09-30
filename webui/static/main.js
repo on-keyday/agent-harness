@@ -3307,7 +3307,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const text = chatInput.value.trim();
     if (!text) return;
     chatInput.value = "";
-    chatAppend(window.harness.streamUserTurnLine(text), "c-you");
+    // No local echo: the adapter puts the turn on the stream, so this page
+    // shows it the way every other client and a later replay do.
     chatBusy = true;
     chatSetStatus("");
     try {

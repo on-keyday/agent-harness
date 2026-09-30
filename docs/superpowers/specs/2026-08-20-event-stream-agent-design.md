@@ -965,6 +965,38 @@ and the adapter dropped.
 Design and measurements:
 [`2026-09-30-stream-progress-design.md`](2026-09-30-stream-progress-design.md).
 
+## Amendment 2026-09-30e: a sent turn is on the stream, and thinking has text
+
+Two gaps the operator hit while driving a stream task from the TUI and the
+WebUI side by side.
+
+**A user turn existed only in the chat that sent it.** Claude does not echo a
+turn under stream-json, and each chat echoed its own turn locally. So another
+client, a later reattach and the task log never saw who asked what.
+
+- Now the adapter emits the turn as a `user_text` event after writing it to
+  the agent. It does this for every turn, including the opening `--prompt`.
+- Both chats dropped their local echo. They show the stream's line, like
+  every other client does.
+- `user_text` was already in the vocabulary (the transcript replay added it),
+  so nothing new reaches the wire.
+
+**Thinking blocks were empty.** Opus 4.7 and later return thinking TEXT only
+when the request asks for a summary. The Agent SDK exposes that as
+`ThinkingConfig.display: "summarized"`, whose API default is `"omitted"`.
+
+- The adapter now passes `--thinking-display summarized`. The flag is in the
+  claude binary (2.1.285) but NOT in `claude --help` or the CLI reference, so
+  a claude that predates it may refuse to start. That fails loudly at spawn.
+- Measured on Opus 5.5 with `-p` and stream-json: 0 chars without the flag;
+  with it, a 283-char summary and 25 non-empty thinking deltas.
+- `agentlog` now reads a thinking block's text and renders
+  `· thinking: <summary>`. An empty block still renders `· thinking`.
+
+Verified on a dummy harness with Opus 5.5. The task log and `session stream
+attach` both showed a turn sent from the CLI as `you ▶ …`, then
+`· thinking: …`, then the answer.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind

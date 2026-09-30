@@ -40,11 +40,13 @@ func TestClaudeDecoderGolden(t *testing.T) {
 	if !strings.HasPrefix(got[0], "▶ session ") {
 		t.Fatalf("line 0 = %q, want a session line", got[0])
 	}
+	// This capture's thinking blocks carry text (the model returned it), so
+	// they render as a summary line. Matched by prefix: the text is long.
 	want := []string{
-		"· thinking",
+		"· thinking: The user is asking me to:",
 		`→ Bash: {"command":"echo one","description":"Run echo one"}`,
 		"← one",
-		"· thinking",
+		"· thinking: The bash command executed successfully",
 		"done",
 		"✓ 5365ms $0.016351",
 	}
@@ -54,6 +56,12 @@ func TestClaudeDecoderGolden(t *testing.T) {
 			len(rest), len(want), strings.Join(got, "\n"))
 	}
 	for i := range want {
+		if strings.HasPrefix(want[i], "· thinking: ") {
+			if !strings.HasPrefix(rest[i], want[i]) {
+				t.Errorf("line %d = %q, want a summary starting %q", i+1, rest[i], want[i])
+			}
+			continue
+		}
 		if rest[i] != want[i] {
 			t.Errorf("line %d = %q, want %q", i+1, rest[i], want[i])
 		}

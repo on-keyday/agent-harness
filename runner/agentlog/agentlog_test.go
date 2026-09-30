@@ -74,7 +74,10 @@ func TestRender(t *testing.T) {
 	}{
 		{"raw", Event{Kind: KindRaw, Text: "plain line"}, "plain line"},
 		{"session", Event{Kind: KindSessionStart, Text: "sess-123"}, "▶ session sess-123"},
-		{"thinking", Event{Kind: KindThinking, Text: "ignored body"}, "· thinking"},
+		// A thinking block's text is a summary when the request asked for one,
+		// and it is shown; an empty block is still a liveness line.
+		{"thinking with a summary", Event{Kind: KindThinking, Text: "  weighing two options  "}, "· thinking: weighing two options"},
+		{"thinking without one", Event{Kind: KindThinking}, "· thinking"},
 		{"tool start", Event{Kind: KindToolStart, Tool: "Bash", Args: `{"command":"echo one"}`}, `→ Bash: {"command":"echo one"}`},
 		{"tool end", Event{Kind: KindToolEnd, Result: "one"}, "← one"},
 		{"tool end exit 0", Event{Kind: KindToolEnd, Result: "one", ExitCode: &exit0}, "← one"},

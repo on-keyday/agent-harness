@@ -544,7 +544,8 @@ func (m ChatModel) onKey(msg tea.KeyMsg) (ChatModel, tea.Cmd) {
 			return m, nil
 		}
 		m.input.SetValue("")
-		m.appendStyled(toneStyle(streamagent.ToneYou), streamagent.UserTurnLine(text))
+		// No local echo: the adapter puts the turn on the stream, so this chat
+		// shows it the same way every other client and a later replay do.
 		m.busy = true
 		m.elapsed = 0
 		m.status = ""

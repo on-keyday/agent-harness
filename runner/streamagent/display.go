@@ -2,8 +2,6 @@ package streamagent
 
 import (
 	"fmt"
-
-	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
 
 // Tone is what a chat surface should make a line LOOK like, decided once here
@@ -152,11 +150,4 @@ func RenderExit(ex Exit) (string, Tone) {
 		return fmt.Sprintf("agent exited: code=%d err=%s", ex.Code, ex.Err), ToneErr
 	}
 	return fmt.Sprintf("agent exited: code=%d", ex.Code), ToneMuted
-}
-
-// UserTurnLine is the echo a chat appends for a turn it sends. It is the same
-// line a replayed user turn renders to, so a typed turn and a replayed one
-// read alike by construction rather than by two copies of a prefix.
-func UserTurnLine(text string) string {
-	return agentlog.Render(agentlog.Event{Kind: agentlog.KindUserText, Text: text})
 }
