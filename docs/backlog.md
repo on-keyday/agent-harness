@@ -188,3 +188,50 @@ editing `detect_rules.json` in the same change.
 **Why deferred.** Wanted, not needed — nothing is blocked on it today. And a
 one-shot task has no PTY and no statusline, so this route cannot cover
 `submit`-created tasks at all.
+
+---
+
+## Any connect-PSK holder can register as a runner
+
+**What.** `role=runner` proves the connect PSK and nothing else, and every
+agent holds that PSK. So an agent can connect as a runner, declare whatever
+roots, hostname and runner id it likes, and be registered: there is no
+enrollment step (`pskGate.Check` step 2 → `RunnerHandler` Hello →
+`Registry.Add`). A registered runner is handed tasks together with a fresh
+ticket, and that ticket authenticates an agent connection for that task. For a
+task the operator submitted, the task's caps can be wider than the impostor's
+own caps. The operator PSK is kept separate so that an agent cannot get out of
+its caps. This path gets a similar result without going near operator auth.
+
+**Evidence** (2026-09-30, from reading the code, not exercised):
+
+- An impostor that is already up at submit time shows up as an error:
+  `handleSubmit` answers `AmbiguousRunner` when more than one candidate
+  matches.
+- A task that is already Queued is not checked again. `Scheduler.Tick` gives
+  it to any Idle runner whose root equals `RepoPath` and that passes
+  `selectorMatches`. It deliberately does not enforce `BoundRunnerID`. So
+  while the bound runner is Busy or Offline, an impostor that claims the same
+  root gets the task on the next Tick.
+- Pinning does not stop this. `ByHostname` and `ByRunnerId` compare values
+  the runner reports about itself in its hello, and an agent knows its own
+  runner's id from `HARNESS_RUNNER_ID`. `ByIp` matches any connection from
+  the same host. Only `ByConnId` is a value the server observes, and it
+  stops matching when the runner reconnects.
+- `dispatch.go` creates the ticket, registers it under
+  `(runner.Identity, task.ID)`, and sends it in `AssignTaskBody.AuthTicket`.
+  `gate.ValidateTicket` checks only the (runner id, task id, ticket) triple.
+- Not read: whether `Registry.Add` refuses a second entry with the same
+  identity, and where an agent connection's caps come from after `Validate`.
+
+**Why deferred.** A separate runner secret would not be a boundary. Most of
+the fleet today runs agents outside a sandbox, under the runner's uid. On
+those hosts the agent can read everything the runner reads, including files
+and `/proc/<pid>/environ`, and runner autostart needs a credential stored on
+disk. A separate secret would also break the way agents bring runners up with
+`scripts/runner.sh`, which works because they hold the connect PSK. So the
+boundary that actually holds today is this: an agent outside a sandbox has the
+same power as a runner, across the whole fleet and not only on its own host,
+because the PSK reaches every runner's queue. A fix worth doing would be an
+enrollment step that the server grants behind a capability, so that `--caps`
+can withhold it. Even that closes the path only once agents run in a sandbox.
