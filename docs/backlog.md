@@ -278,6 +278,16 @@ log.
 **Evidence** (2026-09-30): `ls --json` listed 33 retained tasks, all of them
 `interactive`.
 
-**Why deferred.** It is the same decision as whether oneshot stays: the log is
-oneshot's output channel, and its value rises and falls with whether anything
-consumes oneshot results.
+**The one use that does exist: a detached command.** `exec` is synchronous and
+dies with its caller, and its `--detach` was removed on purpose (README,
+"Running a command in a task's worktree"). The README names `submit --agent bash
+--task '…'` as the detached form, and the dummy-harness skill uses the same
+route to run agent-side commands under a task's `HARNESS_*`. For those, the log
+is where the output is read afterwards. So removing oneshot for claude and
+removing it for bash are separate decisions.
+
+**Why deferred. DECIDED (operator, 2026-09-30): leave it for now.** With the
+stream writer gone, an unused oneshot costs no writes; what it still costs is
+upkeep, since the logs pane and the WebUI log view are surfaces a feature
+change has to consider. Revisit when that upkeep gets in the way, starting from
+the claude path alone.
