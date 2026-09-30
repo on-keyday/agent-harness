@@ -44,11 +44,9 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// clean AttachSession error (not_detachable / not_interactive).
 	// IsPTYKind, not IsSessionKind: reattach hands the terminal to a PTY
 	// splice, which would paint an event stream's NDJSON as terminal bytes.
-	// The stream kind is not waiting on a renderer — it has one, and the TUI
-	// already shows it: the runner renders this kind's events into the task
-	// log, so the logs pane IS the follower. What it lacks is a TAKEOVER,
-	// which is a PTY concept: there is no seat to take. See the live-stream
-	// case below for what r says instead.
+	// The stream kind is not waiting on a renderer — it has one, the chat.
+	// What it lacks is a TAKEOVER, which is a PTY concept: there is no seat to
+	// take. See the live-stream case below for what r does instead.
 	if protocol.IsPTYKind(t.Kind) && taskSessionAlive(t.Status) {
 		return taskAction{Kind: actionReattach}
 	}

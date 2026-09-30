@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -165,10 +164,15 @@ func ParseAnswers(specs []string) (map[string][]string, error) {
 // set is a line that is not the protocol — `session send` can put one there —
 // and it is carried rather than dropped: a follower who cannot see what a
 // cowriter injected cannot explain what the adapter does next.
+//
+// Stderr=true is a line of the AGENT's stderr, which rides its own frame type
+// beside the NDJSON. The chats interleave it with the protocol lines: the task
+// log that used to be its only home is no longer written for this kind.
 type StreamLine struct {
 	Msg     streamagent.Msg
 	Raw     []byte
 	Decoded bool
+	Stderr  bool
 }
 
 // NotProtocolLine is how every follower shows a line that is not the adapter
@@ -180,11 +184,20 @@ func NotProtocolLine(raw []byte) string {
 	return "(not the protocol) " + EscapeForTerminal(raw)
 }
 
+// StderrLine is how every chat shows a line of the agent's stderr: escaped,
+// because it is whatever the agent's process printed.
+func StderrLine(raw []byte) string {
+	return "stderr: " + EscapeForTerminal(raw)
+}
+
 // LineDisplay is streamagent.DisplayOf for a line as read off the stream: a
 // line that is not the protocol displays as NotProtocolLine. The two chats
 // apply it — the TUI directly, the WebUI over the wasm bridge — so neither
 // words or escapes a line itself.
 func LineDisplay(l StreamLine) (streamagent.Display, bool) {
+	if l.Stderr {
+		return streamagent.Display{Text: StderrLine(l.Raw), Tone: streamagent.ToneWarn}, true
+	}
 	if !l.Decoded {
 		return streamagent.Display{Text: NotProtocolLine(l.Raw), Tone: streamagent.ToneRaw}, true
 	}
@@ -215,6 +228,7 @@ func decodeStreamLine(line []byte) (StreamLine, error) {
 type StreamSession struct {
 	stream *agentexec.CommandExecutionStream
 	rd     *bufio.Reader
+	erd    *bufio.Reader
 	// wmu serialises writes: ReadLine runs on its own goroutine, so a Send from
 	// the UI goroutine would otherwise interleave with nothing protecting the
 	// underlying stream.
@@ -227,7 +241,8 @@ func (c *Client) OpenStreamSession(ctx context.Context, taskIDHex string) (*Stre
 	if err != nil {
 		return nil, err
 	}
-	return &StreamSession{stream: stream, rd: bufio.NewReader(stream.Stdout())}, nil
+	return &StreamSession{stream: stream, rd: bufio.NewReader(stream.Stdout()),
+		erd: bufio.NewReader(stream.Stderr())}, nil
 }
 
 // ReadLine returns the next line off the stream. It BLOCKS; run it on its own
@@ -242,11 +257,16 @@ func (s *StreamSession) ReadLine() (StreamLine, error) {
 	return StreamLine{}, err
 }
 
-// Stderr is the AGENT's stderr, which rides its own frame type and is not
-// NDJSON. A caller that does not drain it backpressures the whole stream, so
-// treat this as required rather than optional — `session stream attach` copies
-// it on its own goroutine for exactly that reason.
-func (s *StreamSession) Stderr() io.Reader { return s.stream.Stderr() }
+// ReadStderrLine returns the next line of the AGENT's stderr, which rides its
+// own frame type and is not NDJSON. It BLOCKS; run it on its own goroutine, and
+// run it: an undrained stderr backpressures the whole stream.
+func (s *StreamSession) ReadStderrLine() (StreamLine, error) {
+	line, err := s.erd.ReadBytes('\n')
+	if len(line) > 0 {
+		return StreamLine{Raw: bytes.TrimRight(line, "\r\n"), Stderr: true}, err
+	}
+	return StreamLine{}, err
+}
 
 // Send writes one message. Safe from any goroutine.
 func (s *StreamSession) Send(m streamagent.Msg) error {

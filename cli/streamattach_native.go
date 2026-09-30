@@ -14,9 +14,9 @@ import (
 
 // SessionStreamAttach follows an event-stream task: it view-attaches, decodes
 // the neutral NDJSON riding in the Stdout frames, and renders each message as
-// the same one-line text the task log carries (streamagent.RenderText — the
-// shared renderer is what keeps `logs`, the runner tap and this view from
-// drifting apart). Rendered lines go to out; the agent's own stderr and this
+// the one-line text streamagent.RenderText gives it — the renderer the chats'
+// display is built on, so this view and the chats word a message alike.
+// Rendered lines go to out; the agent's own stderr and this
 // function's informational lines go to errOut.
 //
 // A VIEW attach on purpose: following is exec_view's meaning for this kind,

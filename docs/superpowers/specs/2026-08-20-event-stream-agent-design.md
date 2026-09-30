@@ -997,6 +997,55 @@ Verified on a dummy harness with Opus 5.5. The task log and `session stream
 attach` both showed a turn sent from the CLI as `you ▶ …`, then
 `· thinking: …`, then the answer.
 
+## Amendment 2026-09-30f: this kind writes no task log
+
+**DECIDED (operator, 2026-09-30). This reverses §3's "That is what makes it
+safe for this kind to render its events into the task log".** The runner no
+longer publishes anything to `task.<id>.log` for a stream task.
+
+**The premise that moved.** §3 wanted the log because "nobody being attached
+is the expected state and the ring evicts", so the stream alone would lose
+what happened while no one watched. That premise never weighed claude's own
+session transcript on the runner host, which holds the whole conversation, and
+which the 2026-09-30 replay design reads on every resume. Against it the log was
+a lossy copy: tool arguments and results cut at 200 bytes, a request reduced to
+its one-liner. No workflow relied on it. The skill for supervising workers
+already said `logs` covers oneshot tasks only. Meanwhile every event was a write
+on the server's disk. The operator was choosing the PTY kind over this one to
+avoid those writes.
+
+**What only the log held, and where it goes now.** Walked case by case:
+
+- A clean conversation, a crash mid-turn, an OOM kill, a runner death: the
+  transcript, the runner's own log, or the task's Failed row already cover them.
+  The log added nothing.
+- One thing lived nowhere else: the agent's stderr. It matters most when claude
+  fails at startup, for example expired credentials or a flag an older binary
+  refuses, before any transcript exists. It already rode the stream as Stderr
+  frames, but both chats discarded it on the strength of "the task log carries
+  it". Both chats now interleave it into the transcript as `stderr: <line>`,
+  escaped, in the warn tone. `cli.StreamSession.ReadStderrLine` reads it and
+  `cli.LineDisplay` words it, so the two chats cannot differ.
+  `session stream attach` already copied it to its stderr.
+- An adapter failure is in the `exit` line on the stream and in the task's
+  `TaskFinished` error. A line the runner cannot decode goes to the runner's
+  own log.
+
+**What is given up.** Suppose the agent writes to stderr while nobody is
+attached, and the server then restarts or the session ends. The ring goes with
+it, so that stderr is lost. If that is ever missed, the fix is to save the
+tail of the stream once, when the session ends, not to go back to writing
+every event.
+
+**Surfaces.**
+
+- The TUI's `session stream attach` used to switch to the logs pane. It now
+  opens the chat, the same view `r` opens.
+- Every text that sent an operator to "the logs pane" for this kind now names
+  the chat: the TUI's refusal for `session attach`, the WebUI's refusal for
+  attach, and the README.
+- `logs` on a stream task returns nothing. That is the truth, not an error.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind
@@ -1004,5 +1053,5 @@ attach` both showed a turn sent from the CLI as `you ▶ …`, then
 - Event-stream support for codex or agy. The seam is vendor-neutral by
   construction, but only a claude adapter is designed here, and the neutral
   vocabulary is not to be extended on speculation about a second one.
-- Persisting the event stream for replay beyond what the existing per-task log
-  already retains.
+- Persisting the event stream. The harness holds only the server's ring; the
+  vendor's own transcript is the record (Amendment 2026-09-30f).

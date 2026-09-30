@@ -75,10 +75,11 @@ func (c *Client) StartStreamChat(ctx context.Context, taskIDHex string) error {
 	slot.sess = sess
 	chatMu.Unlock()
 
-	// The agent's stderr rides its own frame type and is not NDJSON. An
-	// undrained side backpressures the whole stream, so drain it even though
-	// this view does not show it — the task log carries it tagged [err].
-	go func() { _, _ = io.Copy(io.Discard, sess.Stderr()) }()
+	// The agent's stderr rides its own frame type and is not NDJSON. It is
+	// interleaved into the transcript, as in the TUI chat: this kind writes no
+	// task log, so the chat is where an agent's complaint is seen. Draining it
+	// is also what keeps it from backpressuring the whole stream.
+	go streamChatStderrPump(taskIDHex, sess, gen)
 	go streamChatPump(taskIDHex, sess, gen)
 	return nil
 }
@@ -133,6 +134,22 @@ func streamChatPump(taskID string, sess *StreamSession, gen uint64) {
 				msg = err.Error()
 			}
 			chatCall(gen, "harness_streamClosed", taskID, msg)
+			return
+		}
+	}
+}
+
+// streamChatStderrPump hands each stderr line to the page as a line with its
+// display decided, the same call a protocol line takes.
+func streamChatStderrPump(taskID string, sess *StreamSession, gen uint64) {
+	for {
+		line, err := sess.ReadStderrLine()
+		if len(line.Raw) > 0 {
+			if !chatCall(gen, "harness_streamLine", taskID, string(line.Raw), displayForJS(line)) {
+				return
+			}
+		}
+		if err != nil {
 			return
 		}
 	}

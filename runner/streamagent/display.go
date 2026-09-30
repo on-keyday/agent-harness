@@ -154,8 +154,8 @@ func RenderExit(ex Exit) (string, Tone) {
 	return fmt.Sprintf("agent exited: code=%d", ex.Code), ToneMuted
 }
 
-// QuestionSummary is a question request's one-line form, for the task log and
-// the chats' notice line: the first question, how many more, and the id.
+// QuestionSummary is a question request's one-line form, for `session stream
+// attach` and the chats' notice line: the first question, how many more, and the id.
 func QuestionSummary(r Request) string {
 	if len(r.Questions) == 0 {
 		return ""

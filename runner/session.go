@@ -932,7 +932,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// The event-stream kind: same stream, same lifecycle, a different thing on
 	// the far end of it. StreamTask runs the adapter through agentexec with
 	// ptyEnabled=false, so the frames carry neutral NDJSON rather than terminal
-	// bytes, and taps them for the pending table and the task log.
+	// bytes, and taps them for the pending table and the agent's exit.
 	if oer.EventStream() {
 		st := &StreamTask{
 			AdapterPath: streamProfile.StreamAdapter,
@@ -943,22 +943,15 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// sends the first user turn, the same shape `session new` has.
 			ResumeConversation: oer.ResumeConversation(),
 			Logger:             log,
-			// Events are ALSO rendered into the task log, as the oneshot path
-			// does. `Detached` is a normal state for this kind — §4's default
-			// is to block, so nobody being attached is the expected case — and
-			// the ring evicts, so the stream alone loses what happened while
-			// no one was watching.
-			//
-			// The PTY kind has no equivalent, and not for want of needing one:
-			// terminal bytes replay wrong without VT state, so a text log of
-			// them would be worse than none. Structured events render
-			// losslessly, which is what makes this possible here at all.
-			//
-			// This was briefly removed for opening a capability hole — reading
-			// the stream needs exec_view, while GetTaskLog was gated on
-			// visibility alone. The hole was real; it is fixed at its source
-			// instead, and GetTaskLog now requires exec_view for every kind.
-			LogSink: func(b []byte) { _ = s.Sender.Publish(topics.TaskLog(taskIDHex), b) },
+			// No task log for this kind. It rendered every event into one
+			// until 2026-09-30, on the premise that the ring evicts and so
+			// the stream alone loses what happened while nobody watched. That
+			// premise missed claude's own session transcript on the runner
+			// host, which holds the whole conversation (and which a resume
+			// now replays). The log was a lossy copy that no workflow relied
+			// on, paid for in writes on the server's disk. Removed by operator
+			// decision; the agent's stderr, the one thing only the log kept,
+			// is shown by both chats instead.
 		}
 		runErr := st.Run(taskCtx, stream)
 

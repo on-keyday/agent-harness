@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -23,8 +22,9 @@ import (
 // ChatModel is the event-stream kind's driving surface: a conversation view
 // over one task's stream, entered with `r` on a live stream task.
 //
-// It reads the STREAM rather than the task log, and that is forced rather than
-// stylistic. streamagent.RenderText renders a request as "⏸ approval needed:
+// It reads the STREAM, which is the only place this kind's events are (it
+// writes no task log), and it would have to even if there were a log.
+// streamagent.RenderText renders a request as "⏸ approval needed:
 // <tool> (<id>)" and drops Input entirely; agentlog.Render truncates a
 // tool_start's args at 200 bytes. Both are right for a progress feed and wrong
 // for deciding whether to allow a Write whose content is the thing at stake —
@@ -297,10 +297,21 @@ func (m *ChatModel) Open(ctx context.Context, c *cli.Client, program *tea.Progra
 		// here: Update owns the model, and a goroutine writing m.sess would be
 		// a data race with every keystroke.
 		program.Send(chatAttachedMsg{TaskID: taskID, Sess: sess})
-		// The agent's stderr rides its own frame type and is not NDJSON. An
-		// undrained side backpressures the whole stream, so it is drained even
-		// though this view does not show it — the task log carries it tagged.
-		go func() { _, _ = io.Copy(io.Discard, sess.Stderr()) }()
+		// The agent's stderr rides its own frame type and is not NDJSON. It is
+		// interleaved into the transcript: this kind writes no task log, so
+		// the chat is where an agent's complaint is seen. Draining it is also
+		// what keeps it from backpressuring the whole stream.
+		go func() {
+			for {
+				line, err := sess.ReadStderrLine()
+				if line.Raw != nil {
+					program.Send(ChatLineMsg{TaskID: taskID, Line: line})
+				}
+				if err != nil || pumpCtx.Err() != nil {
+					return
+				}
+			}
+		}()
 		for {
 			line, err := sess.ReadLine()
 			if line.Raw != nil || line.Decoded {
@@ -414,7 +425,7 @@ func (m *ChatModel) appendStyled(st lipgloss.Style, l string) {
 // applyLine folds one stream line into the view.
 //
 // Every line but a request goes through cli.LineDisplay, whose event text is
-// streamagent.RenderText — the SAME renderer the task log uses. The REQUEST
+// streamagent.RenderText — the SAME renderer `session stream attach` uses. The REQUEST
 // case is the one that deliberately differs: RenderText's one-liner is a
 // notification, and this view needs the payload.
 func (m *ChatModel) applyLine(line cli.StreamLine) {

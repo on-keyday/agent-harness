@@ -522,17 +522,13 @@ func (h tuiVerbs) SessionKill(v verb.SessionAction) tea.Cmd {
 }
 
 func (h tuiVerbs) SessionStreamAttach(v verb.SessionAction) tea.Cmd {
-	a := h.a
 	full, ok := h.sessionTask(v)
 	if !ok {
 		return nil
 	}
-	// Following an event-stream task in the TUI IS following its log: the
-	// runner renders this kind's events into the task log, so the logs pane is
-	// the follower — the same content the CLI's `session stream attach` shows.
-	a.cmdresult.Append(fmt.Sprintf("stream attach %s: following its events in the logs pane", shortTaskID(full)))
-	a.setFocus(focusLogs)
-	return a.followTask(full)
+	// The chat IS the TUI's follower for this kind: it reads the stream the
+	// CLI's `session stream attach` reads, and this kind writes no task log.
+	return h.a.openChat(full)
 }
 
 func (h tuiVerbs) SessionStreamTurn(v verb.SessionAction) tea.Cmd      { return h.streamWrite(v) }

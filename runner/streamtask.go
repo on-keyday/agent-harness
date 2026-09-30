@@ -26,8 +26,8 @@ import (
 // standing rule that exec/frame is legacy and not extended.
 //
 // What this file still owns, and agentexec deliberately does not: the
-// pending-approval table, the task-log rendering, and the adapter argv. Those
-// hang off ExecuteOption.Audit, which taps raw stdout/stdin payloads — the hook
+// pending-approval table, the adapter's in-band exit, and the adapter argv.
+// The first two hang off ExecuteOption.Audit, which taps raw stdout/stdin payloads — the hook
 // that exists for exactly this and made a stream wrapper unnecessary.
 //
 // The three negatives from §2 of the design hold: this file does not parse
@@ -49,10 +49,6 @@ type StreamTask struct {
 	ResumeConversation bool
 
 	Logger *slog.Logger
-
-	// LogSink receives rendered log lines in the same shape the oneshot path
-	// publishes, so `logs` and the log panes need no changes for this kind.
-	LogSink func([]byte)
 
 	// OnPending fires when the pending-request count changes, so the task can
 	// report `pending=N`. §3 puts this count on the task rather than adding a
@@ -143,12 +139,6 @@ func (t *StreamTask) Run(ctx context.Context, stream trsf.BidirectionalStream) e
 		agentexec.ExecuteOption{Audit: &streamTap{task: t}})
 }
 
-func (t *StreamTask) log(s string) {
-	if t.LogSink != nil {
-		t.LogSink([]byte(s + "\n"))
-	}
-}
-
 func (t *StreamTask) notifyPending(n int) {
 	if t.OnPending != nil {
 		t.OnPending(n)
@@ -189,37 +179,20 @@ func (s *streamTap) Stdin(data []byte) {
 }
 
 // Stderr is the AGENT's stderr, already passed through verbatim by the adapter.
-// It reaches the client as Stderr frames on its own; this copy goes to the task
-// log, tagged the way the oneshot path tags it.
-func (s *streamTap) Stderr(data []byte) {
-	for _, line := range splitLines(data) {
-		s.task.log("[err]" + line)
-	}
-}
+// It reaches the client as Stderr frames on its own, and both chats show it;
+// the runner keeps no copy.
+func (s *streamTap) Stderr([]byte) {}
 
 // onAdapterLine is the adapter → client direction.
 func (s *streamTap) onAdapterLine(line []byte) {
 	m, err := streamagent.DecodeMsg(line)
 	if err != nil {
 		// A line the runner cannot read still reaches the client untouched —
-		// it was already framed by the time this ran. Logging it is all the
-		// runner can honestly do; failing the task on a line it merely does not
-		// understand would make an adapter newer than the runner fatal.
-		s.task.log("[err]adapter line not understood: " + err.Error())
+		// it was already framed by the time this ran. Failing the task on a
+		// line it merely does not understand would make an adapter newer than
+		// the runner fatal.
+		s.task.logger().Warn("adapter line not understood", "err", err)
 		return
-	}
-	// The display line comes from the SHARED renderer (events and requests),
-	// so this log and the CLI's `session stream attach` cannot drift into two
-	// renderings of one message.
-	// A replayed event is history the log either already holds (a stream task
-	// resumed as a stream) or is not where the operator reads it (a PTY task
-	// resumed as a stream). Only its bracket lines, EventRaw, are logged, so
-	// the log still records that a replay happened. Design:
-	// docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md §4.
-	replayed := m.Kind == streamagent.KindEvent && m.Event != nil &&
-		m.Event.Replay && m.Event.Kind != streamagent.EventRaw
-	if line, ok := streamagent.RenderText(m); ok && !replayed {
-		s.task.log("[out]" + line)
 	}
 	switch m.Kind {
 	case streamagent.KindRequest:
@@ -252,9 +225,6 @@ func (s *streamTap) onAdapterLine(line []byte) {
 			s.task.mu.Lock()
 			s.task.exit = &ex
 			s.task.mu.Unlock()
-			if ex.Err != "" {
-				s.task.log("[err]adapter: " + ex.Err)
-			}
 		}
 	}
 }
@@ -277,9 +247,6 @@ func (s *streamTap) onClientLine(line []byte) {
 		return
 	}
 	s.task.notifyPending(n)
-	// The log line is the adapter's `resolved`, rendered like every other
-	// adapter line, so it records a DELIVERED answer rather than a forwarded
-	// one and is not written twice.
 }
 
 // appendLines accumulates data into buf and calls fn for each complete line,
@@ -309,28 +276,3 @@ func indexNewline(b []byte) int {
 	}
 	return -1
 }
-
-// splitLines is appendLines' one-shot form for stderr, which needs no
-// cross-call buffering: a partial trailing line is logged as-is rather than
-// held back, because a diagnostic that arrives late is worse than one that
-// arrives split.
-func splitLines(data []byte) []string {
-	var out []string
-	start := 0
-	for i := range data {
-		if data[i] == '\n' {
-			if i > start {
-				out = append(out, string(data[start:i]))
-			}
-			start = i + 1
-		}
-	}
-	if start < len(data) {
-		out = append(out, string(data[start:]))
-	}
-	return out
-}
-
-// The neutral→agentlog conversion and the shared display line both live in
-// streamagent (Event.ToAgentlog / RenderText), so the CLI's stream attach and
-// this tap render one message identically by construction.

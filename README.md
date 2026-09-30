@@ -270,17 +270,18 @@ bin/harness-cli session await-idle kill <watcher-id>
 
 # 5b. Event-stream sessions (TaskKind stream): same lifecycle as a PTY session,
 # but the data plane is structured agent events (NDJSON from the profile's
-# stream adapter, --agent-stream-adapter) instead of terminal bytes. The
-# events also render into the task log, so `logs` / the TUI logs pane / the
-# WebUI log view follow one without attaching. The attach response carries the
+# stream adapter, --agent-stream-adapter) instead of terminal bytes. It writes
+# no task log: the harness holds the stream (the server's ring), and the whole
+# conversation is in claude's own session transcript on the runner host. The
+# agent's stderr is interleaved into both chats. The attach response carries the
 # task's kind, so a PTY verb pointed at a stream task refuses and names the
 # right one (and vice versa); `session resize` / `session exec` refuse (no
 # PTY, no shell), `session send` stays the raw low-level escape hatch for both
 # kinds. `session stream requests` / `snapshot` are specified in the
 # event-stream design spec and not built yet; until they are,
 # `session snapshot --raw` reads this kind's stream verbatim, which is where a
-# pending approval's tool input can be read whole (the task log renders a
-# request as a one-liner and truncates a tool's arguments at 200 bytes).
+# pending approval's tool input can be read whole (`session stream attach`
+# renders a request as a one-liner and truncates a tool's arguments at 200 bytes).
 # Only a profile that NAMES an adapter serves this kind; the rest refuse the
 # task rather than handing it a PTY. `scripts/runner.sh up --agents claude`
 # (also sandbox-claude) supplies bin/harness-stream-adapter, which `make build`
@@ -291,9 +292,8 @@ bin/harness-cli session await-idle kill <watcher-id>
 # resumed first, read from claude's own session transcript on the runner host.
 # That covers a conversation begun as a PTY session too. The replay is bounded
 # (the most recent part), each replayed line is marked `↺`, it sits between
-# `── previous conversation … ──` and `── resumed ──`, and it is not written
-# into the task log again. If no transcript can be found, one warning says so
-# and the resume carries on.
+# `── previous conversation … ──` and `── resumed ──`. If no transcript can be
+# found, one warning says so and the resume carries on.
 bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
 bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,
@@ -1166,8 +1166,7 @@ the two inside it. `--json` is CLI-only there: this surface answers with a
 live view and has nothing to pipe a dump into.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
-follows its events in the logs pane, which is where this kind's events
-render anyway. `caps NAMES`
+opens the chat on it, the same view `r` opens. `caps NAMES`
 / `scope SPEC` set the session-default authority for subsequent spawns
 (no argument opens the selection picker); per-spawn `--caps` / `--scope`
 override it, and on a resume re-grant only what was literally typed.

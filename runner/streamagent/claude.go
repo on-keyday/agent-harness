@@ -89,7 +89,7 @@ type ClaudeOpts struct {
 
 	Out    io.Writer // neutral NDJSON out (the runner's pipe)
 	In     io.Reader // neutral NDJSON in
-	ErrOut io.Writer // agent stderr, verbatim, for the task log
+	ErrOut io.Writer // agent stderr, verbatim: it reaches the client as Stderr frames
 }
 
 // RunClaude runs one event-stream session end to end. It returns when the

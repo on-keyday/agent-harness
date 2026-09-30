@@ -323,6 +323,15 @@ func (a *App) onSetParent(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
+// openChat opens the event-stream kind's conversation view on taskID: the one
+// way the TUI follows and drives that kind, whether reached by r or by
+// `session stream attach` on the command line.
+func (a *App) openChat(taskID string) tea.Cmd {
+	a.chat.Open(a.appCtx, a.client, a.program, taskID)
+	a.chat.SetSize(a.width, a.height)
+	return chatTickCmd()
+}
+
 // `r` / `R` re-enter the selected session: reattach a live Detached
 // session, or resume a finished task into a new detachable session.
 // r resumes with --continue (keep claude's memory); R resumes fresh.
@@ -349,9 +358,7 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 			a.cmdresult.Append(WarnStyle.Render("u/U: pick a finished task to resume without assigned runner"))
 			return nil, true
 		}
-		a.chat.Open(a.appCtx, a.client, a.program, a.tasks.SelectedID())
-		a.chat.SetSize(a.width, a.height)
-		return chatTickCmd(), true
+		return a.openChat(a.tasks.SelectedID()), true
 	case actionResume:
 		// repo is irrelevant on resume — the server reuses the task's
 		// RepoPath and worktree branch. Prefer the runner the task last

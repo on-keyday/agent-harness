@@ -273,10 +273,10 @@ func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) 
 		// event-stream task would paint raw NDJSON. The keybinding routes are
 		// already IsPTYKind-gated at the row; this catches the cmdline route
 		// (`session attach <id>`), where the kind is only known from the
-		// response. The events are followable in the logs pane (enter).
+		// response. The chat (r on the task) follows and drives this kind.
 		if kind == protocol.TaskKind_Stream {
 			_ = stream.Close()
-			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: task %s is an event-stream session (no terminal): follow its events in the logs pane (enter on the task), or `session stream attach` from the CLI", taskIDHex)}
+			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: task %s is an event-stream session (no terminal): open its chat (r on the task, or `session stream attach`)", taskIDHex)}
 		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskIDHex}
 	}

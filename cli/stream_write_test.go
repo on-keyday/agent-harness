@@ -153,6 +153,23 @@ func TestLineDisplayEscapesANonProtocolLine(t *testing.T) {
 	}
 }
 
+// The agent's stderr is interleaved into both chats now that this kind writes
+// no task log, so it is escaped like any other line a process wrote, and it is
+// shown even when it happens to be valid protocol JSON: which side it arrived
+// on decides what it is.
+func TestLineDisplayShowsStderrEscaped(t *testing.T) {
+	d, ok := LineDisplay(StreamLine{Raw: []byte("\x1b[31m{\"v\":1,\"kind\":\"event\"}"), Stderr: true})
+	if !ok {
+		t.Fatal("a stderr line has no display")
+	}
+	if want := `stderr: \x1b[31m{"v":1,"kind":"event"}`; d.Text != want {
+		t.Fatalf("got %q, want %q", d.Text, want)
+	}
+	if d.Tone != streamagent.ToneWarn || d.SetStatus {
+		t.Fatalf("got %+v, want a warn line that leaves the status alone", d)
+	}
+}
+
 func TestParseAnswers(t *testing.T) {
 	got, err := ParseAnswers([]string{"Format=Summary", "Sections=Intro", "Sections=a=b"})
 	if err != nil {

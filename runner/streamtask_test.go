@@ -188,18 +188,12 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 	stream, cl := newStreamPair()
 
 	var mu sync.Mutex
-	var logLines []string
 	var pendingSeen []int
 
 	task := &StreamTask{
 		AdapterPath: testAdapter(t),
 		AgentArgv:   []string{agent},
 		Dir:         t.TempDir(),
-		LogSink: func(b []byte) {
-			mu.Lock()
-			defer mu.Unlock()
-			logLines = append(logLines, strings.TrimRight(string(b), "\n"))
-		},
 		OnPending: func(n int) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -297,16 +291,6 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	joined := strings.Join(logLines, "\n")
-	if !strings.Contains(joined, "[out]working") {
-		t.Errorf("the agent's text was not rendered into the task log:\n%s", joined)
-	}
-	if !strings.Contains(joined, "approval needed") {
-		t.Errorf("a blocked approval left no trace in the task log:\n%s", joined)
-	}
-	if strings.Contains(joined, `"kind":"event"`) {
-		t.Errorf("neutral JSON leaked into the task log instead of a rendered line:\n%s", joined)
-	}
 	if len(pendingSeen) == 0 || pendingSeen[0] != 1 || pendingSeen[len(pendingSeen)-1] != 0 {
 		t.Errorf("pending counts = %v, want 1 then back to 0", pendingSeen)
 	}
@@ -376,164 +360,5 @@ func TestStreamTaskFailsLoudlyOnAMissingAdapter(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does-not-exist") {
 		t.Errorf("the error does not name the adapter: %v", err)
-	}
-}
-
-// Events reach BOTH the stream and the task log, and that is deliberate.
-// `Detached` is a normal state for this kind, so the stream alone loses what
-// happened while nobody was attached.
-//
-// An earlier version of this test asserted the opposite — that nothing reaches
-// the log — because publishing opened a capability hole: reading the stream
-// needs exec_view while GetTaskLog was gated on visibility alone. The hole was
-// real and is fixed at its source instead; GetTaskLog now requires exec_view
-// for every kind, so the two paths carry the same payload under the same gate.
-func TestStreamTaskRendersEventsIntoTheTaskLog(t *testing.T) {
-	agent := fakeStreamAgent(t,
-		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"recorded"}]}}'`+"\n"+
-			"cat > /dev/null\n")
-	stream, cl := newStreamPair()
-
-	var logged []string
-	var mu sync.Mutex
-	task := &StreamTask{
-		AdapterPath: testAdapter(t),
-		AgentArgv:   []string{agent},
-		Dir:         t.TempDir(),
-		LogSink: func(b []byte) {
-			mu.Lock()
-			defer mu.Unlock()
-			logged = append(logged, strings.TrimRight(string(b), "\n"))
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- task.Run(ctx, stream) }()
-
-	var sawOnStream bool
-	deadline := time.Now().Add(30 * time.Second)
-	for !sawOnStream && time.Now().Before(deadline) {
-		payload, err := cl.nextStdout()
-		if err != nil {
-			break
-		}
-		if strings.Contains(string(payload), "recorded") {
-			sawOnStream = true
-		}
-	}
-	_ = cl.finish()
-	// Keep reading. The adapter still writes its exit line, and a reader that
-	// stops early blocks the writer — which looks exactly like a teardown
-	// deadlock, as it did the first two times.
-	go func() {
-		for {
-			if _, err := cl.nextStdout(); err != nil {
-				return
-			}
-		}
-	}()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("Run did not return")
-	}
-
-	if !sawOnStream {
-		t.Error("the event never reached the stream")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	joined := strings.Join(logged, "\n")
-	if !strings.Contains(joined, "recorded") {
-		t.Errorf("the event was not rendered into the task log:\n%s", joined)
-	}
-	if strings.Contains(joined, `"kind":"event"`) {
-		t.Errorf("neutral JSON reached the log instead of a rendered line:\n%s", joined)
-	}
-}
-
-// A resume replays the agent's transcript onto the stream, but the task log
-// keeps only the two bracket lines: the history is either already in the log
-// (a stream task resumed as a stream) or not read there (a PTY task resumed
-// as a stream). Design:
-// docs/superpowers/specs/2026-09-30-stream-resume-transcript-replay-design.md §4.
-func TestStreamTaskDoesNotLogReplayedHistory(t *testing.T) {
-	dir := t.TempDir()
-	cfg := t.TempDir()
-	// CLAUDE_CODE_PROJECT_DIR_NAME names the project directory outright, so this
-	// test needs no copy of the adapter's directory-name encoding (which its
-	// own package tests).
-	proj := filepath.Join(cfg, "projects", "replay-test")
-	if err := os.MkdirAll(proj, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	transcript := `{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"remember the codeword"}}` + "\n" +
-		`{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"text","text":"history-answer"}]}}` + "\n"
-	if err := os.WriteFile(filepath.Join(proj, "s1.jsonl"), []byte(transcript), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	agent := fakeStreamAgent(t,
-		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"live-answer"}]}}'`+"\n"+
-			"cat > /dev/null\n")
-	stream, cl := newStreamPair()
-
-	var logged []string
-	var mu sync.Mutex
-	task := &StreamTask{
-		AdapterPath:        testAdapter(t),
-		AgentArgv:          []string{agent},
-		Dir:                dir,
-		Env:                []string{"CLAUDE_CONFIG_DIR=" + cfg, "CLAUDE_CODE_PROJECT_DIR_NAME=replay-test"},
-		ResumeConversation: true,
-		LogSink: func(b []byte) {
-			mu.Lock()
-			defer mu.Unlock()
-			logged = append(logged, strings.TrimRight(string(b), "\n"))
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- task.Run(ctx, stream) }()
-
-	var onStream strings.Builder
-	deadline := time.Now().Add(30 * time.Second)
-	for !strings.Contains(onStream.String(), "live-answer") && time.Now().Before(deadline) {
-		payload, err := cl.nextStdout()
-		if err != nil {
-			break
-		}
-		onStream.Write(payload)
-	}
-	_ = cl.finish()
-	go func() {
-		for {
-			if _, err := cl.nextStdout(); err != nil {
-				return
-			}
-		}
-	}()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("Run did not return")
-	}
-
-	if !strings.Contains(onStream.String(), "history-answer") {
-		t.Errorf("the replayed history never reached the stream:\n%s", onStream.String())
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	joined := strings.Join(logged, "\n")
-	if strings.Contains(joined, "history-answer") || strings.Contains(joined, "remember the codeword") {
-		t.Errorf("replayed history reached the task log:\n%s", joined)
-	}
-	if !strings.Contains(joined, "previous conversation") || !strings.Contains(joined, "resumed") {
-		t.Errorf("the replay's bracket lines are missing from the task log:\n%s", joined)
-	}
-	if !strings.Contains(joined, "live-answer") {
-		t.Errorf("the live event was not logged:\n%s", joined)
 	}
 }

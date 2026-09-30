@@ -213,6 +213,10 @@ lines). Reasons:
 
 The bracket lines still record in the log that a replay happened.
 
+**Superseded the same day.** The stream kind now writes no task log at all
+([event-stream spec, Amendment 2026-09-30f](2026-08-20-event-stream-agent-design.md)),
+so this filter went with it.
+
 ### 5. Surfaces
 
 | Surface | Change |
