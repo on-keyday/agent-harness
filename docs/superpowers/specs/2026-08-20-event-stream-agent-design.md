@@ -917,6 +917,38 @@ the live verification are in
 [`2026-09-30-stream-resume-transcript-replay-design.md`](2026-09-30-stream-resume-transcript-replay-design.md)
 §Amendment 2026-09-30b.
 
+## Amendment 2026-09-30c: a request's end is on the stream (`resolved`)
+
+§3 said answering is non-exclusive and that the first answer wins. What it
+did not settle is how a FOLLOWER learns that a request has ended.
+
+- A request line stays in the server's ring. The answer to it travels client
+  → adapter and never enters the ring.
+- So every reattach replayed each past request as still waiting. The
+  operator saw a request they had already answered come back.
+- A request answered from one client also stayed open in every other chat.
+
+Fix: after the adapter has written an answer to the agent, it emits
+`{"kind":"resolved","resolved":{"id","behavior"}}`. That line is the
+authoritative end of the request.
+
+- An answer the adapter refuses (an unknown or already-answered id) emits
+  nothing.
+- `streamagent.DisplayOf` turns the line into `Display.Resolves`, and both
+  chats drop a pending request that matches it.
+- The runner's pending table honours it too.
+- The task log's `▶ <id>: <behavior>` line is now this line rendered, so it
+  records a DELIVERED answer. It used to be the runner echoing the client's
+  response as it was FORWARDED, which is the "no delivery ack" gap §3's
+  wiring left open.
+
+The change is additive and `ProtocolVersion` stays 1. A client that has not
+been upgraded ignores the kind, so it shows today's behaviour.
+
+Verified on a dummy harness: a Write approval was raised, then answered with
+`session stream approve --allow`. `session stream attach` afterwards replayed
+the request line followed by `▶ <id>: allow`, and the file was written.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind

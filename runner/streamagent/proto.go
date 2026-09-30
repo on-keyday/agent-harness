@@ -96,6 +96,15 @@ const (
 	KindFinish MsgKind = "finish"
 	// KindExit reports the agent process exiting. Adapter → runner, last line.
 	KindExit MsgKind = "exit"
+	// KindResolved reports that a request is no longer pending: the adapter
+	// delivered an answer to the agent. Adapter → runner.
+	//
+	// It exists because the stream is REPLAYED. A request line stays in the
+	// server's ring, and the answer to it travels the other way (client →
+	// adapter) and never enters the ring. Without this, every reattach showed
+	// every past request as waiting again, and a request answered from one
+	// client stayed open in every other chat.
+	KindResolved MsgKind = "resolved"
 )
 
 // Msg is one NDJSON line in either direction.
@@ -111,6 +120,7 @@ type Msg struct {
 	Interrupt *Interrupt `json:"interrupt,omitempty"`
 	Finish    *Finish    `json:"finish,omitempty"`
 	Exit      *Exit      `json:"exit,omitempty"`
+	Resolved  *Resolved  `json:"resolved,omitempty"`
 }
 
 // Hello opens the stream. Vendor and AgentVersion are descriptive; Protocol is
@@ -275,6 +285,14 @@ type Finish struct {
 // UserTurn is text to feed the agent as a new turn.
 type UserTurn struct {
 	Text string `json:"text"`
+}
+
+// Resolved names the request an answer settled, and how. It is emitted only
+// after the answer was written to the agent: a refused answer (an unknown or
+// already-answered id) resolves nothing.
+type Resolved struct {
+	ID       string   `json:"id"`
+	Behavior Behavior `json:"behavior"`
 }
 
 // Exit reports the agent process ending. The adapter sends it last, then

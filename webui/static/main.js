@@ -3152,6 +3152,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (d.text) chatAppend(d.text, "c-" + (d.tone || "muted"));
     if (d.setStatus) chatSetStatus(d.status || "");
     if (d.idle) chatBusy = false;
+    // A request settled anywhere — this page, another client, or before this
+    // page attached and replayed — is no longer waiting on anyone.
+    if (d.resolves && chatPending && chatPending.id === d.resolves) {
+      chatPending = null;
+      chatShowApproval();
+    }
     return true;
   };
 

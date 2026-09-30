@@ -526,7 +526,17 @@ func (a *claudeAdapter) answer(r Response) error {
 			"response":   inner,
 		},
 	}
-	return a.writeVendor(out)
+	if err := a.writeVendor(out); err != nil {
+		return err
+	}
+	// Only now is the request settled, and the line says so on the stream the
+	// server keeps: a follower replaying it sees the request AND its end.
+	verdict := BehaviorAllow
+	if r.Behavior == BehaviorDeny {
+		verdict = BehaviorDeny
+	}
+	_ = a.w.Resolved(Resolved{ID: r.ID, Behavior: verdict})
+	return nil
 }
 
 // originalInput is a placeholder for the skeleton: the adapter keeps only the

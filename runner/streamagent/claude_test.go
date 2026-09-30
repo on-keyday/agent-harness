@@ -347,13 +347,19 @@ func TestSecondAnswerIsRefused(t *testing.T) {
 			"cat > "+inFile+"\n")
 
 	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
-		if m.Kind != KindRequest {
+		if m.Kind == KindRequest {
+			r := Response{ID: m.Request.ID, Behavior: BehaviorAllow}
+			// Written off this goroutine: it is the one reading the adapter's
+			// output, and the first answer makes the adapter write a
+			// `resolved` line. Writing both here would block the second write
+			// on an adapter that is blocked on us.
+			go func() {
+				_ = in.Response(r)
+				_ = in.Response(r) // the same answer twice: first wins
+			}()
 			return false
 		}
-		r := Response{ID: m.Request.ID, Behavior: BehaviorAllow}
-		_ = in.Response(r)
-		_ = in.Response(r) // the same answer twice: first wins
-		return true
+		return m.Kind == KindEvent && m.Event.Kind == EventError && strings.Contains(m.Event.Text, "no pending request")
 	})
 
 	if n := strings.Count(readFile(t, inFile), `"type":"control_response"`); n != 1 {
@@ -649,5 +655,37 @@ func TestRequestIDsCarryAPerRunNonce(t *testing.T) {
 	}
 	if b.mintRequestID() == first {
 		t.Error("the second run's first id collides with the first run's")
+	}
+}
+
+// An answer the adapter delivered is announced as `resolved` on the stream the
+// server keeps, exactly once, and a refused one announces nothing. A follower
+// replaying the ring then sees each request AND its end — before this, every
+// reattach showed every past request as waiting again.
+func TestADeliveredAnswerIsAnnouncedAsResolved(t *testing.T) {
+	agent := fakeAgent(t, filepath.Join(t.TempDir(), "argv"),
+		`printf '%s\n' '{"type":"control_request","request_id":"vendor-1","request":{"subtype":"can_use_tool","tool_name":"Write"}}'`+"\n"+
+			"cat > /dev/null\n")
+	var reqID string
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindRequest {
+			reqID = m.Request.ID
+			// Off the reading goroutine, for the reason TestSecondAnswerIsRefused gives.
+			go func() {
+				_ = in.Response(Response{ID: reqID, Behavior: BehaviorDeny, Message: "no"})
+				_ = in.Response(Response{ID: reqID, Behavior: BehaviorAllow}) // refused: already answered
+			}()
+			return false
+		}
+		return m.Kind == KindEvent && m.Event.Kind == EventError && strings.Contains(m.Event.Text, "no pending request")
+	})
+	var resolved []Resolved
+	for _, m := range msgs {
+		if m.Kind == KindResolved && m.Resolved != nil {
+			resolved = append(resolved, *m.Resolved)
+		}
+	}
+	if len(resolved) != 1 || resolved[0].ID != reqID || resolved[0].Behavior != BehaviorDeny {
+		t.Fatalf("resolved lines %+v, want exactly one {%s deny}", resolved, reqID)
 	}
 }

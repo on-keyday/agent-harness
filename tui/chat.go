@@ -319,6 +319,15 @@ func (m *ChatModel) applyLine(line cli.StreamLine) {
 	if d.Idle {
 		m.busy = false
 	}
+	if d.Resolves != "" && m.pending != nil && m.pending.ID == d.Resolves {
+		// Settled, wherever the answer came from. A deny reason still being
+		// typed for it has nothing left to answer.
+		if m.mode != chatModeNormal {
+			m.cancelSubMode()
+		}
+		m.pending = nil
+		m.status = ""
+	}
 }
 
 // toneStyle is this surface's paint for a streamagent.Tone. The WebUI's is the

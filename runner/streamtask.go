@@ -232,6 +232,20 @@ func (s *streamTap) onAdapterLine(line []byte) {
 		n := len(s.task.pending)
 		s.task.mu.Unlock()
 		s.task.notifyPending(n)
+	case streamagent.KindResolved:
+		// The adapter delivered an answer. This, not the client's response
+		// line, is the authoritative end of a request; the client-side clear
+		// below stays only for an adapter that predates this kind.
+		if m.Resolved != nil {
+			s.task.mu.Lock()
+			_, known := s.task.pending[m.Resolved.ID]
+			delete(s.task.pending, m.Resolved.ID)
+			n := len(s.task.pending)
+			s.task.mu.Unlock()
+			if known {
+				s.task.notifyPending(n)
+			}
+		}
 	case streamagent.KindExit:
 		if m.Exit != nil {
 			ex := *m.Exit
@@ -263,9 +277,9 @@ func (s *streamTap) onClientLine(line []byte) {
 		return
 	}
 	s.task.notifyPending(n)
-	// NOTE: this fires when the answer was FORWARDED, not when the agent acted
-	// on it. There is no delivery ack in the protocol; see the wiring log.
-	s.task.log(fmt.Sprintf("[out]▶ %s: %s", m.Response.ID, m.Response.Behavior))
+	// The log line is the adapter's `resolved`, rendered like every other
+	// adapter line, so it records a DELIVERED answer rather than a forwarded
+	// one and is not written twice.
 }
 
 // appendLines accumulates data into buf and calls fn for each complete line,

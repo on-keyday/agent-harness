@@ -38,6 +38,10 @@ type Display struct {
 	SetStatus bool   // replace the status line with Status
 	Status    string // "" with SetStatus clears it
 	Idle      bool   // the agent is no longer running a turn
+	// Resolves names a request this message settled. A chat holding that
+	// request as pending drops it, however it was answered — from this chat,
+	// from another client, or before this chat attached and replayed.
+	Resolves string
 }
 
 // DisplayOf decides m's Display. ok=false means the message has no display of
@@ -50,6 +54,12 @@ func DisplayOf(m Msg) (d Display, ok bool) {
 		}
 		return Display{SetStatus: true,
 			Status: fmt.Sprintf("attached · %s protocol %d", m.Hello.Vendor, m.Hello.Protocol)}, true
+	case KindResolved:
+		if m.Resolved == nil {
+			return Display{}, false
+		}
+		text, _ := RenderText(m)
+		return Display{Text: text, Tone: ToneMuted, Resolves: m.Resolved.ID}, true
 	case KindExit:
 		if m.Exit == nil {
 			return Display{}, false

@@ -330,3 +330,24 @@ func TestChatReplayDoesNotDriveTheStatusLine(t *testing.T) {
 		t.Fatalf("a live thinking event did not reach the status line: %q", m.status)
 	}
 }
+
+// A reattach replays the ring, which holds a request line and — since the
+// adapter announces it — the `resolved` line after it. The chat must end up
+// with nothing pending; before, the request came back as waiting every time.
+func TestChatAReplayedRequestThatWasResolvedIsNotPending(t *testing.T) {
+	m := openChat(t)
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-n-1","tool":"Write"}}`))
+	if m.pending == nil {
+		t.Fatal("the request did not become pending")
+	}
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"resolved","resolved":{"id":"req-n-1","behavior":"allow"}}`))
+	if m.pending != nil {
+		t.Fatalf("a resolved request is still pending: %+v", m.pending)
+	}
+	// Another request's resolution must not clear this one.
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-n-2","tool":"Bash"}}`))
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"resolved","resolved":{"id":"req-n-1","behavior":"allow"}}`))
+	if m.pending == nil || m.pending.ID != "req-n-2" {
+		t.Fatalf("an unrelated resolution cleared the pending request: %+v", m.pending)
+	}
+}

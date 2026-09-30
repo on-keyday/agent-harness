@@ -155,6 +155,7 @@ func displayForJS(line StreamLine) any {
 		"setStatus": d.SetStatus,
 		"status":    d.Status,
 		"idle":      d.Idle,
+		"resolves":  d.Resolves,
 	}
 }
 

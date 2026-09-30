@@ -112,6 +112,11 @@ func RenderText(m Msg) (line string, ok bool) {
 			return "", false
 		}
 		return fmt.Sprintf("⏸ approval needed: %s (%s)", m.Request.Tool, m.Request.ID), true
+	case KindResolved:
+		if m.Resolved == nil {
+			return "", false
+		}
+		return fmt.Sprintf("▶ %s: %s", m.Resolved.ID, m.Resolved.Behavior), true
 	}
 	return "", false
 }

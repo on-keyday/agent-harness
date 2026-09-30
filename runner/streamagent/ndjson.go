@@ -61,6 +61,9 @@ func (w *Writer) Interrupt(i Interrupt) error {
 }
 func (w *Writer) Hello(h Hello) error { return w.Write(Msg{Kind: KindHello, Hello: &h}) }
 func (w *Writer) Exit(e Exit) error   { return w.Write(Msg{Kind: KindExit, Exit: &e}) }
+func (w *Writer) Resolved(r Resolved) error {
+	return w.Write(Msg{Kind: KindResolved, Resolved: &r})
+}
 
 // ErrBadLine wraps a line that is not this protocol. A caller that keeps
 // reading past it treats one bad line as one bad line; a caller that stops is
