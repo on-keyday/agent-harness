@@ -576,6 +576,20 @@ def cross_project(projects: list[dict]) -> dict:
     }
 
 
+def index_by_file(p: dict) -> dict:
+    """Index rows keyed by the memory's path relative to memory/.
+
+    A filed memory's hook lives in its own directory's INDEX.md, so the
+    lookup has to span both levels or everything below the top looks
+    hookless — in the page and in a sent message alike.
+    """
+    by_file = {row["file"]: row for row in p["index"]}
+    for a, rows in (p.get("sub_index") or {}).items():
+        for row in rows:
+            by_file.setdefault(f"{a}/{row['file'].split('/')[-1]}", row)
+    return by_file
+
+
 def build_payload() -> dict:
     projects = scan()
     out = []
@@ -595,13 +609,7 @@ def build_payload() -> dict:
         p["index"] = [dict(row, hookHtml=_inline(row["hook"])) for row in p["index"]]
         p["sub_index"] = {a: [dict(r, hookHtml=_inline(r["hook"])) for r in rows]
                           for a, rows in (p.get("sub_index") or {}).items()}
-        by_file = {row["file"]: row for row in p["index"]}
-        # A filed memory's hook lives in its own directory's INDEX.md, so the
-        # lookup has to span both levels or everything below the top looks
-        # hookless.
-        for a, rows in p["sub_index"].items():
-            for row in rows:
-                by_file.setdefault(f"{a}/{row['file'].split('/')[-1]}", row)
+        by_file = index_by_file(p)
         for m in p["memories"]:
             m.body_html = render_markdown(m.body)
         out.append(
@@ -2133,7 +2141,8 @@ COMMENT_OPEN = "--- ここから操作者 (人間) が書いたコメント ---"
 COMMENT_CLOSE = "--- 操作者のコメントここまで ---"
 
 
-def compose(mem: Memory, ix: dict | None, comment: str, meta: bool, body: bool) -> str:
+def compose(mem: Memory, ix: dict | None, ix_name: str, comment: str,
+            meta: bool, body: bool) -> str:
     """The message text. Comment FIRST, and fenced: it is the thing being said,
     and the only part of the message that is not machine-generated.
 
@@ -2149,7 +2158,7 @@ def compose(mem: Memory, ix: dict | None, comment: str, meta: bool, body: bool) 
     out = [f"[memviewer] {mem.name}", TOOL_NOTE, "",
            COMMENT_OPEN, comment.strip(), COMMENT_CLOSE, ""]
     if meta:
-        out.append(f"index: {ix['title']} — {ix['hook']}" if ix else "index: (MEMORY.md に行が無い)")
+        out.append(f"index: {ix['title']} — {ix['hook']}" if ix else f"index: ({ix_name} に行が無い)")
         if mem.description:
             out.append(f"desc: {mem.description}")
         out.append(f"file: {mem.area + '/' if mem.area else ''}{mem.path.name}")
@@ -2160,7 +2169,7 @@ def compose(mem: Memory, ix: dict | None, comment: str, meta: bool, body: bool) 
 
 
 def find_memory(project_key: str, area: str, filename: str):
-    """(Memory, index row) read fresh, or (None, None). Path-traversal safe:
+    """(Memory, index row, index file name) read fresh, or Nones. Path-traversal safe:
     the name has to MATCH one this process just scanned, so nothing the page
     posts is ever joined onto a path."""
     for p in scan():
@@ -2169,9 +2178,11 @@ def find_memory(project_key: str, area: str, filename: str):
         for m in p["memories"]:
             if m.path.name == filename and m.area == area:
                 rel = f"{area}/{filename}" if area else filename
-                ix = next((r for r in p["index"] if r["file"] == rel), None)
-                return m, ix
-    return None, None
+                # Named the way the page names it: a topic is indexed by its
+                # own INDEX.md, an archive (or the top level) by MEMORY.md.
+                ix_name = f"{area}/INDEX.md" if area in (p.get("sub_index") or {}) else "MEMORY.md"
+                return m, index_by_file(p).get(rel), ix_name
+    return None, None, None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2256,13 +2267,13 @@ class Handler(BaseHTTPRequestHandler):
                              "err": f"{topic or '(宛先なし)'} は今の生きている宛先にありません"})
             return
 
-        mem, ix = find_memory(str(req.get("project") or ""), str(req.get("area") or ""),
-                              str(req.get("file") or ""))
+        mem, ix, ix_name = find_memory(str(req.get("project") or ""), str(req.get("area") or ""),
+                                       str(req.get("file") or ""))
         if mem is None:
             self._json(404, {"ok": False, "err": "そのメモが見つかりません"})
             return
 
-        text = compose(mem, ix, comment, bool(req.get("meta")), bool(req.get("body")))
+        text = compose(mem, ix, ix_name, comment,bool(req.get("meta")), bool(req.get("body")))
         # --data - reads the body from stdin. The trailing-words form would
         # let a body that starts with a dash be re-read as a flag, and the
         # verb's own notes call that out.
