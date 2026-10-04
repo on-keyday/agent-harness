@@ -83,6 +83,8 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_BoardPurge:       noTarget,
 	protocol.TaskControlKind_BoardRetract:     noTarget,
 	protocol.TaskControlKind_BoardSubscribers: noTarget,
+	protocol.TaskControlKind_BoardSend:        noTarget,
+	protocol.TaskControlKind_BoardWake:        noTarget,
 	// set_caps / set_parent name a target task but are operator-only by
 	// principal identity, which is strictly stronger than any scope: an
 	// operator's scope is global.
@@ -122,7 +124,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AwaitIdleKill); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardWake); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -137,16 +139,16 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// await_idle_kill is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught four appends now:
+// board_wake is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught five appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
-// with whatever gate their neighbours happened to have; and the two
-// await_idle_* kinds.
-func TestAwaitIdleKillIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AwaitIdleKill) + 1)
+// with whatever gate their neighbours happened to have; the two
+// await_idle_* kinds; and board_send / board_wake.
+func TestBoardWakeIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardWake) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after await_idle_kill (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after board_wake (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

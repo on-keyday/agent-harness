@@ -46,6 +46,8 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_BoardPurge:       capInMap,
 	protocol.TaskControlKind_BoardRetract:     capInMap,
 	protocol.TaskControlKind_BoardSubscribers: capInMap,
+	protocol.TaskControlKind_BoardSend:        capInMap,
+	protocol.TaskControlKind_BoardWake:        capInMap,
 	protocol.TaskControlKind_GitQuery:         capInMap,
 	protocol.TaskControlKind_OpenExecRun:      capInMap,
 	protocol.TaskControlKind_OpenForwardTap:   capInMap,
@@ -125,7 +127,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AwaitIdleKill); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardWake); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

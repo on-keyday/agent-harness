@@ -541,6 +541,15 @@ enum TaskControlKind:
     await_idle_kill         # appended: disarm one watcher by id. Same predicate
                             # as await_idle_list; anything else is not_found.
 
+    # --- agentboard, operator face: publishing ---
+    #
+    # Gated on board_send. These publish (or wake) IN THE OPERATOR'S NAME: the
+    # message is stamped sender_kind=operator whoever the caller is, with the
+    # caller's principal task as from_task. That is why they are not agent_
+    # kinds: agent_send is keyed to the caller's own identity and takes no bit.
+    board_send              # publish; may suppress the wake (no_wake)
+    board_wake              # wake a topic's subscribers; publishes nothing
+
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
 # operator surfaces use cli/tui/webui and carry no agent_info.
@@ -1163,6 +1172,17 @@ enum RetractedBy:
     # that passed rather than a kind of caller.
     purge_cap = 1, "purge_cap"
 
+# SenderKind says WHO published a message, which the from_* identity fields
+# cannot: an operator and a server-originated publish both carry a zero (or
+# borrowed) from_task. Before this field the server's await-idle publish was
+# recognisable only by from_hostname "server", a convention; the kind carries
+# it. agent is 0 so a row nobody stamped means what every row meant before.
+enum SenderKind:
+    :u8
+    agent
+    operator
+    server
+
 format BoardMessageRow:
     seq :u64
     # See agentboard/agentboard.bgn SendRequest.in_reply_to — same value,
@@ -1206,6 +1226,9 @@ format BoardMessageRow:
     # server-side off the parent and appears nowhere in either message's text.
     reply_to_topic_len :u16
     reply_to_topic :[reply_to_topic_len]u8
+    # Who published it; see SenderKind. from_task is the caller's principal
+    # task for an operator publish (zero for a real operator connection).
+    sender_kind :SenderKind
 
 format BoardReadResponse:
     request_id :u32
@@ -1360,6 +1383,11 @@ enum SendStatus:
     too_many_topics
     bad_frame
     unknown_in_reply_to
+    # The parent of a reply was published by the operator or the server and
+    # declared no reply_to_topic, and the reply named no topic of its own.
+    # The fallback (the author's chat.<short-id>) would be the chat topic of
+    # a zero task id, so the server refuses instead of guessing.
+    no_reply_route
 
 format AgentSendResponse:
     request_id :u32
@@ -1382,6 +1410,47 @@ format AgentSendResponse:
     # subscribe and read its payloads via inbox. It reveals nothing to someone
     # who cannot name the topic, so it is not a discovery sweep.
     delivered_to :u16
+
+# BoardSendRequest is agent_send's request on the operator face: the same
+# body transport and reply routing, plus no_wake. Its own format rather than a
+# bit on AgentSendRequest so that the agent face cannot express no_wake at
+# all -- an agent that suppressed its own wake by misunderstanding would
+# report the message as undelivered. The response is AgentSendResponse.
+format BoardSendRequest:
+    request_id :u32
+    # See AgentSendRequest.in_reply_to.
+    in_reply_to :u64
+    topic_len :u16
+    topic :[topic_len]u8
+    topic_len != 0 || in_reply_to != 0
+    # See AgentSendRequest.payload_stream_id.
+    payload_stream_id :u64
+    # See AgentSendRequest.no_retire_on_reply.
+    no_retire_on_reply :u1
+    # no_wake publishes and retains the message but emits no task_wake to any
+    # subscriber. The message reaches them on their next inbox read (the
+    # UserPromptSubmit hook), or when a board_wake on the topic wakes them.
+    no_wake :u1
+    reserved :u6
+    # See AgentSendRequest.reply_to_topic. An operator message without one has
+    # no reply route: a reply to it that names no topic is refused with
+    # SendStatus.no_reply_route.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
+
+# BoardWakeRequest wakes every task subscribed to topic, exactly as a publish
+# there would, and publishes nothing. Meant for after one or more no_wake
+# sends; it does not check whether anything is unread.
+format BoardWakeRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+format BoardWakeResponse:
+    request_id :u32
+    # How many tasks a task_wake was emitted for. A task waiting on the topic
+    # is not counted (the wait already hands it the messages). Clamped to u16.
+    woken :u16
 
 format AgentSubscribeRequest:
     request_id :u32
@@ -1424,9 +1493,8 @@ format DeliveredMessage:
     # a task's profile is per-open: `session new --resume` reuses a task id (and
     # so its chat.<short-id> topic) under a different runtime, so resolving it at
     # read time would misattribute everything already in the ring. Empty means
-    # the server could not attribute a runtime (e.g. a server-originated
-    # publish, which carries from_hostname "server"); it never means "runner
-    # default".
+    # the server could not attribute a runtime (e.g. a publish whose
+    # sender_kind is server or operator); it never means "runner default".
     from_agent_profile_len :u8
     from_agent_profile :[from_agent_profile_len]u8
     # reply_to_topic is where a reply to THIS message is routed — the
@@ -1440,6 +1508,9 @@ format DeliveredMessage:
     # without being able to see it.
     reply_to_topic_len :u16
     reply_to_topic :[reply_to_topic_len]u8
+    # Who published it; see SenderKind. from_task is the caller's principal
+    # task for an operator publish (zero for a real operator connection).
+    sender_kind :SenderKind
 
 format AgentWaitRequest:
     request_id :u32
@@ -1540,6 +1611,9 @@ format RetainedMeta:
     # to purge and diagnosing where an answer went are the same read.
     reply_to_topic_len :u16
     reply_to_topic :[reply_to_topic_len]u8
+    # Who published it; see SenderKind. from_task is the caller's principal
+    # task for an operator publish (zero for a real operator connection).
+    sender_kind :SenderKind
 
 format AgentListRetainedResponse:
     request_id :u32
@@ -1946,6 +2020,8 @@ format TaskControlRequest:
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractRequest
         TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListRequest
         TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillRequest
+        TaskControlKind.board_send               => board_send               :BoardSendRequest
+        TaskControlKind.board_wake               => board_wake               :BoardWakeRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2017,6 +2093,8 @@ format TaskControlResponse:
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractResponse
         TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListResponse
         TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillResponse
+        TaskControlKind.board_send               => board_send               :AgentSendResponse
+        TaskControlKind.board_wake               => board_wake               :BoardWakeResponse
 
 enum SetCapsStatus:
     :u8
@@ -3200,6 +3278,11 @@ enum Capability:
     # every caller that can see a forward already gets, and a count is not a
     # payload.
     forward_tap    = 0x10000, "forward_tap"
+    # board_send authorizes publishing to the agentboard IN THE OPERATOR'S
+    # NAME (board send, board wake): the message is stamped
+    # sender_kind=operator. Operators hold it through all; for a task it is
+    # the permission to speak as the operator. Default-off, appended.
+    board_send     = 0x20000, "board_send"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -3209,7 +3292,7 @@ enum Capability:
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x1ffff, "all"
+    all            = 0x3ffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

@@ -46,6 +46,8 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
 	protocol.TaskControlKind_BoardRetract:     protocol.Capability_Purge,
 	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardSend:        protocol.Capability_BoardSend,
+	protocol.TaskControlKind_BoardWake:        protocol.Capability_BoardSend,
 	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
 	protocol.TaskControlKind_OpenExecRun:      protocol.Capability_ExecRun,
 	// OpenForwardTap sits in this map, and NOT inline like KillPortForward's,

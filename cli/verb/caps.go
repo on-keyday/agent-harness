@@ -42,6 +42,9 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_RunnerAdmin,
 		protocol.Capability_BoardObserve,
 		protocol.Capability_Purge,
+		// board_send after the other two board bits: it is the only one that
+		// WRITES, and what it writes carries the operator's name.
+		protocol.Capability_BoardSend,
 		protocol.Capability_All,
 	}
 }
@@ -96,6 +99,9 @@ func CapDescription(c protocol.Capability) string {
 			"or every message of one conversation, across each topic it spans (board purge-thread); " +
 			"or withdraw messages from every agent path while leaving them readable to the operator " +
 			"(board retract, board retract-thread)"
+	case protocol.Capability_BoardSend:
+		return "publish to the agentboard in the operator's name (board send, board wake); " +
+			"NOT required for agent send"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:
