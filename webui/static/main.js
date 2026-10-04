@@ -5774,9 +5774,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   async function sendBoardCompose() {
     const body = boardComposeBody.value;
-    if (!body.trim() || !currentBoardTopic || !window.harness) return;
+    if (!body.trim() || !window.harness) return;
+    // The chains view spans topics, so it has none to send a new message to.
+    const target = boardComposeTarget(boardView === "chains" ? null : currentBoardTopic, boardReplyingSeq);
+    if (!target) {
+      appendCmdOutput("board send: the chains view only replies — press ↩ on the message to answer");
+      return;
+    }
     const req = boardSendRequest({
-      ...boardComposeTarget(currentBoardTopic, boardReplyingSeq),
+      ...target,
       replyTo: boardComposeReplyTo.value.trim(),
       wake: boardComposeWake.checked,
       keep: boardComposeKeep.checked,
@@ -5792,7 +5798,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     } catch (err) {
       appendCmdOutput(`board send error: ${err.message}`);
     }
-    openBoardTopic(currentBoardTopic);
+    if (boardView === "chains") renderBoardChains();
+    else openBoardTopic(currentBoardTopic);
+  }
+
+  // The composer is one element shared by both views, moved to whichever is
+  // showing, so the two cannot drift apart in what they send.
+  const boardComposeEl = document.getElementById("board-compose");
+  const boardComposeHomeEl = document.getElementById("board-detail");
+  function placeBoardCompose(view) {
+    if (!boardComposeEl) return;
+    const host = view === "chains" ? document.getElementById("board-chains-view") : boardComposeHomeEl;
+    if (host && boardComposeEl.parentElement !== host) {
+      host.appendChild(boardComposeEl);
+      resetBoardCompose();
+    }
+    boardComposeBody.placeholder = view === "chains"
+      ? "↩ を押したメッセージに operator として返信（Enter 送信 / Shift+Enter 改行）"
+      : "operator として送信（Enter 送信 / Shift+Enter 改行）";
   }
 
   document.getElementById("board-compose-send")?.addEventListener("click", sendBoardCompose);
@@ -5852,6 +5875,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Export belongs to the chains view: what it produces is the conversations
     // as one sheet, which the topic view does not assemble.
     if (boardExportBtn) boardExportBtn.hidden = name !== "chains";
+    if (typeof placeBoardCompose === "function") placeBoardCompose(name);
     if (name === "chains") renderBoardChains();
     else renderBoardTopics();
   }
@@ -5997,6 +6021,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         tag.textContent = "RETRACTED" + (r.retractedBy ? " by=" + r.retractedBy : "");
         head.appendChild(tag);
       }
+      // Reply as the operator, from the conversation itself. Same composer as
+      // the topic view; withdrawn messages included, since replying destroys
+      // nothing and a withdrawn parent still routes.
+      const replyBtn = document.createElement("button");
+      replyBtn.type = "button";
+      replyBtn.className = "board-msg-reply-btn";
+      replyBtn.textContent = "↩";
+      replyBtn.title = `Reply to #${r.seq} as the operator`;
+      replyBtn.addEventListener("click", () => {
+        armBoardReply(r.seq);
+        boardComposeEl.scrollIntoView({ block: "nearest" });
+      });
+      head.appendChild(replyBtn);
       row.appendChild(head);
 
       // Body bytes arrive already escaped by Go, so nothing here has to decide
@@ -6672,9 +6709,11 @@ function boardSendDefaults(_target) {
 
 // boardComposeTarget is where the composer's message goes: a reply names its
 // parent only (the server routes it -- the open topic is not necessarily where
-// the answer belongs), otherwise the open topic.
+// the answer belongs), otherwise the open topic. null when there is neither:
+// the chains view has no topic of its own, so there it only replies.
 function boardComposeTarget(topic, replyingSeq) {
-  return replyingSeq ? { inReplyTo: String(replyingSeq) } : { topic };
+  if (replyingSeq) return { inReplyTo: String(replyingSeq) };
+  return topic ? { topic } : null;
 }
 
 // boardSendRequest is what the board composer hands harness.boardSend. Seqs

@@ -1060,7 +1060,9 @@ composer carries the same three as a wake checkbox, the reply-to field and
 「返信後も残す」. In the WebUI board view, a composer
 under the topic's messages sends (Enter; Shift+Enter is a newline), ↩ on a
 message turns it into a reply until sent or cancelled with ×, and ⏰ Wake sits
-in the topic header.
+in the topic header. The Chains view has ↩ on every row and the same composer
+under it; there it only replies, since a conversation has no single topic to
+send a new message to.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms

@@ -52,3 +52,8 @@ test("the composer sends to the open topic, or replies when a reply is armed", (
   // is not necessarily where the answer belongs.
   assert.deepEqual(plain(page.boardComposeTarget("chat.x", "9007199254740993")), { inReplyTo: "9007199254740993" });
 });
+
+test("with no open topic (the chains view) the composer only replies", () => {
+  assert.equal(page.boardComposeTarget(null, ""), null);
+  assert.deepEqual(plain(page.boardComposeTarget(null, "42")), { inReplyTo: "42" });
+});
