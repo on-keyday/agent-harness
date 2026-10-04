@@ -657,6 +657,23 @@ func (b *Board) RetractSeq(seq uint64, by protocol.TaskID) (topicName string, ok
 	if seq == 0 || by.Id == ([16]byte{}) {
 		return "", false
 	}
+	return b.retractAsAuthor(seq, by)
+}
+
+// RetireSeq is reply-retire's withdrawal: RetractSeq with author taken from the
+// message's OWN record rather than from a caller. The zero-id refusal above
+// exists because a caller claiming the zero id would be claiming to be nobody;
+// here author is what the board stored for the message, and an operator's
+// message genuinely carries the zero id. Refusing it made every operator
+// instruction survive being answered, whatever --no-retire-on-reply said.
+func (b *Board) RetireSeq(seq uint64, author protocol.TaskID) (topicName string, ok bool) {
+	if seq == 0 {
+		return "", false
+	}
+	return b.retractAsAuthor(seq, author)
+}
+
+func (b *Board) retractAsAuthor(seq uint64, by protocol.TaskID) (topicName string, ok bool) {
 	now := time.Now()
 	b.mu.Lock()
 	names := make([]string, 0, len(b.topics))

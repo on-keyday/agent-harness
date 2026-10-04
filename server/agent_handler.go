@@ -171,7 +171,9 @@ func retireRepliedParent(b *agentboard.Board, parentSeq uint64, replier protocol
 	if m.Topic != agentboard.SelfTopic(replier) || m.FromTask.Id == replier.Id {
 		return
 	}
-	if topic, retired := b.RetractSeq(parentSeq, m.FromTask); retired {
+	// RetireSeq, not RetractSeq: the author is the parent's own record, and an
+	// operator's message records the zero id, which RetractSeq refuses.
+	if topic, retired := b.RetireSeq(parentSeq, m.FromTask); retired {
 		slog.Info("agentboard: parent retired by reply",
 			"seq", parentSeq, "topic", topic,
 			"author", hex.EncodeToString(m.FromTask.Id[:]),

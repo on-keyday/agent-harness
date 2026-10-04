@@ -80,8 +80,8 @@ but no runner restart order follows from it.
 real operator connection, the task id when an agent holding the new bit calls
 the operator verb. This is the attribution `fireIdleBoard`
 (`server/await_idle_handler.go`) already uses for the requester. `from_runner`
-gets the same placeholder that function uses (a zero RunnerID panics the
-encoder), and `from_hostname` is empty.
+is the zero RunnerID, as in that function (RunnerID is 16 opaque bytes, so zero
+encodes), and `from_hostname` is empty.
 
 `fireIdleBoard`'s publish is identified today only by `from_hostname ==
 "server"`, a convention stated in its comment and in `DeliveredMessage`'s.
@@ -230,6 +230,9 @@ whether it has a reply route.
 - An operator `--in-reply-to` an agent message lands on the parent's
   `reply_to_topic` or the author's `chat.<short-id>`, and does not retire the
   parent.
+- An agent's answer to an operator message on its own `chat.<short-id>`
+  retires that message, unless it was sent with `--no-retire-on-reply`
+  (Amendment B).
 - `fireIdleBoard` messages carry kind `server`.
 - An agent subscribing to `chat.operator` gets `bad_pattern`; an agent
   answering an operator reply prefilled with `--reply-to chat.operator`
@@ -256,8 +259,18 @@ parent is not retired again: `retireRepliedParent` still reads live rings only.
 The reply's `in_reply_to` may name a seq agents cannot read; that is the same
 state an evicted parent already produces, rendered as ORPHAN by `thread`.
 
-Found while making this change and NOT changed: reply-retire never withdraws an
-**operator** message. `retireRepliedParent` retracts as the parent's author,
-and `RetractSeq` refuses a zero author, which is what an operator message
-carries. An operator's instruction therefore survives the agent's answer, and a
-resumed agent can re-read it. Open for the operator to decide.
+## Amendment B (2026-10-05) — reply-retire withdraws an operator message
+
+`board send` carries `--no-retire-on-reply`, and as on `agent send` its default
+is to retire: the agent's answer to a message addressed to it withdraws that
+message. For an operator message the default never happened. `retireRepliedParent`
+withdrew through `RetractSeq` with the parent's recorded author, and
+`RetractSeq` refuses a zero author — a guard meant for a CALLER claiming the
+zero id, not for a message that genuinely records it. So every operator
+instruction survived being answered, the flag had no effect, and a resumed
+agent could re-read and redo it.
+
+Reply-retire now withdraws through `Board.RetireSeq`, which takes the author
+from the message's own record and accepts the zero id. `RetractSeq`, the
+explicit `agent retract` path, keeps its refusal. An operator message sent with
+`--no-retire-on-reply` still survives the answer.

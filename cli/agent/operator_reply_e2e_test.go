@@ -121,3 +121,40 @@ func TestAgentCLI_E2E_SecondReplyAfterAutoRetireStillRoutes(t *testing.T) {
 		t.Errorf("the asker's topic holds %q, want the second answer", got)
 	}
 }
+
+// An operator message addressed to the agent is retired by the agent's answer,
+// like any other point-to-point message -- unless it was sent with
+// --no-retire-on-reply. The operator's zero task id used to make the retire a
+// silent no-op, so the flag had no effect and a resumed agent re-read every
+// operator instruction it had already answered.
+func TestAgentCLI_E2E_ReplyRetiresAnOperatorMessage(t *testing.T) {
+	board, addr, rid, tid, ticket := operatorReplyFixture(t)
+	self := agent.SelfTopic(tid)
+	retires, _, err := board.Send(self, []byte("do X"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0,
+		agentboard.WithSenderKind(protocol.SenderKind_Operator), agentboard.WithReplyTo(agentboard.OperatorTopic))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stays, _, err := board.Send(self, []byte("standing order"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0,
+		agentboard.WithSenderKind(protocol.SenderKind_Operator), agentboard.WithReplyTo(agentboard.OperatorTopic),
+		agentboard.NoRetireOnReply())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	restore := setAgentEnv(addr, rid, tid, ticket)
+	defer restore()
+	var out bytes.Buffer
+	for _, seq := range []uint64{retires, stays} {
+		if err := agent.Send(ctx, []string{"--in-reply-to", itoa(seq), "--data", "ack"}, nil, &out); err != nil {
+			t.Fatalf("reply to %d: %v", seq, err)
+		}
+	}
+	if _, live := board.Retained(retires); live {
+		t.Error("the answered operator message is still live")
+	}
+	if _, live := board.Retained(stays); !live {
+		t.Error("a --no-retire-on-reply operator message was retired")
+	}
+}
