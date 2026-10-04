@@ -838,6 +838,34 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// looks like now.
 		return a, DoBoardRead(a.client, msg.Topic)
 
+	case BoardSendMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("send: " + msg.Err.Error())
+			return a, nil
+		}
+		wake := "on"
+		if msg.Params.NoWake {
+			wake = "off"
+		}
+		dest := msg.Params.Topic
+		if dest == "" {
+			dest = fmt.Sprintf("reply to #%d", msg.Params.InReplyTo)
+		}
+		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("sent #%d (%s, delivered_to=%d, wake %s)",
+			msg.Result.Seq, dest, msg.Result.DeliveredTo, wake))
+		// A reply lands on the author's topic, not necessarily the open one;
+		// re-reading the open topic still shows a send to it and refreshes the
+		// status either way.
+		return a, DoBoardRead(a.client, a.boardModal.CurTopic())
+
+	case BoardWakeMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("wake: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatus(fmt.Sprintf("woke %d task(s) on %s", msg.Woken, msg.Topic))
+		return a, nil
+
 	case BoardThreadOpMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus(msg.Verb + "-thread: " + msg.Err.Error())

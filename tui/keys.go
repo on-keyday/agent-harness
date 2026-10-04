@@ -122,6 +122,9 @@ type modalKeyMap struct {
 	BoardRetractMsg  string
 	BoardSubscribers string
 	BoardChains      string
+	BoardCompose     string
+	BoardReply       string
+	BoardWake        string
 	GitSetBase       string
 	GitStatus        string
 	GitNextFile      string
@@ -158,7 +161,14 @@ var modalKeys = modalKeyMap{
 	// `c` opens the chain view. Its own letter rather than a mode of Enter:
 	// Enter drills into ONE topic, and the chain view is the opposite move —
 	// it reads every topic at once because a conversation spans them.
-	BoardChains:  "c",
+	BoardChains: "c",
+	// m (message) composes on the open topic and a (answer) replies to the
+	// selected message, both as the operator. p (poke) wakes the topic's
+	// subscribers: its own letter, because waking is not a stronger form of
+	// sending, and the wake toggle for a send lives inside the editor.
+	BoardCompose: "m",
+	BoardReply:   "a",
+	BoardWake:    "p",
 	GitSetBase:   "B",
 	GitStatus:    "s",
 	GitNextFile:  "n",

@@ -291,6 +291,8 @@ type BoardModal struct {
 	// consumed by the Apply*, rather than fixed in each handler, because both
 	// the per-message and the thread-scoped paths had it.
 	pendingStatus string
+	// compose is the open send/reply editor, nil when none is.
+	compose *boardCompose
 }
 
 // takePendingStatus installs a status set before a refresh was scheduled.
@@ -638,10 +640,7 @@ func (m *BoardModal) updateContentFromCursor() {
 		payloadStr = string(msg.Payload)
 	}
 
-	fromShort := msg.FromTaskHex
-	if len(fromShort) > 8 {
-		fromShort = fromShort[:8]
-	}
+	fromShort := cli.SenderParty(msg.SenderKind, msg.FromTaskHex)
 	at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format(time.RFC3339)
 	agentName := msg.FromAgentProfile
 	if agentName == "" {
@@ -751,7 +750,7 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  r: refresh  x: purge topic  Esc: close")
+		footer := FooterStyle.Render("Enter: read  c: chains  s: subscribers  " + modalKeys.BoardWake + ": wake  r: refresh  x: purge topic  Esc: close")
 		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
 
 	case boardMessages:
@@ -764,10 +763,7 @@ func (m BoardModal) View() string {
 				cursor = "> "
 			}
 			msg := m.msgs[i]
-			fromShort := msg.FromTaskHex
-			if len(fromShort) > 8 {
-				fromShort = fromShort[:8]
-			}
+			fromShort := cli.SenderParty(msg.SenderKind, msg.FromTaskHex)
 			agentName := msg.FromAgentProfile
 			if agentName == "" {
 				agentName = "-"
@@ -791,7 +787,12 @@ func (m BoardModal) View() string {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
-		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · w: retract msg  X: purge msg  r: re-read  Esc: back")
+		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · " +
+			modalKeys.BoardCompose + ": send  " + modalKeys.BoardReply + ": reply  " + modalKeys.BoardWake + ": wake · " +
+			"w: retract msg  X: purge msg  r: re-read  Esc: back")
+		if m.compose != nil {
+			footer = m.composeView()
+		}
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 
 	case boardSubscribers:

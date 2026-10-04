@@ -264,6 +264,15 @@ func (a *App) inChat(msg tea.KeyMsg) tea.Cmd {
 // The App dispatches Do* cmds for Enter/r/x/X; the modal handles
 // table/viewport navigation itself.
 func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
+	// The send/reply editor owns every key while it is open -- Esc included,
+	// which leaves the editor rather than the view -- so a typed letter never
+	// reaches the board's own bindings.
+	if a.boardModal.Composing() {
+		if send, p, body := a.boardModal.HandleComposeKey(msg); send {
+			return DoBoardSend(a.client, p, body)
+		}
+		return nil
+	}
 	if msg.Type == tea.KeyEsc {
 		// The chain view is list -> detail like the topic one, so Esc walks back
 		// one level rather than all the way out.
@@ -306,6 +315,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			// No topic argument: the chain view reads every topic, because a
 			// conversation is split across them.
 			return DoBoardChains(a.client)
+		case modalKeys.BoardWake:
+			if topic := a.boardModal.SelectedTopicName(); topic != "" {
+				return DoBoardWake(a.client, topic)
+			}
+			return nil
 		}
 	} else if a.boardModal.Mode() == boardSubscribers {
 		if msg.String() == modalKeys.BoardSubscribers {
@@ -352,6 +366,14 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case modalKeys.BoardRefresh:
 			return DoBoardRead(a.client, a.boardModal.CurTopic())
+		case modalKeys.BoardCompose:
+			a.boardModal.BeginCompose()
+			return nil
+		case modalKeys.BoardReply:
+			a.boardModal.BeginReply(a.boardModal.SelectedMsgSeq())
+			return nil
+		case modalKeys.BoardWake:
+			return DoBoardWake(a.client, a.boardModal.CurTopic())
 		}
 	}
 	var cmd tea.Cmd
