@@ -50,7 +50,8 @@ func TestBoardModal_ComposeSendsOnTheOpenTopicAndWakesByDefault(t *testing.T) {
 	}
 	typeInto(&m, "hello")
 	send, p, body := m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if !send || body != "hello" || p.Topic != "chat.abcd1234" || p.NoWake || p.InReplyTo != 0 {
+	if !send || body != "hello" || p.Topic != "chat.abcd1234" || p.NoWake || p.InReplyTo != 0 ||
+		p.ReplyTo != agentboard.OperatorTopic {
 		t.Fatalf("send=%v body=%q params=%+v", send, body, p)
 	}
 	if m.Composing() {
@@ -104,5 +105,29 @@ func TestBoardModal_OperatorSenderIsNamed(t *testing.T) {
 	v := m.View()
 	if !strings.Contains(v, "from=operator") || strings.Contains(v, "00000000") {
 		t.Fatalf("view does not name the operator:\n%s", v)
+	}
+}
+
+// ctrl+r drops the reply destination, for a note that wants no answer on the
+// board; pressed again it comes back.
+func TestBoardModal_CtrlRTogglesTheReplyDestination(t *testing.T) {
+	m := boardModalOnTopic(t)
+	m.BeginCompose()
+	m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	if !strings.Contains(m.View(), "reply-to: none") {
+		t.Errorf("view does not say the reply destination is off\n%s", m.View())
+	}
+	typeInto(&m, "fyi")
+	_, p, _ := m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.ReplyTo != "" {
+		t.Fatalf("ReplyTo = %q after ctrl+r, want empty", p.ReplyTo)
+	}
+	m.BeginReply(42)
+	m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	typeInto(&m, "x")
+	_, p, _ = m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.ReplyTo != agentboard.OperatorTopic {
+		t.Fatalf("ReplyTo = %q after ctrl+r twice, want chat.operator", p.ReplyTo)
 	}
 }

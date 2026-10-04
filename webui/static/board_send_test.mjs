@@ -39,3 +39,9 @@ test("the result line names the target and the wake", () => {
   assert.equal(page.boardSendResultLine({ seq: "13", deliveredTo: 0 }, { inReplyTo: "12", noWake: false }),
     "board send: sent #13 as a reply to #12 (delivered_to=0, wake on)");
 });
+
+test("the send dialog asks for answers on chat.operator, new message or reply", () => {
+  for (const target of [{ topic: "chat.x" }, { inReplyTo: "12" }]) {
+    assert.deepEqual(plain(page.boardSendDefaults(target)), { replyTo: "chat.operator", wake: true });
+  }
+});

@@ -55,15 +55,19 @@ type boardCompose struct {
 	params cli.BoardSendParams
 }
 
-// BeginCompose opens the editor for a new message on the open topic.
+// BeginCompose opens the editor for a new message on the open topic. Like a
+// reply, it asks for answers on chat.operator (operator, 2026-10-05): without
+// a destination the agent's answer would be refused (no_reply_route), which
+// reads from here as an agent that never answered. ctrl+r drops it for a note
+// that wants no answer on the board.
 func (m *BoardModal) BeginCompose() {
-	m.openCompose(cli.BoardSendParams{Topic: m.curTopic}, "send to "+m.curTopic+" ▶ ")
+	m.openCompose(cli.BoardSendParams{Topic: m.curTopic, ReplyTo: agentboard.OperatorTopic},
+		"send to "+m.curTopic+" ▶ ")
 }
 
-// BeginReply opens the editor for a reply to seq. The reply asks for answers
-// on chat.operator: without a destination the agent's answer to it would be
-// refused (no_reply_route), and the parent's own topic would wake the agent
-// with its own answer.
+// BeginReply opens the editor for a reply to seq, asking for answers on
+// chat.operator for BeginCompose's reason; the parent's own topic would not
+// do, because it would wake the agent with its own answer.
 func (m *BoardModal) BeginReply(seq uint64) {
 	if seq == 0 {
 		return
@@ -102,6 +106,13 @@ func (m *BoardModal) HandleComposeKey(k tea.KeyMsg) (send bool, p cli.BoardSendP
 	case tea.KeyTab:
 		m.compose.params.NoWake = !m.compose.params.NoWake
 		return false, p, ""
+	case tea.KeyCtrlR:
+		if m.compose.params.ReplyTo == "" {
+			m.compose.params.ReplyTo = agentboard.OperatorTopic
+		} else {
+			m.compose.params.ReplyTo = ""
+		}
+		return false, p, ""
 	case tea.KeyEnter:
 		body = m.compose.input.Value()
 		if body == "" {
@@ -121,6 +132,10 @@ func (m *BoardModal) composeView() string {
 	if m.compose.params.NoWake {
 		wake = "off"
 	}
+	replyTo := m.compose.params.ReplyTo
+	if replyTo == "" {
+		replyTo = "none"
+	}
 	return m.compose.input.View() + "\n" +
-		MutedStyle.Render("enter sends · tab: wake: "+wake+" · esc cancels")
+		MutedStyle.Render("enter sends · tab: wake: "+wake+" · ctrl+r: reply-to: "+replyTo+" · esc cancels")
 }

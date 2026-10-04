@@ -33,6 +33,7 @@ becomes a field.
 | Replies to the operator go to the reserved topic `chat.operator`; agents may not subscribe to it | operator, 2026-10-04 |
 | `chat.operator` keeps the ordinary topic TTL | operator, 2026-10-04 |
 | A withdrawn (retracted) message can still be replied to, by the operator and by agents; purged/evicted stays `unknown_in_reply_to` (Amendment A) | operator, 2026-10-05 |
+| TUI and WebUI default every send (not only replies) to `--reply-to chat.operator`; TUI toggles it with `ctrl+r` | operator, 2026-10-05 |
 
 Why no-wake is kept off the agent face: an agent that uses it by
 misunderstanding gets a message that is retained but not acted on, and reports
@@ -164,8 +165,11 @@ replying to a `session_idle` notice, so this is expected to be invisible.
 
 When the operator replies to an agent without `--reply-to`, the agent's answer
 to that reply is refused with `no_reply_route`. To keep a conversation going,
-the TUI and WebUI reply actions prefill `--reply-to chat.operator`. The CLI
-does not add it implicitly; `board send --help` names it.
+the TUI and WebUI prefill `--reply-to chat.operator` on every send, new message
+and reply alike (operator, 2026-10-05; first shipped on replies only). The TUI
+editor's `ctrl+r` and an emptied WebUI field drop it, for a note that wants no
+answer on the board. The CLI does not add it implicitly; `board send --help`
+names it.
 
 The parent's own topic would not work as that destination: it is the agent's
 `chat.<short-id>` or a topic the agent subscribes to, so the agent's answer

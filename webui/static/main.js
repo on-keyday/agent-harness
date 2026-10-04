@@ -5754,10 +5754,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       ? `#${target.inReplyTo} に operator として返信`
       : `${target.topic} に operator として送信`;
     document.getElementById("board-send-body").value = "";
-    document.getElementById("board-send-wake").checked = true;
-    // A reply asks for answers on chat.operator: without a destination the
-    // agent's answer would be refused (no_reply_route).
-    document.getElementById("board-send-reply-to").value = target.inReplyTo ? "chat.operator" : "";
+    const d = boardSendDefaults(target);
+    document.getElementById("board-send-wake").checked = d.wake;
+    document.getElementById("board-send-reply-to").value = d.replyTo;
     boardSendModal.showModal();
   }
 
@@ -6644,6 +6643,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 // chosen so the typical case (a handful of hosts, each with a few slots)
 // renders as host-grouped blocks whose order does not change as long as
 // no runner re-registers.
+// boardSendDefaults is what the send dialog opens with, for a new message
+// ({topic}) and a reply ({inReplyTo}) alike: wake on, answers asked for on
+// chat.operator. Without a destination an agent's answer is refused
+// (no_reply_route), which reads from here as an agent that never answered;
+// clearing the field is the opt-out (operator, 2026-10-05).
+function boardSendDefaults(_target) {
+  return { replyTo: "chat.operator", wake: true };
+}
+
 // boardSendRequest is what the board send dialog hands harness.boardSend. Seqs
 // stay decimal strings (a board seq exceeds 2^53); "0" means not a reply.
 function boardSendRequest({ topic, inReplyTo, replyTo, wake, body }) {

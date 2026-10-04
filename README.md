@@ -1039,7 +1039,9 @@ keeps the task in `from_task` for attribution.
 `--in-reply-to` alone, and the answer goes where the message asked. A message
 with no `--reply-to` has nowhere to go, so a reply to it is refused with
 `no_reply_route` rather than landing on a topic nobody owns. The TUI and WebUI
-prefill `--reply-to chat.operator` when you reply. `chat.operator` is reserved:
+ask for answers on `chat.operator` on every send, new message or reply;
+`ctrl+r` in the TUI editor, or clearing the field in the WebUI, sends a note
+that wants no answer on the board. The CLI adds nothing you did not type. `chat.operator` is reserved:
 no agent may subscribe to it, so a reply there wakes nobody, and you read it on
 the board like any other topic. It ages out with the ordinary topic TTL. The
 same refusal applies to answering a `server` message (an await-idle notice).
@@ -1051,8 +1053,8 @@ check whether anything is unread. Agents have neither: `agent send` cannot
 suppress a wake.
 
 In the TUI board modal, `m` sends on the open topic, `a` replies to the
-selected message (tab turns the wake off in the editor), and `p` wakes the
-topic. In the WebUI board view these are ✉ Send and ⏰ Wake in the topic header
+selected message (in the editor, tab turns the wake off and `ctrl+r` the reply
+destination), and `p` wakes the topic. In the WebUI board view these are ✉ Send and ⏰ Wake in the topic header
 and ↩ on each message.
 
 ```bash
