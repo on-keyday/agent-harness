@@ -2584,3 +2584,34 @@ They are recorded together because they share every surface and one lesson.
   locally, so the WebUI and the TUI each showed only their own turns. No item
   asks whether an operator's own input is visible to the OTHER operator
   surfaces — 38 is about screens, 11–23 about fields.
+
+### 2026-10-04 — operator `board send` / `board wake`, `sender_kind`, `chat.operator`
+
+done:    1, 2, 4, 6, 8, 10, 15, 24, 27, 28a, 29, 30, 31, 32, 33, 34a, 35, 36, 37, 39
+omitted: 7 (board send/wake are CLI-command verbs like the rest of the board family; TUI and WebUI reach them through the board panes, ModalSurfaces declared)
+
+- **2** — fired late: "--topic or --in-reply-to" lived only in `cli.BoardSend`
+  until the walk moved it to an `AtLeastOne` rule on the row. An opaque
+  `Validate` was tried first and `TestEveryDeclaredFlagIsReadByItsBuild`
+  refused it (the probe cannot synthesise a line past a function).
+- **4 / 6** — TUI `m`/`a`/`p` in the board modal (plus the `?` help string,
+  which lists modal keys by hand); WebUI ✉ Send / ⏰ Wake / ↩ and a dialog.
+- **24** — `--reply-to` means the same on `agent send` and `board send`;
+  `--no-wake` exists on the operator path only; `--in-reply-to` against an
+  operator/server parent with no route is refused (`no_reply_route`) on both.
+- **27 / 28a** — one payload-stream helper (`cli.TaskControlWithPayload`)
+  for agent send, agent dispatch and board send; one `BoardSendRequest`
+  construction.
+- **31** — `sender=agent` printed like the other kinds; `woken 0` printed.
+- **32** — `cli.SenderParty` decides the short sender name; the bridge ships
+  it (`senderParty`) rather than JS re-deriving it.
+- **39** — the spec's Surfaces table walked against the code and driven live
+  on a dummy harness: CLI (exact help spellings), TUI by keystroke through
+  `session send`, WebUI by Playwright clicks.
+
+Display surfaces outside 11–23 that this change needed and the list does not
+name: the board's own rows (`board read`, `board thread`, `agent inbox` JSON,
+`agent retained`, TUI board modal, WebUI board cards and chains, the
+board-render example). Recorded here rather than as a new number: the list's
+display items are task/runner fields, and a board-message field is the first
+of its kind to come through.

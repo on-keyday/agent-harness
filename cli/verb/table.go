@@ -1248,6 +1248,11 @@ var Verbs = []VerbSpec{
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "BoardSendAction",
+		// The destination is a pair: a topic, or a parent the server routes
+		// from. Naming neither is a send to nowhere, refused at the parse so
+		// no surface dials first to find that out.
+		AtLeastOne: []Rule{{Flags: []string{"topic", "in-reply-to"},
+			Reason: "a send needs a destination: a topic, or the message it answers"}},
 		Trailing: &Trailing{Name: "text", Field: "Positional",
 			Reason: "the message body is free-form; --data or stdin are the alternatives"},
 		Flags: []Flag{

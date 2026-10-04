@@ -807,7 +807,7 @@ Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, cancel, the three
 session-attach powers, file read / write, local / remote port-forward,
 reading a forward's payload, notify, prune, purge, runner-admin, global
-info) — and a **target scope**
+info, publishing to the board as the operator) — and a **target scope**
 bounding WHICH tasks those capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
@@ -1019,6 +1019,41 @@ and purge on one message in the topic view. In the WebUI they are buttons on
 each conversation's header in the Chains view, beside nothing else that
 destroys: the Export modal stays export-only, because what it holds is
 everything currently displayed rather than one thread.
+
+### Writing to the board as the operator
+
+```bash
+bin/harness-cli board send --topic chat.<8-hex> --reply-to chat.operator please look at the failing test
+bin/harness-cli board send --in-reply-to <seq> --reply-to chat.operator thanks   # answer an agent
+bin/harness-cli board send --topic chat.<8-hex> --no-wake --data - < notes.md    # queue, don't wake
+bin/harness-cli board wake chat.<8-hex>                                          # wake them now
+```
+
+`board send` publishes in the operator's name: every row shows
+`from=operator` (`sender_kind: operator` in JSON), never a borrowed task id.
+It is gated on the `board_send` bit, which an operator holds through `all`;
+granting it to a task lets that task speak as the operator, so the message
+keeps the task in `from_task` for attribution.
+
+**Replies come back on `chat.operator`.** An agent answers with
+`--in-reply-to` alone, and the answer goes where the message asked. A message
+with no `--reply-to` has nowhere to go, so a reply to it is refused with
+`no_reply_route` rather than landing on a topic nobody owns. The TUI and WebUI
+prefill `--reply-to chat.operator` when you reply. `chat.operator` is reserved:
+no agent may subscribe to it, so a reply there wakes nobody, and you read it on
+the board like any other topic. It ages out with the ordinary topic TTL. The
+same refusal applies to answering a `server` message (an await-idle notice).
+
+`--no-wake` retains the message without typing a wake prompt into anyone's
+terminal; it reaches them on their next turn, or when `board wake <topic>`
+wakes every subscriber at once (publishing nothing). `board wake` does not
+check whether anything is unread. Agents have neither: `agent send` cannot
+suppress a wake.
+
+In the TUI board modal, `m` sends on the open topic, `a` replies to the
+selected message (tab turns the wake off in the editor), and `p` wakes the
+topic. In the WebUI board view these are ✉ Send and ⏰ Wake in the topic header
+and ↩ on each message.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms

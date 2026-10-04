@@ -26,3 +26,18 @@ func TestNoWakeIsOnlyOnTheOperatorSend(t *testing.T) {
 		t.Error("board wake is not declared")
 	}
 }
+
+// A send with neither --topic nor --in-reply-to has nowhere to go; the parser
+// says so before anything dials.
+func TestBoardSendNeedsATopicOrAParent(t *testing.T) {
+	v, _ := Lookup("board", "send")
+	v = v.For(CLI)
+	fs := v.NewFlagSet(0)
+	if _, err := v.Parse(fs, []string{"hello"}); err == nil {
+		t.Error("board send with no --topic and no --in-reply-to parsed")
+	}
+	fs = v.NewFlagSet(0)
+	if _, err := v.Parse(fs, []string{"--in-reply-to", "7", "hello"}); err != nil {
+		t.Errorf("board send --in-reply-to alone: %v", err)
+	}
+}

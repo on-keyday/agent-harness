@@ -523,6 +523,14 @@ the server restarted since you read it (the board is in memory), the send is
 **rejected** with `unknown_in_reply_to`; drop the flag to send the same body
 as an ordinary message.
 
+**Answering the operator.** A message with `sender_kind: operator` came from
+the human. When it carries `reply_to_topic` (normally `chat.operator`),
+`--in-reply-to` alone lands there, where the operator reads it. When it carries
+none, the operator did not ask for an answer on the board: `--in-reply-to` is
+**rejected** with `no_reply_route` — answer in your own conversation instead, and
+do not hunt for a topic to force it onto. The same refusal applies to a
+`sender_kind: server` notice.
+
 Collect the replies to one message with:
 
 ```bash
@@ -560,6 +568,11 @@ The server seeds the conventional inbound topic `chat.<short-id>` when it
 assigns the task to a runner, so you neither subscribe to it nor announce it:
 a peer's `--in-reply-to` is routed back to you by the server.
 
+`chat.operator` is the operator's, and subscribing to it is refused
+(`BadPattern`). Publishing there is allowed — it is how a reply to the operator
+arrives — but nothing subscribes, so `delivered_to: 0` there is expected, not a
+lost message: the operator reads it on the board.
+
 **There is no board-wide rendezvous topic.** Peers reach you id-directed on
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
 a global visibility rank finds it with `ls`. If you have no id for the peer you need, get
@@ -589,9 +602,13 @@ verdict: the injected hook fires for any runtime that reads
 `.claude/settings.json`, and a one-shot task of ANY runtime, Claude included,
 is push-less because it has no stdin writer to wake. What `from.agent` tells
 you is which runtime answered, not whether it was pushed. An
-empty `from.agent` means the server could not attribute a runtime — a
-server-originated message such as an `await-idle` notification, identifiable
-by `from.hostname == "server"`.
+empty `from.agent` means the server could not attribute a runtime.
+
+Every record also carries `sender_kind`, set by the server: `agent` for a peer,
+`operator` for **the human** (their message, written in the TUI, WebUI or CLI),
+`server` for a server notice such as an `await-idle` notification. Read it
+before `from.task_id`: an operator or server message may carry an all-zero task
+id, which names no task and no `chat.<short-id>` to answer on.
 
 ## Finding other agents / tasks
 

@@ -405,7 +405,7 @@ func keyHelpBody() string {
 			sb.WriteString("\n")
 		}
 	}
-	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message, w retract message" +
+	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message, w retract message, m send as operator, a reply as operator, p wake topic" +
 		" · conns: t trsf reading (cwnd/srtt/loss and where the run loop's time goes), then enter reads the selected runner's own transport and s the server's")
 	return sb.String()
 }
