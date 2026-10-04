@@ -1053,8 +1053,11 @@ check whether anything is unread. Agents have neither: `agent send` cannot
 suppress a wake.
 
 In the TUI board modal, `m` sends on the open topic, `a` replies to the
-selected message (in the editor, tab turns the wake off and `ctrl+r` the reply
-destination), and `p` wakes the topic. In the WebUI board view, a composer
+selected message (in the editor, tab turns the wake off, `ctrl+r` the reply
+destination, and `ctrl+t` keeps the message after it is answered — the
+`--no-retire-on-reply` of the CLI), and `p` wakes the topic. The WebUI
+composer carries the same three as a wake checkbox, the reply-to field and
+「返信後も残す」. In the WebUI board view, a composer
 under the topic's messages sends (Enter; Shift+Enter is a newline), ↩ on a
 message turns it into a reply until sent or cancelled with ×, and ⏰ Wake sits
 in the topic header.

@@ -106,6 +106,10 @@ func (m *BoardModal) HandleComposeKey(k tea.KeyMsg) (send bool, p cli.BoardSendP
 	case tea.KeyTab:
 		m.compose.params.NoWake = !m.compose.params.NoWake
 		return false, p, ""
+	case tea.KeyCtrlT:
+		// keep: --no-retire-on-reply. Off by default, as on the CLI.
+		m.compose.params.NoRetireOnReply = !m.compose.params.NoRetireOnReply
+		return false, p, ""
 	case tea.KeyCtrlR:
 		if m.compose.params.ReplyTo == "" {
 			m.compose.params.ReplyTo = agentboard.OperatorTopic
@@ -136,6 +140,11 @@ func (m *BoardModal) composeView() string {
 	if replyTo == "" {
 		replyTo = "none"
 	}
+	keep := "off"
+	if m.compose.params.NoRetireOnReply {
+		keep = "on"
+	}
 	return m.compose.input.View() + "\n" +
-		MutedStyle.Render("enter sends · tab: wake: "+wake+" · ctrl+r: reply-to: "+replyTo+" · esc cancels")
+		MutedStyle.Render("enter sends · tab: wake: "+wake+" · ctrl+r: reply-to: "+replyTo+
+			" · ctrl+t: keep: "+keep+" · esc cancels")
 }

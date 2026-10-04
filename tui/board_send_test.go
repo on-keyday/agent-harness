@@ -131,3 +131,28 @@ func TestBoardModal_CtrlRTogglesTheReplyDestination(t *testing.T) {
 		t.Fatalf("ReplyTo = %q after ctrl+r twice, want chat.operator", p.ReplyTo)
 	}
 }
+
+// ctrl+t keeps the message on the board after its recipient answers
+// (--no-retire-on-reply); off by default, like the CLI flag.
+func TestBoardModal_CtrlTKeepsTheMessageAfterAReply(t *testing.T) {
+	m := boardModalOnTopic(t)
+	m.BeginCompose()
+	if !strings.Contains(m.View(), "keep: off") {
+		t.Errorf("view does not show keep: off by default\n%s", m.View())
+	}
+	m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	if !strings.Contains(m.View(), "keep: on") {
+		t.Errorf("view does not say keep is on\n%s", m.View())
+	}
+	typeInto(&m, "standing order")
+	_, p, _ := m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !p.NoRetireOnReply {
+		t.Fatal("ctrl+t did not set NoRetireOnReply")
+	}
+	m.BeginCompose()
+	typeInto(&m, "x")
+	_, p, _ = m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.NoRetireOnReply {
+		t.Fatal("a fresh editor inherited keep from the last one")
+	}
+}

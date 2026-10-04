@@ -1882,7 +1882,7 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 //	harness.boardRetract(topic, seq) -> Promise<{found}>
 //
 // harnessBoardSend publishes as the operator:
-// harness.boardSend({topic, inReplyTo, replyTo, noWake, body}) → {seq, deliveredTo}.
+// harness.boardSend({topic, inReplyTo, replyTo, noWake, noRetireOnReply, body}) → {seq, deliveredTo}.
 // inReplyTo and the returned seq are decimal strings, for boardRetract's
 // reason: a board seq exceeds JS's 2^53 safe-integer range.
 func harnessBoardSend(this js.Value, args []js.Value) any {
@@ -1906,7 +1906,8 @@ func harnessBoardSend(this js.Value, args []js.Value) any {
 				}
 				return ""
 			}
-			p := cli.BoardSendParams{Topic: str("topic"), ReplyTo: str("replyTo"), NoWake: o.Get("noWake").Truthy()}
+			p := cli.BoardSendParams{Topic: str("topic"), ReplyTo: str("replyTo"),
+				NoWake: o.Get("noWake").Truthy(), NoRetireOnReply: o.Get("noRetireOnReply").Truthy()}
 			if s := str("inReplyTo"); s != "" {
 				seq, perr := strconv.ParseUint(s, 10, 64)
 				if perr != nil {

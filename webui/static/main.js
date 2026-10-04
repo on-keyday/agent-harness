@@ -5748,6 +5748,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // reported by boardSendResultLine (top level, so node --test reaches them).
   const boardComposeBody = document.getElementById("board-compose-body");
   const boardComposeWake = document.getElementById("board-compose-wake");
+  const boardComposeKeep = document.getElementById("board-compose-keep");
   const boardComposeReplyTo = document.getElementById("board-compose-reply-to");
   const boardComposeReplying = document.getElementById("board-compose-replying");
   let boardReplyingSeq = ""; // decimal string; "" = a new message on the open topic
@@ -5759,6 +5760,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (boardComposeReplying) boardComposeReplying.hidden = true;
     const d = boardSendDefaults({});
     if (boardComposeWake) boardComposeWake.checked = d.wake;
+    if (boardComposeKeep) boardComposeKeep.checked = d.keep;
     if (boardComposeReplyTo) boardComposeReplyTo.value = d.replyTo;
   }
   resetBoardCompose();
@@ -5777,6 +5779,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       ...boardComposeTarget(currentBoardTopic, boardReplyingSeq),
       replyTo: boardComposeReplyTo.value.trim(),
       wake: boardComposeWake.checked,
+      keep: boardComposeKeep.checked,
       body,
     });
     try {
@@ -6662,7 +6665,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 // (no_reply_route), which reads from here as an agent that never answered;
 // clearing the field is the opt-out (operator, 2026-10-05).
 function boardSendDefaults(_target) {
-  return { replyTo: "chat.operator", wake: true };
+  // keep = --no-retire-on-reply, off as on the CLI: an answered message is
+  // withdrawn so a resumed agent does not redo it.
+  return { replyTo: "chat.operator", wake: true, keep: false };
 }
 
 // boardComposeTarget is where the composer's message goes: a reply names its
@@ -6674,12 +6679,13 @@ function boardComposeTarget(topic, replyingSeq) {
 
 // boardSendRequest is what the board composer hands harness.boardSend. Seqs
 // stay decimal strings (a board seq exceeds 2^53); "0" means not a reply.
-function boardSendRequest({ topic, inReplyTo, replyTo, wake, body }) {
+function boardSendRequest({ topic, inReplyTo, replyTo, wake, keep, body }) {
   return {
     topic: topic || "",
     inReplyTo: inReplyTo ? String(inReplyTo) : "0",
     replyTo: replyTo || "",
     noWake: !wake,
+    noRetireOnReply: !!keep,
     body,
   };
 }

@@ -23,14 +23,14 @@ test("boardSend with no client rejects instead of hanging", async () => {
 
 test("a new message goes to the open topic and wakes by default", () => {
   assert.deepEqual(plain(page.boardSendRequest({ topic: "chat.x", body: "hi", wake: true, replyTo: "" })),
-    { topic: "chat.x", inReplyTo: "0", replyTo: "", noWake: false, body: "hi" });
+    { topic: "chat.x", inReplyTo: "0", replyTo: "", noWake: false, noRetireOnReply: false, body: "hi" });
 });
 
 test("a reply names the parent as a decimal string and no topic", () => {
   // A board seq exceeds 2^53, so it crosses the bridge as a string.
   const seq = "9007199254740993";
-  assert.deepEqual(plain(page.boardSendRequest({ inReplyTo: seq, body: "a", wake: false, replyTo: "chat.operator" })),
-    { topic: "", inReplyTo: seq, replyTo: "chat.operator", noWake: true, body: "a" });
+  assert.deepEqual(plain(page.boardSendRequest({ inReplyTo: seq, body: "a", wake: false, replyTo: "chat.operator", keep: true })),
+    { topic: "", inReplyTo: seq, replyTo: "chat.operator", noWake: true, noRetireOnReply: true, body: "a" });
 });
 
 test("the result line names the target and the wake", () => {
@@ -42,7 +42,7 @@ test("the result line names the target and the wake", () => {
 
 test("the send dialog asks for answers on chat.operator, new message or reply", () => {
   for (const target of [{ topic: "chat.x" }, { inReplyTo: "12" }]) {
-    assert.deepEqual(plain(page.boardSendDefaults(target)), { replyTo: "chat.operator", wake: true });
+    assert.deepEqual(plain(page.boardSendDefaults(target)), { replyTo: "chat.operator", wake: true, keep: false });
   }
 });
 
