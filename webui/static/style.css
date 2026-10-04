@@ -616,6 +616,16 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
    own width, which is declared LATER in this file and ties on specificity. */
 .picker-modal.regrant-modal { width: min(94vw, 36rem); }
 .regrant-modal .picker-form { width: 100%; box-sizing: border-box; }
+/* Board send dialog: one control per row, the body full width and in the
+   dark palette the other text areas use (.raw-http-form textarea). */
+#board-send-modal .picker-form { display: flex; flex-direction: column; gap: 0.5rem; }
+#board-send-modal textarea, #board-send-modal input[type="text"] {
+  width: 100%; box-sizing: border-box;
+  background: #1e1e1e; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px;
+  padding: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+#board-send-modal textarea { resize: vertical; }
+#board-send-modal label { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 /* The mobile stacked-form rules (#compose label/input block, width:100%)
    split a radio/checkbox from its text; the scope picker's controls must
    keep their inline pairing. */

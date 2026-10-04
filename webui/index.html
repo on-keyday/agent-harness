@@ -490,6 +490,22 @@
      Single-choice radios: root / swap-with-current-parent / another task.
      The current parent row is pre-checked so an accidental apply is a no-op.
      Body-level for the same top-layer reason as file-preview-modal above. -->
+<!-- Board send modal: a message (or a reply) published in the operator's
+     name. The reply-to field is a topic name, prefilled with chat.operator on
+     a reply so the agent's answer to it has somewhere to go. -->
+<dialog id="board-send-modal" class="picker-modal regrant-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title" id="board-send-title">operator として送信</h3>
+    <textarea id="board-send-body" rows="6" aria-label="Message body"></textarea>
+    <label><input type="checkbox" id="board-send-wake" checked> 受信側を起こす (wake)</label>
+    <label for="board-send-reply-to">返信先 (reply-to)</label>
+    <input type="text" id="board-send-reply-to" placeholder="(なし: 返信は拒否される)">
+    <menu class="picker-actions">
+      <button type="button" id="board-send-submit">送信</button>
+      <button type="button" id="board-send-cancel">キャンセル</button>
+    </menu>
+  </form>
+</dialog>
 <dialog id="parent-modal" class="picker-modal regrant-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title">親タスク変更 <span id="parent-task"></span></h3>

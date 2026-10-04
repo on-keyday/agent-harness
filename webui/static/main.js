@@ -5540,7 +5540,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
         const fromSpan = document.createElement("span");
         fromSpan.className = "board-msg-from";
-        fromSpan.textContent = `from=${m.fromTask ? m.fromTask.slice(0, 8) : "-"}`;
+        // senderParty is decided in Go (cli.SenderParty): "operator" /
+        // "server" by kind, else the 8-hex prefix.
+        fromSpan.textContent = `from=${m.senderParty || "-"}`;
 
         const hostSpan = document.createElement("span");
         hostSpan.className = "board-msg-host";
@@ -5636,6 +5638,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         if (!m.retracted) hdr.appendChild(retractBtn);
         hdr.appendChild(purgeBtn);
 
+        // Reply as the operator. Offered on withdrawn messages too: replying
+        // destroys nothing.
+        const replyBtn = document.createElement("button");
+        replyBtn.className = "board-msg-reply-btn";
+        replyBtn.textContent = "↩";
+        replyBtn.title = `Reply to #${m.seq} as the operator`;
+        replyBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openBoardSendDialog({ inReplyTo: m.seq });
+        });
+        hdr.appendChild(replyBtn);
+
         const pre = document.createElement("pre");
         pre.textContent = prettyPayload(m.payload || "");
 
@@ -5721,6 +5735,70 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         renderBoardTopics();
       } catch (err) {
         appendCmdOutput(`boardPurge topic error: ${err.message}`);
+      }
+    });
+  }
+
+  // ── Board send / wake (as the operator) ───────────────────────────────────
+  // A topic-level Send and Wake in the detail header, and a ↩ on every card.
+  // The request and the result line are built by boardSendRequest /
+  // boardSendResultLine (top level, so node --test reaches them); this half
+  // is only the dialog.
+  const boardSendModal = document.getElementById("board-send-modal");
+  let boardSendTarget = null; // {topic} or {inReplyTo}
+
+  function openBoardSendDialog(target) {
+    if (!boardSendModal || !window.harness || typeof window.harness.boardSend !== "function") return;
+    boardSendTarget = target;
+    document.getElementById("board-send-title").textContent = target.inReplyTo
+      ? `#${target.inReplyTo} に operator として返信`
+      : `${target.topic} に operator として送信`;
+    document.getElementById("board-send-body").value = "";
+    document.getElementById("board-send-wake").checked = true;
+    // A reply asks for answers on chat.operator: without a destination the
+    // agent's answer would be refused (no_reply_route).
+    document.getElementById("board-send-reply-to").value = target.inReplyTo ? "chat.operator" : "";
+    boardSendModal.showModal();
+  }
+
+  if (boardSendModal) {
+    document.getElementById("board-send-cancel").addEventListener("click", () => boardSendModal.close());
+    document.getElementById("board-send-submit").addEventListener("click", async () => {
+      const body = document.getElementById("board-send-body").value;
+      if (!body || !boardSendTarget) return;
+      const req = boardSendRequest({
+        topic: boardSendTarget.topic || "",
+        inReplyTo: boardSendTarget.inReplyTo || "",
+        replyTo: document.getElementById("board-send-reply-to").value.trim(),
+        wake: document.getElementById("board-send-wake").checked,
+        body,
+      });
+      boardSendModal.close();
+      try {
+        const r = await window.harness.boardSend(req);
+        appendCmdOutput(boardSendResultLine(r, req));
+      } catch (err) {
+        appendCmdOutput(`board send error: ${err.message}`);
+      }
+      if (currentBoardTopic) openBoardTopic(currentBoardTopic);
+    });
+  }
+
+  const boardSendBtn = document.getElementById("board-send-btn");
+  if (boardSendBtn) {
+    boardSendBtn.addEventListener("click", () => {
+      if (currentBoardTopic) openBoardSendDialog({ topic: currentBoardTopic });
+    });
+  }
+  const boardWakeBtn = document.getElementById("board-wake-btn");
+  if (boardWakeBtn) {
+    boardWakeBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic || !window.harness) return;
+      try {
+        const r = await window.harness.boardWake(currentBoardTopic);
+        appendCmdOutput(`board wake: woke ${r.woken} task(s) on ${currentBoardTopic}`);
+      } catch (err) {
+        appendCmdOutput(`board wake error: ${err.message}`);
       }
     });
   }
@@ -5883,7 +5961,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (r.inReplyTo && r.inReplyTo !== "0") bits.push("re=" + r.inReplyTo);
       if (r.replyToTopic) bits.push("reply-to=" + r.replyToTopic);
       bits.push("topic=" + r.topic);
-      bits.push("from=" + String(r.from && r.from.taskId || "").slice(0, 8));
+      bits.push("from=" + String(r.from && r.from.senderParty || ""));
       if (r.from && r.from.agentProfile) bits.push("agent=" + r.from.agentProfile);
       // size is always populated, so a 0 here is a zero-byte publish rather
       // than a field nobody filled in — printed rather than hidden.
@@ -6566,6 +6644,27 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 // chosen so the typical case (a handful of hosts, each with a few slots)
 // renders as host-grouped blocks whose order does not change as long as
 // no runner re-registers.
+// boardSendRequest is what the board send dialog hands harness.boardSend. Seqs
+// stay decimal strings (a board seq exceeds 2^53); "0" means not a reply.
+function boardSendRequest({ topic, inReplyTo, replyTo, wake, body }) {
+  return {
+    topic: topic || "",
+    inReplyTo: inReplyTo ? String(inReplyTo) : "0",
+    replyTo: replyTo || "",
+    noWake: !wake,
+    body,
+  };
+}
+
+// boardSendResultLine names the target and the change, like every other
+// result line on this surface.
+function boardSendResultLine(res, req) {
+  const dest = req.inReplyTo && req.inReplyTo !== "0"
+    ? `as a reply to #${req.inReplyTo}`
+    : `to ${req.topic}`;
+  return `board send: sent #${res.seq} ${dest} (delivered_to=${res.deliveredTo}, wake ${req.noWake ? "off" : "on"})`;
+}
+
 function sortRunners(runners) {
   const key = (r) => [
     r.hostname || "",

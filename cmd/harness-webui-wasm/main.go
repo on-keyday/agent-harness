@@ -151,6 +151,8 @@ func main() {
 		"boardThread":        js.FuncOf(harnessBoardThread),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
+		"boardSend":          js.FuncOf(harnessBoardSend),
+		"boardWake":          js.FuncOf(harnessBoardWake),
 		"boardRetractThread": js.FuncOf(harnessBoardThreadOp(cli.ThreadRetract, "boardRetractThread")),
 		"boardPurgeThread":   js.FuncOf(harnessBoardThreadOp(cli.ThreadPurge, "boardPurgeThread")),
 		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
@@ -1635,6 +1637,11 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					"fromTask":     m.FromTaskHex,
 					"fromHostname": m.FromHostname,
 					"agentProfile": m.FromAgentProfile,
+					// Who published, and the short name the row shows: the
+					// kind for the operator and the server, whose task id
+					// may be all zeros, else the 8-hex prefix.
+					"senderKind":   m.SenderKind,
+					"senderParty":  cli.SenderParty(m.SenderKind, m.FromTaskHex),
 					"receivedAtMs": float64(m.ReceivedAtMs),
 					"payload":      string(m.Payload),
 					// A withdrawn message. It reaches no agent any more and
@@ -1750,6 +1757,8 @@ func harnessBoardThread(this js.Value, args []js.Value) any {
 						"taskId":       r.Msg.FromTaskHex,
 						"hostname":     r.Msg.FromHostname,
 						"agentProfile": r.Msg.FromAgentProfile,
+						"senderKind":   r.Msg.SenderKind,
+						"senderParty":  cli.SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex),
 					},
 					"retracted":     r.Msg.Retracted,
 					"retractedAtMs": float64(r.Msg.RetractedAtMs),
@@ -1871,6 +1880,86 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 // error here rather than a wider operation.
 //
 //	harness.boardRetract(topic, seq) -> Promise<{found}>
+//
+// harnessBoardSend publishes as the operator:
+// harness.boardSend({topic, inReplyTo, replyTo, noWake, body}) → {seq, deliveredTo}.
+// inReplyTo and the returned seq are decimal strings, for boardRetract's
+// reason: a board seq exceeds JS's 2^53 safe-integer range.
+func harnessBoardSend(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 || args[0].Type() != js.TypeObject {
+				rejectErr(reject, errors.New("boardSend: want {topic, inReplyTo, replyTo, noWake, body}"))
+				return
+			}
+			o := args[0]
+			str := func(k string) string {
+				if v := o.Get(k); v.Type() == js.TypeString {
+					return v.String()
+				}
+				return ""
+			}
+			p := cli.BoardSendParams{Topic: str("topic"), ReplyTo: str("replyTo"), NoWake: o.Get("noWake").Truthy()}
+			if s := str("inReplyTo"); s != "" {
+				seq, perr := strconv.ParseUint(s, 10, 64)
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("boardSend: bad inReplyTo %q: %w", s, perr))
+					return
+				}
+				p.InReplyTo = seq
+			}
+			res, err := c.BoardSend(rootCtx, p, []byte(str("body")))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"seq":         strconv.FormatUint(res.Seq, 10),
+				"deliveredTo": int(res.DeliveredTo),
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardWake wakes a topic's subscribers without publishing:
+// harness.boardWake(topic) → {woken}.
+func harnessBoardWake(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 || args[0].String() == "" {
+				rejectErr(reject, errors.New("boardWake: missing topic"))
+				return
+			}
+			n, err := c.BoardWake(rootCtx, args[0].String())
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardWake: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{"woken": n}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 func harnessBoardRetract(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
