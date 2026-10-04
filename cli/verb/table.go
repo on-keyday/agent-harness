@@ -2793,6 +2793,6 @@ func init() {
 		"server-side operations, addressed to the server rather than to a task",
 	}
 	FamilyNotes["board"] = []string{
-		"inspect/withdraw/purge the agentboard (cap: board_observe; retract and purge: purge)",
+		"inspect/withdraw/purge/publish on the agentboard (cap: board_observe; retract and purge: purge; send and wake: board_send)",
 	}
 }
