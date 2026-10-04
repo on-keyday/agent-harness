@@ -35,8 +35,7 @@ type BoardMessage struct {
 	FromHostname string
 	// FromAgentProfile is the agent profile the sender was running under when
 	// the message was published. Empty = the server could not attribute a
-	// runtime (e.g. a server-originated publish, which carries FromHostname
-	// "server").
+	// runtime (an operator or server publish; SenderKind says which).
 	FromAgentProfile string
 	// SenderKind is who published it: "agent", "operator" or "server" (see
 	// SenderKindName). Empty only from a server that predates the field.

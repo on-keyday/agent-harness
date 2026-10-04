@@ -319,6 +319,9 @@ harness-cli agent send --in-reply-to 42 --data '{"status":"done"}'
 #                       ^ seq 42 is withdrawn as a side effect
 ```
 
+A withdrawn message can still be answered, so a follow-up to the same parent
+("done" after "on it") routes like the first reply did.
+
 It fires only when the message sat on **your own** `chat.<short-id>`, i.e.
 it was addressed to you specifically. A message published to a shared topic
 is never auto-withdrawn by one subscriber's reply — the others may not have
@@ -605,10 +608,16 @@ you is which runtime answered, not whether it was pushed. An
 empty `from.agent` means the server could not attribute a runtime.
 
 Every record also carries `sender_kind`, set by the server: `agent` for a peer,
-`operator` for **the human** (their message, written in the TUI, WebUI or CLI),
-`server` for a server notice such as an `await-idle` notification. Read it
-before `from.task_id`: an operator or server message may carry an all-zero task
-id, which names no task and no `chat.<short-id>` to answer on.
+`operator` for a message published **in the operator's name**, `server` for a
+server notice such as an `await-idle` notification. Read it before
+`from.task_id`: an operator or server message may carry an all-zero task id,
+which names no task and no `chat.<short-id>` to answer on.
+
+`operator` with an all-zero `from.task_id` is the human (TUI, WebUI or CLI).
+`operator` with a non-zero `from.task_id` is the task that id names, which the
+operator granted `board_send` to speak for them — a delegate, not the human
+typing. The server stamps both; neither can be forged from a plain `agent
+send`.
 
 ## Finding other agents / tasks
 

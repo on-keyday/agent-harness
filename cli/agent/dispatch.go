@@ -110,10 +110,6 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 		return err
 	}
 
-	if err := refuseIfOwnTicket(payload); err != nil {
-		return err
-	}
-
 	selfTid, err := cliopts.ResolveTaskID("")
 	if err != nil {
 		return err

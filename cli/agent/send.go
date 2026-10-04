@@ -62,10 +62,6 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 		return err
 	}
 
-	if err := refuseIfOwnTicket(payload); err != nil {
-		return err
-	}
-
 	c, cerr := connectClient(ctx, *serverCID)
 	if cerr != nil {
 		return cerr

@@ -766,6 +766,35 @@ func (b *Board) Retained(seq uint64) (RetainedMessage, bool) {
 	return RetainedMessage{}, false
 }
 
+// ReplyParent is Retained widened to withdrawn messages, for reply routing
+// only. A withdrawn message is out of every agent READ path, but it was said and
+// can still be answered: reply-retire withdraws a message on the first answer,
+// so a follow-up to the same parent ("done" after "on it") would otherwise be
+// refused, and so would an operator's reply to something it retracted. Purged
+// and evicted messages are gone from both lists and stay unanswerable.
+func (b *Board) ReplyParent(seq uint64) (RetainedMessage, bool) {
+	if m, ok := b.Retained(seq); ok {
+		return m, true
+	}
+	if seq == 0 {
+		return RetainedMessage{}, false
+	}
+	b.mu.Lock()
+	tps := make([]*topic, 0, len(b.topics))
+	for _, t := range b.topics {
+		tps = append(tps, t)
+	}
+	b.mu.Unlock()
+	for _, t := range tps {
+		for _, m := range t.snapshotRetracted() {
+			if m.Seq == seq {
+				return m, true
+			}
+		}
+	}
+	return RetainedMessage{}, false
+}
+
 func (b *Board) LookupSeq(seq uint64) (string, protocol.TaskID, bool) {
 	if seq == 0 {
 		return "", protocol.TaskID{}, false

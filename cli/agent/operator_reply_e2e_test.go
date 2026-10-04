@@ -91,3 +91,33 @@ func TestAgentCLI_E2E_SubscribingToChatOperatorIsRefused(t *testing.T) {
 		t.Fatalf("subscribe to %s succeeded (out=%q), want a refusal", agentboard.OperatorTopic, out.String())
 	}
 }
+
+// A peer's first answer to a message addressed to it withdraws that message
+// (reply-retire: it sat on the replier's own chat topic). A second answer to
+// the same parent -- "done" after "on it" -- must still route back to the
+// asker.
+func TestAgentCLI_E2E_SecondReplyAfterAutoRetireStillRoutes(t *testing.T) {
+	board, addr, rid, tid, ticket := operatorReplyFixture(t)
+	asker := mkTidE2E(0x62)
+	parent, _, err := board.Send(agent.SelfTopic(tid), []byte("please do X"), protocol.RunnerID{}, asker, "h", "claude", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	restore := setAgentEnv(addr, rid, tid, ticket)
+	defer restore()
+	var out bytes.Buffer
+	if err := agent.Send(ctx, []string{"--in-reply-to", itoa(parent), "--data", "on-it"}, nil, &out); err != nil {
+		t.Fatalf("first reply: %v", err)
+	}
+	if _, live := board.Retained(parent); live {
+		t.Fatal("precondition: the first reply did not retire the parent")
+	}
+	if err := agent.Send(ctx, []string{"--in-reply-to", itoa(parent), "--data", "done"}, nil, &out); err != nil {
+		t.Fatalf("second reply: %v", err)
+	}
+	if got := topicPayloads(t, board, agent.SelfTopic(asker)); !strings.Contains(got, "done") {
+		t.Errorf("the asker's topic holds %q, want the second answer", got)
+	}
+}

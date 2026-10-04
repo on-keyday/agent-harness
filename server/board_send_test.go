@@ -117,3 +117,32 @@ func TestHandleBoardRead_CarriesSenderKind(t *testing.T) {
 		t.Fatalf("board read = %+v, want one operator row", br)
 	}
 }
+
+// A withdrawn message can still be answered. Reply-retire withdraws an
+// operator's message the moment the agent first answers it, so without this a
+// follow-up ("done", after "on it") to the same parent was refused as
+// unknown_in_reply_to -- and so was every operator reply to a message the
+// operator had retracted.
+func TestResolveReplyTarget_RetractedParentStillRoutes(t *testing.T) {
+	h, _ := newBoardTestHandler(t)
+	var author protocol.TaskID
+	author.Id[0] = 0x42
+	parent, _, _ := h.Board.Send("shared", []byte("q"), protocol.RunnerID{}, author, "h", "claude", 0)
+	if _, found := h.Board.ForceRetractSeq("shared", parent, protocol.TaskID{}); !found {
+		t.Fatal("retract did not find the parent")
+	}
+	dest, st := resolveReplyTarget(h.Board, "", parent)
+	if st != protocol.SendStatus_Ok || dest != agentboard.SelfTopic(author) {
+		t.Fatalf("dest=%q status=%v, want the author's chat topic", dest, st)
+	}
+}
+
+// Purged is still gone: only a withdrawn message keeps its reply route.
+func TestResolveReplyTarget_PurgedParentIsUnknown(t *testing.T) {
+	h, _ := newBoardTestHandler(t)
+	parent, _, _ := h.Board.Send("shared", []byte("q"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	h.Board.PurgeSeq("shared", parent)
+	if _, st := resolveReplyTarget(h.Board, "", parent); st != protocol.SendStatus_UnknownInReplyTo {
+		t.Fatalf("status = %v, want unknown_in_reply_to", st)
+	}
+}

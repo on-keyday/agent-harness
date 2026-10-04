@@ -27,7 +27,11 @@ Per record, a header line then the body:
 
 - `  reply-to=<reply_to_topic>` is appended when that field is present, and
   nothing when it is absent.
-- When `from.agent` is `""` (server-originated), the header prints
+- When `sender_kind` is `operator` or `server`, the header is
+  `#<seq> <topic>  from=<kind>` — their `from.task_id` may be all zeros, which
+  names no task. A record without `sender_kind` (an older server) gets the agent
+  form.
+- Otherwise, when `from.agent` is `""` (no runtime attributed), the header prints
   `from=?@<hostname>`.
 - When `in_reply_to != 0`, `  in-reply-to=#<n>` is appended.
 

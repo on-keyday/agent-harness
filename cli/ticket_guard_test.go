@@ -1,4 +1,4 @@
-package agent
+package cli
 
 import (
 	"strings"
@@ -24,7 +24,7 @@ func TestRefuseIfOwnTicket(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("HARNESS_AUTH_TICKET", c.env)
-			err := refuseIfOwnTicket([]byte(c.payload))
+			err := RefuseIfOwnTicket([]byte(c.payload))
 			if c.refuse && err == nil {
 				t.Fatal("expected refusal, got nil")
 			}

@@ -113,7 +113,9 @@ func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (st
 	if inReplyTo == 0 {
 		return topic, protocol.SendStatus_Ok
 	}
-	parent, ok := b.Retained(inReplyTo)
+	// ReplyParent, not Retained: a withdrawn parent can still be answered
+	// (see its comment). Only purged / evicted is unknown.
+	parent, ok := b.ReplyParent(inReplyTo)
 	if !ok {
 		return "", protocol.SendStatus_UnknownInReplyTo
 	}

@@ -16,7 +16,8 @@ const (
 )
 
 // ResolvePayload picks a publish body out of already-parsed values and names
-// where it came from. Shared by `agent send`, `agent dispatch` and
+// where it came from, and refuses one that carries this task's own ticket
+// (RefuseIfOwnTicket). Shared by `agent send`, `agent dispatch` and
 // `board send`, so the verbs — identical body surfaces, one board — cannot
 // disagree about what `--data`, a positional and a bare pipe each mean.
 //
@@ -28,19 +29,19 @@ func ResolvePayload(dataSet bool, data, positional string, stdin io.Reader) ([]b
 	switch {
 	case dataSet && data != "-":
 		// explicit literal payload via --data
-		return []byte(data), PayloadSourceData, nil
+		return []byte(data), PayloadSourceData, RefuseIfOwnTicket([]byte(data))
 	case !dataSet && positional != "":
 		// payload given as positional argument(s), joined ssh-style. This matches
 		// the common `cmd <payload>` instinct so a forgotten --data doesn't
 		// silently send an empty body (we used to ignore positionals entirely and
 		// fall through to reading stdin).
-		return []byte(positional), PayloadSourcePositional, nil
+		return []byte(positional), PayloadSourcePositional, RefuseIfOwnTicket([]byte(positional))
 	default:
 		// explicit `--data -`, or neither --data nor a positional given: read stdin.
 		b, err := io.ReadAll(stdin)
 		if err != nil {
 			return nil, "", err
 		}
-		return b, PayloadSourceStdin, nil
+		return b, PayloadSourceStdin, RefuseIfOwnTicket(b)
 	}
 }

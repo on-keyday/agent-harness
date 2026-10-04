@@ -32,6 +32,7 @@ becomes a field.
 | memviewer stays as it is | operator, 2026-10-04 |
 | Replies to the operator go to the reserved topic `chat.operator`; agents may not subscribe to it | operator, 2026-10-04 |
 | `chat.operator` keeps the ordinary topic TTL | operator, 2026-10-04 |
+| A withdrawn (retracted) message can still be replied to, by the operator and by agents; purged/evicted stays `unknown_in_reply_to` (Amendment A) | operator, 2026-10-05 |
 
 Why no-wake is kept off the agent face: an agent that uses it by
 misunderstanding gets a message that is retained but not acted on, and reports
@@ -237,3 +238,26 @@ whether it has a reply route.
 - `agent send --help` does not list `--no-wake`.
 - The TUI and WebUI paths are driven with real input (Playwright for the
   WebUI), not only rendered.
+
+## Amendment A (2026-10-05) — replying to a withdrawn message
+
+`resolveReplyTarget` resolved the parent through `Board.Retained`, which reads
+only live rings. A retracted message is moved to the topic's withdrawn list, so
+any reply to it was refused as `unknown_in_reply_to`. Two cases hit this:
+
+- an operator replying (WebUI ↩, TUI `a`) to a message somebody retracted;
+- an agent's follow-up to a message it already answered: reply-retire
+  withdraws the parent on the first reply, so "done" after "on it" was refused.
+
+The parent is now resolved through `Board.ReplyParent`, which also searches the
+withdrawn list. Routing is unchanged (declared `reply_to_topic`, else the
+author's chat topic, else `no_reply_route` for a non-agent author). A withdrawn
+parent is not retired again: `retireRepliedParent` still reads live rings only.
+The reply's `in_reply_to` may name a seq agents cannot read; that is the same
+state an evicted parent already produces, rendered as ORPHAN by `thread`.
+
+Found while making this change and NOT changed: reply-retire never withdraws an
+**operator** message. `retireRepliedParent` retracts as the parent's author,
+and `RetractSeq` refuses a zero author, which is what an operator message
+carries. An operator's instruction therefore survives the agent's answer, and a
+resumed agent can re-read it. Open for the operator to decide.

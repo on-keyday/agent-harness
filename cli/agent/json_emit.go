@@ -18,8 +18,8 @@ import (
 // hostname, agent profile). It is always present, even for legacy messages
 // where the bytes may be zero — that lets jq/grep consumers reliably address
 // `.from.*`. An empty `agent` means the server could not attribute a runtime to
-// the sender (e.g. a server-originated publish, which carries hostname
-// "server"); it never means "runner default".
+// the sender (an operator or server publish; sender_kind says which); it never
+// means "runner default".
 //
 // in_reply_to is emitted on every record, 0 when the message is not a reply,
 // for the same reason the from block is unconditional: a consumer can address
