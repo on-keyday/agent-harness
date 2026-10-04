@@ -1238,7 +1238,7 @@ var Verbs = []VerbSpec{
 		ModalSurfaces: []ModalSurface{
 			// m composes on the open topic, a replies to the selected message.
 			{Surface: TUI, At: "tui/board.go:BoardModal"},
-			{Surface: WebUI, At: "webui/index.html#board-send-btn"},
+			{Surface: WebUI, At: "webui/index.html#board-compose"},
 		},
 		Notes: []string{
 			"publish in the OPERATOR's name: the message is stamped sender=operator (cap: board_send).",

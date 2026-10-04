@@ -5476,6 +5476,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   // openBoardTopic shows the detail view for one topic.
   async function openBoardTopic(topic) {
+    // A different topic starts a fresh composer; re-reading the same one (a
+    // refresh after a send) leaves what is being written alone.
+    if (topic !== currentBoardTopic && typeof resetBoardCompose === "function") resetBoardCompose();
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
@@ -5646,7 +5649,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         replyBtn.title = `Reply to #${m.seq} as the operator`;
         replyBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          openBoardSendDialog({ inReplyTo: m.seq });
+          armBoardReply(m.seq);
         });
         hdr.appendChild(replyBtn);
 
@@ -5739,56 +5742,66 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
 
-  // ── Board send / wake (as the operator) ───────────────────────────────────
-  // A topic-level Send and Wake in the detail header, and a ↩ on every card.
-  // The request and the result line are built by boardSendRequest /
-  // boardSendResultLine (top level, so node --test reaches them); this half
-  // is only the dialog.
-  const boardSendModal = document.getElementById("board-send-modal");
-  let boardSendTarget = null; // {topic} or {inReplyTo}
+  // ── Board composer / wake (as the operator) ───────────────────────────────
+  // The composer sits under the topic's messages; ↩ on a card arms a reply.
+  // What it sends is built by boardComposeTarget / boardSendRequest and
+  // reported by boardSendResultLine (top level, so node --test reaches them).
+  const boardComposeBody = document.getElementById("board-compose-body");
+  const boardComposeWake = document.getElementById("board-compose-wake");
+  const boardComposeReplyTo = document.getElementById("board-compose-reply-to");
+  const boardComposeReplying = document.getElementById("board-compose-replying");
+  let boardReplyingSeq = ""; // decimal string; "" = a new message on the open topic
 
-  function openBoardSendDialog(target) {
-    if (!boardSendModal || !window.harness || typeof window.harness.boardSend !== "function") return;
-    boardSendTarget = target;
-    document.getElementById("board-send-title").textContent = target.inReplyTo
-      ? `#${target.inReplyTo} に operator として返信`
-      : `${target.topic} に operator として送信`;
-    document.getElementById("board-send-body").value = "";
-    const d = boardSendDefaults(target);
-    document.getElementById("board-send-wake").checked = d.wake;
-    document.getElementById("board-send-reply-to").value = d.replyTo;
-    boardSendModal.showModal();
+  // Back to a new message with the defaults, so a reply-to cleared for one
+  // note does not silently carry over to the next.
+  function resetBoardCompose() {
+    boardReplyingSeq = "";
+    if (boardComposeReplying) boardComposeReplying.hidden = true;
+    const d = boardSendDefaults({});
+    if (boardComposeWake) boardComposeWake.checked = d.wake;
+    if (boardComposeReplyTo) boardComposeReplyTo.value = d.replyTo;
+  }
+  resetBoardCompose();
+
+  function armBoardReply(seq) {
+    boardReplyingSeq = String(seq);
+    document.getElementById("board-compose-replying-label").textContent = `↩ #${seq} に返信`;
+    boardComposeReplying.hidden = false;
+    boardComposeBody.focus();
   }
 
-  if (boardSendModal) {
-    document.getElementById("board-send-cancel").addEventListener("click", () => boardSendModal.close());
-    document.getElementById("board-send-submit").addEventListener("click", async () => {
-      const body = document.getElementById("board-send-body").value;
-      if (!body || !boardSendTarget) return;
-      const req = boardSendRequest({
-        topic: boardSendTarget.topic || "",
-        inReplyTo: boardSendTarget.inReplyTo || "",
-        replyTo: document.getElementById("board-send-reply-to").value.trim(),
-        wake: document.getElementById("board-send-wake").checked,
-        body,
-      });
-      boardSendModal.close();
-      try {
-        const r = await window.harness.boardSend(req);
-        appendCmdOutput(boardSendResultLine(r, req));
-      } catch (err) {
-        appendCmdOutput(`board send error: ${err.message}`);
-      }
-      if (currentBoardTopic) openBoardTopic(currentBoardTopic);
+  async function sendBoardCompose() {
+    const body = boardComposeBody.value;
+    if (!body.trim() || !currentBoardTopic || !window.harness) return;
+    const req = boardSendRequest({
+      ...boardComposeTarget(currentBoardTopic, boardReplyingSeq),
+      replyTo: boardComposeReplyTo.value.trim(),
+      wake: boardComposeWake.checked,
+      body,
     });
+    try {
+      const r = await window.harness.boardSend(req);
+      appendCmdOutput(boardSendResultLine(r, req));
+      // Cleared only on success: a refused send (no_reply_route, say) keeps
+      // what was typed.
+      boardComposeBody.value = "";
+      resetBoardCompose();
+    } catch (err) {
+      appendCmdOutput(`board send error: ${err.message}`);
+    }
+    openBoardTopic(currentBoardTopic);
   }
 
-  const boardSendBtn = document.getElementById("board-send-btn");
-  if (boardSendBtn) {
-    boardSendBtn.addEventListener("click", () => {
-      if (currentBoardTopic) openBoardSendDialog({ topic: currentBoardTopic });
-    });
-  }
+  document.getElementById("board-compose-send")?.addEventListener("click", sendBoardCompose);
+  // Enter sends; Shift+Enter is a newline -- the stream chat's binding.
+  boardComposeBody?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendBoardCompose(); }
+  });
+  document.getElementById("board-compose-cancel-reply")?.addEventListener("click", () => {
+    boardReplyingSeq = "";
+    boardComposeReplying.hidden = true;
+  });
+
   const boardWakeBtn = document.getElementById("board-wake-btn");
   if (boardWakeBtn) {
     boardWakeBtn.addEventListener("click", async () => {
@@ -6643,7 +6656,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 // chosen so the typical case (a handful of hosts, each with a few slots)
 // renders as host-grouped blocks whose order does not change as long as
 // no runner re-registers.
-// boardSendDefaults is what the send dialog opens with, for a new message
+// boardSendDefaults is what the composer starts from, for a new message
 // ({topic}) and a reply ({inReplyTo}) alike: wake on, answers asked for on
 // chat.operator. Without a destination an agent's answer is refused
 // (no_reply_route), which reads from here as an agent that never answered;
@@ -6652,7 +6665,14 @@ function boardSendDefaults(_target) {
   return { replyTo: "chat.operator", wake: true };
 }
 
-// boardSendRequest is what the board send dialog hands harness.boardSend. Seqs
+// boardComposeTarget is where the composer's message goes: a reply names its
+// parent only (the server routes it -- the open topic is not necessarily where
+// the answer belongs), otherwise the open topic.
+function boardComposeTarget(topic, replyingSeq) {
+  return replyingSeq ? { inReplyTo: String(replyingSeq) } : { topic };
+}
+
+// boardSendRequest is what the board composer hands harness.boardSend. Seqs
 // stay decimal strings (a board seq exceeds 2^53); "0" means not a reply.
 function boardSendRequest({ topic, inReplyTo, replyTo, wake, body }) {
   return {

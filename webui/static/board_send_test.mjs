@@ -45,3 +45,10 @@ test("the send dialog asks for answers on chat.operator, new message or reply", 
     assert.deepEqual(plain(page.boardSendDefaults(target)), { replyTo: "chat.operator", wake: true });
   }
 });
+
+test("the composer sends to the open topic, or replies when a reply is armed", () => {
+  assert.deepEqual(plain(page.boardComposeTarget("chat.x", "")), { topic: "chat.x" });
+  // A reply names the parent only: the server routes it, and the open topic
+  // is not necessarily where the answer belongs.
+  assert.deepEqual(plain(page.boardComposeTarget("chat.x", "9007199254740993")), { inReplyTo: "9007199254740993" });
+});

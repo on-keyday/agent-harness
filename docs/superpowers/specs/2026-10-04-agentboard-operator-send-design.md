@@ -202,7 +202,7 @@ kind `operator`, the party is `operator` instead.
 |---|---|---|
 | CLI | `board send [--topic T] [--in-reply-to N] [--reply-to T] [--no-wake] [--data -] text…` | `board wake <topic>` |
 | TUI | compose from the board modal (`tui/board.go` `BoardModal`): new message on the open topic, reply on the selected message | action on the open topic |
-| WebUI | compose on the board topic view (`openBoardTopic`, `webui/static/main.js`), and a reply action on each `board-msg` card | button on the topic view |
+| WebUI | an inline composer under the topic view's messages (`#board-compose`; it replaced the first version's modal dialog, operator 2026-10-05), and ↩ on each `board-msg` card arming a reply in it | button on the topic view |
 
 The topic is a flag, as on `agent send`, and may be omitted only with
 `--in-reply-to`: a positional topic in front of free-form text would be

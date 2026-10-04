@@ -1054,8 +1054,10 @@ suppress a wake.
 
 In the TUI board modal, `m` sends on the open topic, `a` replies to the
 selected message (in the editor, tab turns the wake off and `ctrl+r` the reply
-destination), and `p` wakes the topic. In the WebUI board view these are ✉ Send and ⏰ Wake in the topic header
-and ↩ on each message.
+destination), and `p` wakes the topic. In the WebUI board view, a composer
+under the topic's messages sends (Enter; Shift+Enter is a newline), ↩ on a
+message turns it into a reply until sent or cancelled with ×, and ⏰ Wake sits
+in the topic header.
 
 ```bash
 bin/harness-cli caps                       # capability names + scope forms

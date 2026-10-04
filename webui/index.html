@@ -324,12 +324,29 @@
           <div class="board-detail-header">
             <button id="board-back-btn" class="board-back-btn">← Back</button>
             <span id="board-detail-title" class="board-detail-title"></span>
-            <button id="board-send-btn" type="button" title="Send a message to this topic as the operator">✉ Send</button>
             <button id="board-wake-btn" type="button" title="Wake this topic's subscribers without publishing">⏰ Wake</button>
             <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
           </div>
           <div id="board-subscribers"></div>
           <div id="board-messages"></div>
+          <!-- Operator composer: a message on this topic, or a reply when ↩
+               armed one. Inline rather than a dialog, so the board stays in
+               view while writing; the same shape as the stream chat's input. -->
+          <div id="board-compose" class="board-compose">
+            <div id="board-compose-replying" class="board-compose-replying" hidden>
+              <span id="board-compose-replying-label"></span>
+              <button type="button" id="board-compose-cancel-reply" title="返信をやめて新規送信に戻す">×</button>
+            </div>
+            <div class="chat-input-row">
+              <textarea id="board-compose-body" rows="2" placeholder="operator として送信（Enter 送信 / Shift+Enter 改行）"></textarea>
+              <button type="button" id="board-compose-send">送信</button>
+            </div>
+            <div class="board-compose-opts">
+              <label><input type="checkbox" id="board-compose-wake" checked> 受信側を起こす (wake)</label>
+              <label for="board-compose-reply-to">返信先</label>
+              <input type="text" id="board-compose-reply-to" placeholder="(なし: 返信は拒否される)">
+            </div>
+          </div>
         </div>
       </div>
       <div id="board-chains-view" hidden>
@@ -490,22 +507,6 @@
      Single-choice radios: root / swap-with-current-parent / another task.
      The current parent row is pre-checked so an accidental apply is a no-op.
      Body-level for the same top-layer reason as file-preview-modal above. -->
-<!-- Board send modal: a message (or a reply) published in the operator's
-     name. The reply-to field is a topic name, prefilled with chat.operator on
-     a reply so the agent's answer to it has somewhere to go. -->
-<dialog id="board-send-modal" class="picker-modal regrant-modal">
-  <form method="dialog" class="picker-form">
-    <h3 class="picker-title" id="board-send-title">operator として送信</h3>
-    <textarea id="board-send-body" rows="6" aria-label="Message body"></textarea>
-    <label><input type="checkbox" id="board-send-wake" checked> 受信側を起こす (wake)</label>
-    <label for="board-send-reply-to">返信先 (reply-to)</label>
-    <input type="text" id="board-send-reply-to" placeholder="(なし: 返信は拒否される)">
-    <menu class="picker-actions">
-      <button type="button" id="board-send-submit">送信</button>
-      <button type="button" id="board-send-cancel">キャンセル</button>
-    </menu>
-  </form>
-</dialog>
 <dialog id="parent-modal" class="picker-modal regrant-modal">
   <form method="dialog" class="picker-form">
     <h3 class="picker-title">親タスク変更 <span id="parent-task"></span></h3>
