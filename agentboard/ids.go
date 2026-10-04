@@ -17,6 +17,13 @@ func hexTaskIDProto(t protocol.TaskID) string {
 // SelfTopicPrefix is the prefix for each task's id-directed inbound topic.
 const SelfTopicPrefix = "chat."
 
+// OperatorTopic is where replies to the operator go. The TUI and WebUI prefill
+// it as --reply-to when the operator replies, so an agent answering with
+// --in-reply-to alone lands here. It is reserved: no agent may subscribe to it
+// (Board.Subscribe), so a publish here wakes nobody and reaches no inbox. It
+// cannot collide with a task's chat.<8-hex>, because "operator" is not hex.
+const OperatorTopic = SelfTopicPrefix + "operator"
+
 const selfTopicShortLen = 8
 
 // SelfTopic returns the conventional inbound topic for tid:

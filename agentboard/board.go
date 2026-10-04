@@ -213,6 +213,13 @@ func (b *Board) Subscribe(c *ConnState, pattern string) error {
 	if c == nil || c.task == nil {
 		return errors.New("not attached")
 	}
+	// Wait is deliberately NOT refused the same way: a wait already reads any
+	// named topic's ring (knowing the name is the price of entry), and a task
+	// waiting on a topic is skipped by the wake loop. Subscription is what
+	// would put chat.operator into an inbox and wake a task on every reply.
+	if pattern == OperatorTopic {
+		return ErrReservedTopic
+	}
 	c.task.addPattern(pattern)
 	return nil
 }
@@ -227,6 +234,7 @@ func (b *Board) Unsubscribe(c *ConnState, pattern string) {
 var (
 	ErrPayloadTooLarge = errors.New("agentboard: payload too large")
 	ErrTooManyTopics   = errors.New("agentboard: too many topics")
+	ErrReservedTopic   = errors.New("agentboard: topic is reserved and cannot be subscribed")
 )
 
 // Send appends a message to topicName attributed to the given
@@ -281,18 +289,29 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	seq := b.seq.Add(1)
 	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
 
+	b.deliver(targets, topicName, !cfg.noWake)
+	return seq, len(targets), nil
+}
+
+// deliver pings every target's connections and, when wake is set, emits
+// onDeliver for each target that is not already waiting on this topic. It
+// returns how many onDeliver calls it made. Shared by Send and Wake so the two
+// cannot disagree about who a publish reaches.
+//
+// Subscription is the opt-in: every matching subscriber is pinged AND
+// gets onDeliver (hence a task_wake) — the publisher's own taskState
+// included, so a send to one's own chat.<short-id> is a working
+// self-ping. This also makes the (rid, tid)-keyed publisher case
+// consistent with publishes that self-wake by construction anyway:
+// server-originated ones (await-idle) carry a placeholder RunnerID and
+// never matched a publisher skip. Loop pressure is bounded elsewhere —
+// the runner debounces wake injections per task (wakeDebounceWindow),
+// and agents are told to subscribe only to topics they receive on.
+func (b *Board) deliver(targets []*taskState, topicName string, wake bool) int {
 	b.mu.Lock()
 	fn := b.onDeliver
 	b.mu.Unlock()
-	// Subscription is the opt-in: every matching subscriber is pinged AND
-	// gets onDeliver (hence a task_wake) — the publisher's own taskState
-	// included, so a send to one's own chat.<short-id> is a working
-	// self-ping. This also makes the (rid, tid)-keyed publisher case
-	// consistent with publishes that self-wake by construction anyway:
-	// server-originated ones (await-idle) carry a placeholder RunnerID and
-	// never matched a publisher skip. Loop pressure is bounded elsewhere —
-	// the runner debounces wake injections per task (wakeDebounceWindow),
-	// and agents are told to subscribe only to topics they receive on.
+	woken := 0
 	for _, ts := range targets {
 		for _, c := range ts.snapshotConns() {
 			c.ping()
@@ -304,12 +323,29 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		// waiter has already taken. The check is per (task, topic): another
 		// task subscribed to the same topic still gets its wake, and this task
 		// still gets woken for its other topics.
-		if fn != nil && !ts.isWaiting(topicName) {
+		if wake && fn != nil && !ts.isWaiting(topicName) {
 			rid, tid, _, _ := ts.identity()
 			fn(rid, tid)
+			woken++
 		}
 	}
-	return seq, len(targets), nil
+	return woken
+}
+
+// Wake emits a wake to every task subscribed to topicName, exactly as a
+// publish there would, and publishes nothing: no topic is created and no seq
+// is consumed. It returns how many tasks a wake was emitted for. The caller is
+// the operator's board_wake, run after one or more no-wake sends.
+func (b *Board) Wake(topicName string) int {
+	b.mu.Lock()
+	targets := make([]*taskState, 0)
+	for _, ts := range b.tasks {
+		if ts.matches(topicName) {
+			targets = append(targets, ts)
+		}
+	}
+	b.mu.Unlock()
+	return b.deliver(targets, topicName, true)
 }
 
 // Inbox returns retained messages for all topics the (rid, tid) taskState is
@@ -533,6 +569,8 @@ type SendOption func(*sendConfig)
 type sendConfig struct {
 	noRetireOnReply bool
 	replyToTopic    string
+	senderKind      protocol.SenderKind
+	noWake          bool
 }
 
 // NoRetireOnReply marks the message as one that must survive being answered:
@@ -554,6 +592,20 @@ func NoRetireOnReply() SendOption {
 // have no opinion about this.
 func WithReplyTo(topic string) SendOption {
 	return func(c *sendConfig) { c.replyToTopic = topic }
+}
+
+// WithSenderKind records who published the message. The zero value is agent,
+// which is what every caller passing no options means.
+func WithSenderKind(k protocol.SenderKind) SendOption {
+	return func(c *sendConfig) { c.senderKind = k }
+}
+
+// WithNoWake publishes and retains the message without emitting a wake for
+// any subscriber. Subscribers still get their conn ping (a live wait or inbox
+// read sees it at once) and still count in deliveredTo; only the task_wake,
+// which types a prompt into the agent's PTY, is suppressed.
+func WithNoWake() SendOption {
+	return func(c *sendConfig) { c.noWake = true }
 }
 
 // ListRetracted returns the topic's withdrawn messages — whether their author
