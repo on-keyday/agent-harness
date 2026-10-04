@@ -148,3 +148,24 @@ func (m *BoardModal) composeView() string {
 		MutedStyle.Render("enter sends · tab: wake: "+wake+" · ctrl+r: reply-to: "+replyTo+
 			" · ctrl+t: keep: "+keep+" · esc cancels")
 }
+
+// BeginReplyToLatest opens the reply editor on the newest message of the
+// highlighted conversation, for the chain views, which have a cursor per
+// conversation but none per message. The newest is the one a reply is usually
+// for; an earlier one is answered from the topic view. False when nothing is
+// highlighted.
+func (m *BoardModal) BeginReplyToLatest() bool {
+	conv, ok := m.selectedConv()
+	if !ok || len(conv.Rows) == 0 {
+		return false
+	}
+	latest := conv.Rows[0].Msg
+	for _, r := range conv.Rows[1:] {
+		if r.Msg.ReceivedAtMs > latest.ReceivedAtMs ||
+			(r.Msg.ReceivedAtMs == latest.ReceivedAtMs && r.Msg.Seq > latest.Seq) {
+			latest = r.Msg
+		}
+	}
+	m.BeginReply(latest.Seq)
+	return true
+}

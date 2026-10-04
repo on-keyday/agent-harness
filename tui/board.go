@@ -847,7 +847,10 @@ func (m BoardModal) View() string {
 		// Wrapped, not truncated: an operator reading "nothing here" needs the
 		// whole sentence to know whether that is the window or a fault.
 		window := MutedStyle.Width(m.content.Width).Render(cli.ThreadWindowOperator)
-		footer := FooterStyle.Render("↑/↓ select · Enter: open · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		footer := FooterStyle.Render("↑/↓ select · Enter: open · " + modalKeys.BoardReply + ": reply to latest · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		if m.compose != nil {
+			footer = m.composeView()
+		}
 		return box.Render(header + "\n" + window + "\n" + list.String() + statusLine + "\n" + footer)
 
 	case boardChains:
@@ -862,7 +865,10 @@ func (m BoardModal) View() string {
 			key = conv.Key
 		}
 		header := HeaderStyle.Render("conversation: " + key)
-		footer := FooterStyle.Render(scrollHint + " · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		footer := FooterStyle.Render(scrollHint + " · " + modalKeys.BoardReply + ": reply to latest · w: retract thread  X: purge thread  c: refresh  Esc: back")
+		if m.compose != nil {
+			footer = m.composeView()
+		}
 		return box.Render(header + "\n" + m.content.View() + statusLine + "\n" + footer)
 	}
 	return box.Render("(unknown board mode)")

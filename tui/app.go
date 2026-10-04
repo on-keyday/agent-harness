@@ -854,8 +854,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.SetStatusAfterRefresh(fmt.Sprintf("sent #%d (%s, delivered_to=%d, wake %s)",
 			msg.Result.Seq, dest, msg.Result.DeliveredTo, wake))
 		// A reply lands on the author's topic, not necessarily the open one;
-		// re-reading the open topic still shows a send to it and refreshes the
-		// status either way.
+		// re-reading what is on screen still shows it where it belongs and
+		// installs the status either way.
+		if mode := a.boardModal.Mode(); mode == boardChainList || mode == boardChains {
+			return a, DoBoardChains(a.client)
+		}
 		return a, DoBoardRead(a.client, a.boardModal.CurTopic())
 
 	case BoardWakeMsg:

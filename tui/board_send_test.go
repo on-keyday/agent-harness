@@ -156,3 +156,53 @@ func TestBoardModal_CtrlTKeepsTheMessageAfterAReply(t *testing.T) {
 		t.Fatal("a fresh editor inherited keep from the last one")
 	}
 }
+
+// In the chain view `a` answers the newest message of the highlighted
+// conversation -- the one a reply is usually for. An earlier message is
+// answered from the topic view, which has a cursor per message.
+func TestBoardModal_ReplyFromChainsAnswersTheLatestMessage(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplyChains(chainFixture(t))
+	conv, ok := m.selectedConv()
+	if !ok {
+		t.Fatal("nothing selected")
+	}
+	var latest uint64
+	var latestAt uint64
+	for _, r := range conv.Rows {
+		if r.Msg.ReceivedAtMs > latestAt || (r.Msg.ReceivedAtMs == latestAt && r.Msg.Seq > latest) {
+			latest, latestAt = r.Msg.Seq, r.Msg.ReceivedAtMs
+		}
+	}
+	for _, open := range []bool{false, true} { // from the list, and from the opened conversation
+		if open {
+			m.OpenSelectedConversation()
+		}
+		if !m.BeginReplyToLatest() {
+			t.Fatalf("open=%v: BeginReplyToLatest found nothing", open)
+		}
+		if !strings.Contains(m.View(), "reply to #") {
+			t.Errorf("open=%v: the editor is not drawn in the chain view\n%s", open, m.View())
+		}
+		typeInto(&m, "re")
+		_, p, _ := m.HandleComposeKey(tea.KeyMsg{Type: tea.KeyEnter})
+		if p.InReplyTo != latest || p.ReplyTo != agentboard.OperatorTopic {
+			t.Fatalf("open=%v: params %+v, want in_reply_to=%d reply_to=chat.operator", open, p, latest)
+		}
+	}
+}
+
+// The send result set before the chains refresh is still on screen after it.
+func TestBoardModal_SendStatusSurvivesTheChainsRefresh(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(160, 45)
+	m.ApplyChains(chainFixture(t))
+	m.SetStatusAfterRefresh("sent #7 (reply to #6, delivered_to=1, wake on)")
+	m.ApplyChains(chainFixture(t))
+	if v := m.View(); !strings.Contains(v, "sent #7") {
+		t.Fatalf("status lost across the chains refresh\n%s", v)
+	}
+}

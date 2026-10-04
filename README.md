@@ -1055,7 +1055,9 @@ suppress a wake.
 In the TUI board modal, `m` sends on the open topic, `a` replies to the
 selected message (in the editor, tab turns the wake off, `ctrl+r` the reply
 destination, and `ctrl+t` keeps the message after it is answered — the
-`--no-retire-on-reply` of the CLI), and `p` wakes the topic. The WebUI
+`--no-retire-on-reply` of the CLI), and `p` wakes the topic. In the chains view
+`a` replies to the newest message of the highlighted conversation; an earlier
+one is answered from the topic view, which has a cursor per message. The WebUI
 composer carries the same three as a wake checkbox, the reply-to field and
 「返信後も残す」. In the WebUI board view, a composer
 under the topic's messages sends (Enter; Shift+Enter is a newline), ↩ on a

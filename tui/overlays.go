@@ -338,6 +338,11 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 		switch msg.String() {
 		case modalKeys.BoardChains:
 			return DoBoardChains(a.client)
+		case modalKeys.BoardReply:
+			// The newest message of the highlighted conversation: the chain
+			// views have no per-message cursor.
+			a.boardModal.BeginReplyToLatest()
+			return nil
 		case modalKeys.BoardRetractMsg:
 			if key := a.boardModal.SelectedConversationKey(); key != "" {
 				return DoBoardThreadOp(a.client, cli.ThreadRetract, key)
