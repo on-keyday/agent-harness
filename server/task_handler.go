@@ -759,6 +759,22 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleBoardSubscribers(conn, req.RequestId, topic)
 
+	case protocol.TaskControlKind_BoardSend:
+		bs := req.BoardSend()
+		if bs == nil {
+			slog.Error("TaskHandler: BoardSend variant is nil")
+			return
+		}
+		h.handleBoardSend(conn, req.RequestId, bs, h.lookupPrincipal(cid))
+
+	case protocol.TaskControlKind_BoardWake:
+		bw := req.BoardWake()
+		if bw == nil {
+			slog.Error("TaskHandler: BoardWake variant is nil")
+			return
+		}
+		h.handleBoardWake(conn, req.RequestId, string(bw.Topic))
+
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
 			h.handleBoardRead(conn, req.RequestId, string(r.Topic))

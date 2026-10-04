@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sort"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -129,6 +131,7 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
 			Size:             uint32(size),
 			FromTask:         m.FromTask,
+			SenderKind:       m.SenderKind,
 		}
 		row.SetFromHostname([]byte(m.FromHostname))
 		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
@@ -227,5 +230,100 @@ func (h *TaskHandler) handleBoardPurge(conn ConnHandle, requestID uint32, topic 
 	out := protocol.BoardPurgeResponse{RequestId: requestID, Status: status, Purged: purged}
 	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardPurge, RequestId: requestID}
 	resp.SetBoardPurge(out)
+	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+}
+
+// boardPublish is board_send after the body has been read: the operator-face
+// publish. It is split from handleBoardSend so the routing and stamping are
+// testable without a payload stream.
+//
+// The message is stamped sender_kind=operator whoever the caller is; by is the
+// caller's principal task (zero for a real operator connection), recorded as
+// from_task so a task granted board_send stays attributable. There is no
+// reply-retire: that rule fires only when the parent sits on the replier's own
+// chat.<short-id>, and the operator has none.
+func (h *TaskHandler) boardPublish(by protocol.TaskID, topic string, payload []byte, inReplyTo uint64, replyTo string, noRetire, noWake bool) (uint64, int, protocol.SendStatus) {
+	dest, st := resolveReplyTarget(h.Board, topic, inReplyTo)
+	if st != protocol.SendStatus_Ok {
+		return 0, 0, st
+	}
+	opts := []agentboard.SendOption{agentboard.WithSenderKind(protocol.SenderKind_Operator)}
+	if noRetire {
+		opts = append(opts, agentboard.NoRetireOnReply())
+	}
+	if replyTo != "" {
+		opts = append(opts, agentboard.WithReplyTo(replyTo))
+	}
+	if noWake {
+		opts = append(opts, agentboard.WithNoWake())
+	}
+	// A zero RunnerID, as fireIdleBoard passes for a publish no runner made.
+	// RunnerID is 16 opaque bytes, so zero encodes.
+	seq, delivered, err := h.Board.Send(dest, payload, protocol.RunnerID{}, by, "", "", inReplyTo, opts...)
+	switch err {
+	case nil:
+		return seq, delivered, protocol.SendStatus_Ok
+	case agentboard.ErrPayloadTooLarge:
+		return 0, 0, protocol.SendStatus_PayloadTooLarge
+	case agentboard.ErrTooManyTopics:
+		return 0, 0, protocol.SendStatus_TooManyTopics
+	default:
+		return 0, 0, protocol.SendStatus_BadFrame
+	}
+}
+
+// handleBoardSend reads the body off the client-initiated stream the request
+// names, then publishes it through boardPublish. The read runs on its own
+// goroutine for the reason handleAgentSend gives: this is driven from the
+// connection's receive loop, and a stalled body must not stall the rest.
+func (h *TaskHandler) handleBoardSend(conn ConnHandle, requestID uint32, r *protocol.BoardSendRequest, by protocol.TaskID) {
+	reply := func(status protocol.SendStatus, seq uint64, deliveredTo int) {
+		if deliveredTo > 65535 {
+			deliveredTo = 65535
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardSend, RequestId: requestID}
+		resp.SetBoardSend(protocol.AgentSendResponse{
+			RequestId: requestID, Status: status, Seq: seq, DeliveredTo: uint16(deliveredTo),
+		})
+		respondAgent(conn, resp)
+	}
+	if h.Board == nil {
+		reply(protocol.SendStatus_BadFrame, 0, 0)
+		return
+	}
+	// Captured before the goroutine: the request is the decoded frame.
+	topic := string(r.Topic)
+	inReplyTo := r.InReplyTo
+	replyTo := string(r.ReplyToTopic)
+	noRetire := r.NoRetireOnReply()
+	noWake := r.NoWake()
+	streamID := r.PayloadStreamId
+	go func() {
+		payload, err := readAgentPayloadStream(conn, streamID, h.Board.MaxPayload())
+		if err != nil {
+			slog.Warn("board_send: read payload stream failed", "request_id", requestID, "err", err)
+			status := protocol.SendStatus_BadFrame
+			if errors.Is(err, errPayloadTooLarge) {
+				status = protocol.SendStatus_PayloadTooLarge
+			}
+			reply(status, 0, 0)
+			return
+		}
+		seq, delivered, st := h.boardPublish(by, topic, payload, inReplyTo, replyTo, noRetire, noWake)
+		reply(st, seq, delivered)
+	}()
+}
+
+// handleBoardWake wakes topic's subscribers and publishes nothing.
+func (h *TaskHandler) handleBoardWake(conn ConnHandle, requestID uint32, topic string) {
+	woken := 0
+	if h.Board != nil {
+		woken = h.Board.Wake(topic)
+	}
+	if woken > 65535 {
+		woken = 65535
+	}
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardWake, RequestId: requestID}
+	resp.SetBoardWake(protocol.BoardWakeResponse{RequestId: requestID, Woken: uint16(woken)})
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }

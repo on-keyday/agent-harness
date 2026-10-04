@@ -33,7 +33,8 @@ func TestResolveReplyTarget_DerivesParentSenderTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	topic, ok := resolveReplyTarget(b, "", parent)
+	topic, st := resolveReplyTarget(b, "", parent)
+	ok := st == protocol.SendStatus_Ok
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
@@ -52,7 +53,8 @@ func TestResolveReplyTarget_ExplicitTopicWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	topic, ok := resolveReplyTarget(b, "rr.dec-019", parent)
+	topic, st := resolveReplyTarget(b, "rr.dec-019", parent)
+	ok := st == protocol.SendStatus_Ok
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
@@ -63,14 +65,15 @@ func TestResolveReplyTarget_ExplicitTopicWins(t *testing.T) {
 
 func TestResolveReplyTarget_UnknownParent(t *testing.T) {
 	b := replyTestBoard(t)
-	if _, ok := resolveReplyTarget(b, "chat.aaaa", 424242); ok {
-		t.Error("ok = true for an unpublished parent, want false")
+	if _, st := resolveReplyTarget(b, "chat.aaaa", 424242); st != protocol.SendStatus_UnknownInReplyTo {
+		t.Errorf("status = %v for an unpublished parent, want unknown_in_reply_to", st)
 	}
 }
 
 func TestResolveReplyTarget_NotAReply(t *testing.T) {
 	b := replyTestBoard(t)
-	topic, ok := resolveReplyTarget(b, "plain", 0)
+	topic, st := resolveReplyTarget(b, "plain", 0)
+	ok := st == protocol.SendStatus_Ok
 	if !ok {
 		t.Fatal("ok = false for a non-reply, want true")
 	}

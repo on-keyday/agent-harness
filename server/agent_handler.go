@@ -99,7 +99,9 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 //     destination comes off the parent, server-side.
 //   - the parent sender's own chat.<short-id>, which is what every reply did
 //     before reply_to_topic existed and what one still does when the asker
-//     declared nothing.
+//     declared nothing. Only when the parent's sender is an AGENT: an operator
+//     or server message may carry a zero from_task, whose chat topic nobody
+//     owns, so with no declaration it answers no_reply_route instead.
 //
 // Every arm resolves against the RETAINED entry, so the destination is the
 // server's own record and not something the requester supplied.
@@ -107,21 +109,24 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 // The parent is read whole (Retained) rather than as (topic, sender)
 // (LookupSeq), because the destination now lives on the message. Both are full
 // ring scans, so this costs nothing extra.
-func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (string, bool) {
+func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (string, protocol.SendStatus) {
 	if inReplyTo == 0 {
-		return topic, true
+		return topic, protocol.SendStatus_Ok
 	}
 	parent, ok := b.Retained(inReplyTo)
 	if !ok {
-		return "", false
+		return "", protocol.SendStatus_UnknownInReplyTo
 	}
 	if topic != "" {
-		return topic, true
+		return topic, protocol.SendStatus_Ok
 	}
 	if parent.ReplyToTopic != "" {
-		return parent.ReplyToTopic, true
+		return parent.ReplyToTopic, protocol.SendStatus_Ok
 	}
-	return agentboard.SelfTopic(parent.FromTask), true
+	if parent.SenderKind != protocol.SenderKind_Agent {
+		return "", protocol.SendStatus_NoReplyRoute
+	}
+	return agentboard.SelfTopic(parent.FromTask), protocol.SendStatus_Ok
 }
 
 // retireRepliedParent applies the reply-retire rule: answering a message that

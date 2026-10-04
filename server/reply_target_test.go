@@ -48,7 +48,8 @@ func TestResolveReplyTarget_Priority(t *testing.T) {
 		{"unknown parent is refused", "", 99999, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := resolveReplyTarget(b, tc.topic, tc.inReplyTo)
+			got, st := resolveReplyTarget(b, tc.topic, tc.inReplyTo)
+			ok := st == protocol.SendStatus_Ok
 			if ok != tc.wantOK || got != tc.want {
 				t.Errorf("resolveReplyTarget(%q, %d) = %q,%v want %q,%v",
 					tc.topic, tc.inReplyTo, got, ok, tc.want, tc.wantOK)

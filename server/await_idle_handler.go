@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -204,8 +205,8 @@ func (h *TaskHandler) fireIdleNotify(taskIDHex, requesterConnID string, stopped 
 // fireIdleBoard publishes a fired idle watcher to the agentboard topic the
 // requester named (typically its own chat.<short-id> inbound channel, so the
 // arming agent's inbox hook wakes it). Attributed to the requester's
-// principal task (zero for an operator) with a placeholder RunnerID — a
-// zero-value RunnerID panics the encoder.
+// principal task (zero for an operator) with a zero RunnerID, and stamped
+// sender_kind=server.
 func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.TaskID, stopped bool, lastOutputUnixNano int64) {
 	status := "fired"
 	if stopped {
@@ -214,10 +215,11 @@ func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.
 	payload := fmt.Sprintf(
 		`{"kind":"session_idle","task":"%s","last_output_at_unix_ms":%d,"status":"%s"}`,
 		taskIDHex, lastOutputUnixNano/int64(time.Millisecond), status)
-	// The last argument is the sender's agent profile: empty because this
-	// publish originates in the server itself, not in any agent. Receivers
-	// recognise it by the "server" hostname above.
-	if _, _, err := h.Board.Send(topic, []byte(payload), protocol.RunnerID{}, requester, "server", "", 0); err != nil {
+	// The agent profile is empty because this publish originates in the
+	// server itself, not in any agent. The kind is what identifies it; the
+	// "server" hostname stays for readers that predate the kind.
+	if _, _, err := h.Board.Send(topic, []byte(payload), protocol.RunnerID{}, requester, "server", "", 0,
+		agentboard.WithSenderKind(protocol.SenderKind_Server)); err != nil {
 		slog.Warn("await-idle: board publish failed", "topic", topic, "task", taskIDHex, "err", err)
 	}
 }

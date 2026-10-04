@@ -132,9 +132,9 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 			return
 		}
 		fromRid, fromTid, fromHost, fromProfile := st.Identity()
-		destTopic, ok := resolveReplyTarget(h.Board, topic, inReplyTo)
-		if !ok {
-			reply(protocol.SendStatus_UnknownInReplyTo, 0, 0)
+		destTopic, st := resolveReplyTarget(h.Board, topic, inReplyTo)
+		if st != protocol.SendStatus_Ok {
+			reply(st, 0, 0)
 			return
 		}
 		var sendOpts []agentboard.SendOption
@@ -205,6 +205,7 @@ func deliveredRows(conn ConnHandle, msgs []agentboard.RetainedMessage, what stri
 			// converted to on every row — are gone.
 			FromRunnerId: m.FromRunner,
 			FromTaskId:   m.FromTask,
+			SenderKind:   m.SenderKind,
 		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
@@ -347,6 +348,7 @@ func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32,
 					FromTask:         m.FromTask,
 					Size:             uint32(size),
 					ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
+					SenderKind:       m.SenderKind,
 				}
 				meta.SetFromHostname([]byte(m.FromHostname))
 				meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
