@@ -530,6 +530,13 @@ func (h cliVerbs) BoardRetract(a verb.BoardAction) error       { return h.board(
 func (h cliVerbs) BoardPurge(a verb.BoardAction) error         { return h.board(a) }
 func (h cliVerbs) BoardRetractThread(a verb.BoardAction) error { return h.board(a) }
 func (h cliVerbs) BoardPurgeThread(a verb.BoardAction) error   { return h.board(a) }
+func (h cliVerbs) BoardWake(a verb.BoardAction) error          { return h.board(a) }
+
+// BoardSend reads its body from stdin when asked to, which RunBoardAction's
+// signature has no room for -- the same reason AgentSend is not h.board.
+func (h cliVerbs) BoardSend(a verb.BoardSendAction) error {
+	return cli.RunBoardSend(h.ctx, h.cid(), a, os.Stdin, os.Stdout)
+}
 
 func (h cliVerbs) board(a verb.BoardAction) error {
 	return cli.RunBoardAction(h.ctx, h.cid(), a, os.Stdout)

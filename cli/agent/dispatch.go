@@ -124,63 +124,45 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	}
 	defer c.Close()
 
-	// Send: the payload travels on a client-initiated send-stream (UDP MTU).
-	sendStream := c.Transport().CreateSendStream()
-	if sendStream == nil {
-		return errors.New("agent: failed to allocate payload stream")
-	}
-	sr := protocol.AgentSendRequest{PayloadStreamId: uint64(sendStream.ID())}
-	sr.SetTopic([]byte(*topic))
-	if *replyTo != "" {
-		if !sr.SetReplyToTopic([]byte(*replyTo)) {
-			return errors.New("agent: --reply-to too long")
+	// Send: the payload travels on a client-initiated send-stream (UDP MTU),
+	// announced before the body is written (see cli.TaskControlWithPayload).
+	res, serr := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
+		sr := protocol.AgentSendRequest{PayloadStreamId: streamID}
+		sr.SetTopic([]byte(*topic))
+		if *replyTo != "" {
+			if !sr.SetReplyToTopic([]byte(*replyTo)) {
+				return nil, errors.New("--reply-to too long")
+			}
 		}
-	}
-	sendReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
-	sendReq.SetAgentSend(sr)
-	// Announce BEFORE writing the body, as `agent send` does and for its
-	// reason: the request names the stream, so until the server has read it
-	// nobody drains that stream and a body past the peer's receive window
-	// blocks forever. This path used to write the whole body first, which is
-	// the same deadlock waiting for a large enough payload.
-	sendCh, berr := c.BeginTaskControl(sendReq)
-	if berr != nil {
-		return berr
-	}
-	if werr := sendStream.AppendDataContext(ctx, false, payload); werr != nil {
-		return fmt.Errorf("agent: payload stream write: %w", werr)
-	}
-	if werr := sendStream.AppendDataContext(ctx, true); werr != nil {
-		return fmt.Errorf("agent: payload stream EOF: %w", werr)
+		sendReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+		sendReq.SetAgentSend(sr)
+		return sendReq, nil
+	}, payload)
+	if serr != nil {
+		return fmt.Errorf("agent: %w", serr)
 	}
 
-	var publishedSeq uint64
-	select {
-	case res := <-sendCh:
-		if res.Err != nil {
-			return res.Err
-		}
-		if kerr := expectKind(res.Resp, protocol.TaskControlKind_AgentSend); kerr != nil {
-			return kerr
-		}
-		r := res.Resp.AgentSend()
-		if r == nil {
-			return errors.New("agent: send response variant is nil")
-		}
-		if r.Status != protocol.SendStatus_Ok {
-			return fmt.Errorf("send failed: %v (%d bytes from %s)", r.Status, len(payload), source)
-		}
-		publishedSeq = r.Seq
-		// What went out, before this blocks for an answer. stdout here is the
-		// REPLY stream (JSON-Lines), so the summary goes to stderr the way
-		// `session send`'s does — and it has to be printed BEFORE the wait,
-		// because a body that went out empty or truncated otherwise shows up
-		// only as a timeout minutes later, which names nothing.
-		fmt.Fprintf(os.Stderr, "agent dispatch: published %d bytes from %s as seq %d, delivered_to %d\n",
-			len(payload), source, r.Seq, r.DeliveredTo)
-	case <-ctx.Done():
-		return ctx.Err()
+	if res.Err != nil {
+		return res.Err
 	}
+	if kerr := expectKind(res.Resp, protocol.TaskControlKind_AgentSend); kerr != nil {
+		return kerr
+	}
+	sent := res.Resp.AgentSend()
+	if sent == nil {
+		return errors.New("agent: send response variant is nil")
+	}
+	if sent.Status != protocol.SendStatus_Ok {
+		return fmt.Errorf("send failed: %v (%d bytes from %s)", sent.Status, len(payload), source)
+	}
+	publishedSeq := sent.Seq
+	// What went out, before this blocks for an answer. stdout here is the
+	// REPLY stream (JSON-Lines), so the summary goes to stderr the way
+	// `session send`'s does — and it has to be printed BEFORE the wait,
+	// because a body that went out empty or truncated otherwise shows up
+	// only as a timeout minutes later, which names nothing.
+	fmt.Fprintf(os.Stderr, "agent dispatch: published %d bytes from %s as seq %d, delivered_to %d\n",
+		len(payload), source, sent.Seq, sent.DeliveredTo)
 
 	// The server-side wait gets what is LEFT of the budget after the publish
 	// round trip, minus a margin. The margin is not padding: without it the

@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
@@ -73,88 +72,34 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 	}
 	defer c.Close()
 
-	// Allocate a client-initiated send-stream for the payload; the server
-	// reads from the matching receive stream until EOF and treats those
-	// bytes as the publish body. Streaming the payload (instead of stuffing
-	// it into the SendRequest envelope) keeps the envelope inside path MTU
-	// on UDP transport.
-	stream := c.Transport().CreateSendStream()
-	if stream == nil {
-		return errors.New("agent: failed to allocate payload stream")
-	}
-
-	req := protocol.AgentSendRequest{PayloadStreamId: uint64(stream.ID()), InReplyTo: *inReplyTo}
-	// Negative on the wire too, so the zero value means the default. Only set
-	// it when the caller asked to opt out.
-	if *noRetireOnReply {
-		req.SetNoRetireOnReply(true)
-	}
-	// An empty topic is the wire's "derive the destination from the parent"; the
-	// schema assertion guarantees it can only be empty on a reply.
-	req.SetTopic([]byte(wireTopic))
-	// Where REPLIES to this message go. The server records it on the retained
-	// entry and resolveReplyTarget reads it back, so the peer answers with
-	// --in-reply-to alone and never has to learn the topic.
-	if *replyTo != "" {
-		if !req.SetReplyToTopic([]byte(*replyTo)) {
-			return errors.New("agent: --reply-to too long")
+	r, err := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
+		req := protocol.AgentSendRequest{PayloadStreamId: streamID, InReplyTo: *inReplyTo}
+		// Negative on the wire too, so the zero value means the default. Only
+		// set it when the caller asked to opt out.
+		if *noRetireOnReply {
+			req.SetNoRetireOnReply(true)
 		}
-	}
-
-	tcReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
-	tcReq.SetAgentSend(req)
-	// The request goes out BEFORE the body. It names the stream id, so until
-	// the server has it, nobody drains the payload stream: AppendData blocks
-	// once the send buffer fills (1MB) and stays blocked once the peer's
-	// receive window (16MB) is exhausted, so a body past the window used to
-	// deadlock here with the request still unsent. Announcing first gives the
-	// server a reader — which is also what lets it stop an over-long body
-	// mid-flight instead of discovering the length after the fact. The server
-	// polls briefly for the stream to become visible, so arriving first is
-	// expected (server/agent_taskcontrol.go, readAgentPayloadStream).
-	//
-	// BeginTaskControl rather than RoundTripTaskControl for exactly that
-	// ordering: a round trip would block for the response before this body
-	// could be written, which is the deadlock stated above with the steps
-	// swapped.
-	respCh, sendErr := c.BeginTaskControl(tcReq)
-	if sendErr != nil {
-		return sendErr
-	}
-
-	// AppendDataContext, not AppendData: the latter passes context.Background()
-	// internally, so a stalled write would ignore this command's deadline and
-	// hang instead of failing.
-	writeErr := stream.AppendDataContext(ctx, false, payload)
-	if writeErr == nil {
-		writeErr = stream.AppendDataContext(ctx, true)
-	}
-	if writeErr != nil {
-		// The server tears the payload stream down when it refuses the body,
-		// which surfaces here as a bare io.EOF. The actionable reason is in
-		// its SendResponse, so wait briefly and prefer that; "EOF" tells the
-		// sender nothing about what to do differently.
-		select {
-		case resp := <-respCh:
-			return sendResult(resp, *inReplyTo, len(payload), source, stdout)
-		case <-time.After(payloadErrGrace):
-			return fmt.Errorf("agent: payload stream write: %w", writeErr)
-		case <-ctx.Done():
-			return fmt.Errorf("agent: payload stream write: %w", writeErr)
+		// An empty topic is the wire's "derive the destination from the
+		// parent"; the schema assertion guarantees it can only be empty on a
+		// reply.
+		req.SetTopic([]byte(wireTopic))
+		// Where REPLIES to this message go. The server records it on the
+		// retained entry and resolveReplyTarget reads it back, so the peer
+		// answers with --in-reply-to alone and never has to learn the topic.
+		if *replyTo != "" {
+			if !req.SetReplyToTopic([]byte(*replyTo)) {
+				return nil, errors.New("--reply-to too long")
+			}
 		}
+		tcReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AgentSend}
+		tcReq.SetAgentSend(req)
+		return tcReq, nil
+	}, payload)
+	if err != nil {
+		return fmt.Errorf("agent: %w", err)
 	}
-
-	select {
-	case resp := <-respCh:
-		return sendResult(resp, *inReplyTo, len(payload), source, stdout)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return sendResult(r, *inReplyTo, len(payload), source, stdout)
 }
-
-// payloadErrGrace bounds how long a failed payload write waits for the
-// server's explanation before reporting the local error instead.
-const payloadErrGrace = 2 * time.Second
 
 // sendResult renders a SendResponse: the ok line on stdout, or the error the
 // status stands for. n and source describe the body that was published.
@@ -173,6 +118,9 @@ func sendResult(r cli.TaskControlResult, inReplyTo uint64, n int, source string,
 		return fmt.Errorf("send rejected: --in-reply-to %d is not on the board "+
 			"(evicted past the topic's ring or TTL, or purged). "+
 			"Drop --in-reply-to to send this as an ordinary message", inReplyTo)
+	}
+	if resp.Status == protocol.SendStatus_NoReplyRoute {
+		return &cli.NoReplyRouteError{InReplyTo: inReplyTo}
 	}
 	if resp.Status != protocol.SendStatus_Ok {
 		// The size belongs on the rejection too: PayloadTooLarge is the status

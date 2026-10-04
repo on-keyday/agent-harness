@@ -1233,6 +1233,57 @@ var Verbs = []VerbSpec{
 			"board purge-thread --conversation 60542da9+70fbad4a",
 		},
 	},
+	{
+		Path: []string{"board", "send"},
+		ModalSurfaces: []ModalSurface{
+			// m composes on the open topic, a replies to the selected message.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-send-btn"},
+		},
+		Notes: []string{
+			"publish in the OPERATOR's name: the message is stamped sender=operator (cap: board_send).",
+			"--reply-to chat.operator lets the recipient answer with --in-reply-to alone; without a reply destination its reply is refused (no_reply_route).",
+			"--no-wake retains the message without waking anyone; `board wake <topic>` wakes them later.",
+			"The body is the trailing words, or --data STRING, or --data - to read stdin.",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardSendAction",
+		Trailing: &Trailing{Name: "text", Field: "Positional",
+			Reason: "the message body is free-form; --data or stdin are the alternatives"},
+		Flags: []Flag{
+			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "agentboard topic (may be omitted with --in-reply-to)"},
+			// The body's SOURCE, as on agent send: "-" is a VALUE of --data,
+			// never a positional, and DataSet says whether it was typed.
+			{Name: "data", Type: FlagString, Default: "-", Field: "Data", PresenceField: "DataSet",
+				Help: `payload string, or "-" to read stdin`},
+			{Name: "in-reply-to", Type: FlagUint64, Default: uint64(0), Field: "InReplyTo",
+				Help: "seq of the message being replied to; with it, --topic may be omitted"},
+			{Name: "reply-to", Type: FlagString, Default: "", Field: "ReplyTo",
+				Help: "where replies to THIS message go (chat.operator to receive them on the operator surfaces)"},
+			{Name: "no-retire-on-reply", Type: FlagBool, Default: false, Field: "NoRetireOnReply",
+				Help: "keep this message on the board even after its recipient replies"},
+			{Name: "no-wake", Type: FlagBool, Default: false, Field: "NoWake",
+				Help: "retain without waking subscribers; see board wake"},
+		},
+		Examples: []string{"board send --topic chat.abcd1234 --reply-to chat.operator please look at the failing test"},
+	},
+	{
+		Path: []string{"board", "wake"},
+		ModalSurfaces: []ModalSurface{
+			// p on the open (or highlighted) topic.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-wake-btn"},
+		},
+		Notes: []string{
+			"wake every task subscribed to <topic>, exactly as a publish there would; publishes nothing (cap: board_send).",
+			"For after --no-wake sends. It does not check whether anything is unread.",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "wake"},
+		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
+		Examples:        []string{"board wake chat.abcd1234"},
+	},
 	// --- spawning: submit / interactive / session new ---
 	//
 	// One shape, three verbs. The inventory found the TUI's submit had no

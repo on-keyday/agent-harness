@@ -72,7 +72,7 @@ type AgentSendAction struct {
 	Timeout time.Duration
 }
 
-// BoardAction is built by: board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics.
+// BoardAction is built by: board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -91,6 +91,27 @@ type BoardAction struct {
 	Conversation string
 	// print rows without bodies
 	HeadersOnly bool
+}
+
+// BoardSendAction is built by: board send.
+type BoardSendAction struct {
+	ActionMarker
+	// agentboard topic (may be omitted with --in-reply-to)
+	Topic string
+	// whether --data was typed, which its zero value cannot say
+	DataSet bool
+	// payload string, or "-" to read stdin
+	Data string
+	// seq of the message being replied to; with it, --topic may be omitted
+	InReplyTo uint64
+	// where replies to THIS message go (chat.operator to receive them on the operator surfaces)
+	ReplyTo string
+	// keep this message on the board even after its recipient replies
+	NoRetireOnReply bool
+	// retain without waking subscribers; see board wake
+	NoWake bool
+	// the message body is free-form; --data or stdin are the alternatives
+	Positional string
 }
 
 // CancelAction is built by: cancel.
@@ -1658,6 +1679,26 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"board send\x00cli": func(b Bound) (Action, error) {
+			a := BoardSendAction{}
+			a.Topic = b.Str("topic")
+			a.DataSet = b.Set["data"]
+			a.Data = b.Str("data")
+			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
+			a.ReplyTo = b.Str("reply-to")
+			a.NoRetireOnReply = b.Bool("no-retire-on-reply")
+			a.NoWake = b.Bool("no-wake")
+			a.Positional = b.Trail
+			return a, nil
+		},
+		"board wake\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "wake"
+			if len(b.Args) > 0 {
+				a.Topic = b.Args[0]
+			}
+			return a, nil
+		},
 		"submit\x00cli": func(b Bound) (Action, error) {
 			a := SpawnAction{}
 			a.Kind = "submit"
@@ -2975,6 +3016,8 @@ const (
 	CmdBoardPurge             = "board purge"
 	CmdBoardRetractThread     = "board retract-thread"
 	CmdBoardPurgeThread       = "board purge-thread"
+	CmdBoardSend              = "board send"
+	CmdBoardWake              = "board wake"
 	CmdSubmit                 = "submit"
 	CmdInteractive            = "interactive"
 	CmdSessionNew             = "session new"
@@ -3102,6 +3145,7 @@ const (
 	SubUnsubscribe     = "unsubscribe"
 	SubVersion         = "version"
 	SubWait            = "wait"
+	SubWake            = "wake"
 	SubWatch           = "watch"
 	SubWhoami          = "whoami"
 )
@@ -3938,6 +3982,48 @@ func ParseCmdBoardPurgeThread(sf Surface, args []string, ctx map[string]string) 
 	sp, ok := Lookup("board", "purge-thread")
 	if !ok {
 		return zero, fmt.Errorf("board purge-thread: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardSend(sf Surface, args []string, ctx map[string]string) (BoardSendAction, error) {
+	var zero BoardSendAction
+	sp, ok := Lookup("board", "send")
+	if !ok {
+		return zero, fmt.Errorf("board send: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardSendAction)
+	return a, nil
+}
+
+func ParseCmdBoardWake(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "wake")
+	if !ok {
+		return zero, fmt.Errorf("board wake: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -5380,6 +5466,10 @@ type CLIDispatch[R any] interface {
 	BoardRetractThread(BoardAction) R
 	// board purge-thread
 	BoardPurgeThread(BoardAction) R
+	// board send
+	BoardSend(BoardSendAction) R
+	// board wake
+	BoardWake(BoardAction) R
 	// submit
 	Submit(SpawnAction) R
 	// interactive
@@ -5697,6 +5787,18 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardPurgeThread(a), true, nil
+	case CmdBoardSend:
+		a, perr := ParseCmdBoardSend(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardSend(a), true, nil
+	case CmdBoardWake:
+		a, perr := ParseCmdBoardWake(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardWake(a), true, nil
 	case CmdSubmit:
 		a, perr := ParseCmdSubmit(CLI, args, ctx)
 		if perr != nil {
@@ -6094,7 +6196,11 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardRetractThread(a), true
 		case "purge-thread":
 			return h.BoardPurgeThread(a), true
+		case "wake":
+			return h.BoardWake(a), true
 		}
+	case BoardSendAction:
+		return h.BoardSend(a), true
 	case SpawnAction:
 		switch a.Kind {
 		case "submit":
@@ -6434,6 +6540,18 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardPurgeThread:
 			a, perr := ParseCmdBoardPurgeThread(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardSend:
+			a, perr := ParseCmdBoardSend(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardWake:
+			a, perr := ParseCmdBoardWake(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

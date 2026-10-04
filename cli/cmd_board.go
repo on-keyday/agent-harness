@@ -361,6 +361,15 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)
 		}
 
+	case verb.SubWake:
+		n, err := BoardWake(ctx, cid, ba.Topic)
+		if err != nil {
+			return err
+		}
+		line, _ := json.Marshal(map[string]any{"topic": ba.Topic, "status": "ok", "woken": n})
+		fmt.Fprintln(out, string(line))
+		return nil
+
 	case verb.SubRetract:
 		// --seq required and non-zero is enforced in the verb's Build:
 		// deliberately NOT purge's "0 means the whole topic", because
@@ -616,4 +625,32 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 	}
 	line, _ := json.Marshal(rec)
 	fmt.Fprintln(out, string(line))
+}
+
+// RunBoardSend is `board send`: publish in the operator's name. The ok line
+// mirrors agent send's (seq, delivered_to, bytes, source) because the same two
+// mistakes -- a body that went out wrong, a topic nobody holds -- are what it
+// exists to show.
+func RunBoardSend(ctx context.Context, cid objproto.ConnectionID, a verb.BoardSendAction, stdin io.Reader, out io.Writer) error {
+	payload, source, err := ResolvePayload(a.DataSet, a.Data, a.Positional, stdin)
+	if err != nil {
+		return err
+	}
+	res, err := BoardSend(ctx, cid, BoardSendParams{
+		Topic: a.Topic, InReplyTo: a.InReplyTo, ReplyTo: a.ReplyTo,
+		NoRetireOnReply: a.NoRetireOnReply, NoWake: a.NoWake,
+	}, payload)
+	if err != nil {
+		return err
+	}
+	line, _ := json.Marshal(map[string]any{
+		"seq": res.Seq, "status": "ok", "delivered_to": res.DeliveredTo,
+		// What was ASKED, not a count: how many tasks were actually woken is
+		// delivered_to minus any that were waiting on the topic, and the
+		// response does not carry that split.
+		"woke":  !a.NoWake,
+		"bytes": len(payload), "source": source,
+	})
+	fmt.Fprintln(out, string(line))
+	return nil
 }

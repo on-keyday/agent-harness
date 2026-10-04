@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -402,4 +403,113 @@ func BoardRetract(ctx context.Context, peerCID objproto.ConnectionID, topic stri
 	}
 	defer c.Close()
 	return c.BoardRetract(ctx, topic, seq)
+}
+
+// NoReplyRouteError is SendStatus.no_reply_route: the message being answered
+// came from the operator or the server and declared no reply destination, and
+// the reply named no topic of its own.
+type NoReplyRouteError struct{ InReplyTo uint64 }
+
+func (e *NoReplyRouteError) Error() string {
+	return fmt.Sprintf("send rejected: message %d came from the operator (or the server) "+
+		"and declared no reply destination; answer in your own conversation, "+
+		"or name a topic with --topic", e.InReplyTo)
+}
+
+// BoardSendParams is board send's request, minus the body.
+type BoardSendParams struct {
+	Topic           string // may be empty only with InReplyTo
+	InReplyTo       uint64
+	ReplyTo         string
+	NoRetireOnReply bool
+	NoWake          bool
+}
+
+// BoardSendResult is what an accepted board send reports.
+type BoardSendResult struct {
+	Seq         uint64
+	DeliveredTo uint16
+}
+
+// BoardSend publishes payload in the operator's name. The server stamps
+// sender_kind=operator and needs Capability_BoardSend.
+func (c *Client) BoardSend(ctx context.Context, p BoardSendParams, payload []byte) (BoardSendResult, error) {
+	if p.Topic == "" && p.InReplyTo == 0 {
+		return BoardSendResult{}, errors.New("board send: --topic required (or --in-reply-to)")
+	}
+	r, err := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
+		br := protocol.BoardSendRequest{PayloadStreamId: streamID, InReplyTo: p.InReplyTo}
+		if !br.SetTopic([]byte(p.Topic)) {
+			return nil, errors.New("board send: --topic too long")
+		}
+		if p.ReplyTo != "" && !br.SetReplyToTopic([]byte(p.ReplyTo)) {
+			return nil, errors.New("board send: --reply-to too long")
+		}
+		br.SetNoRetireOnReply(p.NoRetireOnReply)
+		br.SetNoWake(p.NoWake)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSend}
+		req.SetBoardSend(br)
+		return req, nil
+	}, payload)
+	if err != nil {
+		return BoardSendResult{}, fmt.Errorf("board send: %w", err)
+	}
+	if r.Err != nil {
+		return BoardSendResult{}, r.Err
+	}
+	resp := r.Resp.BoardSend()
+	if resp == nil || r.Resp.Kind != protocol.TaskControlKind_BoardSend {
+		return BoardSendResult{}, fmt.Errorf("BoardSend: unexpected response kind=%v", r.Resp.Kind)
+	}
+	switch resp.Status {
+	case protocol.SendStatus_Ok:
+		return BoardSendResult{Seq: resp.Seq, DeliveredTo: resp.DeliveredTo}, nil
+	case protocol.SendStatus_NoReplyRoute:
+		return BoardSendResult{}, &NoReplyRouteError{InReplyTo: p.InReplyTo}
+	case protocol.SendStatus_UnknownInReplyTo:
+		return BoardSendResult{}, fmt.Errorf("board send: --in-reply-to %d is not on the board "+
+			"(evicted past the topic's ring or TTL, or purged)", p.InReplyTo)
+	default:
+		return BoardSendResult{}, fmt.Errorf("board send rejected: %v (%d bytes)", resp.Status, len(payload))
+	}
+}
+
+// BoardWake wakes every task subscribed to topic and publishes nothing.
+// Returns how many tasks a wake was emitted for.
+func (c *Client) BoardWake(ctx context.Context, topic string) (int, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardWake}
+	var bw protocol.BoardWakeRequest
+	if !bw.SetTopic([]byte(topic)) {
+		return 0, errors.New("board wake: topic too long")
+	}
+	req.SetBoardWake(bw)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	w := resp.BoardWake()
+	if w == nil || resp.Kind != protocol.TaskControlKind_BoardWake {
+		return 0, fmt.Errorf("BoardWake: unexpected response kind=%v", resp.Kind)
+	}
+	return int(w.Woken), nil
+}
+
+// BoardSend is a package-level fresh-dial wrapper for (*Client).BoardSend.
+func BoardSend(ctx context.Context, peerCID objproto.ConnectionID, p BoardSendParams, payload []byte) (BoardSendResult, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return BoardSendResult{}, err
+	}
+	defer c.Close()
+	return c.BoardSend(ctx, p, payload)
+}
+
+// BoardWake is a package-level fresh-dial wrapper for (*Client).BoardWake.
+func BoardWake(ctx context.Context, peerCID objproto.ConnectionID, topic string) (int, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	return c.BoardWake(ctx, topic)
 }
