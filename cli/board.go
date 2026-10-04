@@ -38,6 +38,9 @@ type BoardMessage struct {
 	// runtime (e.g. a server-originated publish, which carries FromHostname
 	// "server").
 	FromAgentProfile string
+	// SenderKind is who published it: "agent", "operator" or "server" (see
+	// SenderKindName). Empty only from a server that predates the field.
+	SenderKind string
 	// ReplyToTopic is where a reply to THIS message is routed -- the
 	// destination its SENDER declared with `agent send --reply-to`. Empty =
 	// none declared, so a reply comes back to the sender's own
@@ -252,6 +255,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 			FromTaskHex:      hex.EncodeToString(m.FromTask.Id[:]),
 			FromHostname:     string(m.FromHostname),
 			FromAgentProfile: string(m.FromAgentProfile),
+			SenderKind:       SenderKindName(m.SenderKind),
 			ReplyToTopic:     string(m.ReplyToTopic),
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
 			Retracted:        m.Retracted(),
@@ -512,4 +516,31 @@ func BoardWake(ctx context.Context, peerCID objproto.ConnectionID, topic string)
 	}
 	defer c.Close()
 	return c.BoardWake(ctx, topic)
+}
+
+// SenderKindName is the sender kind as every surface prints it: lowercase,
+// matching the .bgn names. protocol.SenderKind.String() is the generator's
+// CamelCase ("Operator"), which is not what a JSON field or a row should say.
+func SenderKindName(k protocol.SenderKind) string {
+	switch k {
+	case protocol.SenderKind_Agent:
+		return "agent"
+	case protocol.SenderKind_Operator:
+		return "operator"
+	case protocol.SenderKind_Server:
+		return "server"
+	default:
+		return fmt.Sprintf("sender_kind(%d)", uint8(k))
+	}
+}
+
+// SenderLabel is the sender as a row names it in full: the kind itself for the
+// operator and the server, whose from_task may be zero, else the task hex as
+// given. SenderParty is the 8-hex short form.
+func SenderLabel(kind, fromTaskHex string) string {
+	switch kind {
+	case "operator", "server":
+		return kind
+	}
+	return fromTaskHex
 }

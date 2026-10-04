@@ -68,6 +68,10 @@ func emitMessageRecord(w io.Writer, m protocol.DeliveredMessage, payload []byte,
 			"hostname":  string(m.FromHostname),
 			"agent":     string(m.FromAgentProfile),
 		},
+		// Beside "from", not inside it: who published is not part of the
+		// sender's identity block, and a reader ignoring unknown keys at the
+		// top level is unaffected.
+		"sender_kind": cli.SenderKindName(m.SenderKind),
 	}
 	// Omitted when empty: absent means "the sender declared nothing, so a
 	// reply comes back to it" — the overwhelmingly common case, and one every

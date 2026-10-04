@@ -63,6 +63,20 @@ class HeaderTest(unittest.TestCase):
         out, _, _ = render(rec)
         self.assertIn("from=?@server", out)
 
+    def test_operator_and_server_kinds_are_named(self) -> None:
+        for kind in ("operator", "server"):
+            rec = record(sender_kind=kind)
+            rec["from"]["agent"] = ""
+            rec["from"]["hostname"] = ""
+            rec["from"]["task_id"] = "0" * 32
+            out, _, _ = render(rec)
+            self.assertIn(f"from={kind}", out)
+            self.assertNotIn("task=00000000", out)
+
+    def test_agent_kind_renders_as_before(self) -> None:
+        out, _, _ = render(record(sender_kind="agent"))
+        self.assertIn("from=claude@gmkhost task=70fbad4a", out)
+
     def test_in_reply_to_appended_when_nonzero(self) -> None:
         out, _, _ = render(record(in_reply_to=41))
         self.assertIn("in-reply-to=#41", out)

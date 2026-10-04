@@ -58,7 +58,13 @@ def _header(rec: dict) -> str:
     hostname = _sanitize(str(sender.get("hostname", "")))
     task_id = _sanitize(str(sender.get("task_id", "")))
     topic = _sanitize(str(rec.get("topic", "")))
-    line = f"#{rec.get('seq', 0)} {topic}  from={agent or '?'}@{hostname} task={task_id[:8]}"
+    kind = rec.get("sender_kind")
+    if kind in ("operator", "server"):
+        # Named by kind: their task id may be all zeros, which names no task.
+        # Records from a server older than sender_kind fall to the agent form.
+        line = f"#{rec.get('seq', 0)} {topic}  from={kind}"
+    else:
+        line = f"#{rec.get('seq', 0)} {topic}  from={agent or '?'}@{hostname} task={task_id[:8]}"
     reply_to_topic = rec.get("reply_to_topic")
     if reply_to_topic:
         line += f"  reply-to={_sanitize(str(reply_to_topic))}"

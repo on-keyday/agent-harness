@@ -30,6 +30,16 @@ func boardAgentOrDash(profile string) string {
 	return profile
 }
 
+// boardSenderOrDash is the sender kind for a text row. "-" only when the
+// server predates the field; "agent" is printed like the other two kinds,
+// because a kind left out reads as "no kind" rather than as the default.
+func boardSenderOrDash(kind string) string {
+	if kind == "" {
+		return "-"
+	}
+	return kind
+}
+
 // RunBoardSubcmd handles the board sub-subcommands (topics, read, retract,
 // purge).
 // verb is the first arg after "board"; rest is the remaining args.
@@ -69,6 +79,7 @@ func emitBoardMessageJSON(out io.Writer, topic string, m BoardMessage, subs []Bo
 		"received_at_ms": m.ReceivedAtMs,
 		"received_at":    boardMsToRFC3339(m.ReceivedAtMs),
 		"retracted":      m.Retracted,
+		"sender_kind":    m.SenderKind,
 		"from": map[string]any{
 			"task_id":  m.FromTaskHex,
 			"hostname": m.FromHostname,
@@ -278,8 +289,9 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 			if m.ReplyToTopic != "" {
 				replyTo = fmt.Sprintf(" reply-to=%s", m.ReplyToTopic)
 			}
-			fmt.Fprintf(out, "#%d%s%s from=%s host=%s agent=%s size=%d at=%s %s%s\n",
-				m.Seq, re, replyTo, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
+			fmt.Fprintf(out, "#%d%s%s from=%s sender=%s host=%s agent=%s size=%d at=%s %s%s\n",
+				m.Seq, re, replyTo, SenderLabel(m.SenderKind, m.FromTaskHex), boardSenderOrDash(m.SenderKind),
+				m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
 				ShownToLabel(subs, topic, m.Seq), retracted)
 			// JSON-indent behaviour lives in writeBoardBody now, along with the
@@ -561,7 +573,7 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 		}
 		fmt.Fprintf(out, "%s#%d%s%s topic=%s from=%s host=%s agent=%s size=%d at=%s%s\n",
 			TreePrefix(r.IsLast), r.Msg.Seq, re, replyTo, r.Topic,
-			boardTaskShort(r.Msg.FromTaskHex), r.Msg.FromHostname,
+			SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex), r.Msg.FromHostname,
 			boardAgentOrDash(r.Msg.FromAgentProfile), r.Size,
 			boardMsToRFC3339(r.Msg.ReceivedAtMs), marker)
 		if !opts.HeadersOnly {
@@ -569,16 +581,6 @@ func RenderThreads(out io.Writer, rows []ThreadRow, opts ThreadRenderOptions, ke
 		}
 	}
 	return nil
-}
-
-// boardTaskShort renders a sender task hex as the 8-hex prefix every other
-// board row surface uses. An empty hex prints as-is (""), which the caller
-// reads as "no attribution".
-func boardTaskShort(hex string) string {
-	if len(hex) > 8 {
-		return hex[:8]
-	}
-	return hex
 }
 
 // emitThreadRowJSON writes one JSON-Lines record for a chain row. The record
@@ -609,6 +611,7 @@ func emitThreadRowJSON(out io.Writer, r ThreadRow, includeBody bool) {
 		// groups by the same key the text view sections on, rather than
 		// re-deriving a grouping that could disagree with it.
 		"conversation": r.Conversation,
+		"sender_kind":  r.Msg.SenderKind,
 		"from": map[string]any{
 			"task_id":  r.Msg.FromTaskHex,
 			"hostname": r.Msg.FromHostname,

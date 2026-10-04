@@ -225,3 +225,19 @@ func TestEmitMessageLine_ReplyToTopic(t *testing.T) {
 		t.Errorf("undeclared sender emitted reply_to_topic: %s", without.String())
 	}
 }
+
+// sender_kind sits beside "from", not inside it, so a reader that ignores
+// unknown keys is unaffected and one that wants it finds it at the top.
+func TestEmitMessageLine_SenderKind(t *testing.T) {
+	m := mkDM(9, "t", mkTestRid(), protocol.TaskID{}, "", "", 0, "")
+	m.SenderKind = protocol.SenderKind_Operator
+	var buf bytes.Buffer
+	emitMessageLine(&buf, m, []byte("hi"))
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec["sender_kind"] != "operator" {
+		t.Errorf("sender_kind = %v, want operator", rec["sender_kind"])
+	}
+}

@@ -420,6 +420,22 @@ func CollectThreads(ctx context.Context, peerCID objproto.ConnectionID, f Thread
 	return CollectThreadsWith(ctx, c, f)
 }
 
+// SenderParty is the short name a sender goes by on every surface: the 8-hex
+// task prefix for an agent, and the kind itself for the operator and the
+// server, whose from_task may be zero -- "00000000" would name a party that
+// does not exist. It is also the conversation party, so an exchange with the
+// operator keys as <8-hex>+operator, matching the chat.operator topic suffix.
+func SenderParty(kind, fromTaskHex string) string {
+	switch kind {
+	case "operator", "server":
+		return kind
+	}
+	if len(fromTaskHex) > 8 {
+		return fromTaskHex[:8]
+	}
+	return fromTaskHex
+}
+
 // conversationKey identifies the conversation one chain belongs to.
 //
 // A chain that touched a topic which is NOT a chat.<short-id> keys on that
@@ -447,10 +463,7 @@ func conversationKey(chain []ThreadRow, topicOf map[uint64]string) string {
 				named = topic
 			}
 		}
-		if h := r.Msg.FromTaskHex; h != "" {
-			if len(h) > 8 {
-				h = h[:8]
-			}
+		if h := SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex); h != "" {
 			parties[h] = true
 		}
 	}
@@ -597,10 +610,7 @@ func ConversationHeader(rows []ThreadRow) string {
 	chains := map[uint64]bool{}
 	var first, last uint64
 	for _, r := range rows {
-		if h := r.Msg.FromTaskHex; h != "" {
-			if len(h) > 8 {
-				h = h[:8]
-			}
+		if h := SenderParty(r.Msg.SenderKind, r.Msg.FromTaskHex); h != "" {
 			parties[h] = true
 			if a := r.Msg.FromAgentProfile; a != "" {
 				agentOf[h] = a

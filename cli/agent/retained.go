@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -99,6 +100,7 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 				FromTask:     hex.EncodeToString(m.FromTask.Id[:]),
 				FromHostname: string(m.FromHostname),
 				FromAgent:    string(m.FromAgentProfile),
+				SenderKind:   cli.SenderKindName(m.SenderKind),
 				ReplyToTopic: string(m.ReplyToTopic),
 				Size:         m.Size,
 				ReceivedAtMs: m.ReceivedAtUnixMs,
@@ -121,6 +123,7 @@ type retainedLine struct {
 	FromTask     string `json:"from_task"`
 	FromHostname string `json:"from_hostname"`
 	FromAgent    string `json:"from_agent"`
+	SenderKind   string `json:"sender_kind"`
 	ReplyToTopic string `json:"reply_to_topic,omitempty"`
 	Size         uint32 `json:"size"`
 	ReceivedAtMs uint64 `json:"received_at_ms"`
