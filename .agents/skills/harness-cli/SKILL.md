@@ -472,6 +472,7 @@ harness-cli agent send --topic T --data 'hello'
 # almost always a typo'd or stale chat.<short-id>. The message still lands in
 # the retained ring, so nothing else in the response tells you. It counts you
 # too when you publish to a topic you subscribe to, so a self-ping reads 1.
+# The one topic where 0 is always correct is chat.operator (see Subscriptions).
 #
 # READ bytes and source too: delivered_to says the message reached someone,
 # these two say WHAT reached them. A publish succeeds whether or not the body
@@ -528,7 +529,9 @@ as an ordinary message.
 
 **Answering the operator.** A message with `sender_kind: operator` came from
 the human. When it carries `reply_to_topic` (normally `chat.operator`),
-`--in-reply-to` alone lands there, where the operator reads it. When it carries
+`--in-reply-to` alone lands there, where the operator reads it, and the send
+reports `delivered_to: 0` because nothing can subscribe to `chat.operator` —
+that is the reply arriving, not a misroute. When it carries
 none, the operator did not ask for an answer on the board: `--in-reply-to` is
 **rejected** with `no_reply_route` — answer in your own conversation instead, and
 do not hunt for a topic to force it onto. The same refusal applies to a
@@ -953,8 +956,9 @@ retained on the board and reaches no inbox.
 
 **The third cause you already answered when you sent.** `agent send` reports
 `delivered_to` — the number of subscribers the publish matched — and it needs
-no capability. `delivered_to: 0` IS the third cause; anything above 0 rules it
-out and leaves you with the first two. Re-send is not how you check: publish a
+no capability. `delivered_to: 0` IS the third cause — except on
+`chat.operator`, where it is always 0 and the operator reads the board instead;
+anything above 0 rules it out and leaves you with the first two. Re-send is not how you check: publish a
 throwaway to the same topic if you no longer have the original response.
 
 A fourth cause hides among them and the same line rules it out: the message
