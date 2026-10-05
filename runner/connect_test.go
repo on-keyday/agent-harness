@@ -135,11 +135,15 @@ func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
 	s.mu.Unlock()
 
 	taskID := protocol.TaskID{Id: [16]byte{0xCA}}
+	// The AssignTask envelope arrived (the receive loop marks it pending), and
+	// the CancelTask overtook its body.
+	endPending := s.beginPendingTask(taskID)
 	s.handleCancelTask(taskID)
 
 	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
 	body.SetRepoPath([]byte("/some/repo"))
 	s.handleAssign(context.Background(), taskID, body)
+	endPending()
 
 	// Cancel's TaskFinished, the assign's TaskAccepted, then the refusal's
 	// TaskFinished — and NO TaskStarted, which is the proof nothing ran.
@@ -163,21 +167,40 @@ func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
 	}
 }
 
-// The tombstone refuses a registration until cancelTombstoneTTL has passed, and
-// is pruned after it, so unknown-id cancels cannot grow the map without bound.
-func TestCancelTombstoneExpires(t *testing.T) {
-	r := NewTaskRegistry()
-	t0 := time.Unix(1000, 0)
-	if r.cancelTask("aa", t0) {
-		t.Fatal("cancelTask reported a registered task for an unknown id")
+// A cancel for a task that is NOT pending must not refuse a later run of the
+// same id. A resume reuses the id, and the server cancels an interactive task
+// whose mux stopped just as the runner forgets it — so a record that outlived
+// the pending window refused `session new --resume` right after.
+func TestCancelOfUnknownTaskDoesNotRefuseALaterRun(t *testing.T) {
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{"/some/repo"},
+		Profiles:     singleProfile(t, "/bin/true"),
+		Timeout:      time.Second,
+		Sender:       ms,
+		Now:          time.Now,
 	}
-	if r.putUnlessCancelled("aa", &taskEntry{cancel: func() {}}) {
-		t.Fatal("a tombstoned id was registered")
+	// A live runner's registry exists before any cancel can reach it (Config.Tasks,
+	// or the first task's initMaps); without it the cancel below records nothing
+	// and the test cannot fail.
+	s.mu.Lock()
+	s.initMaps()
+	s.mu.Unlock()
+	taskID := protocol.TaskID{Id: [16]byte{0xCB}}
+	s.handleCancelTask(taskID) // the run is already gone: answered, not recorded
+
+	endPending := s.beginPendingTask(taskID) // the resume's AssignTask
+	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
+	body.SetRepoPath([]byte("/some/repo"))
+	s.handleAssign(context.Background(), taskID, body)
+	endPending()
+
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1]).TaskFinished()
+	if last == nil || string(last.ErrorMessage) == cancelledBeforeStart {
+		t.Fatalf("the resumed run was refused by the earlier cancel: %+v", last)
 	}
-	// Another unknown cancel past the TTL prunes the old tombstone.
-	r.cancelTask("bb", t0.Add(cancelTombstoneTTL+time.Second))
-	if !r.putUnlessCancelled("aa", &taskEntry{cancel: func() {}}) {
-		t.Fatal("an expired tombstone still refused registration")
+	if s.reg.pending[hex.EncodeToString(taskID.Id[:])] {
+		t.Fatal("a pending mark outlived its run")
 	}
 }
 

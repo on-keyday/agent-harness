@@ -695,7 +695,9 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		// The body (auth_ticket / repo_path / prompt / extra_args) is on
 		// a server-initiated send-stream — fetch+decode here so handleAssign
 		// receives a fully-resolved request.
+		endPending := session.beginPendingTask(at.TaskId)
 		go func() {
+			defer endPending()
 			body, err := waitForAssignTaskBody(ctx, session.Streams, trsf.StreamID(at.StreamId))
 			if err != nil {
 				log.Error("AssignTask body fetch failed",
@@ -717,7 +719,11 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if oer == nil {
 			return
 		}
-		go session.handleOpenExec(ctx, oer)
+		endPending := session.beginPendingTask(oer.TaskId)
+		go func() {
+			defer endPending()
+			session.handleOpenExec(ctx, oer)
+		}()
 	case protocol.RunnerRequestType_RunnerHelloResponse:
 		// Stored synchronously: peer.Conn delivers messages serially, so
 		// by the time the next AssignTask is dispatched, this field is set.

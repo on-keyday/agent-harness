@@ -133,3 +133,17 @@ func TestRepeatedCancelResends(t *testing.T) {
 		t.Fatalf("OnCancel fired %d times; the transition must happen once", published)
 	}
 }
+
+// A Queued task has nothing on a runner to cancel, even though handleSubmit
+// records the candidate runner (BoundRunnerID) at submit. Sending it a
+// CancelTask is now answered with TaskFinished(-1) — the runner does not have
+// the task — which would turn the operator's Cancelled into Failed.
+func TestCancelOfQueuedTaskSendsNothing(t *testing.T) {
+	f := newCancelFixture(t, []time.Duration{})
+	queued := f.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, f.fc.id.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	before := f.cancelsSent(t)
+	f.tasks.Cancel(queued)
+	if got := f.cancelsSent(t); got != before {
+		t.Fatalf("cancelling a Queued task sent %d CancelTask", got-before)
+	}
+}

@@ -199,20 +199,29 @@ const (
 	cancelledBeforeStart = "cancel: cancelled before it started"
 )
 
+// beginPendingTask marks a task whose AssignTask/OpenExec just arrived as on
+// its way in, and returns the func that clears the mark. The receive loop calls
+// it before handing the task to its own goroutine, which defers the result.
+func (s *Session) beginPendingTask(tid protocol.TaskID) (end func()) {
+	taskIDHex := hex.EncodeToString(tid.Id[:])
+	s.mu.Lock()
+	s.initMaps()
+	reg := s.reg
+	s.mu.Unlock()
+	reg.beginPending(taskIDHex)
+	return func() { reg.endPending(taskIDHex) }
+}
+
 // handleCancelTask ends a task the server cancelled, or — when this runner is
 // not running it — answers with a TaskFinished. The server resends CancelTask
 // until a TaskFinished arrives (a CancelTask is one datagram, lost silently
 // over UDP), so a cancel for an unknown task means the TaskFinished never
 // reached it or the task never reached us; staying silent would leave it
-// resending. cancelTask also records the id, so an AssignTask that is merely
-// late is refused instead of started.
+// resending. A task still pending (see TaskRegistry.pending) is marked, so it
+// is refused at registration instead of started.
 func (s *Session) handleCancelTask(tid protocol.TaskID) {
 	taskIDHex := hex.EncodeToString(tid.Id[:])
-	now := time.Now
-	if s.Now != nil {
-		now = s.Now
-	}
-	if s.reg.cancelTask(taskIDHex, now()) {
+	if s.reg.cancelTask(taskIDHex) {
 		return
 	}
 	s.logger().Info("runner: cancel for unknown task; answering with TaskFinished", "task_id", taskIDHex)

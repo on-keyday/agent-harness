@@ -279,8 +279,12 @@ var defaultCancelResendDelays = []time.Duration{
 	30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second,
 }
 
-// OnCancel looks up the runner that is executing taskID (via AssignedTo, falling
-// back to BoundRunnerID) and sends a CancelTask message to it. Capacity is
+// OnCancel looks up the runner that is executing taskID (AssignedTo) and sends a
+// CancelTask message to it. A task that was never dispatched gets nothing: it
+// has no runner-side state, and handleSubmit's BoundRunnerID (the candidate it
+// picked at submit) is not where it runs. Sending there was once harmless — the
+// runner ignored an unknown id — but a runner now answers one with
+// TaskFinished(-1), which would turn a cancelled Queued task into Failed. Capacity is
 // intentionally NOT released here; the TaskFinished message from the runner (or
 // the runner-disconnect path) will call UnbindTask.
 //
@@ -301,46 +305,16 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	if !ok {
 		return
 	}
-	entry, found := d.runnerOf(task)
-	switch {
-	case !task.AssignedTo.IsZero():
-		boardRevokeTask(d.Board, task.AssignedTo, taskID)
-	case found:
-		boardRevokeTask(d.Board, entry.Identity, taskID)
+	if task.AssignedTo.IsZero() {
+		return
 	}
+	boardRevokeTask(d.Board, task.AssignedTo, taskID)
+	entry, found := d.Registry.GetByIdentity(task.AssignedTo)
 	if !found || entry.Conn == nil {
 		return
 	}
 	d.sendCancel(entry, taskID)
 	d.resendCancelUntilFinished(taskID)
-}
-
-// runnerOf resolves the registry entry of the runner a task was dispatched to.
-func (d *Dispatcher) runnerOf(task TaskEntry) (RunnerEntry, bool) {
-	// AssignedTo is set by Assign() when TryDispatch succeeds; BoundRunnerID is
-	// the candidate resolved at submit time. Prefer AssignedTo.
-	//
-	// The two are looked up DIFFERENTLY, which is why they are separate blocks
-	// rather than one string: AssignedTo is the runner's identity and survives
-	// its reconnects, while BoundRunnerID is the registry's connection key and
-	// does not. Both were bare strings until identity stopped being an address,
-	// and reaching for the wrong index compiled fine.
-	switch {
-	case !task.AssignedTo.IsZero():
-		return d.Registry.GetByIdentity(task.AssignedTo)
-	case task.BoundRunnerID != "":
-		// The WAL boundary: BoundRunnerID is PERSISTED, so it is text on disk
-		// and becomes the type again here. A parse failure is an unusable
-		// record rather than a runner to forward to.
-		cid, err := objproto.ParseConnectionID(task.BoundRunnerID, 0)
-		if err != nil {
-			return RunnerEntry{}, false
-		}
-		return d.Registry.Get(cid)
-	default:
-		// Task was never dispatched to a runner; nothing to forward.
-		return RunnerEntry{}, false
-	}
 }
 
 func (d *Dispatcher) sendCancel(entry RunnerEntry, taskID string) {
@@ -395,7 +369,7 @@ func (d *Dispatcher) resendCancelUntilFinished(taskID string) {
 			if !ok || task.Status != protocol.TaskStatus_Cancelled {
 				return
 			}
-			entry, found := d.runnerOf(task)
+			entry, found := d.Registry.GetByIdentity(task.AssignedTo)
 			if !found || entry.Conn == nil {
 				return
 			}

@@ -63,19 +63,20 @@ type TaskRegistry struct {
 	// server accepts or refuses each task after the reconnect.
 	hold *armedHold
 
-	// cancelled records a CancelTask that named a task this runner was not
-	// running, keyed by task id hex. The server resends CancelTask until a
-	// TaskFinished arrives, so an unknown id is answered with one; this entry
-	// is what keeps that answer true when the AssignTask is merely LATE — its
-	// body is fetched on a goroutine of its own, so a cancel can overtake it —
-	// by refusing the registration that would otherwise start the task anyway.
-	cancelled map[string]time.Time
+	// pending holds the ids, by task id hex, of tasks whose AssignTask or
+	// OpenExec has arrived but which are not registered yet: the AssignTask body
+	// and the OpenExec stream are fetched on a goroutine of their own, so a
+	// CancelTask can overtake them. true means one did. The task is then
+	// refused at registration rather than started, because handleCancelTask has
+	// already told the server it is over.
+	//
+	// Scoped to that window on purpose. A record keyed by task id alone and
+	// kept for a while also refused the NEXT run of the same id: a resume
+	// reuses the id, and an interactive session whose mux stops is cancelled
+	// by the server just as the runner forgets it, so `session new --resume`
+	// straight after would have been refused.
+	pending map[string]bool
 }
-
-// cancelTombstoneTTL bounds how long an unknown-task cancel refuses a later
-// registration. An AssignTask overtaken by its own cancel lands within a round
-// trip or two; this only has to outlast that, and keeps the map from growing.
-const cancelTombstoneTTL = 10 * time.Minute
 
 // armedHold is a promise this runner made to a server that was going down: keep
 // these children alive with no server until the deadline.
@@ -246,9 +247,35 @@ func (r *TaskRegistry) put(taskIDHex string, e *taskEntry) {
 	r.tasks[taskIDHex] = e
 }
 
+// beginPending marks a task as on its way in (see pending). Called from the
+// receive loop, synchronously, before the goroutine that will register it, so
+// a CancelTask delivered after the AssignTask/OpenExec always finds the mark.
+func (r *TaskRegistry) beginPending(taskIDHex string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pending == nil {
+		r.pending = make(map[string]bool)
+	}
+	r.pending[taskIDHex] = false
+}
+
+// endPending drops the mark. Deferred by the goroutine beginPending precedes,
+// so a spawn path that gives up before registering does not leave one behind.
+func (r *TaskRegistry) endPending(taskIDHex string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, taskIDHex)
+}
+
 // putUnlessCancelled is put for the two spawn paths: it refuses a task whose
-// cancel already arrived while it was unknown (see cancelled). false means the
-// caller must not start it.
+// CancelTask arrived while it was pending. false means the caller must not
+// start it.
 func (r *TaskRegistry) putUnlessCancelled(taskIDHex string, e *taskEntry) bool {
 	if r == nil {
 		return true
@@ -256,7 +283,9 @@ func (r *TaskRegistry) putUnlessCancelled(taskIDHex string, e *taskEntry) bool {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.cancelled[taskIDHex]; ok {
+	cancelled := r.pending[taskIDHex]
+	delete(r.pending, taskIDHex)
+	if cancelled {
 		return false
 	}
 	if r.tasks == nil {
@@ -266,10 +295,11 @@ func (r *TaskRegistry) putUnlessCancelled(taskIDHex string, e *taskEntry) bool {
 	return true
 }
 
-// cancelTask cancels a registered task and reports true, or records the id so
-// putUnlessCancelled refuses it later and reports false. One critical section,
-// so a registration cannot land between the lookup and the record.
-func (r *TaskRegistry) cancelTask(taskIDHex string, now time.Time) bool {
+// cancelTask cancels a registered task and reports true. Otherwise it reports
+// false, and if the task is pending it marks it so putUnlessCancelled refuses
+// it. One critical section, so a registration cannot land between the lookup
+// and the mark.
+func (r *TaskRegistry) cancelTask(taskIDHex string) bool {
 	if r == nil {
 		return false
 	}
@@ -280,15 +310,9 @@ func (r *TaskRegistry) cancelTask(taskIDHex string, now time.Time) bool {
 		e.cancel()
 		return true
 	}
-	if r.cancelled == nil {
-		r.cancelled = make(map[string]time.Time)
+	if _, ok := r.pending[taskIDHex]; ok {
+		r.pending[taskIDHex] = true
 	}
-	for id, at := range r.cancelled {
-		if now.Sub(at) > cancelTombstoneTTL {
-			delete(r.cancelled, id)
-		}
-	}
-	r.cancelled[taskIDHex] = now
 	r.mu.Unlock()
 	return false
 }

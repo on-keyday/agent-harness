@@ -49,13 +49,17 @@ TaskFinished), and `TaskStore.Finish` overwrites `Cancelled` with it.
 | Fix with (1) revoke the ticket at cancel and (2) resend CancelTask until a TaskFinished; the general periodic task-set reconciliation is NOT part of this change | operator, 2026-10-06 |
 | Write down how it was done in a spec | operator, 2026-10-06 |
 | Resend rather than move CancelTask onto a trsf stream: a stream would not cover a lost TaskFinished, and would change the wire | Claude, 2026-10-06 (proposed to the operator before implementation) |
-| A runner answers a CancelTask for a task it does not have with a TaskFinished, and refuses a later AssignTask/OpenExec for that id | Claude, 2026-10-06 |
+| A runner answers a CancelTask for a task it does not have with a TaskFinished, and refuses an AssignTask/OpenExec whose cancel overtook it while it was pending (Amendment A narrowed this from "for that id, 10 min") | Claude, 2026-10-06 |
 | Resend schedule 3, 6, 12, 24, 30, 30, 30, 30 s (9 sends, ~2.75 min), then give up with a Warn | Claude, 2026-10-06 |
+| The server sends CancelTask only to a task that was dispatched (`AssignedTo` set), never to the submit-time `BoundRunnerID` (Amendment A) | Claude, 2026-10-06 |
 
 ## Server
 
-**The ticket is revoked at the cancel** (`Dispatcher.OnCancel`). The identity
-is `AssignedTo` when set, otherwise the registry entry's. This takes the
+**Only a dispatched task is sent a CancelTask.** `OnCancel` does nothing for a
+task with no `AssignedTo` — a Queued one has no runner-side state (Amendment A).
+
+**The ticket is revoked at the cancel** (`Dispatcher.OnCancel`), under
+`AssignedTo`. This takes the
 agent's board and harness access whether or not the runner ever hears of the
 cancel. `Board.Revoke` also drops the task's subscriptions, so from the cancel
 on, a publish to its `chat.<short-id>` reports `delivered_to: 0`; the topic
@@ -99,17 +103,32 @@ close:
 The server records this as `Failed` with that reason: it cannot know the real
 outcome in the first case.
 
-**A cancel that overtakes its own AssignTask is remembered.** The AssignTask
-body is fetched on a goroutine of its own (`dispatchRunnerRequest`), so a cancel
-can find the id unknown while the task is still on its way. Without a record
-the answer above would be false: the task would then start with its slot
-released and its ticket revoked. `TaskRegistry.cancelTask` cancels a registered
-task, or records the id in `TaskRegistry.cancelled` under the same lock.
-Registration on both spawn paths goes through `putUnlessCancelled`, which
-refuses a recorded id. A refused task sends
-`TaskFinished{exit -1, "cancel: cancelled before it started"}` and returns
-before anything is spawned. Records older than `cancelTombstoneTTL` (10 min) are
-pruned on the next unknown-id cancel.
+**A cancel that overtakes its own AssignTask/OpenExec refuses it.** The
+AssignTask body and the OpenExec stream are fetched on a goroutine of their own
+(`dispatchRunnerRequest`), so a cancel can find the id unknown while the task
+is still on its way in. The answer above would then be false: the task would
+start with its slot released and its ticket revoked. So:
+
+1. The receive loop marks the id pending (`Session.beginPendingTask` →
+   `TaskRegistry.pending`) synchronously, before handing the request to its
+   goroutine. Control messages are delivered one at a time, so a CancelTask that
+   arrives after the AssignTask/OpenExec always finds the mark.
+2. `TaskRegistry.cancelTask` cancels a registered task; for a pending one it
+   sets the mark to "cancelled", under the same lock.
+3. Both spawn paths register through `putUnlessCancelled`, which clears the
+   mark and refuses a cancelled one. A refused task sends
+   `TaskFinished{exit -1, "cancel: cancelled before it started"}` and returns
+   before anything is spawned.
+4. The goroutine defers `endPending`, so a spawn path that gives up before
+   registering leaves no mark.
+
+A cancel for an id that is neither registered nor pending records nothing, so
+it cannot affect the next run of that id (a resume reuses it).
+
+A CancelTask that arrives BEFORE its AssignTask — two datagrams reordered on
+the path — is not covered: the task would start after the server has closed
+its row. The server sends the cancel only after the AssignTask, separated by an
+operator action, so this needs a reordering longer than that.
 
 ## Not covered
 
@@ -150,7 +169,9 @@ Unit tests, each checked against its negative control (the fix's piece removed
 | `TestCancelResentUntilTaskFinished`, `TestCancelResendGivesUp` | `resendCancelUntilFinished` call removed |
 | `TestRepeatedCancelResends` | `OnCancelRepeated` not called |
 | `runner/connect_test.go` `TestRunnerAnswersCancelForUnknownTaskWithTaskFinished` (replaces `TestRunnerHandlesCancelTaskUnknownIsNoOp`) | no TaskFinished on an unknown id |
-| `TestCancelBeforeAssignRefusesTheLateTask`, `TestCancelTombstoneExpires` | `putUnlessCancelled` ignores the record |
+| `TestCancelBeforeAssignRefusesTheLateTask` | `cancelTask` does not mark a pending task |
+| `TestCancelOfUnknownTaskDoesNotRefuseALaterRun` | the 10-minute id record of the first version, imitated |
+| `server/cancel_resend_test.go` `TestCancelOfQueuedTaskSendsNothing` | the first version (failed before the Amendment A fix) |
 
 `make vet`, `make test` and `make test-integration` pass.
 
@@ -167,3 +188,31 @@ changed to drop exactly ONE CancelTask (`os.Remove` of the marker instead of
 ```
 
 One resend, then none: the TaskFinished took the row out of `Cancelled`.
+
+## Amendment A (2026-10-06) — two regressions in the first version
+
+The first version (commit `7be1f325`) had two defects, both found by reading
+after it landed, not by a symptom:
+
+1. **Cancelling a Queued task turned it Failed.** `OnCancel` routed by
+   `AssignedTo`, falling back to `BoundRunnerID`. `handleSubmit` sets
+   `BoundRunnerID` on every submitted task (`server/task_handler.go`, the
+   `Tasks.Create` call), so a Queued task was sent a CancelTask too. That was
+   harmless while the runner ignored an unknown id. With the runner now
+   answering `TaskFinished(-1)`, `Finish` replaced the operator's `Cancelled`
+   with `Failed`. Fixed by sending only when `AssignedTo` is set;
+   `TestCancelOfQueuedTaskSendsNothing` failed on the first version.
+2. **The overtaken-assignment record was keyed by task id for 10 minutes.** Any
+   unknown-id cancel left one, and a resume reuses the id, so a resume within
+   10 minutes of such a cancel would have been refused with "cancelled before
+   it started". Fixed by replacing the record with the pending mark above,
+   which exists only between the AssignTask/OpenExec and its registration.
+
+For (2), the trigger I first named — an interactive session ending, the server
+cancelling it from `afterMuxStopped` while the runner has already forgotten it,
+then `session new --resume` — did NOT occur on a dummy instance with either
+build: after `exit` the TaskFinished arrived first and the row went straight to
+Succeeded. So the defect is shown at unit level (the imitation in the Testing
+table), not live. The resume flow itself was run end to end on both builds
+(`session new` → `session send 'exit\r'` → `session new --resume`) and resumed
+on both.
