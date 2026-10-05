@@ -191,6 +191,41 @@ func (s *Session) sendTaskMsg(taskIDHex string, data []byte) error {
 	return err
 }
 
+// cancelledBeforeStart is the TaskFinished reason for a task whose CancelTask
+// arrived before the task did. handleCancelTask answers such a cancel with
+// cancelNotRunning; the spawn path that then refuses the late task says this.
+const (
+	cancelNotRunning     = "cancel: task not running on this runner"
+	cancelledBeforeStart = "cancel: cancelled before it started"
+)
+
+// handleCancelTask ends a task the server cancelled, or — when this runner is
+// not running it — answers with a TaskFinished. The server resends CancelTask
+// until a TaskFinished arrives (a CancelTask is one datagram, lost silently
+// over UDP), so a cancel for an unknown task means the TaskFinished never
+// reached it or the task never reached us; staying silent would leave it
+// resending. cancelTask also records the id, so an AssignTask that is merely
+// late is refused instead of started.
+func (s *Session) handleCancelTask(tid protocol.TaskID) {
+	taskIDHex := hex.EncodeToString(tid.Id[:])
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	if s.reg.cancelTask(taskIDHex, now()) {
+		return
+	}
+	s.logger().Info("runner: cancel for unknown task; answering with TaskFinished", "task_id", taskIDHex)
+	var m protocol.RunnerMessage
+	m.Kind = protocol.RunnerMessageType_TaskFinished
+	m.SetTaskFinished(protocol.TaskFinished{
+		TaskId:       tid,
+		ExitCode:     -1,
+		ErrorMessage: []byte(cancelNotRunning),
+	})
+	_ = s.sendTaskMsg(taskIDHex, m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+}
+
 // childLive reports that this task's child process has started and not yet
 // exited — the only condition under which a hold may promise it.
 func (e *taskEntry) childLive() bool {
@@ -594,8 +629,13 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: body.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
-	s.reg.put(taskIDHex, entry)
+	registered := s.reg.putUnlessCancelled(taskIDHex, entry)
 	s.mu.Unlock()
+	if !registered {
+		cancel()
+		finishWithError(-1, cancelledBeforeStart)
+		return
+	}
 	defer func() {
 		cancel()
 		s.mu.Lock()
@@ -832,8 +872,14 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	entry := &taskEntry{cancel: cancel, repoPath: repoPath, ticket: oer.AuthTicket}
 	s.mu.Lock()
 	s.initMaps()
-	s.reg.put(taskIDHex, entry)
+	registered := s.reg.putUnlessCancelled(taskIDHex, entry)
 	s.mu.Unlock()
+	if !registered {
+		cancel()
+		_ = stream.CloseBoth()
+		finishWithError(-1, cancelledBeforeStart)
+		return
+	}
 	defer func() {
 		cancel()
 		s.mu.Lock()

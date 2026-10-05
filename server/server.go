@@ -567,6 +567,11 @@ func New(cfg Config) *Server {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
 		s.dispatcher.OnCancel(id)
 	}
+	// A cancel of a task still waiting for its TaskFinished resends the
+	// CancelTask; nothing is published, the transition already was.
+	s.tasks.OnCancelRepeated = func(id string) {
+		s.dispatcher.OnCancel(id)
+	}
 	s.tasks.OnPrune = func(id string) {
 		// The task is already removed, so publishTaskEvent's TaskKind lookup
 		// comes back zero — fine, clients key on the TaskPruned kind and drop

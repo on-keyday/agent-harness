@@ -711,13 +711,7 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if ct == nil {
 			return
 		}
-		taskIDHex := hex.EncodeToString(ct.TaskId.Id[:])
-		te, ok := session.reg.get(taskIDHex)
-		if ok {
-			te.cancel()
-		} else {
-			log.Info("runner: cancel for unknown task", "task_id", taskIDHex)
-		}
+		session.handleCancelTask(ct.TaskId)
 	case protocol.RunnerRequestType_OpenExec:
 		oer := req.OpenExec()
 		if oer == nil {

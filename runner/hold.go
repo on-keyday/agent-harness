@@ -62,7 +62,20 @@ type TaskRegistry struct {
 	// cleared when it expires, when the children are killed, or when the
 	// server accepts or refuses each task after the reconnect.
 	hold *armedHold
+
+	// cancelled records a CancelTask that named a task this runner was not
+	// running, keyed by task id hex. The server resends CancelTask until a
+	// TaskFinished arrives, so an unknown id is answered with one; this entry
+	// is what keeps that answer true when the AssignTask is merely LATE — its
+	// body is fetched on a goroutine of its own, so a cancel can overtake it —
+	// by refusing the registration that would otherwise start the task anyway.
+	cancelled map[string]time.Time
 }
+
+// cancelTombstoneTTL bounds how long an unknown-task cancel refuses a later
+// registration. An AssignTask overtaken by its own cancel lands within a round
+// trip or two; this only has to outlast that, and keeps the map from growing.
+const cancelTombstoneTTL = 10 * time.Minute
 
 // armedHold is a promise this runner made to a server that was going down: keep
 // these children alive with no server until the deadline.
@@ -231,6 +244,53 @@ func (r *TaskRegistry) put(taskIDHex string, e *taskEntry) {
 		r.tasks = make(map[string]*taskEntry)
 	}
 	r.tasks[taskIDHex] = e
+}
+
+// putUnlessCancelled is put for the two spawn paths: it refuses a task whose
+// cancel already arrived while it was unknown (see cancelled). false means the
+// caller must not start it.
+func (r *TaskRegistry) putUnlessCancelled(taskIDHex string, e *taskEntry) bool {
+	if r == nil {
+		return true
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.cancelled[taskIDHex]; ok {
+		return false
+	}
+	if r.tasks == nil {
+		r.tasks = make(map[string]*taskEntry)
+	}
+	r.tasks[taskIDHex] = e
+	return true
+}
+
+// cancelTask cancels a registered task and reports true, or records the id so
+// putUnlessCancelled refuses it later and reports false. One critical section,
+// so a registration cannot land between the lookup and the record.
+func (r *TaskRegistry) cancelTask(taskIDHex string, now time.Time) bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	if e, ok := r.tasks[taskIDHex]; ok && e != nil {
+		r.mu.Unlock()
+		e.cancel()
+		return true
+	}
+	if r.cancelled == nil {
+		r.cancelled = make(map[string]time.Time)
+	}
+	for id, at := range r.cancelled {
+		if now.Sub(at) > cancelTombstoneTTL {
+			delete(r.cancelled, id)
+		}
+	}
+	r.cancelled[taskIDHex] = now
+	r.mu.Unlock()
+	return false
 }
 
 // remove drops a task, unless a hold is armed and covers it: a held task

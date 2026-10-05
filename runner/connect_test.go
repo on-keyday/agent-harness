@@ -77,9 +77,12 @@ func TestRunnerHandlesCancelTaskCallsCancelFunc(t *testing.T) {
 	}
 }
 
-// TestRunnerHandlesCancelTaskUnknownIsNoOp verifies that a CancelTask for an
-// unknown task ID does not panic and is silently ignored (just a log line).
-func TestRunnerHandlesCancelTaskUnknownIsNoOp(t *testing.T) {
+// A CancelTask for a task this runner does not have is answered with a
+// TaskFinished. The server resends CancelTask until one arrives, so the silence
+// this used to answer with kept it resending; and the two ways to get here — the
+// task's own TaskFinished was lost, or its AssignTask never arrived — both leave
+// the server with a row only a TaskFinished can close.
+func TestRunnerAnswersCancelForUnknownTaskWithTaskFinished(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{"/repo"},
@@ -98,8 +101,84 @@ func TestRunnerHandlesCancelTaskUnknownIsNoOp(t *testing.T) {
 		t.Fatalf("encode CancelTask: %v", err)
 	}
 
-	// Must not panic.
 	dispatchRunnerRequest(context.Background(), s, s.logger(), appwire.AppKind_RunnerControl, payload)
+
+	if len(ms.sent) != 1 {
+		t.Fatalf("sent %d messages, want exactly one TaskFinished", len(ms.sent))
+	}
+	m := decodeRunnerMsg(t, ms.sent[0])
+	tf := m.TaskFinished()
+	if m.Kind != protocol.RunnerMessageType_TaskFinished || tf == nil {
+		t.Fatalf("sent kind %v, want TaskFinished", m.Kind)
+	}
+	if tf.TaskId.Id != taskIDBytes || tf.ExitCode != -1 || string(tf.ErrorMessage) != cancelNotRunning {
+		t.Fatalf("TaskFinished = {task %x, exit %d, %q}, want {%x, -1, %q}",
+			tf.TaskId.Id, tf.ExitCode, tf.ErrorMessage, taskIDBytes, cancelNotRunning)
+	}
+}
+
+// The cancel can overtake its own AssignTask: the body is fetched on a goroutine
+// of its own. The runner has already told the server the task is over, so the
+// late assignment must be refused, not started — otherwise the task runs with
+// its slot released and its ticket revoked.
+func TestCancelBeforeAssignRefusesTheLateTask(t *testing.T) {
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{"/some/repo"},
+		Profiles:     singleProfile(t, "/bin/true"),
+		Timeout:      time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+	}
+	s.mu.Lock()
+	s.initMaps()
+	s.mu.Unlock()
+
+	taskID := protocol.TaskID{Id: [16]byte{0xCA}}
+	s.handleCancelTask(taskID)
+
+	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
+	body.SetRepoPath([]byte("/some/repo"))
+	s.handleAssign(context.Background(), taskID, body)
+
+	// Cancel's TaskFinished, the assign's TaskAccepted, then the refusal's
+	// TaskFinished — and NO TaskStarted, which is the proof nothing ran.
+	var kinds []protocol.RunnerMessageType
+	var last *protocol.TaskFinished
+	for _, b := range ms.sent {
+		m := decodeRunnerMsg(t, b)
+		kinds = append(kinds, m.Kind)
+		if m.Kind == protocol.RunnerMessageType_TaskStarted {
+			t.Fatalf("a task cancelled before it arrived was started; sent %v", kinds)
+		}
+		if tf := m.TaskFinished(); tf != nil {
+			last = tf
+		}
+	}
+	if last == nil || string(last.ErrorMessage) != cancelledBeforeStart {
+		t.Fatalf("last TaskFinished = %+v, want reason %q; sent %v", last, cancelledBeforeStart, kinds)
+	}
+	if _, ok := s.reg.get(hex.EncodeToString(taskID.Id[:])); ok {
+		t.Fatal("the refused task was left in the registry")
+	}
+}
+
+// The tombstone refuses a registration until cancelTombstoneTTL has passed, and
+// is pruned after it, so unknown-id cancels cannot grow the map without bound.
+func TestCancelTombstoneExpires(t *testing.T) {
+	r := NewTaskRegistry()
+	t0 := time.Unix(1000, 0)
+	if r.cancelTask("aa", t0) {
+		t.Fatal("cancelTask reported a registered task for an unknown id")
+	}
+	if r.putUnlessCancelled("aa", &taskEntry{cancel: func() {}}) {
+		t.Fatal("a tombstoned id was registered")
+	}
+	// Another unknown cancel past the TTL prunes the old tombstone.
+	r.cancelTask("bb", t0.Add(cancelTombstoneTTL+time.Second))
+	if !r.putUnlessCancelled("aa", &taskEntry{cancel: func() {}}) {
+		t.Fatal("an expired tombstone still refused registration")
+	}
 }
 
 // TestBuildRunnerHello verifies that buildRunnerHello (used in the merged

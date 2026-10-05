@@ -132,6 +132,14 @@ type TaskStore struct {
 	OnCancel func(id string)                                         // optional; called after Cancel marks a task Cancelled.
 	OnPrune  func(id string)                                         // optional; called (after the store lock is released) for each task removed by PruneByIDs/PruneTerminal.
 
+	// OnCancelRepeated is called when Cancel finds the task ALREADY Cancelled.
+	// That state means no TaskFinished has arrived yet (Finish replaces it), so
+	// a second cancel is the operator saying the first one did not take: the
+	// server wires it to resend the CancelTask, which is one unacknowledged
+	// datagram. Separate from OnCancel because the transition — the WAL record
+	// and the task_ended event — happened the first time and must not repeat.
+	OnCancelRepeated func(id string)
+
 	// OnHold / OnReadopt are the hold axis's two edges, and they exist because
 	// a held task publishes NOTHING otherwise. Every other non-terminal
 	// transition without a hook of its own is repaired incidentally — the next
@@ -616,7 +624,8 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 }
 
 // Cancel sets the task to Cancelled and records EndedAt. Idempotent: if the
-// task is already in a terminal state, the call is a no-op.
+// task is already Succeeded or Failed, the call is a no-op; if it is already
+// Cancelled, only OnCancelRepeated fires.
 // Allowed source states: Queued, Running, and Detached (non-terminal states).
 func (s *TaskStore) Cancel(id string) {
 	now := time.Now()
@@ -632,8 +641,15 @@ func (s *TaskStore) Cancel(id string) {
 	// store transition IS the cancel — what kills the child is its absence
 	// from the accepted list when that runner reconnects.
 	switch e.Status {
-	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed:
 		s.mu.Unlock()
+		return
+	case protocol.TaskStatus_Cancelled:
+		onRepeat := s.OnCancelRepeated
+		s.mu.Unlock()
+		if onRepeat != nil {
+			onRepeat(id)
+		}
 		return
 	}
 	e.Status = protocol.TaskStatus_Cancelled

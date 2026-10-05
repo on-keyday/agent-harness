@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -76,6 +78,13 @@ type Dispatcher struct {
 	// Board is the agentboard instance for ticket lifecycle management.
 	// When nil, ticket registration is skipped (safe for tests that do not wire a Board).
 	Board *agentboard.Board
+
+	// CancelResendDelays overrides defaultCancelResendDelays; nil means the
+	// default. Tests shorten it.
+	CancelResendDelays []time.Duration
+
+	resendMu  sync.Mutex
+	resending map[string]bool // task id hex → a resend loop is running
 }
 
 // Dispatch routes msg by inspecting the first byte (the wire kind).
@@ -261,10 +270,29 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 	return false
 }
 
+// defaultCancelResendDelays is how long OnCancel waits before each resend of a
+// CancelTask that has not been answered by a TaskFinished: about 2.5 minutes in
+// all. The first gap outlasts the runner's kill ladder (SIGHUP → SIGTERM →
+// SIGKILL, ~2s), so an ordinary cancel is answered before anything is resent.
+var defaultCancelResendDelays = []time.Duration{
+	3 * time.Second, 6 * time.Second, 12 * time.Second, 24 * time.Second,
+	30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second,
+}
+
 // OnCancel looks up the runner that is executing taskID (via AssignedTo, falling
 // back to BoundRunnerID) and sends a CancelTask message to it. Capacity is
 // intentionally NOT released here; the TaskFinished message from the runner (or
 // the runner-disconnect path) will call UnbindTask.
+//
+// The task's agentboard ticket is revoked HERE, not when the TaskFinished
+// arrives, because the CancelTask is one objproto datagram — unacknowledged,
+// and over UDP lost without a word. Measured on a dummy instance with the send
+// dropped: the row read Cancelled while the agent ran on and its ticket still
+// published to the board. Revoking at the decision makes the cancel take the
+// agent's harness access whether or not the runner ever hears of it.
+//
+// It is also why the CancelTask is resent until a TaskFinished turns the row
+// from Cancelled into its real outcome (see resendCancelUntilFinished).
 func (d *Dispatcher) OnCancel(taskID string) {
 	if d.Registry == nil || d.Tasks == nil {
 		return
@@ -273,6 +301,22 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	if !ok {
 		return
 	}
+	entry, found := d.runnerOf(task)
+	switch {
+	case !task.AssignedTo.IsZero():
+		boardRevokeTask(d.Board, task.AssignedTo, taskID)
+	case found:
+		boardRevokeTask(d.Board, entry.Identity, taskID)
+	}
+	if !found || entry.Conn == nil {
+		return
+	}
+	d.sendCancel(entry, taskID)
+	d.resendCancelUntilFinished(taskID)
+}
+
+// runnerOf resolves the registry entry of the runner a task was dispatched to.
+func (d *Dispatcher) runnerOf(task TaskEntry) (RunnerEntry, bool) {
 	// AssignedTo is set by Assign() when TryDispatch succeeds; BoundRunnerID is
 	// the candidate resolved at submit time. Prefer AssignedTo.
 	//
@@ -281,33 +325,27 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	// its reconnects, while BoundRunnerID is the registry's connection key and
 	// does not. Both were bare strings until identity stopped being an address,
 	// and reaching for the wrong index compiled fine.
-	var entry RunnerEntry
 	switch {
 	case !task.AssignedTo.IsZero():
-		entry, ok = d.Registry.GetByIdentity(task.AssignedTo)
+		return d.Registry.GetByIdentity(task.AssignedTo)
 	case task.BoundRunnerID != "":
 		// The WAL boundary: BoundRunnerID is PERSISTED, so it is text on disk
 		// and becomes the type again here. A parse failure is an unusable
 		// record rather than a runner to forward to.
 		cid, err := objproto.ParseConnectionID(task.BoundRunnerID, 0)
 		if err != nil {
-			return
+			return RunnerEntry{}, false
 		}
-		entry, ok = d.Registry.Get(cid)
+		return d.Registry.Get(cid)
 	default:
 		// Task was never dispatched to a runner; nothing to forward.
-		return
+		return RunnerEntry{}, false
 	}
-	if !ok || entry.Conn == nil {
-		return
-	}
+}
 
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(taskID)
-	copy(tid.Id[:], raw)
-
+func (d *Dispatcher) sendCancel(entry RunnerEntry, taskID string) {
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CancelTask}
-	req.SetCancelTask(protocol.CancelTask{TaskId: tid})
+	req.SetCancelTask(protocol.CancelTask{TaskId: taskIDFromHex(taskID)})
 	data, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
 		slog.Error("dispatcher: OnCancel encode failed", "task", taskID, "err", err)
@@ -317,4 +355,53 @@ func (d *Dispatcher) OnCancel(taskID string) {
 		// Per spec: capacity is NOT released on send fail; TaskFinished path handles it.
 		slog.Error("dispatcher: OnCancel send failed", "runner", entry.ID, "task", taskID, "err", err)
 	}
+}
+
+// resendCancelUntilFinished resends the CancelTask on the schedule in
+// CancelResendDelays while the row still reads Cancelled — the state between
+// the decision and the runner's TaskFinished, which TaskStore.Finish replaces
+// with the real outcome. It stops when that happens, when the runner is no
+// longer registered (its disconnect path ends the task instead), or when the
+// schedule runs out. One loop per task: a repeated cancel joins the running one.
+//
+// The runner answers a CancelTask for a task it does not have with a
+// TaskFinished (runner.Session.handleCancelTask), so a lost TaskFinished, or an
+// AssignTask that never arrived, ends the loop too rather than exhausting it.
+func (d *Dispatcher) resendCancelUntilFinished(taskID string) {
+	delays := d.CancelResendDelays
+	if delays == nil {
+		delays = defaultCancelResendDelays
+	}
+	d.resendMu.Lock()
+	if d.resending == nil {
+		d.resending = make(map[string]bool)
+	}
+	if d.resending[taskID] {
+		d.resendMu.Unlock()
+		return
+	}
+	d.resending[taskID] = true
+	d.resendMu.Unlock()
+
+	go func() {
+		defer func() {
+			d.resendMu.Lock()
+			delete(d.resending, taskID)
+			d.resendMu.Unlock()
+		}()
+		for _, delay := range delays {
+			time.Sleep(delay)
+			task, ok := d.Tasks.Get(taskID)
+			if !ok || task.Status != protocol.TaskStatus_Cancelled {
+				return
+			}
+			entry, found := d.runnerOf(task)
+			if !found || entry.Conn == nil {
+				return
+			}
+			slog.Info("dispatcher: resending CancelTask; no TaskFinished yet", "runner", entry.ID, "task", taskID)
+			d.sendCancel(entry, taskID)
+		}
+		slog.Warn("dispatcher: CancelTask never answered by a TaskFinished; giving up", "task", taskID, "sends", len(delays)+1)
+	}()
 }
