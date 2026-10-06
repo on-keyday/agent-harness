@@ -1080,6 +1080,14 @@ present is the normal case.
   server replaying its own snapshot ahead of those bytes (D14, §5), so the
   runner does nothing about it — except in the no-snapshot fallback, where it
   resizes the PTY by one column and back to make a full-screen agent redraw.
+- **The rebind runs OFF the receive loop** (added 2026-10-06, `4592b50b`). It
+  waits for the stream the server just created, and `dispatchRunnerRequest`
+  runs on the loop that reads every packet of the connection
+  (`trsf.AutoReceive` calls the control handler synchronously) — the loop that
+  has to read the frame making that stream visible. Run there, the wait could
+  only end by timing out, and every control message behind it waited too. So
+  `handleRebindSession` goes on its own goroutine, as `handleOpenExec` already
+  did. §9.15 has the measurement.
 - The identity must NOT change across any of this — it is minted once per
   process above `PersistLoop` (`cmd/agent-runner/main.go:438-439`), and a
   held-task report from a new identity is refused by §5's rule, correctly.
@@ -1523,6 +1531,48 @@ Also:
    failed every time with `stream lookup failed`. The capture's size frame is
    what crosses it now, which makes the priming a consequence of restoring the
    size rather than a separate step someone can drop.
+
+   **Corrected 2026-10-06: priming was not the cause, and the failure was not
+   UDP's.** `stream lookup failed` kept occurring after the priming landed — on
+   the live fleet, all over WebSocket: **5 failed rebinds against 97
+   successful** in the runner logs on this host (`grep -h 'hold: rebind
+   failed\|hold: session rebound' bin/.run/*.log`), and when one restart failed
+   two rebinds, the failures were exactly 2 s apart. The cause is where the wait
+   ran. `handleRebindSession` was called synchronously from
+   `dispatchRunnerRequest`, which runs on `trsf.AutoReceive`'s loop — one loop
+   that reads every packet of the connection and hands the control ones to that
+   handler before reading the next. The frame that makes the server's stream
+   visible arrives on the same connection. When it was queued BEHIND the
+   `RebindSessionRequest`, the loop could not read it while the handler waited
+   for it, so the wait ran to `WaitForBidirectionalStream`'s 2 s deadline and
+   the child was killed (§9.16). Whether it worked was a question of arrival
+   order, which is why it was intermittent on both transports.
+
+   The same block delays every control message behind it. Measured on a dummy
+   instance: a restart that followed rebinds still waiting got
+   `hold: no ack in time` — its `HoldTasksRequest` sat behind the blocked
+   handler — so that restart held nothing and the tasks were Failed.
+
+   Fixed by running the rebind on its own goroutine (§6). Dummy instance,
+   3 interactive bash sessions, the server stopped with SIGTERM and relaunched
+   with the same argv, repeated:
+
+   | | ws | udp |
+   |---|---|---|
+   | before (`eec65eb9`) | 21 rebound / 1 failed | every session dead by round 3; 2× `no ack in time` |
+   | after (`4592b50b`) | 30 / 0 | 30 / 0; no missed ack |
+
+   `TestRebindSessionDoesNotBlockTheReceiveLoop` held the dispatch for 2.0 s
+   before the fix.
+
+   Two things this leaves standing:
+   - In every one of those runs the capture had no size frame (`rebind:
+     incomplete capture size=false`), and after the fix all 60 rebinds still
+     succeeded. So the priming described above is not what lets the runner
+     find the stream. Which frame does is not established here.
+   - `WaitForBidirectionalStream` ignores the 5 s context `handleRebindSession`
+     passes it and stops at its own fixed 2 s (`peer/publish.go`). Off the
+     receive loop, 2 s is ample on the measured links, so it is left as is.
 16. **A rebind that fails leaves its child alive forever.** SHIPPED, found by
    the operator noticing a process, fixed 2026-09-10. A held child survives the
    gap on purpose and three things could end that — a rebind, the server
@@ -1534,8 +1584,8 @@ Also:
    cannot be honoured because "the child died between the report and this
    request", so there appeared to be nothing to kill. Two of the three reasons
    that reach that function leave the child RUNNING, and `stream lookup failed`
-   — item 15's symptom, which the size-frame priming made rare rather than
-   impossible — is one of them.
+   — item 15's symptom, whose actual cause is in item 15's 2026-10-06
+   correction — is one of them.
    Measured on the live fleet: **one failure against 24 successful rebinds in a
    day**, leaving a claude holding ~440 MB plus an MCP child of its own, on a
    16 GB swapless host. Nothing surfaces it — the task row is the NEW child's,
