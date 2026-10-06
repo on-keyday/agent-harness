@@ -96,9 +96,9 @@ _STREAM_ADAPTER = str(
     _BIN_DIR / ("harness-stream-adapter.exe" if os.name == "nt" else "harness-stream-adapter")
 )
 
-# name -> {bin, oneshotArgv, resumeOneshotArgv, resumeInteractiveArgv,
-# logFormat, streamAdapter}. The argv values are the flag-STRING template form
-# ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
+# name -> {bin, oneshotArgv, resumeOneshotArgv, interactiveArgv,
+# resumeInteractiveArgv, logFormat, streamAdapter}. The argv values are the
+# flag-STRING template form ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
 # default profile — see cmd/agent-runner/main.go parseAgentArgsFlag). For
 # extra profiles (carried via --agent-profiles JSON) expand_agents_preset()
 # below splits these on whitespace into the argv-array form
@@ -128,6 +128,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # accepted ahead of -p.
         "oneshotArgv": "--output-format stream-json --verbose {args} -p {prompt}",
         "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
+        "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "claude-stream-json",
         # The one preset the adapter speaks for. Its own flags are NOT listed
@@ -143,7 +144,19 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # `codex exec resume` subcommand, so it is valid after `resume`.
         "oneshotArgv": "exec --json {args} {prompt}",
         "resumeOneshotArgv": "exec --json resume --last {args} {prompt}",
-        "resumeInteractiveArgv": "resume --last {args}",
+        # --no-daemon on both PTY opens. Since codex 0.157 (openai/codex#47179)
+        # an interactive codex attaches by default to ONE per-user app-server
+        # daemon and runs its tools there, with the environment of whichever
+        # codex started that daemon — codex documents "per-client environment
+        # isolation is not provided" (codex-rs/app-server-daemon/README.md).
+        # Every codex task's shell then carries the FIRST task's
+        # HARNESS_TASK_ID / HARNESS_AUTH_TICKET: BadTicket once that task is
+        # gone, and while it lives, a silent act-as-another-task. Observed
+        # 2026-10-07 on 0.160.1 (daemon environ held a Failed task's ids).
+        # The one-shot templates do not carry it: `codex exec` never attaches
+        # to the daemon and rejects the flag (exit 2 on 0.160.1).
+        "interactiveArgv": "--no-daemon {args}",
+        "resumeInteractiveArgv": "resume --last --no-daemon {args}",
         "logFormat": "codex-jsonl",
         "streamAdapter": "",
     },
@@ -170,6 +183,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # the interactive path working as intended).
         "oneshotArgv": "{args} --print {prompt}",
         "resumeOneshotArgv": "{args} --continue --print {prompt}",
+        "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
@@ -206,6 +220,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # so a non-PTY launch fails by timeout rather than by error.
         "oneshotArgv": "run {args} {prompt}",
         "resumeOneshotArgv": "run --continue {args} {prompt}",
+        "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
@@ -265,6 +280,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # instead of a wrong binary.
         "oneshotArgv": "{args} --print -- {prompt}",
         "resumeOneshotArgv": "{args} --continue --print -- {prompt}",
+        "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
@@ -284,6 +300,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "bin": bash_bin() or "bash",
         "oneshotArgv": "{args} -c {prompt}",
         "resumeOneshotArgv": "{args} -c {prompt}",
+        "interactiveArgv": "{args}",
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
         "streamAdapter": "",
@@ -299,12 +316,11 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # streamed events.
 #
 # The agent is carried by the BIN, not by a flag in the argv templates. A fresh
-# interactive launch uses NO argv template (runner/agent_command.go
-# buildInteractiveArgs returns the extra args unchanged when
-# resumeConversation is false), so a template-borne selector vanishes on that
-# path: `session new --agent sandbox-bash` opened Claude Code while the task
-# row still read agent=sandbox-bash. The bin is the one thing every launch path
-# carries.
+# interactive launch once used NO argv template, so a template-borne selector
+# vanished on that path: `session new --agent sandbox-bash` opened Claude Code
+# while the task row still read agent=sandbox-bash. That path now has its own
+# template (interactiveArgv), but the bin stays the carrier: it is the one
+# thing every launch path carries without each template having to repeat it.
 #
 # `bin` is an absolute path, which presets fully support: nothing constrains it
 # to a bare command name (runner/agent_profile.go ResolveBinPaths LookPath+Abs's
@@ -342,6 +358,7 @@ _CONFLICTING_FLAGS = (
     "--claude-bin",
     "--agent-oneshot-argv",
     "--agent-resume-oneshot-argv",
+    "--agent-interactive-argv",
     "--agent-resume-interactive-argv",
     "--agent-log-format",
     "--agent-stream-adapter",
@@ -376,6 +393,7 @@ def agent_profiles_json(names: list[str]) -> str:
                 "bin": p["bin"],
                 "oneshotArgv": p["oneshotArgv"].split(),
                 "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
+                "interactiveArgv": p["interactiveArgv"].split(),
                 "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
                 "logFormat": p["logFormat"],
                 "streamAdapter": p["streamAdapter"],
@@ -389,8 +407,9 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
 
     The FIRST name in *agents_csv* becomes the default profile: emitted as
     ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``,
-    ``--agent-resume-interactive-argv``, ``--agent-log-format`` and
-    ``--agent-stream-adapter``. All six are always emitted together for the
+    ``--agent-interactive-argv``, ``--agent-resume-interactive-argv``,
+    ``--agent-log-format`` and ``--agent-stream-adapter``. All seven are
+    always emitted together for the
     default profile — agent-runner's startup validation requires
     --agent-resume-oneshot-argv whenever --agent-oneshot-argv is customized
     (cmd/agent-runner/main.go validate()), and a Claude-shaped resume default
@@ -402,13 +421,14 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     Any REMAINING names are serialized into a single ``--agent-profiles``
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
-    name/bin/oneshotArgv/resumeOneshotArgv/resumeInteractiveArgv/logFormat/
-    streamAdapter, argv fields as JSON string arrays
+    name/bin/oneshotArgv/resumeOneshotArgv/interactiveArgv/
+    resumeInteractiveArgv/logFormat/streamAdapter, argv fields as JSON string arrays
     (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--claude-bin/--agent-oneshot-argv/
-    --agent-resume-oneshot-argv/--agent-resume-interactive-argv/
+    --agent-resume-oneshot-argv/--agent-interactive-argv/
+    --agent-resume-interactive-argv/
     --agent-log-format/--agent-stream-adapter/--agent-profiles, this raises
     AgentsPresetError instead of silently overriding or merging. --agents is
     an all-or-nothing shortcut for the known presets; use the explicit
@@ -441,6 +461,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-bin", default["bin"],
         "--agent-oneshot-argv", default["oneshotArgv"],
         "--agent-resume-oneshot-argv", default["resumeOneshotArgv"],
+        "--agent-interactive-argv", default["interactiveArgv"],
         "--agent-resume-interactive-argv", default["resumeInteractiveArgv"],
         "--agent-log-format", default["logFormat"],
         "--agent-stream-adapter", default["streamAdapter"],

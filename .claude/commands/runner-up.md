@@ -83,6 +83,11 @@ Arguments: $ARGUMENTS
      interactive-only.
    - `resume_conversation` interactive invokes `resume --last` (codex does
      not take `--continue`).
+   - both PTY opens (fresh and resumed) pass `--no-daemon`, and the one-shots
+     do not. Without it, codex 0.157+ runs every interactive session's tools
+     in one shared per-user daemon that kept the environment of the codex that
+     started it, so each codex task acts with THAT task's `HARNESS_*`
+     identity. `codex exec` never uses the daemon and rejects the flag.
    - `{args}` = runner-global `--agent-args` + per-task `--agent-arg`;
      `{prompt}` = the one-shot prompt as a single argv element. Templates are
      shlex-split and executed via argv, not a shell.

@@ -63,8 +63,32 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             ["exec", "--json", "resume", "--last", "{args}", "{prompt}"],
         )
         self.assertEqual(
-            codex["resumeInteractiveArgv"], ["resume", "--last", "{args}"]
+            codex["resumeInteractiveArgv"],
+            ["resume", "--last", "--no-daemon", "{args}"],
         )
+        self.assertEqual(codex["interactiveArgv"], ["--no-daemon", "{args}"])
+
+    def test_codex_pty_opens_bypass_the_shared_daemon(self) -> None:
+        # codex >= 0.157 runs an interactive session's tools inside ONE
+        # per-user app-server daemon holding the environment of whichever task
+        # started it, so every codex task would carry that task's HARNESS_*
+        # identity. Both PTY opens must opt out; the one-shot `exec` never
+        # attaches and rejects the flag, so it must NOT carry it.
+        out = expand_agents_preset("codex", [])
+        self.assertIn("--no-daemon", out[out.index("--agent-interactive-argv") + 1].split())
+        self.assertIn(
+            "--no-daemon", out[out.index("--agent-resume-interactive-argv") + 1].split()
+        )
+        for flag in ("--agent-oneshot-argv", "--agent-resume-oneshot-argv"):
+            self.assertNotIn("--no-daemon", out[out.index(flag) + 1].split())
+
+    def test_every_preset_declares_a_fresh_interactive_template(self) -> None:
+        # The fresh PTY open is a launch mode of its own; a preset without the
+        # key would make agent_profiles_json raise for that name.
+        for name, preset in agent_presets.KNOWN_AGENT_PRESETS.items():
+            with self.subTest(agent=name):
+                self.assertIn("{args}", preset["interactiveArgv"].split())
+                self.assertNotIn("{prompt}", preset["interactiveArgv"].split())
 
     def test_agy_preset_argv(self) -> None:
         out = expand_agents_preset("claude,agy", [])
@@ -134,6 +158,10 @@ class ExpandAgentsPresetTest(unittest.TestCase):
     def test_conflict_with_explicit_agent_bin_rejected(self) -> None:
         with self.assertRaises(AgentsPresetError):
             expand_agents_preset("claude,codex", ["--agent-bin", "claude"])
+
+    def test_conflict_with_explicit_interactive_argv_rejected(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            expand_agents_preset("codex", ["--agent-interactive-argv", "{args}"])
 
     def test_conflict_with_explicit_agent_profiles_rejected(self) -> None:
         with self.assertRaises(AgentsPresetError):
@@ -243,6 +271,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
                 for flag in (
                     "--agent-oneshot-argv",
                     "--agent-resume-oneshot-argv",
+                    "--agent-interactive-argv",
                     "--agent-resume-interactive-argv",
                 ):
                     self.assertEqual(
