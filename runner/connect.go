@@ -767,7 +767,14 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		if rb == nil {
 			return
 		}
-		session.handleRebindSession(rb)
+		// On its own goroutine, like OpenExec: the rebind waits for the stream
+		// the server just created, and this function runs ON the receive loop
+		// (trsf.AutoReceive calls it synchronously) — the same loop that has to
+		// read the frame making that stream visible. Waiting here could only
+		// end by timing out, and stalled every control message behind it (a
+		// HoldTasks ack missed its window that way). Live: 5 of 102 rebinds
+		// failed "stream lookup failed", each 2s after the one before.
+		go session.handleRebindSession(rb)
 	case protocol.RunnerRequestType_TaskWake:
 		tw := req.TaskWake()
 		if tw == nil {
