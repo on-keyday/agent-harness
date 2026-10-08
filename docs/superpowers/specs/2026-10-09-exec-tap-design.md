@@ -47,6 +47,7 @@ the rows worth a second look.
 | D12 | Stream offsets come from the splice's own per-stream count, not from the tap; forward tap is moved onto that too | this spec |
 | D13 | `removeExec` takes the outcome as an argument, so every removal path tells taps how the exec ended | this spec |
 | D14 | CLI, TUI and WebUI all get the tap and the counters in v1 | this spec (`feedback_features_span_all_three_uis`) |
+| D15 | A tap's stream ENDS after its last record (`exec_ended`, and `forward_closed` for forwards); the end does not go through the bounded queue, so a full queue cannot drop it | this spec (found while planning, 2026-10-09) |
 
 ## Why the tap is at the server (D1)
 
@@ -331,6 +332,19 @@ takes the offset as an argument; exec passes its channel counter, and forward
 passes the connection's `connBytes` half before the add (`forward_counters.go:143-152`
 already updates it before offering). Forward taps opened mid-connection change
 from 0-based to connection-based offsets, which is what their spec promised.
+
+**The last record ends the tap (D15).** The forward spec says the stream
+"EOFs after" `forward_closed`, but nothing ends `forwardTap.run` today:
+`closeTaps` (`server/forward_tap.go:314`) queues the record and the tap keeps
+waiting, so `forward tap` stays open until the operator interrupts it. The
+generic tap gets a `finish(final)` that is not a queue push: `run` delivers
+what is queued, any outstanding gaps, then the final record, and returns — the
+handler then closes the reader's stream. Exec uses it for `exec_ended`; forward
+uses it for `forward_closed`. Going around the queue matters because the end is
+the record a fallen-behind reader needs most, and a queue push is exactly what
+gets dropped when it is full. A tap attached to an exec that has already ended
+is finished at once with the stored outcome, so a handler that looked the exec
+up an instant before its removal does not leave a tap waiting forever.
 
 The overflow rule is unchanged from forward tap: a tap that cannot keep up
 accumulates `missed` per stream and stays attached; the writer emits a `gap`
