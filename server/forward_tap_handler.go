@@ -1,31 +1,10 @@
 package server
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 )
-
-// streamTapSink writes tap records onto the client's stream.
-//
-// Records are CONCATENATED, with no length prefix of their own: every
-// ForwardTapRecord is self-delimiting under its own schema, so the reader
-// decodes one and keeps the remainder. A length prefix would be a wire byte the
-// schema does not describe, which is the one thing this project's message
-// format is not allowed to have.
-type streamTapSink struct {
-	stream trsf.BidirectionalStream
-}
-
-func (s *streamTapSink) send(rec *protocol.ForwardTapRecord) error {
-	buf, err := rec.EncodeCopy(nil)
-	if err != nil {
-		return err
-	}
-	return s.stream.AppendData(false, buf)
-}
 
 // forwardVisibleTo reports whether connID may see pf at all. Factored out of
 // visiblePortForwards so the listing and the tap decide visibility with one
@@ -73,32 +52,9 @@ func (h *TaskHandler) handleOpenForwardTap(conn ConnHandle, req *protocol.OpenFo
 		return errResp(protocol.OpenForwardTapStatus_InternalError)
 	}
 
-	tap := newForwardTap(&streamTapSink{stream: stream}, req.DirectionFilter, req.MaxRecordBytes)
+	tap := newForwardTap(&streamRecordSink[*protocol.ForwardTapRecord]{stream: stream}, req.DirectionFilter, req.MaxRecordBytes)
 	pf.addTap(tap)
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		defer cancel()
-		defer pf.removeTap(tap)
-		defer func() { _ = stream.CloseBoth() }()
-		tap.run(ctx)
-	}()
-	// Watch for the tapper going away. The client never writes on this stream,
-	// so any read returning EOF or error means it is gone — the same signal
-	// watchRemoteForwardControl reads for a forward's control stream.
-	//
-	// Without this a tap is only reaped when the NEXT record fails to send, so
-	// a tap closed on a quiet forward is never noticed: it stays attached, and
-	// `taps=N` keeps counting a reader that left. Observed exactly that way —
-	// the TUI's tap view closed and the row still said taps=1.
-	go func() {
-		defer cancel()
-		for {
-			_, eof, err := stream.ReadDirect(4096)
-			if eof || err != nil {
-				return
-			}
-		}
-	}()
+	serveTapStream(stream, tap.run, func() { pf.removeTap(tap) })
 
 	slog.Info("forward tap: attached", "forward_id", pf.forwardID, "task_id", pf.taskIDHex,
 		"filter", req.DirectionFilter, "max_record_bytes", req.MaxRecordBytes)

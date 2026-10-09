@@ -289,3 +289,43 @@ func TestTapIsReapedWhenTheReaderGoesAwayOnAQuietForward(t *testing.T) {
 		}
 	}
 }
+
+// D12: the offset is the CONNECTION's byte count, not the tap's. A tap opened
+// after 5 bytes crossed starts at 5, which is what the forward spec promises
+// and what lines up with bytes_to_target on the listing.
+func TestTapOpenedMidConnectionStartsAtTheConnectionsOffset(t *testing.T) {
+	pf := newCounterForward()
+	seq := pf.openConn()
+	pf.observe(seq, protocol.ForwardTapDirection_ToTarget, []byte("12345"))
+
+	tap, recs := newTestTap(t, pf, protocol.ForwardTapFilter_Both, 0)
+	defer pf.removeTap(tap)
+	pf.observe(seq, protocol.ForwardTapDirection_ToTarget, []byte("ab"))
+
+	got := drain(t, recs, 1)
+	if got[0].Data().StreamOffset != 5 {
+		t.Fatalf("offset = %d, want 5 (the connection's count when the tap opened)", got[0].Data().StreamOffset)
+	}
+}
+
+// forward_closed is the LAST record: the tap stops after it, so the handler
+// closes the reader's stream and `forward tap` exits instead of waiting for an
+// interrupt.
+func TestTapStopsAfterForwardClosed(t *testing.T) {
+	pf := newCounterForward()
+	sink := &chanSink{out: make(chan *protocol.ForwardTapRecord, 8)}
+	tap := newForwardTap(sink, protocol.ForwardTapFilter_Both, 0)
+	pf.addTap(tap)
+	done := make(chan struct{})
+	go func() { tap.run(context.Background()); close(done) }()
+
+	pf.closeTaps(protocol.PortForwardCloseReason_Killed)
+	if rec := drain(t, sink.out, 1)[0]; rec.Kind != protocol.ForwardTapRecordKind_ForwardClosed {
+		t.Fatalf("kind %v", rec.Kind)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tap kept running after forward_closed; its reader would never see EOF")
+	}
+}

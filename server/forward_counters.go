@@ -140,12 +140,17 @@ func (pf *portForward) observe(seq uint64, dir protocol.ForwardTapDirection, dat
 	if pf == nil || len(data) == 0 {
 		return
 	}
+	// The offset is this connection's count BEFORE these bytes, so a tap opened
+	// mid-connection starts where the connection is rather than at 0.
+	var offset uint64
 	pf.connMu.Lock()
 	if pf.conns != nil {
 		c := pf.conns[seq]
 		if dir == protocol.ForwardTapDirection_ToTarget {
+			offset = c.toTarget
 			c.toTarget += uint64(len(data))
 		} else {
+			offset = c.fromTarget
 			c.fromTarget += uint64(len(data))
 		}
 		pf.conns[seq] = c
@@ -156,6 +161,6 @@ func (pf *portForward) observe(seq uint64, dir protocol.ForwardTapDirection, dat
 	taps := pf.taps
 	pf.tapMu.Unlock()
 	for _, t := range taps {
-		t.offer(seq, dir, data)
+		t.offer(seq, dir, offset, data)
 	}
 }

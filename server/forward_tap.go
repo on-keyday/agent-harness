@@ -2,65 +2,45 @@ package server
 
 import (
 	"context"
-	"log/slog"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// forwardTapQueueDepth bounds one tap's backlog. Same shape as the session
-// mux's viewer queue (session_mux.go, viewerQueueDepth) and for the same
-// reason: the producer is a relay that must never wait.
-//
-// It differs in what overflow DOES. SessionMux drops the viewer; a tap keeps
-// its consumer and reports a gap instead. A session viewer that is dropped can
-// reattach and replay from the ring — a tap has no ring by design, and a tap
-// that vanishes mid-investigation reads as "the forward closed", which is a
-// false statement about the thing being investigated.
-const forwardTapQueueDepth = 256
+// forwardTapQueueDepth is recordTapQueueDepth under the name the forward tests
+// were written against.
+const forwardTapQueueDepth = recordTapQueueDepth
 
-// forwardTapSink is where a tap's records go. The stream implementation is the
-// real one; tests substitute a channel.
-type forwardTapSink interface {
-	send(rec *protocol.ForwardTapRecord) error
-}
+// forwardTapSink is where a forward tap's records go.
+type forwardTapSink = recordSink[*protocol.ForwardTapRecord]
 
 // tapStreamKey identifies one byte stream inside a forward: a connection and a
-// direction. Offsets and missed-byte counts are per key, because the two
-// directions of one connection are two independent streams.
+// direction. Missed-byte counts are per key, because the two directions of one
+// connection are two independent streams.
 type tapStreamKey struct {
 	seq uint64
 	dir protocol.ForwardTapDirection
-}
-
-type tapStreamState struct {
-	offset uint64
-	missed uint64
 }
 
 // forwardTap is one reader attached to one forward.
 type forwardTap struct {
 	filter         protocol.ForwardTapFilter
 	maxRecordBytes uint32
-	ch             chan *protocol.ForwardTapRecord
-	sink           forwardTapSink
-
-	mu      sync.Mutex
-	streams map[tapStreamKey]*tapStreamState
-
-	closed atomic.Bool
+	q              *recordTap[tapStreamKey, *protocol.ForwardTapRecord]
 }
 
 func newForwardTap(sink forwardTapSink, filter protocol.ForwardTapFilter, maxRecordBytes uint32) *forwardTap {
 	return &forwardTap{
 		filter:         filter,
 		maxRecordBytes: maxRecordBytes,
-		ch:             make(chan *protocol.ForwardTapRecord, forwardTapQueueDepth),
-		sink:           sink,
-		streams:        map[tapStreamKey]*tapStreamState{},
+		q:              newRecordTap[tapStreamKey, *protocol.ForwardTapRecord](sink, recordKey, forwardGapRecord),
 	}
+}
+
+func forwardGapRecord(key tapStreamKey, missed uint64) *protocol.ForwardTapRecord {
+	gap := nowTapRecord(protocol.ForwardTapRecordKind_Gap)
+	gap.SetGap(protocol.ForwardTapGap{ConnSeq: key.seq, Direction: key.dir, DroppedBytes: missed})
+	return gap
 }
 
 func (t *forwardTap) wants(dir protocol.ForwardTapDirection) bool {
@@ -73,48 +53,24 @@ func (t *forwardTap) wants(dir protocol.ForwardTapDirection) bool {
 	return true
 }
 
-// missedBytes is the total this tap has failed to keep up with, across every
-// stream. Test and diagnostic use; the gap records carry the per-stream halves.
-func (t *forwardTap) missedBytes() uint64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	var n uint64
-	for _, st := range t.streams {
-		n += st.missed
-	}
-	return n
-}
-
-func (t *forwardTap) state(key tapStreamKey) *tapStreamState {
-	st := t.streams[key]
-	if st == nil {
-		st = &tapStreamState{}
-		t.streams[key] = st
-	}
-	return st
-}
+func (t *forwardTap) missedBytes() uint64     { return t.q.missedBytes() }
+func (t *forwardTap) run(ctx context.Context) { t.q.run(ctx) }
 
 // offer is called from the relay goroutine, once per chunk. It never blocks and
 // never returns an error the relay would have to handle: a tap that cannot keep
 // up loses bytes and is told so, rather than slowing the forward down.
 //
+// offset is where data starts in its (connection, direction) stream, counted by
+// the caller from the connection's first byte — not by the tap, which would
+// start at 0 whenever it was opened mid-connection (D12 of the exec tap spec).
+//
 // The payload is COPIED. relayBytes hands out the buffer it is about to reuse
 // (the same rule spliceConnStream documents), so retaining the slice would make
 // a tap show bytes from a later chunk.
-func (t *forwardTap) offer(seq uint64, dir protocol.ForwardTapDirection, data []byte) {
-	if t.closed.Load() || !t.wants(dir) || len(data) == 0 {
+func (t *forwardTap) offer(seq uint64, dir protocol.ForwardTapDirection, offset uint64, data []byte) {
+	if t.q.isClosed() || !t.wants(dir) || len(data) == 0 {
 		return
 	}
-	key := tapStreamKey{seq: seq, dir: dir}
-
-	t.mu.Lock()
-	st := t.state(key)
-	offset := st.offset
-	// The offset advances by what CROSSED, not by what is kept: a truncated
-	// record must not make the stream look shorter than it is.
-	st.offset += uint64(len(data))
-	t.mu.Unlock()
-
 	keep := data
 	var cut uint32
 	if t.maxRecordBytes > 0 && uint32(len(keep)) > t.maxRecordBytes {
@@ -131,45 +87,14 @@ func (t *forwardTap) offer(seq uint64, dir protocol.ForwardTapDirection, data []
 		TruncatedBytes: cut,
 	}
 	d.SetData(payload)
-	rec := &protocol.ForwardTapRecord{
-		Kind:   protocol.ForwardTapRecordKind_Data,
-		UnixMs: uint64(time.Now().UnixMilli()),
-	}
+	rec := nowTapRecord(protocol.ForwardTapRecordKind_Data)
 	rec.SetData(d)
-
-	select {
-	case t.ch <- rec:
-	default:
-		t.mu.Lock()
-		t.state(key).missed += uint64(len(data))
-		t.mu.Unlock()
-	}
+	t.q.push(tapStreamKey{seq: seq, dir: dir}, rec, len(data))
 }
 
-// emit queues a record that carries no payload (conn_open / conn_close /
-// forward_closed). Same non-blocking rule; a dropped bracket costs the reader a
-// delimiter, not data, so it is not counted as missed bytes.
+// emit queues a record that carries no payload (conn_open / conn_close).
 func (t *forwardTap) emit(rec *protocol.ForwardTapRecord) {
-	if t.closed.Load() {
-		return
-	}
-	select {
-	case t.ch <- rec:
-	default:
-	}
-}
-
-// takeMissed returns and clears the missed count for one stream.
-func (t *forwardTap) takeMissed(key tapStreamKey) uint64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	st := t.streams[key]
-	if st == nil {
-		return 0
-	}
-	n := st.missed
-	st.missed = 0
-	return n
+	t.q.push(recordKey(rec), rec, 0)
 }
 
 // recordKey is the stream a record belongs to. Records without a direction of
@@ -197,41 +122,6 @@ func recordKey(rec *protocol.ForwardTapRecord) tapStreamKey {
 	return tapStreamKey{}
 }
 
-// run drains the queue onto the sink until ctx ends or the sink fails. Before
-// each record it flushes that stream's accumulated overflow as a gap, so the
-// reader learns what it missed at the point it missed it rather than finding a
-// silent discontinuity in the offsets.
-func (t *forwardTap) run(ctx context.Context) {
-	defer t.closed.Store(true)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case rec := <-t.ch:
-			key := recordKey(rec)
-			if missed := t.takeMissed(key); missed > 0 {
-				gap := &protocol.ForwardTapRecord{
-					Kind:   protocol.ForwardTapRecordKind_Gap,
-					UnixMs: uint64(time.Now().UnixMilli()),
-				}
-				gap.SetGap(protocol.ForwardTapGap{
-					ConnSeq:      key.seq,
-					Direction:    key.dir,
-					DroppedBytes: missed,
-				})
-				if err := t.sink.send(gap); err != nil {
-					slog.Debug("forward tap: sink ended", "err", err)
-					return
-				}
-			}
-			if err := t.sink.send(rec); err != nil {
-				slog.Debug("forward tap: sink ended", "err", err)
-				return
-			}
-		}
-	}
-}
-
 // --- registration side ---
 
 func (pf *portForward) addTap(t *forwardTap) {
@@ -249,7 +139,7 @@ func (pf *portForward) removeTap(t *forwardTap) {
 		}
 	}
 	pf.tapMu.Unlock()
-	t.closed.Store(true)
+	t.q.close()
 }
 
 // tapCount is what the listing reports as taps=N. Capped at the field's width
@@ -311,10 +201,13 @@ func (pf *portForward) tapConnClose(seq uint64, toTarget, fromTarget uint64) {
 // bare EOF, which is indistinguishable from its own connection dropping — the
 // registration's owner already gets this fact through its control stream, and a
 // tapper is not necessarily the owner.
+//
+// forward_closed is the last record: finish delivers it after everything queued
+// and ends the tap, so the handler closes the reader's stream.
 func (pf *portForward) closeTaps(reason protocol.PortForwardCloseReason) {
 	pf.eachTap(func(t *forwardTap) {
 		rec := nowTapRecord(protocol.ForwardTapRecordKind_ForwardClosed)
 		rec.SetForwardClosed(protocol.ForwardTapForwardClosed{Reason: reason})
-		t.emit(rec)
+		t.q.finish(rec)
 	})
 }
