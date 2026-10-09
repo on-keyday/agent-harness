@@ -891,7 +891,7 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	// for the whole server: the quantity moves per byte, so it can only be
 	// published on a clock, and a per-forward publisher would have to
 	// rediscover the coalescing each time.
-	go s.taskHandler.runForwardStatsSweeper(ctx)
+	go s.taskHandler.runStatsSweeper(ctx)
 
 	const shutdownGracePeriod = 2 * time.Second
 

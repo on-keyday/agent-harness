@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -226,4 +227,25 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 		t.Fatalf("no whoami response (kind %v)", resp.Kind)
 	}
 	assertNoZeroFields(t, *w, map[string]string{})
+}
+
+// ExecRunInfo is built by hand in execRunInfo, the same exposure as
+// portForwardInfo: a field added to the wire struct and forgotten at the build
+// site round-trips as zero and every surface shows a default.
+func TestExecRunInfoMapsEveryField(t *testing.T) {
+	e := &execRun{
+		execID:     4,
+		taskIDHex:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		argv:       []string{"cat"},
+		clientCID:  "ws:127.0.0.1:1-1",
+		clientKind: protocol.ClientKind_Tui,
+	}
+	e.startedAt = time.Now()
+	// Counters are atomics a literal cannot fill: drive them through the
+	// real path, one channel each, so a forgotten mapping shows up as zero.
+	for _, typ := range []frame.FrameType{frame.FrameType_Stdin, frame.FrameType_Stdout, frame.FrameType_Stderr} {
+		e.observeFrame(typ, []byte("x"))
+	}
+	e.addTap(newExecTap(nil, protocol.ExecTapFilter_All, 0))
+	assertNoZeroFields(t, execRunInfo(e), map[string]string{})
 }
