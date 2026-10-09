@@ -115,6 +115,7 @@ type modalKeyMap struct {
 	Escape           string
 	ForwardKill      string
 	ForwardTap       string
+	ExecTap          string
 	ForwardRefresh   string
 	BoardRefresh     string
 	BoardPurgeTopic  string
@@ -147,6 +148,8 @@ var modalKeys = modalKeyMap{
 	// `t` rather than a shift-variant of the kill key: tapping is a read, not
 	// a stronger form of killing, and the two should not look like a pair.
 	ForwardTap: "t",
+	// Same letter as ForwardTap, for the same reason: tapping reads.
+	ExecTap: "t",
 	// `r` refreshes, matching BoardRefresh — the forwards pane needs one now
 	// that its rows carry counters rather than only configuration.
 	ForwardRefresh:  "r",
@@ -281,7 +284,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},
 	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Do: (*App).onTree, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Do: (*App).onForwards, Short: "f forwards", Long: "port-forward list (t taps the selected row's traffic, r refreshes, x kills)"},
-	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (x kills the selected row)"},
+	{Keys: []string{mainKeys.Execs}, Scope: scopeGlobal, Do: (*App).onExecs, Short: "e execs", Long: "running-exec list (t taps the selected row's stdin/stdout/stderr, x kills)"},
 	{Keys: []string{mainKeys.IdleWatchers}, Scope: scopeGlobal, Do: (*App).onIdleWatchers, Short: "I watchers", Long: "armed await-idle watchers (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},

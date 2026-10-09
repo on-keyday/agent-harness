@@ -82,7 +82,9 @@ var verbConsumers = []verbConsumer{
 	{"exec", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/execrun.go"}},
 
 	{"forward tap", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
-	{"forward tap", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/forwardtap_pump.go"}},
+	{"forward tap", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/tap_pump.go"}},
+	{"exec tap", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/main.go"}},
+	{"exec tap", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go", "../../tui/overlays.go", "../../tui/tap_pump.go"}},
 
 	{"session await-idle", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/session.go"}},
 	{"session await-idle", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
@@ -143,6 +145,7 @@ var actionFor = map[string]any{
 	"git diff":                verb.GitAction{},
 	"exec":                    verb.ExecRunAction{},
 	"forward tap":             verb.ForwardTapAction{},
+	"exec tap":                verb.ExecTapAction{},
 	"session await-idle":      verb.SessionAction{},
 	"session await-idle ls":   verb.SessionAction{},
 	"session await-idle kill": verb.SessionAction{},

@@ -94,11 +94,11 @@ type App struct {
 	// older one is dropped rather than allowed to reschedule. See trsfTickMsg.
 	trsfGen       int
 	forwardsModal ForwardsModal
-	// forwardTap is the live traffic view for one forward. Its pump is stopped
-	// through forwardTapStop, which is nil whenever no tap is running.
-	forwardTap     ForwardTapView
-	forwardTapStop context.CancelFunc
-	execsModal     ExecsModal
+	// tap is the live traffic view for one forward or exec. Its pump is
+	// stopped through tapStop, which is nil whenever no tap is running.
+	tap        TapView
+	tapStop    context.CancelFunc
+	execsModal ExecsModal
 	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
 	idleWatchersModal IdleWatchersModal
 
@@ -617,26 +617,26 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
-	case ForwardTapLinesMsg:
+	case TapLinesMsg:
 		// Lines for a tap the operator already closed are dropped rather than
 		// appended into whatever view replaced it.
-		if a.forwardTap.IsOpen() && a.forwardTap.ForwardID() == msg.ForwardID {
-			a.forwardTap.Append(msg.Lines)
+		if a.tap.IsOpen() && a.tap.Subject() == msg.Subject {
+			a.tap.Append(msg.Lines)
 		}
 		return a, nil
-	case ForwardTapEndedMsg:
-		if a.forwardTap.IsOpen() && a.forwardTap.ForwardID() == msg.ForwardID {
+	case TapEndedMsg:
+		if a.tap.IsOpen() && a.tap.Subject() == msg.Subject {
 			if msg.Err != nil {
-				a.forwardTap.Append([]string{ErrorStyle.Render("tap ended: " + msg.Err.Error())})
+				a.tap.Append([]string{ErrorStyle.Render("tap ended: " + msg.Err.Error())})
 			} else {
-				a.forwardTap.Append([]string{"-- tap ended --"})
+				a.tap.Append([]string{"-- tap ended --"})
 			}
 		}
 		// The view stays up so the operator can read what it caught; only the
 		// pump is finished.
-		a.forwardTapStop = nil
-		if msg.Err != nil && !a.forwardTap.IsOpen() {
-			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward tap %d: %v", msg.ForwardID, msg.Err)))
+		a.tapStop = nil
+		if msg.Err != nil && !a.tap.IsOpen() {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("%s tap: %v", msg.Subject, msg.Err)))
 		}
 		return a, nil
 	case ForwardStatusMsg:
@@ -1502,7 +1502,7 @@ func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.fileEditor.SetSize(a.width, a.height)
 	a.connsModal.SetSize(a.width, a.height)
 	a.forwardsModal.SetSize(a.width, a.height)
-	a.forwardTap.SetSize(a.width, a.height)
+	a.tap.SetSize(a.width, a.height)
 	a.execsModal.SetSize(a.width, a.height)
 	a.idleWatchersModal.SetSize(a.width, a.height)
 	a.boardModal.SetSize(a.width, a.height)
@@ -1838,14 +1838,16 @@ func (a *App) View() string {
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
 	}
+	// The tap is opened from the execs modal and the forwards pane and is
+	// drawn over both.
+	if a.tap.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.tap.View())
+	}
 	if a.execsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.execsModal.View())
 	}
 	if a.idleWatchersModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())
-	}
-	if a.forwardTap.IsOpen() {
-		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardTap.View())
 	}
 	if a.forwardsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardsModal.View())

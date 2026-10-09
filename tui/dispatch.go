@@ -442,6 +442,10 @@ func (h tuiVerbs) ExecKill(v verb.ExecRunAction) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (h tuiVerbs) ExecTap(v verb.ExecTapAction) tea.Cmd {
+	return h.a.startExecTap(v)
+}
+
 // --- spawn -------------------------------------------------------------
 //
 // Three verbs, one action, and the Kind the declaration fixes. The prologue

@@ -592,15 +592,13 @@ var Verbs = []VerbSpec{
 			"needs the exec_tap capability; the reader shows up as taps=N on `exec ls`",
 			"--raw writes payload bytes with no headers, so it needs one --chan: three channels on one stdout is not a stream any decoder can read",
 		},
-		// Widened to TUI in the TUI commit and to WebUI in the WebUI commit:
-		// each surface's dispatch interface gains the method only when the
-		// declaration names it, so each compiles on its own.
-		CmdlineSurfaces: CLI,
-		// Replaced by ModalSurfaces when the TUI's tap view lands.
-		NoModalSurface: "CLI-only until the TUI and WebUI surfaces are added",
-		Action:         "ExecTapAction",
-		Args:           []Arg{{Name: "exec-id", Type: ArgUint, Field: "ExecID"}},
-		Modes:          &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
+		// Widened to WebUI in the WebUI commit.
+		CmdlineSurfaces: CLI | TUI,
+		SurfaceNotes:    map[Surface][]string{TUI: {"stream an exec's stdin/stdout/stderr, live (t on the execs modal); nothing is recorded server-side"}},
+		ModalSurfaces:   []ModalSurface{{Surface: TUI, At: "tui/tapview.go:TapView"}},
+		Action:          "ExecTapAction",
+		Args:            []Arg{{Name: "exec-id", Type: ArgUint, Field: "ExecID"}},
+		Modes:           &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
 		Flags: []Flag{
 			{Name: "chan", Type: FlagString, Default: "all", Field: "Chan",
 				OneOf: []string{"all", "stdin", "stdout", "stderr"},
@@ -609,7 +607,9 @@ var Verbs = []VerbSpec{
 				Help: "cut each record's payload to this many bytes (0 = whole payload)"},
 			{Name: "hex", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "hexdump body (default)"},
 			{Name: "text", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "printable body, no offset column"},
-			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "payload bytes only; requires one --chan"},
+			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it",
+				CmdlineSurfaces: CLI, SurfaceReason: "the TUI's tap view is lines; payload bytes with no framing are a stdout stream",
+				Help: "payload bytes only; requires one --chan"},
 			{Name: "json", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "one JSON object per record"},
 		},
 		Validate: func(b Bound) error {
@@ -755,7 +755,7 @@ var Verbs = []VerbSpec{
 		WebUIDispatch: WebUIDispatch{Cache: "lastForwards", Stale: "one snapshot poll"},
 		SurfaceNotes:  map[Surface][]string{WebUI: {"show the bytes crossing a forward, live, in a panel under its row (needs the forward_tap capability; nothing is recorded — a tap sees only what crosses after it opens)"}, TUI: {"stream the bytes crossing a forward, live; nothing is recorded server-side, so a tap sees only what crosses after it opens"}},
 		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/forwardtap.go:ForwardTapView"},
+			{Surface: TUI, At: "tui/tapview.go:TapView"},
 		},
 		Notes: []string{
 			"stream the bytes crossing one forward. A tap sees only what crosses AFTER it opens; nothing is recorded server-side",

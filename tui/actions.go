@@ -77,7 +77,7 @@ func (a *App) onForwards(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	a.forwardsModal.SetSize(a.width, a.height)
-	a.forwardTap.SetSize(a.width, a.height)
+	a.tap.SetSize(a.width, a.height)
 	a.forwardsModal.Open()
 	return DoListForwards(a.client, false, cli.ForwardListQuery{}), true
 }

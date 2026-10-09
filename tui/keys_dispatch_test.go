@@ -74,8 +74,11 @@ func TestOverlayOrderTopmostFirst(t *testing.T) {
 		t.Fatal("handler not in appOverlays")
 		return -1
 	}
-	if idx((*App).inForwardTap) > idx((*App).inForwardsModal) {
-		t.Error("the forward tap is drawn over the forwards modal and must come first")
+	if idx((*App).inTap) > idx((*App).inForwardsModal) {
+		t.Error("the tap is drawn over the forwards modal and must come first")
+	}
+	if idx((*App).inTap) > idx((*App).inExecsModal) {
+		t.Error("the tap is drawn over the execs modal and must come first")
 	}
 	if idx((*App).inFileEditor) > idx((*App).inFilePicker) {
 		t.Error("the file editor is drawn over the file picker and must come first")

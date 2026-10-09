@@ -28,6 +28,22 @@ const (
 	TapJSON
 )
 
+// TapModeByName maps the verb declaration's mode word onto the renderer. The
+// four are mutually exclusive in the declaration, so exactly one arrives; an
+// empty word is the default, hex.
+func TapModeByName(name string) TapRenderMode {
+	switch name {
+	case "text":
+		return TapText
+	case "raw":
+		return TapRaw
+	case "json":
+		return TapJSON
+	default:
+		return TapHex
+	}
+}
+
 // ParseTapFilter maps the --dir flag onto the wire enum. An unrecognised value
 // is an error rather than a silent "both": a typo that quietly widens what you
 // are reading is worse than a refusal.

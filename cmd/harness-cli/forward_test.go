@@ -82,10 +82,10 @@ func TestForwardTapRenderModes(t *testing.T) {
 		}
 		return act.(verb.ForwardTapAction)
 	}
-	if m := tapModeByName(parse(t).Mode); m != cli.TapHex {
+	if m := cli.TapModeByName(parse(t).Mode); m != cli.TapHex {
 		t.Errorf("no flag = %v, want hex", m)
 	}
-	if m := tapModeByName(parse(t, "--json").Mode); m != cli.TapJSON {
+	if m := cli.TapModeByName(parse(t, "--json").Mode); m != cli.TapJSON {
 		t.Errorf("--json = %v, want json", m)
 	}
 	if _, _, err := verb.ParseCLICommand([]string{"forward", "tap", "7", "--hex", "--raw"}, nil); err == nil {

@@ -1507,6 +1507,26 @@ func TestCmdlineForwardTapRejectsBadDir(t *testing.T) {
 	}
 }
 
+func TestCmdlineParsesExecTap(t *testing.T) {
+	act, err := ParseCommand("exec tap 4 --chan stdin --max-bytes 64", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ta, ok := act.(verb.ExecTapAction)
+	if !ok {
+		t.Fatalf("action type %T", act)
+	}
+	if ta.ExecID != 4 || ta.Chan != "stdin" || ta.MaxRecordBytes != 64 {
+		t.Fatalf("parsed %+v", ta)
+	}
+}
+
+func TestCmdlineExecTapRejectsBadChan(t *testing.T) {
+	if _, err := ParseCommand("exec tap 4 --chan sideways", ""); err == nil {
+		t.Fatal("a bad --chan must be refused here too")
+	}
+}
+
 // TestPruneFlagAfterIDsIsRead pins the one behaviour the declaration changes
 // on this surface. The old parsePrune had no arity check and used stdlib
 // Parse, so `prune <id> --force` put "--force" into TaskIDs and left Force
@@ -1528,5 +1548,20 @@ func TestPruneFlagAfterIDsIsRead(t *testing.T) {
 	}
 	if len(act.TaskIDs) != 1 || act.TaskIDs[0] != id {
 		t.Errorf("TaskIDs = %q, want [%s]", act.TaskIDs, id)
+	}
+}
+
+// The TUI's tap view is lines, so --raw (bytes with no framing) is refused
+// here rather than accepted and drawn as something else; --text is honoured.
+func TestCmdlineExecTapModes(t *testing.T) {
+	if _, err := ParseCommand("exec tap 4 --chan stdout --raw", ""); err == nil {
+		t.Fatal("--raw must be refused in the TUI")
+	}
+	act, err := ParseCommand("exec tap 4 --text", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := cli.TapModeByName(act.(verb.ExecTapAction).Mode); got != cli.TapText {
+		t.Fatalf("mode %v, want text", got)
 	}
 }

@@ -102,3 +102,11 @@ func TestParseExecTapFilter(t *testing.T) {
 		t.Fatal("an unknown channel must be refused, not widened to all")
 	}
 }
+
+func TestTapModeByName(t *testing.T) {
+	for name, want := range map[string]TapRenderMode{"": TapHex, "hex": TapHex, "text": TapText, "raw": TapRaw, "json": TapJSON} {
+		if got := TapModeByName(name); got != want {
+			t.Fatalf("%q -> %v, want %v", name, got, want)
+		}
+	}
+}

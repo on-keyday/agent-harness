@@ -457,7 +457,7 @@ func (h cliVerbs) ExecTap(a verb.ExecTapAction) error {
 	tctx, cancel := interruptContext("exec tap", h.ctx)
 	defer cancel()
 	return cli.RunExecTapDial(tctx, h.cid(), a.ExecID, cli.ExecTapOpts{
-		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: tapModeByName(a.Mode),
+		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: cli.TapModeByName(a.Mode),
 	}, os.Stdout)
 }
 
@@ -504,7 +504,7 @@ func (h cliVerbs) ForwardTap(a verb.ForwardTapAction) error {
 	tctx, cancel := interruptContext("forward tap", h.ctx)
 	defer cancel()
 	return cli.RunForwardTapDial(tctx, h.cid(), a.ForwardID, cli.ForwardTapOpts{
-		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: tapModeByName(a.Mode),
+		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: cli.TapModeByName(a.Mode),
 	}, os.Stdout)
 }
 

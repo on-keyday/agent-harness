@@ -21,10 +21,11 @@ type overlay struct {
 var appOverlays = []overlay{
 	{func(a *App) bool { return a.detail.IsOpen() }, (*App).inDetail},
 	{func(a *App) bool { return a.connsModal.IsOpen() }, (*App).inConnsModal},
+	// Opened from the forwards pane or the execs modal and drawn over both,
+	// so it comes before both.
+	{func(a *App) bool { return a.tap.IsOpen() }, (*App).inTap},
 	{func(a *App) bool { return a.execsModal.IsOpen() }, (*App).inExecsModal},
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
-	// Opened from the forwards pane and drawn over it, so it comes first.
-	{func(a *App) bool { return a.forwardTap.IsOpen() }, (*App).inForwardTap},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
 	{func(a *App) bool { return a.grid.IsOpen() }, (*App).inGrid},
 	{func(a *App) bool { return a.chat.IsOpen() }, (*App).inChat},
@@ -137,6 +138,12 @@ func (a *App) inExecsModal(msg tea.KeyMsg) tea.Cmd {
 		a.execsModal.BeginKillConfirm()
 		return nil
 	}
+	if msg.String() == modalKeys.ExecTap {
+		if id, ok := a.execsModal.SelectedID(); ok {
+			return a.startExecTap(verb.ExecTapAction{ExecID: id, Chan: "all"})
+		}
+		return nil
+	}
 	var cmd tea.Cmd
 	a.execsModal, cmd = a.execsModal.Update(msg)
 	return cmd
@@ -171,19 +178,21 @@ func (a *App) inIdleWatchersModal(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-// The tap view is opened from the forwards pane and drawn on top of it, so
-// appOverlays lists it BEFORE that pane and it owns the keys while it is up.
-func (a *App) inForwardTap(msg tea.KeyMsg) tea.Cmd {
+// The tap view is opened from the forwards pane or the execs modal and drawn
+// on top of either, so appOverlays lists it BEFORE both and it owns the keys
+// while it is up.
+func (a *App) inTap(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc {
-		a.stopForwardTap()
+		a.stopTap()
 		// Straight back onto a pane whose counters moved while the tap
-		// was up — refetch rather than show the numbers from before.
+		// was up — refetch rather than show the numbers from before. The
+		// execs modal is push-fed (exec_stats), so it needs no refetch.
 		if a.forwardsModal.IsOpen() {
 			return DoListForwards(a.client, false, cli.ForwardListQuery{})
 		}
 		return nil
 	}
-	cmd := a.forwardTap.Update(msg)
+	cmd := a.tap.Update(msg)
 	return cmd
 }
 

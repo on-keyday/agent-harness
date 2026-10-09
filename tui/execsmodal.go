@@ -33,6 +33,11 @@ func execRunInfoRow(e *protocol.ExecRunInfo, now time.Time) table.Row {
 		fmt.Sprintf("%d", e.ExecId),
 		pfShortID(FormatTaskID(e.TaskId)),
 		age,
+		cli.FormatByteCount(e.StdinBytes),
+		cli.FormatByteCount(e.StdoutBytes),
+		cli.FormatByteCount(e.StderrBytes),
+		cli.ExecRunLastActivity(e),
+		fmt.Sprintf("%d", e.Taps),
 		cli.ExecRunOrigin(e),
 		cli.ExecRunArgvString(e.Argv),
 	}
@@ -50,8 +55,8 @@ func execRunInfoRow(e *protocol.ExecRunInfo, now time.Time) table.Row {
 // FIVE-line viewport that scrolls to the bottom on every write — so a listing
 // of more than four execs showed its tail and hid its own header.
 //
-// Like ForwardsModal and unlike ConnsModal there is no incremental ApplyEvent:
-// execs have no live push subscription, so a fresh fetch is the only refresh.
+// Rows are kept current by execs.status: started and stats upsert, ended
+// removes (ApplyEvent).
 type ExecsModal struct {
 	open     bool
 	table    table.Model
@@ -77,6 +82,11 @@ func NewExecsModal() ExecsModal {
 		{Title: "id", Width: 6},
 		{Title: "task", Width: 12},
 		{Title: "age", Width: 9},
+		{Title: "stdin", Width: 8},
+		{Title: "stdout", Width: 8},
+		{Title: "stderr", Width: 8},
+		{Title: "last", Width: 9},
+		{Title: "taps", Width: 4},
 		{Title: "origin", Width: 28},
 		{Title: "command", Width: 40},
 	}
@@ -108,8 +118,8 @@ func (m *ExecsModal) ApplySnapshot(es []protocol.ExecRunInfo) {
 	setTableRows(&m.table, rows)
 }
 
-// ApplyEvent folds one execs.status event into the rows. Two kinds, because an
-// exec has nothing that moves while it runs: started inserts, ended removes.
+// ApplyEvent folds one execs.status event into the rows: started and stats
+// upsert, ended removes.
 //
 // The age column still ages only on a refetch — it is rendered into a string at
 // row-build time, which is what execRunInfoRow's own comment says. That is
@@ -127,7 +137,7 @@ func (m *ExecsModal) ApplyEvent(ev protocol.ExecStatusEvent) {
 	}
 
 	switch ev.Kind {
-	case protocol.StatusEventKind_ExecStarted:
+	case protocol.StatusEventKind_ExecStarted, protocol.StatusEventKind_ExecStats:
 		if idx >= 0 {
 			m.execs[idx] = ev.Info
 		} else {
@@ -231,7 +241,7 @@ func (m ExecsModal) View() string {
 			m.confirmID, pfShortID(m.confirmTask), m.confirmArgv)
 		return box.Render(header + "\n" + m.table.View() + "\n" + FooterStyle.Render(prompt))
 	}
-	footer := FooterStyle.Render("x: kill · Esc: close")
+	footer := FooterStyle.Render("t: tap · x: kill · Esc: close")
 	if len(m.execs) == 0 {
 		return box.Render(header + "\n" + "no running execs" + "\n" + footer)
 	}

@@ -1378,6 +1378,29 @@ func init() {
 			}
 			return a, nil
 		},
+		"exec tap\x00tui": func(b Bound) (Action, error) {
+			a := ExecTapAction{}
+			a.Chan = b.Str("chan")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec tap: bad exec id %q", b.Args[0])
+				}
+				a.ExecID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
+			}
+			return a, nil
+		},
 		"forward\x00cli": func(b Bound) (Action, error) {
 			a := ForwardOpenAction{}
 			a.L = stringsOf(b.Custom["L"])
@@ -6965,6 +6988,8 @@ type TUIDispatch[R any] interface {
 	ExecLs(ExecRunAction) R
 	// exec kill
 	ExecKill(ExecRunAction) R
+	// exec tap
+	ExecTap(ExecTapAction) R
 	// forward ls
 	ForwardLs(ForwardLsAction) R
 	// forward kill
@@ -7168,6 +7193,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ExecKill(a), true, nil
+	case CmdExecTap:
+		a, perr := ParseCmdExecTap(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ExecTap(a), true, nil
 	case CmdForwardLs:
 		a, perr := ParseCmdForwardLs(TUI, args, ctx)
 		if perr != nil {
@@ -7524,6 +7555,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		case "kill":
 			return h.ExecKill(a), true
 		}
+	case ExecTapAction:
+		return h.ExecTap(a), true
 	case ForwardLsAction:
 		return h.ForwardLs(a), true
 	case ForwardKillAction:
@@ -7752,6 +7785,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdExecKill:
 			a, perr := ParseCmdExecKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecTap:
+			a, perr := ParseCmdExecTap(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
