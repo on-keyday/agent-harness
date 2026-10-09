@@ -62,81 +62,44 @@ func (c *Client) OpenForwardTap(ctx context.Context, forwardID uint64, opts Forw
 	return st, nil
 }
 
-// tapRecordReader turns the stream's byte chunks back into records.
-//
-// The stream is a CONCATENATION of self-delimiting records with no length
-// prefix — a prefix would be a wire byte the schema does not describe — so a
-// chunk can end mid-record and a chunk can hold several. push accumulates and
-// decodes as far as it can, keeping the remainder.
-type tapRecordReader struct {
-	buf []byte
-}
-
-func (r *tapRecordReader) push(chunk []byte) ([]*protocol.ForwardTapRecord, error) {
-	r.buf = append(r.buf, chunk...)
-	var out []*protocol.ForwardTapRecord
-	for len(r.buf) > 0 {
-		rec := &protocol.ForwardTapRecord{}
-		rest, err := rec.Decode(r.buf)
-		if err != nil {
-			// Short read: wait for more bytes. There is no way to tell a
-			// truncated record from a malformed one here, and treating an
-			// incomplete tail as an error would break every split chunk.
-			break
-		}
-		out = append(out, rec)
-		if len(rest) == len(r.buf) {
-			// No progress: refuse to spin.
-			return out, errors.New("forward tap: decoder made no progress")
-		}
-		r.buf = rest
-	}
-	return out, nil
-}
+// tapRecordReader is the forward instantiation of recordReader (tap_stream.go).
+type tapRecordReader = recordReader[protocol.ForwardTapRecord, *protocol.ForwardTapRecord]
 
 // RunForwardTap streams a tap to w until the forward ends, the context is
 // cancelled, or the stream fails. It is the whole body of `harness-cli forward
-// tap`, and the TUI/WebUI pumps use OpenForwardTap + tapRecordReader directly
-// so they can render into their own surfaces.
+// tap`; the TUI and the WebUI use StreamForwardTap so they can render into
+// their own surfaces.
 func RunForwardTap(ctx context.Context, c *Client, forwardID uint64, opts ForwardTapOpts, w io.Writer) error {
 	st, err := c.OpenForwardTap(ctx, forwardID, opts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.CloseBoth() }()
+	return streamTapRecords(ctx, st, func(recs []*protocol.ForwardTapRecord) error {
+		for _, rec := range recs {
+			if err := writeTapLines(w, RenderTapRecord(rec, opts.Mode), opts.Mode); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 
-	var reader tapRecordReader
-	for {
-		data, eof, rerr := st.ReadDirectContext(ctx, 64*1024)
-		if len(data) > 0 {
-			recs, derr := reader.push(data)
-			if derr != nil {
-				return derr
+// writeTapLines prints rendered lines: raw payload verbatim, everything else
+// one line each.
+func writeTapLines(w io.Writer, lines []string, mode TapRenderMode) error {
+	for _, line := range lines {
+		if mode == TapRaw {
+			if _, err := io.WriteString(w, line); err != nil {
+				return err
 			}
-			for _, rec := range recs {
-				for _, line := range RenderTapRecord(rec, opts.Mode) {
-					if opts.Mode == TapRaw {
-						if _, werr := io.WriteString(w, line); werr != nil {
-							return werr
-						}
-						continue
-					}
-					if _, werr := fmt.Fprintln(w, line); werr != nil {
-						return werr
-					}
-				}
-			}
+			continue
 		}
-		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil // the operator stopped it; not a failure
-			}
-			return rerr
-		}
-		if eof {
-			return nil
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // RunForwardTapDial is the harness-cli entry point: it dials, taps, and streams
@@ -164,31 +127,14 @@ func StreamForwardTap(ctx context.Context, c *Client, forwardID uint64, opts For
 		return err
 	}
 	defer func() { _ = st.CloseBoth() }()
-
-	var reader tapRecordReader
-	for {
-		data, eof, rerr := st.ReadDirectContext(ctx, 64*1024)
-		if len(data) > 0 {
-			recs, derr := reader.push(data)
-			if derr != nil {
-				return derr
-			}
-			var lines []string
-			for _, rec := range recs {
-				lines = append(lines, RenderTapRecord(rec, opts.Mode)...)
-			}
-			if len(lines) > 0 && onLines != nil {
-				onLines(lines)
-			}
+	return streamTapRecords(ctx, st, func(recs []*protocol.ForwardTapRecord) error {
+		var lines []string
+		for _, rec := range recs {
+			lines = append(lines, RenderTapRecord(rec, opts.Mode)...)
 		}
-		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return rerr
+		if len(lines) > 0 && onLines != nil {
+			onLines(lines)
 		}
-		if eof {
-			return nil
-		}
-	}
+		return nil
+	})
 }

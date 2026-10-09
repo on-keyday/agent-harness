@@ -138,6 +138,7 @@ var flagNotInAction = map[string]string{
 	// --hex IS the default render mode, so naming it produces the same Action
 	// as leaving it out. It exists to be writable, not to change anything.
 	"forward tap.hex": "hexdump is the default mode; --hex names what already happens",
+	"exec tap.hex":    "hexdump is the default mode; --hex names what already happens",
 }
 
 // buildWith parses a synthesised command line for v -- the required

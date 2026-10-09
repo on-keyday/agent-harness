@@ -449,6 +449,18 @@ func (h cliVerbs) ExecKill(a verb.ExecRunAction) error {
 	return failed
 }
 
+func (h cliVerbs) ExecTap(a verb.ExecTapAction) error {
+	filter, ferr := cli.ParseExecTapFilter(a.Chan)
+	if ferr != nil {
+		return ferr
+	}
+	tctx, cancel := interruptContext("exec tap", h.ctx)
+	defer cancel()
+	return cli.RunExecTapDial(tctx, h.cid(), a.ExecID, cli.ExecTapOpts{
+		Filter: filter, MaxRecordBytes: a.MaxRecordBytes, Mode: tapModeByName(a.Mode),
+	}, os.Stdout)
+}
+
 // --- forward ------------------------------------------------------------
 
 func (h cliVerbs) ForwardLs(a verb.ForwardLsAction) error {

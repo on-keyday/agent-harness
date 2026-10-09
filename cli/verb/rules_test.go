@@ -36,6 +36,12 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"forward tap", []string{"7", "--text", "--json"}, "mutually exclusive"},
 		{"forward tap", []string{"7", "--raw"}, "explicit --dir"},
 
+		// exec tap: one channel for --raw, and only a known channel.
+		{"exec tap", []string{"4", "--raw"}, "needs one --chan"},
+		{"exec tap", []string{"4", "--chan", "sideways"}, "sideways"},
+		// `exec --shell tap 4` is not "run 4 on a task named tap".
+		{"exec", []string{"--shell", "tap", "--", "4"}, "sub-verb"},
+
 		// session send: the snapshot knobs mean nothing without --snapshot,
 		// and every orphan is named at once.
 		{"session send", []string{"--rows", "10", "--style", id, "x"}, "--rows, --style need --snapshot"},
@@ -123,6 +129,8 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"forward", []string{id, "-W", "h:1", "--http-path", "/x"}},
 		{"forward tap", []string{"7"}}, // no mode named = hex
 		{"forward tap", []string{"7", "--raw", "--dir", "to-target"}},
+		{"exec tap", []string{"4"}},
+		{"exec tap", []string{"4", "--raw", "--chan", "stdin"}},
 		{"session send", []string{id, "hello"}},
 		{"session send", []string{"--snapshot", "--rows", "10", id, "hello"}},
 		{"submit", []string{"--repo", "/r", "--task", "do it"}},

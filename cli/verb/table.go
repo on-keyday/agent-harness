@@ -529,9 +529,9 @@ var Verbs = []VerbSpec{
 		Requires: []Requirement{{Flags: []string{"sshd-parent"}, Needs: "shell"}},
 		Validate: func(b Bound) error {
 			// `exec --shell kill 3` used to parse as "run `3` on a task named
-			// kill". ls and kill are sub-verbs, and the run flags do not apply
+			// kill". ls, kill and tap are sub-verbs, and the run flags do not apply
 			// to them, so naming one here is a mistake rather than a task id.
-			if sub := b.Args[0]; sub == "ls" || sub == "kill" {
+			if sub := b.Args[0]; sub == "ls" || sub == "kill" || sub == "tap" {
 				return fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent do not apply to it", sub)
 			}
 			return nil
@@ -583,6 +583,46 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args:            []Arg{{Name: "exec-id", Type: ArgUint, Variadic: true, Field: "ExecIDs"}},
 		Examples:        []string{"exec kill 3"},
+	},
+	{
+		Path: []string{"exec", "tap"},
+		Notes: []string{
+			"stream the payload crossing one running exec: stdin, stdout and stderr, live",
+			"a tap sees only what crosses AFTER it opens; nothing is recorded server-side",
+			"needs the exec_tap capability; the reader shows up as taps=N on `exec ls`",
+			"--raw writes payload bytes with no headers, so it needs one --chan: three channels on one stdout is not a stream any decoder can read",
+		},
+		// Widened to TUI in the TUI commit and to WebUI in the WebUI commit:
+		// each surface's dispatch interface gains the method only when the
+		// declaration names it, so each compiles on its own.
+		CmdlineSurfaces: CLI,
+		// Replaced by ModalSurfaces when the TUI's tap view lands.
+		NoModalSurface: "CLI-only until the TUI and WebUI surfaces are added",
+		Action:         "ExecTapAction",
+		Args:           []Arg{{Name: "exec-id", Type: ArgUint, Field: "ExecID"}},
+		Modes:          &Modes{Field: "Mode", Names: []string{"hex", "text", "raw", "json"}, Default: "hex"},
+		Flags: []Flag{
+			{Name: "chan", Type: FlagString, Default: "all", Field: "Chan",
+				OneOf: []string{"all", "stdin", "stdout", "stderr"},
+				Help:  "stdin, stdout, stderr or all"},
+			{Name: "max-bytes", Type: FlagUint, Default: uint(0), Field: "MaxRecordBytes", FieldType: "uint32",
+				Help: "cut each record's payload to this many bytes (0 = whole payload)"},
+			{Name: "hex", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "hexdump body (default)"},
+			{Name: "text", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "printable body, no offset column"},
+			{Name: "raw", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "payload bytes only; requires one --chan"},
+			{Name: "json", Type: FlagBool, Default: false, FieldReason: "the mode group carries it", Help: "one JSON object per record"},
+		},
+		Validate: func(b Bound) error {
+			if mb := uintOf(b.Flags["max-bytes"]); uint64(mb) > math.MaxUint32 {
+				return fmt.Errorf("exec tap: --max-bytes %d is out of range", mb)
+			}
+			if b.Bool("raw") && b.Str("chan") == "all" {
+				return fmt.Errorf("exec tap: --raw needs one --chan (stdin, stdout or stderr); " +
+					"three channels on one stdout is not a stream any decoder can read")
+			}
+			return nil
+		},
+		Examples: []string{"exec tap 4", "exec tap 4 --chan stdin --text"},
 	},
 
 	// --- forward ---

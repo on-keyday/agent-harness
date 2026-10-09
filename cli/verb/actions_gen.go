@@ -166,6 +166,18 @@ type ExecRunAction struct {
 	ExecIDs []uint64
 }
 
+// ExecTapAction is built by: exec tap.
+type ExecTapAction struct {
+	ActionMarker
+	// stdin, stdout, stderr or all
+	Chan string
+	// cut each record's payload to this many bytes (0 = whole payload)
+	MaxRecordBytes uint32
+	ExecID         uint64
+	// hex | text | raw | json
+	Mode string
+}
+
 // FileDeleteAction is built by: file delete.
 type FileDeleteAction struct {
 	ActionMarker
@@ -1340,6 +1352,29 @@ func init() {
 					return nil, fmt.Errorf("exec kill: bad exec id %q", raw)
 				}
 				a.ExecIDs = append(a.ExecIDs, n)
+			}
+			return a, nil
+		},
+		"exec tap\x00cli": func(b Bound) (Action, error) {
+			a := ExecTapAction{}
+			a.Chan = b.Str("chan")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec tap: bad exec id %q", b.Args[0])
+				}
+				a.ExecID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
 			}
 			return a, nil
 		},
@@ -2993,6 +3028,7 @@ const (
 	CmdExec                   = "exec"
 	CmdExecLs                 = "exec ls"
 	CmdExecKill               = "exec kill"
+	CmdExecTap                = "exec tap"
 	CmdForward                = "forward"
 	CmdForwardLs              = "forward ls"
 	CmdForwardKill            = "forward kill"
@@ -3512,6 +3548,27 @@ func ParseCmdExecKill(sf Surface, args []string, ctx map[string]string) (ExecRun
 		return zero, err
 	}
 	a := act.(ExecRunAction)
+	return a, nil
+}
+
+func ParseCmdExecTap(sf Surface, args []string, ctx map[string]string) (ExecTapAction, error) {
+	var zero ExecTapAction
+	sp, ok := Lookup("exec", "tap")
+	if !ok {
+		return zero, fmt.Errorf("exec tap: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ExecTapAction)
 	return a, nil
 }
 
@@ -5430,6 +5487,8 @@ type CLIDispatch[R any] interface {
 	ExecLs(ExecRunAction) R
 	// exec kill
 	ExecKill(ExecRunAction) R
+	// exec tap
+	ExecTap(ExecTapAction) R
 	// forward
 	Forward(ForwardOpenAction) R
 	// forward ls
@@ -5679,6 +5738,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ExecKill(a), true, nil
+	case CmdExecTap:
+		a, perr := ParseCmdExecTap(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.ExecTap(a), true, nil
 	case CmdForward:
 		a, perr := ParseCmdForward(CLI, args, ctx)
 		if perr != nil {
@@ -6155,6 +6220,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		case "kill":
 			return h.ExecKill(a), true
 		}
+	case ExecTapAction:
+		return h.ExecTap(a), true
 	case ForwardOpenAction:
 		return h.Forward(a), true
 	case ForwardLsAction:
@@ -6432,6 +6499,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdExecKill:
 			a, perr := ParseCmdExecKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdExecTap:
+			a, perr := ParseCmdExecTap(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

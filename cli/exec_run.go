@@ -396,7 +396,7 @@ func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
 	if len(es) == 0 {
 		return []string{"no running execs"}
 	}
-	out := make([]string, 0, len(es)+1)
+	out := make([]string, 0, 2*len(es)+1)
 	out = append(out, fmt.Sprintf("%-6s %-12s %-8s %-24s %s", "id", "task", "age", "origin", "command"))
 	for i := range es {
 		e := &es[i]
@@ -410,27 +410,58 @@ func ExecRunInfoLines(es []protocol.ExecRunInfo) []string {
 			age,
 			ExecRunOrigin(e),
 			ExecRunArgvString(e.Argv)))
+		out = append(out, "       "+ExecRunTrafficLine(e))
 	}
 	return out
+}
+
+// ExecRunLastActivity renders when payload last crossed: "never" before the
+// first byte — that is not a zero duration — and "<dur> ago" after. One
+// implementation, for the CLI line, the TUI column and the browser row.
+func ExecRunLastActivity(e *protocol.ExecRunInfo) string {
+	if e.LastActivityUnixMs == 0 {
+		return "never"
+	}
+	return time.Since(time.UnixMilli(int64(e.LastActivityUnixMs))).Truncate(time.Second).String() + " ago"
+}
+
+// ExecRunTrafficLine renders what an exec has carried, per channel. Every field
+// prints, zeros included: `stderr=0` says nothing was written there, a blank
+// would say the row does not report it. Exported for the wasm bridge, so the
+// browser shows this exact string.
+func ExecRunTrafficLine(e *protocol.ExecRunInfo) string {
+	return fmt.Sprintf("stdin=%s  stdout=%s  stderr=%s  last=%s  taps=%d",
+		FormatByteCount(e.StdinBytes), FormatByteCount(e.StdoutBytes), FormatByteCount(e.StderrBytes),
+		ExecRunLastActivity(e), e.Taps)
 }
 
 // ExecRunInfoJSONLine renders one row as JSON, carrying everything the text
 // form abbreviates — the full task id and the argv as a list.
 func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
 	row := struct {
-		ExecID        uint64   `json:"exec_id"`
-		TaskID        string   `json:"task_id"`
-		StartedUnixMs uint64   `json:"started_unix_ms"`
-		Argv          []string `json:"argv"`
-		OriginKind    string   `json:"origin_kind"`
-		OriginCID     string   `json:"origin_cid"`
+		ExecID             uint64   `json:"exec_id"`
+		TaskID             string   `json:"task_id"`
+		StartedUnixMs      uint64   `json:"started_unix_ms"`
+		Argv               []string `json:"argv"`
+		OriginKind         string   `json:"origin_kind"`
+		OriginCID          string   `json:"origin_cid"`
+		StdinBytes         uint64   `json:"stdin_bytes"`
+		StdoutBytes        uint64   `json:"stdout_bytes"`
+		StderrBytes        uint64   `json:"stderr_bytes"`
+		LastActivityUnixMs uint64   `json:"last_activity_unix_ms"`
+		Taps               uint16   `json:"taps"`
 	}{
-		ExecID:        e.ExecId,
-		TaskID:        hex.EncodeToString(e.TaskId.Id[:]),
-		StartedUnixMs: e.StartedUnixMs,
-		Argv:          ExecArgvStrings(e.Argv),
-		OriginKind:    e.OriginKind.String(),
-		OriginCID:     string(e.OriginCid),
+		ExecID:             e.ExecId,
+		TaskID:             hex.EncodeToString(e.TaskId.Id[:]),
+		StartedUnixMs:      e.StartedUnixMs,
+		Argv:               ExecArgvStrings(e.Argv),
+		OriginKind:         e.OriginKind.String(),
+		OriginCID:          string(e.OriginCid),
+		StdinBytes:         e.StdinBytes,
+		StdoutBytes:        e.StdoutBytes,
+		StderrBytes:        e.StderrBytes,
+		LastActivityUnixMs: e.LastActivityUnixMs,
+		Taps:               e.Taps,
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

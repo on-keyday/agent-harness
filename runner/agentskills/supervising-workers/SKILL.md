@@ -384,7 +384,7 @@ and the scope forms (`--json` for the machine-readable form).
   whether a denied RPC is a missing cap vs. a real error.
 
 Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
-`exec_control`, `exec_resize`, `exec_run`, `file_read`, `file_write`,
+`exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `purge` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
@@ -392,7 +392,9 @@ prints the authoritative list with a line each; this one can fall behind it.
 cleartext, so routinely Authorization headers and credentials. Holding a
 forward is a different power from reading what goes through it, so
 `forward_local` does not imply it and neither does `forward_remote`; the byte
-COUNTS on `forward ls` need neither. `exec_resize` and `exec_run` sit BESIDE
+COUNTS on `forward ls` need neither. `exec_tap` reads the payload crossing an
+exec (`exec tap`) — its stdin as well as its output; `exec_run` does not imply
+it, and the byte counts on `exec ls` need neither. `exec_resize` and `exec_run` sit BESIDE
 the three attach caps rather than inside their ranking — resizing is availability and running a command in the
 worktree touches no session at all, so neither is implied by being allowed to
 type. The three attach caps are ranked and checked with implication:
@@ -511,7 +513,14 @@ harness-cli exec <TASK_ID> -- make test >out.txt 2>err.txt
 # What is running right now, and how to stop one.
 harness-cli exec ls [-task <TASK_ID>] [--json]
 harness-cli exec kill <EXEC_ID>
+
+# What is crossing one, live: stdin, stdout, stderr. Needs exec_tap.
+harness-cli exec tap <EXEC_ID> [--chan stdin|stdout|stderr] [--text|--raw|--json]
 ```
+
+`exec ls` prints a second line per exec — `stdin=… stdout=… stderr=… last=…
+taps=N` — so whether bytes are moving at all is visible without a tap. A tap
+sees only what crosses after it opens, and `taps=N` tells everyone it is open.
 
 The exit code is the command's own, so `if harness-cli exec "$TASK_ID" -- make
 test; then …` works. A command that never started — missing binary, no
