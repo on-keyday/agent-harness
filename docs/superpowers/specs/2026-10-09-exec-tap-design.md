@@ -560,7 +560,7 @@ These are v1 boundaries chosen while writing, not refusals:
 
 ## Amendment — what shipped, 2026-10-09
 
-Commits `9d290f18..4510cf9a` (plan: `docs/superpowers/plans/2026-10-09-exec-tap.md`).
+Commits `9d290f18..d760aa11` (plan: `docs/superpowers/plans/2026-10-09-exec-tap.md`).
 
 ### Where the shipped code differs from the text above
 
@@ -583,6 +583,19 @@ Commits `9d290f18..4510cf9a` (plan: `docs/superpowers/plans/2026-10-09-exec-tap.
   (`cli/tap_stream.go`), one callback per chunk rather than per record, which is
   what `StreamForwardTap` already did: a UI that redraws per callback redraws
   once per burst.
+- **`exec_ended` waits for the exec's output, not only for its outcome.**
+  § Ending said `removeExec` emits `exec_ended` to every tap once the
+  registration is gone. The runner sends the outcome on its control stream and
+  the last output on the data stream, and the server sees them in either order,
+  so finishing on the outcome alone could drop a final reply with no `gap` —
+  found in the branch review, and the exact question P1 asks. What shipped:
+  the taps are finished when the outcome is recorded AND the runner→client
+  relay has ended (`beginOutput` before the splice starts, `outputDone` when
+  that relay returns), or 2s after the outcome if the relay lingers (a kill).
+  `TestExecTapShowsOutputThatArrivesAfterTheEndIsReported` pins the order.
+- **The TUI execs modal re-ages `last` / `age` every second** while open, on the
+  App's existing aging tick: an exec that stops moving sends no `exec_stats`, so
+  a row rendered once would read `last=0s ago` for a wedged exec.
 - **No `stdout eof` in practice.** The runner does not send a
   zero-length stdout frame before the child exits, so a tap on a finishing
   exec shows `stdin eof` (when the client closes stdin) and then `exec_ended`;
