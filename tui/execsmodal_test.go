@@ -55,3 +55,23 @@ func TestApp_TOnTheExecsModalTapsTheSelectedExec(t *testing.T) {
 		t.Fatalf("Esc: tap open=%v, modal open=%v; want the tap closed over a modal still up", a.tap.IsOpen(), a.execsModal.IsOpen())
 	}
 }
+
+// `last` and `age` are rendered against the clock, and an exec that stops
+// moving produces no further event. Without a re-render the row would keep
+// saying "0s ago" for a wedged exec - the busy/wedged confusion the counters
+// exist to remove. The App's one-second aging tick rebuilds the rows while the
+// modal is open.
+func TestExecsModalLastColumnAgesOnTheTick(t *testing.T) {
+	a := &App{execsModal: NewExecsModal(), cmdresult: NewCmdResult()}
+	a.execsModal.SetSize(200, 20)
+	now := time.Now()
+	a.execsModal.ApplySnapshot([]protocol.ExecRunInfo{{ExecId: 4, LastActivityUnixMs: uint64(now.Add(-3 * time.Second).UnixMilli())}})
+	a.execsModal.Open()
+	// Stand-in for wall time passing: the stored value moves back instead.
+	a.execsModal.execs[0].LastActivityUnixMs = uint64(now.Add(-10 * time.Second).UnixMilli())
+
+	a.updateResult(actAgeTickMsg{})
+	if got := a.execsModal.table.Rows()[0][6]; got != "10s ago" {
+		t.Fatalf("last after a tick = %q, want 10s ago", got)
+	}
+}

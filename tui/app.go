@@ -444,6 +444,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.hasAgingActRow() {
 			a.refreshTasksTable()
 		}
+		// The execs modal's `last` / `age` read the clock too, and a wedged
+		// exec sends no event to refresh them.
+		if a.execsModal.IsOpen() {
+			a.execsModal.Reage()
+		}
 		return a, actAgeTick()
 
 	case gridTickMsg:

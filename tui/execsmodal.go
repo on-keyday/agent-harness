@@ -155,6 +155,21 @@ func (m *ExecsModal) ApplyEvent(ev protocol.ExecStatusEvent) {
 		return
 	}
 
+	m.rebuild(selected, hadSelection)
+}
+
+// Reage re-renders the rows against the current time. `age` and `last` are
+// strings built at row time, and an exec that stops moving produces no event,
+// so without this a wedged exec would keep reading `last=0s ago`. Driven by
+// the App's one-second aging tick while the modal is open.
+func (m *ExecsModal) Reage() {
+	selected, hadSelection := m.SelectedID()
+	m.rebuild(selected, hadSelection)
+}
+
+// rebuild renders every row from m.execs and puts the cursor back on the exec
+// it was on.
+func (m *ExecsModal) rebuild(selected uint64, hadSelection bool) {
 	now := time.Now()
 	rows := make([]table.Row, 0, len(m.execs))
 	for i := range m.execs {
