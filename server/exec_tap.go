@@ -115,7 +115,7 @@ func execEndedRecord(kind protocol.ExecEventKind, code int32) *protocol.ExecTapR
 func (e *execRun) addTap(t *execTap) {
 	e.tapMu.Lock()
 	defer e.tapMu.Unlock()
-	if e.ended {
+	if e.tapsFinished {
 		t.q.finish(execEndedRecord(e.endedKind, e.endedCode))
 		return
 	}
@@ -155,12 +155,55 @@ func (e *execRun) eachTap(fn func(*execTap)) {
 	}
 }
 
-// endTaps tells every tap how the exec ended and ends it. The record goes
-// through finish, not the queue, so a tap that has fallen behind still learns
-// the outcome after what it already holds.
+// execTapEndGrace bounds how long exec_ended waits for the runner→client relay
+// after the end was reported. A kill can leave the runner's stream open; the
+// tap must still end.
+var execTapEndGrace = 2 * time.Second
+
+// beginOutput marks the runner→client relay as running; outputDone marks it
+// finished. spliceExecCounted brackets that relay with them.
+func (e *execRun) beginOutput() {
+	e.tapMu.Lock()
+	e.outputPending = true
+	e.tapMu.Unlock()
+}
+
+func (e *execRun) outputDone() {
+	e.tapMu.Lock()
+	e.outputPending = false
+	e.tapMu.Unlock()
+	e.maybeFinishTaps(false)
+}
+
+// endTaps records how the exec ended and ends every tap with it — once the
+// runner→client relay has also finished. The runner sends the outcome on its
+// control stream and the last output on the data stream, and the server sees
+// the two in either order; finishing on the outcome alone dropped output that
+// arrived after it, with no gap to say so. The record goes through finish, not
+// the queue, so a tap that has fallen behind still learns the outcome after
+// what it already holds.
 func (e *execRun) endTaps(kind protocol.ExecEventKind, code int32) {
 	e.tapMu.Lock()
 	e.ended, e.endedKind, e.endedCode = true, kind, code
+	pending := e.outputPending
+	e.tapMu.Unlock()
+	if pending {
+		time.AfterFunc(execTapEndGrace, func() { e.maybeFinishTaps(true) })
+	}
+	e.maybeFinishTaps(false)
+}
+
+// maybeFinishTaps finishes every tap once the exec has ended and its output
+// relay is done; force skips the second condition (the grace timer). Runs at
+// most once.
+func (e *execRun) maybeFinishTaps(force bool) {
+	e.tapMu.Lock()
+	if !e.ended || e.tapsFinished || (e.outputPending && !force) {
+		e.tapMu.Unlock()
+		return
+	}
+	e.tapsFinished = true
+	kind, code := e.endedKind, e.endedCode
 	taps := make([]*execTap, len(e.taps))
 	copy(taps, e.taps)
 	e.tapMu.Unlock()

@@ -49,6 +49,12 @@ type execRun struct {
 	ended     bool
 	endedKind protocol.ExecEventKind
 	endedCode int32
+	// outputPending is true while the runner→client relay still runs. The
+	// runner reports the end on its control stream and the last output on the
+	// data stream, unordered at the server, so the taps are finished only once
+	// both have happened (or execTapEndGrace has passed since the end).
+	outputPending bool
+	tapsFinished  bool
 
 	// The stats sweep's last publish, compared to decide whether to publish.
 	statsMu       sync.Mutex

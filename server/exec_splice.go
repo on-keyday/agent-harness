@@ -18,11 +18,17 @@ import (
 // Teardown stays half-close, for the reason handleOpenExecRun gives: a command
 // that finishes in milliseconds must not have the client's data stream torn
 // down before the client has resolved it by id.
+//
+// The caller calls e.beginOutput() BEFORE starting it: an exec that ends before
+// this goroutine is scheduled must still find its output marked pending.
 func spliceExecCounted(client, runner trsf.BidirectionalStream, e *execRun) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); relayExecFrames(client, runner, e) }()
-	go func() { defer wg.Done(); relayExecFrames(runner, client, e) }()
+	// The runner→client relay carries the exec's last output, which can arrive
+	// after the runner reported the end; the taps' exec_ended waits for it.
+	// beginOutput was called by the caller, before this goroutine existed.
+	go func() { defer wg.Done(); defer e.outputDone(); relayExecFrames(runner, client, e) }()
 	wg.Wait()
 	_ = client.CloseBoth()
 	_ = runner.CloseBoth()

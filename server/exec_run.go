@@ -105,6 +105,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	// client's data stream down before the client has resolved it by id. git_query and the file transfers splice the
 	// same way for the same reason — a request/response exchange, not an
 	// interactive PTY where a dead direction should end everything.
+	e.beginOutput()
 	go spliceExecCounted(dataStream, runnerStream, e)
 
 	return protocol.ExecRunResponse{

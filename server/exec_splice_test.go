@@ -2,6 +2,7 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
@@ -99,5 +100,45 @@ func TestSlowExecTapGetsAGapAndTheRelayIsNotBlocked(t *testing.T) {
 	}
 	if e.tapCount() != 1 {
 		t.Fatal("a slow tap was dropped")
+	}
+}
+
+// The runner reports an exec's end on its control stream and the last output on
+// the data stream, and nothing orders the two at the server. A tap must still
+// show output that arrives after the end was reported: exec_ended waits for
+// the runner→client relay to finish.
+func TestExecTapShowsOutputThatArrivesAfterTheEndIsReported(t *testing.T) {
+	e := &execRun{}
+	e.beginOutput()
+	tap, recs := newTestExecTap(t, e, protocol.ExecTapFilter_All, 0)
+	defer e.removeTap(tap)
+
+	e.endTaps(protocol.ExecEventKind_Exited, 0)
+	var down frameScanner
+	feed(e, &down, frameBytes(frame.FrameType_Stdout, []byte("reply")))
+	e.outputDone()
+
+	got := drainExec(t, recs, 2)
+	if d := got[0].Data(); d == nil || string(d.Data) != "reply" {
+		t.Fatalf("first record kind %v: the late reply was lost", got[0].Kind)
+	}
+	if got[1].Kind != protocol.ExecTapRecordKind_ExecEnded {
+		t.Fatalf("second record kind %v, want exec_ended", got[1].Kind)
+	}
+}
+
+// A relay that never finishes (a runner stream that lingers after a kill) must
+// not keep the tap open forever: exec_ended goes out after a grace period.
+func TestExecTapEndsAfterTheGraceWhenOutputNeverFinishes(t *testing.T) {
+	old := execTapEndGrace
+	execTapEndGrace = 50 * time.Millisecond
+	defer func() { execTapEndGrace = old }()
+
+	e := &execRun{}
+	e.beginOutput()
+	_, recs := newTestExecTap(t, e, protocol.ExecTapFilter_All, 0)
+	e.endTaps(protocol.ExecEventKind_Killed, -1)
+	if rec := drainExec(t, recs, 1)[0]; rec.Kind != protocol.ExecTapRecordKind_ExecEnded {
+		t.Fatalf("kind %v", rec.Kind)
 	}
 }
