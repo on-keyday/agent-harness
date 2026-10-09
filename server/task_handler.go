@@ -1788,7 +1788,8 @@ func spliceBidiHalfClose(a, b trsf.BidirectionalStream, taskIDHex string) {
 // first read error or write error — a tear-down caller force-closes both
 // streams once either direction returns, which unblocks the reverse relay.
 // relayBytesCounted (forward_splice.go) is this loop plus a forward's
-// accounting; keep the two in step.
+// accounting, and relayExecFrames (exec_splice.go) this loop plus an exec's;
+// keep the three in step.
 func relayBytes(src, dst trsf.BidirectionalStream) {
 	for {
 		data, eof, err := src.ReadDirect(64 * 1024)

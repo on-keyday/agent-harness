@@ -99,13 +99,13 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	// registered event follows around its bind result.
 	h.emitExecEvent(protocol.StatusEventKind_ExecStarted, e)
 
-	// HalfClose, not spliceBidi: the full-teardown variant closes BOTH streams
-	// the moment either direction ends, and for a command that finishes in
-	// milliseconds that can tear the client's data stream down before the
-	// client has resolved it by id. git_query and the file transfers splice the
+	// spliceExecCounted keeps the half-close teardown, not spliceBidi's: the
+	// full-teardown variant closes BOTH streams the moment either direction
+	// ends, and for a command that finishes in milliseconds that can tear the
+	// client's data stream down before the client has resolved it by id. git_query and the file transfers splice the
 	// same way for the same reason — a request/response exchange, not an
 	// interactive PTY where a dead direction should end everything.
-	go spliceBidiHalfClose(dataStream, runnerStream, taskIDHex)
+	go spliceExecCounted(dataStream, runnerStream, e)
 
 	return protocol.ExecRunResponse{
 		Status:          protocol.ExecRunStatus_Ok,
@@ -284,6 +284,7 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 	argv.ArgvLen = uint16(len(argv.Argv))
 	info.Argv = argv
 	info.SetOriginCid([]byte(e.clientCID))
+	info.StdinBytes, info.StdoutBytes, info.StderrBytes, info.LastActivityUnixMs = e.counters()
 	info.Taps = e.tapCount()
 	return info
 }
