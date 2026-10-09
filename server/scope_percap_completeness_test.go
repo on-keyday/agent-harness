@@ -60,6 +60,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// the caller's action scope, which is the same distinction kill_port_forward
 	// draws one line above.
 	protocol.Capability_ForwardTap: {kind: capResolvedLiteral},
+	// exec_tap names an EXEC, which resolves to the task that owns it; the
+	// handler passes the bit to inScope by name.
+	protocol.Capability_ExecTap: {kind: capResolvedLiteral},
 
 	// The attach modes are three powers; the scope that binds one is the
 	// MODE's own bit, not whichever stronger bit satisfied the check.

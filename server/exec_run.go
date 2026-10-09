@@ -87,7 +87,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
-		h.removeExec(execID)
+		h.removeExec(execID, protocol.ExecEventKind_Failed, -1)
 		_ = dataStream.CloseBoth()
 		_ = ctrlStream.Close()
 		_ = runnerStream.CloseBoth()
@@ -157,7 +157,7 @@ func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath 
 // deregisters. An unknown id is a no-op: the client may have gone away first,
 // taking the registration with it.
 func (h *TaskHandler) onExecRunFinished(fin *protocol.ExecRunFinished) {
-	e, ok := h.removeExec(fin.ExecId)
+	e, ok := h.removeExec(fin.ExecId, fin.Kind, fin.ExitCode)
 	if !ok {
 		return
 	}
@@ -284,6 +284,7 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 	argv.ArgvLen = uint16(len(argv.Argv))
 	info.Argv = argv
 	info.SetOriginCid([]byte(e.clientCID))
+	info.Taps = e.tapCount()
 	return info
 }
 
@@ -302,7 +303,7 @@ func (h *TaskHandler) handleExecRunKill(connID string, req *protocol.ExecRunKill
 	if !h.authorize(connID, protocol.Capability_ExecRun, e.taskIDHex) {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
-	if _, still := h.removeExec(req.ExecId); !still {
+	if _, still := h.removeExec(req.ExecId, protocol.ExecEventKind_Killed, -1); !still {
 		return protocol.ExecRunKillResponse{Status: protocol.ExecRunStatus_NotFound}
 	}
 	h.stopExecOnRunner(e, "exec kill")
@@ -355,7 +356,7 @@ func (h *TaskHandler) DropExecRunsForConn(connID string) {
 		if e.clientCID != connID {
 			continue
 		}
-		if _, still := h.removeExec(e.execID); !still {
+		if _, still := h.removeExec(e.execID, protocol.ExecEventKind_Killed, -1); !still {
 			continue
 		}
 		h.stopExecOnRunner(e, "client disconnected")

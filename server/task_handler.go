@@ -687,6 +687,17 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_OpenExecTap:
+		tr := req.OpenExecTap()
+		if tr == nil {
+			slog.Error("TaskHandler: OpenExecTap variant is nil")
+			return
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecTap, RequestId: req.RequestId}
+		resp.SetOpenExecTap(h.handleOpenExecTap(conn, tr, cid))
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {

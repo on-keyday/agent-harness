@@ -50,14 +50,15 @@ func (h *TaskHandler) emitExecEvent(kind protocol.StatusEventKind, e *execRun) {
 }
 
 // removeExec is the single funnel for dropping an exec registration, so
-// exec_ended fires from every path that ends one — the send-failure rollback,
-// the child finishing, an explicit kill, and the client's connection going
-// away. Four call sites reach it; intercepting some of them and not the rest is
-// the failure this project has already paid for more than once.
-func (h *TaskHandler) removeExec(execID uint64) (*execRun, bool) {
+// exec_ended fires — on execs.status and to every tap — from every path that
+// ends one: the send-failure rollback, the child finishing, an explicit kill,
+// and the client's connection going away. The outcome is a parameter rather
+// than a call each site must remember: a site that omits it does not compile.
+func (h *TaskHandler) removeExec(execID uint64, kind protocol.ExecEventKind, exitCode int32) (*execRun, bool) {
 	e, ok := h.execs().remove(execID)
 	if ok {
 		h.emitExecEvent(protocol.StatusEventKind_ExecEnded, e)
+		e.endTaps(kind, exitCode)
 	}
 	return e, ok
 }

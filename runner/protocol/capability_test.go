@@ -7,8 +7,8 @@ func TestCapabilityBits(t *testing.T) {
 	// String method, and fmt applies %x to the STRING for a Stringer — so
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
-	if Capability_All != 0x3ffff {
-		t.Fatalf("All = %#x, want 0x3ffff", uint32(Capability_All))
+	if Capability_All != 0x7ffff {
+		t.Fatalf("All = %#x, want 0x7ffff", uint32(Capability_All))
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", uint32(Capability_None))
@@ -20,7 +20,7 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_RunnerAdmin | Capability_BoardObserve | Capability_Purge |
 		Capability_ExecRun | Capability_ForwardTap |
 		Capability_ExecView | Capability_ExecCowrite | Capability_ExecResize |
-		Capability_BoardSend
+		Capability_BoardSend | Capability_ExecTap
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint32(or), uint32(Capability_All))
 	}
@@ -149,5 +149,19 @@ func TestForwardTapBitIsInAll(t *testing.T) {
 	}
 	if Capability_ForwardLocal&Capability_ForwardTap != 0 {
 		t.Fatal("forward_local must not overlap forward_tap")
+	}
+}
+
+// TestExecTapBitIsInAll pins both halves of the capability change: the bit,
+// and the widened all that callerCaps hands operator connections.
+func TestExecTapBitIsInAll(t *testing.T) {
+	if Capability_ExecTap != 0x40000 {
+		t.Fatalf("exec_tap bit moved: %#x", uint32(Capability_ExecTap))
+	}
+	if Capability_All&Capability_ExecTap == 0 {
+		t.Fatal("all does not include exec_tap; callerCaps would deny the operator")
+	}
+	if (Capability_ExecRun|Capability_ExecView)&Capability_ExecTap != 0 {
+		t.Fatal("exec_run / exec_view must not overlap exec_tap")
 	}
 }

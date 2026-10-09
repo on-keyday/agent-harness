@@ -51,6 +51,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_GitQuery:         capInMap,
 	protocol.TaskControlKind_OpenExecRun:      capInMap,
 	protocol.TaskControlKind_OpenForwardTap:   capInMap,
+	protocol.TaskControlKind_OpenExecTap:      capInMap,
 
 	// Direction-dependent: file_read or file_write is only known once the
 	// request's direction is decoded.
@@ -127,7 +128,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardWake); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_OpenExecTap); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

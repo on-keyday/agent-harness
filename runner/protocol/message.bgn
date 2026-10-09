@@ -549,6 +549,10 @@ enum TaskControlKind:
     # kinds: agent_send is keyed to the caller's own identity and takes no bit.
     board_send              # publish; may suppress the wake (no_wake)
     board_wake              # wake a topic's subscribers; publishes nothing
+    open_exec_tap           # appended: attach a tap to one out-of-band exec;
+                            # returns the stream its records arrive on.
+                            # Gated on exec_tap. See
+                            # docs/superpowers/specs/2026-10-09-exec-tap-design.md
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -2022,6 +2026,7 @@ format TaskControlRequest:
         TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillRequest
         TaskControlKind.board_send               => board_send               :BoardSendRequest
         TaskControlKind.board_wake               => board_wake               :BoardWakeRequest
+        TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2095,6 +2100,7 @@ format TaskControlResponse:
         TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillResponse
         TaskControlKind.board_send               => board_send               :AgentSendResponse
         TaskControlKind.board_wake               => board_wake               :BoardWakeResponse
+        TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapResponse
 
 enum SetCapsStatus:
     :u8
@@ -2291,9 +2297,7 @@ enum StatusEventKind:
                         # because the underlying quantity moves per BYTE and an
                         # event per byte is not a design.
     exec_started        # appended: an exec joined the registry.
-    exec_ended          # appended: it left. Execs have no counters, so they
-                        # need no stats kind — their listing is discrete, which
-                        # is why these two are enough where a forward needs three.
+    exec_ended          # appended: it left. Clients drop the row.
     task_held           # appended: a deliberate server restart asked the runner
                         # to keep this task's child alive and the store recorded
                         # the hold. Named after the WAL record it accompanies
@@ -2323,6 +2327,9 @@ enum StatusEventKind:
                         # a session (a live child with no client), Running for a
                         # oneshot — not the Running the store passes through on
                         # its way there.
+    exec_stats          # appended: an exec's COUNTERS moved (per-channel bytes,
+                        # last activity, taps). The reason forward_stats exists,
+                        # one object over; coalesced by the same server sweep.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -2618,10 +2625,10 @@ format ForwardStatusEvent:
     ts :u64
     info :PortForwardInfo
 
-# ExecStatusEvent is the same shape for execs.status. Two kinds, not three: an
-# exec has nothing that moves while it runs.
+# ExecStatusEvent is the same shape for execs.status: the whole row travels, so
+# a subscriber upserts on exec_started / exec_stats and drops on exec_ended.
 format ExecStatusEvent:
-    kind :StatusEventKind  # exec_started | exec_ended
+    kind :StatusEventKind  # exec_started | exec_stats | exec_ended
     ts :u64
     info :ExecRunInfo
 
@@ -3283,6 +3290,12 @@ enum Capability:
     # sender_kind=operator. Operators hold it through all; for a task it is
     # the permission to speak as the operator. Default-off, appended.
     board_send     = 0x20000, "board_send"
+    # exec_tap authorizes READING THE PAYLOAD of an out-of-band exec — its
+    # stdin as well as its output. Through the ssh gateway that is whatever
+    # the remote tool speaks, including anything typed at a password prompt.
+    # A different power from running an exec or viewing a session, so neither
+    # exec_run nor exec_view implies it.
+    exec_tap       = 0x40000, "exec_tap"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -3292,7 +3305,7 @@ enum Capability:
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x3ffff, "all"
+    all            = 0x7ffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -4064,6 +4077,14 @@ format ExecRunInfo:
     origin_kind :ClientKind
     origin_cid_len :u8
     origin_cid :[origin_cid_len]u8
+    # Payload bytes since the exec started, per channel. Frame headers are not
+    # counted, Synth frames count as stdout (the client's demux writes them
+    # there), control frames count nowhere.
+    stdin_bytes           :u64
+    stdout_bytes          :u64
+    stderr_bytes          :u64
+    last_activity_unix_ms :u64 # 0 = no payload byte has ever crossed
+    taps                  :u16 # taps open on this exec RIGHT NOW
 
 format ExecRunListRequest:
     task_filter :TaskID  # all-zero = every exec the caller may see
@@ -4090,3 +4111,83 @@ format ExecRunKillRequest:
 
 format ExecRunKillResponse:
     status :ExecRunStatus
+
+# --- exec tap (server -> client, one stream per open_exec_tap) ---
+# docs/superpowers/specs/2026-10-09-exec-tap-design.md
+enum ExecTapFilter:
+    :u8
+    all
+    stdin
+    stdout
+    stderr
+
+format OpenExecTapRequest:
+    exec_id          :u64
+    channel_filter   :ExecTapFilter
+    # 0 = whole payload. Otherwise each record's data is cut to this many
+    # bytes and truncated_bytes reports what was cut from THAT record.
+    max_record_bytes :u32
+
+enum OpenExecTapStatus:
+    :u8
+    ok
+    no_such_exec      # unknown id, not visible to the caller, OR outside its
+                      # scope — deliberately one answer, so the id space is not
+                      # an existence oracle
+    internal_error
+    # No `denied`: a capability failure is answered before dispatch with a
+    # PermissionDenied response, so nothing could set it here.
+
+format OpenExecTapResponse:
+    status    :OpenExecTapStatus
+    stream_id :u64
+
+enum ExecTapChannel:
+    :u8
+    stdin
+    stdout            # includes Synth frames
+    stderr
+
+enum ExecTapRecordKind:
+    :u8
+    data
+    gap               # the tap could not keep up; dropped_bytes were missed
+    eof               # a zero-length frame on this channel: for stdin, the
+                      # client closed the child's stdin
+    exec_ended        # the exec left the registry; the stream EOFs after this
+
+format ExecTapData:
+    channel         :ExecTapChannel
+    # Where this payload sits in its channel, counted by the SERVER from the
+    # exec's first byte. A tap opened mid-exec starts at a non-zero offset, and
+    # the value lines up with the *_bytes counter on the listing.
+    stream_offset   :u64
+    # Bytes cut by max_record_bytes. The next record's stream_offset counts
+    # them, so a cut never reads as a shorter stream.
+    truncated_bytes :u32
+    data_len        :u32
+    data            :[data_len]u8
+
+format ExecTapGap:
+    channel       :ExecTapChannel
+    dropped_bytes :u64
+
+format ExecTapEof:
+    channel :ExecTapChannel
+
+format ExecTapExecEnded:
+    kind      :ExecEventKind  # exited | killed | failed — as ExecEvent
+    exit_code :i32            # the child's own for exited, -1 otherwise
+
+format ExecTapRecord:
+    # One per relayed payload piece, on the relay goroutine — the same reason
+    # ForwardTapRecord is noheap.
+    config.go.union = "noheap"
+    kind    :ExecTapRecordKind
+    unix_ms :u64
+    match kind:
+        ExecTapRecordKind.data       => data       :ExecTapData
+        ExecTapRecordKind.gap        => gap        :ExecTapGap
+        ExecTapRecordKind.eof        => eof        :ExecTapEof
+        ExecTapRecordKind.exec_ended => exec_ended :ExecTapExecEnded
+        .. => error("Unexpected exec tap record")

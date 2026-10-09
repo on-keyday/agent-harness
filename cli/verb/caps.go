@@ -29,6 +29,9 @@ func GrantableCaps() []protocol.Capability {
 		// of driving the session's PTY, so it neither implies nor is implied by
 		// any of them.
 		protocol.Capability_ExecRun,
+		// exec_tap after exec_run, and implied by neither it nor exec_view:
+		// running a command and reading what crosses it are different powers.
+		protocol.Capability_ExecTap,
 		protocol.Capability_FileRead,
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
@@ -85,6 +88,10 @@ func CapDescription(c protocol.Capability) string {
 		return "read the payload crossing a port forward (forward tap) — cleartext, " +
 			"so routinely Authorization headers, git credentials and database passwords; " +
 			"NOT implied by forward_local or forward_remote, and not needed for the byte counts on `forward ls`"
+	case protocol.Capability_ExecTap:
+		return "read the payload crossing an out-of-band exec (exec tap) — its stdin as well as its output, " +
+			"which through the ssh gateway is whatever the remote tool speaks, typed passwords included; " +
+			"NOT implied by exec_run or exec_view, and not needed for the byte counts on `exec ls`"
 	case protocol.Capability_Notify:
 		return "send operator notifications"
 	case protocol.Capability_Prune:

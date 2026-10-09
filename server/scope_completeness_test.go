@@ -50,6 +50,10 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// clear the same two gates: visible to the caller, and in the caller's
 	// action scope for forward_tap.
 	protocol.TaskControlKind_OpenForwardTap: targetGated,
+	// open_exec_tap names an EXEC that resolves to a task, exactly as
+	// exec_run_kill does, and reads that exec's payload: visible to the
+	// caller, and in its action scope for exec_tap.
+	protocol.TaskControlKind_OpenExecTap: targetGated,
 	// open_exec_run names a task; exec_run_kill names an EXEC that resolves to
 	// one, and gates on that task exactly as kill_port_forward does with a
 	// forward id.
@@ -124,7 +128,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardWake); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_OpenExecTap); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -139,16 +143,16 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// board_wake is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught five appends now:
+// open_exec_tap is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught six appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
-// await_idle_* kinds; and board_send / board_wake.
-func TestBoardWakeIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardWake) + 1)
+// await_idle_* kinds; board_send / board_wake; and open_exec_tap.
+func TestOpenExecTapIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_OpenExecTap) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after board_wake (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after open_exec_tap (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

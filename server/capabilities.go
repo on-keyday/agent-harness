@@ -56,6 +56,10 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	// registry lookup. The visibility and scope halves still happen in the
 	// handler, which is where the target becomes known.
 	protocol.TaskControlKind_OpenForwardTap: protocol.Capability_ForwardTap,
+	// OpenExecTap: direction-independent like OpenForwardTap — reading an
+	// exec's stdin is the same power as reading its stdout — so the bit is
+	// known before the registry lookup. Visibility and scope are in the handler.
+	protocol.TaskControlKind_OpenExecTap: protocol.Capability_ExecTap,
 }
 
 // attachModeCap returns the capability set that satisfies an attach in the

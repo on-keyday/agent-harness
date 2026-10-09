@@ -3,6 +3,7 @@ package server
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -32,6 +33,26 @@ type execRun struct {
 	control    trsf.SendStream
 	clientCID  string
 	clientKind protocol.ClientKind
+
+	// Per-channel payload counters and last activity, written by the relay
+	// (exec_splice.go) and read by the listing and the stats sweep.
+	stdinBytes     atomic.Uint64
+	stdoutBytes    atomic.Uint64
+	stderrBytes    atomic.Uint64
+	lastActivityMs atomic.Int64
+
+	// Taps reading this exec, and how it ended once it has. ended is set under
+	// tapMu by endTaps, so a tap attached after the end is finished at once
+	// instead of waiting on a registration that will never produce anything.
+	tapMu     sync.Mutex
+	taps      []*execTap
+	ended     bool
+	endedKind protocol.ExecEventKind
+	endedCode int32
+
+	// The stats sweep's last publish, compared to decide whether to publish.
+	statsMu       sync.Mutex
+	lastPublished publishedExecCounters
 }
 
 // execRegistry maps a server-assigned execId to its registration. Safe for
@@ -124,4 +145,12 @@ func (r *execRegistry) countForTask(taskIDHex string) uint16 {
 		}
 	}
 	return n
+}
+
+// publishedExecCounters is the last set published for an exec by the stats
+// sweep (forward_events.go).
+type publishedExecCounters struct {
+	stdin, stdout, stderr uint64
+	taps                  uint16
+	valid                 bool
 }
