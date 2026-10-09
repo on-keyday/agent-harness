@@ -557,3 +557,89 @@ These are v1 boundaries chosen while writing, not refusals:
   bytes go through the session mux, which already has `session snapshot` and a
   view attach.
 - **The WebUI does not subscribe to `exec_stats`** — see § Surfaces.
+
+## Amendment — what shipped, 2026-10-09
+
+Commits `9d290f18..4510cf9a` (plan: `docs/superpowers/plans/2026-10-09-exec-tap.md`).
+
+### Where the shipped code differs from the text above
+
+- **The TUI honours the render mode.** The spec listed the four modes as CLI
+  flags and said nothing per surface. What shipped: the TUI's `exec tap` renders
+  `--hex` / `--text` / `--json` as the CLI prints them (`--text` is the mode a
+  stdio protocol is read in), and `--raw` is declared CLI-only — the TUI view
+  and the browser panel are lines, and payload with no framing is a stdout
+  stream. The WebUI takes none of the four, as for forward tap. Why: the verb
+  table's consumer check (`TestEverySurfaceReadsEveryActionField`) found the
+  TUI dropping `Mode`, and a typed option must take effect or be refused. The
+  mode-name mapping moved from `cmd/harness-cli` to `cli.TapModeByName` so both
+  surfaces use one. Forward tap's TUI still ignores its modes under a
+  `surfaceLocal` exemption; that is unchanged here.
+- **`frameHeaderSize` is the existing constant.** § The splice described the
+  scanner's header as five bytes; `server/session_mux.go` already declares
+  `frameHeaderSize = 5`, so the scanner uses it, and
+  `TestFrameHeaderSizeMatchesTheSchema` pins it to `FrameHeader`'s encoder.
+- **The client's tap reader hands over a chunk's records together**
+  (`cli/tap_stream.go`), one callback per chunk rather than per record, which is
+  what `StreamForwardTap` already did: a UI that redraws per callback redraws
+  once per burst.
+- **No `stdout eof` in practice.** The runner does not send a
+  zero-length stdout frame before the child exits, so a tap on a finishing
+  exec shows `stdin eof` (when the client closes stdin) and then `exec_ended`;
+  `stdout eof` appears only if a runner sends one. Nothing depends on it:
+  `exec_ended` is the end signal.
+- § Capability and scope names `cli/caps.go`; the catalog lives in
+  `cli/verb/caps.go`.
+- The last-kind sentinel test is now `TestOpenExecTapIsStillTheLastKind`, and
+  `open_exec_tap` is classified in `cap_completeness_test.go` as well as the two
+  scope tables § The handler named. All three guards were watched failing on
+  `open_exec_tap` / `exec_tap` before the classification landed.
+
+### § Surfaces, checked against the code
+
+| Surface | Shipped |
+| --- | --- |
+| CLI rows | `cli.ExecRunTrafficLine`, second line under each `exec ls` row |
+| CLI JSON | `stdin_bytes`, `stdout_bytes`, `stderr_bytes`, `last_activity_unix_ms`, `taps` on `ExecRunInfoJSONLine` |
+| CLI verb | `exec tap` row in `cli/verb/table.go`; `--raw` with `--chan all` refused in `Validate` |
+| CLI caps catalog | `exec_tap` in `GrantableCaps` (after `exec_run`) and `CapDescription` |
+| TUI execs modal | ten columns incl. `stdin` `stdout` `stderr` `last` `taps`; `ApplyEvent` upserts on started/stats |
+| TUI tap | `modalKeys.ExecTap = "t"` in `inExecsModal` |
+| TUI tap view | `tui/tapview.go:TapView`, `tapSubject{Kind, ID}`; forward tap uses it too |
+| TUI cmdline | `exec tap` (CLI \| TUI \| WebUI on the row) |
+| WebUI row | traffic line in `renderExecList` |
+| WebUI tap | `tap` button per row; `toggleTapPanel` shared by `toggleForwardTap` / `toggleExecTap`; the panel survives the snapshot poll |
+| WebUI command input | `exec tap` via `WebUIDispatch{Cache: "lastExecs"}`; `exec ls` prints the traffic line |
+| wasm | `harness.execTap`; `cli.ExecSnapshotRow` carries the five fields raw plus `traffic`; `execRunList` rows carry `traffic` |
+| README | summary, the exec section, the list-view paragraph, the TUI verb list, the capability list |
+
+### Live verification (dummy harness, `scripts/dummy-harness.sh up --agent fake`)
+
+Against a `session new -d --agent bash` task, in the spellings the help prints:
+
+1. `harness-cli exec <task> -- cat < fifo`, then from another client
+   `harness-cli exec ls` (traffic line, `taps=0`) and `harness-cli exec tap <id>`
+   (`taps=1`). One JSON line written: a `stdin` and a `stdout` record of 25B, both
+   at offset 0; `exec ls` then read `stdin=25B stdout=25B … taps=1`. Closing the
+   FIFO produced `stdin  eof`, then `-- exec #1 ended: exited 0 --`, and
+   `exec tap` exited 0 on its own.
+2. `ssh-gateway start 127.0.0.1:<port>` in the TUI's command line, then
+   `ssh -p <port> <task>@127.0.0.1 cat` — the exec listed with origin `Tui` —
+   tapped from the CLI with `--text`: an LSP-style `Content-Length` frame showed
+   on stdin and stdout, then `stdin eof`, `exec ended`, and the tap exited.
+3. `submit --agent bash --caps exec_run --scope ids:<task>` running
+   `harness-cli exec tap <id>`: `permission denied: OpenExecTap requires
+   capability exec_tap`. The same with `--caps exec_run,exec_tap` on the same
+   exec: the stdin and stdout records arrived.
+4. TUI: `e`, `t` on the row → `tap on exec #4` over the modal, `taps=1` on
+   `exec ls`; Esc → back on the modal, the row read `taps=0` with the new
+   counters.
+5. WebUI (Playwright, 1280px and 390px): traffic line under the row, `tap` →
+   panel with the stdin/stdout records, still attached after a snapshot poll;
+   no horizontal page overflow at 390px. From the command input,
+   `exec tap <id>` toggled the panel off and `exec tap <id> --chan stdin` on
+   again, after which a written line showed only on stdin, at offset `0x18` —
+   the channel's byte count, not the tap's.
+
+`make test`, `make check`, `make wasm-check` and `scripts/wire-skew-check.sh`
+passed; the skew check reported both directions handshake-compatible.

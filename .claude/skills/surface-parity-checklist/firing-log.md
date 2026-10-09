@@ -2615,3 +2615,73 @@ name: the board's own rows (`board read`, `board thread`, `agent inbox` JSON,
 board-render example). Recorded here rather than as a new number: the list's
 display items are task/runner fields, and a board-message field is the first
 of its kind to come through.
+
+### 2026-10-09 (pre-landing) — `exec tap`, the `exec_tap` capability, per-channel counters on `exec ls`
+
+A verb on all three command lines, a capability, five `ExecRunInfo` fields and a
+push kind (`exec_stats`). Walked 1–39 against the plan before implementing and
+again at the end; 39 walked the spec's Surfaces table row by row and drove every
+row live. S1–S6 `n/a`: no agent added, renamed or launched differently.
+
+done:    1, 2, 4, 6, 7, 11, 12, 15, 23, 24, 27, 28a, 29, 30, 31, 32, 33, 35,
+         36, 37, 39
+omitted: 25 (`channel_filter` all = 0 and `max_record_bytes` 0 = whole payload
+         are real values, not absences — the forward-tap entry's verdict)
+         28 (`execRun` lives in memory and dies with the exec; nothing to replay)
+         34 (the execs modal's column set is fixed — five columns added, none
+         conditional, so the swap invariant is untouched)
+         38 (an exec has no screen; neither live pane renders a registry row)
+
+- **1 / 2** — one row, `exec tap`, widened CLI → CLI|TUI → CLI|TUI|WebUI one
+  commit at a time, because each surface's generated dispatch interface gains
+  the method only when the row names the surface. `--raw` with `--chan all` and
+  an out-of-range `--max-bytes` are refused in the row's `Validate`; the `exec`
+  family's `Validate` also refuses `tap` where a task id belongs.
+- **4 / 6 / 7** — `modalKeys.ExecTap = "t"` on the execs modal (and the `e`
+  row's help); a per-row `tap` button whose panel is SHARED with forward tap
+  (`toggleTapPanel`); `WebUIDispatch{Cache: "lastExecs"}`.
+- **11 / 12 / 23** — not task rows: the `exec ls` row gained its traffic line
+  and the five JSON fields; the wasm exec row carries them raw plus the rendered
+  line (`cli.ExecSnapshotRow`).
+- **15** — `exec_tap` in `GrantableCaps` + `CapDescription`. The TUI picker
+  and the WebUI chips enumerate the catalog, so they needed no edit (checked by
+  grep rather than assumed).
+- **24 / 33** — the item that changed the diff. The verb table's consumer check
+  (`TestEverySurfaceReadsEveryActionField`) found the TUI ignoring `Mode`: the
+  plan had hard-coded hexdump there, copying forward tap, whose TUI ignores its
+  four mode flags under a `surfaceLocal` exemption. A typed `--text` that does
+  nothing is this item's failure shape, so the TUI now renders hex/text/json
+  and `--raw` is declared CLI-only with a reason; the browser takes none of the
+  four, as for forward tap. Forward tap's own exemption is left as it was.
+- **27 / 28a** — `OpenExecTapRequest` is built once (`cli/exec_tap.go`); the
+  three surfaces reach it through `RunExecTapDial` / `StreamExecTap`.
+- **29 / 30 / 31** — `tapping exec N` / `stopped tapping exec N` to the result
+  pane; every counter prints at zero, `last=never` gates on no byte ever having
+  crossed, and the tap's end line names the outcome (`-- exec #N ended: exited
+  0 --`).
+- **32** — `cli.ExecRunTrafficLine` is the one renderer for the line; the
+  mode-name mapping moved from `cmd/harness-cli` into `cli.TapModeByName` so the
+  TUI did not grow a second one.
+- **36** — `supervising-workers` (+ both mirrors): the verb, the traffic line,
+  and `exec_tap` in the granular-names list — the list that missed `exec_run`
+  and then `forward_tap` in earlier entries.
+- **39** — every Surfaces row built; driven live on a dummy harness by CLI,
+  by keystroke into a TUI running inside a session, through an ssh gateway
+  hosted by that TUI, and by Playwright at 1280px and 390px. The walk also found
+  a Testing-section line (the `t` dispatch unit test) the plan had not carried;
+  added.
+
+**What the walk did not produce and the completeness tests did:** the
+last-kind sentinel and the cap-verdict table (`cap_completeness_test.go`) both
+had to learn `open_exec_tap`, and the plan named neither. Same shape as the
+forward-tap entry's note — the executable guards found it, not this list.
+
+**A live-run false alarm worth keeping for the next driver.** The first FIFO
+run showed `exec tap` and the exec both hanging after stdin closed. A server
+goroutine dump showed both relays idle in `ReadDirect` — nothing stuck — and the
+cause was the test script: the tap process, started in the background, had
+inherited the FIFO's writer fd, so closing the script's copy left a writer open
+and `cat` never saw EOF. Killing the tap "unstuck" the exec, which is what made
+it look like the tap was holding it. `3>&-` on the tap's command line fixed it.
+When a background reader appears to block a pipe's EOF, check which processes
+hold the writer before suspecting the code.
