@@ -433,6 +433,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
+  let lastExecs = [];              // latest snapshot; `exec tap` reads this, no second RPC
   let lastConns = [];              // same, for the trsf panel's answerer picker
   for (const [key, btn] of Object.entries(taskChips)) {
     btn.addEventListener("click", () => {
@@ -1097,7 +1098,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
       // A tap panel already open for this forward survives the poll that
       // rebuilt the list: without this, every 5s refresh would close it.
-      const live = openTaps.get(f.forward_id);
+      const live = openTaps.get(`fwd:${f.forward_id}`);
       if (live) {
         wrap.appendChild(live.panel);
         tap.textContent = "untap";
@@ -1107,7 +1108,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   }
 
-  // openTaps maps forward_id -> { panel, close }. A tap is a live subscription,
+  // openTaps maps a tap key (`fwd:<id>` / `exec:<id>`) -> { panel, close }. A
+  // tap is a live subscription,
   // so it outlives the 5s snapshot poll that rebuilds the rows around it — the
   // panel element is re-attached rather than recreated.
   const openTaps = new Map();
@@ -1127,17 +1129,30 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     return null;
   }
 
-  // toggleForwardTap starts or stops a tap on one forward and shows its lines
-  // in a panel under the row.
-  //
-  // Lines arrive already rendered by cli.RenderTapRecord over the wasm bridge:
-  // the browser never formats a record itself, so this panel prints what
-  // `harness-cli forward tap` prints.
-  function toggleForwardTap(f, wrap, btn, opts) {
-    const existing = openTaps.get(f.forward_id);
+  // findExecEntry locates a rendered exec row so the command input can drive
+  // the same panel the row's own button does.
+  function findExecEntry(execID) {
+    const host = document.getElementById("exec-list");
+    if (!host) return null;
+    for (const wrap of host.querySelectorAll(".exec-entry")) {
+      const first = wrap.querySelector(".forward-cell");
+      if (first && first.textContent === `#${execID}`) {
+        const buttons = wrap.querySelectorAll(".exec-row > button");
+        return { wrap, button: buttons[0] };
+      }
+    }
+    return null;
+  }
+
+  // toggleTapPanel starts or stops one tap and shows its lines in a panel under
+  // the row. start(append, onEnd) opens the bridge subscription and returns its
+  // handle. Lines arrive already rendered by the Go renderer over the wasm
+  // bridge, so the panel prints what harness-cli prints.
+  function toggleTapPanel(key, wrap, btn, start) {
+    const existing = openTaps.get(key);
     if (existing) {
       existing.close();
-      openTaps.delete(f.forward_id);
+      openTaps.delete(key);
       existing.panel.remove();
       btn.textContent = "tap";
       btn.classList.remove("btn-active");
@@ -1145,14 +1160,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     const panel = document.createElement("pre");
     panel.className = "forward-tap-panel";
-    panel.textContent = "";
     wrap.appendChild(panel);
 
     let stopped = false;
     const append = (lines) => {
       if (stopped) return;
       // Pinned to the bottom unless the reader has scrolled up: a tap on a
-      // busy forward would otherwise make its own scrollback unreadable.
+      // busy subject would otherwise make its own scrollback unreadable.
       const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
       panel.textContent += lines.join("\n") + "\n";
       const lineCount = panel.textContent.split("\n").length;
@@ -1161,15 +1175,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       }
       if (atBottom) panel.scrollTop = panel.scrollHeight;
     };
-
     let closeFn = () => { stopped = true; };
     try {
-      // The row's button taps both directions whole; the command line can
-      // narrow either. They were discarded here, so `forward tap 7 --dir
-      // to-target` parsed and tapped both.
-      const tapOpts = { dir: (opts && opts.dir) || "both" };
-      if (opts && opts.maxBytes) tapOpts.maxBytes = opts.maxBytes;
-      const handle = window.harness.forwardTap(f.forward_id, tapOpts, append, (err) => {
+      const handle = start(append, (err) => {
         append([err ? `-- tap ended: ${err} --` : "-- tap ended --"]);
       });
       if (handle && typeof handle.close === "function") {
@@ -1178,9 +1186,26 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     } catch (err) {
       append([`-- tap failed: ${err.message} --`]);
     }
-    openTaps.set(f.forward_id, { panel, close: closeFn });
+    openTaps.set(key, { panel, close: closeFn });
     btn.textContent = "untap";
     btn.classList.add("btn-active");
+  }
+
+  function toggleForwardTap(f, wrap, btn, opts) {
+    // The row's button taps both directions whole; the command line can
+    // narrow either. They were discarded here once, so `forward tap 7 --dir
+    // to-target` parsed and tapped both.
+    const tapOpts = { dir: (opts && opts.dir) || "both" };
+    if (opts && opts.maxBytes) tapOpts.maxBytes = opts.maxBytes;
+    toggleTapPanel(`fwd:${f.forward_id}`, wrap, btn,
+      (append, onEnd) => window.harness.forwardTap(f.forward_id, tapOpts, append, onEnd));
+  }
+
+  function toggleExecTap(e, wrap, btn, opts) {
+    const tapOpts = { chan: (opts && opts.chan) || "all" };
+    if (opts && opts.maxBytes) tapOpts.maxBytes = opts.maxBytes;
+    toggleTapPanel(`exec:${e.exec_id}`, wrap, btn,
+      (append, onEnd) => window.harness.execTap(e.exec_id, tapOpts, append, onEnd));
   }
 
   // renderExecList draws one row per running exec (every exec visible to this
@@ -1193,6 +1218,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // The task row's `execs=N` says HOW MANY are running; this is the one WebUI
   // surface that says WHICH, whose they are, and lets one be stopped.
   function renderExecList(execs) {
+    lastExecs = execs || [];
     const host = document.getElementById("exec-list");
     if (!host) return;
     host.textContent = "";
@@ -1205,6 +1231,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     const now = Date.now();
     for (const e of execs) {
+      const wrap = document.createElement("div");
+      wrap.className = "forward-entry exec-entry";
       const row = document.createElement("div");
       row.className = "exec-row";
       const taskShort = e.task ? e.task.slice(0, 8) + "…" : "-";
@@ -1220,6 +1248,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         cell.textContent = text;
         row.appendChild(cell);
       }
+      const tap = document.createElement("button");
+      tap.type = "button";
+      tap.className = "btn-secondary";
+      tap.textContent = "tap";
+      tap.addEventListener("click", () => toggleExecTap(e, wrap, tap));
+      row.appendChild(tap);
       const kill = document.createElement("button");
       kill.type = "button";
       kill.className = "btn-danger";
@@ -1240,7 +1274,25 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         }
       });
       row.appendChild(kill);
-      host.appendChild(row);
+      wrap.appendChild(row);
+
+      // The traffic line is the exact string `exec ls` prints
+      // (cli.ExecRunTrafficLine over the bridge), under the row as a forward's
+      // is, because five columns already fill 390px.
+      const traffic = document.createElement("div");
+      traffic.className = "forward-traffic";
+      traffic.textContent = e.traffic || "";
+      wrap.appendChild(traffic);
+
+      // A tap panel already open for this exec survives the poll that rebuilt
+      // the list: without this, every refresh would close it.
+      const live = openTaps.get(`exec:${e.exec_id}`);
+      if (live) {
+        wrap.appendChild(live.panel);
+        tap.textContent = "untap";
+        tap.classList.add("btn-active");
+      }
+      host.appendChild(wrap);
     }
   }
 
@@ -2780,7 +2832,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     connsView: (o) => connsView(o),
     findForwardEntry: (id) => findForwardEntry(id),
     toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
-    tapOpen: (id) => openTaps.has(id),
+    tapOpen: (id) => openTaps.has(`fwd:${id}`),
+    execs: () => lastExecs || [],
+    findExecEntry: (id) => findExecEntry(id),
+    toggleExecTap: (e, wrap, btn, opts) => toggleExecTap(e, wrap, btn, opts),
+    execTapOpen: (id) => openTaps.has(`exec:${id}`),
     chatTaskID: () => chatTaskId,
     openChatFor: (id) => openChatFor(id),
     // The compose panel's spawn defaults, as ONE value with two doors: the
@@ -7284,7 +7340,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         out = es.length
           ? (b.flags.json
               ? es.map((e) => JSON.stringify(e)).join("\n")
-              : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}`).join("\n"))
+              : es.map((e) => `#${e.execId}  ${String(e.taskId).slice(0, 8)}…  ${e.argvText}\n    ${e.traffic || ""}`).join("\n"))
           : "(no running execs)";
       } else if (sub === "kill") {
         // Every id, as on the CLI: this killed args[0] and reported
@@ -7298,6 +7354,19 @@ async function runVerbCommandDispatch(tokens, ctx) {
             }
             if (failedexecRunKill.length) throw new Error(`exec kill: ${failedexecRunKill.join("; ")}`);
         out = `killed exec ${b.args.join(", ")}`;
+      } else if (sub === "tap") {
+        // Same panel the row's button opens: one rendering path for one
+        // subscription.
+        const id = Number(b.args[0]);
+        const e = ctx.execs().find((x) => x.exec_id === id);
+        if (!e) throw new Error(`exec tap: no such exec ${id} in the current snapshot`);
+        const entry = ctx.findExecEntry(id);
+        if (!entry) throw new Error(`exec tap: exec ${id} has no row to attach a panel to`);
+        ctx.toggleExecTap(e, entry.wrap, entry.button, {
+          chan: b.flags.chan || "all",
+          maxBytes: b.flags["max-bytes"] || 0,
+        });
+        out = ctx.execTapOpen(id) ? `tapping exec ${id}` : `stopped tapping exec ${id}`;
       } else {
         out = await ctx.execRunToOutput(b.args[0], b.trailArgs, { shell: !!b.flags.shell, sshdParent: !!b.flags["sshd-parent"] });
       }

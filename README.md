@@ -92,8 +92,10 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Commands in a worktree: `exec <task-id> -- <cmd> [args...]` runs one
       command in the task's worktree as its own process — separate stdout and
       stderr, and the command's exit code becomes yours. `exec ls` / `exec
-      kill <exec-id>` list and stop the running ones. See **Running a command
-      in a task's worktree** below.
+      kill <exec-id>` list and stop the running ones; `exec ls` reports what
+      each exec has carried per channel, and `exec tap <exec-id>` streams its
+      stdin, stdout and stderr, live. See **Running a command in a task's
+      worktree** below.
     - SSH front door: `ssh-gateway [--listen 127.0.0.1:2222]` serves ssh,
       so `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session
       from any ssh client — an `~/.ssh/config` alias, tmux, mosh, a script
@@ -434,7 +436,16 @@ bin/harness-cli exec <task-id> -- make test           # exits with make's status
 bin/harness-cli exec <task-id> -- sh -c 'echo out; echo err 1>&2' 2>/dev/null
 bin/harness-cli exec ls [-task <task-id>] [--json]    # what is running right now
 bin/harness-cli exec kill <exec-id>                   # stop one
+bin/harness-cli exec tap <exec-id> [--chan stdin|stdout|stderr] [--text|--raw|--json]   # watch what crosses it
 ```
+
+`exec ls` prints a second line per exec — `stdin=… stdout=… stderr=… last=…
+taps=N`, zeros included — so whether bytes are moving at all needs no tap. A
+tap reads the exec's payload at the server, from any client — including an exec
+the ssh gateway started for a remote editor. It needs the `exec_tap` capability
+(a task's `exec_run` does not imply it), shows only what crosses after it opens,
+and is visible to everyone as `taps=N` on `exec ls`. It ends by itself when the
+exec does, with a last line saying how.
 
 What it gives you that `session exec` does not:
 
@@ -490,10 +501,11 @@ maps to it (see **SSH gateway**).
 **The list has a view of its own on each UI**, because the count and the list
 answer different questions: `execs=N` (the TUI Obs column, the WebUI task row,
 `ls`) says how many are running, and these say WHICH, whose they are, and let
-one be stopped. In the TUI it is `e` — a full-screen table, `x` then y/n kills
-the selected row, Esc closes. In the WebUI it is the 「実行中の exec」 panel on
-the Connections tab, beside the port-forward list it is modelled on, each row
-with its own kill button. Both show every exec visible to you on the server,
+one be stopped. In the TUI it is `e` — a full-screen table with per-channel
+byte columns, `t` taps the selected row, `x` then y/n kills it, Esc closes. In
+the WebUI it is the 「実行中の exec」 panel on the Connections tab, beside the
+port-forward list it is modelled on, each row with its traffic line and its own
+tap and kill buttons. Both show every exec visible to you on the server,
 not just ones that surface started — including, now, the long-lived bootstrap a
 VS Code Remote-SSH session holds open.
 
@@ -806,7 +818,7 @@ scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
 Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, cancel, the three
 session-attach powers, file read / write, local / remote port-forward,
-reading a forward's payload, notify, prune, purge, runner-admin, global
+reading a forward's or an exec's payload, notify, prune, purge, runner-admin, global
 info, publishing to the board as the operator) — and a **target scope**
 bounding WHICH tasks those capabilities may be pointed at.
 
@@ -1199,7 +1211,8 @@ The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
-`exec ls` / `exec kill <exec-id>` list and stop the running ones.
+`exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch
+the running ones; `t` on the execs modal (`e`) taps the selected row.
 `ssh-gateway [start [bind:port] | stop]` hosts the SSH front door from the TUI
 itself (see **SSH gateway**); with no argument it reports the address it is
 listening on, or that it is not running. It dies with the TUI, and with the

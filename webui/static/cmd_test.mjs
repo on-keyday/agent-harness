@@ -183,6 +183,19 @@ test("forward tap passes --dir and --max-bytes to the tap", async () => {
   eq(named(calls, "toggleForwardTap")[0][2], { dir: "to-target", maxBytes: 64 });
 });
 
+test("exec tap passes --chan and --max-bytes to the tap", async () => {
+  const execs = [{ exec_id: 4, task: ID, origin: "tui", command: "cat" }];
+  const { calls, out } = await run("exec tap 4 --chan stdin --max-bytes 64", { execs });
+  eq(named(calls, "toggleExecTap")[0][2], { chan: "stdin", maxBytes: 64 });
+  assert.match(String(out), /tapping exec 4/);
+});
+
+test("exec ls prints the traffic line under each row", async () => {
+  const rows = [{ execId: 4, taskId: ID, argvText: "cat", traffic: "stdin=0  stdout=0  stderr=0  last=never  taps=0" }];
+  const { out } = await run("exec ls", { execRunList: rows });
+  assert.match(String(out), /\n    stdin=0 {2}stdout=0/);
+});
+
 test("file pull carries --offset and --length", async () => {
   // filePullCmd reaches window.harness directly, so the recorder is on the
   // page's own bridge rather than on ctx.
@@ -234,6 +247,8 @@ test("the declared rules refuse here too", async () => {
     ["grid --under abc", /full 32-hex/],
     ["forward tap 7 --dir sideways", /want to-target/],
     ["forward tap 7 --max-bytes 4294967297", /out of range/],
+    ["exec tap 4 --chan sideways", /sideways/],
+    ["exec tap 4 --max-bytes 4294967297", /out of range/],
     ["exec kill", /at least/],
   ]) {
     const { err } = await run(line);

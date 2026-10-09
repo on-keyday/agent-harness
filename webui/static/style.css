@@ -1786,6 +1786,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
    layout; the entry only stacks them. */
 .forward-entry { margin-bottom: 0.4rem; }
 .forward-entry > .forward-row { margin-bottom: 0; }
+.forward-entry > .exec-row { margin-bottom: 0; }
 
 /* The traffic line reads like `forward ls` — same string, same order — sitting
    under the row rather than as a sixth column, because five already fill a
@@ -1845,7 +1846,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   /* Select by CONTAINER, not by button class: a control added to the row
      later would otherwise fall between the selectors and render differently
      from its neighbours — the trap the base-row checkbox already hit. */
-  .forward-row > button { align-self: flex-start; }
+  .forward-row > button,
+  .exec-row > button { align-self: flex-start; }
   .forward-tap-panel {
     max-height: 12rem;
     font-size: 0.7rem;

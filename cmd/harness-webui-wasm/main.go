@@ -161,6 +161,7 @@ func main() {
 		"pathsForSurface":    js.FuncOf(harnessPathsForSurface),
 		"parseGit":           js.FuncOf(harnessParseGit),
 		"forwardTap":         js.FuncOf(harnessForwardTap),
+		"execTap":            js.FuncOf(harnessExecTap),
 		"forwardList":        js.FuncOf(harnessForwardList),
 		"trsfState":          js.FuncOf(harnessTrsfState),
 		"parseDurationMs":    js.FuncOf(harnessParseDurationMs),
@@ -1336,20 +1337,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			}
 			execs := make([]any, 0, len(execInfos))
 			for i := range execInfos {
-				e := &execInfos[i]
-				execs = append(execs, map[string]any{
-					"exec_id": float64(e.ExecId),
-					"task":    hex.EncodeToString(e.TaskId.Id[:]),
-					// RAW, not a rendered age: the page re-renders on every
-					// poll, so formatting here would freeze the age at
-					// whatever it was when the snapshot was built while the
-					// row kept being redrawn — a clock that looks live and is
-					// not. The TUI modal formats at snapshot time because its
-					// table holds strings and does not redraw.
-					"started_unix_ms": float64(e.StartedUnixMs),
-					"origin":          cli.ExecRunOrigin(e),
-					"command":         cli.ExecRunArgvString(e.Argv),
-				})
+				execs = append(execs, cli.ExecSnapshotRow(&execInfos[i]))
 			}
 			// Watchers ride the same poll as execs and forwards: a shared
 			// server-side registry with no push subscription.
@@ -3914,7 +3902,9 @@ func harnessExecArgvText(this js.Value, args []js.Value) any {
 
 // harnessExecRunList lists the running execs this caller may see.
 //
-//	harness.execRunList(taskFilterHex?) -> Promise<[{execId, taskId, startedUnixMs, argv, argvText, originKind, originCid}]>
+//	harness.execRunList(taskFilterHex?) -> Promise<[{execId, taskId, startedUnixMs, argv, argvText, originKind, originCid, traffic}]>
+//
+// traffic is cli.ExecRunTrafficLine, the exact second line `exec ls` prints.
 //
 // argvText comes from cli.ExecArgvString rather than a join in JS: the quoting
 // rule that keeps a two-word argument from reading as two arguments has one
@@ -3954,6 +3944,7 @@ func harnessExecRunList(this js.Value, args []js.Value) any {
 					"argvText":      cli.ExecArgvString(argv),
 					"originKind":    e.OriginKind.String(),
 					"originCid":     string(e.OriginCid),
+					"traffic":       cli.ExecRunTrafficLine(e),
 				})
 			}
 			resolve.Invoke(js.ValueOf(rows))
@@ -4352,6 +4343,83 @@ func harnessForwardTap(this js.Value, args []js.Value) any {
 			return
 		}
 		serr := cli.StreamForwardTap(ctx, c, forwardID, cli.ForwardTapOpts{
+			Filter: filter, MaxRecordBytes: maxRecordBytes, Mode: cli.TapHex,
+		}, func(lines []string) {
+			if !onLines.Truthy() {
+				return
+			}
+			arr := make([]any, 0, len(lines))
+			for _, l := range lines {
+				arr = append(arr, l)
+			}
+			onLines.Invoke(js.ValueOf(arr))
+		})
+		if ctx.Err() != nil {
+			return // the page closed it; not an end worth reporting
+		}
+		if onEnd.Truthy() {
+			if serr != nil {
+				onEnd.Invoke(serr.Error())
+			} else {
+				onEnd.Invoke(js.Null())
+			}
+		}
+	}()
+
+	handle := map[string]any{
+		"close": js.FuncOf(func(js.Value, []js.Value) any {
+			cancel()
+			return js.Undefined()
+		}),
+	}
+	return js.ValueOf(handle)
+}
+
+// harnessExecTap taps one exec and streams its rendered lines to the page.
+//
+//	harness.execTap(execId, opts, onLines, onEnd) -> { close() }
+//
+// harnessForwardTap's shape for an exec: a subscription, rendered by
+// cli.RenderExecTapRecord on this side of the bridge, on currentClient().
+// opts.chan narrows to stdin, stdout or stderr; the default is all three.
+func harnessExecTap(this js.Value, args []js.Value) any {
+	if len(args) < 3 || args[0].IsUndefined() {
+		slog.Warn("execTap: want (execId, opts, onLines[, onEnd])")
+		return js.Undefined()
+	}
+	execID := uint64(args[0].Float())
+	filter := protocol.ExecTapFilter_All
+	var maxRecordBytes uint32
+	if opts := args[1]; opts.Truthy() {
+		if ch := opts.Get("chan"); ch.Truthy() {
+			parsed, err := cli.ParseExecTapFilter(ch.String())
+			if err != nil {
+				slog.Warn("execTap: bad chan", "err", err)
+				return js.Undefined()
+			}
+			filter = parsed
+		}
+		if mb := opts.Get("maxBytes"); mb.Truthy() {
+			maxRecordBytes = uint32(mb.Float())
+		}
+	}
+	onLines := args[2]
+	var onEnd js.Value
+	if len(args) > 3 {
+		onEnd = args[3]
+	}
+
+	ctx, cancel := context.WithCancel(rootCtx)
+	go func() {
+		c, err := currentClient()
+		if err != nil {
+			cancel()
+			if onEnd.Truthy() {
+				onEnd.Invoke(err.Error())
+			}
+			return
+		}
+		serr := cli.StreamExecTap(ctx, c, execID, cli.ExecTapOpts{
 			Filter: filter, MaxRecordBytes: maxRecordBytes, Mode: cli.TapHex,
 		}, func(lines []string) {
 			if !onLines.Truthy() {

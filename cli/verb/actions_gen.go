@@ -1401,6 +1401,29 @@ func init() {
 			}
 			return a, nil
 		},
+		"exec tap\x00webui": func(b Bound) (Action, error) {
+			a := ExecTapAction{}
+			a.Chan = b.Str("chan")
+			a.MaxRecordBytes = uint32(uintOf(b.Flags["max-bytes"]))
+			if len(b.Args) > 0 {
+				n, err := strconv.ParseUint(b.Args[0], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("exec tap: bad exec id %q", b.Args[0])
+				}
+				a.ExecID = n
+			}
+			a.Mode = "hex"
+			if b.Bool("text") {
+				a.Mode = "text"
+			}
+			if b.Bool("raw") {
+				a.Mode = "raw"
+			}
+			if b.Bool("json") {
+				a.Mode = "json"
+			}
+			return a, nil
+		},
 		"forward\x00cli": func(b Bound) (Action, error) {
 			a := ForwardOpenAction{}
 			a.L = stringsOf(b.Custom["L"])
