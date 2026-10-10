@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -122,27 +123,28 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	}
 	argv.ArgvLen = uint16(len(argv.Argv))
 
-	in := &protocol.ExecRunRequest{TaskId: protocol.TaskID{Id: [16]byte{9}}, Argv: argv}
+	in := &protocol.ExecRunRequest{TaskId: protocol.TaskID{Id: [16]byte{9}}}
 	in.SetStdinEnabled(true)
 	// Every flag set to the NON-default, so a relay that drops one is caught by
 	// the assertion rather than passing on the zero value it would have had.
 	in.SetShellLine(true)
 	in.SetSshdParent(true)
 	in.SetPty(true)
-	in.SetTerm([]byte("xterm-256color"))
+	body := &protocol.ExecRunBody{Argv: argv}
+	body.SetTerm([]byte("xterm-256color"))
 
-	out := runnerExecRunRequest(in, 7, "/repo", 42, [16]byte{})
-	if out.ExecId != 7 || out.StreamId != 42 {
-		t.Errorf("exec id / stream id = %d / %d, want 7 / 42", out.ExecId, out.StreamId)
+	out, ob := runnerExecRunMessages(body, in, 7, "/repo", 42, 43, [16]byte{})
+	if out.ExecId != 7 || out.StreamId != 42 || out.BodyStreamId != 43 {
+		t.Errorf("exec id / stream id / body stream = %d / %d / %d, want 7 / 42 / 43", out.ExecId, out.StreamId, out.BodyStreamId)
 	}
-	if string(out.RepoPath) != "/repo" {
-		t.Errorf("repo path = %q, want /repo — a terminal task's worktree cannot be resolved without it", out.RepoPath)
+	if string(ob.RepoPath) != "/repo" {
+		t.Errorf("repo path = %q, want /repo — a terminal task's worktree cannot be resolved without it", ob.RepoPath)
 	}
 	if out.TaskId.Id != in.TaskId.Id {
 		t.Error("task id did not survive the relay")
 	}
-	if out.Argv.ArgvLen != 3 || string(out.Argv.Argv[2].Arg) != "echo hi" {
-		t.Errorf("argv did not survive the relay: %+v", out.Argv)
+	if ob.Argv.ArgvLen != 3 || string(ob.Argv.Argv[2].Arg) != "echo hi" {
+		t.Errorf("argv did not survive the relay: %+v", ob.Argv)
 	}
 	if !out.StdinEnabled() {
 		t.Error("stdin_enabled did not survive the relay")
@@ -156,8 +158,8 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	if !out.Pty() {
 		t.Error("pty did not survive the relay")
 	}
-	if string(out.Term) != "xterm-256color" {
-		t.Errorf("term = %q, did not survive the relay", out.Term)
+	if string(ob.Term) != "xterm-256color" {
+		t.Errorf("term = %q, did not survive the relay", ob.Term)
 	}
 }
 
@@ -165,7 +167,7 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 // to run and no reason to open three streams to discover that.
 func TestOpenExecRunRefusesEmptyArgv(t *testing.T) {
 	h := &TaskHandler{}
-	resp := h.handleOpenExecRun(nil, &protocol.ExecRunRequest{})
+	resp := h.openExecRun(nil, &protocol.ExecRunRequest{}, &protocol.ExecRunBody{})
 	if resp.Status != protocol.ExecRunStatus_EmptyArgv {
 		t.Errorf("status = %v, want empty_argv", resp.Status)
 	}
@@ -204,7 +206,7 @@ func TestExecRunInfoCarriesOrigin(t *testing.T) {
 // assigned, not a fresh one, which would overwrite the running agent's.
 //
 // Before this, the field was simply never set. That is not the miss
-// runnerExecRunRequest's "every field survives" test was built for: the ticket
+// runnerExecRunMessages's "every field survives" test was built for: the ticket
 // is not relayed from the client's request, it is added by the SERVER, so a
 // relay-completeness test could not see it missing. The symptom was
 // HARNESS_AUTH_TICKET=000…0 inside the child and `psk: server rejected:
@@ -216,7 +218,7 @@ func TestRunnerExecRunRequestCarriesTheTasksTicket(t *testing.T) {
 		ticket[i] = byte(i + 1)
 	}
 	in := &protocol.ExecRunRequest{TaskId: protocol.TaskID{Id: [16]byte{9}}}
-	out := runnerExecRunRequest(in, 7, "/repo", 42, ticket)
+	_, out := runnerExecRunMessages(&protocol.ExecRunBody{}, in, 7, "/repo", 42, 43, ticket)
 	if out.AuthTicket != ticket {
 		t.Fatalf("auth ticket = %x, want %x — a zero ticket is refused by the PSK gate, "+
 			"and blocks the PSK fallback that would otherwise work", out.AuthTicket, ticket)
@@ -233,5 +235,19 @@ func TestExecRunInfoCarriesPty(t *testing.T) {
 	pipe := execRunInfo(&execRun{execID: 4})
 	if pipe.Pty() {
 		t.Fatal("a pipe exec listed as pty")
+	}
+}
+
+// A body past the cap is refused by name, not as internal_error: the caller can
+// act on "too large" and cannot act on "internal".
+func TestOpenExecRunRefusesAnOversizeBody(t *testing.T) {
+	if st := execBodyStatus(errPayloadTooLarge); st != protocol.ExecRunStatus_BodyTooLarge {
+		t.Fatalf("status = %v, want body_too_large", st)
+	}
+}
+
+func TestOpenExecRunRefusesAMalformedBody(t *testing.T) {
+	if st := execBodyStatus(errors.New("decode")); st != protocol.ExecRunStatus_BadBody {
+		t.Fatalf("status = %v, want bad_body", st)
 	}
 }

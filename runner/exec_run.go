@@ -121,14 +121,14 @@ func (c *execCancels) take(id uint64) context.CancelFunc {
 // execPtyRefusal reports why a request's terminal settings cannot be honoured,
 // or "" when they can. Refused rather than adjusted: each case is a caller
 // asking for something the child would not get.
-func execPtyRefusal(req *protocol.RunnerExecRunRequest) string {
+func execPtyRefusal(req *protocol.RunnerExecRunRequest, term []byte) string {
 	if req.Pty() && !req.StdinEnabled() {
 		return "pty needs stdin_enabled: a terminal child's stdin is the terminal"
 	}
-	if len(req.Term) > 0 && !req.Pty() {
+	if len(term) > 0 && !req.Pty() {
 		return "term is set without pty: TERM is applied only to a terminal"
 	}
-	if err := protocol.ValidateExecTerm(string(req.Term)); err != nil {
+	if err := protocol.ValidateExecTerm(string(term)); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -136,9 +136,9 @@ func execPtyRefusal(req *protocol.RunnerExecRunRequest) string {
 
 // execPtyEnv applies the request's TERM under a PTY. Appended last so it wins
 // over the inherited one (the last duplicate is what the child sees).
-func execPtyEnv(env []string, req *protocol.RunnerExecRunRequest) []string {
-	if req.Pty() && len(req.Term) > 0 {
-		env = append(env, "TERM="+string(req.Term))
+func execPtyEnv(env []string, req *protocol.RunnerExecRunRequest, term []byte) []string {
+	if req.Pty() && len(term) > 0 {
+		env = append(env, "TERM="+string(term))
 	}
 	return env
 }
@@ -153,7 +153,6 @@ func execPtyEnv(env []string, req *protocol.RunnerExecRunRequest) []string {
 func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRunRequest) {
 	log := s.logger()
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
-	repoPath := string(req.RepoPath)
 
 	finish := func(kind protocol.ExecEventKind, code int32, detail string) {
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_ExecRunFinished}
@@ -163,6 +162,27 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
+
+	// The command arrives on its own stream (RunnerExecRunRequest.body_stream_id)
+	// so it never has to fit one UDP datagram. A body that cannot be had is
+	// still REPORTED: the exec id is in the envelope, and returning silently
+	// would leave the client waiting on the outcome forever.
+	raw, berr := waitForStreamBody(ctx, s.Streams, trsf.StreamID(req.BodyStreamId), "exec body")
+	var body protocol.RunnerExecRunBody
+	if berr == nil {
+		berr = body.DecodeExactCopy(raw)
+	}
+	if berr != nil {
+		log.Error("exec_run: body", "exec_id", req.ExecId, "err", berr)
+		if s.Streams != nil {
+			if st := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId)); st != nil {
+				_ = st.CloseBoth()
+			}
+		}
+		finish(protocol.ExecEventKind_Failed, -1, "exec body: "+berr.Error())
+		return
+	}
+	repoPath := string(body.RepoPath)
 
 	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
 	if stream == nil {
@@ -185,20 +205,20 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		finish(protocol.ExecEventKind_Failed, -1, "no worktree for task "+taskIDHex)
 		return
 	}
-	if req.Argv.ArgvLen == 0 || len(req.Argv.Argv) == 0 {
+	if body.Argv.ArgvLen == 0 || len(body.Argv.Argv) == 0 {
 		_ = stream.CloseBoth()
 		finish(protocol.ExecEventKind_Failed, -1, "empty argv")
 		return
 	}
-	if why := execPtyRefusal(req); why != "" {
+	if why := execPtyRefusal(req, body.Term); why != "" {
 		_ = stream.CloseBoth()
 		finish(protocol.ExecEventKind_Failed, -1, why)
 		return
 	}
 
-	argv := make([]string, 0, len(req.Argv.Argv))
-	for i := range req.Argv.Argv {
-		argv = append(argv, string(req.Argv.Argv[i].Arg))
+	argv := make([]string, 0, len(body.Argv.Argv))
+	for i := range body.Argv.Argv {
+		argv = append(argv, string(body.Argv.Argv[i].Arg))
 	}
 	if req.ShellLine() {
 		var serr error
@@ -218,13 +238,13 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		RepoPath:   repoPath,
 		Hostname:   s.Hostname,
 		WSPath:     s.WSPath,
-		AuthTicket: req.AuthTicket,
+		AuthTicket: body.AuthTicket,
 		BinDir:     s.BinDir,
 		PSK:        s.PSK,
 		ProxyVia:   s.ProxyVia,
 	})
 	env = append(env, AgentCwdEnv(dir)...)
-	env = execPtyEnv(env, req)
+	env = execPtyEnv(env, req, body.Term)
 
 	// A cancellable context so close_exec_run can stop the child. Closing the
 	// stream would not: the frame pump reads EOF and ends its input goroutine

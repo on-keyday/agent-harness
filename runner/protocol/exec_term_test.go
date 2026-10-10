@@ -39,20 +39,19 @@ func TestExecRunRequestPtyDoesNotDisturbTheOlderFlags(t *testing.T) {
 	}
 }
 
-func TestExecRunRequestRoundTripsTerm(t *testing.T) {
-	in := ExecRunRequest{}
-	in.SetPty(true)
+func TestExecRunBodyRoundTripsTerm(t *testing.T) {
+	in := ExecRunBody{}
 	in.SetTerm([]byte("xterm-256color"))
-	b, err := in.Append(nil)
+	b, err := in.EncodeCopy(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out ExecRunRequest
+	var out ExecRunBody
 	if err := out.DecodeExactCopy(b); err != nil {
 		t.Fatal(err)
 	}
-	if !out.Pty() || string(out.Term) != "xterm-256color" {
-		t.Fatalf("round trip: pty=%v term=%q", out.Pty(), out.Term)
+	if string(out.Term) != "xterm-256color" {
+		t.Fatalf("round trip: term=%q", out.Term)
 	}
 }
 

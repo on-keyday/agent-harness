@@ -16,14 +16,13 @@ func TestExecRunRequestRoundTrip(t *testing.T) {
 	}
 	argv.ArgvLen = uint16(len(argv.Argv))
 
-	in := ExecRunRequest{TaskId: TaskID{Id: [16]byte{1, 2, 3}}, Argv: argv}
-	in.SetStdinEnabled(true)
-
-	buf, err := in.Append(nil)
+	// The argv rides the body; the envelope keeps the task and the flags.
+	in := ExecRunBody{Argv: argv}
+	buf, err := in.EncodeCopy(nil)
 	if err != nil {
-		t.Fatalf("Append: %v", err)
+		t.Fatalf("EncodeCopy: %v", err)
 	}
-	var out ExecRunRequest
+	var out ExecRunBody
 	if err := out.DecodeExactCopy(buf); err != nil {
 		t.Fatalf("DecodeExactCopy: %v", err)
 	}
@@ -36,11 +35,19 @@ func TestExecRunRequestRoundTrip(t *testing.T) {
 	if got := string(out.Argv.Argv[0].Arg); got != "sh" {
 		t.Errorf("argv[0] = %q, want sh", got)
 	}
-	if !out.StdinEnabled() {
-		t.Error("stdin_enabled did not survive")
+
+	env := ExecRunRequest{TaskId: TaskID{Id: [16]byte{1, 2, 3}}, PayloadStreamId: 9}
+	env.SetStdinEnabled(true)
+	eb, err := env.Append(nil)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
 	}
-	if out.TaskId.Id != in.TaskId.Id {
-		t.Error("task id did not survive")
+	var eo ExecRunRequest
+	if err := eo.DecodeExactCopy(eb); err != nil {
+		t.Fatalf("DecodeExactCopy: %v", err)
+	}
+	if !eo.StdinEnabled() || eo.PayloadStreamId != 9 || eo.TaskId.Id != env.TaskId.Id {
+		t.Errorf("envelope did not survive: %+v", eo)
 	}
 }
 

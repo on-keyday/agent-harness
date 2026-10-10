@@ -105,7 +105,6 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if len(argv) == 0 {
 		return ExecRunResult{}, errors.New("exec: empty command")
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}
 	if opts.ShellLine && len(argv) != 1 {
 		return ExecRunResult{}, fmt.Errorf("exec: ShellLine needs exactly one argv element, got %d", len(argv))
 	}
@@ -131,17 +130,34 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if err := protocol.ValidateExecTerm(opts.Term); err != nil {
 		return ExecRunResult{}, fmt.Errorf("exec: %w", err)
 	}
-	body := protocol.ExecRunRequest{TaskId: tid, Argv: buildExecArgv(argv)}
-	body.SetShellLine(opts.ShellLine)
-	body.SetSshdParent(opts.SshdParent)
-	body.SetStdinEnabled(opts.Stdin != nil || opts.Terminal)
-	body.SetPty(opts.Pty)
-	body.SetTerm([]byte(opts.Term))
-	req.SetOpenExecRun(body)
-
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	execBody := protocol.ExecRunBody{Argv: buildExecArgv(argv)}
+	execBody.SetTerm([]byte(opts.Term))
+	bodyBytes, err := execBody.EncodeCopy(nil)
+	if err != nil {
+		return ExecRunResult{}, fmt.Errorf("exec: encode command: %w", err)
+	}
+	// The command rides a stream, not the request: an argv has no bound that
+	// fits one UDP datagram, and an over-sized control message is dropped with
+	// no error at either end — which is how Zed's remote terminal hung.
+	tr, err := c.TaskControlWithPayload(ctx, func(streamID uint64) (*protocol.TaskControlRequest, error) {
+		env := protocol.ExecRunRequest{TaskId: tid, PayloadStreamId: streamID}
+		env.SetShellLine(opts.ShellLine)
+		env.SetSshdParent(opts.SshdParent)
+		env.SetStdinEnabled(opts.Stdin != nil || opts.Terminal)
+		env.SetPty(opts.Pty)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}
+		req.SetOpenExecRun(env)
+		return req, nil
+	}, bodyBytes)
+	if err == nil {
+		err = tr.Err
+	}
+	resp := tr.Resp
 	if err != nil {
 		return ExecRunResult{}, err
+	}
+	if resp == nil {
+		return ExecRunResult{}, errors.New("exec: no response from the server")
 	}
 	r := resp.OpenExecRun()
 	if r == nil {
@@ -426,6 +442,10 @@ func execRunStatusError(taskID string, st protocol.ExecRunStatus) error {
 		return errors.New("exec: empty command")
 	case protocol.ExecRunStatus_Denied:
 		return errors.New("exec: denied (needs the exec_run capability)")
+	case protocol.ExecRunStatus_BodyTooLarge:
+		return errors.New("exec: command too large (the server reads at most 2 MiB)")
+	case protocol.ExecRunStatus_BadBody:
+		return errors.New("exec: the server could not read the command")
 	default:
 		return fmt.Errorf("exec: %s", st.String())
 	}

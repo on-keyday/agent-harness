@@ -219,16 +219,19 @@ func TestShellLineArgvWithoutSshdParentIsUnchanged(t *testing.T) {
 }
 
 func TestExecPtyRefusal(t *testing.T) {
-	mk := func(pty, stdin bool, term string) *protocol.RunnerExecRunRequest {
+	type in struct {
+		req  *protocol.RunnerExecRunRequest
+		term []byte
+	}
+	mk := func(pty, stdin bool, term string) in {
 		r := &protocol.RunnerExecRunRequest{}
 		r.SetPty(pty)
 		r.SetStdinEnabled(stdin)
-		r.SetTerm([]byte(term))
-		return r
+		return in{r, []byte(term)}
 	}
 	for _, c := range []struct {
 		name string
-		req  *protocol.RunnerExecRunRequest
+		req  in
 		want string // substring; "" = accepted
 	}{
 		{"pipe", mk(false, false, ""), ""},
@@ -238,7 +241,7 @@ func TestExecPtyRefusal(t *testing.T) {
 		{"term without pty", mk(false, true, "xterm"), "pty"},
 		{"bad term", mk(true, true, "xterm 256"), "term"},
 	} {
-		got := execPtyRefusal(c.req)
+		got := execPtyRefusal(c.req.req, c.req.term)
 		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: refusal = %q, want %q", c.name, got, c.want)
 		}
@@ -252,13 +255,33 @@ func TestExecPtyEnvAppendsTermOnlyUnderAPty(t *testing.T) {
 	base := []string{"TERM=dumb", "PATH=/bin"}
 	r := &protocol.RunnerExecRunRequest{}
 	r.SetPty(true)
-	r.SetTerm([]byte("xterm-256color"))
-	got := execPtyEnv(append([]string(nil), base...), r)
+	got := execPtyEnv(append([]string(nil), base...), r, []byte("xterm-256color"))
 	if got[len(got)-1] != "TERM=xterm-256color" {
 		t.Fatalf("env = %q, want TERM=xterm-256color last", got)
 	}
-	r.SetTerm(nil)
-	if got := execPtyEnv(append([]string(nil), base...), r); len(got) != len(base) {
+	if got := execPtyEnv(append([]string(nil), base...), r, nil); len(got) != len(base) {
 		t.Fatalf("empty term changed the env: %q", got)
+	}
+}
+
+// The exec id is in the envelope, so a body that never arrives is still
+// reported — returning silently would leave the client waiting on the outcome
+// forever.
+func TestExecRunReportsAnUnreadableBody(t *testing.T) {
+	ms := &mockSender{}
+	s := &Session{Sender: ms}
+	s.handleExecRun(context.Background(), &protocol.RunnerExecRunRequest{ExecId: 5, StreamId: 9, BodyStreamId: 0})
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if len(ms.sent) != 1 {
+		t.Fatalf("sent %d messages, want one ExecRunFinished", len(ms.sent))
+	}
+	var m protocol.RunnerMessage
+	if err := m.DecodeExactCopy(ms.sent[0][1:]); err != nil {
+		t.Fatal(err)
+	}
+	fin := m.ExecRunFinished()
+	if fin == nil || fin.ExecId != 5 || fin.Kind != protocol.ExecEventKind_Failed || len(fin.Detail) == 0 {
+		t.Fatalf("finish = %+v, want failed with a reason for exec 5", fin)
 	}
 }

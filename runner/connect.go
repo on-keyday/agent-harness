@@ -995,15 +995,17 @@ func endpointLegsFor(schemes []string) (endpointLegs, error) {
 	return legs, nil
 }
 
-// waitForAssignTaskBody resolves the server-initiated send-stream
-// referenced by AssignTask.StreamId, reads the full body to EOF, and
-// decodes it as a protocol.AssignTaskBody. Mirrors cli/get_log.go's
-// waitForReceiveStream pattern: the trsf stream-creation frame may not
-// have arrived by the time the AssignTask envelope is dispatched, so
-// we poll Transport.GetReceiveStream briefly before reading.
-func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID) (*protocol.AssignTaskBody, error) {
+// waitForStreamBody resolves a server-initiated send-stream, reads it to EOF
+// and returns the bytes. AssignTask and exec both ship their bodies this way
+// (a small envelope over the control channel, the variable-length part on a
+// stream, so neither has to fit one UDP datagram); each caller decodes its own
+// format. what names the body in errors. Mirrors cli/get_log.go's
+// waitForReceiveStream pattern: the trsf stream-creation frame may not have
+// arrived by the time the envelope is dispatched, so we poll
+// Transport.GetReceiveStream briefly before reading.
+func waitForStreamBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID, what string) ([]byte, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("AssignTask stream_id is 0 (server failed to allocate)")
+		return nil, fmt.Errorf("%s stream id is 0 (server failed to allocate)", what)
 	}
 	st := p.GetReceiveStream(id)
 	if st == nil {
@@ -1017,7 +1019,7 @@ func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-deadline.C:
-				return nil, fmt.Errorf("AssignTask stream %d not visible after 2s", id)
+				return nil, fmt.Errorf("%s stream %d not visible after 2s", what, id)
 			case <-tick.C:
 				st = p.GetReceiveStream(id)
 				if st != nil {
@@ -1033,14 +1035,22 @@ func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup
 		}
 		data, eof, err := st.ReadDirect(64 * 1024)
 		if err != nil {
-			return nil, fmt.Errorf("AssignTask stream %d read: %w", id, err)
+			return nil, fmt.Errorf("%s stream %d read: %w", what, id, err)
 		}
 		if len(data) > 0 {
 			raw = append(raw, data...)
 		}
 		if eof {
-			break
+			return raw, nil
 		}
+	}
+}
+
+// waitForAssignTaskBody reads and decodes AssignTask's body.
+func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID) (*protocol.AssignTaskBody, error) {
+	raw, err := waitForStreamBody(ctx, p, id, "AssignTask")
+	if err != nil {
+		return nil, err
 	}
 	body := &protocol.AssignTaskBody{}
 	if err := body.DecodeExact(raw); err != nil {

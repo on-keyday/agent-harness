@@ -538,14 +538,24 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenExecRun variant is nil")
 			return
 		}
-		eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
-		if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(er.TaskId.Id[:])) {
-			eresp = h.handleOpenExecRun(conn, er)
-		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecRun, RequestId: req.RequestId}
-		resp.SetOpenExecRun(eresp)
-		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		// Off the receive loop: the command arrives on a stream the client
+		// writes AFTER this request (ExecRunRequest.payload_stream_id), and
+		// that stream's frames are delivered by the very loop this handler runs
+		// on, so reading it here would wait out its own timeout. board_send's
+		// shape. Copied first: the request is the decoded frame, and the
+		// envelope has only fixed-size fields, so a value copy is the whole of it.
+		envCopy := *er
+		requestID := req.RequestId
+		go func() {
+			eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
+			if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(envCopy.TaskId.Id[:])) {
+				eresp = h.handleOpenExecRun(conn, &envCopy)
+			}
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecRun, RequestId: requestID}
+			resp.SetOpenExecRun(eresp)
+			out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+			conn.SendMessage(out) //nolint:errcheck
+		}()
 
 	case protocol.TaskControlKind_ExecRunList:
 		// No capability: the listing is bounded by task VISIBILITY inside the

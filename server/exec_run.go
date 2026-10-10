@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"errors"
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -21,7 +22,28 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	errResp := func(s protocol.ExecRunStatus) protocol.ExecRunResponse {
 		return protocol.ExecRunResponse{Status: s}
 	}
-	if req.Argv.ArgvLen == 0 {
+	// The command rides its own stream (ExecRunRequest.payload_stream_id): an
+	// argv has no bound that fits one UDP datagram. Read it first, so a body
+	// that cannot be had is refused before anything is allocated.
+	raw, rerr := readAgentPayloadStream(conn, req.PayloadStreamId, execBodyMax)
+	if rerr != nil {
+		slog.Warn("exec_run: command body", "err", rerr)
+		return errResp(execBodyStatus(rerr))
+	}
+	var body protocol.ExecRunBody
+	if derr := body.DecodeExactCopy(raw); derr != nil {
+		slog.Warn("exec_run: command body decode", "err", derr)
+		return errResp(protocol.ExecRunStatus_BadBody)
+	}
+	return h.openExecRun(conn, req, &body)
+}
+
+// openExecRun is handleOpenExecRun once the command body is in hand.
+func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest, body *protocol.ExecRunBody) protocol.ExecRunResponse {
+	errResp := func(s protocol.ExecRunStatus) protocol.ExecRunResponse {
+		return protocol.ExecRunResponse{Status: s}
+	}
+	if body.Argv.ArgvLen == 0 {
 		return errResp(protocol.ExecRunStatus_EmptyArgv)
 	}
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
@@ -68,7 +90,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	e := &execRun{
 		taskIDHex:  taskIDHex,
 		runnerID:   task.AssignedTo,
-		argv:       execArgvStrings(req.Argv),
+		argv:       execArgvStrings(body.Argv),
 		control:    ctrlStream,
 		clientCID:  conn.ConnectionID().String(),
 		clientKind: h.lookupClientKind(conn.ConnectionID().String()),
@@ -84,16 +106,40 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	// credential that cannot work.
 	ticket, _ := boardTaskTicket(h.Board, runner.Identity, req.TaskId)
 
+	// The runner gets the command the same way: a small envelope and a body
+	// stream, AssignTask's pattern, because a runner can be on UDP too.
+	bodyStream := runner.Conn.CreateSendStream()
+	if bodyStream == nil {
+		h.removeExec(execID, protocol.ExecEventKind_Failed, -1)
+		_ = dataStream.CloseBoth()
+		_ = ctrlStream.Close()
+		_ = runnerStream.CloseBoth()
+		return errResp(protocol.ExecRunStatus_InternalError)
+	}
+	env, rbody := runnerExecRunMessages(body, req, execID, task.RepoPath, uint64(runnerStream.ID()), uint64(bodyStream.ID()), ticket)
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExecRun}
-	rreq.SetOpenExecRun(runnerExecRunRequest(req, execID, task.RepoPath, uint64(runnerStream.ID()), ticket))
+	rreq.SetOpenExecRun(env)
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		h.removeExec(execID, protocol.ExecEventKind_Failed, -1)
 		_ = dataStream.CloseBoth()
 		_ = ctrlStream.Close()
 		_ = runnerStream.CloseBoth()
+		_ = bodyStream.Close()
 		slog.Error("exec_run: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.ExecRunStatus_InternalError)
+	}
+	encoded, eerr := rbody.EncodeCopy(nil)
+	if eerr == nil {
+		eerr = bodyStream.AppendData(false, encoded)
+	}
+	if eerr == nil {
+		eerr = bodyStream.AppendData(true)
+	}
+	if eerr != nil {
+		// The runner reports an unreadable body itself — it holds the exec id —
+		// so the client still gets an outcome; nothing more to unwind here.
+		slog.Error("exec_run: body to runner failed", "task_id", taskIDHex, "err", eerr)
 	}
 	// Announced only once the runner has been told, so a send failure does not
 	// publish an exec that never started — the same rule the remote forward's
@@ -126,8 +172,9 @@ func execArgvStrings(a protocol.ExecArgv) []string {
 	return out
 }
 
-// runnerExecRunRequest relays the client's request to the runner, adding the
-// exec id, the stream id and the repo path the server holds.
+// runnerExecRunMessages relays the client's request to the runner as an
+// envelope and a body, adding the exec id, the stream ids and the repo path the
+// server holds.
 //
 // A separate function so a test can assert EVERY field survives: one relay site
 // for a growing struct is the shape that has silently dropped a new field on
@@ -140,21 +187,36 @@ func execArgvStrings(a protocol.ExecArgv) []string {
 // missing. It is a parameter rather than something read off req for exactly
 // that reason — a caller has to pass it, and one that forgets is a compile
 // error rather than a zero.
-func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath string, streamID uint64, authTicket [16]byte) protocol.RunnerExecRunRequest {
-	body := protocol.RunnerExecRunRequest{
-		ExecId:     execID,
-		TaskId:     req.TaskId,
-		StreamId:   streamID,
-		Argv:       req.Argv,
-		AuthTicket: authTicket,
+func runnerExecRunMessages(body *protocol.ExecRunBody, req *protocol.ExecRunRequest, execID uint64, repoPath string, dataStreamID, bodyStreamID uint64, authTicket [16]byte) (protocol.RunnerExecRunRequest, protocol.RunnerExecRunBody) {
+	env := protocol.RunnerExecRunRequest{
+		ExecId:       execID,
+		TaskId:       req.TaskId,
+		StreamId:     dataStreamID,
+		BodyStreamId: bodyStreamID,
 	}
-	body.SetRepoPath([]byte(repoPath))
-	body.SetShellLine(req.ShellLine())
-	body.SetSshdParent(req.SshdParent())
-	body.SetStdinEnabled(req.StdinEnabled())
-	body.SetPty(req.Pty())
-	body.SetTerm(req.Term)
-	return body
+	env.SetShellLine(req.ShellLine())
+	env.SetSshdParent(req.SshdParent())
+	env.SetStdinEnabled(req.StdinEnabled())
+	env.SetPty(req.Pty())
+	rb := protocol.RunnerExecRunBody{AuthTicket: authTicket, Argv: body.Argv}
+	rb.SetRepoPath([]byte(repoPath))
+	rb.SetTerm(body.Term)
+	return env, rb
+}
+
+// execBodyMax is the most the server reads of an exec's command: Linux's usual
+// total ARG_MAX, so no command a runner's OS would run is refused here first,
+// and a bound, because an unbounded read is a free allocation.
+const execBodyMax = 2 << 20
+
+// execBodyStatus maps a failure to read the command body to what the client is
+// told: "too large" is actionable, anything else is a body the server could not
+// read.
+func execBodyStatus(err error) protocol.ExecRunStatus {
+	if errors.Is(err, errPayloadTooLarge) {
+		return protocol.ExecRunStatus_BodyTooLarge
+	}
+	return protocol.ExecRunStatus_BadBody
 }
 
 // onExecRunFinished delivers the outcome to the waiting client and

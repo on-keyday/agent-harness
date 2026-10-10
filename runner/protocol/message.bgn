@@ -3937,7 +3937,6 @@ format ExecArgv:
 
 format ExecRunRequest:
     task_id :TaskID
-    argv :ExecArgv
     # stdin_enabled=0 gives the child /dev/null as its stdin, which is what a
     # non-interactive caller wants: a child that reads stdin then gets EOF
     # rather than hanging forever on a pipe nobody will write to.
@@ -4010,6 +4009,17 @@ format ExecRunRequest:
     # Declared after sshd_parent for shell_line's reason above.
     pty :u1
     reserved :u4
+    # A client-initiated send-stream carrying ExecRunBody until EOF. The command
+    # rides here rather than inline because an argv has no bound that fits one
+    # UDP datagram — Zed's remote terminal is a 2802-byte line, and an
+    # over-sized control message is dropped with no error at either end.
+    # AgentSendRequest.payload_stream_id's pattern.
+    payload_stream_id :u64
+
+# ExecRunBody is what ExecRunRequest.payload_stream_id carries: everything of
+# an exec request whose length the caller chooses.
+format ExecRunBody:
+    argv :ExecArgv
     # The child's TERM, applied only when pty=1 (the gateway passes the one
     # pty-req carried, `exec -t` passes its own $TERM). Empty = leave the
     # environment's TERM alone. 1-255 bytes of printable non-space ASCII;
@@ -4033,6 +4043,10 @@ enum ExecRunStatus:
     empty_argv
     denied
     internal_error
+    # The command body is larger than the server reads (2 MiB).
+    body_too_large
+    # The command body could not be read from its stream or did not decode.
+    bad_body
 
 format ExecRunResponse:
     status :ExecRunStatus
@@ -4060,15 +4074,7 @@ format ExecEvent:
 format RunnerExecRunRequest:
     exec_id :u64
     task_id :TaskID
-    auth_ticket :[16]u8
     stream_id :u64       # bidi stream toward the runner for the frame protocol
-    # repo_path travels from the SERVER's task record, as RunnerGitQueryRequest's
-    # does and for the same reason: the runner drops its per-task entry when a
-    # task ends, so it cannot resolve the worktree of a TERMINAL task on its
-    # own. The runner re-validates this against its --roots before running.
-    repo_path_len :u16
-    repo_path :[repo_path_len]u8
-    argv :ExecArgv
     stdin_enabled :u1
     # Relayed verbatim; see ExecRunRequest.shell_line.
     shell_line :u1
@@ -4077,7 +4083,22 @@ format RunnerExecRunRequest:
     # Relayed verbatim; see ExecRunRequest.pty.
     pty :u1
     reserved :u4
-    # Relayed verbatim; see ExecRunRequest.term.
+    # A server-initiated send-stream carrying RunnerExecRunBody until EOF.
+    # AssignTask.stream_id's pattern, for ExecRunRequest.payload_stream_id's
+    # reason.
+    body_stream_id :u64
+
+# RunnerExecRunBody is what RunnerExecRunRequest.body_stream_id carries.
+format RunnerExecRunBody:
+    auth_ticket :[16]u8
+    # repo_path travels from the SERVER's task record, as RunnerGitQueryRequest's
+    # does and for the same reason: the runner drops its per-task entry when a
+    # task ends, so it cannot resolve the worktree of a TERMINAL task on its
+    # own. The runner re-validates this against its --roots before running.
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    argv :ExecArgv
+    # Relayed verbatim; see ExecRunBody.term.
     term_len :u8
     term :[term_len]u8
 
