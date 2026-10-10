@@ -211,7 +211,7 @@ RPID=$!
 # always sampled before the evidence existed and reported the catch-all
 # "neither rejected nor connected" -- a false FAIL that looks like a real one.
 for _ in $(seq 1 40); do
-  grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed|persist: connected|connection refused|ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log" && break
+  grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed|persist: connected|connection refused|ecdh: message receive timeout|ecdh: message channel closed|server response did not decode" "$TMP/runner.log" && break
   kill -0 "$RPID" 2>/dev/null || break   # died early: the assertions below report it
   sleep 1
 done
@@ -244,6 +244,15 @@ elif grep -qiE "ecdh: message receive timeout|ecdh: message channel closed" "$TM
   runner_alive || fail "runner EXITED against the old server — an objproto-layer handshake timeout is being classified FATAL. A landing would wipe the fleet."
   grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
   echo "  [1/3] PASS — objproto handshake timed out, stayed alive, kept retrying"
+elif grep -q "server response did not decode" "$TMP/runner.log"; then
+  # Outcome 5: the server's RESPONSE format moved (2026-10-11: PskAuthResponse
+  # gained server_sig). The NEW runner cannot decode the OLD server's one-byte
+  # answer and reports it at once; the skew is exercised, so the same two
+  # assertions apply.
+  echo "        skew exercised: the old server's PskAuthResponse did not decode"
+  runner_alive || fail "runner EXITED against the old server — an undecodable PskAuthResponse is being classified FATAL. A landing would wipe the fleet."
+  grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
+  echo "  [1/3] PASS — response undecodable, stayed alive, kept retrying"
 elif grep -qi "connection refused" "$TMP/runner.log"; then
   # Outcome 3a: setup broken — the OLD server was never reachable at all.
   fail "the OLD server was not reachable — skew never exercised (setup broken, not a pass)"
