@@ -228,3 +228,43 @@ to stream its body (or the connection has to be ws).
 - Streaming any other request. The check will name one if it is over budget;
   that is the trigger to move it.
 - The `scp` extension upload Zed attempts (refused by the gateway); separate.
+
+## Amendment — what shipped, 2026-10-10
+
+Commits `a6393208..da20a438` (plan
+`docs/superpowers/plans/2026-10-10-exec-request-streamed.md`).
+
+### Where the shipped code differs from the text above
+
+- **The server opens an exec OFF the receive loop.** The spec said the server
+  reads the body with `readAgentPayloadStream`; it did not say where. Run inline
+  in the task-control dispatch, the read waited out its own 2 s timeout — the
+  stream's frames are delivered by the same loop — and every exec came back
+  `bad_body`. The `OpenExecRun` case now runs in a goroutine on a value copy of
+  the envelope, `board_send`'s shape (`server/task_handler.go`).
+- **`sendRunnerRequest` has 20 call sites, not 15.** The spec's list came from a
+  grep for `protocol.RunnerRequest{`; five more requests are built as
+  `var rr protocol.RunnerRequest` (`hold.go`, `dataplane.go` ×2, `readopt.go`,
+  `server.go`'s EstablishRelay). The guard test found them. `psk.go` is exempt
+  from the guard: it re-encodes the handshake's RunnerHello as a
+  `RunnerMessage` for the in-process dispatcher, and nothing goes on the wire.
+- `buildAssignMsg` returns the `*protocol.RunnerRequest` rather than encoded
+  bytes, so both AssignTask senders go through `sendRunnerRequest`.
+- The empty-argv refusal moved behind the body read; it lives in
+  `openExecRun(conn, req, body)`, which `handleOpenExecRun` calls once the body
+  is in hand.
+
+### Verification
+
+- `make test`, `make check`, `make wasm-check`, `make test-integration` green.
+- `TestExecRunLongCommandOverBothTransports`: an 8 KiB shell line runs from a
+  client on the WS leg and one on the UDP leg, against a runner on UDP. On
+  loopback this proves the stream path, not the drop (MTU 65536).
+- The send-site check: `TestCheckControlMessage`,
+  `TestTaskControlSendsCheckTheSizeFirst`,
+  `TestSendRunnerRequestRefusesOverBudgetOnUDP`, and the guard
+  `TestRunnerRequestsAreSentOnlyThroughSendRunnerRequest` — falsified by adding
+  a direct `RunnerRequest` encode to `git_query.go`, then restored.
+- `scripts/wire-skew-check.sh` PASS (handshake only, as before).
+- **Not yet done:** the operator's live check — Zed's remote terminal through a
+  TUI-hosted gateway on UDP.
