@@ -131,3 +131,76 @@ func TestExecRunOptsReachTheRequestFlags(t *testing.T) {
 		t.Error("setting stdin_enabled disturbed the flags declared after it")
 	}
 }
+
+// Each refusal happens before anything is sent, so a zero Client is enough:
+// reaching the network would panic on the nil transport, which is itself the
+// failure this guards against.
+func TestExecRunRefusesPtyWithoutStdin(t *testing.T) {
+	_, err := (&Client{}).ExecRun(context.Background(), "0123456789abcdef0123456789abcdef",
+		[]string{"bash", "-l"}, ExecRunOpts{Pty: true})
+	if err == nil || !strings.Contains(err.Error(), "Stdin") {
+		t.Fatalf("ExecRun(Pty, no Stdin) = %v, want a refusal naming Stdin", err)
+	}
+}
+
+func TestExecRunRefusesTermWithoutPty(t *testing.T) {
+	_, err := (&Client{}).ExecRun(context.Background(), "0123456789abcdef0123456789abcdef",
+		[]string{"true"}, ExecRunOpts{Term: "xterm"})
+	if err == nil || !strings.Contains(err.Error(), "Pty") {
+		t.Fatalf("ExecRun(Term, no Pty) = %v, want a refusal naming Pty", err)
+	}
+}
+
+func TestExecRunRefusesTerminalWithoutPty(t *testing.T) {
+	_, err := (&Client{}).ExecRun(context.Background(), "0123456789abcdef0123456789abcdef",
+		[]string{"true"}, ExecRunOpts{Terminal: true})
+	if err == nil || !strings.Contains(err.Error(), "Pty") {
+		t.Fatalf("ExecRun(Terminal, no Pty) = %v, want a refusal naming Pty", err)
+	}
+}
+
+func TestExecRunRefusesAnInvalidTerm(t *testing.T) {
+	_, err := (&Client{}).ExecRun(context.Background(), "0123456789abcdef0123456789abcdef",
+		[]string{"true"}, ExecRunOpts{Pty: true, Stdin: strings.NewReader(""), Term: "xterm 256"})
+	if err == nil || !strings.Contains(err.Error(), "term") {
+		t.Fatalf("ExecRun(invalid Term) = %v, want a refusal naming term", err)
+	}
+}
+
+type recordedSize struct{ rows, cols, w, h uint16 }
+
+type sizeRecorder struct{ got []recordedSize }
+
+func (r *sizeRecorder) SetTerminalWindowSize(rows, cols, w, h uint16) error {
+	r.got = append(r.got, recordedSize{rows, cols, w, h})
+	return nil
+}
+
+func TestExecRunSendsTheInitialSize(t *testing.T) {
+	var r sizeRecorder
+	if err := execInitialSize(&r, ExecRunOpts{Pty: true, InitialRows: 30, InitialCols: 100, InitialWidthPx: 800, InitialHeightPx: 600}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.got) != 1 || r.got[0] != (recordedSize{30, 100, 800, 600}) {
+		t.Fatalf("frames = %+v, want one 30x100 (800x600px)", r.got)
+	}
+}
+
+// Both-or-nothing, as applyInitialWindowSize: a PTY sized 30x0 is not a smaller
+// terminal, it is a broken one, and guessing the missing half would hide a
+// client that sent only one.
+func TestExecRunSendsNoInitialSizeWhenHalfIsZero(t *testing.T) {
+	for _, o := range []ExecRunOpts{
+		{Pty: true, InitialRows: 30},
+		{Pty: true, InitialCols: 100},
+		{Pty: false, InitialRows: 30, InitialCols: 100},
+	} {
+		var r sizeRecorder
+		if err := execInitialSize(&r, o); err != nil {
+			t.Fatal(err)
+		}
+		if len(r.got) != 0 {
+			t.Errorf("opts %+v sent %+v, want nothing", o, r.got)
+		}
+	}
+}

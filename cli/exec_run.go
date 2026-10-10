@@ -60,6 +60,34 @@ type ExecRunOpts struct {
 	// Needs ShellLine: what it renames is the shell, and there is no shell to
 	// rename when the caller supplied its own argv.
 	SshdParent bool
+
+	// Pty runs the child under a pseudo-terminal on the runner: its stdin,
+	// stdout and stderr are the terminal, so everything arrives on Stdout and
+	// nothing on Stderr. Needs Stdin (or Terminal) — a terminal child reads the
+	// terminal. For `ssh -t host cmd` through the gateway and `exec -t`.
+	Pty bool
+
+	// Term becomes the child's TERM. Needs Pty; empty leaves the environment's
+	// TERM alone. protocol.ValidateExecTerm is the rule.
+	Term string
+
+	// The PTY's size, sent as the first TerminalWindowSize control frame once
+	// the data stream is open — the way an interactive session is sized
+	// (applyInitialWindowSize). Both rows and cols, or nothing: the child then
+	// runs at the PTY's creation size until a resize.
+	InitialRows, InitialCols, InitialWidthPx, InitialHeightPx uint16
+
+	// OnResizer, if set with Pty, is called once with a function that resizes
+	// the PTY, after the initial size has been sent. The ssh gateway forwards
+	// window-change through it.
+	OnResizer func(resize func(rows, cols, widthPx, heightPx uint16) error)
+
+	// Terminal hands the stream to THIS process's terminal instead of
+	// Stdin/Stdout/Stderr: raw mode, the local size and its changes, and the
+	// terminal reset on the way out (objtrsf RemoteShell). Needs Pty. Ctrl+]
+	// ends the exec — RemoteShell's detach key half-closes the stream and the
+	// child is hung up. For `exec -t`.
+	Terminal bool
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -88,10 +116,27 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	if opts.SshdParent && !opts.ShellLine {
 		return ExecRunResult{}, errors.New("exec: SshdParent needs ShellLine — what it renames is the shell")
 	}
+	// Refused here, before anything is sent, for the same reason as the
+	// SshdParent check: each is a combination the caller cannot have meant, and
+	// the runner would refuse it anyway with less to say about why.
+	if opts.Terminal && !opts.Pty {
+		return ExecRunResult{}, errors.New("exec: Terminal needs Pty — the local terminal is handed to a PTY child")
+	}
+	if opts.Pty && opts.Stdin == nil && !opts.Terminal {
+		return ExecRunResult{}, errors.New("exec: Pty needs Stdin — a terminal child reads the terminal")
+	}
+	if opts.Term != "" && !opts.Pty {
+		return ExecRunResult{}, errors.New("exec: Term needs Pty — TERM is applied only to a terminal")
+	}
+	if err := protocol.ValidateExecTerm(opts.Term); err != nil {
+		return ExecRunResult{}, fmt.Errorf("exec: %w", err)
+	}
 	body := protocol.ExecRunRequest{TaskId: tid, Argv: buildExecArgv(argv)}
 	body.SetShellLine(opts.ShellLine)
 	body.SetSshdParent(opts.SshdParent)
-	body.SetStdinEnabled(opts.Stdin != nil)
+	body.SetStdinEnabled(opts.Stdin != nil || opts.Terminal)
+	body.SetPty(opts.Pty)
+	body.SetTerm([]byte(opts.Term))
 	req.SetOpenExecRun(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -116,58 +161,77 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	defer data.CloseBoth()
 
 	stream := agentexec.NewCommandExecutionStream(data)
-	// Both output pumps must be drained: an undrained demux side backpressures
-	// the stream, and the child would stall part-way through its output.
-	done := make(chan struct{}, 2)
-	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stdout, stream.Stdout()) }()
-	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stderr, stream.Stderr()) }()
-	// The child's stdin is closed when the caller's runs out — or IMMEDIATELY
-	// when there is no caller stdin at all. Closing writes the 0-length Stdin
-	// frame the executor reads as "close the child's stdin"; without it the
-	// child holds a pipe nobody will ever write to.
-	//
-	// The no-stdin case is not hypothetical politeness. The TUI and the WebUI
-	// pass no Stdin, and `exec <task> -- bash` from either hung forever with the
-	// shell waiting on an EOF that was never coming — measured against a live
-	// runner, the child still alive minutes later.
-	//
-	// A CURRENT runner needs none of this: stdin_enabled=0 makes it give the
-	// child /dev/null, which is strictly better (no window in which stdin is
-	// open and empty). This close stays as the cover for a runner that predates
-	// that — the deployment order is server first, THEN runners, so a new client
-	// against an old runner is a state the fleet passes through. The runner
-	// drops a 0-length frame silently for exactly this reason.
-	closeChildStdin := func(w io.Writer) {
-		if cl, ok := w.(io.Closer); ok {
-			_ = cl.Close()
+	if opts.Pty && !opts.Terminal {
+		// RemoteShell sizes the PTY itself in Terminal mode, from the local
+		// terminal, so the explicit size is for the other callers only.
+		if err := execInitialSize(stream, opts); err != nil {
+			return ExecRunResult{}, fmt.Errorf("exec: initial window size: %w", err)
+		}
+		if opts.OnResizer != nil {
+			opts.OnResizer(stream.SetTerminalWindowSize)
 		}
 	}
-	if opts.Stdin != nil {
-		go func() {
-			w := stream.Stdin()
-			_, _ = io.Copy(w, opts.Stdin)
-			closeChildStdin(w)
-		}()
+	if opts.Terminal {
+		// RemoteShell owns the local terminal until the child's output ends
+		// (or Ctrl+] half-closes the stream and the child is hung up); the
+		// outcome is then read below exactly as for a pipe exec.
+		if err := execRemoteShell(stream); err != nil {
+			return ExecRunResult{}, fmt.Errorf("exec: terminal: %w", err)
+		}
 	} else {
-		closeChildStdin(stream.Stdin())
-	}
+		// Both output pumps must be drained: an undrained demux side backpressures
+		// the stream, and the child would stall part-way through its output.
+		done := make(chan struct{}, 2)
+		go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stdout, stream.Stdout()) }()
+		go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stderr, stream.Stderr()) }()
+		// The child's stdin is closed when the caller's runs out — or IMMEDIATELY
+		// when there is no caller stdin at all. Closing writes the 0-length Stdin
+		// frame the executor reads as "close the child's stdin"; without it the
+		// child holds a pipe nobody will ever write to.
+		//
+		// The no-stdin case is not hypothetical politeness. The TUI and the WebUI
+		// pass no Stdin, and `exec <task> -- bash` from either hung forever with the
+		// shell waiting on an EOF that was never coming — measured against a live
+		// runner, the child still alive minutes later.
+		//
+		// A CURRENT runner needs none of this: stdin_enabled=0 makes it give the
+		// child /dev/null, which is strictly better (no window in which stdin is
+		// open and empty). This close stays as the cover for a runner that predates
+		// that — the deployment order is server first, THEN runners, so a new client
+		// against an old runner is a state the fleet passes through. The runner
+		// drops a 0-length frame silently for exactly this reason.
+		closeChildStdin := func(w io.Writer) {
+			if cl, ok := w.(io.Closer); ok {
+				_ = cl.Close()
+			}
+		}
+		if opts.Stdin != nil {
+			go func() {
+				w := stream.Stdin()
+				_, _ = io.Copy(w, opts.Stdin)
+				closeChildStdin(w)
+			}()
+		} else {
+			closeChildStdin(stream.Stdin())
+		}
 
-	// Cancellation has to reach the PUMPS. They block on the stream, not on ctx,
-	// so a cancelled context alone leaves this call parked for the whole life of
-	// the command — which is what "Ctrl-C does not stop it" looked like: the
-	// interrupt handler printed, the process stayed, and the child ran on.
-	// Returning here runs the deferred CloseBoth, which ends both pumps; the
-	// caller's connection close is what then stops the child server-side.
-	finished := make(chan struct{})
-	go func() {
-		<-done
-		<-done
-		close(finished)
-	}()
-	select {
-	case <-finished:
-	case <-ctx.Done():
-		return ExecRunResult{}, ctx.Err()
+		// Cancellation has to reach the PUMPS. They block on the stream, not on ctx,
+		// so a cancelled context alone leaves this call parked for the whole life of
+		// the command — which is what "Ctrl-C does not stop it" looked like: the
+		// interrupt handler printed, the process stayed, and the child ran on.
+		// Returning here runs the deferred CloseBoth, which ends both pumps; the
+		// caller's connection close is what then stops the child server-side.
+		finished := make(chan struct{})
+		go func() {
+			<-done
+			<-done
+			close(finished)
+		}()
+		select {
+		case <-finished:
+		case <-ctx.Done():
+			return ExecRunResult{}, ctx.Err()
+		}
 	}
 
 	// The outcome stream is looked up HERE, not before the pumps: it carries
@@ -204,6 +268,16 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 		return ExecRunResult{}, fmt.Errorf("exec: decode outcome: %w", derr)
 	}
 	return ExecRunResult{ExitCode: ev.ExitCode, Kind: ev.Kind, Detail: string(ev.Detail)}, nil
+}
+
+// execInitialSize sends the PTY's first size, or nothing. Both-or-nothing for
+// applyInitialWindowSize's reason; nothing at all for a pipe exec, which has
+// no terminal to size.
+func execInitialSize(s windowSizeSetter, opts ExecRunOpts) error {
+	if !opts.Pty || opts.InitialRows == 0 || opts.InitialCols == 0 {
+		return nil
+	}
+	return s.SetTerminalWindowSize(opts.InitialRows, opts.InitialCols, opts.InitialWidthPx, opts.InitialHeightPx)
 }
 
 // copyIfSet drains src even when the caller wants nothing written, because an
