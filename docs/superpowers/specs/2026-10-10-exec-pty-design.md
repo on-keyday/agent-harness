@@ -48,8 +48,11 @@ chose it while writing — those rows are the ones worth a second look.
 
 objtrsf starts the child and only then reads the stream, so the child runs for
 a few milliseconds at the PTY's creation size before the first frame lands:
-80×25 on Windows (`go-pty pty_windows.go:51`), and whatever `pty.New` leaves on
-Unix — it sets none, so presumably the kernel's 0×0 (inferred, not measured).
+80×25 on Windows (`go-pty pty_windows.go:51`), and **0×0 on Linux**: `pty.New`
+sets no size. Measured 2026-10-10 with go-pty v0.2.2 (the version this module
+pins): `p, _ := pty.New(); c := p.Command("stty", "size"); c.Start()`, then one
+line read from `p` — `"0 0\r\n"`. (Read one line, not to EOF: go-pty keeps the
+slave open in the parent, so the master never reports EOF.)
 
 Interactive tasks have lived with exactly this since they existed:
 `applyInitialWindowSize` (`cli/initial_winsize.go`) sends one frame right after
