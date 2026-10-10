@@ -46,7 +46,7 @@ chose it while writing.
 | D1 | `exec` carries its argv and `term` on a stream, on BOTH hops (client → server, server → runner) | operator |
 | D2 | A size check at the send site of the two request paths that carry caller-supplied lengths: the client's task-control send, and the server's `RunnerRequest` send. Not every send | operator |
 | D3 | The check is NOT in objtrsf's `objproto` | operator |
-| D4 | The budget is a fixed constant, about 1170 bytes, and an over-budget message on a `udp` connection is an ERROR, not sent. `ws`/`wss` are not checked | this spec, presented and not objected to |
+| D4 | The budget is what fits one datagram on THAT connection right now — trsf's `MaxDatagramSize()`, which moves with PLPMTUD — and an over-budget message on a `udp` connection is an ERROR, not sent. `ws`/`wss` are not checked | operator (the live MTU replaced a fixed 1170) |
 | D5 | The server reads an exec body up to **2 MiB** and refuses beyond it — Linux's usual total `ARG_MAX`, so no command a runner's OS would run is refused by the server first | operator |
 | D6 | The four exec flags (`stdin_enabled`, `shell_line`, `sshd_parent`, `pty`) stay in the envelope; only variable-length fields move to the body | this spec |
 | D7 | Every server → runner `RunnerRequest` send goes through one function, `sendRunnerRequest`, with a test that fails on a send outside it | this spec (the "obligation in a function + grep guard" shape this repo already uses) |
@@ -63,12 +63,27 @@ path — because those are the ones that grow past the budget without anyone
 editing a schema. Responses and server-originated notifications stay
 unchecked; a later incident there is the trigger to extend D7's shape.
 
-Why an error and not the kernel's EMSGSIZE: `transport/udp.go` (objtrsf)
-swallows EMSGSIZE deliberately, because trsf's MTU probes are oversize on
-purpose, so the harness cannot see it. A fixed budget is what the harness CAN
-check. It is conservative: a 1300-byte message that fits a 1500-MTU LAN today
-becomes an error. Such a message is already dropped on a tailnet path
-(WireGuard MTU 1280), so the error makes an existing defect visible.
+Why not the kernel's EMSGSIZE: `transport/udp.go` (objtrsf) swallows it
+deliberately, because trsf's MTU probes are oversize on purpose, so the harness
+cannot see it.
+
+What the harness CAN see is trsf's own path-MTU estimate. trsf runs PLPMTUD per
+connection and exports the result as `MaxDatagramSize()` — "the largest payload
+that fits one packet RIGHT NOW", already on both the server's `ConnHandle` and
+the client's `peer.Conn`. Control messages do not go through trsf, so nothing
+clamps them to that estimate; reading it as the budget is new. It is the
+estimate for the same UDP 5-tuple, so it applies to these messages too
+(inferred, not measured). It starts at trsf's floor (1200 − 30 = 1170) and
+rises as probes succeed, so a LAN connection gets about 1470 once discovery has
+run, and nothing that fits the path today is refused. `MaxDatagramSize()`
+subtracts trsf's 30-byte packet overhead where an objproto control message
+spends 24, so the budget is 6 bytes conservative; using the exported value
+rather than recomputing the overhead in the harness keeps that arithmetic in
+the one place its comment says it lives.
+
+What it does not cover: right after the path narrows (a LAN → tailnet move) the
+estimate is still the old, larger value until PLPMTUD notices, and an
+over-sized message in that window is still dropped silently.
 
 ## Wire
 
@@ -161,27 +176,25 @@ the body.
 `runner/protocol/control_budget.go`:
 
 ```go
-// ControlMessageBudget is the largest control message that fits one UDP
-// datagram on every path the harness runs over: trsf's DefaultInitialMTU (1200)
-// minus objproto's 8-byte header and AEAD tag.
-const ControlMessageBudget = 1170
-
 // CheckControlMessage refuses a control message that would be dropped
-// silently: over budget on a udp connection. ws/wss ride TCP and are not
-// checked.
-func CheckControlMessage(transport string, n int) error
+// silently: on a udp connection, larger than what fits one datagram right now
+// (budget = the connection's trsf MaxDatagramSize()). ws/wss ride TCP and are
+// not checked.
+func CheckControlMessage(transport string, budget, n int) error
 ```
 
 The error names the size, the budget, the transport, and that the request has
 to stream its body (or the connection has to be ws).
 
 - **Client**: `RoundTripTaskControl` and `BeginTaskControl` call it with
-  `c.conn.Connection().ConnectionID().Transport` and the encoded length, after
-  encoding and before `SendMessage`; an error is returned as the send error and
-  the pending entry is removed, exactly as a failed send is now.
-- **Server → runner**: `sendRunnerRequest(conn objproto.Connection, req
+  `c.conn.Connection().ConnectionID().Transport`, `c.conn.MaxDatagramSize()`
+  and the encoded length, after encoding and before `SendMessage`; an error is
+  returned as the send error and the pending entry is removed, exactly as a
+  failed send is now.
+- **Server → runner**: `sendRunnerRequest(conn ConnHandle, req
   *protocol.RunnerRequest) error` encodes with the `RunnerControl` app kind,
-  checks, and sends. The 15 sites that build a `RunnerRequest` today
+  checks against `conn.ConnectionID().Transport` and `conn.MaxDatagramSize()`,
+  and sends. The 15 sites that build a `RunnerRequest` today
   (`agent_wake.go`, `dispatch.go` ×2, `exec_run.go` ×2, `file_transfer.go` ×2,
   `git_query.go`, `port_forward.go` ×4, `runner_handler.go` ×2,
   `task_handler.go`) call it. A test fails when a `RunnerRequest` is encoded
@@ -190,9 +203,10 @@ to stream its body (or the connection has to be ws).
 ## Testing
 
 - **Envelope size**: an `ExecRunRequest` and a `RunnerExecRunRequest` built
-  for a 4 KiB argv with `term` set encode within `ControlMessageBudget`.
-- **The check**: `CheckControlMessage("udp", budget+1)` errors and names the
-  size; `("udp", budget)`, `("ws", 64<<10)` and `("wss", 64<<10)` pass.
+  for a 4 KiB argv with `term` set encode within 1170 bytes (trsf's floor).
+- **The check**: `CheckControlMessage("udp", 1170, 1171)` errors and names the
+  size and budget; `("udp", 1170, 1170)`, `("udp", 1470, 1300)`,
+  `("ws", 1170, 64<<10)` and `("wss", 1170, 64<<10)` pass.
 - **Client**: a request encoded over budget on a udp client is refused before
   `SendMessage`, and its pending entry is gone.
 - **Server**: a body over 2 MiB is refused; a malformed body is refused.
