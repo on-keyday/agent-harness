@@ -1,8 +1,11 @@
 package runner
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -393,5 +396,19 @@ func TestBuildAgentEnvOmitsAZeroTicket(t *testing.T) {
 	}
 	if found != "HARNESS_AUTH_TICKET=ab"+strings.Repeat("00", 15) {
 		t.Fatalf("a real ticket must still be set, got %q", found)
+	}
+}
+
+func TestBuildAgentEnv_ServerPubKey(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	env := BuildAgentEnv(AgentEnvSpec{ServerPubKey: pub})
+	want := "HARNESS_SERVER_PUBKEY=" + hex.EncodeToString(pub)
+	if !slices.Contains(env, want) {
+		t.Fatalf("env lacks %q: %v", want, env)
+	}
+	for _, kv := range BuildAgentEnv(AgentEnvSpec{}) {
+		if strings.HasPrefix(kv, "HARNESS_SERVER_PUBKEY=") {
+			t.Fatalf("no key configured, but env has %q", kv)
+		}
 	}
 }

@@ -2,13 +2,18 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -255,8 +260,8 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 		return nil
 	}
 
-	respCh := make(chan protocol.PskAuthResponse, 1)
-	respCh <- protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}
+	respCh := make(chan cli.PskAuthReply, 1)
+	respCh <- cli.PskAuthReply{Resp: protocol.PskAuthResponse{Status: protocol.PskAuthStatus_Ok}}
 
 	// No PSK: binder_len should be 0.
 	ctx := context.Background()
@@ -456,5 +461,39 @@ func TestRunHandle_BufferedRunnerHelloResponse_SetsCanonicalID(t *testing.T) {
 	// A message arriving AFTER activation is dispatched live (not buffered).
 	if len(h.ctlBuf) != 0 {
 		t.Fatalf("ctlBuf not drained after activateDispatch: %d left", len(h.ctlBuf))
+	}
+}
+
+// A forged bad_psk must not become a PskRejectedError: Connect wraps a
+// non-retryable PskRejectedError as fatal, and the runner would exit for good.
+func TestRunnerHandshake_ForgedRejectionIsNotFatal(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	_, impostor, _ := ed25519.GenerateKey(rand.Reader)
+	tr := []byte("tr")
+	resp := protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}
+	resp.SetServerSig(cli.SignServerAuth(impostor, tr, protocol.PskAuthStatus_BadPsk))
+	respCh := make(chan cli.PskAuthReply, 1)
+	respCh <- cli.PskAuthReply{Resp: resp}
+
+	cfg := Config{RunnerID: NewRunnerID(), ServerPubKey: pub}
+	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil }, nil, tr, cfg, respCh)
+	var sae *cli.ServerAuthError
+	var rej *cli.PskRejectedError
+	if !errors.As(err, &sae) || errors.As(err, &rej) {
+		t.Fatalf("err = %v, want ServerAuthError and not PskRejectedError", err)
+	}
+}
+
+func TestRunnerHandshake_UndecodableReplyIsRetryable(t *testing.T) {
+	respCh := make(chan cli.PskAuthReply, 1)
+	respCh <- cli.DecodePskAuthReply([]byte{0})
+	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil },
+		nil, nil, Config{RunnerID: NewRunnerID()}, respCh)
+	if err == nil || !strings.Contains(err.Error(), "server response did not decode") {
+		t.Fatalf("err = %v", err)
+	}
+	var rej *cli.PskRejectedError
+	if errors.As(err, &rej) {
+		t.Fatal("must not be a PskRejectedError")
 	}
 }

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
@@ -301,6 +302,8 @@ type Session struct {
 	// HARNESS_PSK so harness-cli invocations from inside the agent can
 	// authenticate against the PSK-protected server.
 	PSK []byte
+	// ServerPubKey is forwarded to agents as HARNESS_SERVER_PUBKEY.
+	ServerPubKey ed25519.PublicKey
 
 	// ProxyVia, when non-empty, is propagated into spawned agent env as
 	// HARNESS_PROXY_VIA_RUNNER (Phase B). Set by ListenAndServe in listen mode.
@@ -696,16 +699,17 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// s.Sender.ID() — the latter is the peer's symmetric ConnectionID, which
 	// is the server's own CID from the runner's vantage.
 	env := BuildAgentEnv(AgentEnvSpec{
-		ServerCID:  s.ServerCID,
-		RunnerID:   s.runnerCanonicalRunnerID(),
-		TaskID:     taskID,
-		RepoPath:   repoPath,
-		Hostname:   s.Hostname,
-		WSPath:     s.WSPath,
-		AuthTicket: body.AuthTicket,
-		BinDir:     s.BinDir,
-		PSK:        s.PSK,
-		ProxyVia:   s.ProxyVia,
+		ServerCID:    s.ServerCID,
+		RunnerID:     s.runnerCanonicalRunnerID(),
+		TaskID:       taskID,
+		RepoPath:     repoPath,
+		Hostname:     s.Hostname,
+		WSPath:       s.WSPath,
+		AuthTicket:   body.AuthTicket,
+		BinDir:       s.BinDir,
+		PSK:          s.PSK,
+		ServerPubKey: s.ServerPubKey,
+		ProxyVia:     s.ProxyVia,
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
@@ -958,19 +962,20 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		}
 	}
 	env := BuildAgentEnv(AgentEnvSpec{
-		ServerCID:   s.ServerCID,
-		RunnerID:    s.runnerCanonicalRunnerID(),
-		TaskID:      oer.TaskId,
-		RepoPath:    repoPath,
-		Hostname:    s.Hostname,
-		WSPath:      s.WSPath,
-		AuthTicket:  oer.AuthTicket,
-		BinDir:      s.BinDir,
-		PSK:         s.PSK,
-		ProxyVia:    s.ProxyVia,
-		X11Enabled:  x11Enabled,
-		X11Display:  x11Display,
-		X11AuthFile: x11AuthFile,
+		ServerCID:    s.ServerCID,
+		RunnerID:     s.runnerCanonicalRunnerID(),
+		TaskID:       oer.TaskId,
+		RepoPath:     repoPath,
+		Hostname:     s.Hostname,
+		WSPath:       s.WSPath,
+		AuthTicket:   oer.AuthTicket,
+		BinDir:       s.BinDir,
+		PSK:          s.PSK,
+		ServerPubKey: s.ServerPubKey,
+		ProxyVia:     s.ProxyVia,
+		X11Enabled:   x11Enabled,
+		X11Display:   x11Display,
+		X11AuthFile:  x11AuthFile,
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.

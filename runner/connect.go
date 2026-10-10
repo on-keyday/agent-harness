@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -70,6 +71,11 @@ type Config struct {
 	Logger *slog.Logger
 	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
 	PSK []byte
+	// ServerPubKey, when non-nil, is the server's Ed25519 public key: the
+	// handshake refuses a PskAuthResponse whose signature does not verify
+	// against it, and every spawned agent gets it as HARNESS_SERVER_PUBKEY.
+	// nil = no verification. agent-runner resolves it at startup.
+	ServerPubKey ed25519.PublicKey
 
 	// NoWorktree disables the per-task git worktree creation. Tasks run with
 	// cwd = AssignTask.RepoPath. Settings/skills injection and worktree
@@ -123,7 +129,7 @@ type RunHandle struct {
 	sender  *peerSender
 	cfg     Config
 
-	pskRespCh chan protocol.PskAuthResponse
+	pskRespCh chan cli.PskAuthReply
 	closeOnce sync.Once
 
 	// Control-message handling spans two phases. During the merged handshake
@@ -401,6 +407,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		WSPath:         cli.WebSocketPath,
 		BinDir:         binDir,
 		PSK:            psk,
+		ServerPubKey:   cfg.ServerPubKey,
 		ProxyVia:       cfg.ProxyVia,
 		Sender:         sender,
 		Streams:        pc.Transport(),
@@ -437,19 +444,16 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		session:   session,
 		sender:    sender,
 		cfg:       cfg,
-		pskRespCh: make(chan protocol.PskAuthResponse, 1),
+		pskRespCh: make(chan cli.PskAuthReply, 1),
 	}
 
 	// During PSK phase, only route PskAuth responses (brgen-decoded); runner
 	// control messages arrive only after the server has accepted the connection.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
-			var resp protocol.PskAuthResponse
-			if _, err := resp.Decode(payload); err == nil {
-				select {
-				case h.pskRespCh <- resp:
-				default:
-				}
+			select {
+			case h.pskRespCh <- cli.DecodePskAuthReply(payload):
+			default:
 			}
 			return
 		}
@@ -558,7 +562,7 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 // This is the runner-side counterpart to cli.SendMergedHandshake (which is
 // role=client). The binder computation (HMAC-SHA512 over the objproto transcript)
 // is identical to cli.ComputePSKBinder — only the role and identity union differ.
-func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan protocol.PskAuthResponse) error {
+func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Runner}
 
 	if len(psk) > 0 {
@@ -587,18 +591,14 @@ func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, p
 	}
 
 	select {
-	case resp := <-respCh:
-		if resp.Status == protocol.PskAuthStatus_Ok {
-			return nil
-		}
-		// Explicit server rejection. Connect wraps it as *cli.PSKAuthError (fatal)
-		// ONLY when !Retryable() — so Code MUST be set: a zero Code reads as
-		// PskAuthStatus_Ok, makes Retryable() false, and silently restores the
-		// fatal-on-wire-skew behaviour that wiped the fleet on 2026-07-16.
-		// (The runner sends a RunnerHello, so it has its own handshake here and
-		// does NOT go through cli.SendMergedHandshake — this is a third creation
-		// site, easy to miss when grepping only cli/.)
-		return cli.NewPskRejectedError(resp.Status)
+	case reply := <-respCh:
+		// Signature before status (cli.CheckPskAuthReply): a forged bad_psk
+		// must come back as a retryable ServerAuthError, not as the
+		// PskRejectedError that Connect turns fatal. A rejection that DOES
+		// verify still gets its Code via cli.NewPskRejectedError — this is the
+		// third PskRejectedError creation site the 2026-07-16 note warns about
+		// (the runner sends a RunnerHello, so it has its own handshake here).
+		return cli.CheckPskAuthReply(reply, cfg.ServerPubKey, transcript)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE: a server
 		// restart that interrupts the handshake must trigger reconnect, not exit.

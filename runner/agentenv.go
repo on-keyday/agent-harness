@@ -1,11 +1,13 @@
 package runner
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -29,6 +31,10 @@ type AgentEnvSpec struct {
 	// (e.g. agentboard send/recv) can authenticate against the
 	// PSK-protected server.
 	PSK []byte
+	// ServerPubKey, when non-nil, is forwarded as HARNESS_SERVER_PUBKEY so an
+	// in-task harness-cli verifies the server like its runner does. Not a
+	// secret, unlike PSK.
+	ServerPubKey ed25519.PublicKey
 
 	// ProxyVia, when non-empty, is the runner's listen-side ConnectionID
 	// string (e.g. "ws:127.0.0.1:8540-*"). Set in listen mode. Injected as
@@ -99,6 +105,9 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	}
 	if len(s.PSK) > 0 {
 		env = append(env, "HARNESS_PSK="+string(s.PSK))
+	}
+	if len(s.ServerPubKey) > 0 {
+		env = append(env, cli.ServerPubKeyEnv+"="+hex.EncodeToString(s.ServerPubKey))
 	}
 	if s.ProxyVia != "" {
 		env = append(env, "HARNESS_PROXY_VIA_RUNNER="+rewriteProxyViaForLocalDial(s.ProxyVia))

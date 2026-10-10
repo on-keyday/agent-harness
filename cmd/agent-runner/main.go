@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	// Aliased: this file already uses `fs` as the local name for a
@@ -63,6 +64,8 @@ type mainConfig struct {
 	Hostname                   string
 	PSK                        string
 	PSKFile                    string
+	ServerPubKey               string
+	ServerPubKeyFile           string
 	NoWorktree                 bool
 	ForceInjectHarnessSettings bool
 	AgentSkillsDir             string
@@ -140,6 +143,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
 	fs.StringVar(&c.PSKFile, "psk-file", c.PSKFile, "path to PSK file (env: HARNESS_PSK_FILE)")
+	fs.StringVar(&c.ServerPubKey, "server-pubkey", c.ServerPubKey, "the server's public key (hex, from <data-dir>/server-key.pub on the server host); when set, the runner refuses a server that cannot prove it holds the matching private key, and agents inherit it (env: HARNESS_SERVER_PUBKEY)")
+	fs.StringVar(&c.ServerPubKeyFile, "server-pubkey-file", c.ServerPubKeyFile, "path to a file holding --server-pubkey (env: HARNESS_SERVER_PUBKEY_FILE)")
 	fs.BoolVar(&c.NoWorktree, "no-worktree", c.NoWorktree, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
 	fs.BoolVar(&c.ForceInjectHarnessSettings, "force-inject-harness-settings", c.ForceInjectHarnessSettings, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
 	fs.StringVar(&c.AgentSkillsDir, "agentskills-dir", c.AgentSkillsDir, "hot-reload: inject agent skills from this directory on disk instead of the embedded copy (env: HARNESS_AGENTSKILLS_DIR). Point it at the repo's runner/agentskills dir; then editing a SKILL.md reaches the NEXT task with no runner rebuild or restart. A subdirectory counts as a skill only if it holds a SKILL.md, so non-skill files in the directory are ignored. Empty (default) injects the embedded copy, which is frozen at this process's launch.")
@@ -440,6 +445,22 @@ func main() {
 	}
 	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
 
+	pubVal, pubFile := cfg.ServerPubKey, cfg.ServerPubKeyFile
+	if pubVal == "" {
+		pubVal = os.Getenv(cli.ServerPubKeyEnv)
+	}
+	if pubFile == "" {
+		pubFile = os.Getenv(cli.ServerPubKeyFileEnv)
+	}
+	serverPubKey, err := cli.ResolveServerPubKey(pubVal, pubFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if serverPubKey != nil {
+		slog.Info("server key configured: the handshake verifies the server", "pubkey", hex.EncodeToString(serverPubKey))
+	}
+
 	// Agent skills: embedded by default; a non-empty --agentskills-dir (or
 	// HARNESS_AGENTSKILLS_DIR) swaps in an on-disk FS that WriteAgentSkills
 	// re-reads on every task assign. Warn-level like harness-server's
@@ -475,6 +496,7 @@ func main() {
 		Profiles:                   cfg.Profiles,
 		Logger:                     slog.Default(),
 		PSK:                        resolvedPSK,
+		ServerPubKey:               serverPubKey,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		AgentSkillsFS:              agentSkillsFS,

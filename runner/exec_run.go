@@ -232,16 +232,17 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	// The child sees what a task in this tree sees. Needing something else is
 	// what `env VAR=x <cmd>` in the argv is for.
 	env := BuildAgentEnv(AgentEnvSpec{
-		ServerCID:  s.ServerCID,
-		RunnerID:   s.runnerCanonicalRunnerID(),
-		TaskID:     req.TaskId,
-		RepoPath:   repoPath,
-		Hostname:   s.Hostname,
-		WSPath:     s.WSPath,
-		AuthTicket: body.AuthTicket,
-		BinDir:     s.BinDir,
-		PSK:        s.PSK,
-		ProxyVia:   s.ProxyVia,
+		ServerCID:    s.ServerCID,
+		RunnerID:     s.runnerCanonicalRunnerID(),
+		TaskID:       req.TaskId,
+		RepoPath:     repoPath,
+		Hostname:     s.Hostname,
+		WSPath:       s.WSPath,
+		AuthTicket:   body.AuthTicket,
+		BinDir:       s.BinDir,
+		PSK:          s.PSK,
+		ServerPubKey: s.ServerPubKey,
+		ProxyVia:     s.ProxyVia,
 	})
 	env = append(env, AgentCwdEnv(dir)...)
 	env = execPtyEnv(env, req, body.Term)
