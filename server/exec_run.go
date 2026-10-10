@@ -97,6 +97,14 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 		pty:        req.Pty(),
 	}
 	execID := h.execs().add(e)
+	if execID == 0 {
+		// The client's connection was torn down while this open was reading
+		// its body; nobody is left to read the outcome or to stop the child.
+		_ = dataStream.CloseBoth()
+		_ = ctrlStream.Close()
+		_ = runnerStream.CloseBoth()
+		return errResp(protocol.ExecRunStatus_InternalError)
+	}
 
 	// The child runs in the task's worktree AS that task, so it carries the
 	// task's own ticket — looked up, never reissued, see boardTaskTicket. A
@@ -139,6 +147,14 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 		// The runner reports an unreadable body itself — it holds the exec id —
 		// so the client still gets an outcome; nothing more to unwind here.
 		slog.Error("exec_run: body to runner failed", "task_id", taskIDHex, "err", eerr)
+	}
+	// The connection may have been torn down between add and the send above:
+	// its DropExecRunsForConn then removed this exec and asked the runner to
+	// stop an id the runner had not heard of yet. Stop it now, after the open,
+	// so the runner sees the two in order.
+	if _, still := h.execs().get(execID); !still {
+		h.stopExecOnRunner(e, "client disconnected")
+		return errResp(protocol.ExecRunStatus_InternalError)
 	}
 	// Announced only once the runner has been told, so a send failure does not
 	// publish an exec that never started — the same rule the remote forward's
@@ -418,6 +434,10 @@ func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
 // No outcome is written back: the stream it would go on belongs to the
 // connection that just died.
 func (h *TaskHandler) DropExecRunsForConn(connID string) {
+	// Marked FIRST: an open still in flight for this connection registers
+	// after this point only to be refused, and one that registered before it
+	// is in the list below.
+	h.execs().markConnGone(connID)
 	for _, e := range h.execs().list("") {
 		if e.clientCID != connID {
 			continue

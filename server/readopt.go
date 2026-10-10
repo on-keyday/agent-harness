@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/hex"
 
-
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 

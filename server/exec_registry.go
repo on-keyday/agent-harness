@@ -72,10 +72,36 @@ type execRegistry struct {
 	mu   sync.Mutex
 	next uint64
 	m    map[uint64]*execRun
+	// gone holds client connections whose teardown has already dropped their
+	// execs, and when. An open runs off the receive loop (it reads its command
+	// from a stream), so it can finish after its connection's
+	// DropExecRunsForConn — and a registration then would leave the child
+	// running with nothing left to stop it. Kept only as long as an open can
+	// be in flight; see goneTTL.
+	gone map[string]time.Time
 }
 
+// goneTTL is how long a dropped connection is remembered. An open in flight
+// waits at most a couple of seconds for its body, so a minute is ample and the
+// map stays small for the life of the server.
+const goneTTL = time.Minute
+
 func newExecRegistry() *execRegistry {
-	return &execRegistry{m: map[uint64]*execRun{}}
+	return &execRegistry{m: map[uint64]*execRun{}, gone: map[string]time.Time{}}
+}
+
+// markConnGone records that connID's execs have been dropped, so a later add
+// for it is refused. It also forgets entries older than goneTTL.
+func (r *execRegistry) markConnGone(connID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for id, at := range r.gone {
+		if now.Sub(at) > goneTTL {
+			delete(r.gone, id)
+		}
+	}
+	r.gone[connID] = now
 }
 
 // execs returns the registry, creating it on first use so struct-literal
@@ -91,9 +117,14 @@ func (h *TaskHandler) execs() *execRegistry {
 //
 // Ids start at 1, so 0 is never a real one and a zero-valued field is
 // unambiguously "none" — the forward registry's counter draws the same line.
+// add registers e and returns its id, or 0 — never a real id — when e's
+// client connection has already been dropped (markConnGone).
 func (r *execRegistry) add(e *execRun) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, gone := r.gone[e.clientCID]; gone && e.clientCID != "" {
+		return 0
+	}
 	r.next++
 	e.execID = r.next
 	if e.startedAt.IsZero() {

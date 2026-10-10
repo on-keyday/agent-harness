@@ -74,8 +74,14 @@ the client's `peer.Conn`. Control messages do not go through trsf, so nothing
 clamps them to that estimate; reading it as the budget is new. It is the
 estimate for the same UDP 5-tuple, so it applies to these messages too
 (inferred, not measured). It starts at trsf's floor (1200 − 30 = 1170) and
-rises as probes succeed, so a LAN connection gets about 1470 once discovery has
-run, and nothing that fits the path today is refused. `MaxDatagramSize()`
+rises as probes succeed, up to trsf's `DefaultMaxMTU` (1452) − 30 = **1422**.
+So it IS stricter than the path in two places (final review, read from code):
+before PLPMTUD has probed — a hello-time message gets 1170 — and above 1422,
+where an Ethernet path would still carry up to 1472 and loopback about 64 KiB.
+A request in those gaps used to arrive and is now an error. Known ones that
+can reach it: `submit` with a long prompt, `notify` text, `open_interactive`
+with long `extra_args`, and `RunnerHelloResponse` with more than about 70
+re-adopted tasks. `MaxDatagramSize()`
 subtracts trsf's 30-byte packet overhead where an objproto control message
 spends 24, so the budget is 6 bytes conservative; using the exported value
 rather than recomputing the overhead in the harness keeps that arithmetic in

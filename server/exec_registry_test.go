@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestExecRegistry(t *testing.T) {
 	r := newExecRegistry()
@@ -83,5 +86,34 @@ func TestExecsAccessorIsStable(t *testing.T) {
 	id := a.add(&execRun{taskIDHex: "aaaa"})
 	if _, ok := b.get(id); !ok {
 		t.Error("an entry added through one accessor is invisible through another")
+	}
+}
+
+// An exec whose client connection has already been torn down must not be
+// registered: the connection's DropExecRunsForConn has run and will not run
+// again, so a late registration would leave the child running with nothing to
+// stop it. The open now runs off the receive loop, which is what made "late"
+// possible.
+func TestExecRegistryRefusesAConnectionAlreadyDropped(t *testing.T) {
+	r := newExecRegistry()
+	r.markConnGone("ws:127.0.0.1:1-1")
+	// 0 is never a real id, so it is the refusal.
+	if id := r.add(&execRun{clientCID: "ws:127.0.0.1:1-1"}); id != 0 {
+		t.Fatalf("registered exec %d for a connection that was already dropped", id)
+	}
+	if id := r.add(&execRun{clientCID: "ws:127.0.0.1:2-2"}); id == 0 {
+		t.Fatal("refused an exec for a live connection")
+	}
+}
+
+// The record of dropped connections is only needed while an open can still be
+// in flight; it must not grow for the life of the server.
+func TestExecRegistryForgetsOldDroppedConnections(t *testing.T) {
+	r := newExecRegistry()
+	r.markConnGone("old")
+	r.gone["old"] = time.Now().Add(-2 * time.Minute)
+	r.markConnGone("new")
+	if _, still := r.gone["old"]; still {
+		t.Fatal("a connection dropped two minutes ago is still remembered")
 	}
 }
