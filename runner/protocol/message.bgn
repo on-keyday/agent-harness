@@ -160,8 +160,17 @@ format PskAuthRequest:
 
 # PskAuthResponse is the server's accept/reject for a PskAuthRequest.
 # On-wire: [0x45] + PskAuthResponse(brgen-encoded).
+#
+# server_sig authenticates the SERVER to the client: Ed25519 over
+# "agent-harness server-auth v1" || 0x00 || transcript || status, where
+# transcript is the objproto handshake transcript the client's binder also
+# covers (cli.SignServerAuth). The server's control listener always sends 64
+# bytes; the runner's data-plane listener sends 0. A client that has the
+# server's public key configured refuses a missing or wrong signature.
 format PskAuthResponse:
     status :PskAuthStatus
+    server_sig_len :u8
+    server_sig :[server_sig_len]u8
 
 format TaskID:
     id :[16]u8
