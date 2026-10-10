@@ -3998,7 +3998,24 @@ format ExecRunRequest:
     # something the command would not have, and reporting success for that is
     # worse than a refusal.
     sshd_parent :u1
-    reserved :u5
+    # pty=1 runs the child under a pseudo-terminal: one output stream (the
+    # child's stdout and stderr are the terminal), the child's stdin is the
+    # terminal, and TerminalWindowSize control frames on the data stream resize
+    # it. Requires stdin_enabled=1 — a terminal child reads the terminal.
+    #
+    # For `ssh -t host cmd` through the gateway, which sends pty-req before
+    # exec: an editor's remote terminal is exactly that, and over pipes its
+    # login shell is non-interactive — no prompt, no echo.
+    #
+    # Declared after sshd_parent for shell_line's reason above.
+    pty :u1
+    reserved :u4
+    # The child's TERM, applied only when pty=1 (the gateway passes the one
+    # pty-req carried, `exec -t` passes its own $TERM). Empty = leave the
+    # environment's TERM alone. 1-255 bytes of printable non-space ASCII;
+    # ValidateExecTerm is the rule.
+    term_len :u8
+    term :[term_len]u8
 
 enum ExecRunStatus:
     :u8
@@ -4057,7 +4074,12 @@ format RunnerExecRunRequest:
     shell_line :u1
     # Relayed verbatim; see ExecRunRequest.sshd_parent.
     sshd_parent :u1
-    reserved :u5
+    # Relayed verbatim; see ExecRunRequest.pty.
+    pty :u1
+    reserved :u4
+    # Relayed verbatim; see ExecRunRequest.term.
+    term_len :u8
+    term :[term_len]u8
 
 format ExecRunFinished:
     exec_id :u64
@@ -4085,6 +4107,8 @@ format ExecRunInfo:
     stderr_bytes          :u64
     last_activity_unix_ms :u64 # 0 = no payload byte has ever crossed
     taps                  :u16 # taps open on this exec RIGHT NOW
+    pty                   :u1  # runs under a PTY: stdout carries everything, stderr stays 0
+    reserved              :u7
 
 format ExecRunListRequest:
     task_filter :TaskID  # all-zero = every exec the caller may see
