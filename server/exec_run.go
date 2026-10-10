@@ -119,8 +119,7 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 	env, rbody := runnerExecRunMessages(body, req, execID, task.RepoPath, uint64(runnerStream.ID()), uint64(bodyStream.ID()), ticket)
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExecRun}
 	rreq.SetOpenExecRun(env)
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		h.removeExec(execID, protocol.ExecEventKind_Failed, -1)
 		_ = dataStream.CloseBoth()
 		_ = ctrlStream.Close()
@@ -397,8 +396,7 @@ func (h *TaskHandler) stopExecOnRunner(e *execRun, why string) {
 	}
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CloseExecRun}
 	rreq.SetCloseExecRun(protocol.CloseExecRunRequest{ExecId: e.execID})
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		slog.Error("exec_run: close request to runner failed", "exec_id", e.execID, "why", why, "err", err)
 	}
 }

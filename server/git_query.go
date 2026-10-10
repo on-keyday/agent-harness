@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"log/slog"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -56,8 +55,7 @@ func (h *TaskHandler) handleGitQuery(conn ConnHandle, req *protocol.GitQueryRequ
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_GitQuery}
 	rreq.SetGitQuery(runnerGitRequest(req, task.RepoPath, uint64(runnerStream.ID())))
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		slog.Error("git_query: send to runner failed", "task_id", taskIDHex, "err", err)

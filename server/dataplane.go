@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -334,11 +333,7 @@ func (s *Server) sendAuthorizeDataPlaneRequest(
 	var rr protocol.RunnerRequest
 	rr.Kind = protocol.RunnerRequestType_AuthorizeDataPlane
 	rr.SetAuthorizeDataPlane(req)
-	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		return protocol.AuthorizeDataPlaneResponse{}, fmt.Errorf("encode AuthorizeDataPlane: %w", err)
-	}
-	if _, _, err := entry.Conn.SendMessage(payload); err != nil {
+	if err := sendRunnerRequest(entry.Conn, &rr); err != nil {
 		return protocol.AuthorizeDataPlaneResponse{}, fmt.Errorf("send AuthorizeDataPlane: %w", err)
 	}
 	select {
@@ -359,11 +354,7 @@ func (s *Server) sendRevokeDataPlaneRequest(entry *RunnerEntry, grantID [16]byte
 	var rr protocol.RunnerRequest
 	rr.Kind = protocol.RunnerRequestType_RevokeDataPlane
 	rr.SetRevokeDataPlane(protocol.RevokeDataPlaneRequest{GrantId: grantID})
-	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		return
-	}
-	entry.Conn.SendMessage(payload) //nolint:errcheck
+	_ = sendRunnerRequest(entry.Conn, &rr)
 }
 
 // deliverAuthorizeDataPlaneResponse routes a runner's answer back to the

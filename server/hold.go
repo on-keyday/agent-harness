@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -170,11 +169,6 @@ func (s *Server) RunHoldSequence() int {
 	var rr protocol.RunnerRequest
 	rr.Kind = protocol.RunnerRequestType_HoldTasks
 	rr.SetHoldTasks(req)
-	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		log.Error("hold: encode failed", "err", err)
-		return 0
-	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -192,7 +186,10 @@ func (s *Server) RunHoldSequence() int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, _, err := entry.Conn.SendMessage(payload); err != nil {
+			// Each goroutine encodes its own copy: an encode may write length
+			// fields into the struct, and these run concurrently.
+			own := rr
+			if err := sendRunnerRequest(entry.Conn, &own); err != nil {
 				log.Warn("hold: send failed", "runner", idHex, "err", err)
 				return
 			}

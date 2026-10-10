@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/hex"
 
-	"github.com/on-keyday/agent-harness/appwire"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -247,12 +246,7 @@ func (s *Server) rebindHeldSessions(identity protocol.RunnerID, taskIDs []string
 			TaskId:   tid,
 			StreamId: uint64(runnerStream.ID()),
 		})
-		payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-		if err != nil {
-			log.Error("rebind: encode failed", "task", taskID, "err", err)
-			continue
-		}
-		if _, _, err := entry.Conn.SendMessage(payload); err != nil {
+		if err := sendRunnerRequest(entry.Conn, &rr); err != nil {
 			log.Error("rebind: send failed", "task", taskID, "err", err)
 			s.tasks.MarkFailed(taskID, "rebind_send_failed")
 			continue

@@ -135,7 +135,7 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	}
 }
 
-// buildAssignMsg constructs the wire bytes for a RunnerControl/AssignTask
+// buildAssignMsg constructs the RunnerControl/AssignTask request
 // message that carries only TaskID + StreamID. The actual body
 // (auth_ticket / repo_path / prompt / extra_args) is encoded separately
 // and written to the trsf send-stream with the returned ID; the runner
@@ -143,7 +143,7 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 //
 // Streamed via trsf instead of inline so long prompts don't exceed path
 // MTU on UDP transport.
-func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, []byte, error) {
+func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) (*protocol.RunnerRequest, []byte, error) {
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(task.ID)
 	copy(tid.Id[:], raw)
@@ -155,10 +155,6 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
 	req.SetAssignTask(assign)
-	data, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		return nil, nil, err
-	}
 
 	body := protocol.AssignTaskBody{
 		AuthTicket: ticket,
@@ -172,7 +168,7 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 	if err != nil {
 		return nil, nil, err
 	}
-	return data, bodyBytes, nil
+	return req, bodyBytes, nil
 }
 
 // taskIDFromHex converts a hex task ID string to a protocol.TaskID.
@@ -256,7 +252,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			continue
 		}
 
-		if _, _, err := runner.Conn.SendMessage(envelope); err != nil {
+		if err := sendRunnerRequest(runner.Conn, envelope); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
 			boardRevokeTask(d.Board, runner.Identity, task.ID)
 			d.Registry.UnbindTask(runner.ID, task.ID)
@@ -320,12 +316,7 @@ func (d *Dispatcher) OnCancel(taskID string) {
 func (d *Dispatcher) sendCancel(entry RunnerEntry, taskID string) {
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CancelTask}
 	req.SetCancelTask(protocol.CancelTask{TaskId: taskIDFromHex(taskID)})
-	data, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		slog.Error("dispatcher: OnCancel encode failed", "task", taskID, "err", err)
-		return
-	}
-	if _, _, err := entry.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(entry.Conn, req); err != nil {
 		// Per spec: capacity is NOT released on send fail; TaskFinished path handles it.
 		slog.Error("dispatcher: OnCancel send failed", "runner", entry.ID, "task", taskID, "err", err)
 	}

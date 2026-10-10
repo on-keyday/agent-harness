@@ -1578,10 +1578,7 @@ func (s *Server) sendAssign(runnerID objproto.ConnectionID, taskID string) error
 	if werr := stream.AppendData(true); werr != nil {
 		return fmt.Errorf("stream EOF: %w", werr)
 	}
-	if _, _, err := entry.Conn.SendMessage(envelope); err != nil {
-		return err
-	}
-	return nil
+	return sendRunnerRequest(entry.Conn, envelope)
 }
 
 // takePendingViaInfo removes and returns the ViaRegistrationInfo stashed for the
@@ -1669,11 +1666,7 @@ func (s *Server) sendEstablishRelayRequest(ctx context.Context, entry *RunnerEnt
 	var rr protocol.RunnerRequest
 	rr.Kind = protocol.RunnerRequestType_EstablishRelay
 	rr.SetEstablishRelay(req)
-	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		return protocol.EstablishRelayResponse{}, fmt.Errorf("encode EstablishRelayRequest: %w", err)
-	}
-	if _, _, err := entry.Conn.SendMessage(payload); err != nil {
+	if err := sendRunnerRequest(entry.Conn, &rr); err != nil {
 		return protocol.EstablishRelayResponse{}, fmt.Errorf("send EstablishRelayRequest: %w", err)
 	}
 

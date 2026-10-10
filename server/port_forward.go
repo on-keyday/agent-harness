@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -68,8 +67,7 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	}
 	body.SetRemoteHost(req.RemoteHost)
 	rreq.SetOpenPortForward(body)
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		slog.Error("port_forward: send to runner failed", "task_id", taskIDHex, "err", err)
@@ -208,8 +206,7 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 	}
 	body.SetBindAddr(req.BindAddr)
 	rreq.SetOpenPortForward(body)
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		h.pforwards().remove(fid)
 		_ = ctrl.CloseBoth()
 		slog.Error("port_forward: send listen request to runner failed", "task_id", pf.taskIDHex, "err", err)
@@ -262,8 +259,7 @@ func sendClosePortForward(rc ConnHandle, forwardID uint64) {
 	}
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ClosePortForward}
 	rreq.SetClosePortForward(protocol.ClosePortForwardRequest{ForwardId: forwardID})
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	_, _, _ = rc.SendMessage(data)
+	_ = sendRunnerRequest(rc, &rreq)
 }
 
 // handleRemoteForwardConn fires when a runner reports a new connection accepted
@@ -371,7 +367,5 @@ func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.R
 	}
 	body.SetRemoteHost(req.TargetHost)
 	rreq.SetOpenPortForward(body)
-	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	_, _, err := runner.Conn.SendMessage(data)
-	return err
+	return sendRunnerRequest(runner.Conn, &rreq)
 }

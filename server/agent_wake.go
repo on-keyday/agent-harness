@@ -4,7 +4,6 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -69,12 +68,7 @@ func (s *Server) emitTaskWake(tid protocol.TaskID) {
 	}
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_TaskWake}
 	req.SetTaskWake(protocol.TaskWakeRequest{TaskId: tid})
-	wireBytes, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err != nil {
-		slog.Warn("emitTaskWake encode failed", "err", err)
-		return
-	}
-	if _, _, err := conn.SendMessage(wireBytes); err != nil {
+	if err := sendRunnerRequest(conn, req); err != nil {
 		slog.Warn("emitTaskWake send failed", "task_id", taskIDHex, "err", err)
 		return
 	}

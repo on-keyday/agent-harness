@@ -1561,8 +1561,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		}
 	}
 	rreq.SetOpenExec(oer)
-	rdata := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if _, _, err := runnerConn.SendMessage(rdata); err != nil {
+	if err := sendRunnerRequest(runnerConn, &rreq); err != nil {
 		_ = tuiStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		finishWithError("send open_exec to runner: " + err.Error())
