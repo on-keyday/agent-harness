@@ -266,6 +266,12 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 
 	req.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	if err := c.checkTaskControlSize(data); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("send: %w", err)
+	}
 	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
@@ -308,6 +314,12 @@ type TaskControlResult struct {
 	Err  error
 }
 
+// checkTaskControlSize refuses a request that would not fit one datagram on a
+// udp connection, instead of sending it to be dropped silently.
+func (c *Client) checkTaskControlSize(data []byte) error {
+	return protocol.CheckControlMessage(c.conn.Connection().ConnectionID().Transport, c.conn.MaxDatagramSize(), len(data))
+}
+
 // BeginTaskControl is RoundTripTaskControl split in two: it assigns the id,
 // sends the request, and hands back the channel the answer will arrive on.
 //
@@ -332,6 +344,12 @@ func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan Task
 
 	req.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	if err := c.checkTaskControlSize(data); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("send: %w", err)
+	}
 	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
