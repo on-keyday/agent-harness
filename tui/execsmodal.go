@@ -38,6 +38,7 @@ func execRunInfoRow(e *protocol.ExecRunInfo, now time.Time) table.Row {
 		cli.FormatByteCount(e.StderrBytes),
 		cli.ExecRunLastActivity(e),
 		fmt.Sprintf("%d", e.Taps),
+		cli.ExecRunIOMode(e),
 		cli.ExecRunOrigin(e),
 		cli.ExecRunArgvString(e.Argv),
 	}
@@ -87,6 +88,7 @@ func NewExecsModal() ExecsModal {
 		{Title: "stderr", Width: 8},
 		{Title: "last", Width: 9},
 		{Title: "taps", Width: 4},
+		{Title: "io", Width: 4},
 		{Title: "origin", Width: 28},
 		{Title: "command", Width: 40},
 	}

@@ -499,12 +499,23 @@ func ExecRunLastActivity(e *protocol.ExecRunInfo) string {
 	return time.Since(time.UnixMilli(int64(e.LastActivityUnixMs))).Truncate(time.Second).String() + " ago"
 }
 
+// ExecRunIOMode names how an exec's stdio is wired: "pty" — one terminal
+// stream, so stderr stays 0 — or "pipe". Both values print everywhere, so a row
+// never leaves it out. One implementation for the CLI, the TUI and the browser.
+func ExecRunIOMode(e *protocol.ExecRunInfo) string {
+	if e.Pty() {
+		return "pty"
+	}
+	return "pipe"
+}
+
 // ExecRunTrafficLine renders what an exec has carried, per channel. Every field
 // prints, zeros included: `stderr=0` says nothing was written there, a blank
 // would say the row does not report it. Exported for the wasm bridge, so the
 // browser shows this exact string.
 func ExecRunTrafficLine(e *protocol.ExecRunInfo) string {
-	return fmt.Sprintf("stdin=%s  stdout=%s  stderr=%s  last=%s  taps=%d",
+	return fmt.Sprintf("io=%s  stdin=%s  stdout=%s  stderr=%s  last=%s  taps=%d",
+		ExecRunIOMode(e),
 		FormatByteCount(e.StdinBytes), FormatByteCount(e.StdoutBytes), FormatByteCount(e.StderrBytes),
 		ExecRunLastActivity(e), e.Taps)
 }
@@ -524,6 +535,7 @@ func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
 		StderrBytes        uint64   `json:"stderr_bytes"`
 		LastActivityUnixMs uint64   `json:"last_activity_unix_ms"`
 		Taps               uint16   `json:"taps"`
+		Pty                bool     `json:"pty"`
 	}{
 		ExecID:             e.ExecId,
 		TaskID:             hex.EncodeToString(e.TaskId.Id[:]),
@@ -536,6 +548,7 @@ func ExecRunInfoJSONLine(e *protocol.ExecRunInfo) string {
 		StderrBytes:        e.StderrBytes,
 		LastActivityUnixMs: e.LastActivityUnixMs,
 		Taps:               e.Taps,
+		Pty:                e.Pty(),
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

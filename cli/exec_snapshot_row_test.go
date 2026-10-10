@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -16,5 +17,14 @@ func TestExecSnapshotRowCarriesRawAndRendered(t *testing.T) {
 	}
 	if row["traffic"] != ExecRunTrafficLine(&protocol.ExecRunInfo{ExecId: 4, StdinBytes: 10, Taps: 1}) {
 		t.Fatalf("traffic must be exactly the CLI line: %v", row["traffic"])
+	}
+}
+
+func TestExecSnapshotRowCarriesPty(t *testing.T) {
+	var e protocol.ExecRunInfo
+	e.SetPty(true)
+	row := ExecSnapshotRow(&e)
+	if row["pty"] != true || !strings.HasPrefix(row["traffic"].(string), "io=pty") {
+		t.Fatalf("snapshot row: pty=%v traffic=%v", row["pty"], row["traffic"])
 	}
 }

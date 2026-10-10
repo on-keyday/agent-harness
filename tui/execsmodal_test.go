@@ -75,3 +75,15 @@ func TestExecsModalLastColumnAgesOnTheTick(t *testing.T) {
 		t.Fatalf("last after a tick = %q, want 10s ago", got)
 	}
 }
+
+// io is its own column, after taps, so the existing column indexes hold.
+func TestExecsModalRowShowsTheIOMode(t *testing.T) {
+	var e protocol.ExecRunInfo
+	if row := execRunInfoRow(&e, time.Now()); len(row) < 9 || row[8] != "pipe" {
+		t.Fatalf("pipe exec row = %v, want io cell \"pipe\" at 8", row)
+	}
+	e.SetPty(true)
+	if row := execRunInfoRow(&e, time.Now()); len(row) < 9 || row[8] != "pty" {
+		t.Fatalf("pty exec row = %v, want io cell \"pty\" at 8", row)
+	}
+}

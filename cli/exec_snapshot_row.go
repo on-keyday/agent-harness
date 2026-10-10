@@ -26,6 +26,7 @@ func ExecSnapshotRow(e *protocol.ExecRunInfo) map[string]any {
 		"stderr_bytes":          float64(e.StderrBytes),
 		"last_activity_unix_ms": float64(e.LastActivityUnixMs),
 		"taps":                  float64(e.Taps),
+		"pty":                   e.Pty(),
 		"traffic":               ExecRunTrafficLine(e),
 	}
 }
