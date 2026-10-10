@@ -18,6 +18,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestGetPSK_Unset(t *testing.T) {
@@ -416,5 +417,25 @@ func TestGetServerPubKey_Env(t *testing.T) {
 	t.Setenv(cli.ServerPubKeyEnv, "not-a-key")
 	if _, err := cli.GetServerPubKey(); err == nil {
 		t.Fatal("malformed HARNESS_SERVER_PUBKEY accepted")
+	}
+}
+
+// A malformed key is a configuration error and must surface BEFORE the dial
+// (spec D9): with the server down, a PersistLoop caller would otherwise only
+// ever see connection errors and retry forever.
+func TestDial_MalformedServerPubKeyFailsBeforeDialing(t *testing.T) {
+	t.Setenv(cli.ServerPubKeyEnv, "abcd")
+	t.Setenv(cli.ServerPubKeyFileEnv, "")
+	t.Setenv("HARNESS_PROXY_VIA_RUNNER", "")
+	cid, err := objproto.ParseConnectionID("ws:127.0.0.1:1-*", objproto.ParseOption_AllowRandomID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	var fatal *cli.PSKAuthError
+	if !errors.As(err, &fatal) || !strings.Contains(err.Error(), cli.ServerPubKeyEnv) {
+		t.Fatalf("err = %v, want a *cli.PSKAuthError naming %s", err, cli.ServerPubKeyEnv)
 	}
 }

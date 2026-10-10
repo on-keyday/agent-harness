@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -85,28 +86,49 @@ var ErrResponseUndecodable = errors.New("task control response undecodable (vers
 // peer.StartEndpointMaintenance for why that is the rule and not an
 // optimisation.
 func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
+	serverKey, err := serverPubKeyForDial()
+	if err != nil {
+		return nil, err
+	}
 	pc, err := DialPeerConn(ctx, peerCID)
 	if err != nil {
 		return nil, err
 	}
-	return dialOn(ctx, pc, kind)
+	return dialOn(ctx, pc, kind, serverKey)
 }
 
 // DialWith is Dial on an endpoint the caller owns and keeps. Every reconnect
 // opens a new Connection on that ONE endpoint, which is what an endpoint is
 // for; the caller builds it once with NewProcessEndpoint.
 func DialWith(ctx context.Context, ep objproto.Endpoint, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
+	serverKey, err := serverPubKeyForDial()
+	if err != nil {
+		return nil, err
+	}
 	pc, err := DialPeerConnWith(ctx, ep, peerCID)
 	if err != nil {
 		return nil, err
 	}
-	return dialOn(ctx, pc, kind)
+	return dialOn(ctx, pc, kind, serverKey)
+}
+
+// serverPubKeyForDial resolves the configured server key BEFORE any network
+// work. A key that is set but unusable is a configuration error no retry can
+// fix, so it is a *PSKAuthError (PersistLoop's fatal marker); resolving it
+// after the dial instead meant a down server hid it behind connection errors
+// forever.
+func serverPubKeyForDial() (ed25519.PublicKey, error) {
+	key, err := GetServerPubKey()
+	if err != nil {
+		return nil, &PSKAuthError{Err: fmt.Errorf("%s / %s: %w", ServerPubKeyEnv, ServerPubKeyFileEnv, err)}
+	}
+	return key, nil
 }
 
 // dialOn is everything Dial does AFTER the connection exists: the merged
 // PSK+identity handshake and the control-handler wiring. Both entry points
 // share it, so the two cannot drift in what they authenticate.
-func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Client, error) {
+func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, serverKey ed25519.PublicKey) (*Client, error) {
 	// The same decision buildMergedClientHello makes, through the same
 	// function, for the reason its own comment gives: the header cannot
 	// disagree with the handshake, and neither can this.
@@ -121,12 +143,6 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Clie
 	// (HARNESS_OPERATOR_PSK), in-task agents prove the connect psk (HARNESS_PSK).
 	// See resolveBinderPSK — keeping them in distinct env vars stops a runner
 	// from inheriting the operator secret and leaking it to agents.
-	serverKey, err := GetServerPubKey()
-	if err != nil {
-		pc.Close()
-		// A configuration error, not a server answer: retrying cannot fix it.
-		return nil, &PSKAuthError{Err: err}
-	}
 	psk := resolveBinderPSK()
 	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
 	pskRespCh := make(chan PskAuthReply, 1)
