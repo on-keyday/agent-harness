@@ -84,6 +84,83 @@ func TestExecRunE2E(t *testing.T) {
 		}
 	})
 
+	// The child gets a terminal: stdin is a tty, TERM is the one asked for, and
+	// the size sent right after the stream opened is the one it reads.
+	t.Run("pty_gives_the_child_a_terminal", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		defer pw.Close() // stdin stays open: its EOF would hang the child up
+		var out, errb bytes.Buffer
+		res, err := c.ExecRun(context.Background(), taskID,
+			// sleep: the size is a frame that lands just after the child starts
+			// (spec D3), so the first moment reads 0 0.
+			[]string{"sh", "-c", `test -t 0 && echo IS-TTY; echo "TERM=$TERM"; sleep 0.5; stty size`},
+			cli.ExecRunOpts{Pty: true, Term: "xterm-e2e", Stdin: pr, Stdout: &out, Stderr: &errb,
+				InitialRows: 33, InitialCols: 101})
+		if err != nil {
+			t.Fatalf("ExecRun: %v", err)
+		}
+		if res.Kind != protocol.ExecEventKind_Exited || res.ExitCode != 0 {
+			t.Fatalf("result = %+v, want exited/0", res)
+		}
+		for _, want := range []string{"IS-TTY", "TERM=xterm-e2e", "33 101"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("stdout = %q, want %q", out.String(), want)
+			}
+		}
+		if errb.Len() != 0 {
+			t.Errorf("stderr = %q, want nothing: under a PTY it all arrives on stdout", errb.String())
+		}
+	})
+
+	// A resize reaches the PTY. The resize frame and the newline that releases
+	// `read` travel the same stream in that order, so the child reads the size
+	// only after it has changed.
+	t.Run("pty_follows_a_resize", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		defer pw.Close()
+		resized := make(chan struct{})
+		go func() { <-resized; _, _ = pw.Write([]byte("go\n")) }()
+		var out bytes.Buffer
+		res, err := c.ExecRun(context.Background(), taskID,
+			[]string{"sh", "-c", "read x; stty size"},
+			cli.ExecRunOpts{Pty: true, Stdin: pr, Stdout: &out,
+				OnResizer: func(resize func(rows, cols, w, h uint16) error) {
+					if err := resize(40, 120, 0, 0); err != nil {
+						t.Errorf("resize: %v", err)
+					}
+					close(resized)
+				}})
+		if err != nil {
+			t.Fatalf("ExecRun: %v", err)
+		}
+		if res.Kind != protocol.ExecEventKind_Exited {
+			t.Fatalf("result = %+v, want exited", res)
+		}
+		if !strings.Contains(out.String(), "40 120") {
+			t.Errorf("stdout = %q, want the resized 40 120", out.String())
+		}
+	})
+
+	// The caller's stdin ending hangs the terminal up; the exec must END and
+	// report it, not hang.
+	t.Run("pty_stdin_eof_ends_the_exec", func(t *testing.T) {
+		done := make(chan error, 1)
+		go func() {
+			_, err := c.ExecRun(context.Background(), taskID,
+				[]string{"sh", "-c", "sleep 30"},
+				cli.ExecRunOpts{Pty: true, Stdin: strings.NewReader("")})
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("ExecRun: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a PTY exec whose stdin ended was still running 10s later")
+		}
+	})
+
 	t.Run("missing_binary_is_failed_not_exited", func(t *testing.T) {
 		res, err := c.ExecRun(context.Background(), taskID,
 			[]string{"definitely-not-a-real-binary-xyz"}, cli.ExecRunOpts{})

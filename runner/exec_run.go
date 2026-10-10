@@ -118,12 +118,38 @@ func (c *execCancels) take(id uint64) context.CancelFunc {
 	return cancel
 }
 
+// execPtyRefusal reports why a request's terminal settings cannot be honoured,
+// or "" when they can. Refused rather than adjusted: each case is a caller
+// asking for something the child would not get.
+func execPtyRefusal(req *protocol.RunnerExecRunRequest) string {
+	if req.Pty() && !req.StdinEnabled() {
+		return "pty needs stdin_enabled: a terminal child's stdin is the terminal"
+	}
+	if len(req.Term) > 0 && !req.Pty() {
+		return "term is set without pty: TERM is applied only to a terminal"
+	}
+	if err := protocol.ValidateExecTerm(string(req.Term)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// execPtyEnv applies the request's TERM under a PTY. Appended last so it wins
+// over the inherited one (the last duplicate is what the child sees).
+func execPtyEnv(env []string, req *protocol.RunnerExecRunRequest) []string {
+	if req.Pty() && len(req.Term) > 0 {
+		env = append(env, "TERM="+string(req.Term))
+	}
+	return env
+}
+
 // handleExecRun runs one argv in a task's worktree and reports the outcome.
 //
 // The data plane is the call the event-stream task kind already makes
-// (runner/streamtask.go): ptyEnabled=false, so stdout and stderr arrive as
-// separate frame types instead of interleaved on one PTY. That separation is
-// the entire reason this verb exists rather than reusing `session exec`.
+// (runner/streamtask.go): ptyEnabled=false unless the request sets pty, so
+// stdout and stderr arrive as separate frame types instead of interleaved on
+// one PTY. That separation is the reason this verb exists rather than reusing
+// `session exec`; a pty exec is the caller choosing a terminal over it.
 func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRunRequest) {
 	log := s.logger()
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
@@ -164,6 +190,11 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		finish(protocol.ExecEventKind_Failed, -1, "empty argv")
 		return
 	}
+	if why := execPtyRefusal(req); why != "" {
+		_ = stream.CloseBoth()
+		finish(protocol.ExecEventKind_Failed, -1, why)
+		return
+	}
 
 	argv := make([]string, 0, len(req.Argv.Argv))
 	for i := range req.Argv.Argv {
@@ -193,6 +224,7 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		ProxyVia:   s.ProxyVia,
 	})
 	env = append(env, AgentCwdEnv(dir)...)
+	env = execPtyEnv(env, req)
 
 	// A cancellable context so close_exec_run can stop the child. Closing the
 	// stream would not: the frame pump reads EOF and ends its input goroutine
@@ -207,7 +239,14 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	var detail string
 	runErr := agentexec.ExecuteCommandWithOption(execCtx, stream, log,
 		argv[0], argv[1:], dir,
-		false, // no PTY: separate stdout and stderr is the point
+		// No PTY unless asked: separate stdout and stderr is the point of this
+		// verb. A PTY is for a caller that wants a terminal — `ssh -t` through
+		// the gateway, `exec -t` — and gives that separation up.
+		//
+		// Known limit: objtrsf's PTY branch does not apply KillProcessTree. A
+		// kill ends the shell; the kernel hangs up its foreground job, and a
+		// background job that ignores SIGHUP can outlive the exec.
+		req.Pty(),
 		env,
 		agentexec.ExecuteOption{
 			// The caller told us whether it will send stdin. When it will not

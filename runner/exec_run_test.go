@@ -217,3 +217,48 @@ func TestShellLineArgvWithoutSshdParentIsUnchanged(t *testing.T) {
 		t.Errorf("shell = %q, want %q", got[0], want)
 	}
 }
+
+func TestExecPtyRefusal(t *testing.T) {
+	mk := func(pty, stdin bool, term string) *protocol.RunnerExecRunRequest {
+		r := &protocol.RunnerExecRunRequest{}
+		r.SetPty(pty)
+		r.SetStdinEnabled(stdin)
+		r.SetTerm([]byte(term))
+		return r
+	}
+	for _, c := range []struct {
+		name string
+		req  *protocol.RunnerExecRunRequest
+		want string // substring; "" = accepted
+	}{
+		{"pipe", mk(false, false, ""), ""},
+		{"pty", mk(true, true, ""), ""},
+		{"pty with term", mk(true, true, "xterm-256color"), ""},
+		{"pty without stdin", mk(true, false, ""), "stdin"},
+		{"term without pty", mk(false, true, "xterm"), "pty"},
+		{"bad term", mk(true, true, "xterm 256"), "term"},
+	} {
+		got := execPtyRefusal(c.req)
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: refusal = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TERM goes LAST, so it beats whatever BuildAgentEnv inherited: the child's
+// exec (os/exec on Unix, go-pty's dedupEnvCase on Windows) keeps the last
+// duplicate.
+func TestExecPtyEnvAppendsTermOnlyUnderAPty(t *testing.T) {
+	base := []string{"TERM=dumb", "PATH=/bin"}
+	r := &protocol.RunnerExecRunRequest{}
+	r.SetPty(true)
+	r.SetTerm([]byte("xterm-256color"))
+	got := execPtyEnv(append([]string(nil), base...), r)
+	if got[len(got)-1] != "TERM=xterm-256color" {
+		t.Fatalf("env = %q, want TERM=xterm-256color last", got)
+	}
+	r.SetTerm(nil)
+	if got := execPtyEnv(append([]string(nil), base...), r); len(got) != len(base) {
+		t.Fatalf("empty term changed the env: %q", got)
+	}
+}
