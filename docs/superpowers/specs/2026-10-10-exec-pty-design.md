@@ -264,3 +264,78 @@ environment variable with a restricted alphabet and cannot introduce another.
   refused).
 - A Windows-runner live check: the dummy harness is Linux. ConPTY is the path
   interactive tasks on Windows runners already take.
+
+## Amendment — what shipped, 2026-10-10
+
+Commits `13cc916f..28548725` (plan `docs/superpowers/plans/2026-10-10-exec-pty.md`),
+plus objtrsf `a6067fd`.
+
+### Where the shipped code differs from the text above
+
+- **`exec -t`'s exit no longer moves the cursor — fixed in objtrsf, not here.**
+  The spec chose `RemoteShell` for `-t` (D8) and did not look at what it writes
+  on the way out. Its reset (`WriteTerminalReset`) carries `\x1b[r` (DECSTBM)
+  and `\x1b[?6l` (DECOM), and both home the cursor. Live: `exec -t <task> --
+  true; echo rc=$?` printed `rc=0` and the next prompt on row 1, over the
+  screen. objtrsf's comment called the reset idempotent on a terminal at
+  defaults, true of the modes and false of the cursor. `a6067fd` wraps the two
+  in DECSC/DECRC; harness bumps to it and pins the behaviour with
+  `vtgrid/terminal_reset_test.go`, which feeds the real bytes to the emulator.
+  One consequence is stated in objtrsf's comment: the restore brings back the
+  origin mode saved with the position, so a DECOM an app left on stays on —
+  with the scroll region back to the full window it addresses the same cells.
+  The same reset runs when `session attach` detaches, so a shell session's
+  detach had the same artefact (inferred, not observed) and is fixed by the
+  same change.
+- **The `-t` terminal check is `term.IsTerminal`, not the existing `isTTY`.**
+  `isTTY` tests for a character device and `/dev/null` is one, so `exec -t …
+  < /dev/null` would have passed and failed inside raw mode. `isTTY` itself is
+  unchanged (git colour and the stdin-forwarding rule use it).
+- **Skew, measured:** `scripts/wire-skew-check.sh` PASS — the handshake stays
+  compatible in both directions (old server × new runner and the reverse).
+  What a mixed pair does with an actual PTY exec request was not exercised;
+  the appended `term` fields mean the older side should fail to decode it and
+  the exec fail, not run.
+- **Ctrl+] under `exec -t` (D8) was not driven live.** It is `RemoteShell`'s
+  detach key, unchanged objtrsf code; what it does to an exec follows from the
+  stream half-close and is not separately tested here.
+
+### § Surfaces, checked against the code
+
+| Surface | Shipped |
+| --- | --- |
+| ssh gateway | `cli/sshgw/session.go`: `pty-req` remembered as `execTTY`; `runExec` sets `Pty`/`Term`/size/`OnResizer`; `window-change` → `execResizer` (keeps the last size until the stream is open) |
+| CLI `exec` | `-t` (`cli/verb/table.go`, `cmd/harness-cli/exec.go`) |
+| CLI `exec ls` (row, `--json`) | `io=` leads the traffic line; `"pty"` in JSON |
+| TUI execs modal | `io` column after `taps` |
+| WebUI exec list | the traffic line (`cli.ExecSnapshotRow`), plus `pty` raw |
+| TUI / WebUI `exec` command line | `-t` declared `CmdlineSurfaces: CLI` with its reason |
+| `README.md`, `supervising-workers` skill | the `exec` section, the gateway section, the traffic line; skill + both mirrors |
+
+### Live verification (dummy harness, `scripts/dummy-harness.sh up --agent fake`)
+
+The terminals were the dummy's own `bash` sessions driven with `session send` /
+`snapshot` / `resize`.
+
+1. Session A ran `harness-tui`; `ssh-gateway start 127.0.0.1:<port>` from its
+   command line. Session B (30×100): `ssh -t -p <port> <A>@127.0.0.1 'exec bash
+   -l'` → a prompt; `pwd; tty; stty size; echo $TERM; echo hi` → the task's
+   directory, `/dev/pts/11`, `30 100`, `xterm-256color`, `hi`.
+   `session send --resize 40x120` on B, then `stty size` → `40 120`.
+2. `harness-cli exec ls` meanwhile: the ssh exec `io=pty`, a concurrent
+   `exec <A> -- sleep 20` `io=pipe`.
+3. In B: `harness-cli exec -t <A> -- sh -c 'tty; stty size; echo TERM=$TERM'` →
+   a tty, `40 120`, `TERM=xterm-256color`, exit 0. After the objtrsf fix, in a
+   fresh session: `echo L1; echo L2; echo L3`, then `harness-cli exec -t <A> --
+   sh -c 'echo CHILD; stty size'; echo rc=$?` → `CHILD`, `20 80`, `rc=0` and
+   the prompt on the lines below, `L1`..`L3` intact.
+4. From a pipe: `harness-cli exec -t <A> -- true < /dev/null` → `exec -t: stdin
+   is not a terminal`, exit 1.
+5. WebUI (Playwright): the 接続 tab's exec list reads `io=pty …` and `io=pipe …`
+   at 1280px and 390px, no horizontal scroll (`scrollWidth` = 390).
+   `.playwright-mcp/exec-pty-webui-1280.png`, `-390.png`.
+
+Gates: `make test`, `make check`, `make wasm-check`, `make test-integration`
+green. The integration suite's PTY cases (`TestExecRunE2E/pty_*`,
+`TestSSHGatewayE2E/pty_exec_gets_a_terminal`) were each falsified by switching
+the PTY off at the runner or the gateway, then restored.

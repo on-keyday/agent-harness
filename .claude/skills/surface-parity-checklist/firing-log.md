@@ -2685,3 +2685,70 @@ and `cat` never saw EOF. Killing the tap "unstuck" the exec, which is what made
 it look like the tap was holding it. `3>&-` on the tap's command line fixed it.
 When a background reader appears to block a pipe's EOF, check which processes
 hold the writer before suspecting the code.
+
+### 2026-10-10 (pre-landing) — `exec` under a PTY: `ssh -t` through the gateway, `exec -t`, `io=` on `exec ls`
+
+A `pty` bit and a `term` string on `ExecRunRequest` / `RunnerExecRunRequest`, a
+`pty` bit on `ExecRunInfo`, the gateway mapping `pty-req` + `exec` onto it, and a
+CLI-only `-t`. Walked 1–39 at the end; 39 walked the spec's Surfaces table and
+drove every row live. S1–S6 `n/a`: no agent added, renamed or launched
+differently — the child's `TERM` comes from the CALLER, not from a preset.
+
+done:    1 (`-t` on the `exec` row, `CmdlineSurfaces: CLI` with a reason; the
+         sub-verb refusal names it), 11, 12 (`io=pty|pipe` leads the traffic
+         line; `"pty"` in `--json`), 23 (`pty` raw on the wasm exec row, the
+         rendered line beside it), 24, 25, 27, 28a, 31, 32, 33, 34, 35, 36, 39
+omitted: 4, 5, 6 (no TUI key or WebUI control for `-t`: those two run an exec
+         with no stdin path, so a terminal has nothing to read from — the row's
+         `SurfaceReason`)
+         28 (`execRun` lives in memory and dies with the exec)
+         38 (a PTY exec has a terminal but no server-side screen model; neither
+         live pane renders an exec, and `exec tap` is its only view)
+
+- **24** — `pty` has a written meaning on every path: the gateway's `exec` after
+  a `pty-req` (PTY, the pty-req's `TERM` and size) and without one (pipes, as
+  before); `shell` still discards the pty-req's `TERM`, because the session's
+  is fixed; `-t` hands the local terminal over, a plain `exec` keeps the
+  stdin-only-when-not-a-tty rule.
+- **25** — no presence bit: `pty=0` is exactly the pre-change behaviour and an
+  empty `term` is a real "do not override", not an absence.
+- **27 / 28a** — `ExecRunRequest{` is still built once (`cli.ExecRun`); the
+  gateway and `-t` both reach it through `ExecRunOpts`; the server's one relay
+  site gained both fields and `TestRunnerExecRunRequestCarriesEveryField` and
+  `TestExecRunInfoMapsEveryField` both went red until it did.
+- **31** — the mode prints for BOTH values. A row that said only `pty` would
+  leave a pipe row silent, and under a PTY `stderr=0` is not a measurement of
+  errors, so the row has to say why.
+- **32** — one `TERM` rule, `protocol.ValidateExecTerm`, called by the client
+  before sending and by the runner before applying; one `cli.ExecRunIOMode` for
+  the three surfaces.
+- **33** — `pty` without stdin, `term` without `pty`, an invalid `term`, and
+  `-t` on a non-terminal stdin are all refusals that name the rule. The last one
+  first used `isTTY`, which tests for a character device — `/dev/null` is one —
+  so `exec -t … < /dev/null` would have passed it and died in raw mode with an
+  ioctl error instead of the sentence. `term.IsTerminal` instead.
+- **39** — every row driven live on a dummy harness: `ssh -t … 'exec bash -l'`
+  through a gateway hosted by a TUI running inside a session (prompt, echo,
+  `/dev/pts/N`, the client's size and `TERM`, a resize followed), `exec -t`
+  inside a session, the non-terminal refusal from a pipe, `exec ls` showing
+  `io=pty` beside `io=pipe`, and the WebUI exec list at 1280px and 390px.
+
+**What the walk did not produce and the live run did:** `exec -t` returned
+cleanly and the shell's next prompt landed on ROW 1, over what was on screen.
+`RemoteShell`'s exit reset (objtrsf `WriteTerminalReset`) carries `\x1b[r` and
+`\x1b[?6l`, and both home the cursor; its doc comment called the reset
+"idempotent on a terminal already at defaults", which is true of the MODES and
+false of the cursor. It had been invisible because its callers until now left
+a full-screen app, where the cursor position means nothing. Fixed upstream
+(objtrsf `a6067fd`, DECSC/DECRC around the two) and pinned on this side by
+`vtgrid`'s `TestTerminalResetLeavesTheCursorWhereItWas`, which feeds the real
+reset bytes to the emulator. Detaching `session attach` from a shell session
+had the same artefact (inferred, not observed). No item asks what a sequence a
+client writes on the way OUT does to the screen it leaves behind; recorded
+rather than numbered, for a second instance to count against.
+
+**A live-run probe error worth keeping:** the first read of that screen took
+the snapshot's TAIL and saw no `rc=` — which read as a hang. The process had
+exited; the output was on row 1, above the window being read. When a terminal
+check looks like a hang, read the whole screen before reading the process
+table.
