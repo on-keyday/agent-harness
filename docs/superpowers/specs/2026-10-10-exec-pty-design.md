@@ -291,11 +291,28 @@ plus objtrsf `a6067fd`.
   `isTTY` tests for a character device and `/dev/null` is one, so `exec -t …
   < /dev/null` would have passed and failed inside raw mode. `isTTY` itself is
   unchanged (git colour and the stdin-forwarding rule use it).
-- **Skew, measured:** `scripts/wire-skew-check.sh` PASS — the handshake stays
-  compatible in both directions (old server × new runner and the reverse).
-  What a mixed pair does with an actual PTY exec request was not exercised;
-  the appended `term` fields mean the older side should fail to decode it and
-  the exec fail, not run.
+- **Skew.** `scripts/wire-skew-check.sh` PASS — but it covers the HANDSHAKE
+  only, and the handshake stays compatible in both directions. Exec requests
+  do not: `term_len` is appended to both formats, so EVERY exec request changes
+  length, PTY or not. Read from the decode sites (final review, not run):
+  - **New server × old runner — runs over pipes, silently.** The runner
+    decodes `RunnerRequest` with the lenient `Decode` (`runner/connect.go`
+    `dispatchRunnerRequest`), so the trailing `term` is ignored and `pty` lands
+    in the old reserved bits. `ssh -t` / `exec -t` get pipes while `exec ls`
+    says `io=pty` (the server records the request's bit). Under `exec -t` the
+    child's stderr is then not drained, which can stall the stream.
+  - **Old server × new runner — every exec hangs.** The new runner fails to
+    decode the shorter request, logs, and returns without reporting an
+    outcome, so the client waits on the outcome stream indefinitely.
+  - **Old client × new server, and the reverse — every exec request hangs.**
+    `TaskControlRequest` is decoded exactly on the server, and a decode failure
+    there is answered by nothing.
+
+  All of these end when both sides run the new build; none corrupts state. So
+  restart the server, every runner AND every client (the TUI that hosts a
+  gateway included) together — no restart order avoids a window, and an
+  earlier draft of this paragraph claiming the older side "fails, not runs"
+  was wrong.
 - **Ctrl+] under `exec -t` (D8) was not driven live.** It is `RemoteShell`'s
   detach key, unchanged objtrsf code; what it does to an exec follows from the
   stream half-close and is not separately tested here.
