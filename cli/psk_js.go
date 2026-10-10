@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/url"
 	"strings"
@@ -61,7 +62,7 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 // Builds a PskAuthRequest{binder (or empty when psk==nil), role=client,
 // client_hello=<operatorKind>}, sends [0x45]+PskAuthRequest, and awaits a
 // PskAuthResponse on respCh. Identical semantics to the native build.
-func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, respCh <-chan protocol.PskAuthResponse) error {
+func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 
 	if len(psk) > 0 {
@@ -90,12 +91,9 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 	}
 
 	select {
-	case resp := <-respCh:
-		if resp.Status == protocol.PskAuthStatus_Ok {
-			return nil
-		}
-		// Explicit server rejection — FATAL, not retryable (see persist.go).
-		return NewPskRejectedError(resp.Status)
+	case reply := <-respCh:
+		// Signature first, then status: see CheckPskAuthReply.
+		return CheckPskAuthReply(reply, serverKey, transcript)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE.
 		return ctx.Err()

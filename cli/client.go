@@ -121,19 +121,22 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Clie
 	// (HARNESS_OPERATOR_PSK), in-task agents prove the connect psk (HARNESS_PSK).
 	// See resolveBinderPSK — keeping them in distinct env vars stops a runner
 	// from inheriting the operator secret and leaking it to agents.
+	serverKey, err := GetServerPubKey()
+	if err != nil {
+		pc.Close()
+		// A configuration error, not a server answer: retrying cannot fix it.
+		return nil, &PSKAuthError{Err: err}
+	}
 	psk := resolveBinderPSK()
 	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
-	pskRespCh := make(chan protocol.PskAuthResponse, 1)
+	pskRespCh := make(chan PskAuthReply, 1)
 
 	// Combined handler: PskAuth response during merged handshake, TaskControl after.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
-			var resp protocol.PskAuthResponse
-			if _, err := resp.Decode(payload); err == nil {
-				select {
-				case pskRespCh <- resp:
-				default:
-				}
+			select {
+			case pskRespCh <- DecodePskAuthReply(payload):
+			default:
 			}
 			return
 		}
@@ -152,7 +155,7 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind) (*Clie
 	pskErr := SendMergedHandshake(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), kind, pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), kind, serverKey, pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()

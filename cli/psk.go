@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"os"
 	"strings"
@@ -156,7 +157,9 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 //     means the server could not DECODE it — in practice a wire/schema skew
 //     (server older than us). Resolves when the server is upgraded; must not
 //     be fatal (see PskRejectedError.Retryable).
-func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, respCh <-chan protocol.PskAuthResponse) error {
+//   - signature missing/wrong with serverKey set → *ServerAuthError (retryable)
+//   - undecodable response → retryable error ("server response did not decode")
+func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 
 	if len(psk) > 0 {
@@ -185,13 +188,9 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 	}
 
 	select {
-	case resp := <-respCh:
-		if resp.Status == protocol.PskAuthStatus_Ok {
-			return nil
-		}
-		// Explicit server rejection (bad psk / bad ticket / no identity) — FATAL,
-		// not retryable. Callers wrap this as *PSKAuthError.
-		return NewPskRejectedError(resp.Status)
+	case reply := <-respCh:
+		// Signature first, then status: see CheckPskAuthReply.
+		return CheckPskAuthReply(reply, serverKey, transcript)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE (e.g. a server
 		// restart interrupting the in-flight handshake). NOT a PskRejectedError,
