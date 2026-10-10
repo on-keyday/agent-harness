@@ -313,6 +313,15 @@ plus objtrsf `a6067fd`.
   gateway included) together — no restart order avoids a window, and an
   earlier draft of this paragraph claiming the older side "fails, not runs"
   was wrong.
+- **Known difference from sshd, left as is (operator, 2026-10-10):** under a
+  PTY, the end of the caller's stdin hangs the child up. `cli.ExecRun` sends
+  the 0-length stdin frame and objtrsf's PTY branch answers it with SIGHUP,
+  then SIGTERM at 1s and SIGKILL at 2s — so `ssh -tt host job </dev/null`
+  through the gateway stops `job` within 2s. sshd, by the final reviewer's
+  reading (not verified), keeps the child running. Zed's terminal keeps stdin
+  open and `exec -t` refuses a non-terminal stdin, so neither meets it. The
+  change, if wanted: do not forward stdin EOF when `Pty` is set, and invert
+  `TestExecRunE2E/pty_stdin_eof_ends_the_exec`.
 - **Ctrl+] under `exec -t` (D8) was not driven live.** It is `RemoteShell`'s
   detach key, unchanged objtrsf code; what it does to an exec follows from the
   stream half-close and is not separately tested here.
