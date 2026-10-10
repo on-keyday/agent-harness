@@ -1778,6 +1778,20 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   color: #d4d4d4;
 }
 .forward-cell { white-space: nowrap; }
+/* An exec's command has no bound (an editor's remote terminal is ~2.8 KB): one
+   ellipsised line taking the row's leftover width; a click shows it whole. */
+.exec-row .exec-command {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.exec-row .exec-command.expanded {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .forward-row .btn-danger,
 .exec-row .btn-danger { margin-left: auto; }
 
@@ -1841,6 +1855,10 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
     white-space: normal;
     word-break: break-all;
   }
+  /* Stacked, the command is held to the row's width explicitly — stretch
+     alone let the unwrapped line size it to ~17000px — and a zero basis would
+     size its HEIGHT in a column flex. */
+  .exec-row .exec-command { flex: none; width: 100%; max-width: 100%; }
   .forward-row .btn-danger,
   .exec-row .btn-danger { margin-left: 0; align-self: flex-start; }
   /* Select by CONTAINER, not by button class: a control added to the row

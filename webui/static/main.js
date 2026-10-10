@@ -433,6 +433,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
+  const expandedExecCommands = new Set(); // exec ids whose command is shown whole
   let lastExecs = [];              // latest snapshot; `exec tap` reads this, no second RPC
   let lastConns = [];              // same, for the trsf panel's answerer picker
   for (const [key, btn] of Object.entries(taskChips)) {
@@ -1242,12 +1243,31 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const age = e.started_unix_ms
         ? `${Math.max(0, Math.round((now - e.started_unix_ms) / 1000))}s`
         : "-";
-      for (const text of [`#${e.exec_id}`, taskShort, age, e.origin, e.command]) {
+      for (const text of [`#${e.exec_id}`, taskShort, age, e.origin]) {
         const cell = document.createElement("span");
         cell.className = "forward-cell";
         cell.textContent = text;
         row.appendChild(cell);
       }
+      // A command line has no bound — an editor's remote terminal is ~2.8 KB —
+      // so it is one ellipsised line in the row's leftover width, the whole of
+      // it in the tooltip, and a click shows it wrapped. Remembered by id:
+      // the poll rebuilds this list, and an expanded row must survive that.
+      const cmd = document.createElement("span");
+      cmd.className = "forward-cell exec-command";
+      if (expandedExecCommands.has(e.exec_id)) cmd.classList.add("expanded");
+      cmd.textContent = e.command;
+      cmd.title = e.command;
+      cmd.addEventListener("click", () => {
+        if (expandedExecCommands.has(e.exec_id)) {
+          expandedExecCommands.delete(e.exec_id);
+          cmd.classList.remove("expanded");
+        } else {
+          expandedExecCommands.add(e.exec_id);
+          cmd.classList.add("expanded");
+        }
+      });
+      row.appendChild(cmd);
       const tap = document.createElement("button");
       tap.type = "button";
       tap.className = "btn-secondary";
