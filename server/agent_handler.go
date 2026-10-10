@@ -195,6 +195,38 @@ var errPayloadTooLarge = errors.New("agent payload exceeds max")
 // readAgentPayloadStream resolves the receive stream by id and reads the body,
 // giving up once it exceeds max. Mirrors cli/agent/conn.go::FetchDeliveredPayload.
 func readAgentPayloadStream(conn ConnHandle, id uint64, max int) ([]byte, error) {
+	st, err := waitReceiveStream(conn, id)
+	if err != nil {
+		return nil, err
+	}
+	sid := trsf.StreamID(id)
+	var raw []byte
+	for {
+		data, eof, err := st.ReadDirect(payloadReadChunk)
+		if err != nil {
+			return nil, fmt.Errorf("payload stream %d read: %w", sid, err)
+		}
+		if len(data) > 0 {
+			raw = append(raw, data...)
+			if len(raw) > max {
+				// Cancel rather than drain: every ReadDirect returns receive
+				// window to the peer, so draining an over-long body is an
+				// invitation to send more. agent send is reachable with no
+				// capability, which makes this the cheapest allocation
+				// primitive on the server if it is left unbounded.
+				st.Cancel()
+				return nil, errPayloadTooLarge
+			}
+		}
+		if eof {
+			return raw, nil
+		}
+	}
+}
+
+// waitReceiveStream resolves a client-initiated receive stream by id, polling
+// briefly: the request naming it can arrive before the stream's first frame.
+func waitReceiveStream(conn ConnHandle, id uint64) (trsf.ReceiveStream, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("payload stream id is 0")
 	}
@@ -218,28 +250,36 @@ func readAgentPayloadStream(conn ConnHandle, id uint64, max int) ([]byte, error)
 			}
 		}
 	}
-	var raw []byte
-	for {
-		data, eof, err := st.ReadDirect(payloadReadChunk)
-		if err != nil {
-			return nil, fmt.Errorf("payload stream %d read: %w", sid, err)
+	return st, nil
+}
+
+// discardPayloadStream cancels the body of a request that was refused before
+// anything read it. Left alone, the body sits in the server's receive buffer
+// until the connection ends — up to the per-stream window for every refused
+// request. Cancel rather than drain, for readAgentPayloadStream's reason.
+func discardPayloadStream(conn ConnHandle, id uint64) {
+	if st, err := waitReceiveStream(conn, id); err == nil {
+		st.Cancel()
+	}
+}
+
+// payloadStreamOf is the body stream a task-control request names, or 0.
+func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
+	switch req.Kind {
+	case protocol.TaskControlKind_OpenExecRun:
+		if r := req.OpenExecRun(); r != nil {
+			return r.PayloadStreamId
 		}
-		if len(data) > 0 {
-			raw = append(raw, data...)
-			if len(raw) > max {
-				// Cancel rather than drain: every ReadDirect returns receive
-				// window to the peer, so draining an over-long body is an
-				// invitation to send more. agent send is reachable with no
-				// capability, which makes this the cheapest allocation
-				// primitive on the server if it is left unbounded.
-				st.Cancel()
-				return nil, errPayloadTooLarge
-			}
+	case protocol.TaskControlKind_BoardSend:
+		if r := req.BoardSend(); r != nil {
+			return r.PayloadStreamId
 		}
-		if eof {
-			return raw, nil
+	case protocol.TaskControlKind_AgentSend:
+		if r := req.AgentSend(); r != nil {
+			return r.PayloadStreamId
 		}
 	}
+	return 0
 }
 
 // pendingPayload is a delivery whose stream id has been announced but whose

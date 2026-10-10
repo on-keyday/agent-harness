@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// Both task-control send paths check the size BEFORE SendMessage. A path that
-// skipped it would send an over-budget request to be dropped silently over udp,
+// Both task-control send paths send through sendTaskControlFrame, which checks
+// the size first (TestSendCheckedRefusesOverBudgetOnUDPOnly). A path that
+// called SendMessage itself would send an over-budget request to be dropped silently over udp,
 // which is how Zed's remote terminal hung with no error anywhere.
 func TestTaskControlSendsCheckTheSizeFirst(t *testing.T) {
 	src, err := os.ReadFile("client.go")
@@ -23,10 +24,10 @@ func TestTaskControlSendsCheckTheSizeFirst(t *testing.T) {
 		if j := strings.Index(body[1:], "\nfunc "); j > 0 {
 			body = body[:j+1]
 		}
-		check := strings.Index(body, "c.checkTaskControlSize(")
+		check := strings.Index(body, "c.sendTaskControlFrame(")
 		send := strings.Index(body, ".SendMessage(")
-		if check < 0 || send < 0 || check > send {
-			t.Errorf("%s: checkTaskControlSize must come before SendMessage (check at %d, send at %d)", fn, check, send)
+		if check < 0 || send >= 0 {
+			t.Errorf("%s: the send must go through sendTaskControlFrame (at %d; a direct SendMessage at %d)", fn, check, send)
 		}
 	}
 }

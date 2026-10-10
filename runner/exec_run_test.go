@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // The gate is the DIRECTORY existing, not the task's status: a task that ended
@@ -283,5 +285,51 @@ func TestExecRunReportsAnUnreadableBody(t *testing.T) {
 	fin := m.ExecRunFinished()
 	if fin == nil || fin.ExecId != 5 || fin.Kind != protocol.ExecEventKind_Failed || len(fin.Detail) == 0 {
 		t.Fatalf("finish = %+v, want failed with a reason for exec 5", fin)
+	}
+}
+
+type failingRecv struct{ trsf.ReceiveStream }
+
+func (failingRecv) ReadDirect(uint64) ([]byte, bool, error) { return nil, false, errors.New("reset") }
+
+type closingBidi struct {
+	trsf.BidirectionalStream
+	closed bool
+}
+
+func (c *closingBidi) CloseBoth() error { c.closed = true; return nil }
+
+type bodyLookup struct {
+	recv trsf.ReceiveStream
+	data *closingBidi
+}
+
+func (l bodyLookup) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream { return l.recv }
+func (l bodyLookup) GetBidirectionalStream(trsf.StreamID) trsf.BidirectionalStream {
+	return l.data
+}
+
+// A body whose read FAILS mid-way (not only one that was never announced) is
+// reported, and the data stream is closed so the server's relay ends too.
+func TestExecRunReportsABodyReadFailure(t *testing.T) {
+	ms := &mockSender{}
+	data := &closingBidi{}
+	s := &Session{Sender: ms, Streams: bodyLookup{recv: failingRecv{}, data: data}}
+	s.handleExecRun(context.Background(), &protocol.RunnerExecRunRequest{ExecId: 6, StreamId: 9, BodyStreamId: 11})
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if len(ms.sent) != 1 {
+		t.Fatalf("sent %d messages, want one ExecRunFinished", len(ms.sent))
+	}
+	var m protocol.RunnerMessage
+	if err := m.DecodeExactCopy(ms.sent[0][1:]); err != nil {
+		t.Fatal(err)
+	}
+	fin := m.ExecRunFinished()
+	if fin == nil || fin.ExecId != 6 || fin.Kind != protocol.ExecEventKind_Failed || !strings.Contains(string(fin.Detail), "reset") {
+		t.Fatalf("finish = %+v, want failed naming the read error", fin)
+	}
+	if !data.closed {
+		t.Error("the data stream was left open")
 	}
 }

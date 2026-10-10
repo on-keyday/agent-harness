@@ -164,8 +164,11 @@ that names the size; a body that does not decode is refused as malformed. The
 
 To the runner: the server creates a send-stream, sends the
 `RunnerExecRunRequest` envelope through `sendRunnerRequest`, then writes the
-encoded `RunnerExecRunBody` and EOF — `AssignTask`'s order (`server/dispatch.go`
-`buildAssignMsg` and its caller).
+encoded `RunnerExecRunBody` and EOF. `AssignTask` (`server/dispatch.go`
+`buildAssignMsg` and its caller) uses the same two pieces in the OTHER order —
+body first, then the envelope; either works, because the runner polls for the
+stream before it reads. A body write that fails still CLOSES the stream, so
+the runner's read ends and it reports the exec failed.
 
 ## Runner
 

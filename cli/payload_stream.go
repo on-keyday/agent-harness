@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // payloadErrGrace bounds how long a failed payload write waits for the
@@ -39,12 +40,23 @@ func (c *Client) TaskControlWithPayload(ctx context.Context, build func(streamID
 	if stream == nil {
 		return TaskControlResult{}, errors.New("failed to allocate payload stream")
 	}
+	return taskControlWithPayload(ctx, stream, c.BeginTaskControl, build, payload)
+}
+
+// taskControlWithPayload is TaskControlWithPayload once the stream exists, so
+// the failure paths can be tested without a connection.
+func taskControlWithPayload(ctx context.Context, stream trsf.SendStream, begin func(*protocol.TaskControlRequest) (<-chan TaskControlResult, error), build func(streamID uint64) (*protocol.TaskControlRequest, error), payload []byte) (TaskControlResult, error) {
 	req, err := build(uint64(stream.ID()))
 	if err != nil {
+		_ = stream.Close()
 		return TaskControlResult{}, err
 	}
-	respCh, err := c.BeginTaskControl(req)
+	// A request that never went out — refused for size, a dead connection —
+	// names a stream nobody will read; close it rather than leave it behind
+	// for the life of the connection.
+	respCh, err := begin(req)
 	if err != nil {
+		_ = stream.Close()
 		return TaskControlResult{}, err
 	}
 	// AppendDataContext, not AppendData: the latter passes context.Background()

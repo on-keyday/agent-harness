@@ -40,18 +40,19 @@ func TestSendRunnerRequestRefusesOverBudgetOnUDP(t *testing.T) {
 	}
 }
 
-// Every RunnerRequest leaves the server through sendRunnerRequest. The encode
-// prefix is the tell: a RunnerRequest encoded anywhere else is one sent past
-// the check.
+// Every RunnerRequest leaves the server through sendRunnerRequest. Any use of
+// the RunnerControl kind elsewhere is how a request gets encoded and sent past
+// the check — whatever the spelling (MustAppend, Append, EncodeCopy plus a
+// prepended byte, a kind held in a variable), it names the kind. The allowed
+// uses: the sender itself, the receive-side dispatch case, and psk.go, which
+// re-encodes the handshake's RunnerHello as a RunnerMESSAGE for the in-process
+// dispatcher (d.Dispatch) — nothing goes on the wire there.
 func TestRunnerRequestsAreSentOnlyThroughSendRunnerRequest(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const tell = "byte(appwire.AppKind_RunnerControl)})"
 	for _, f := range files {
-		// psk.go re-encodes the handshake's RunnerHello as a RunnerMESSAGE for
-		// the in-process dispatcher (d.Dispatch); nothing goes on the wire.
 		if strings.HasSuffix(f, "_test.go") || f == "runner_send.go" || f == "psk.go" {
 			continue
 		}
@@ -59,8 +60,14 @@ func TestRunnerRequestsAreSentOnlyThroughSendRunnerRequest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(src), tell) {
-			t.Errorf("%s encodes a RunnerRequest itself; send it through sendRunnerRequest", f)
+		for i, line := range strings.Split(string(src), "\n") {
+			if !strings.Contains(line, "AppKind_RunnerControl") {
+				continue
+			}
+			if strings.TrimSpace(line) == "case appwire.AppKind_RunnerControl:" {
+				continue // receiving, not sending
+			}
+			t.Errorf("%s:%d uses AppKind_RunnerControl; send RunnerRequests through sendRunnerRequest", f, i+1)
 		}
 	}
 }

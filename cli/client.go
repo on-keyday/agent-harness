@@ -266,13 +266,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 
 	req.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-	if err := c.checkTaskControlSize(data); err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("send: %w", err)
-	}
-	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
+	if err := c.sendTaskControlFrame(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -314,10 +308,24 @@ type TaskControlResult struct {
 	Err  error
 }
 
-// checkTaskControlSize refuses a request that would not fit one datagram on a
-// udp connection, instead of sending it to be dropped silently.
-func (c *Client) checkTaskControlSize(data []byte) error {
-	return protocol.CheckControlMessage(c.conn.Connection().ConnectionID().Transport, c.conn.MaxDatagramSize(), len(data))
+// sendTaskControlFrame sends one encoded task-control request, refusing it
+// first if it would not fit one datagram on a udp connection — where it would
+// otherwise be dropped with no error at either end.
+func (c *Client) sendTaskControlFrame(data []byte) error {
+	conn := c.conn.Connection()
+	return sendChecked(conn.ConnectionID().Transport, c.conn.MaxDatagramSize(), data, func(b []byte) error {
+		_, _, err := conn.SendMessage(b)
+		return err
+	})
+}
+
+// sendChecked is the check and the send, without a connection, so the rule
+// "refused means not sent" can be tested.
+func sendChecked(transport string, budget int, data []byte, send func([]byte) error) error {
+	if err := protocol.CheckControlMessage(transport, budget, len(data)); err != nil {
+		return err
+	}
+	return send(data)
 }
 
 // BeginTaskControl is RoundTripTaskControl split in two: it assigns the id,
@@ -344,13 +352,7 @@ func (c *Client) BeginTaskControl(req *protocol.TaskControlRequest) (<-chan Task
 
 	req.RequestId = id
 	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-	if err := c.checkTaskControlSize(data); err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("send: %w", err)
-	}
-	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
+	if err := c.sendTaskControlFrame(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()

@@ -349,6 +349,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	if want, gated := requiredCap[req.Kind]; gated {
 		if !hasCap(h.callerCaps(cid), want) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			// A refused request's body would otherwise sit in the receive
+			// buffer until the connection ends.
+			if id := payloadStreamOf(&req); id != 0 {
+				go discardPayloadStream(conn, id)
+			}
 			return
 		}
 	}
@@ -550,6 +555,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
 			if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(envCopy.TaskId.Id[:])) {
 				eresp = h.handleOpenExecRun(conn, &envCopy)
+			} else {
+				discardPayloadStream(conn, envCopy.PayloadStreamId)
 			}
 			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecRun, RequestId: requestID}
 			resp.SetOpenExecRun(eresp)

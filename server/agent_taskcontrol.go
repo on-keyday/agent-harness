@@ -109,6 +109,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		// refusal. bad_frame rather than a permission error, for boardState's
 		// reason.
 		reply(protocol.SendStatus_BadFrame, 0, 0)
+		go discardPayloadStream(conn, r.PayloadStreamId)
 		return
 	}
 

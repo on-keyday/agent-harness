@@ -7,6 +7,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // handleOpenExecRun starts one out-of-band exec: allocate an id, create the
@@ -25,17 +26,41 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	// The command rides its own stream (ExecRunRequest.payload_stream_id): an
 	// argv has no bound that fits one UDP datagram. Read it first, so a body
 	// that cannot be had is refused before anything is allocated.
-	raw, rerr := readAgentPayloadStream(conn, req.PayloadStreamId, execBodyMax)
-	if rerr != nil {
-		slog.Warn("exec_run: command body", "err", rerr)
-		return errResp(execBodyStatus(rerr))
+	body, st := readExecBody(conn, req.PayloadStreamId)
+	if st != protocol.ExecRunStatus_Ok {
+		return errResp(st)
+	}
+	return h.openExecRun(conn, req, body)
+}
+
+// readExecBody reads and decodes an exec's command body, or says why not.
+func readExecBody(conn ConnHandle, id uint64) (*protocol.ExecRunBody, protocol.ExecRunStatus) {
+	raw, err := readAgentPayloadStream(conn, id, execBodyMax)
+	if err != nil {
+		slog.Warn("exec_run: command body", "err", err)
+		return nil, execBodyStatus(err)
 	}
 	var body protocol.ExecRunBody
-	if derr := body.DecodeExactCopy(raw); derr != nil {
-		slog.Warn("exec_run: command body decode", "err", derr)
-		return errResp(protocol.ExecRunStatus_BadBody)
+	if err := body.DecodeExactCopy(raw); err != nil {
+		slog.Warn("exec_run: command body decode", "err", err)
+		return nil, protocol.ExecRunStatus_BadBody
 	}
-	return h.openExecRun(conn, req, &body)
+	return &body, protocol.ExecRunStatus_Ok
+}
+
+// writeRunnerExecBody writes the runner's copy of the command and ends the
+// stream. On a failure the stream is still CLOSED: the runner reads it to EOF,
+// and an unended stream would leave it reading forever instead of reporting the
+// exec failed.
+func writeRunnerExecBody(st trsf.SendStream, encoded []byte) error {
+	err := st.AppendData(false, encoded)
+	if err == nil {
+		err = st.AppendData(true)
+	}
+	if err != nil {
+		_ = st.Close()
+	}
+	return err
 }
 
 // openExecRun is handleOpenExecRun once the command body is in hand.
@@ -138,10 +163,9 @@ func (h *TaskHandler) openExecRun(conn ConnHandle, req *protocol.ExecRunRequest,
 	}
 	encoded, eerr := rbody.EncodeCopy(nil)
 	if eerr == nil {
-		eerr = bodyStream.AppendData(false, encoded)
-	}
-	if eerr == nil {
-		eerr = bodyStream.AppendData(true)
+		eerr = writeRunnerExecBody(bodyStream, encoded)
+	} else {
+		_ = bodyStream.Close()
 	}
 	if eerr != nil {
 		// The runner reports an unreadable body itself — it holds the exec id —

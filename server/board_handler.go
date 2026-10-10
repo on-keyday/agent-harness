@@ -289,6 +289,7 @@ func (h *TaskHandler) handleBoardSend(conn ConnHandle, requestID uint32, r *prot
 	}
 	if h.Board == nil {
 		reply(protocol.SendStatus_BadFrame, 0, 0)
+		go discardPayloadStream(conn, r.PayloadStreamId)
 		return
 	}
 	// Captured before the goroutine: the request is the decoded frame.
