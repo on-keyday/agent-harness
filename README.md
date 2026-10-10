@@ -434,13 +434,15 @@ bin/harness-cli exec <task-id> -- git status          # words after -- are the a
 bin/harness-cli exec --shell <task-id> -- 'ls | wc -l'   # one line for the RUNNER's shell
 bin/harness-cli exec <task-id> -- make test           # exits with make's status
 bin/harness-cli exec <task-id> -- sh -c 'echo out; echo err 1>&2' 2>/dev/null
+bin/harness-cli exec -t <task-id> -- bash -l          # under a terminal, like ssh -t
 bin/harness-cli exec ls [-task <task-id>] [--json]    # what is running right now
 bin/harness-cli exec kill <exec-id>                   # stop one
 bin/harness-cli exec tap <exec-id> [--chan stdin|stdout|stderr] [--text|--raw|--json]   # watch what crosses it
 ```
 
-`exec ls` prints a second line per exec — `stdin=… stdout=… stderr=… last=…
-taps=N`, zeros included — so whether bytes are moving at all needs no tap. A
+`exec ls` prints a second line per exec — `io=pipe|pty stdin=… stdout=…
+stderr=… last=… taps=N`, zeros included — so whether bytes are moving at all
+needs no tap. A
 tap reads the exec's payload at the server, from any client — including an exec
 the ssh gateway started for a remote editor. It needs the `exec_tap` capability
 (a task's `exec_run` does not imply it), shows only what crosses after it opens,
@@ -492,6 +494,14 @@ visible to every client in `exec ls` and stoppable from any of them, and each
 task's row shows how many are running: `execs=N` in `ls` and the WebUI, `Nx` in
 the TUI Obs column, `execs: N running` in the TUI `d` popup, `exec_count` in
 `ls --json`.
+
+`-t` runs the command under a terminal, as `ssh -t` does: this terminal goes
+raw and becomes the child's, its size follows yours, and `TERM` is yours. What
+that gives up is the first point above — stdout and stderr are one stream, so
+`exec ls` shows `io=pty` and `stderr=0` — and part of the last: a kill ends
+the command and hangs up its terminal, but a background job that ignores
+`SIGHUP` can outlive it. Ctrl+] ends the exec. `-t` needs a terminal on stdin
+and is CLI-only: the TUI and WebUI run an exec with no stdin path.
 
 Available from all three surfaces and over ssh: the TUI cmdline takes the same
 `exec` / `exec ls` / `exec kill` words, the WebUI has them on its command line
@@ -644,7 +654,14 @@ code returned as ssh's, and the session it belongs to never touched.
 ```bash
 ssh -p 2222 <task-id>@127.0.0.1 'make test'    # exits with make's status
 ssh -p 2222 <task-id>@127.0.0.1 'git status' > out.txt 2> err.txt
+ssh -t -p 2222 <task-id>@127.0.0.1 'exec bash -l'   # under a terminal
 ```
+
+With `-t` (a `pty-req` before the `exec`) the command gets a terminal of its
+own — the `exec -t` above, carrying the ssh client's `TERM` and size, and
+following its window changes. An editor's remote terminal is that shape: over
+pipes its login shell is non-interactive and prints no prompt. Ctrl+] is not
+intercepted here; the byte goes to the command.
 
 This was refused for one release, and the reason it stopped being refused is
 worth stating: the only command surface then was `session exec`, which types

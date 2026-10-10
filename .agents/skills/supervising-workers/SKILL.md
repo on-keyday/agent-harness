@@ -518,9 +518,15 @@ harness-cli exec kill <EXEC_ID>
 harness-cli exec tap <EXEC_ID> [--chan stdin|stdout|stderr] [--text|--raw|--json]
 ```
 
-`exec ls` prints a second line per exec — `stdin=… stdout=… stderr=… last=…
-taps=N` — so whether bytes are moving at all is visible without a tap. A tap
-sees only what crosses after it opens, and `taps=N` tells everyone it is open.
+`exec ls` prints a second line per exec — `io=pipe|pty stdin=… stdout=…
+stderr=… last=… taps=N` — so whether bytes are moving at all is visible without
+a tap. A tap sees only what crosses after it opens, and `taps=N` tells everyone
+it is open.
+
+`io=pty` is an exec running under a terminal — `exec -t`, or `ssh -t` through
+the gateway. Its stdout and stderr are one stream, so its `stderr=0` says
+nothing about errors. `-t` needs a real terminal on stdin, which you do not
+have; it is the operator's.
 
 The exit code is the command's own, so `if harness-cli exec "$TASK_ID" -- make
 test; then …` works. A command that never started — missing binary, no

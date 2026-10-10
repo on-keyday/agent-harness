@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"golang.org/x/term"
 )
 
 // execExitError is the exit code for an exec that never produced one of its
@@ -25,6 +26,17 @@ const execExitError = 125
 // usable from a script.
 func runExecAction(ctx context.Context, cid objproto.ConnectionID, run verb.ExecRunAction) error {
 	taskID, argv, shellLine, sshdParent := run.TaskID, run.Argv, run.Shell, run.SshdParent
+
+	// -t hands THIS terminal to the child; with no terminal there is nothing to
+	// hand over. Checked before dialing so the refusal is the whole outcome.
+	// There is no -tt: forcing a PTY onto a pipe has no caller yet.
+	//
+	// term.IsTerminal, not isTTY: isTTY tests for a character device, and
+	// /dev/null is one — `exec -t … < /dev/null` would pass it and then fail
+	// inside raw mode with an ioctl error instead of this sentence.
+	if run.Tty && !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("exec -t: stdin is not a terminal")
+	}
 
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
@@ -47,13 +59,26 @@ func runExecAction(ctx context.Context, cid objproto.ConnectionID, run verb.Exec
 	if !isTTY(os.Stdin) {
 		stdin = os.Stdin
 	}
-	res, runErr := c.ExecRun(ectx, taskID, argv, cli.ExecRunOpts{
+	opts := cli.ExecRunOpts{
 		ShellLine:  shellLine,
 		SshdParent: sshdParent,
 		Stdin:      stdin,
 		Stdout:     os.Stdout,
 		Stderr:     os.Stderr,
-	})
+	}
+	if run.Tty {
+		// The terminal goes to the child: raw mode, its size and changes, and
+		// the reset on the way out. Ctrl-C is then a byte to the child, not a
+		// signal here — as with `ssh -t`. Ctrl+] ends the exec.
+		opts = cli.ExecRunOpts{
+			ShellLine:  shellLine,
+			SshdParent: sshdParent,
+			Pty:        true,
+			Terminal:   true,
+			Term:       os.Getenv("TERM"),
+		}
+	}
+	res, runErr := c.ExecRun(ectx, taskID, argv, opts)
 
 	// Closed HERE, not in a defer: every path below ends in os.Exit, which runs
 	// no defers. Without this the connection would be left to a ping timeout —

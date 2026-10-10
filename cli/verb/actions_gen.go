@@ -155,7 +155,9 @@ type ExecRunAction struct {
 	Shell bool
 	// run under the task's sshd parent process
 	SshdParent bool
-	TaskID     string
+	// run it under a terminal: this terminal goes raw and becomes the child's (Ctrl+] ends the exec)
+	Tty    bool
+	TaskID string
 	// everything after `--` is the argv verbatim; re-scanning it for flags is how a command whose own firs…
 	Argv []string
 	Sub  string
@@ -1259,6 +1261,7 @@ func init() {
 			a.Sub = "run"
 			a.Shell = b.Bool("shell")
 			a.SshdParent = b.Bool("sshd-parent")
+			a.Tty = b.Bool("t")
 			if len(b.Args) > 0 {
 				a.TaskID = b.Args[0]
 			}

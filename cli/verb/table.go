@@ -524,6 +524,10 @@ var Verbs = []VerbSpec{
 				Help: "hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)"},
 			{Name: "sshd-parent", Type: FlagBool, Default: false, Field: "SshdParent",
 				Help: "run under the task's sshd parent process"},
+			{Name: "t", Type: FlagBool, Default: false, Field: "Tty",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI run an exec with no stdin path, so a terminal has nothing to read from",
+				Help:            "run it under a terminal: this terminal goes raw and becomes the child's (Ctrl+] ends the exec)"},
 		},
 		// What it renames IS the shell, so it cannot rename an argv.
 		Requires: []Requirement{{Flags: []string{"sshd-parent"}, Needs: "shell"}},
@@ -532,7 +536,7 @@ var Verbs = []VerbSpec{
 			// kill". ls, kill and tap are sub-verbs, and the run flags do not apply
 			// to them, so naming one here is a mistake rather than a task id.
 			if sub := b.Args[0]; sub == "ls" || sub == "kill" || sub == "tap" {
-				return fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent do not apply to it", sub)
+				return fmt.Errorf("exec: %q is a sub-verb; --shell / --sshd-parent / -t do not apply to it", sub)
 			}
 			return nil
 		},
