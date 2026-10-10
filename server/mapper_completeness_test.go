@@ -239,6 +239,7 @@ func TestExecRunInfoMapsEveryField(t *testing.T) {
 		argv:       []string{"cat"},
 		clientCID:  "ws:127.0.0.1:1-1",
 		clientKind: protocol.ClientKind_Tui,
+		pty:        true,
 	}
 	e.startedAt = time.Now()
 	// Counters are atomics a literal cannot fill: drive them through the

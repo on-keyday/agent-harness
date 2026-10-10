@@ -128,6 +128,8 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	// the assertion rather than passing on the zero value it would have had.
 	in.SetShellLine(true)
 	in.SetSshdParent(true)
+	in.SetPty(true)
+	in.SetTerm([]byte("xterm-256color"))
 
 	out := runnerExecRunRequest(in, 7, "/repo", 42, [16]byte{})
 	if out.ExecId != 7 || out.StreamId != 42 {
@@ -150,6 +152,12 @@ func TestRunnerExecRunRequestCarriesEveryField(t *testing.T) {
 	}
 	if !out.SshdParent() {
 		t.Error("sshd_parent did not survive the relay")
+	}
+	if !out.Pty() {
+		t.Error("pty did not survive the relay")
+	}
+	if string(out.Term) != "xterm-256color" {
+		t.Errorf("term = %q, did not survive the relay", out.Term)
 	}
 }
 
@@ -212,5 +220,18 @@ func TestRunnerExecRunRequestCarriesTheTasksTicket(t *testing.T) {
 	if out.AuthTicket != ticket {
 		t.Fatalf("auth ticket = %x, want %x — a zero ticket is refused by the PSK gate, "+
 			"and blocks the PSK fallback that would otherwise work", out.AuthTicket, ticket)
+	}
+}
+
+// exec ls says which execs run under a terminal: their stderr is always 0, and
+// a row that did not say why would read as a command that writes no errors.
+func TestExecRunInfoCarriesPty(t *testing.T) {
+	info := execRunInfo(&execRun{execID: 3, taskIDHex: "00000000000000000000000000000001", pty: true})
+	if !info.Pty() {
+		t.Fatal("execRunInfo dropped pty")
+	}
+	pipe := execRunInfo(&execRun{execID: 4})
+	if pipe.Pty() {
+		t.Fatal("a pipe exec listed as pty")
 	}
 }

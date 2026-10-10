@@ -33,6 +33,9 @@ type execRun struct {
 	control    trsf.SendStream
 	clientCID  string
 	clientKind protocol.ClientKind
+	// pty: the exec runs under a terminal (ExecRunRequest.pty). Fixed at open;
+	// the listing reports it so a row whose stderr stays 0 says why.
+	pty bool
 
 	// Per-channel payload counters and last activity, written by the relay
 	// (exec_splice.go) and read by the listing and the stats sweep.

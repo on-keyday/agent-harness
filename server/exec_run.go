@@ -72,6 +72,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 		control:    ctrlStream,
 		clientCID:  conn.ConnectionID().String(),
 		clientKind: h.lookupClientKind(conn.ConnectionID().String()),
+		pty:        req.Pty(),
 	}
 	execID := h.execs().add(e)
 
@@ -151,6 +152,8 @@ func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath 
 	body.SetShellLine(req.ShellLine())
 	body.SetSshdParent(req.SshdParent())
 	body.SetStdinEnabled(req.StdinEnabled())
+	body.SetPty(req.Pty())
+	body.SetTerm(req.Term)
 	return body
 }
 
@@ -287,6 +290,7 @@ func execRunInfo(e *execRun) protocol.ExecRunInfo {
 	info.SetOriginCid([]byte(e.clientCID))
 	info.StdinBytes, info.StdoutBytes, info.StderrBytes, info.LastActivityUnixMs = e.counters()
 	info.Taps = e.tapCount()
+	info.SetPty(e.pty)
 	return info
 }
 
