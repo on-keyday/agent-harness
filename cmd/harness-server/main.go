@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -46,6 +47,7 @@ var (
 	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. With neither this nor --operator-psk-file set, one is generated into <data-dir>/operator-psk.")
 	operatorPSKFile      = flag.String("operator-psk-file", "", "path to operator-psk file; auto-generated on first run if absent")
+	serverKeyFile        = flag.String("server-key-file", "", "path to the server's Ed25519 signing key (hex seed); auto-generated if absent. Default <data-dir>/server-key. Its public half is written to <data-dir>/server-key.pub and logged at startup: configure it on clients as HARNESS_SERVER_PUBKEY (runners: --server-pubkey) so they refuse an impostor server.")
 	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces are then validated against --psk (or nothing, when that is empty too), which every in-task agent also holds, so an agent can drop its ticket, reconnect as kind=Client and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
@@ -115,6 +117,53 @@ func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, err
 		file = filepath.Join(dataDir, operatorPSKFileName)
 	}
 	return resolvePSK(val, file)
+}
+
+// serverKeyFileName is where the server's signing key lives when
+// --server-key-file is not given; its public half goes to <name>.pub beside it.
+const serverKeyFileName = "server-key"
+
+// resolveServerKey loads the server's Ed25519 key, generating it on first run
+// the way resolveOperatorPSK does. A file that exists but does not parse is an
+// error: regenerating would silently invalidate every client's pinned key.
+func resolveServerKey(file, dataDir string) (ed25519.PrivateKey, error) {
+	if file == "" {
+		if dataDir == "" {
+			return nil, errors.New("no --server-key-file and no --data-dir to keep a server key in")
+		}
+		if err := os.MkdirAll(dataDir, 0o700); err != nil {
+			return nil, fmt.Errorf("data-dir for %s: %w", serverKeyFileName, err)
+		}
+		file = filepath.Join(dataDir, serverKeyFileName)
+	}
+	var key ed25519.PrivateKey
+	data, err := os.ReadFile(file)
+	switch {
+	case err == nil && strings.TrimSpace(string(data)) != "":
+		if key, err = cli.ParseServerKeySeed(string(data)); err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
+		}
+	case err == nil || errors.Is(err, os.ErrNotExist):
+		_, key, err = ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("server key generate: %w", err)
+		}
+		if err := os.WriteFile(file, []byte(hex.EncodeToString(key.Seed())+"\n"), 0o600); err != nil {
+			return nil, fmt.Errorf("server key write: %w", err)
+		}
+		slog.Info("generated server key", "path", file)
+	default:
+		return nil, fmt.Errorf("server key read: %w", err)
+	}
+	pubHex := hex.EncodeToString(key.Public().(ed25519.PublicKey))
+	if dataDir != "" {
+		pubPath := filepath.Join(dataDir, serverKeyFileName+".pub")
+		if err := os.WriteFile(pubPath, []byte(pubHex+"\n"), 0o644); err != nil {
+			return nil, fmt.Errorf("server public key write: %w", err)
+		}
+	}
+	slog.Info("server public key", "pubkey", pubHex)
+	return key, nil
 }
 
 // loadListenTLS turns --tls-cert / --tls-key into the listener's TLS config,
@@ -224,6 +273,11 @@ func main() {
 		slog.Error("operator-PSK setup failed", "err", err)
 		os.Exit(1)
 	}
+	serverKey, err := resolveServerKey(strings.TrimSpace(*serverKeyFile), *dataDir)
+	if err != nil {
+		slog.Error("server key setup failed", "err", err)
+		os.Exit(1)
+	}
 	listenTLS, err := loadListenTLS(strings.TrimSpace(*tlsCert), strings.TrimSpace(*tlsKey), strings.TrimSpace(*listen))
 	if err != nil {
 		slog.Error("TLS setup failed", "err", err)
@@ -267,6 +321,7 @@ func main() {
 		Logger:               slog.Default(),
 		PSK:                  pskBytes,
 		OperatorPSK:          operatorPSKBytes,
+		ServerKey:            serverKey,
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,

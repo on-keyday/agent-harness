@@ -3,8 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/on-keyday/agent-harness/cli"
 )
 
 // The operator secret is required by default: handed nothing, the server
@@ -78,5 +81,44 @@ func TestResolveOperatorPSK_NamedFileIsNotRedirectedToDataDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, operatorPSKFileName)); !os.IsNotExist(err) {
 		t.Fatalf("the data-dir default must be untouched when a file is named; stat err = %v", err)
+	}
+}
+
+func TestResolveServerKey(t *testing.T) {
+	dir := t.TempDir()
+	k1, err := resolveServerKey("", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(dir, serverKeyFileName))
+	if err != nil {
+		t.Fatalf("key not generated into data dir: %v", err)
+	}
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode = %v, want 0600", st.Mode().Perm())
+	}
+	pubHex, err := os.ReadFile(filepath.Join(dir, serverKeyFileName+".pub"))
+	if err != nil {
+		t.Fatalf("public key not written: %v", err)
+	}
+	pub, err := cli.ParseServerPubKey(string(pubHex))
+	if err != nil || !pub.Equal(k1.Public()) {
+		t.Fatalf("server-key.pub does not hold the key's public half: %v", err)
+	}
+	// Second start reuses the key.
+	k2, err := resolveServerKey("", dir)
+	if err != nil || !k2.Equal(k1) {
+		t.Fatalf("restart produced a different key: %v", err)
+	}
+	// A corrupt key file is a startup error, never silently regenerated.
+	if err := os.WriteFile(filepath.Join(dir, serverKeyFileName), []byte("nothex\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveServerKey("", dir); err == nil {
+		t.Fatal("corrupt key file accepted")
+	}
+	// No flag and no data dir: nowhere to keep a key.
+	if _, err := resolveServerKey("", ""); err == nil {
+		t.Fatal("no data dir and no --server-key-file must fail")
 	}
 }

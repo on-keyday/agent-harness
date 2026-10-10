@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ed25519"
 	"crypto/subtle"
 	"log/slog"
 
@@ -90,7 +91,10 @@ type pskGate struct {
 	// operator binder and thus cannot claim operator authority by sending
 	// kind=Client. Empty operatorPSK preserves the legacy behaviour (operator
 	// connections validated against psk, the shared connect secret).
-	operatorPSK    []byte
+	operatorPSK []byte
+	// serverKey signs every PskAuthResponse so a client holding the public
+	// half can tell this server from an impostor. server.New guarantees one.
+	serverKey      ed25519.PrivateKey
 	ValidateTicket func(info *protocol.AgentInfo) protocol.PskAuthStatus
 }
 
@@ -117,12 +121,16 @@ func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
 	return g.psk
 }
 
-// sendPskResponse encodes and sends [AppKind_PskAuth] + PskAuthResponse{status} via sendFn.
-func sendPskResponse(sendFn func([]byte), status protocol.PskAuthStatus) {
+// respond encodes and sends [AppKind_PskAuth] + PskAuthResponse{status, sig}.
+// Rejections are signed too: an unsigned bad_psk is exactly what an impostor
+// would send to stop a runner for good.
+func (g *pskGate) respond(sendFn func([]byte), transcript []byte, status protocol.PskAuthStatus) {
 	resp := protocol.PskAuthResponse{Status: status}
+	if g.serverKey != nil {
+		resp.SetServerSig(cli.SignServerAuth(g.serverKey, transcript, status))
+	}
 	out, err := resp.Append([]byte{byte(appwire.AppKind_PskAuth)})
 	if err != nil {
-		// Encoding cannot fail for a single-byte enum; log defensively.
 		slog.Error("pskGate: failed to encode PskAuthResponse", "err", err)
 		return
 	}
@@ -170,7 +178,7 @@ func (g *pskGate) Check(
 	var req protocol.PskAuthRequest
 	if err := req.DecodeExact(data[1:]); err != nil {
 		slog.Warn("pskGate: failed to decode PskAuthRequest", "err", err)
-		sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+		g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 		return true, true, nil
 	}
 
@@ -184,7 +192,7 @@ func (g *pskGate) Check(
 	if key := g.binderKey(&req); len(key) > 0 {
 		expected, err := cli.ComputePSKBinder(key, transcript)
 		if err != nil || subtle.ConstantTimeCompare(req.Binder, expected) != 1 {
-			sendPskResponse(sendFn, protocol.PskAuthStatus_BadPsk)
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadPsk)
 			return true, true, nil
 		}
 	}
@@ -195,14 +203,14 @@ func (g *pskGate) Check(
 	case protocol.AuthRole_Client:
 		if req.ClientHello() == nil {
 			slog.Warn("pskGate: client role but ClientHello is nil (identity required)")
-			sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
 	case protocol.AuthRole_Runner:
 		rh := req.RunnerHello()
 		if rh == nil {
 			slog.Warn("pskGate: runner role but RunnerHello is nil (identity required)")
-			sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
 		// A zero runner_id is an ABSENT identity, not a valid one, and it has to
@@ -220,13 +228,13 @@ func (g *pskGate) Check(
 		if rh.RunnerId.IsZero() {
 			slog.Warn("pskGate: runner hello carries a zero runner_id (identity required)",
 				"hostname", string(rh.Hostname))
-			sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
 	default:
 		// Unknown role — fail-closed.
 		slog.Warn("pskGate: unknown role", "role", req.Role)
-		sendPskResponse(sendFn, protocol.PskAuthStatus_NoIdentity)
+		g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 		return true, true, nil
 	}
 
@@ -239,12 +247,12 @@ func (g *pskGate) Check(
 			info := hello.AgentInfo()
 			if info == nil {
 				slog.Warn("pskGate: agent kind but AgentInfo is nil")
-				sendPskResponse(sendFn, protocol.PskAuthStatus_BadTicket)
+				g.respond(sendFn, transcript, protocol.PskAuthStatus_BadTicket)
 				return true, true, nil
 			}
 			if g.ValidateTicket != nil {
 				if s := g.ValidateTicket(info); s != protocol.PskAuthStatus_Ok {
-					sendPskResponse(sendFn, s)
+					g.respond(sendFn, transcript, s)
 					return true, true, nil
 				}
 			}
@@ -254,6 +262,6 @@ func (g *pskGate) Check(
 
 	// Step 5: Accept — mark authed, reply ok, return decoded request for dispatch.
 	g.authed = true
-	sendPskResponse(sendFn, protocol.PskAuthStatus_Ok)
+	g.respond(sendFn, transcript, protocol.PskAuthStatus_Ok)
 	return true, false, &req
 }

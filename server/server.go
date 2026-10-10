@@ -3,6 +3,7 @@ package server
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -75,6 +76,11 @@ type Config struct {
 	// against PSK); server.Run logs a loud startup warning in that case, because
 	// without it a confined task can escalate to operator by dropping its ticket.
 	OperatorPSK []byte
+
+	// ServerKey signs every PskAuthResponse (spec 2026-10-11 server signature
+	// auth). nil → New generates an ephemeral one, so a server always signs;
+	// harness-server passes the persistent key from <data-dir>/server-key.
+	ServerKey ed25519.PrivateKey
 
 	// WebUIFS, when non-nil, causes server.Run to register handlers on its
 	// internal mux for "/" (serving "<root>/index.html") and "/static/" (serving
@@ -222,6 +228,13 @@ type Server struct {
 func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.ServerKey == nil {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			panic("server: generate ephemeral server key: " + err.Error())
+		}
+		cfg.ServerKey = priv
 	}
 	s := &Server{
 		cfg:            cfg,
@@ -1278,6 +1291,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 
 	gate := newPSKGate(s.cfg.PSK)
 	gate.operatorPSK = s.cfg.OperatorPSK
+	gate.serverKey = s.cfg.ServerKey
 	// Wire ticket validation into the gate: an agent that fails this check
 	// must NOT fall through to operator (this is the hole the merged handshake
 	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.

@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"testing"
 	"time"
 
@@ -974,5 +976,54 @@ func TestPSKGate_AgentboardBadTicket_NoPrincipal(t *testing.T) {
 	status := parsePskResponse(t, sent)
 	if status != protocol.PskAuthStatus_BadTicket {
 		t.Errorf("response status: got %v, want BadTicket", status)
+	}
+}
+
+// parsePskResponseFull decodes the whole response, signature included.
+func parsePskResponseFull(t *testing.T, sent []byte) protocol.PskAuthResponse {
+	t.Helper()
+	if len(sent) < 2 || appwire.AppKind(sent[0]) != appwire.AppKind_PskAuth {
+		t.Fatalf("not a PskAuth response: %v", sent)
+	}
+	var resp protocol.PskAuthResponse
+	if err := resp.DecodeExact(sent[1:]); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return resp
+}
+
+// Every status Check can send is signed, rejections included (spec D4).
+func TestPSKGate_SignsEveryStatus(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	psk := []byte("s3cr3t")
+	cases := map[protocol.PskAuthStatus][]byte{
+		protocol.PskAuthStatus_Ok:         buildPskAuthData(t, buildOperatorClientHello(psk, testTranscript)),
+		protocol.PskAuthStatus_BadPsk:     buildPskAuthData(t, buildOperatorClientHello([]byte("wrong"), testTranscript)),
+		protocol.PskAuthStatus_NoIdentity: {byte(appwire.AppKind_PskAuth), 0xff},
+		// ValidateTicket below refuses every ticket.
+		protocol.PskAuthStatus_BadTicket: buildPskAuthData(t, buildAgentClientHello(psk, testTranscript, protocol.AgentInfo{})),
+	}
+	for want, data := range cases {
+		g := newPSKGate(psk)
+		g.serverKey = priv
+		g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
+		var sent []byte
+		g.Check(data, testTranscript, func(b []byte) { sent = append(sent, b...) })
+		resp := parsePskResponseFull(t, sent)
+		if resp.Status != want {
+			t.Errorf("status = %v, want %v", resp.Status, want)
+			continue
+		}
+		if err := cli.VerifyServerAuth(pub, testTranscript, &resp); err != nil {
+			t.Errorf("%v: %v", want, err)
+		}
+	}
+}
+
+// server.New gives every server a key, so the gate it builds always signs.
+func TestNew_AlwaysHasServerKey(t *testing.T) {
+	s := New(Config{})
+	if len(s.cfg.ServerKey) != ed25519.PrivateKeySize {
+		t.Fatalf("server.New left ServerKey unset (len %d)", len(s.cfg.ServerKey))
 	}
 }
