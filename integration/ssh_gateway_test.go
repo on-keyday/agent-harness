@@ -241,6 +241,65 @@ func TestSSHGatewayE2E(t *testing.T) {
 		}
 	})
 
+	// `ssh -t host cmd`: the command gets a terminal of its own, with the
+	// pty-req's TERM and size, and follows window-change. Zed's remote terminal
+	// is this shape; over pipes its login shell printed no prompt.
+	t.Run("pty_exec_gets_a_terminal", func(t *testing.T) {
+		cl := dialSSH(t, gwAddr, taskID)
+		defer cl.Close()
+		sess, err := cl.NewSession()
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		defer sess.Close()
+		stdout, err := sess.StdoutPipe()
+		if err != nil {
+			t.Fatalf("StdoutPipe: %v", err)
+		}
+		stdin, err := sess.StdinPipe()
+		if err != nil {
+			t.Fatalf("StdinPipe: %v", err)
+		}
+		if err := sess.RequestPty("xterm-gw", 30, 100, ssh.TerminalModes{}); err != nil {
+			t.Fatalf("RequestPty: %v", err)
+		}
+		if err := sess.Start(`test -t 0 && echo IS-TTY; echo "TERM=$TERM"; sleep 0.5; stty size; read x; stty size`); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		eventually(t, func() bool {
+			execs, lerr := c.ExecRunListWith(context.Background(), "")
+			if lerr != nil {
+				return false
+			}
+			for i := range execs {
+				if execs[i].Pty() {
+					return true
+				}
+			}
+			return false
+		}, 5*time.Second, 50*time.Millisecond, "exec ls to list the exec with pty set")
+
+		got := readUntilContains(t, stdout, "30 100", 5*time.Second)
+		for _, want := range []string{"IS-TTY", "TERM=xterm-gw"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("output = %q, want %q", got, want)
+			}
+		}
+		if err := sess.WindowChange(40, 120); err != nil {
+			t.Fatalf("WindowChange: %v", err)
+		}
+		// window-change and stdin take different goroutines in the gateway;
+		// give the resize a moment to land before releasing `read`.
+		time.Sleep(200 * time.Millisecond)
+		if _, err := stdin.Write([]byte("\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		readUntilContains(t, stdout, "40 120", 5*time.Second)
+		if err := sess.Wait(); err != nil {
+			t.Errorf("Wait = %v, want a clean exit", err)
+		}
+	})
+
 	// An interrupted `ssh host cmd` stops the command. Ctrl-C at the far
 	// terminal kills the ssh client, and the only signal this end gets is the
 	// channel closing — the gateway's OWN harness connection stays up, so the
@@ -585,6 +644,26 @@ func readSome(t *testing.T, r io.Reader, d time.Duration) []byte {
 	case <-time.After(d):
 		return nil
 	}
+}
+
+// readUntilContains reads r until what has arrived contains want, or fails
+// after d. Returns everything read.
+func readUntilContains(t *testing.T, r io.Reader, want string, d time.Duration) string {
+	t.Helper()
+	var acc strings.Builder
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		chunk := readSome(t, r, time.Until(deadline))
+		acc.Write(chunk)
+		if strings.Contains(acc.String(), want) {
+			return acc.String()
+		}
+		if chunk == nil {
+			break
+		}
+	}
+	t.Fatalf("did not see %q within %v; got %q", want, d, acc.String())
+	return ""
 }
 
 // readUntilEOF drains r until it ends or d elapses.

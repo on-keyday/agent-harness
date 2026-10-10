@@ -58,17 +58,19 @@ func parseExecReq(payload []byte) (string, error) {
 	return string(er.Command), nil
 }
 
-// parsePtyReq decodes a pty-req payload (RFC 4254 6.2).
+// parsePtyReq decodes a pty-req payload (RFC 4254 6.2): the size, and the
+// client's TERM.
 //
-// TERM is decoded and discarded: the runner-side PTY's TERM is fixed when the
+// A shell ignores the TERM: the runner-side PTY's TERM is fixed when the
 // session is created, and changing it mid-session would change what the
-// already-running agent renders.
-func parsePtyReq(payload []byte) (ptyDims, error) {
+// already-running agent renders. An exec that follows the pty-req gets a PTY
+// of its own and passes it on as the child's TERM.
+func parsePtyReq(payload []byte) (ptyDims, string, error) {
 	var pr sshwire.PtyReq
 	if err := pr.DecodeExact(payload); err != nil {
-		return ptyDims{}, fmt.Errorf("pty-req payload: %w", err)
+		return ptyDims{}, "", fmt.Errorf("pty-req payload: %w", err)
 	}
-	return dims(pr.Columns, pr.Rows, pr.WidthPx, pr.HeightPx), nil
+	return dims(pr.Columns, pr.Rows, pr.WidthPx, pr.HeightPx), string(pr.Term), nil
 }
 
 // serveSession runs one ssh session channel against one attach stream.
@@ -109,17 +111,21 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 	// happened to have.
 	var dims ptyDims
 	var haveDims bool
+	// A pty-req is remembered for an exec that follows it: `ssh -t host cmd`
+	// sends both, and the command then wants a terminal of its own.
+	var tty *execTTY
 	started := false
 	for req := range requests {
 		switch req.Type {
 		case "pty-req":
-			d, perr := parsePtyReq(req.Payload)
+			d, term, perr := parsePtyReq(req.Payload)
 			if perr != nil {
 				fmt.Fprintf(ch.Stderr(), "ssh-gateway: %v\r\n", perr)
 				_ = req.Reply(false, nil)
 				continue
 			}
 			dims, haveDims = d, true
+			tty = &execTTY{term: term, dims: d}
 			_ = req.Reply(true, nil)
 		case "shell":
 			_ = req.Reply(true, nil)
@@ -155,15 +161,24 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 			// interrupted — Ctrl-C at the far terminal kills the ssh client, and
 			// nothing else here would notice.
 			ectx, cancelExec := context.WithCancel(ctx)
+			var resize execResizer
 			go func() {
 				defer cancelExec()
 				for r := range requests {
+					// window-change resizes a PTY exec. It wants no reply
+					// (RFC 4254 6.7), and a zero size is not a terminal.
+					if tty != nil && r.Type == "window-change" {
+						if d, perr := parseWindowChange(r.Payload); perr == nil && d.Rows != 0 && d.Cols != 0 {
+							resize.apply(d)
+						}
+						continue
+					}
 					if r.WantReply {
 						_ = r.Reply(false, nil)
 					}
 				}
 			}()
-			g.runExec(ectx, ch, taskID, cmdline, uopts)
+			g.runExec(ectx, ch, taskID, cmdline, uopts, tty, &resize)
 			cancelExec()
 			return
 		case "subsystem":
@@ -206,7 +221,11 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 // read-only here would advertise an authority boundary the gateway does not
 // have, since reaching it at all already means holding the operator's
 // credentials.
-func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string, uopts UserOpts) {
+//
+// A pty-req before the exec (`ssh -t host cmd`) makes it a PTY exec carrying the
+// pty-req's TERM and size. An editor's remote terminal is that shape — over
+// pipes its login shell is non-interactive and shows no prompt.
+func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline string, uopts UserOpts, tty *execTTY, resize *execResizer) {
 	// The kill is by ID, and it is not belt-and-braces: cancelling ctx only
 	// unwinds THIS end. The server drops an exec when its client's CONNECTION
 	// goes away, and one ssh client leaving is not this gateway's harness
@@ -237,7 +256,7 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 		}
 	}()
 
-	res, err := g.client.ExecRun(ctx, taskID, []string{cmdline}, cli.ExecRunOpts{
+	opts := cli.ExecRunOpts{
 		// From the ssh USER NAME, so it is a property of the connection rather
 		// than of one command: a client that opens several execs over one
 		// connection — which is what a remote editor's bootstrap does — gets
@@ -254,7 +273,18 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 		Stdin:  ch,
 		Stdout: ch,
 		Stderr: ch.Stderr(),
-	})
+	}
+	if tty != nil {
+		// `ssh -t host cmd`: the command gets a terminal, as under sshd. stdout
+		// and stderr become one stream; Stderr stays wired and receives nothing.
+		// Ctrl+] is NOT intercepted here — the byte belongs to the child.
+		opts.Pty = true
+		opts.Term = tty.term
+		opts.InitialRows, opts.InitialCols = tty.dims.Rows, tty.dims.Cols
+		opts.InitialWidthPx, opts.InitialHeightPx = tty.dims.WidthPx, tty.dims.HeightPx
+		opts.OnResizer = resize.set
+	}
+	res, err := g.client.ExecRun(ctx, taskID, []string{cmdline}, opts)
 	if err != nil {
 		fmt.Fprintf(ch.Stderr(), "ssh-gateway: %v\r\n", err)
 		sendExit(ch, 1)

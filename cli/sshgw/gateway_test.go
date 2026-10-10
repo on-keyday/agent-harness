@@ -87,9 +87,13 @@ func TestParsePtyReq(t *testing.T) {
 	payload = appendU32(payload, 480)
 	payload = appendU32(payload, 0)
 
-	d, err := parsePtyReq(payload)
+	d, gotTerm, err := parsePtyReq(payload)
 	if err != nil {
 		t.Fatalf("parsePtyReq: %v", err)
+	}
+	// An exec after the pty-req passes this on as the child's TERM.
+	if gotTerm != term {
+		t.Errorf("term = %q, want the TERM the pty-req carried (%q)", gotTerm, term)
 	}
 	// The whole reason for named fields: SSH sends COLUMNS first, and
 	// SetTerminalWindowSize takes ROWS first. A swap renders a plausible but
@@ -100,16 +104,16 @@ func TestParsePtyReq(t *testing.T) {
 }
 
 func TestParsePtyReq_Short(t *testing.T) {
-	if _, err := parsePtyReq([]byte{0, 0, 0, 9}); err == nil {
+	if _, _, err := parsePtyReq([]byte{0, 0, 0, 9}); err == nil {
 		t.Error("want an error when the TERM length exceeds the payload")
 	}
-	if _, err := parsePtyReq(nil); err == nil {
+	if _, _, err := parsePtyReq(nil); err == nil {
 		t.Error("want an error for an empty payload")
 	}
 	// A TERM string present but the dimensions missing.
 	short := appendU32(nil, 2)
 	short = append(short, "vt"...)
-	if _, err := parsePtyReq(short); err == nil {
+	if _, _, err := parsePtyReq(short); err == nil {
 		t.Error("want an error when the dimensions are absent")
 	}
 }
