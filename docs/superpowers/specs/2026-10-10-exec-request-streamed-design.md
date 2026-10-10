@@ -81,7 +81,9 @@ where an Ethernet path would still carry up to 1472 and loopback about 64 KiB.
 A request in those gaps used to arrive and is now an error. Known ones that
 can reach it: `submit` with a long prompt, `notify` text, `open_interactive`
 with long `extra_args`, and `RunnerHelloResponse` with more than about 70
-re-adopted tasks. `MaxDatagramSize()`
+re-adopted tasks. Kept as an error, not a warning (operator, 2026-10-10):
+`submit` is rarely used in practice, and when one of these trips the check, it
+is the one to move onto a stream. `MaxDatagramSize()`
 subtracts trsf's 30-byte packet overhead where an objproto control message
 spends 24, so the budget is 6 bytes conservative; using the exported value
 rather than recomputing the overhead in the harness keeps that arithmetic in
