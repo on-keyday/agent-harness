@@ -3,12 +3,15 @@ package tui
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -199,52 +202,17 @@ type NotifyEventMsg struct {
 	Event protocol.NotifyEvent
 }
 
-// drainNotifyEvents decodes every complete NotifyEvent in buf, calling emit for
-// each (in order), and returns the undrained remainder. Handles coalesced reads
-// (multiple events in one payload) and split reads (a partial event at the tail).
-func drainNotifyEvents(buf []byte, emit func(protocol.NotifyEvent)) []byte {
-	for {
-		var ev protocol.NotifyEvent
-		rest, err := ev.Decode(buf)
-		if err != nil {
-			break
-		}
-		emit(ev)
-		buf = rest
-	}
-	return buf
-}
-
 // SubscribeNotifications joins the notifications topic and forwards each decoded
-// NotifyEvent as NotifyEventMsg via program.Send. Unlike subscribeAndStream, this
-// accumulates bytes across ReadDirect calls and drains ALL complete events per read,
-// correctly handling the server-side ring replay path that may coalesce multiple
-// AppendData calls into a single ReadDirect payload. The accumulation buffer is
-// reset per (re)subscribe: a new stream starts at a ring-replay boundary, so a
-// partial event left over from a dead stream must not prefix it.
+// NotifyEvent as NotifyEventMsg. The ring replay arrives first, as ordinary
+// messages.
 func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Program) {
-	resubscribeLoop(ctx, c, topics.Notifications(), program, func(stream trsf.BidirectionalStream) {
-		var buf []byte
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			data, eof, rerr := stream.ReadDirect(64 * 1024)
-			if rerr != nil {
-				return
-			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				buf = drainNotifyEvents(buf, func(ev protocol.NotifyEvent) {
-					program.Send(NotifyEventMsg{Event: ev})
-				})
-			}
-			if eof {
-				return
-			}
+	subscribeAndStream(ctx, c, topics.Notifications(), program, func(payload []byte) tea.Msg {
+		var ev protocol.NotifyEvent
+		if _, err := ev.Decode(payload); err != nil {
+			slog.Warn("decode notify event", "err", err)
+			return nil
 		}
+		return NotifyEventMsg{Event: ev}
 	})
 }
 
@@ -307,31 +275,37 @@ func resubscribeLoop(ctx context.Context, c *cli.Client, topic string, program *
 	}
 }
 
-// subscribeAndStream uses peer.Conn.JoinAndGetStream to do the JOIN+lookup+
-// header-discard dance, then pumps payload chunks through fn → program.Send.
-// Runs until ctx is cancelled; stream death resubscribes via resubscribeLoop.
+// subscribeAndStream joins topic and pumps each message through fn →
+// program.Send via PumpEvents. Runs until ctx is cancelled; stream death
+// resubscribes via resubscribeLoop.
 func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, program *tea.Program, fn func([]byte) tea.Msg) {
 	resubscribeLoop(ctx, c, topic, program, func(st trsf.BidirectionalStream) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			data, eof, err := st.ReadDirect(64 * 1024)
-			if err != nil {
-				return
-			}
-			if len(data) > 0 {
-				if msg := fn(data); msg != nil {
-					program.Send(msg)
-				}
-			}
-			if eof {
-				return
-			}
-		}
+		_ = PumpEvents(ctx, st, topic, fn, program.Send)
 	})
+}
+
+// PumpEvents reads topic's subscriber stream one message at a time and sends
+// fn's result for each. It returns the reader's error — io.EOF when the stream
+// ended cleanly — or ctx.Err().
+func PumpEvents(ctx context.Context, st pubsub.StreamReader, topic string, fn func([]byte) tea.Msg, send func(tea.Msg)) error {
+	fr := pubsub.NewFrameReader(st)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		payload, err := fr.Next()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && ctx.Err() == nil {
+				slog.Warn("subscription stream", "topic", topic, "err", err)
+			}
+			return err
+		}
+		if msg := fn(payload); msg != nil {
+			send(msg)
+		}
+	}
 }
 
 // FormatTaskID returns the hex string for a TaskID, exposed for app.go.

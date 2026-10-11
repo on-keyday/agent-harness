@@ -1,33 +1,56 @@
 package cli
 
 import (
-	"bytes"
 	"strings"
-	"sync"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func TestDrainNotifyEvents(t *testing.T) {
+type chunkStream struct{ chunks [][]byte }
+
+func (s *chunkStream) ReadDirect(uint64) ([]byte, bool, error) {
+	if len(s.chunks) == 0 {
+		return nil, true, nil
+	}
+	c := s.chunks[0]
+	s.chunks = s.chunks[1:]
+	return c, len(s.chunks) == 0, nil
+}
+
+type frameSink struct{ wire []byte }
+
+func (f *frameSink) AppendData(_ bool, data ...[]byte) error {
+	for _, d := range data {
+		f.wire = append(f.wire, d...)
+	}
+	return nil
+}
+
+// A payload that does not decode is skipped; the events around it still arrive.
+func TestReadFrames_BadPayloadDoesNotDisturbTheNext(t *testing.T) {
 	e1 := (&protocol.NotifyEvent{Ts: 1, Level: protocol.NotifyLevel_Info, Origin: protocol.NotifyOrigin_External, TextLen: 2, Text: []byte("hi")}).MustAppend(nil)
 	e2 := (&protocol.NotifyEvent{Ts: 2, Level: protocol.NotifyLevel_Warn, Origin: protocol.NotifyOrigin_External, TextLen: 1, Text: []byte("x")}).MustAppend(nil)
-	buf := append(append([]byte{}, e1...), e2...)
-	buf = append(buf, e2[:1]...) // a partial third event
-
-	var out bytes.Buffer
-	var mu sync.Mutex
-	rest := drainNotifyEvents(buf, &out, &mu, notifyEventJSONLine)
-
-	if n := strings.Count(out.String(), "\n"); n != 2 {
-		t.Fatalf("emitted %d lines, want 2:\n%s", n, out.String())
+	var sink frameSink
+	for _, m := range [][]byte{e1, {0xff}, e2} {
+		if err := pubsub.WriteFrame(&sink, m); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(rest) != 1 {
-		t.Fatalf("leftover = %d bytes, want 1 (the partial event)", len(rest))
+	var lines []string
+	err := readFrames(&chunkStream{chunks: [][]byte{sink.wire[:5], sink.wire[5:]}}, "notifications", func(p []byte) {
+		ev := &protocol.NotifyEvent{}
+		if _, err := ev.Decode(p); err != nil {
+			return
+		}
+		lines = append(lines, notifyEventJSONLine(ev))
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// each emitted line is JSON with the lowercase level
-	if !strings.Contains(out.String(), `"level":"info"`) || !strings.Contains(out.String(), `"level":"warn"`) {
-		t.Fatalf("expected lowercase levels in output:\n%s", out.String())
+	if len(lines) != 2 || !strings.Contains(lines[0], `"level":"info"`) || !strings.Contains(lines[1], `"level":"warn"`) {
+		t.Fatalf("lines = %q, want the info event then the warn event", lines)
 	}
 }
 

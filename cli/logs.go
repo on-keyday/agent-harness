@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
 
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -43,23 +45,22 @@ func (c *Client) Logs(ctx context.Context, taskID string, out io.Writer, follow 
 	if err != nil {
 		return err
 	}
+	fr := pubsub.NewFrameReader(st)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		data, eof, err := st.ReadDirect(64 * 1024)
+		p, err := fr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		if len(data) > 0 {
-			if _, werr := out.Write(data); werr != nil {
-				return werr
-			}
-		}
-		if eof {
-			return nil
+		if _, werr := out.Write(p); werr != nil {
+			return werr
 		}
 	}
 }

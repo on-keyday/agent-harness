@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -38,40 +39,33 @@ func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 
 	var mu sync.Mutex
 
-	// consumeTasks drains a stream carrying TaskStatusEvent payloads.
+	// consumeTasks reads a stream carrying TaskStatusEvent messages.
 	consumeTasks := func(st trsf.BidirectionalStream) {
-		var buf []byte
-		for {
-			data, eof, err := st.ReadDirect(4096)
-			if err != nil {
+		_ = readFrames(st, tasksTopic, func(p []byte) {
+			ev := &protocol.TaskStatusEvent{}
+			if _, err := ev.Decode(p); err != nil {
+				slog.Warn("decode task event", "err", err)
 				return
 			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				buf = drainTaskEvents(buf, out, &mu)
-			}
-			if eof {
-				return
-			}
-		}
+			mu.Lock()
+			fmt.Fprintf(out, "task %x kind=%s status=%s ts=%d exit=%d\n",
+				ev.TaskId.Id[:6], ev.Kind, ev.TaskStatus, ev.Ts, ev.ExitCode)
+			mu.Unlock()
+		})
 	}
 
-	// consumeRunners drains a stream carrying RunnerStatusEvent payloads.
+	// consumeRunners reads a stream carrying RunnerStatusEvent messages.
 	consumeRunners := func(st trsf.BidirectionalStream) {
-		var buf []byte
-		for {
-			data, eof, err := st.ReadDirect(4096)
-			if err != nil {
+		_ = readFrames(st, runnersTopic, func(p []byte) {
+			ev := &protocol.RunnerStatusEvent{}
+			if _, err := ev.Decode(p); err != nil {
+				slog.Warn("decode runner event", "err", err)
 				return
 			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				buf = drainRunnerEvents(buf, out, &mu)
-			}
-			if eof {
-				return
-			}
-		}
+			mu.Lock()
+			fmt.Fprintf(out, "runner kind=%s status=%s ts=%d\n", ev.Kind, ev.RunnerStatus, ev.Ts)
+			mu.Unlock()
+		})
 	}
 
 	var wg sync.WaitGroup
@@ -93,42 +87,4 @@ func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) er
 	}
 	defer c.Close()
 	return c.Watch(ctx, out)
-}
-
-// drainTaskEvents decodes as many TaskStatusEvent records as possible from buf,
-// prints each one, and returns the unconsumed tail.
-func drainTaskEvents(buf []byte, out io.Writer, mu *sync.Mutex) []byte {
-	for {
-		ev := &protocol.TaskStatusEvent{}
-		rest, err := ev.Decode(buf)
-		if err != nil {
-			// Not enough data yet; wait for more bytes.
-			break
-		}
-		mu.Lock()
-		fmt.Fprintf(out, "task %x kind=%s status=%s ts=%d exit=%d\n",
-			ev.TaskId.Id[:6], ev.Kind, ev.TaskStatus, ev.Ts, ev.ExitCode)
-		mu.Unlock()
-		buf = rest
-	}
-	return buf
-}
-
-// drainRunnerEvents decodes as many RunnerStatusEvent records as possible from buf,
-// prints each one, and returns the unconsumed tail.
-func drainRunnerEvents(buf []byte, out io.Writer, mu *sync.Mutex) []byte {
-	for {
-		ev := &protocol.RunnerStatusEvent{}
-		rest, err := ev.Decode(buf)
-		if err != nil {
-			// Not enough data yet; wait for more bytes.
-			break
-		}
-		mu.Lock()
-		fmt.Fprintf(out, "runner kind=%s status=%s ts=%d\n",
-			ev.Kind, ev.RunnerStatus, ev.Ts)
-		mu.Unlock()
-		buf = rest
-	}
-	return buf
 }

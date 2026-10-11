@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -260,20 +261,16 @@ func (c *Client) watchConnStatusEvents(ctx context.Context, out io.Writer, line 
 	}
 	var mu sync.Mutex
 	go func() {
-		var buf []byte
-		for {
-			data, eof, rerr := stream.ReadDirect(4096)
-			if rerr != nil {
+		_ = readFrames(stream, topic, func(p []byte) {
+			ev := &protocol.ConnStatusEvent{}
+			if _, err := ev.Decode(p); err != nil {
+				slog.Warn("decode conn event", "err", err)
 				return
 			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				buf = drainConnStatusEvents(buf, out, &mu, line)
-			}
-			if eof {
-				return
-			}
-		}
+			mu.Lock()
+			fmt.Fprintln(out, line(ev))
+			mu.Unlock()
+		})
 	}()
 	<-ctx.Done()
 	return ctx.Err()
@@ -311,24 +308,6 @@ func WatchConnsJSON(ctx context.Context, serverCID objproto.ConnectionID, out io
 	}
 	defer c.Close()
 	return c.WatchConnsJSONWith(ctx, out)
-}
-
-// drainConnStatusEvents decodes as many whole ConnStatusEvents as buf holds,
-// writing one formatted line each, and returns the undrained remainder.
-// Mirrors drainNotifyEvents in notify_watch.go.
-func drainConnStatusEvents(buf []byte, out io.Writer, mu *sync.Mutex, line func(*protocol.ConnStatusEvent) string) []byte {
-	for {
-		ev := &protocol.ConnStatusEvent{}
-		rest, err := ev.Decode(buf)
-		if err != nil {
-			break
-		}
-		mu.Lock()
-		fmt.Fprintln(out, line(ev))
-		mu.Unlock()
-		buf = rest
-	}
-	return buf
 }
 
 // connStatusEventTextLine renders one human-readable line for a ConnStatusEvent.

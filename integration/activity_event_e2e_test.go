@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -96,29 +97,19 @@ func TestActivityEventE2E(t *testing.T) {
 	var mu sync.Mutex
 	var events []protocol.TaskStatusEvent
 	go func() {
-		var buf []byte
+		fr := pubsub.NewFrameReader(evStream)
 		for {
-			data, eof, rerr := evStream.ReadDirect(64 * 1024)
+			p, rerr := fr.Next()
 			if rerr != nil {
 				return
 			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				for {
-					var ev protocol.TaskStatusEvent
-					rest, derr := ev.Decode(buf)
-					if derr != nil {
-						break
-					}
-					mu.Lock()
-					events = append(events, ev)
-					mu.Unlock()
-					buf = rest
-				}
+			var ev protocol.TaskStatusEvent
+			if _, derr := ev.Decode(p); derr != nil {
+				continue
 			}
-			if eof {
-				return
-			}
+			mu.Lock()
+			events = append(events, ev)
+			mu.Unlock()
 		}
 	}()
 

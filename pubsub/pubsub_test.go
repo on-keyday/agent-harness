@@ -41,9 +41,9 @@ func TestPubSub_OnSubscribeHookFires(t *testing.T) {
 	sub := NewSubscriber(objproto.ConnectionID{}, tp)
 
 	var (
-		hookCalls  int
-		hookTopic  string
-		hookSend   func([]byte) error
+		hookCalls int
+		hookTopic string
+		hookSend  func([]byte) error
 	)
 	ps.OnSubscribe = func(topic string, send func([]byte) error) {
 		hookCalls++
@@ -98,10 +98,11 @@ type recordingStream struct {
 	got chan []byte
 }
 
+// AppendData keeps the payload: a frame arrives as [header, payload].
 func (r *recordingStream) AppendData(eof bool, data ...[]byte) error {
-	for _, d := range data {
+	if len(data) > 0 {
 		select {
-		case r.got <- d:
+		case r.got <- data[len(data)-1]:
 		default:
 		}
 	}

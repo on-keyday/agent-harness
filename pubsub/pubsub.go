@@ -189,7 +189,7 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 	}
 	ps.topics[topic].AddSubscriber(sub)
 	if ps.OnSubscribe != nil {
-		ps.OnSubscribe(topic, func(msg []byte) error { return stream.AppendData(false, msg) })
+		ps.OnSubscribe(topic, func(msg []byte) error { return WriteFrame(stream, msg) })
 	}
 	ps.logger.Info("subscriber joined topic", "topic", topic, "nickName", nickName, "subscriberID", sub.id, "streamID", stream.ID())
 	return &protocol.PubSubResponse{
@@ -249,7 +249,8 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 
 // PublishFiltered delivers msg to subscribers of topic whose ConnectionID
 // passes allow. Subscribers for which allow returns false are skipped.
-// Taps always receive the message regardless of the filter.
+// Taps always receive the message regardless of the filter. A subscriber gets
+// msg as one PubSubFrame (WriteFrame); a tap gets msg itself.
 //
 // PublishFiltered SNAPSHOTS the matching subscriber streams + their CIDs under
 // the lock, then RELEASES the lock before calling allow() and AppendData().
@@ -288,7 +289,7 @@ func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, all
 	ps.m.Unlock()
 	for _, p := range toSend {
 		if allow == nil || allow(p.id) {
-			p.conn.AppendData(false, msg) //nolint:errcheck
+			WriteFrame(p.conn, msg) //nolint:errcheck
 		}
 	}
 	for _, t := range tapsCopy {

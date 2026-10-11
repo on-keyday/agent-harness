@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -24,20 +25,16 @@ func (c *Client) watchNotifications(ctx context.Context, out io.Writer, line fun
 	}
 	var mu sync.Mutex
 	go func() {
-		var buf []byte
-		for {
-			data, eof, rerr := stream.ReadDirect(4096)
-			if rerr != nil {
+		_ = readFrames(stream, topic, func(p []byte) {
+			ev := &protocol.NotifyEvent{}
+			if _, err := ev.Decode(p); err != nil {
+				slog.Warn("decode notify event", "err", err)
 				return
 			}
-			if len(data) > 0 {
-				buf = append(buf, data...)
-				buf = drainNotifyEvents(buf, out, &mu, line)
-			}
-			if eof {
-				return
-			}
-		}
+			mu.Lock()
+			fmt.Fprintln(out, line(ev))
+			mu.Unlock()
+		})
 	}()
 	<-ctx.Done()
 	return ctx.Err()
@@ -75,23 +72,6 @@ func WatchNotificationsText(ctx context.Context, peerCID objproto.ConnectionID, 
 	}
 	defer c.Close()
 	return c.WatchNotificationsText(ctx, out)
-}
-
-// drainNotifyEvents decodes as many whole NotifyEvents as buf holds, writing one
-// formatted line each, and returns the undrained remainder.
-func drainNotifyEvents(buf []byte, out io.Writer, mu *sync.Mutex, line func(*protocol.NotifyEvent) string) []byte {
-	for {
-		ev := &protocol.NotifyEvent{}
-		rest, err := ev.Decode(buf)
-		if err != nil {
-			break
-		}
-		mu.Lock()
-		fmt.Fprintln(out, line(ev))
-		mu.Unlock()
-		buf = rest
-	}
-	return buf
 }
 
 func notifyEventJSONLine(ev *protocol.NotifyEvent) string {

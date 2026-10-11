@@ -2832,9 +2832,6 @@ func (b *bytesBuffer) Write(p []byte) (int, error) {
 
 func (b *bytesBuffer) String() string { return string(b.buf) }
 
-// watchPipe wraps each line written by cli.Watch in a small JSON object and
-// forwards it to window.harness_onTaskEvent. cli.Watch emits one human-
-// readable line per event terminated with '\n' (see drainTaskEvents /
 // jsArrayToStringSlice converts a JS Array of strings (or undefined / null /
 // non-array) into a Go []string. Non-string entries are coerced via
 // String() so a value typed as e.g. a Number still produces sensible output;
@@ -2867,8 +2864,10 @@ func jsArrayToStringSlice(v js.Value) []string {
 	return out
 }
 
-// drainRunnerEvents in cli/watch.go). The JS side parses {"line": ...} and
-// can render or further parse as needed.
+// watchPipe wraps each line written by cli.Watch in a small JSON object and
+// forwards it to window.harness_onTaskEvent. cli.Watch emits one human-
+// readable line per event terminated with '\n' (see Watch in cli/watch.go).
+// The JS side parses {"line": ...} and can render or further parse as needed.
 type watchPipe struct {
 	carry []byte
 }
