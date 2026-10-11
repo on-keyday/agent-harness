@@ -43,12 +43,12 @@ func TestPubSub_OnSubscribeHookFires(t *testing.T) {
 	var (
 		hookCalls  int
 		hookTopic  string
-		hookStream trsf.BidirectionalStream
+		hookSend   func([]byte) error
 	)
-	ps.OnSubscribe = func(topic string, stream trsf.BidirectionalStream) {
+	ps.OnSubscribe = func(topic string, send func([]byte) error) {
 		hookCalls++
 		hookTopic = topic
-		hookStream = stream
+		hookSend = send
 	}
 
 	resp := ps.Subscribe(1, "T", "nick", sub)
@@ -62,8 +62,8 @@ func TestPubSub_OnSubscribeHookFires(t *testing.T) {
 	if hookTopic != "T" {
 		t.Fatalf("expected topic %q, got %q", "T", hookTopic)
 	}
-	if hookStream == nil {
-		t.Fatal("expected non-nil stream in OnSubscribe hook")
+	if hookSend == nil {
+		t.Fatal("expected non-nil send in OnSubscribe hook")
 	}
 
 	resp2 := ps.Subscribe(2, "T", "nick", sub)

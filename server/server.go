@@ -376,8 +376,8 @@ func New(cfg Config) *Server {
 		s.notifyRing.append(ev)
 		s.pubsub.Publish("server", topics.Notifications(), ev.MustAppend(nil))
 	}
-	s.pubsub.OnSubscribe = func(topic string, stream trsf.BidirectionalStream) {
-		replayNotifications(s.notifyRing, topic, stream)
+	s.pubsub.OnSubscribe = func(topic string, send func([]byte) error) {
+		replayNotifications(s.notifyRing, topic, send)
 	}
 	// Route runner-reported remote-forward connections into the TaskHandler
 	// (wired here, after taskHandler construction, since runnerHandler is built

@@ -104,14 +104,15 @@ type PubSub struct {
 	logger *slog.Logger
 
 	// OnSubscribe, when non-nil, is called once per successful Subscribe, with
-	// the joined topic and the new subscriber's send stream, while the broker
-	// lock (ps.m) is held — so anything written here reaches the subscriber
-	// BEFORE any concurrent Publish to the same topic. Used for
-	// replay-on-subscribe (the notifications ring backlog). Writes go only to
-	// this one stream's send side; it must NOT read or block on the receive path.
-	// It must also NOT call ps.Publish, ps.Subscribe, or ps.Unsubscribe — ps.m
-	// is already held and is not reentrant; doing so self-deadlocks.
-	OnSubscribe func(topic string, stream trsf.BidirectionalStream)
+	// the joined topic and a function that sends one message to the new
+	// subscriber, while the broker lock (ps.m) is held — so anything sent here
+	// reaches the subscriber BEFORE any concurrent Publish to the same topic.
+	// Used for replay-on-subscribe (the notifications ring backlog). It gets a
+	// send function rather than the stream so that what it sends is a message
+	// like any other, never bytes outside one. It must NOT call ps.Publish,
+	// ps.Subscribe, or ps.Unsubscribe — ps.m is already held and is not
+	// reentrant; doing so self-deadlocks.
+	OnSubscribe func(topic string, send func(msg []byte) error)
 }
 
 func NewPubSub(logger *slog.Logger) *PubSub {
@@ -188,7 +189,7 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 	}
 	ps.topics[topic].AddSubscriber(sub)
 	if ps.OnSubscribe != nil {
-		ps.OnSubscribe(topic, stream)
+		ps.OnSubscribe(topic, func(msg []byte) error { return stream.AppendData(false, msg) })
 	}
 	ps.logger.Info("subscriber joined topic", "topic", topic, "nickName", nickName, "subscriberID", sub.id, "streamID", stream.ID())
 	return &protocol.PubSubResponse{
