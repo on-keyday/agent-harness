@@ -1594,6 +1594,7 @@ var Verbs = []VerbSpec{
 			"publish a message. The body is the trailing words, or --data STRING, or --data - to read it from stdin.",
 			"A bare \"-\" is a VALUE OF --data, never a positional: `send --topic T -` publishes the one-byte body \"-\".",
 			"The ok line reports bytes and source, so a body that went out wrong says so at once.",
+			"delivered_to counts subscribers. On chat.operator it is always 0 and that is the reply arriving: nothing can subscribe there, and the operator reads it on the board.",
 			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
 		},
 		CmdlineSurfaces: CLI,
