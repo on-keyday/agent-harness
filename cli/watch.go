@@ -14,7 +14,7 @@ import (
 )
 
 // Watch subscribes to tasks.status and runners.status topics and prints a
-// human-readable line to out for each event. Returns when ctx is cancelled.
+// human-readable line to out for each event. Returns when ctx is cancelled or a stream fails.
 //
 // Method form: callable on an existing *Client without re-dialing. Long-lived
 // consumers (tui, wasm) should use this directly.
@@ -40,8 +40,8 @@ func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 	var mu sync.Mutex
 
 	// consumeTasks reads a stream carrying TaskStatusEvent messages.
-	consumeTasks := func(st trsf.BidirectionalStream) {
-		_ = readFrames(st, tasksTopic, func(p []byte) {
+	consumeTasks := func(st trsf.BidirectionalStream) error {
+		return readFrames(st, tasksTopic, func(p []byte) {
 			ev := &protocol.TaskStatusEvent{}
 			if _, err := ev.Decode(p); err != nil {
 				slog.Warn("decode task event", "err", err)
@@ -55,8 +55,8 @@ func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 	}
 
 	// consumeRunners reads a stream carrying RunnerStatusEvent messages.
-	consumeRunners := func(st trsf.BidirectionalStream) {
-		_ = readFrames(st, runnersTopic, func(p []byte) {
+	consumeRunners := func(st trsf.BidirectionalStream) error {
+		return readFrames(st, runnersTopic, func(p []byte) {
 			ev := &protocol.RunnerStatusEvent{}
 			if _, err := ev.Decode(p); err != nil {
 				slog.Warn("decode runner event", "err", err)
@@ -68,13 +68,10 @@ func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 		})
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); consumeTasks(tasksStream) }()
-	go func() { defer wg.Done(); consumeRunners(runnersStream) }()
-
-	<-ctx.Done()
-	return ctx.Err()
+	return watchFrames(ctx,
+		func() error { return consumeTasks(tasksStream) },
+		func() error { return consumeRunners(runnersStream) },
+	)
 }
 
 // Watch (package-level) is a thin wrapper that opens a fresh Client per call.

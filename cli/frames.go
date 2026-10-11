@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -23,5 +24,25 @@ func readFrames(st pubsub.StreamReader, topic string, each func(payload []byte))
 			return err
 		}
 		each(payload)
+	}
+}
+
+// watchFrames runs each reader and blocks until ctx is done or a reader fails,
+// returning that failure. A reader that returns nil — its stream ended cleanly
+// — is not a failure; the watch goes on until ctx.
+func watchFrames(ctx context.Context, readers ...func() error) error {
+	errCh := make(chan error, len(readers))
+	for _, read := range readers {
+		go func() {
+			if err := read(); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
 	}
 }

@@ -22,12 +22,17 @@ type FrameWriter interface {
 // WriteFrame writes msg to w as one PubSubFrame. Header and payload go in ONE
 // AppendData call: trsf serialises whole calls, so two publishers writing the
 // same subscriber cannot interleave one's header with the other's payload.
+//
+// Both slices are handed over with no spare capacity. trsf's send side appends
+// the next chunk onto the one it holds (objtrsf trsf/send_stream.go,
+// readChunk), and the broker hands the same msg to every subscriber: an append
+// into spare capacity behind msg would write into the array all of them share.
 func WriteFrame(w FrameWriter, msg []byte) error {
 	if len(msg) >= MaxFrameLen {
 		return fmt.Errorf("pubsub: message of %d bytes is at or over the %d-byte frame cap", len(msg), MaxFrameLen)
 	}
 	hdr := (&protocol.PubSubFrameHeader{DataLen: uint32(len(msg))}).MustAppend(nil)
-	return w.AppendData(false, hdr, msg)
+	return w.AppendData(false, hdr[:len(hdr):len(hdr)], msg[:len(msg):len(msg)])
 }
 
 // StreamReader is the receive side FrameReader needs; trsf streams satisfy it.

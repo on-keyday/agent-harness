@@ -16,7 +16,7 @@ import (
 
 // watchNotifications subscribes to the notifications topic and writes one
 // formatted line per NotifyEvent to out (ring backlog first, then live), using
-// the given per-event line formatter. Blocks until ctx is done.
+// the given per-event line formatter. Blocks until ctx is done or the stream fails.
 func (c *Client) watchNotifications(ctx context.Context, out io.Writer, line func(*protocol.NotifyEvent) string) error {
 	topic := topics.Notifications()
 	stream, err := c.Peer().JoinAndGetStream(ctx, "notify-watch", topic)
@@ -24,8 +24,8 @@ func (c *Client) watchNotifications(ctx context.Context, out io.Writer, line fun
 		return fmt.Errorf("join %s: %w", topic, err)
 	}
 	var mu sync.Mutex
-	go func() {
-		_ = readFrames(stream, topic, func(p []byte) {
+	return watchFrames(ctx, func() error {
+		return readFrames(stream, topic, func(p []byte) {
 			ev := &protocol.NotifyEvent{}
 			if _, err := ev.Decode(p); err != nil {
 				slog.Warn("decode notify event", "err", err)
@@ -35,9 +35,7 @@ func (c *Client) watchNotifications(ctx context.Context, out io.Writer, line fun
 			fmt.Fprintln(out, line(ev))
 			mu.Unlock()
 		})
-	}()
-	<-ctx.Done()
-	return ctx.Err()
+	})
 }
 
 // WatchNotifications writes one JSON object per line (machine-readable). Used by

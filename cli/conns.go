@@ -251,7 +251,7 @@ func renderConns(conns []protocol.ConnInfo, out io.Writer) {
 
 // watchConnStatusEvents subscribes to the conns.status topic and writes one
 // formatted line per ConnStatusEvent to out (ring backlog first, then live),
-// using the given per-event line formatter. Blocks until ctx is done.
+// using the given per-event line formatter. Blocks until ctx is done or the stream fails.
 // Mirrors watchNotifications in notify_watch.go.
 func (c *Client) watchConnStatusEvents(ctx context.Context, out io.Writer, line func(*protocol.ConnStatusEvent) string) error {
 	topic := topics.ConnsStatus()
@@ -260,8 +260,8 @@ func (c *Client) watchConnStatusEvents(ctx context.Context, out io.Writer, line 
 		return fmt.Errorf("join %s: %w", topic, err)
 	}
 	var mu sync.Mutex
-	go func() {
-		_ = readFrames(stream, topic, func(p []byte) {
+	return watchFrames(ctx, func() error {
+		return readFrames(stream, topic, func(p []byte) {
 			ev := &protocol.ConnStatusEvent{}
 			if _, err := ev.Decode(p); err != nil {
 				slog.Warn("decode conn event", "err", err)
@@ -271,14 +271,12 @@ func (c *Client) watchConnStatusEvents(ctx context.Context, out io.Writer, line 
 			fmt.Fprintln(out, line(ev))
 			mu.Unlock()
 		})
-	}()
-	<-ctx.Done()
-	return ctx.Err()
+	})
 }
 
 // WatchConnsWith subscribes to conns.status and writes one human-readable line
 // per ConnStatusEvent to out. Method form: callable on an existing *Client (for
-// TUI/WebUI which hold a long-lived client). Blocks until ctx is done.
+// TUI/WebUI which hold a long-lived client). Blocks until ctx is done or the stream fails.
 func (c *Client) WatchConnsWith(ctx context.Context, out io.Writer) error {
 	return c.watchConnStatusEvents(ctx, out, connStatusEventTextLine)
 }

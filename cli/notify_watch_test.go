@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/pubsub"
+	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -65,5 +69,39 @@ func TestNotifyEventTextLine(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text line missing %q: %q", want, got)
 		}
+	}
+}
+
+// A stream that fails ends the watch verb with its error. `watch` against a
+// server older than this client reads an over-cap length and used to drop the
+// error and block until Ctrl-C with no output.
+func TestWatchFrames_StreamErrorEndsTheVerb(t *testing.T) {
+	over := (&pubsubproto.PubSubFrameHeader{DataLen: pubsub.MaxFrameLen}).MustAppend(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := watchFrames(ctx,
+		func() error { return readFrames(&chunkStream{chunks: [][]byte{over}}, "tasks.status", func([]byte) {}) },
+	)
+	var tl *pubsub.FrameTooLargeError
+	if !errors.As(err, &tl) {
+		t.Fatalf("err = %v, want *pubsub.FrameTooLargeError", err)
+	}
+}
+
+// A stream that ends cleanly is not a failure: the verb waits for ctx.
+func TestWatchFrames_CleanEndWaitsForCtx(t *testing.T) {
+	var sink frameSink
+	if err := pubsub.WriteFrame(&sink, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := watchFrames(ctx,
+		func() error {
+			return readFrames(&chunkStream{chunks: [][]byte{sink.wire}}, "tasks.status", func([]byte) {})
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the ctx's DeadlineExceeded", err)
 	}
 }
