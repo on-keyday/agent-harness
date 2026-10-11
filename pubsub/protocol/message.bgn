@@ -25,3 +25,17 @@ format PubSubResponse:
     status :Status 
     stream_id :u64
 
+
+# PubSubFrame is the unit of a broker → subscriber pubsub stream: every byte the
+# broker writes to a subscriber's stream is a sequence of these. The other
+# direction — a subscriber publishing — is raw bytes, and each read the broker
+# makes of it becomes one message.
+format PubSubFrame:
+    data_len :u32
+    data :[data_len]u8
+
+# PubSubFrameHeader is PubSubFrame's length alone: the writer sends it beside
+# the payload so a large payload is not copied, and the reader decodes it to
+# check the length against its cap before the payload has arrived.
+format PubSubFrameHeader:
+    data_len :u32
