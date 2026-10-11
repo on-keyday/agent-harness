@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"bytes"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -98,13 +99,15 @@ type recordingStream struct {
 	got chan []byte
 }
 
-// AppendData keeps the payload: a frame arrives as [header, payload].
+// AppendData keeps the payload of the frame it is handed.
 func (r *recordingStream) AppendData(eof bool, data ...[]byte) error {
-	if len(data) > 0 {
-		select {
-		case r.got <- data[len(data)-1]:
-		default:
-		}
+	var f protocol.PubSubFrame
+	if _, err := f.Decode(bytes.Join(data, nil)); err != nil {
+		return err
+	}
+	select {
+	case r.got <- f.Data:
+	default:
 	}
 	return nil
 }

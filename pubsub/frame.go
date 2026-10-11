@@ -19,20 +19,22 @@ type FrameWriter interface {
 	AppendData(eof bool, data ...[]byte) error
 }
 
-// WriteFrame writes msg to w as one PubSubFrame. Header and payload go in ONE
-// AppendData call: trsf serialises whole calls, so two publishers writing the
-// same subscriber cannot interleave one's header with the other's payload.
+// WriteFrame writes msg to w as one PubSubFrame, in ONE AppendData call so two
+// publishers writing the same subscriber cannot interleave.
 //
-// Both slices are handed over with no spare capacity. trsf's send side appends
-// the next chunk onto the one it holds (objtrsf trsf/send_stream.go,
-// readChunk), and the broker hands the same msg to every subscriber: an append
-// into spare capacity behind msg would write into the array all of them share.
+// The frame is a fresh buffer, never msg itself: AppendData takes ownership of
+// what it is handed (objtrsf trsf/send_stream.go: "data must be copied before
+// calling AppendData") — the stream keeps it until ACKed and may append onto
+// it — and the broker hands one msg to every subscriber and to its taps.
 func WriteFrame(w FrameWriter, msg []byte) error {
 	if len(msg) >= MaxFrameLen {
 		return fmt.Errorf("pubsub: message of %d bytes is at or over the %d-byte frame cap", len(msg), MaxFrameLen)
 	}
-	hdr := (&protocol.PubSubFrameHeader{DataLen: uint32(len(msg))}).MustAppend(nil)
-	return w.AppendData(false, hdr[:len(hdr):len(hdr)], msg[:len(msg):len(msg)])
+	f := protocol.PubSubFrame{}
+	if !f.SetData(msg) {
+		return fmt.Errorf("pubsub: message of %d bytes does not fit a frame", len(msg))
+	}
+	return w.AppendData(false, f.MustAppend(nil))
 }
 
 // StreamReader is the receive side FrameReader needs; trsf streams satisfy it.

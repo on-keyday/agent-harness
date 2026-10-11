@@ -226,21 +226,25 @@ func (k *keepStream) AppendData(_ bool, data ...[]byte) error {
 	return nil
 }
 
-// The broker hands one msg to every subscriber's stream, and trsf's send side
-// appends the next chunk onto the one it holds (objtrsf trsf/send_stream.go,
-// readChunk: buffer = chunk; append(buffer, next...)). With spare capacity
-// behind msg, that append writes into the array every subscriber shares, and
-// two streams doing it at once put each other's bytes on the wire.
-func TestWriteFrame_PayloadHasNoSpareCapacity(t *testing.T) {
-	msg := make([]byte, 5, 64)
-	copy(msg, "hello")
-	var k keepStream
-	if err := WriteFrame(&k, msg); err != nil {
+// AppendData takes ownership of what it is handed (objtrsf
+// trsf/send_stream.go: "data must be copied before calling AppendData"): the
+// stream keeps the slice until it is ACKed and may append onto it. The broker
+// hands one msg to every subscriber, so each stream must get bytes of its own.
+func TestWriteFrame_StreamOwnsWhatItIsHanded(t *testing.T) {
+	msg := []byte("hello")
+	var a, b keepStream
+	if err := WriteFrame(&a, msg); err != nil {
 		t.Fatal(err)
 	}
-	for i, d := range k.data {
-		if cap(d) != len(d) {
-			t.Fatalf("slice %d handed to the stream has cap %d > len %d: an append on the send side would write into the caller's array", i, cap(d), len(d))
-		}
+	if err := WriteFrame(&b, msg); err != nil {
+		t.Fatal(err)
+	}
+	copy(msg, "XXXXX") // the publisher reuses its buffer
+	for _, d := range a.data {
+		d[len(d)-1] = '!' // stream a writes into what it owns
+	}
+	var f protocol.PubSubFrame
+	if _, err := f.Decode(bytes.Join(b.data, nil)); err != nil || string(f.Data) != "hello" {
+		t.Fatalf("stream b sends %q (%v), want \"hello\": its bytes are shared with the publisher or with stream a", f.Data, err)
 	}
 }
