@@ -84,8 +84,8 @@ a resume, and a replayed conversation reads as continuous from the inside. So
 "I am the process that started this task" is the default assumption, and it is
 silently wrong more often than not.
 
-Each of the three has a knowable start, and you already have the means for all
-three:
+Each of the three has a knowable start. The harness reports only the first, and
+the first alone settles whether you are a later incarnation:
 
 - **The task** — the harness will tell you. `harness-cli ls --json`, your own
   row: a non-empty **`resumed_by`** means this task has been resumed (the value
@@ -94,11 +94,12 @@ three:
   them says the same thing independently. Checked 2026-08-09 against 28 live
   tasks: the 26 with `resumed_by` set all showed week-to-month gaps, the 2
   without it showed 0.00 days.
-- **The conversation** — a coding agent keeps session history in some form.
-  Locate yours the way your own runtime stores it; its first entry dates the
-  conversation, which is a different date from either of the others.
-- **The process** — every OS exposes a process start time. Use the mechanism
-  for the one you are running on.
+- **The conversation** — a coding agent keeps session history in some form,
+  and its first entry dates the conversation, which is a different date from
+  either of the others. Where that history lives, and whether reading it is
+  permitted, is up to your runtime and your instructions, not this skill.
+- **The process** — every OS exposes a process start time, each by its own
+  mechanism.
 
 **What follows from being a later incarnation** is the part that matters. Your
 ticket, and possibly your runner, are not the ones the earlier incarnation
