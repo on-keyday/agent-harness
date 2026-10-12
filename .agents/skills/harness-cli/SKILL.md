@@ -68,13 +68,6 @@ Three lifetimes are in play and only the last one is yours:
 - **the conversation** — replayed into a fresh process when a session is
   resumed.
 - **this OS process** — new every time.
-- **the server** — independent of all three. Its board is in memory: a restart
-  drops every retained message and every subscription, then re-seeds only
-  `chat.<short-id>` for live assignments. Anything else you subscribed to is
-  gone, and `agent subscriptions` reports the reduced set without comment.
-  Detect it without any capability: a board `seq` carries the server's boot
-  time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq` whose prefix
-  differs from one you saw earlier means the server restarted in between.
 
 `session new --resume <id>`, and the TUI/WebUI resume actions, reuse the first
 two and replace the third, with a **new auth ticket** and possibly a different
@@ -100,6 +93,15 @@ the first alone settles whether you are a later incarnation:
   permitted, is up to your runtime and your instructions, not this skill.
 - **The process** — every OS exposes a process start time, each by its own
   mechanism.
+
+**The server has a lifetime of its own, independent of all three.** Its board
+is in memory: a restart drops every retained message and every subscription,
+then re-seeds only `chat.<short-id>` for live assignments. Anything else you
+subscribed to is gone, and `agent subscriptions` reports the reduced set without
+comment. It is detectable without any capability: a board `seq` carries the
+server's boot time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq`
+whose prefix differs from one you saw earlier means the server restarted in
+between.
 
 **What follows from being a later incarnation** is the part that matters. Your
 ticket, and possibly your runner, are not the ones the earlier incarnation
