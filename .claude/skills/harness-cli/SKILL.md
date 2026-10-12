@@ -909,7 +909,9 @@ audience are the ones without it.
 
 Everything above gets a message to the right inbox. These are about whether it
 means the same thing once it is there — the receiver has none of your context,
-and may be a different model on a different runtime.
+and may be a different model on a different runtime. They are defaults, not
+requirements: skip one when the exchange does not need it, and do not hold a
+peer to them — it may never have read this.
 
 **Hand over a commit, not a state of the tree.** Point the peer at a commit SHA
 (and `file:line` within it). Uncommitted work is still moving: a peer that reads
