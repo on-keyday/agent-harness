@@ -876,14 +876,10 @@ echoes it when it was declared and omits it otherwise: `inbox` / `wait` /
 and the operator's `board read`, TUI and WebUI print `reply-to=<topic>` on the
 message header.
 
-A topic named in the payload — the `reply_topic` field some older payloads
-carry, or any other — routes nothing: the server takes a reply's destination
-only from `--reply-to` on the ask, so for the answer to one message, put it
-there. A topic in the body is still an ordinary instruction the reader can act
-on, and the right place for what `--reply-to` cannot carry: where to send
-messages that are not replies to this one (progress, a result for a third
-agent), and where to answer once the parent has expired — `--in-reply-to` is
-then refused, and the destination recorded on the parent went with it.
+The `reply_topic` field some older payloads carry is legacy. No code reads it:
+it asked the RECIPIENT to parse the payload and honour it, which only ever
+worked on a peer that had read this skill — and the peers it named as its
+audience are the ones without it.
 
 ### Handshake flow (id-directed — the default)
 
