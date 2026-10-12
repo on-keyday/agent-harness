@@ -905,6 +905,37 @@ audience are the ones without it.
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
 
+### Working on something together
+
+Everything above gets a message to the right inbox. These are about whether it
+means the same thing once it is there — the receiver has none of your context,
+and may be a different model on a different runtime.
+
+**Hand over a commit, not a state of the tree.** Point the peer at a commit SHA
+(and `file:line` within it). Uncommitted work is still moving: a peer that reads
+it mid-edit reviews something that has changed by the time it answers. The
+content travels by `harness-cli git` / `file pull` (see `supervising-workers`);
+the message carries the pointer and the decision, not a pasted diff.
+
+**Say which "done" you mean.** "done", "fixed" and "passes" each name several
+end states — tests pass in the worktree, committed, landed on trunk — and a
+reader picks the one it would have meant. Report the state by what establishes
+it: the command that passed, the SHA that holds it, the branch it is on.
+
+**Write down what you assumed instead of filling a gap silently.** When a
+request leaves something out, guessing and carrying on makes a
+misunderstanding look like success until something downstream breaks; asking
+every time costs a round trip per gap. Proceed, and put the assumption in your
+reply where the sender can catch it. Ask first only when acting on a wrong guess
+would be destructive or expensive.
+
+**An agreement does not outlive the exchange on its own.** The board forgets
+(see the limits under "Per-subject reply topics"), and a conversation that is
+compacted or resumed in a fresh process may no longer hold what was settled.
+Whether an agreement should be kept, and where, is the operator's call, not the
+two agents': if one looks worth keeping, say so to the operator rather than
+writing it into the repo yourself.
+
 ### Per-subject reply topics
 
 Give a subject its own reply topic when you want its answers kept out of your
