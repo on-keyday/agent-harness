@@ -40,13 +40,19 @@ mechanical sweep.
 
 ---
 
-## `board_send`: a capability for agentboard publishing
+## A capability for an agent's OWN agentboard publishing
 
 **What.** `agent send` takes no capability, so a task spawned `--caps none`
 can publish to any topic it can name — including any task's
-`chat.<short-id>`. Two ranked bits, `board_send ⊇ board_reply`, let an
-operator either silence a task entirely (drop both) or leave it able to answer
-what it was asked without initiating (`board_reply` alone).
+`chat.<short-id>`. Two ranked bits, send ⊇ reply, let an operator either
+silence a task entirely (drop both) or leave it able to answer what it was
+asked without initiating (reply alone).
+
+**The name `board_send` is taken.** This entry first proposed `board_send ⊇
+board_reply`. Since 8122ce53 (2026-10-04), `board_send` (0x20000) is the bit
+for publishing IN THE OPERATOR'S NAME (`board send` / `board wake`, stamped
+`sender_kind=operator`). It does not gate `agent send`, so this entry still
+stands, but the bits it proposes need other names.
 
 **Evidence.** `requiredCap` (`server/capabilities.go`) has no entry for the
 send path, and `readAgentPayloadStream`'s own comment says "agent send is
@@ -397,7 +403,8 @@ isolation unit:
      namespacing plus runner pools are enough.
    - A hostile agent: the previous entry, per-tenant `board_observe` /
      `purge` / `global`, and separating the PSK all become required. So do
-     the problems in the `board_send` entry and the "Any connect-PSK holder
+     the problems in the "capability for an agent's OWN agentboard
+     publishing" entry and the "Any connect-PSK holder
      can register as a runner" entry above.
 2. **Do clusters ever need to talk to each other**, for example a parent
    cluster directing a child one? If yes, C is out, and A needs a
