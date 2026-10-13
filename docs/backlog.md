@@ -291,3 +291,114 @@ stream writer gone, an unused oneshot costs no writes; what it still costs is
 upkeep, since the logs pane and the WebUI log view are surfaces a feature
 change has to consider. Revisit when that upkeep gets in the way, starting from
 the claude path alone.
+
+---
+
+## Pubsub topics: anyone authenticated can read and write them
+
+**What.** A pubsub JOIN has no authorization beyond the PSK handshake, and
+any topic name is accepted. Two consequences:
+
+- **Read.** `task.<id>.log` is readable by JOIN alone, while the `logs`
+  snapshot of the same task needs `exec_view` plus scope.
+  `tasks.status`, `task.<id>.status`, `runners.status` and `notifications`
+  are published unfiltered. A `--caps none` agent therefore sees every task id,
+  status and runner id on the server.
+- **Write.** Whatever a subscriber writes on its joined stream is re-published
+  to that topic under its nickname. Read literally, any connection, agents
+  included, can inject frames into `tasks.status`, `notifications` or a task's
+  log, and `logtap` would persist a log frame.
+
+**Evidence** (2026-10-14, read, not exercised):
+
+- `server/server.go` dispatches `AppKind_Pubsub` straight to
+  `subscriber.HandleMessage` with no capability or scope check.
+- In `pubsub/pubsub.go` `Subscribe`, the per-stream reader goroutine calls
+  `ps.Publish(nickName, topic, data)`.
+- The unfiltered publishes are `s.pubsub.Publish("server",
+  topics.TasksStatus(), …)` and `TaskStatus(taskID)` in `server/server.go`.
+- By contrast, `conns.status`, `forwards.status` and `execs.status` are
+  filtered per subscriber through `visibleToCaller`.
+- Not read: whether any client relies on writing to a joined stream. Grep
+  for callers that `AppendData` on a pubsub stream before closing the write
+  side.
+
+**Why deferred.** It was found while mapping multi-tenancy (next entry), not
+while working on pubsub. Closing it is a prerequisite for that work. It is
+also worth doing without that work, since it is the same caps bypass the
+`logs` gate was meant to prevent.
+
+---
+
+## Multi-tenancy: agent clusters that do not interfere
+
+**What.** The operator wants to split agents into clusters. Each cluster
+talks among itself, and runs on its own runners and forwards, without
+touching the others. The operator still sees everything.
+
+Today the task tree (caps plus `Scope`, `server/scope.go`) is the only
+isolation unit:
+
+| Already bounded by the tree | Outside the tree, one flat namespace |
+|---|---|
+| exec / attach / cancel / prune / file ops / git query | agentboard |
+| port forwards and their taps | pubsub status topics (previous entry) |
+| `ls`, conns, forwards and execs listings | runner assignment |
+
+**Evidence** (2026-10-14, read, not exercised):
+
+- **Agentboard.**
+  - `AgentSend`, subscribe, `Wait` and list-retained take no capability
+    and do not check the topic against the caller
+    (`server/agent_taskcontrol.go`).
+  - Subscribing refuses only `chat.operator`
+    (`agentboard/board.go` `Subscribe`).
+  - Publishing to another task's `chat.<8hex>` wakes it.
+  - `board_observe` and `purge` act server-wide.
+  - The board has one `MaxTopics` cap, so topic eviction is shared across
+    clusters.
+- **Runner assignment.**
+  - `Registry.Candidates` (`server/registry.go`) filters by selector, roots
+    and profile, never by caller.
+  - A selector can pin any runner.
+  - `dial_runner` adds to the one global registry.
+- **No field to hang a tenant on.**
+  - `grep -rnwiE 'namespace|tenant|cluster' server agentboard runner/protocol
+    topics pubsub cli` finds comments only.
+  - `TaskEntry` (`server/taskstore.go`), `RunnerEntry` (`server/registry.go`)
+    and `PskAuthRequest` (`runner/protocol/message.bgn`) carry nothing that
+    could serve.
+- **Ways out of the tree, independent of tenancy.**
+  - A `global` scope or a `VisBase` grant.
+  - Explicit cross-tree ids.
+  - The connect PSK, which every agent holds as `HARNESS_PSK`.
+
+**Shapes considered.**
+
+- **A. An explicit tenant id.** Put it on `TaskEntry`, inherited at spawn
+  and changeable by the operator only. Put a tenant id or set on
+  `RunnerEntry`. Key board topics by (tenant, name), filter pubsub by
+  tenant, and filter `Candidates` by tenant.
+  - The zero value reads as a default tenant, so persisted records keep
+    their meaning.
+  - It is a `.bgn` and WAL change, so it has the disk axis.
+- **B. The tree root as the tenant.** No new wire field for tasks, but
+  runners sit outside the tree and would need a binding anyway. "Which
+  ancestor is the root" becomes a convention instead of something the
+  protocol carries.
+- **C. One server per cluster.** No code change and the strongest
+  separation. The costs: a runner serves one server, the operator connects to
+  several, and cross-cluster messaging becomes a new feature.
+
+**Why deferred. Two questions decide the depth, and neither is answered:**
+
+1. **Is the boundary against accidents or against a hostile agent?**
+   - Accidents (topic name collisions, landing on the wrong runner): board
+     namespacing plus runner pools are enough.
+   - A hostile agent: the previous entry, per-tenant `board_observe` /
+     `purge` / `global`, and separating the PSK all become required. So do
+     the problems in the `board_send` entry and the "Any connect-PSK holder
+     can register as a runner" entry above.
+2. **Do clusters ever need to talk to each other**, for example a parent
+   cluster directing a child one? If yes, C is out, and A needs a
+   cross-tenant send that some capability gates.
