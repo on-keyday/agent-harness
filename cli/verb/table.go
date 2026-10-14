@@ -1452,6 +1452,7 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"inject input into a session (co-writer attach, no takeover); pair with snapshot to drive it statelessly",
 			"flags must precede <task-id>; everything after it is joined with spaces and sent literally",
+			"the text render drops SGR: a FAINT placeholder in an input box (e.g. Claude Code's suggested next prompt) reads exactly like typed input; with --snapshot, check with --style before reporting it as input — see `harness-cli skill session-debugging`",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "SendAction",
@@ -2376,6 +2377,7 @@ var Verbs = []VerbSpec{
 		Notes: []string{
 			"print the session's current PTY screen as text (view attach; non-intrusive, works without a TTY)",
 			"--raw writes the verbatim PTY bytes instead of the VT render (not combinable with --style/--color/--json/--detect)",
+			"the text render drops SGR: a FAINT placeholder in an input box (e.g. Claude Code's suggested next prompt) reads exactly like typed input; check with --style before reporting it as input — see `harness-cli skill session-debugging`",
 		},
 		Action: "SessionAction",
 		Const:  map[string]string{"Sub": "snapshot"},
