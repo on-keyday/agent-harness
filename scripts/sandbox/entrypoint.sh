@@ -27,7 +27,12 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   # covers REPARENTED orphans). The subshell exits immediately, handing the
   # proxy to catatonit, which does reap it.
   # (Measured 2026-08-18: `&` -> ppid=claude, 1 zombie; `( & )` -> ppid=1, 0.)
-  ( gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
+  # Its DENY/BUSY lines go to stderr, which under an interactive session is the
+  # agent's PTY; --proxy-log points them at a bind-mounted host file instead.
+  # The redirect is opened here, as container root, so the file need not be
+  # writable by the proxy uid.
+  ( if [ -n "${SANDBOX_PROXY_LOG:-}" ]; then exec 2>>"$SANDBOX_PROXY_LOG"; fi
+    gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
       /usr/local/bin/sandbox-connect-proxy & )
   for _ in $(seq 1 50); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null; then break; fi

@@ -61,6 +61,10 @@ Arguments: $ARGUMENTS
    controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
+   `--proxy-log[=PATH]` (with `--firewall-proxy`: the proxy's DENY/ALLOW lines
+   go to a host file — default `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log` —
+   instead of the session's terminal; needed for an interactive agy slot, whose
+   TUI they otherwise overwrite),
    `--omit-harness-cli` (drop the control-plane bridge for full isolation), and
    `--mount-auth` (force host `~/.claude` mount auth — resume/`--continue` works —
    even when a setup-token file is present) — see `scripts/sandbox/README.md`.

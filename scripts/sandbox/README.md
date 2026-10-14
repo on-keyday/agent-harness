@@ -288,6 +288,17 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a
   GitHub gist, since `github.com` is allowlisted). Trim the allowlist for
   sensitive tasks; full DLP would need a MITM proxy (out of scope).
+  The proxy logs every connection (`ALLOW` / `DENY` / `BUSY`) to the
+  container's stderr, which in an interactive session is the agent's PTY: the
+  lines are drawn straight over the TUI. agy makes this unusable, because it
+  retries `POST https://play.googleapis.com/log` (Clearcut) twice every 5s and
+  every attempt is a `DENY`. Pass **`--proxy-log`** to append them to a host
+  file instead: `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log` by default, or
+  `--proxy-log=PATH`. Each container adds a header line naming the agent and
+  task id; sessions given the same PATH interleave. The runner log's
+  `[agent-in-podman]` summary line names the file. Nothing deletes these files.
+  The redirect lives in `entrypoint.sh`, so it takes effect only after
+  `build.sh` rebuilds the image.
 
 ### Verifying the above, instead of trusting it
 

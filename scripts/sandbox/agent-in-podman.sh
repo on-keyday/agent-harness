@@ -49,6 +49,13 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       CONNECT proxy (cmd/sandbox-connect-proxy); the agent gets no raw
 #                       egress and its API/WebFetch funnel through the proxy.
 #                       Takes precedence over --firewall if both are given.
+#   --proxy-log[=PATH]  with --firewall-proxy: append the proxy's ALLOW/DENY/BUSY
+#                       lines to a HOST file instead of the container's stderr —
+#                       PATH, or by default ${TMPDIR:-/tmp}/sandbox-proxy-<task>.log.
+#                       Under an interactive session that stderr IS the agent's
+#                       PTY, so every line is drawn over the TUI; agy retries
+#                       play.googleapis.com/log twice every 5s and its UI becomes
+#                       unusable. Ignored (with a warning) without --firewall-proxy.
 #   --mount-auth        force MOUNT auth (bind-mount the host agent config) even
 #                       when a token file exists. Mount auth persists session
 #                       state, so --continue / resume work — at the cost of
@@ -83,6 +90,7 @@ firewall=0
 firewall_proxy=0
 force_mount=0
 image_agent=0
+proxy_log=""
 declare -a ARGS=()
 want_agent=0
 for a in "$@"; do
@@ -93,6 +101,8 @@ for a in "$@"; do
     --omit-harness-cli) bridge_cli=0 ;;
     --firewall)         firewall=1 ;;
     --firewall-proxy)   firewall_proxy=1 ;;
+    --proxy-log)        proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log" ;;
+    --proxy-log=*)      proxy_log="${a#*=}" ;;
     --mount-auth)       force_mount=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     *)                  ARGS+=( "$a" ) ;;
@@ -430,9 +440,26 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
     # Extend the proxy's domain allowlist (comma-separated) for WebFetch research
     # targets via SANDBOX_PROXY_ALLOW in the runner's env.
     [ -n "${SANDBOX_PROXY_ALLOW:-}" ] && FW+=( --env SANDBOX_PROXY_ALLOW="$SANDBOX_PROXY_ALLOW" )
+    if [ -n "$proxy_log" ]; then
+      # Created here, as the host user, so the bind mount has a FILE to land on
+      # (podman would otherwise create a directory). Append, with a header per
+      # container: a resumed task reuses its file, and an explicit PATH may be
+      # shared by every session of a slot.
+      if ! echo "$(date "+%F %T") agent=$AGENT task=${HARNESS_TASK_ID:-?}" >>"$proxy_log"; then
+        echo "[agent-in-podman] --proxy-log: cannot append to $proxy_log" >&2
+        exit 2
+      fi
+      FW+=( -v "$(readlink -f "$proxy_log"):/run/sandbox-proxy.log"
+            --env SANDBOX_PROXY_LOG=/run/sandbox-proxy.log )
+    fi
   else
     FW+=( --env SANDBOX_FIREWALL=1 )
   fi
+fi
+
+if [ -n "$proxy_log" ] && [ "$firewall_proxy" != 1 ]; then
+  echo "[agent-in-podman] --proxy-log ignored: there is no proxy without --firewall-proxy" >&2
+  proxy_log=""
 fi
 
 # Host binary bridge (default ON; --image-agent opts out where a copy exists).
@@ -469,7 +496,7 @@ fi
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
 fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
