@@ -140,16 +140,19 @@ func ringTail(data []byte, n int) []byte {
 
 func oracleRows(data []byte, cols, rows int) []string {
 	emu := vt.NewEmulator(cols, rows)
-	emu.Scrollback().SetMaxLines(1) // the smallest x/vt accepts; 0 is a no-op
 	done := make(chan struct{})
 	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
+	defer func() { // pipe first, then Close: see newOracle in diff_test.go
+		_ = emu.InputPipe().(io.Closer).Close()
+		<-done
+		_ = emu.Close()
+	}()
+	emu.Scrollback().SetMaxLines(1) // the smallest x/vt accepts; 0 is a no-op
 	_, _ = emu.Write(data)
 	out := strings.Split(strings.TrimSuffix(emu.String(), "\n"), "\n")
 	for len(out) < rows {
 		out = append(out, "")
 	}
-	_ = emu.Close()
-	<-done
 	return trimRows(out[:rows])
 }
 

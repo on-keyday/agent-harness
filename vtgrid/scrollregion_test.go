@@ -15,8 +15,6 @@ package vtgrid
 import (
 	"io"
 	"testing"
-
-	"github.com/charmbracelet/x/vt"
 )
 
 // staleRegionThenScroll is the sequence: set a scroll region, shrink the
@@ -62,10 +60,8 @@ func TestResizeClampsScrollRegion(t *testing.T) {
 // the next person does not repeat the search, and it will start reporting a
 // panic again if one returns.
 func TestOracleResizeLeavesStaleScrollRegion(t *testing.T) {
-	emu := vt.NewEmulator(80, 24)
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
-	defer func() { _ = emu.Close(); <-done }()
+	emu, stop := newOracle(80, 24)
+	defer stop()
 
 	staleRegionThenScroll(emu)
 	emu.Resize(80, 10)

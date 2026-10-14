@@ -10,7 +10,6 @@ package vtgrid
 
 import (
 	"bytes"
-	"io"
 	"strings"
 	"testing"
 
@@ -70,14 +69,11 @@ func TestTitleSurvivesAnEightBitSTLookalike(t *testing.T) {
 		t.Fatalf("Title() = %q, want %q", got, want)
 	}
 
-	emu := vt.NewEmulator(80, 24)
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
+	emu, stop := newOracle(80, 24)
 	var viaCallback string
 	emu.SetCallbacks(vt.Callbacks{Title: func(s string) { viaCallback = s }})
 	_, _ = emu.Write([]byte(realTitleOSC))
-	_ = emu.Close()
-	<-done
+	stop()
 
 	switch {
 	case viaCallback == want:

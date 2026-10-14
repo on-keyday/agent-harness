@@ -22,21 +22,30 @@ import (
 	"github.com/charmbracelet/x/vt"
 )
 
+// newOracle returns an x/vt emulator and the func that stops it. Replies the
+// emulator generates (DA, DSR, ...) go into an unbuffered pipe, so a goroutine
+// drains it or Write blocks. x/vt guards Read and Close with a plain bool, so
+// calling Close while that drain sits in Read is a data race; stop closes the
+// pipe first, waits for the drain to see EOF, and only then calls Close.
+func newOracle(cols, rows int) (*vt.Emulator, func()) {
+	emu := vt.NewEmulator(cols, rows)
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
+	return emu, func() {
+		_ = emu.InputPipe().(io.Closer).Close()
+		<-done
+		_ = emu.Close()
+	}
+}
+
 // renderOracle feeds a corpus through x/vt and returns its rows.
 func renderOracle(tb testing.TB, data []byte, cols, rows int) []string {
 	tb.Helper()
-	emu := vt.NewEmulator(cols, rows)
+	emu, stop := newOracle(cols, rows)
+	defer stop()
 	emu.Scrollback().SetMaxLines(1) // the smallest x/vt accepts; 0 is a no-op
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = io.Copy(io.Discard, emu)
-	}()
 	_, _ = emu.Write(data)
-	out := splitRows(emu.String(), rows)
-	_ = emu.Close()
-	<-done
-	return out
+	return splitRows(emu.String(), rows)
 }
 
 func renderOurs(data []byte, cols, rows int) []string {

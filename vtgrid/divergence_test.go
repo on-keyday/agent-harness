@@ -17,11 +17,8 @@ package vtgrid
 
 import (
 	"fmt"
-	"io"
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/x/vt"
 )
 
 const divergenceChunk = 512
@@ -30,10 +27,8 @@ func TestLocateDivergence(t *testing.T) {
 	for _, c := range vtCorpora {
 		data := loadVTCorpus(t, c.Name)
 
-		oracle := vt.NewEmulator(c.Cols, c.Rows)
+		oracle, stop := newOracle(c.Cols, c.Rows)
 		oracle.Scrollback().SetMaxLines(1)
-		done := make(chan struct{})
-		go func() { defer close(done); _, _ = io.Copy(io.Discard, oracle) }()
 		ours := New(c.Cols, c.Rows)
 
 		found := false
@@ -59,8 +54,7 @@ func TestLocateDivergence(t *testing.T) {
 			pinpoint(t, c, data, off, end)
 			break
 		}
-		_ = oracle.Close()
-		<-done
+		stop()
 		if !found {
 			t.Logf("%s: no divergence at any chunk boundary", c.Name)
 		}
@@ -140,11 +134,9 @@ func describeSeqs(b []byte) string {
 // already showed a divergence.
 func pinpoint(t *testing.T, c vtCorpus, data []byte, from, to int) {
 	t.Helper()
-	oracle := vt.NewEmulator(c.Cols, c.Rows)
+	oracle, stop := newOracle(c.Cols, c.Rows)
+	defer stop()
 	oracle.Scrollback().SetMaxLines(1)
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = io.Copy(io.Discard, oracle) }()
-	defer func() { _ = oracle.Close(); <-done }()
 	ours := New(c.Cols, c.Rows)
 
 	_, _ = oracle.Write(data[:from])

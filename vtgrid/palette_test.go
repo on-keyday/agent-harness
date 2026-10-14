@@ -12,19 +12,14 @@ package vtgrid
 import (
 	"fmt"
 	"image/color"
-	"io"
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/x/vt"
 )
 
 func TestIndexedPaletteMatchesOracle(t *testing.T) {
 	const n = 256
-	emu := vt.NewEmulator(n, 1)
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
-	defer func() { _ = emu.Close(); <-done }()
+	emu, stop := newOracle(n, 1)
+	defer stop()
 
 	var b strings.Builder
 	for i := 0; i < n; i++ {

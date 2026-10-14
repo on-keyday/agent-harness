@@ -12,13 +12,10 @@ package vtgrid
 //	VTGRID_FOOTPRINT=1 go test ./vtgrid/ -run Footprint -v
 
 import (
-	"io"
 	"os"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/x/vt"
 )
 
 const (
@@ -50,11 +47,9 @@ func benchOurs(b *testing.B, data []byte) {
 }
 
 func benchOracle(b *testing.B, data []byte) {
-	emu := vt.NewEmulator(benchCols, benchRows)
+	emu, stop := newOracle(benchCols, benchRows)
+	defer stop()
 	emu.Scrollback().SetMaxLines(1)
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
-	defer func() { _ = emu.Close(); <-done }()
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -130,18 +125,14 @@ func TestFootprint(t *testing.T) {
 		return t, func() {}
 	})
 	measure("x/vt empty", func() (any, func()) {
-		emu := vt.NewEmulator(benchCols, benchRows)
+		emu, stop := newOracle(benchCols, benchRows)
 		emu.Scrollback().SetMaxLines(1)
-		done := make(chan struct{})
-		go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
-		return emu, func() { _ = emu.Close(); <-done }
+		return emu, stop
 	})
 	measure("x/vt fed 2k lines", func() (any, func()) {
-		emu := vt.NewEmulator(benchCols, benchRows)
+		emu, stop := newOracle(benchCols, benchRows)
 		emu.Scrollback().SetMaxLines(1)
-		done := make(chan struct{})
-		go func() { defer close(done); _, _ = io.Copy(io.Discard, emu) }()
 		_, _ = emu.Write(fill)
-		return emu, func() { _ = emu.Close(); <-done }
+		return emu, stop
 	})
 }
