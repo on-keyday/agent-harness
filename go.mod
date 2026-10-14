@@ -1,6 +1,6 @@
 module github.com/on-keyday/agent-harness
 
-go 1.25.7
+go 1.26.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -10,8 +10,8 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/on-keyday/objtrsf v0.0.0-20261010120745-a6067fd439b1
-	golang.org/x/crypto v0.52.0
-	golang.org/x/term v0.43.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/term v0.47.0
 )
 
 require (
@@ -39,8 +39,8 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/u-root/u-root v0.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/net v0.54.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
