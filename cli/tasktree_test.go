@@ -408,3 +408,112 @@ func TestTreePrefix_DrawsAncestorGutters(t *testing.T) {
 		}
 	}
 }
+
+// grantShape renders grants as "from>to:kind:caps" lines, ids as their single
+// byte, so a test asserts which pairs exist and what each carries.
+func grantShape(g TaskGrants) string {
+	b1 := func(h string) string { raw, _ := hex.DecodeString(h); return string(raw[:1]) }
+	var b strings.Builder
+	for _, e := range g.Edges {
+		b.WriteString(b1(e.From) + ">" + b1(e.To) + ":" + e.Kind.String() + ":" + CapsLabel(e.Caps) + "\n")
+	}
+	return b.String()
+}
+
+func tid(b byte) protocol.TaskID {
+	var id protocol.TaskID
+	id.Id[0] = b
+	return id
+}
+
+func idHex(b byte) string { id := tid(b); return hex.EncodeToString(id.Id[:]) }
+
+func TestBuildTaskGrants_KindPerClause(t *testing.T) {
+	a := mkTask('a', 0, 10)
+	a.Capabilities = protocol.Capability_Cancel | protocol.Capability_ExecView
+	a.Scope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree,
+		Ids: []protocol.TaskID{tid('b')}, IdsLen: 1,
+		VisIds: []protocol.TaskID{tid('d')}, VisIdsLen: 1}
+	a.Overrides = []protocol.ScopeOverride{{Caps: protocol.Capability_ExecView,
+		Base: protocol.ScopeBase_None, Ids: []protocol.TaskID{tid('c')}, IdsLen: 1}}
+	got := grantShape(BuildTaskGrants([]protocol.TaskInfo{
+		a, mkTask('b', 0, 20), mkTask('c', 0, 30), mkTask('d', 0, 40)}))
+	// b gets the bits no override claims; c only the override's; d is seen.
+	want := "a>b:action:cancel\na>c:override:exec_view\na>d:view:none\n"
+	if got != want {
+		t.Errorf("grants:\ngot:\n%swant:\n%s", got, want)
+	}
+}
+
+func TestBuildTaskGrants_StrongestClauseWinsAndSelfIsNoEdge(t *testing.T) {
+	a := mkTask('a', 0, 10)
+	a.Capabilities = protocol.Capability_Cancel
+	a.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None,
+		Ids: []protocol.TaskID{tid('b'), tid('a')}, IdsLen: 2,
+		VisIds: []protocol.TaskID{tid('b')}, VisIdsLen: 1}
+	got := grantShape(BuildTaskGrants([]protocol.TaskInfo{a, mkTask('b', 0, 20)}))
+	if want := "a>b:action:cancel\n"; got != want {
+		t.Errorf("grants:\ngot:\n%swant:\n%s", got, want)
+	}
+}
+
+// An id clause whose mask holds no bit still discloses the id.
+func TestBuildTaskGrants_ZeroBitIDIsView(t *testing.T) {
+	a := mkTask('a', 0, 10)
+	a.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None,
+		Ids: []protocol.TaskID{tid('b')}, IdsLen: 1}
+	got := grantShape(BuildTaskGrants([]protocol.TaskInfo{a, mkTask('b', 0, 20)}))
+	if want := "a>b:view:none\n"; got != want {
+		t.Errorf("grants:\ngot:\n%swant:\n%s", got, want)
+	}
+}
+
+func TestBuildTaskGrants_GlobalMarksNodeAndSubsumesEdges(t *testing.T) {
+	// a: global action, but visibility narrowed to subtree. Neither id adds
+	// reach, but both add VISIBILITY: server visibilitySet unions action ids
+	// in as well as vis-ids, so both survive as view edges.
+	a := mkTask('a', 0, 10)
+	a.Capabilities = protocol.Capability_Cancel
+	a.Scope = protocol.TaskScope{Base: protocol.ScopeBase_Global,
+		VisBase: protocol.ScopeBase_Subtree,
+		Ids:     []protocol.TaskID{tid('c')}, IdsLen: 1,
+		VisIds: []protocol.TaskID{tid('b')}, VisIdsLen: 1}
+	a.Scope.SetVisBasePresent(true)
+	// e: scope none, exec_view global — an observer that enumerates nothing.
+	e := mkTask('e', 0, 50)
+	e.Capabilities = protocol.Capability_ExecView | protocol.Capability_Cancel
+	e.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None}
+	e.Overrides = []protocol.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}
+	// v: visibility global only.
+	v := mkTask('v', 0, 60)
+	v.Scope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree, VisBase: protocol.ScopeBase_Global,
+		VisIds: []protocol.TaskID{tid('b')}, VisIdsLen: 1}
+	v.Scope.SetVisBasePresent(true)
+
+	g := BuildTaskGrants([]protocol.TaskInfo{a, mkTask('b', 0, 20), mkTask('c', 0, 30), e, v})
+	if got, want := grantShape(g), "a>b:view:none\na>c:view:none\n"; got != want {
+		t.Errorf("grants:\ngot:\n%swant:\n%s", got, want)
+	}
+	for id, want := range map[byte]TaskGlobalGrant{
+		'a': {Kind: GrantAction, Caps: protocol.Capability_Cancel},
+		'e': {Kind: GrantOverride, Caps: protocol.Capability_ExecView},
+		'v': {Kind: GrantView},
+	} {
+		if got := g.Global[idHex(id)]; got != want {
+			t.Errorf("global %c = %+v, want %+v", id, got, want)
+		}
+	}
+	if len(g.Global) != 3 {
+		t.Errorf("global marks %d, want 3", len(g.Global))
+	}
+}
+
+func TestBuildTaskGrants_PrunedTargetIsCountedNotDrawn(t *testing.T) {
+	a := mkTask('a', 0, 10)
+	a.Scope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree,
+		VisIds: []protocol.TaskID{tid('x'), tid('y')}, VisIdsLen: 2}
+	g := BuildTaskGrants([]protocol.TaskInfo{a})
+	if len(g.Edges) != 0 || g.Offscreen[idHex('a')] != 2 {
+		t.Errorf("edges=%v offscreen=%v, want none and 2", g.Edges, g.Offscreen)
+	}
+}

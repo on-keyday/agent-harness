@@ -1276,14 +1276,33 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// painter: multiply col/depth by a spacing, draw a circle and an
 			// edge to parent.
 			treeRows := cli.BuildTaskTree(lr.Tasks)
+			// The authority the creator edges do not show, from the same
+			// listing: id-named grants as edges, global reach and pruned
+			// targets as node properties.
+			grants := cli.BuildTaskGrants(lr.Tasks)
 			taskTree := make([]any, 0, len(treeRows))
 			for _, n := range cli.TaskTreeLayout(treeRows) {
-				taskTree = append(taskTree, map[string]any{
-					"id":     n.ID,
-					"parent": n.Parent,
-					"depth":  float64(n.Depth),
-					"col":    n.Col,
-					"orphan": n.Orphan,
+				node := map[string]any{
+					"id":        n.ID,
+					"parent":    n.Parent,
+					"depth":     float64(n.Depth),
+					"col":       n.Col,
+					"orphan":    n.Orphan,
+					"offscreen": float64(grants.Offscreen[n.ID]),
+				}
+				if g, ok := grants.Global[n.ID]; ok {
+					node["global"] = g.Kind.String()
+					node["globalCaps"] = cli.CapsLabel(g.Caps)
+				}
+				taskTree = append(taskTree, node)
+			}
+			grantEdges := make([]any, 0, len(grants.Edges))
+			for _, e := range grants.Edges {
+				grantEdges = append(grantEdges, map[string]any{
+					"from": e.From,
+					"to":   e.To,
+					"kind": e.Kind.String(),
+					"caps": cli.CapsLabel(e.Caps),
 				})
 			}
 
@@ -1363,6 +1382,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				"runners":       runners,
 				"tasks":         tasks,
 				"taskTree":      taskTree,
+				"grantEdges":    grantEdges,
 				"conns":         conns,
 				"forwards":      forwards,
 				"execs":         execs,

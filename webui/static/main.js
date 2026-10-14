@@ -432,6 +432,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // set of disconnected fragments pretending to be a hierarchy.
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
+  let lastGrantEdges = [];         // id-named grants between tasks (cli.BuildTaskGrants)
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
   const expandedExecCommands = new Set(); // exec ids whose command is shown whole
   let lastExecs = [];              // latest snapshot; `exec tap` reads this, no second RPC
@@ -483,7 +484,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
-      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor, revealTaskInList);
+      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
     });
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
@@ -666,8 +667,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderAgentSelect(agentSelect, knownAgentProfiles);
     runnerList.textContent = renderRunners(sortedRunners);
     lastTaskTree = snap.taskTree || [];
+    lastGrantEdges = snap.grantEdges || [];
     renderTaskList(snap.tasks);
-    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor, revealTaskInList);
+    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
     renderRawTaskSelect(snap.tasks);
@@ -8463,7 +8465,11 @@ function repoBasename(p) {
 // Every position comes from the wasm side (cli.TaskTreeLayout): `col` and
 // `depth` are unitless grid slots, multiplied here by the pixel spacing. This
 // file decides what a node LOOKS like and nothing about where it goes.
-function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
+//
+// grantEdges and each node's global / offscreen are the authority the creator
+// edges do not show (cli.BuildTaskGrants): a task naming another by id in its
+// scope, or reaching every task through a global base.
+function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect) {
   const host = document.getElementById("task-tree-graph");
   if (!host) return;
   // nodes null/empty is how the caller says "the toggle is off": the state
@@ -8489,23 +8495,50 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
   const R = 9;
 
   const byID = new Map((tasks || []).map((t) => [t.id, t]));
+  const onScreen = new Set(nodes.map((n) => n.id));
+  const edges = (grantEdges || []).filter((e) => onScreen.has(e.from) && onScreen.has(e.to));
+  // A grant between two nodes on the same row bows UP (see below), over the
+  // id labels; this band keeps the top row's arcs inside the panel.
+  const GRANT_BAND = edges.length > 0 ? 44 : 0;
   const pos = new Map();
   let maxCol = 0, maxDepth = 0;
   for (const n of nodes) {
-    pos.set(n.id, { x: PAD_X + n.col * COL_W, y: PAD_TOP + n.depth * ROW_H });
+    pos.set(n.id, { x: PAD_X + n.col * COL_W, y: PAD_TOP + GRANT_BAND + n.depth * ROW_H });
     if (n.col > maxCol) maxCol = n.col;
     if (n.depth > maxDepth) maxDepth = n.depth;
   }
   const W = PAD_X * 2 + maxCol * COL_W;
-  const H = PAD_TOP + PAD_BOTTOM + maxDepth * ROW_H;
+  const H = PAD_TOP + GRANT_BAND + PAD_BOTTOM + maxDepth * ROW_H;
 
   host.innerHTML = "";
+  // A legend only when there is something to decode: a plain creator tree
+  // needs none.
+  if (edges.length > 0 || nodes.some((n) => n.global || n.offscreen > 0)) {
+    const legend = document.createElement("div");
+    legend.className = "tt-legend";
+    legend.innerHTML =
+      '<span class="tt-lg tt-lg-action"><i></i>id で全 cap</span>' +
+      '<span class="tt-lg tt-lg-override"><i></i>id で一部の cap</span>' +
+      '<span class="tt-lg tt-lg-view"><i></i>id で閲覧のみ</span>' +
+      '<span class="tt-lg tt-lg-global"><b></b>global</span>';
+    host.appendChild(legend);
+  }
   const svg = svgEl("svg", {
     viewBox: `0 0 ${W} ${H}`,
     width: W,
     height: H,
     class: "task-tree-svg",
   });
+  const defs = svgEl("defs", {});
+  for (const kind of ["action", "override", "view"]) {
+    const marker = svgEl("marker", {
+      id: `tt-arrow-${kind}`, viewBox: "0 0 10 10", refX: 9, refY: 5,
+      markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse",
+    });
+    marker.appendChild(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", class: `tt-arrow tt-arrow-${kind}` }));
+    defs.appendChild(marker);
+  }
+  svg.appendChild(defs);
 
   // Edges first so the nodes paint over them.
   for (const n of nodes) {
@@ -8520,6 +8553,51 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
     }));
   }
 
+  // Grant edges: curved and arrowed, so they never read as one more elbow of
+  // the hierarchy. Across rows the bow is to the LEFT of travel, so a→b and
+  // b→a bend to opposite sides. On one row "left" would send half of them down
+  // through the status and repo labels, so they all bow up into GRANT_BAND,
+  // and a reverse pair is told apart by height instead.
+  for (const e of edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    let nx = dy / len, ny = -dx / len;
+    let bow = Math.min(60, Math.max(20, len * 0.25));
+    if (dy === 0) {
+      nx = 0; ny = -1;
+      bow = Math.min(bow, 2 * GRANT_BAND - 30) + (e.from > e.to ? 24 : 0);
+    }
+    const cx = (a.x + b.x) / 2 + nx * bow, cy = (a.y + b.y) / 2 + ny * bow;
+    // Start and end just outside the dots (global ring included).
+    const trim = (px, py, qx, qy, r) => {
+      const l = Math.hypot(qx - px, qy - py) || 1;
+      return [px + (qx - px) / l * r, py + (qy - py) / l * r];
+    };
+    const [sx, sy] = trim(a.x, a.y, cx, cy, R + 5);
+    const [ex, ey] = trim(b.x, b.y, cx, cy, R + 6);
+    const d = `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`;
+    const g = svgEl("g", { class: `tt-grant tt-grant-${e.kind}` });
+    // A wide transparent twin carries the hover: a 1.5px line is too thin to
+    // land a tooltip on.
+    g.appendChild(svgEl("path", { d, class: "tt-grant-hit" }));
+    g.appendChild(svgEl("path", { d, class: "tt-grant-line", "marker-end": `url(#tt-arrow-${e.kind})` }));
+    if (e.kind === "override") {
+      const label = svgEl("text", {
+        class: "tt-grant-label",
+        x: 0.25 * sx + 0.5 * cx + 0.25 * ex,
+        y: 0.25 * sy + 0.5 * cy + 0.25 * ey - 3,
+      });
+      label.textContent = e.caps.length > 20 ? e.caps.slice(0, 19) + "…" : e.caps;
+      g.appendChild(label);
+    }
+    const title = svgEl("title", {});
+    const what = e.kind === "view" ? "閲覧のみ" : `caps: ${e.caps}`;
+    title.textContent = `${e.from.slice(0, 8)} → ${e.to.slice(0, 8)}\n${e.kind} (${what})`;
+    g.appendChild(title);
+    svg.appendChild(g);
+  }
+
   for (const n of nodes) {
     const p = pos.get(n.id);
     const t = byID.get(n.id);
@@ -8527,6 +8605,9 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
       class: "tt-node" + (n.orphan ? " tt-orphan" : ""),
       transform: `translate(${p.x},${p.y})`,
     });
+    // Global reach has no target to draw an edge to, so it is a ring on the
+    // node itself — under the dot, so the status colour stays readable.
+    if (n.global) g.appendChild(svgEl("circle", { r: R + 4, class: `tt-global tt-global-${n.global}` }));
     const circle = svgEl("circle", { r: R, class: "tt-dot" });
     // The palette comes in from the caller rather than being restated here:
     // the list's status dots use the same function, and two copies of a colour
@@ -8552,10 +8633,24 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
         g.appendChild(repo);
     }
 
+    // Grants whose target is not in the listing (pruned): no edge can be
+    // drawn, so the count stands in for them. Shown only when there are any.
+    if (n.offscreen > 0) {
+      const off = svgEl("text", { class: "tt-offscreen", x: R + 6, y: 4 });
+      off.textContent = `+${n.offscreen} 一覧外`;
+      g.appendChild(off);
+    }
+
     const title = svgEl("title", {});
-    title.textContent = t
-      ? `${n.id}\n${t.status}  ${t.repoPath || ""}\n${n.orphan ? "作成者が一覧に居ない（prune 済み / スコープ外）" : ""}`
-      : n.id;
+    const lines = t ? [n.id, `${t.status}  ${t.repoPath || ""}`] : [n.id];
+    if (n.orphan) lines.push("作成者が一覧に居ない（prune 済み / スコープ外）");
+    if (n.global) {
+      lines.push(n.global === "view"
+        ? "global: 全タスクを閲覧"
+        : `global: ${n.globalCaps} が全タスクに届く`);
+    }
+    if (n.offscreen > 0) lines.push(`id 指定の対象のうち ${n.offscreen} 件が一覧に居ない（prune 済み）`);
+    title.textContent = lines.join("\n");
     g.appendChild(title);
 
     // The diagram is a navigator: clicking a node reveals that task in the

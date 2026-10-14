@@ -2107,6 +2107,45 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 10px;
   text-anchor: middle;
 }
+/* Authority the creator edges do not show (cli.BuildTaskGrants). One hue per
+   kind, shared by edge, arrowhead, global ring and legend; the line style
+   repeats the distinction for a reader who cannot tell the hues apart. */
+.tt-grant-hit { fill: none; stroke: transparent; stroke-width: 10; }
+.tt-grant-line { fill: none; stroke-width: 1.5; }
+.tt-grant-action .tt-grant-line { stroke: #c586c0; }
+.tt-grant-override .tt-grant-line { stroke: #dcdcaa; stroke-dasharray: 6 3; }
+.tt-grant-view .tt-grant-line { stroke: #6a9955; stroke-dasharray: 1.5 3; opacity: 0.8; }
+.tt-grant:hover .tt-grant-line { stroke-width: 2.5; }
+.tt-arrow-action { fill: #c586c0; }
+.tt-arrow-override { fill: #dcdcaa; }
+.tt-arrow-view { fill: #6a9955; }
+.tt-grant-label {
+  fill: #dcdcaa;
+  font-size: 9px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: #1b1b1b;
+  stroke-width: 3;
+}
+.tt-global { fill: none; stroke-width: 2; }
+.tt-global-action { stroke: #c586c0; }
+.tt-global-override { stroke: #dcdcaa; stroke-dasharray: 4 2; }
+.tt-global-view { stroke: #6a9955; stroke-dasharray: 1.5 2.5; }
+.tt-offscreen { fill: #d7ba7d; font-size: 9px; text-anchor: start; }
+.tt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+  font-size: 11px;
+  color: #aaa;
+  margin-bottom: 0.3rem;
+}
+.tt-lg { display: inline-flex; align-items: center; gap: 0.3rem; }
+.tt-lg i { display: inline-block; width: 18px; border-top: 2px solid; }
+.tt-lg-action i { border-color: #c586c0; }
+.tt-lg-override i { border-top-style: dashed; border-color: #dcdcaa; }
+.tt-lg-view i { border-top-style: dotted; border-color: #6a9955; }
+.tt-lg b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #c586c0; }
 
 /* --- event-stream chat -----------------------------------------------------
    Lives in the terminal tab beside #terminal; exactly one of the two is shown,

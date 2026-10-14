@@ -281,3 +281,171 @@ func TaskTreeLayout(rows []TaskTreeRow) []TaskTreeNodePos {
 	}
 	return out
 }
+
+// GrantKind ranks what an id-named grant lets its holder do to the target.
+// The order is the rank: when one task names another through several clauses,
+// the edge carries the strongest.
+type GrantKind int
+
+const (
+	// GrantView: the target is visible and nothing more — a vis-ids entry, or
+	// an action id under a mask that holds no bit.
+	GrantView GrantKind = iota + 1
+	// GrantOverride: only the capabilities of the --scope-for overrides that
+	// name the target reach it.
+	GrantOverride
+	// GrantAction: the base scope's ids, so every bit the task holds outside
+	// its overrides reaches the target.
+	GrantAction
+)
+
+func (k GrantKind) String() string {
+	switch k {
+	case GrantView:
+		return "view"
+	case GrantOverride:
+		return "override"
+	case GrantAction:
+		return "action"
+	}
+	return ""
+}
+
+// TaskGrantEdge is one task naming another by id in its scope.
+type TaskGrantEdge struct {
+	From, To string
+	Kind     GrantKind
+	// Caps is every bit that reaches To through an id clause; 0 for GrantView.
+	Caps protocol.Capability
+}
+
+// TaskGlobalGrant is a task whose scope reaches every task through a `global`
+// base. It is a property of the node, not an edge: it has no target to draw to.
+type TaskGlobalGrant struct {
+	Kind GrantKind
+	Caps protocol.Capability // 0 for GrantView
+}
+
+// TaskGrants is the authority the creator tree does NOT show: what a task
+// reaches beyond its own subtree, by naming ids or by a global base.
+type TaskGrants struct {
+	// Edges are sorted by From, then To, so the drawing is stable across polls.
+	Edges []TaskGrantEdge
+	// Offscreen counts, per From, the edges whose target is not in the input
+	// set (pruned). They are counted rather than dropped so a grant the
+	// diagram cannot place is still said to exist.
+	Offscreen map[string]int
+	Global    map[string]TaskGlobalGrant
+}
+
+// BuildTaskGrants reads the id clauses and global bases out of each task's
+// scope and overrides.
+//
+// The capability a clause carries follows scopeForCap: an override's ids get
+// that override's mask, the base scope's ids get every held bit no override
+// claims. An id reached by a clause whose bits are all zero is still DISCLOSED
+// to the task (message.bgn, ScopeOverride), so it becomes a view edge rather
+// than vanishing.
+//
+// An edge that a global grant of the same task already covers is dropped: a
+// line to one target says nothing a global marker does not, and drawing it
+// would suggest the id were the reason for the reach. The view edge is the
+// exception that proves it: under a global ACTION reach an id clause still adds
+// VISIBILITY unless the visibility rank is global too, so it stays, as a view.
+func BuildTaskGrants(tasks []protocol.TaskInfo) TaskGrants {
+	hexID := func(t protocol.TaskID) string { return hex.EncodeToString(t.Id[:]) }
+	present := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		present[hexID(t.Id)] = true
+	}
+
+	out := TaskGrants{Offscreen: map[string]int{}, Global: map[string]TaskGlobalGrant{}}
+	for _, t := range tasks {
+		from := hexID(t.Id)
+		held := t.Capabilities
+
+		var overMask protocol.Capability
+		for _, o := range t.Overrides {
+			overMask |= o.Caps
+		}
+		actionCaps := held &^ overMask
+
+		// What already reaches every task.
+		var globalAction, globalOverride protocol.Capability
+		if t.Scope.Base == protocol.ScopeBase_Global {
+			globalAction = actionCaps
+		}
+		for _, o := range t.Overrides {
+			if o.Base == protocol.ScopeBase_Global {
+				globalOverride |= o.Caps & held
+			}
+		}
+		visBase := t.Scope.Base
+		if t.Scope.VisBasePresent() {
+			visBase = t.Scope.VisBase
+		}
+		visGlobal := visBase == protocol.ScopeBase_Global
+		globalCaps := globalAction | globalOverride
+		switch {
+		case globalAction != 0:
+			out.Global[from] = TaskGlobalGrant{Kind: GrantAction, Caps: globalCaps}
+		case globalOverride != 0:
+			out.Global[from] = TaskGlobalGrant{Kind: GrantOverride, Caps: globalCaps}
+		case visGlobal:
+			out.Global[from] = TaskGlobalGrant{Kind: GrantView}
+		}
+
+		// Per target: the bits each kind of clause carries to it.
+		type reach struct {
+			action, override protocol.Capability
+		}
+		targets := map[string]*reach{}
+		at := func(id protocol.TaskID) *reach {
+			k := hexID(id)
+			if targets[k] == nil {
+				targets[k] = &reach{}
+			}
+			return targets[k]
+		}
+		for _, id := range t.Scope.Ids {
+			at(id).action |= actionCaps
+		}
+		for _, o := range t.Overrides {
+			for _, id := range o.Ids {
+				at(id).override |= o.Caps & held
+			}
+		}
+		for _, id := range t.Scope.VisIds {
+			at(id)
+		}
+		delete(targets, from) // self is always in reach; not a grant
+
+		for to, r := range targets {
+			action := r.action &^ globalCaps
+			caps := (r.action | r.override) &^ globalCaps
+			var kind GrantKind
+			switch {
+			case action != 0:
+				kind = GrantAction
+			case caps != 0:
+				kind = GrantOverride
+			case !visGlobal:
+				kind = GrantView
+			default:
+				continue
+			}
+			if !present[to] {
+				out.Offscreen[from]++
+				continue
+			}
+			out.Edges = append(out.Edges, TaskGrantEdge{From: from, To: to, Kind: kind, Caps: caps})
+		}
+	}
+	sort.Slice(out.Edges, func(i, j int) bool {
+		if out.Edges[i].From != out.Edges[j].From {
+			return out.Edges[i].From < out.Edges[j].From
+		}
+		return out.Edges[i].To < out.Edges[j].To
+	})
+	return out
+}
