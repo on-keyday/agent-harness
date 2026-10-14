@@ -2078,6 +2078,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   stroke: #4a4a4a;
   stroke-width: 1.5;
 }
+/* What a creator edge carries. Dim like the edge: the hierarchy is the frame,
+   the grants drawn over it are the news. */
+.tt-reach { fill: #8a8a8a; font-size: 9px; text-anchor: start; }
+.tt-creator-noreach .tt-edge { stroke-dasharray: 3 3; opacity: 0.6; }
+.tt-creator-noreach .tt-reach { fill: #666; }
+.tt-creator:hover .tt-edge { stroke: #8a8a8a; }
+.tt-creator:hover .tt-reach { fill: #d4d4d4; }
 .tt-node { cursor: pointer; }
 .tt-dot { stroke: #1b1b1b; stroke-width: 2; transition: r 80ms ease-out; }
 /* Hover says "this is clickable", nothing more. It used to draw a light ring,
@@ -2110,7 +2117,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 /* Authority the creator edges do not show (cli.BuildTaskGrants). One hue per
    kind, shared by edge, arrowhead, global ring and legend; the line style
    repeats the distinction for a reader who cannot tell the hues apart. */
-.tt-grant-hit { fill: none; stroke: transparent; stroke-width: 10; }
+.tt-grant-hit, .tt-edge-hit { fill: none; stroke: transparent; stroke-width: 10; }
 .tt-grant-line { fill: none; stroke-width: 1.5; }
 .tt-grant-action .tt-grant-line { stroke: #c586c0; }
 .tt-grant-override .tt-grant-line { stroke: #dcdcaa; stroke-dasharray: 6 3; }

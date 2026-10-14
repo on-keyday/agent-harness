@@ -8545,12 +8545,29 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect) {
     if (!n.parent || !pos.has(n.parent)) continue;
     const a = pos.get(n.parent), b = pos.get(n.id);
     const midY = (a.y + b.y) / 2;
-    svg.appendChild(svgEl("path", {
-      class: "tt-edge",
-      // Elbow rather than a straight diagonal: with several children the
-      // straight lines fan into a starburst that is hard to trace back.
-      d: `M ${a.x} ${a.y + R} V ${midY} H ${b.x} V ${b.y - R}`,
-    }));
+    // What the creator reaches of this child (cli.BuildTaskGrants
+    // ParentReach). Always written, "なし" included: an edge with no label
+    // would read the same as one whose label failed to render.
+    const caps = n.reachCaps || "none";
+    const reachText = caps !== "none" ? caps : (n.reachVisible ? "閲覧のみ" : "なし");
+    const g = svgEl("g", { class: "tt-creator" + (caps === "none" ? " tt-creator-noreach" : "") });
+    // Elbow rather than a straight diagonal: with several children the
+    // straight lines fan into a starburst that is hard to trace back.
+    const d = `M ${a.x} ${a.y + R} V ${midY} H ${b.x} V ${b.y - R}`;
+    g.appendChild(svgEl("path", { class: "tt-edge-hit", d }));
+    g.appendChild(svgEl("path", { class: "tt-edge", d }));
+    // Beside the child's own vertical segment: the horizontal run is shared
+    // by every sibling, so a label there would belong to none of them.
+    const label = svgEl("text", { class: "tt-reach", x: b.x + 4, y: midY + 12 });
+    label.textContent = reachText.length > 20 ? reachText.slice(0, 19) + "…" : reachText;
+    g.appendChild(label);
+    const title = svgEl("title", {});
+    title.textContent = `${n.parent.slice(0, 8)} → ${n.id.slice(0, 8)}（作成者から子へ）\n` +
+      (caps !== "none" ? `届く caps: ${caps}` : reachText) +
+      (caps !== "none" && !n.reachVisible ? "\n（一覧には出ない: 閲覧範囲の外）" : "") +
+      "\n直接の作成者の分のみ。祖先の subtree もこの子に届く";
+    g.appendChild(title);
+    svg.appendChild(g);
   }
 
   // Grant edges: curved and arrowed, so they never read as one more elbow of

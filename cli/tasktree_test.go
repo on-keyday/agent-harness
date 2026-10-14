@@ -517,3 +517,43 @@ func TestBuildTaskGrants_PrunedTargetIsCountedNotDrawn(t *testing.T) {
 		t.Errorf("edges=%v offscreen=%v, want none and 2", g.Edges, g.Offscreen)
 	}
 }
+
+func TestBuildTaskGrants_ParentReach(t *testing.T) {
+	// p: subtree base, but exec_view narrowed to none — the child gets every
+	// bit except exec_view.
+	p := mkTask('p', 0, 10)
+	p.Capabilities = protocol.Capability_Cancel | protocol.Capability_ExecView
+	p.Overrides = []protocol.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}
+	// n: base none — reaches its children only by naming them.
+	n := mkTask('n', 0, 20)
+	n.Capabilities = protocol.Capability_Cancel
+	n.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None, Ids: []protocol.TaskID{tid('y')}, IdsLen: 1}
+	// o: none + exec_view:global — acts on the child, does not list it.
+	o := mkTask('o', 0, 30)
+	o.Capabilities = protocol.Capability_ExecView
+	o.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None}
+	o.Overrides = []protocol.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}
+	// v: none/none with a vis-id on its child.
+	v := mkTask('v', 0, 40)
+	v.Capabilities = protocol.Capability_Cancel
+	v.Scope = protocol.TaskScope{Base: protocol.ScopeBase_None, VisIds: []protocol.TaskID{tid('w')}, VisIdsLen: 1}
+
+	g := BuildTaskGrants([]protocol.TaskInfo{p, n, o, v,
+		mkTask('a', 'p', 11), mkTask('x', 'n', 21), mkTask('y', 'n', 22),
+		mkTask('z', 'o', 31), mkTask('w', 'v', 41), mkTask('q', 'g', 50)}) // q's creator g is not listed: an orphan
+	for id, want := range map[byte]TaskReach{
+		'a': {Caps: protocol.Capability_Cancel, Visible: true},
+		'x': {},
+		'y': {Caps: protocol.Capability_Cancel, Visible: true},
+		'z': {Caps: protocol.Capability_ExecView},
+		'w': {Visible: true},
+	} {
+		got, ok := g.ParentReach[idHex(id)]
+		if !ok || got != want {
+			t.Errorf("reach of %c = %+v (present %v), want %+v", id, got, ok, want)
+		}
+	}
+	if len(g.ParentReach) != 5 {
+		t.Errorf("ParentReach has %d entries, want 5 (roots and orphans have none)", len(g.ParentReach))
+	}
+}

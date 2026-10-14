@@ -1,13 +1,16 @@
 # Task tree: id grants and global reach
 
-Status: DECIDED (operator, 2026-10-14) — scope below, including `view` edges
-and a node marker for `global`.
+Status: DECIDED (operator, 2026-10-14) — scope below, including `view` edges,
+a node marker for `global`, and a reach label on every creator edge (added the
+same day; labelled even when the creator's whole set reaches).
 
 ## Problem
 
 The WebUI task tree (🌳 chip) draws creator → child edges only. Authority a
 task holds beyond its own subtree is invisible there:
 
+- what a creator reaches of its own child: an override can narrow a bit to
+  `none`, so the creator edge does not imply the creator can act on the child
 - `--scope ids:<id>` / `subtree+ids:<id>` — the base scope's ids
 - `--scope-for CAPS=ids:<id>` — an override's ids
 - `+vis-ids:<id>` — view-only ids
@@ -37,9 +40,15 @@ strings means cross-referencing 32-hex ids by hand.
   because the id still adds visibility under a narrower visibility rank.
 - A target not in the listing (pruned) is counted in `Offscreen[From]`, not
   dropped silently.
+- `ParentReach[child]` — what the child's direct creator reaches of it: per
+  held bit, the scope that bit resolves through (override, else base) covers
+  the child when its base is `subtree` or `global`, or when it names the
+  child's id. `Visible` is the same test on the visibility rank and `vis_ids`,
+  plus any id clause. One level only; a grandparent's reach is its own edge's.
 
 **wasm** — snapshot gains `grantEdges` (`from`, `to`, `kind`, `caps` label),
-and each `taskTree` node gains `global` / `globalCaps` / `offscreen`.
+and each `taskTree` node gains `global` / `globalCaps` / `offscreen`, and
+`reachCaps` / `reachVisible` when it has a creator on screen.
 
 **WebUI (`renderTaskTreeGraph`)** — grant edges as arrowed curves, distinct
 from the elbow creator edges: `action` solid, `override` dashed, `view` dotted
@@ -47,6 +56,11 @@ and faint, override edges labelled with their caps. Edge tooltip names kind
 and caps. A global node gets a ring around its dot in the kind's colour and
 line style, and a tooltip line; `+N 一覧外` appears beside a node only when
 N > 0. A legend shows above the graph only when any of these exist.
+
+Each creator edge is labelled beside the child's own vertical segment (the
+horizontal run is shared by siblings): the caps, else `閲覧のみ`, else `なし`
+with the edge dashed and dimmed. Never blank — a missing label must not read
+as "nothing reaches".
 
 ## Surfaces
 

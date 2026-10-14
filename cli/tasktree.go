@@ -336,6 +336,60 @@ type TaskGrants struct {
 	// diagram cannot place is still said to exist.
 	Offscreen map[string]int
 	Global    map[string]TaskGlobalGrant
+	// ParentReach is, per child id, what its direct creator reaches of it —
+	// what the creator edge carries. Only children whose creator is in the
+	// input set have an entry. One level only: a grandparent's subtree reaches
+	// the child too, and that is the grandparent's edge, not this one.
+	ParentReach map[string]TaskReach
+}
+
+// TaskReach is what one task reaches of another.
+type TaskReach struct {
+	Caps protocol.Capability
+	// Visible: the target is in the holder's visibility set. Caps can be
+	// non-zero while this is false (`scope=none +exec_view:global` acts on
+	// what it is handed but lists nothing).
+	Visible bool
+}
+
+// reachOfDescendant resolves what t reaches of target, a task in t's subtree.
+// It follows scopeForCap per bit and the server's visibilitySet: a subtree or
+// global base covers a descendant, a none base only an id naming it.
+func reachOfDescendant(t protocol.TaskInfo, target protocol.TaskID) TaskReach {
+	covers := func(base protocol.ScopeBase, ids []protocol.TaskID) bool {
+		if base == protocol.ScopeBase_Subtree || base == protocol.ScopeBase_Global {
+			return true
+		}
+		for _, id := range ids {
+			if id == target {
+				return true
+			}
+		}
+		return false
+	}
+	held := t.Capabilities
+	var r TaskReach
+	var overMask protocol.Capability
+	for _, o := range t.Overrides {
+		overMask |= o.Caps
+		if covers(o.Base, o.Ids) {
+			r.Caps |= o.Caps & held
+		}
+		if covers(protocol.ScopeBase_None, o.Ids) {
+			r.Visible = true
+		}
+	}
+	if covers(t.Scope.Base, t.Scope.Ids) {
+		r.Caps |= held &^ overMask
+	}
+	visBase := t.Scope.Base
+	if t.Scope.VisBasePresent() {
+		visBase = t.Scope.VisBase
+	}
+	if covers(visBase, t.Scope.VisIds) || covers(protocol.ScopeBase_None, t.Scope.Ids) {
+		r.Visible = true
+	}
+	return r
 }
 
 // BuildTaskGrants reads the id clauses and global bases out of each task's
@@ -359,9 +413,17 @@ func BuildTaskGrants(tasks []protocol.TaskInfo) TaskGrants {
 		present[hexID(t.Id)] = true
 	}
 
-	out := TaskGrants{Offscreen: map[string]int{}, Global: map[string]TaskGlobalGrant{}}
+	out := TaskGrants{Offscreen: map[string]int{}, Global: map[string]TaskGlobalGrant{},
+		ParentReach: map[string]TaskReach{}}
+	byID := make(map[string]protocol.TaskInfo, len(tasks))
+	for _, t := range tasks {
+		byID[hexID(t.Id)] = t
+	}
 	for _, t := range tasks {
 		from := hexID(t.Id)
+		if p, ok := byID[hexID(t.CreatorTaskId)]; ok && t.CreatorTaskId != (protocol.TaskID{}) && p.Id != t.Id {
+			out.ParentReach[from] = reachOfDescendant(p, t.Id)
+		}
 		held := t.Capabilities
 
 		var overMask protocol.Capability

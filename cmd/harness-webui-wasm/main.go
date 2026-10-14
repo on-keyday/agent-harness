@@ -1290,6 +1290,12 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"orphan":    n.Orphan,
 					"offscreen": float64(grants.Offscreen[n.ID]),
 				}
+				// What the creator edge into this node carries; absent for a
+				// root or an orphan, which have no such edge.
+				if r, ok := grants.ParentReach[n.ID]; ok {
+					node["reachCaps"] = cli.CapsLabel(r.Caps) // "none" when zero
+					node["reachVisible"] = r.Visible
+				}
 				if g, ok := grants.Global[n.ID]; ok {
 					node["global"] = g.Kind.String()
 					node["globalCaps"] = cli.CapsLabel(g.Caps)
