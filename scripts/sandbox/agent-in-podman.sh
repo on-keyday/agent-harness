@@ -187,9 +187,14 @@ case "$AGENT" in
     # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC; agy has no such knob, so it is
     # dropped at the allowlist instead and shows up as DENY lines in the log.
     # Deliberately NOT widened to googleapis.com (that would allowlist every
-    # Google API), and token-refresh hosts (oauth2.googleapis.com /
-    # accounts.google.com) are absent because a fresh token never hit them.
-    A_DOMAINS="daily-cloudcode-pa.googleapis.com,www.googleapis.com,lh3.googleusercontent.com"
+    # Google API).
+    # oauth2.googleapis.com added 2026-10-15: once the access token expired
+    # mid-session, every refresh (`POST /token`) was refused and every model
+    # call failed with it ("token refresh failed: … Forbidden" in agy's cli.log);
+    # a fresh token never hits it, which is why the first measurement missed it.
+    # Still absent, never seen: accounts.google.com. Still denied, seen once and
+    # harmless: www.gstatic.com.
+    A_DOMAINS="daily-cloudcode-pa.googleapis.com,www.googleapis.com,lh3.googleusercontent.com,oauth2.googleapis.com"
     A_HOME="$HOME_DIR"
     ;;
   opencode)
