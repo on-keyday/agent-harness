@@ -105,17 +105,34 @@ with `keyToBytes` and calls `SendInput` exactly as the grid does today.
 The interaction is the PTY pane's: **`i` enters, every key goes to the pane,
 `Ctrl+]` leaves.** Outside input mode a stream pane consumes no key; digits and
 letters stay grid navigation. `Ctrl+]` changes nothing in the pane — a draft,
-an open approval menu, a half-typed deny reason are all still there on the
-next `i`.
+a half-built question answer, a half-typed deny reason are all still there on
+the next `i`.
 
-Inside, the pane shows one input row whose meaning follows its state:
+Inside, the keys are **the stream chat's own**, the way a PTY pane's keys are
+the agent UI's own. The chat already answers both kinds of request in one
+line of input (`tui/chat.go` `onKey`): while a request is pending, letters are
+decisions, not text.
 
-| Pane state | Input row | Keys |
-| --- | --- | --- |
-| normal | `▶ ` + draft | text editing; Enter sends `KindUser` and clears; Esc sends `KindInterrupt` |
-| request pending (approval) | `1 allow  2 allow + <suggestion>…  N deny…` | a digit answers at once; ↑/↓ + Enter selects; Esc does nothing |
-| deny reason | `deny reason ▶ ` + text | Enter sends the denial; Esc returns to the menu |
-| request pending (question) | `⏎ open chat` | Enter closes the grid and opens the chat overlay |
+| Pane state | Keys (all from the chat) |
+| --- | --- |
+| normal | text editing; Enter sends `KindUser`; Ctrl+X interrupts |
+| approval pending | `a` allow · `d` deny reason · `1`–`9` allow + accept suggestion N |
+| question pending | Tab / Shift+Tab question · `1`–`9` pick · `o` free text · `r` reply · `d` deny · Enter sends |
+| a sub-editor (deny reason, free text, reply) | Enter keeps / sends; Esc returns to the request |
+
+To make that one implementation rather than two, the chat's interaction state —
+input, sub-mode, pending request, question answer, and the key handler that
+turns keys into protocol messages — moves out of `ChatModel` into a component
+both `ChatModel` and `StreamPane` hold. Two keys differ by surface, because
+they mean "leave" in the chat and there is nothing to leave in a pane:
+
+- `Esc` in the normal state: the chat closes its overlay; a pane sends
+  `KindInterrupt`, which is what Esc does to the agent in a PTY pane.
+- `Ctrl+]`: a pane leaves input mode (the grid handles it before the pane sees
+  it, as today).
+
+The pending block (approval input, question options) is rendered at the pane's
+bottom, clipped like the chat's — the key row never scrolls away.
 
 `⏎` and `v` in navigation mode open the chat overlay for a stream pane (there
 is no PTY to attach to), instead of `DoAttachSession`.
@@ -125,8 +142,10 @@ is no PTY to attach to), instead of `DoAttachSession`.
 The WebUI grid has no input mode: a focused cell receives keys. A stream cell
 therefore holds a transcript (the chat's `chatApplyDisplay` rendering, bounded)
 and, under it, a one-line input (Enter sends the turn) and — while a request is
-pending — the chat's approval buttons. A question shows a button that opens the
-chat. The header gets the same `‹stream›` / `⚑` markers.
+pending — the chat's approval or question form. `chatShowApproval` /
+`chatShowQuestion` take the element to render into instead of writing
+`#chat-approval`, so the cell gets the chat's form, not a second one. The
+header gets the same `‹stream›` / `⚑` markers.
 
 The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 "there is exactly ONE chat"). It becomes a keyed slot map like
@@ -149,10 +168,10 @@ The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 | D2 | Grid input on a stream pane is `i` → operate → `Ctrl+]`, matching the PTY pane | operator |
 | D3 | Wake on a stream task is a user turn carrying the wake marker text | operator |
 | D4 | WebUI is in the same change | operator |
-| D5 | Approval is answered inside input mode with a numbered menu, not with modifier chords | this spec |
-| D6 | `Ctrl+]` leaves pane state untouched (draft, menu, deny reason survive) | this spec |
-| D7 | Esc in the normal row interrupts; Esc in the approval menu does nothing | this spec |
-| D8 | Questions are not answered in a grid cell; the cell opens the chat | this spec |
+| D5 | Inside input mode a stream pane takes the stream chat's keys, through one interaction component shared with `ChatModel` | this spec — REPLACES a first draft's numbered approval menu, a second key scheme the chat already made unnecessary |
+| D6 | `Ctrl+]` leaves pane state untouched (draft, answer in progress, deny reason survive) | this spec |
+| D7 | Esc in the normal state interrupts (the chat's Esc closes the overlay; a pane has none) | this spec |
+| D8 | Questions ARE answered in a grid cell, with the chat's keys / form | operator — REVERSES a first draft that sent questions to the chat overlay: a PTY pane answers its agent's question UI in the same cell, so cell size was no reason |
 | D9 | Stream panes use the PTY pane's 128 KiB replay cap; the first undecodable line after attach is dropped | this spec |
 | D10 | `taskEntry.wakeWrite` is replaced by a per-path `wake func() error` | this spec |
 | D11 | wasm stream attaches become keyed slots; write verbs route by task id | this spec |
@@ -162,16 +181,18 @@ The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 - A task-level pending count (`pending=N`) — the event-stream increment that
   would make D9's tail assumption unnecessary.
 - Multi-line input in a grid cell.
-- Answering a question from a grid cell (D8).
 
 ## Verification
 
 - Unit: `gridLiveTasks` includes stream; `StreamPane` drops a leading fragment,
-  tracks a pending request and its resolution, renders the tail; input-mode
-  key handling per row state; `WakeStdin` on a stream task writes one decodable
-  `KindUser` line; the interactive wake still writes text, then `\r`.
+  tracks a pending request and its resolution, renders the tail; the shared
+  interaction component produces the same messages from `ChatModel` and from a
+  pane (existing chat tests keep passing unchanged); `WakeStdin` on a stream
+  task writes one decodable `KindUser` line; the interactive wake still writes
+  text, then `\r`.
 - Dummy harness (keystroke and click paths are not reachable from a Go test):
   open a TUI grid with one interactive and one stream session, `i` → type →
-  Enter → `Ctrl+]` on the stream pane, answer one approval by digit; same in
+  Enter → `Ctrl+]` on the stream pane, answer one approval and one question
+  from the pane; same in
   the WebUI grid; send an agentboard message to the stream task and see the
   wake turn appear and the agent take a turn.
