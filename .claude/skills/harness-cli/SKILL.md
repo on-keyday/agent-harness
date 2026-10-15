@@ -120,9 +120,9 @@ the readers it addressed. Two things it got backwards:
 - **The hook file is injected for every runtime.** The runner writes
   `.claude/settings.json` into an injected worktree without consulting which
   agent it is about to spawn there. Having it is not a Claude privilege.
-- **Waking is gated on having a live stdin, not on a runtime.** An
-  interactive session has one; **a one-shot never does and can never be
-  woken**, whatever it runs. That is the real dividing line.
+- **Waking is gated on having a live stdin, not on a runtime.** A session —
+  interactive or event-stream — has one; **a one-shot never does and can never
+  be woken**, whatever it runs. That is the real dividing line.
 
 What remains runtime-dependent is narrow: whether anything on your side turns
 a new turn into an inbox fetch. Claude Code does it by reading the injected
@@ -147,7 +147,11 @@ when the runner detects new agentboard messages while such a session is idle,
 it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
 PTY as real keystrokes, which the agent's terminal UI submits as a new turn —
 that fires `UserPromptSubmit` and delivers the pending messages just like any
-other turn. This works across agent runtimes, not just Claude Code. A **one-shot task** (`submit`) has no PTY and gets no such wake:
+other turn. This works across agent runtimes, not just Claude Code. An
+**event-stream session** (`session new --stream`) is woken too: there is no
+PTY, so the runner hands the same `<harness:agentboard-wake>` text to the
+session as a user turn, and it reaches you the way a turn the operator typed
+does. A **one-shot task** (`submit`) has no stdin to write to and gets no wake:
 it runs a single turn, so `UserPromptSubmit` fires exactly once, at the
 start. If you're a one-shot task and suspect messages have landed since then,
 call `harness-cli agent inbox` yourself — nothing will push it to you.
@@ -397,9 +401,10 @@ hook described above. The correct pattern for any request/response flow,
 2. End the turn (or do other unrelated work). Do **not** invoke `wait`
    or `dispatch` to "block until the reply".
 3. The peer's reply arrives on a later turn through the inbox hook — either
-   when the user types a prompt, or, for an interactive session, when the
-   runner injects a synthetic `<harness:agentboard-wake>` prompt into the PTY
-   because a new message landed while you were idle. A one-shot task has no
+   when the user types a prompt, or, for a session (interactive or
+   event-stream), when the runner injects a synthetic
+   `<harness:agentboard-wake>` turn because a new message landed while you
+   were idle. A one-shot task has no
    such push: its next turn (if any — e.g. a `--resume-conversation`
    follow-up) picks up the reply via the same `UserPromptSubmit` hook, or you
    read it directly with `harness-cli agent inbox` before the turn ends.
@@ -835,7 +840,7 @@ the other end, and graceful degradation when a handshake never completes.
 
 Each agent owns exactly the topics it **receives** on. Never subscribe to a
 topic you only **send** to — doing so causes your own outbound messages to
-loop back into your inbox, and (for an interactive session) to wake you: the
+loop back into your inbox, and (for a session of either kind) to wake you: the
 board fires the wake hook for every matching subscriber including the
 publisher, so a message you send to a topic you subscribe to comes back as a
 `<harness:agentboard-wake>` turn. Sending to your **own** `chat.<short-id>` is
