@@ -689,3 +689,59 @@ func TestADeliveredAnswerIsAnnouncedAsResolved(t *testing.T) {
 		t.Fatalf("resolved lines %+v, want exactly one {%s deny}", resolved, reqID)
 	}
 }
+
+// An interrupt while a request waits makes the agent WITHDRAW it: measured on
+// claude 2.1.300, a control_cancel_request naming the vendor id arrives with
+// the interrupt's receipt, and the tool use is rejected. The request must be
+// resolved on the neutral stream, or every client keeps offering an answer to
+// a request that no longer exists.
+func TestAWithdrawnRequestIsResolvedAsCancelled(t *testing.T) {
+	agent := fakeAgent(t, filepath.Join(t.TempDir(), "argv"),
+		`printf '%s\n' '{"type":"control_request","request_id":"vendor-9","request":{"subtype":"can_use_tool","tool_name":"Bash"}}'`+"\n"+
+			"sleep 0.2\n"+
+			`printf '%s\n' '{"type":"control_cancel_request","request_id":"vendor-9"}'`+"\n"+
+			"cat > /dev/null\n")
+	var reqID string
+	var leaked bool
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		switch m.Kind {
+		case KindRequest:
+			reqID = m.Request.ID
+		case KindEvent:
+			if strings.Contains(m.Event.Text, "control_cancel_request") {
+				leaked = true
+				return true
+			}
+		case KindResolved:
+			go func() { _ = in.Response(Response{ID: reqID, Behavior: BehaviorAllow}) }()
+		}
+		return m.Kind == KindEvent && m.Event.Kind == EventError && strings.Contains(m.Event.Text, "no pending request")
+	})
+	if leaked {
+		t.Fatal("the cancel leaked onto the neutral stream as raw vendor JSON")
+	}
+	r := firstOfKind(msgs, KindResolved)
+	if r == nil || r.Resolved.ID != reqID || r.Resolved.Behavior != BehaviorCancelled {
+		t.Fatalf("resolved %+v, want {%s cancelled}; kinds %v", r, reqID, kinds(msgs))
+	}
+}
+
+// A response is an allow or a deny. The vendor message treats anything that is
+// not a deny as an allow, so any other value — cancelled exists, on Resolved —
+// must be refused, and the request left pending.
+func TestAResponseOtherThanAllowOrDenyIsRefused(t *testing.T) {
+	agent := fakeAgent(t, filepath.Join(t.TempDir(), "argv"),
+		`printf '%s\n' '{"type":"control_request","request_id":"vendor-1","request":{"subtype":"can_use_tool","tool_name":"Write"}}'`+"\n"+
+			"cat > /dev/null\n")
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindRequest {
+			id := m.Request.ID
+			go func() { _ = in.Response(Response{ID: id, Behavior: BehaviorCancelled}) }()
+			return false
+		}
+		return m.Kind == KindEvent && m.Event.Kind == EventError && strings.Contains(m.Event.Text, "allow or deny")
+	})
+	if firstOfKind(msgs, KindResolved) != nil {
+		t.Fatalf("a cancelled response resolved the request; kinds %v", kinds(msgs))
+	}
+}

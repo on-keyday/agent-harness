@@ -441,6 +441,10 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 		if v.Type == "control_response" && a.handleControlResponse(line) {
 			return
 		}
+		if v.Type == "control_cancel_request" {
+			a.handleControlCancel(v.RequestID)
+			return
+		}
 	}
 	for _, e := range a.decoder().Decode(line) {
 		ev := FromAgentlog(e)
@@ -652,6 +656,28 @@ func (a *claudeAdapter) handleControlResponse(line []byte) bool {
 	return true
 }
 
+// handleControlCancel is the agent withdrawing a request it raised — what an
+// interrupt does to one that is still waiting. The request is resolved as
+// cancelled so every client stops offering an answer to it; an answer that
+// arrives anyway finds nothing pending and is refused, as a second answer is.
+// A cancel for a request this adapter does not hold is dropped: it has nothing
+// to resolve, and the vendor JSON must not reach the neutral stream.
+func (a *claudeAdapter) handleControlCancel(vendorID string) {
+	a.mu.Lock()
+	var id string
+	for k, p := range a.pending {
+		if p.vendorID == vendorID {
+			id = k
+			delete(a.pending, k)
+			break
+		}
+	}
+	a.mu.Unlock()
+	if id != "" {
+		_ = a.w.Resolved(Resolved{ID: id, Behavior: BehaviorCancelled})
+	}
+}
+
 // pumpNeutralIn is the neutral→vendor direction.
 func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 	rd := NewReader(r)
@@ -716,6 +742,12 @@ func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 }
 
 func (a *claudeAdapter) answer(r Response) error {
+	// Only the two verdicts an operator can give. Below, anything that is not
+	// a deny is sent as an allow, so a stray value — "cancelled" is a real one,
+	// on Resolved — must be refused here rather than land as permission.
+	if r.Behavior != BehaviorAllow && r.Behavior != BehaviorDeny {
+		return fmt.Errorf("request %q: behavior must be allow or deny, got %q", r.ID, r.Behavior)
+	}
 	// Validated BEFORE the request is taken out of the table: a refused answer
 	// leaves it pending, answerable by a corrected one.
 	a.mu.Lock()

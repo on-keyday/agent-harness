@@ -263,6 +263,10 @@ type Behavior string
 const (
 	BehaviorAllow Behavior = "allow"
 	BehaviorDeny  Behavior = "deny"
+	// BehaviorCancelled appears only on Resolved: nobody answered, the agent
+	// withdrew the request. Measured on claude 2.1.300 — an interrupt while a
+	// request waits rejects the tool use and withdraws the request.
+	BehaviorCancelled Behavior = "cancelled"
 )
 
 // Response answers a Request.
