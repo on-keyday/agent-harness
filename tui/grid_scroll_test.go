@@ -123,7 +123,7 @@ func TestPaneStreamer_ScrollDownFloorsAtZero(t *testing.T) {
 // resets it — the wiring, so a test sees the key path and not only the method.
 func TestGrid_ScrollKeysDriveFocusedPane(t *testing.T) {
 	p := fillPane(80, 20)
-	m := GridModel{panes: []*PaneStreamer{p}, focus: 0}
+	m := GridModel{panes: []gridPane{p}, focus: 0}
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	if got := p.ScrollOffset(); got != 1 {
@@ -231,7 +231,7 @@ func TestPaneStreamer_ResetScrollClearsBothAxes(t *testing.T) {
 // `0` resets both axes.
 func TestGrid_HScrollKeysDriveFocusedPane(t *testing.T) {
 	p := fillWidePane(40, 3)
-	m := GridModel{panes: []*PaneStreamer{p}, focus: 0}
+	m := GridModel{panes: []gridPane{p}, focus: 0}
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
 	if got := p.ColOffset(); got != 1 {

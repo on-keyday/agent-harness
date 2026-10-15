@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -54,8 +55,9 @@ func gridTick() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return gridTickMsg{} })
 }
 
-// GridModel is a full-screen bubbletea overlay tiling live PaneStreamers, one
-// per interactive session (the connsModal/boardModal template — a normal
+// GridModel is a full-screen bubbletea overlay tiling live panes, one per
+// session — a PaneStreamer for a PTY session, a StreamPane for an event-stream
+// one (the connsModal/boardModal template — a normal
 // overlay whose Update/View are dispatched from App, NOT a tea.Exec suspend;
 // tea.Exec would freeze the Update loop and only one live pane could ever be
 // shown at a time).
@@ -69,7 +71,7 @@ type GridModel struct {
 	open   bool
 	width  int
 	height int
-	panes  []*PaneStreamer
+	panes  []gridPane
 	focus  int // global index into panes
 	page   int
 	input  bool // input mode: keystrokes go to the focused pane (cowrite)
@@ -85,7 +87,7 @@ type GridModel struct {
 func NewGridModel() GridModel { return GridModel{} }
 
 // gridLiveTasks selects the tasks a grid can tile — live (Running/Detached)
-// interactive sessions — most-recently-active first.
+// sessions of either kind — most-recently-active first.
 //
 // Separate from Open because a caller has to know whether opening is worth a
 // full-screen overlay BEFORE it opens one (the subtree entry point refuses on
@@ -100,10 +102,9 @@ func NewGridModel() GridModel { return GridModel{} }
 func gridLiveTasks(tasks []protocol.TaskInfo) []protocol.TaskInfo {
 	live := make([]protocol.TaskInfo, 0, len(tasks))
 	for _, t := range tasks {
-		// IsPTYKind, not IsSessionKind: the grid paints terminal panes, and an
-		// event-stream session has no terminal to paint. Intentionally omitted
-		// rather than overlooked.
-		if protocol.IsPTYKind(t.Kind) && taskSessionAlive(t.Status) {
+		// IsSessionKind: a PTY session tiles as a terminal pane, an
+		// event-stream session as its transcript (StreamPane).
+		if protocol.IsSessionKind(t.Kind) && taskSessionAlive(t.Status) {
 			live = append(live, t)
 		}
 	}
@@ -150,8 +151,7 @@ func (m GridModel) pageEnd() int {
 // pageCols is the column count of the current page's tiling.
 func (m GridModel) pageCols() int { return gridCols(m.pageEnd() - m.pageStart()) }
 
-// Open builds panes for the live (Running/Detached) interactive tasks in
-// tasks, capped at gridMaxPanes and ordered most-recently-active first, and
+// Open builds panes for the live (Running/Detached) sessions in tasks, capped at gridMaxPanes and ordered most-recently-active first, and
 // starts each pane streaming read-only over the shared client c. It never
 // dials a fresh connection and never sends a PTY size — the grid has no size
 // authority (Global Constraint); each PaneStreamer sizes its own emulator to
@@ -168,13 +168,21 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.Ta
 	}
 	m.panes = m.panes[:0]
 	for i, t := range live {
-		p := NewPaneStreamer(FormatTaskID(t.Id), 24, 80)
 		// Stagger first attaches: firing all N at once storms the shared client and
 		// starves some panes' attach responses (they hang at rx=0 = permanent
 		// black). Space them so the connection isn't saturated by simultaneous
 		// replay bursts; the reattach loop + per-attach timeout still recover any
 		// that slip through.
-		p.startDelay = time.Duration(i) * gridStagger
+		delay := time.Duration(i) * gridStagger
+		if protocol.IsPTYKind(t.Kind) {
+			p := NewPaneStreamer(FormatTaskID(t.Id), 24, 80)
+			p.startDelay = delay
+			p.Start(ctx, c)
+			m.panes = append(m.panes, p)
+			continue
+		}
+		p := NewStreamPane(FormatTaskID(t.Id))
+		p.startDelay = delay
 		p.Start(ctx, c)
 		m.panes = append(m.panes, p)
 	}
@@ -201,11 +209,16 @@ func (m *GridModel) Close() {
 
 // attachFocused closes the grid and returns a cmd that attaches the focused
 // session in the given mode (Control = takeover, View = read-only). No-op if
-// no pane is focused or there is no client.
+// no pane is focused or there is no client. An event-stream pane has no
+// terminal to attach: both modes open its chat instead.
 func (m GridModel) attachFocused(mode protocol.AttachMode) (GridModel, tea.Cmd) {
 	id := m.FocusedTaskID()
 	if id == "" || m.client == nil {
 		return m, nil
+	}
+	if p := m.focusedPane(); p != nil && p.OpensChat() {
+		m.Close()
+		return m, func() tea.Msg { return GridOpenChatMsg{TaskID: id} }
 	}
 	cmd := DoAttachSession(m.client, id, mode)
 	m.Close()
@@ -219,7 +232,7 @@ func (m GridModel) FocusedTaskID() string {
 	return ""
 }
 
-func (m GridModel) focusedPane() *PaneStreamer {
+func (m GridModel) focusedPane() gridPane {
 	if m.focus < 0 || m.focus >= len(m.panes) {
 		return nil
 	}
@@ -296,12 +309,13 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 		if m.input {
 			if msg.String() == "ctrl+]" {
 				m.input = false
+				if p := m.focusedPane(); p != nil {
+					p.SetInputActive(false)
+				}
 				return m, nil
 			}
-			if b := keyToBytes(msg); len(b) > 0 {
-				if p := m.focusedPane(); p != nil {
-					p.SendInput(b)
-				}
+			if p := m.focusedPane(); p != nil {
+				p.Key(msg)
 			}
 			return m, nil
 		}
@@ -311,8 +325,9 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 			return m, nil
 		case "i":
 			// Enter input mode on the focused pane (type into it in place).
-			if m.FocusedTaskID() != "" {
+			if p := m.focusedPane(); p != nil {
 				m.input = true
+				p.SetInputActive(true)
 			}
 			return m, nil
 		case "enter":
@@ -509,7 +524,7 @@ func (m GridModel) View() string {
 		// anyway: "no live interactive sessions" is a different claim about
 		// the whole fleet than about one subtree.
 		return PanelStyleFocused.Padding(0, 1).Render(
-			"grid: no live interactive sessions in scope " + m.scopeLabel() + " (esc to close)")
+			"grid: no live sessions in scope " + m.scopeLabel() + " (esc to close)")
 	}
 	status := m.statusLine()
 
@@ -553,6 +568,7 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	if len(head) > 8 {
 		head = head[:8]
 	}
+	head += p.Badge()
 	if err := p.Err(); err != nil {
 		head += " (ended)"
 	}
@@ -571,17 +587,15 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	// Truncate the header to the cell width so a long id + markers can never wrap
 	// onto a second line (which would push the pane past its budgeted height and
 	// overflow the grid).
-	if len(head) > w {
-		head = head[:w]
-	}
+	// By display width, not bytes: the header carries the stream badge's
+	// non-ASCII marks, and a byte cut would split one.
+	head = runewidth.Truncate(head, w, "")
 	if gridDiag {
 		// Overlay the pane's own state on its first row (truncated to width) so a
 		// black pane shows WHY. Replaces the top body row rather than adding one,
 		// keeping the pane within its budgeted height.
 		diag := p.DiagLine()
-		if len(diag) > w {
-			diag = diag[:w]
-		}
+		diag = runewidth.Truncate(diag, w, "")
 		if nl := strings.IndexByte(body, '\n'); nl >= 0 {
 			body = diag + body[nl:]
 		} else {
@@ -596,9 +610,7 @@ func (m GridModel) renderPane(idx, w, h int) string {
 			// INPUT status bar.
 			style = PanelStyle.BorderForeground(lipgloss.Color("42"))
 			head = "● " + head
-			if len(head) > w {
-				head = head[:w]
-			}
+			head = runewidth.Truncate(head, w, "")
 		}
 	}
 	// MaxHeight/MaxWidth are a belt-and-suspenders clamp: even if some content

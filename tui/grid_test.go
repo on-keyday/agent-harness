@@ -15,7 +15,7 @@ func keyMsg(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: 
 func TestGridModel_LayoutAndFocusMove(t *testing.T) {
 	m := NewGridModel()
 	// Inject panes directly (no live streams needed for layout).
-	m.panes = []*PaneStreamer{
+	m.panes = []gridPane{
 		NewPaneStreamer("aaaaaaaa", 24, 80),
 		NewPaneStreamer("bbbbbbbb", 24, 80),
 		NewPaneStreamer("cccccccc", 24, 80),
@@ -89,7 +89,7 @@ func TestGridModel_ScopeLabelNamesTheNarrowing(t *testing.T) {
 
 func TestGridModel_DismissFocusedPane(t *testing.T) {
 	m := NewGridModel()
-	m.panes = []*PaneStreamer{
+	m.panes = []gridPane{
 		NewPaneStreamer("aaaaaaaa", 24, 80),
 		NewPaneStreamer("bbbbbbbb", 24, 80),
 	}

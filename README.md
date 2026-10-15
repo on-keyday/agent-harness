@@ -322,7 +322,11 @@ bin/harness-cli session stream answer <task-id> <request-id> \
 # checkboxes per question, with a free-text box for each.
 # In the TUI, `r` on a live stream task opens a chat screen that does all of the
 # above with keys: enter sends, a/d answer a pending approval (with the tool's
-# input shown whole), ctrl+x interrupts, ctrl+d finishes, esc leaves. Whether an
+# input shown whole), esc (or ctrl+x) interrupts, ctrl+d finishes, ctrl+] leaves
+# — the same key that leaves a PTY attach and the grid's input mode. The grid
+# (`g`) tiles a stream session as its transcript, marked ‹stream› (⚑ while a
+# request waits); `i` on it takes these same keys in place, ctrl+] leaves input
+# mode, and ⏎ opens the chat. Whether an
 # approval is ever RAISED depends on the agent's own permission mode — a
 # ~/.claude/settings.json with defaultMode "auto" pre-approves ordinary tools, so
 # pass `--agent-arg --permission-mode --agent-arg default` to a session you want

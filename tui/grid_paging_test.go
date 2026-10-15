@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func mkPanes(ids ...string) []*PaneStreamer {
-	ps := make([]*PaneStreamer, 0, len(ids))
+func mkPanes(ids ...string) []gridPane {
+	ps := make([]gridPane, 0, len(ids))
 	for _, id := range ids {
 		ps = append(ps, NewPaneStreamer(id, 24, 80))
 	}

@@ -291,8 +291,8 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 		stream, _, kind, err := c.AttachSessionWithReplayLimit(attachCtx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
 		cancelAttach()
 		if err == nil && kind == protocol.TaskKind_Stream {
-			// Grid rows are IsPTYKind-filtered, so a pane should never point at
-			// a stream task — but this pane renders a VT screen, and painting
+			// GridModel.Open builds a StreamPane for a stream task, so this pane
+			// should never point at one — but it renders a VT screen, and painting
 			// NDJSON into it would be worse than an error line. Permanent: a
 			// task's kind never changes, so reattaching cannot fix it.
 			_ = stream.Close()

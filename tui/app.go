@@ -1283,6 +1283,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.fileEditor.SetStatus("外部エディタの内容を読み込みました — ctrl+j で保存", false)
 		return a, nil
 
+	case GridOpenChatMsg:
+		return a, a.openChat(msg.TaskID)
+
 	case InteractiveReadyMsg:
 		// armed is true only when this open was dispatched from the `S` key
 		// or the resume cases of `r`/`R`/`u`/`U` (the only sites that set
@@ -1997,7 +2000,7 @@ func (a *App) openGrid(mode cli.GridScopeMode, anchor string, ids []string) tea.
 	}
 	if n := len(gridLiveTasks(set)); n == 0 {
 		a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
-			"grid %s: no live interactive session in this set (%d task(s) in it)", label, len(set))))
+			"grid %s: no live session in this set (%d task(s) in it)", label, len(set))))
 		return nil
 	}
 	a.gridSelMode, a.gridSelAnchor, a.gridSelIDs, a.gridSelSet = mode, anchor, ids, true

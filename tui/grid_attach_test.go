@@ -11,7 +11,7 @@ import (
 func TestGridModel_EnterControl_vView(t *testing.T) {
 	mk := func() GridModel {
 		m := NewGridModel()
-		m.panes = []*PaneStreamer{NewPaneStreamer("aaaaaaaa", 24, 80)}
+		m.panes = []gridPane{NewPaneStreamer("aaaaaaaa", 24, 80)}
 		m.open = true
 		m.client = &cli.Client{}
 		m.SetSize(100, 30)

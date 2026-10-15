@@ -28,7 +28,7 @@ func TestGridView_NeverExceedsTerminal(t *testing.T) {
 	for _, W := range []int{80, 120, 160} {
 		for _, H := range []int{24, 40, 50} {
 			for _, n := range []int{2, 5, 9} {
-				panes := make([]*PaneStreamer, n)
+				panes := make([]gridPane, n)
 				for i := range panes {
 					panes[i] = widePaneStatic(100, 30)
 				}
