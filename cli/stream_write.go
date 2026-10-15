@@ -47,8 +47,9 @@ func EncodeStreamMsg(m streamagent.Msg) ([]byte, error) {
 // openStreamAttach attaches in cowrite mode and refuses a task whose data plane
 // is not NDJSON, so a write verb cannot type JSON into somebody's shell. The
 // stream is closed before the error is returned.
-func (c *Client) openStreamAttach(ctx context.Context, taskIDHex string, what string) (*agentexec.CommandExecutionStream, error) {
-	st, ar, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_Cowrite, 0)
+// replayLimit caps the ring replay as for any observer (0 = the whole ring).
+func (c *Client) openStreamAttach(ctx context.Context, taskIDHex string, what string, replayLimit uint32) (*agentexec.CommandExecutionStream, error) {
+	st, ar, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_Cowrite, replayLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +71,7 @@ func (c *Client) writeStreamMsg(ctx context.Context, taskIDHex string, m streama
 	if err != nil {
 		return err
 	}
-	stream, err := c.openStreamAttach(ctx, taskIDHex, "`session stream "+string(m.Kind)+"`")
+	stream, err := c.openStreamAttach(ctx, taskIDHex, "`session stream "+string(m.Kind)+"`", 0)
 	if err != nil {
 		return err
 	}
@@ -233,28 +234,49 @@ type StreamSession struct {
 	// the UI goroutine would otherwise interleave with nothing protecting the
 	// underlying stream.
 	wmu sync.Mutex
+	// cut is set when the replay was capped: the cap is frame-aligned, not
+	// line-aligned, so the first line may be the tail of one the cap split.
+	// ReadLine drops that first line when it is not the protocol.
+	cut bool
 }
 
-// OpenStreamSession attaches to an event-stream task for both directions.
+// OpenStreamSession attaches to an event-stream task for both directions,
+// replaying the whole ring.
 func (c *Client) OpenStreamSession(ctx context.Context, taskIDHex string) (*StreamSession, error) {
-	stream, err := c.openStreamAttach(ctx, taskIDHex, "the chat view")
+	return c.OpenStreamSessionWithReplayLimit(ctx, taskIDHex, 0)
+}
+
+// OpenStreamSessionWithReplayLimit is OpenStreamSession with the ring replay
+// capped at replayLimit bytes — for a monitoring pane, which shows the tail
+// and would never render the rest (the stream twin of
+// AttachSessionWithReplayLimit).
+func (c *Client) OpenStreamSessionWithReplayLimit(ctx context.Context, taskIDHex string, replayLimit uint32) (*StreamSession, error) {
+	stream, err := c.openStreamAttach(ctx, taskIDHex, "the chat view", replayLimit)
 	if err != nil {
 		return nil, err
 	}
 	return &StreamSession{stream: stream, rd: bufio.NewReader(stream.Stdout()),
-		erd: bufio.NewReader(stream.Stderr())}, nil
+		erd: bufio.NewReader(stream.Stderr()), cut: replayLimit > 0}, nil
 }
 
 // ReadLine returns the next line off the stream. It BLOCKS; run it on its own
 // goroutine. A final partial line (no trailing newline) is still returned,
 // alongside the error that ended the stream.
 func (s *StreamSession) ReadLine() (StreamLine, error) {
-	line, err := s.rd.ReadBytes('\n')
-	if len(line) > 0 {
+	for {
+		line, err := s.rd.ReadBytes('\n')
+		if len(line) == 0 {
+			return StreamLine{}, err
+		}
 		out, _ := decodeStreamLine(bytes.TrimRight(line, "\r\n"))
+		if s.cut {
+			s.cut = false
+			if !out.Decoded && err == nil {
+				continue // the fragment a capped replay starts with
+			}
+		}
 		return out, err
 	}
-	return StreamLine{}, err
 }
 
 // ReadStderrLine returns the next line of the AGENT's stderr, which rides its
