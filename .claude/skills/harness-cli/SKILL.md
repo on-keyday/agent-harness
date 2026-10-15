@@ -112,7 +112,7 @@ about what was *said*, not about what is currently *true*.
 
 ## Inbox is automatic — do not poll
 
-**The split is interactive vs one-shot, NOT claude vs everything else.** This
+**The split is session vs one-shot, NOT claude vs everything else.** This
 paragraph used to say the opposite — that only a Claude agent receives
 anything automatically — and it was wrong in the way most likely to mislead
 the readers it addressed. Two things it got backwards:
