@@ -410,3 +410,34 @@ func TestChatPlainAllowDoesNotAnswerAQuestion(t *testing.T) {
 		t.Fatal("`a` answered a question with nothing chosen")
 	}
 }
+
+// Ctrl+] leaves the chat, as it leaves a PTY attach and the grid's input mode;
+// Esc interrupts the agent and keeps the view — it used to close it, which is
+// what an operator reaching for an interrupt got instead.
+func TestChatCtrlBracketLeavesAndEscInterrupts(t *testing.T) {
+	m := openChat(t)
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.IsOpen() {
+		t.Fatal("esc closed the chat")
+	}
+	if !strings.Contains(transcript(m), "▶ interrupt") {
+		t.Fatalf("esc did not interrupt:\n%s", transcript(m))
+	}
+
+	// In a sub-editor Esc still backs out, and interrupts nothing.
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-e","tool":"Bash"}}`))
+	m, _ = m.onKey(keyRunes("d"))
+	before := strings.Count(transcript(m), "▶ interrupt")
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.mode != chatModeNormal || m.pending == nil {
+		t.Fatalf("esc in the reason editor: mode %v, pending %v", m.mode, m.pending)
+	}
+	if strings.Count(transcript(m), "▶ interrupt") != before {
+		t.Fatal("esc in a sub-editor interrupted the agent")
+	}
+
+	m, _ = m.onKey(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	if m.IsOpen() {
+		t.Fatal("ctrl+] did not leave the chat")
+	}
+}
