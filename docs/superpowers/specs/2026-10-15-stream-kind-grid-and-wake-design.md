@@ -52,12 +52,14 @@ Mechanism:
   `ExecuteOption`.
 - `WakeStdin` keeps its debounce and its log lines; it calls `e.wake()`.
 
-The stream write shares the adapter's stdin pipe with client `Stdin` frames.
-A single `write(2)` of ≤ `PIPE_BUF` bytes is atomic on a pipe, and the wake
-line is ~250 bytes, so it cannot be torn by — or tear — a client line written
-in one call. A client line split across two frames could still be interleaved
-with a wake; the clients in this repo write one message per `Stdin().Write`
-(`StreamSession.Send`), so this is not reachable from them.
+The stream write shares the adapter's stdin with client `Stdin` frames. Both
+reach it through agentexec's `io.Pipe`, which serialises concurrent `Write`s
+whole, so a wake written in one call cannot interleave with a client line
+written in one call. A client's `Stdin().Write` is one frame
+(`objtrsf/exec` `stdinWrapper`), and `handleInput` writes each frame to the
+pipe in one call; the clients in this repo send one message per write
+(`StreamSession.Send`). A client line split across two frames could still be
+interleaved with a wake; none of them produces one.
 
 ### 2. Grid selection (all surfaces)
 
@@ -140,9 +142,12 @@ and loses the view instead. So, in the chat overlay as well as in a pane:
 The key hints the chat prints (`questionHint`, the approval row, the status
 line) change with them.
 
-Esc while a request is pending interrupts rather than answering. What the
-adapter does with an interrupt while it holds an unanswered request is checked
-during implementation; if the request stays pending, the pane keeps showing it.
+Esc while a request is pending interrupts rather than answering. Measured on
+claude 2.1.300: the agent rejects the tool use ("The user doesn't want to
+proceed…"), ends the turn, and withdraws the request with a
+`control_cancel_request` naming its vendor id. The adapter had no handler for
+that line, so the request stayed pending in every client and an answer to it
+went nowhere. It is now resolved as `cancelled` (D13).
 
 The pending block (approval input, question options) is rendered at the pane's
 bottom, clipped like the chat's — the key row never scrolls away.
@@ -154,8 +159,8 @@ is no PTY to attach to), instead of `DoAttachSession`.
 
 The WebUI grid has no input mode: a focused cell receives keys. A stream cell
 therefore holds a transcript (the chat's `chatApplyDisplay` rendering, bounded)
-and, under it, a one-line input (Enter sends the turn) and — while a request is
-pending — the chat's approval or question form. `chatShowApproval` /
+and, under it, the chat's turn box (Enter sends, Shift+Enter is a newline) and —
+while a request is pending — the chat's approval or question form. `chatShowApproval` /
 `chatShowQuestion` take the element to render into instead of writing
 `#chat-approval`, so the cell gets the chat's form, not a second one. The
 header gets the same `‹stream›` / `⚑` markers.
@@ -193,12 +198,14 @@ The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 | D9 | Stream panes use the PTY pane's 128 KiB replay cap; the first undecodable line after attach is dropped | this spec |
 | D10 | `taskEntry.wakeWrite` is replaced by a per-path `wake func() error` | this spec |
 | D11 | wasm stream attaches become keyed slots; write verbs route by task id | this spec |
+| D13 | The adapter resolves a request the agent withdraws (`control_cancel_request`) as `Resolved{behavior: cancelled}`; a `Response` whose behavior is not allow or deny is refused, because the vendor message sends anything but a deny as an allow | this spec — found while verifying D7 |
 
 ## Not in this change
 
 - A task-level pending count (`pending=N`) — the event-stream increment that
   would make D9's tail assumption unnecessary.
-- Multi-line input in a grid cell.
+- Multi-line input in a TUI grid cell (the WebUI cell's textarea has it, as
+  the WebUI chat does).
 
 ## Verification
 
