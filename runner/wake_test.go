@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
 
 // captureWriter records every byte slice written to it.
@@ -54,7 +56,7 @@ func TestSession_WakeStdin_SplitWrite(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
 
 	s.WakeStdin("abc")
 
@@ -73,7 +75,7 @@ func TestSession_WakeStdin_Debounce(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
 
 	s.WakeStdin("abc")
 	s.WakeStdin("abc")
@@ -91,7 +93,7 @@ func TestSession_WakeStdin_AfterWindow(t *testing.T) {
 	s := &Session{Now: func() time.Time { return cur }}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
 
 	s.WakeStdin("abc")
 	cur = now.Add(wakeDebounceWindow + 100*time.Millisecond)
@@ -117,7 +119,7 @@ func TestSession_WakeStdin_TextWriteError_DoesNotAdvanceCursor(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{failNext: errors.New("pipe closed")}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
 
 	s.WakeStdin("abc") // text write fails — writeCount stays 0
 	if cw.writeCount() != 0 {
@@ -165,7 +167,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
 				// Inside wakeDebounceWindow, so the second fire is dropped.
-				s.reg.put("abc", &taskEntry{wakeWrite: cw.write, lastWakeAt: s.Now()})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write), lastWakeAt: s.Now()})
 			},
 			task: "abc",
 			want: "debounced",
@@ -174,7 +176,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			name: "written",
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
-				s.reg.put("abc", &taskEntry{wakeWrite: cw.write})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
 			},
 			task: "abc",
 			want: "wake written",
@@ -203,5 +205,32 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 				t.Errorf("log line does not carry the task id: %s", got)
 			}
 		})
+	}
+}
+
+// A stream session's wake is one write of one protocol line: a user turn whose
+// text is the marker. The adapter reads lines, so anything else — the PTY
+// path's bare text and lone CR — would be a protocol error there.
+func TestSession_WakeStdin_StreamIsOneUserTurnLine(t *testing.T) {
+	s := &Session{Now: time.Now}
+	cw := &captureWriter{}
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wake: streamWake(cw.write)})
+
+	s.WakeStdin("abc")
+
+	if got := cw.writeCount(); got != 1 {
+		t.Fatalf("writeCount = %d, want 1 (one whole line)", got)
+	}
+	line := cw.writeAt(0)
+	if !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1 {
+		t.Fatalf("write is not exactly one line: %q", line)
+	}
+	m, err := streamagent.DecodeMsg([]byte(strings.TrimSuffix(line, "\n")))
+	if err != nil {
+		t.Fatalf("not a protocol line: %v (%q)", err, line)
+	}
+	if m.Kind != streamagent.KindUser || m.User == nil || m.User.Text != wakeMarker {
+		t.Errorf("got %+v, want a user turn carrying the marker", m)
 	}
 }

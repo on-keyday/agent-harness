@@ -16,6 +16,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/agent-harness/topics"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -50,7 +51,7 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 //
 // IMPORTANT: wakeMarker has NO trailing newline / carriage return. The
 // submit keystroke is sent as a separate write after wakeSubmitDelay (see
-// WakeStdin). Observed against claude code, whose UI is built with Ink (a
+// ptyWake). Observed against claude code, whose UI is built with Ink (a
 // React-based terminal renderer): when the runner writes the marker text
 // and a trailing "\r" or "\n" in a single syscall, the trailing byte
 // becomes a literal newline inside the input box rather than firing the
@@ -58,7 +59,7 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 // Splitting the write — text, short pause, lone "\r" — makes the second
 // write parse as a real keystroke and the prompt submits itself.
 //
-// Scope of that finding: WakeStdin applies the split to EVERY profile and
+// Scope of that finding: ptyWake applies the split to EVERY profile and
 // works against codex's Rust TUI too, which is not Ink — so "Ink does X"
 // is the case it was found in, not the general cause.
 //
@@ -115,11 +116,12 @@ type taskEntry struct {
 	cancel   context.CancelFunc
 	repoPath string
 
-	// wakeWrite is the closure handed to OnStdinWriter — writes bytes
-	// directly to the running agent's stdin pipe. Only handleOpenExec (the
-	// interactive PTY path) wires this; a oneshot task run via handleAssign
-	// never sets it, so it stays nil for that task's whole lifetime.
-	wakeWrite func([]byte) (int, error)
+	// wake delivers one wake to the running agent, in the form its stdin
+	// takes: a PTY session gets the marker typed and submitted, a stream
+	// session gets it as a user turn. Set from OnStdinWriter by the two
+	// handleOpenExec paths; a oneshot task run via handleAssign has no stdin
+	// and never sets it, so it stays nil for that task's whole lifetime.
+	wake func() error
 
 	// lastWakeAt is the most recent time WakeStdin actually wrote to
 	// stdin. Wakes within wakeDebounceWindow are dropped (the agent's
@@ -1003,6 +1005,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// sends the first user turn, the same shape `session new` has.
 			ResumeConversation: oer.ResumeConversation(),
 			Logger:             log,
+			OnStdinWriter: func(write func([]byte) (int, error)) {
+				s.setWake(taskIDHex, streamWake(write))
+			},
 			// No task log for this kind. It rendered every event into one
 			// until 2026-09-30, on the premise that the ring evicts and so
 			// the stream alone loses what happened while nobody watched. That
@@ -1075,11 +1080,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
-			s.mu.Lock()
-			if e, ok := s.reg.get(taskIDHex); ok && e != nil {
-				e.wakeWrite = write
-			}
-			s.mu.Unlock()
+			s.setWake(taskIDHex, ptyWake(write))
 			// The child's stdin is wired, so there IS a child now. This is
 			// the earliest observable "started" on this path, and a hold may
 			// only promise tasks that have one.
@@ -1157,13 +1158,12 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 }
 
-// WakeStdin writes the wake marker to the agent's stdin pipe for the given
-// task, debounced per task to one write per wakeDebounceWindow. Safe to
-// call from any goroutine. No-op if the task is unknown, or if its agent
-// process never wired a stdin writer at all — only handleOpenExec (the
-// interactive PTY path) does that via OnStdinWriter; a oneshot task started
-// through handleAssign has no wakeWrite, so a TaskWake aimed at one is a
-// permanent, silent no-op for that task's entire lifetime.
+// WakeStdin delivers a wake to the given task's agent, debounced per task to
+// one delivery per wakeDebounceWindow. Safe to call from any goroutine. No-op
+// if the task is unknown, or if its agent never wired a stdin writer — both
+// handleOpenExec paths do (PTY and event-stream); a oneshot task started
+// through handleAssign has none, so a TaskWake aimed at one is a permanent,
+// silent no-op for that task's entire lifetime.
 //
 // Coalescing rationale: subsequent agentboard messages within the window
 // are not lost — they are read by the agent's next `agent inbox
@@ -1176,13 +1176,13 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task not known to this runner")
 		return
 	}
-	if e.wakeWrite == nil {
+	if e.wake == nil {
 		s.mu.Unlock()
 		// Permanent for that task, not transient: only handleOpenExec wires a
 		// stdin writer, so a oneshot never has one. Worth a line anyway — from
 		// the outside this is identical to a wake that was written and ignored,
 		// and telling the two apart is the whole reason these logs exist.
-		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not an interactive session)")
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not a session)")
 		return
 	}
 	now := s.Now()
@@ -1192,19 +1192,11 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "debounced", "since_last", since)
 		return
 	}
-	write := e.wakeWrite
+	wake := e.wake
 	s.mu.Unlock()
 
-	// Split write — text first, brief pause, lone Enter byte. See the
-	// wakeMarker / wakeSubmitDelay comments for why a single combined
-	// write fails, and for the limits of that finding.
-	if _, err := write([]byte(wakeMarker)); err != nil {
-		s.logger().Warn("wake stdin write (text) failed", "task_id", taskIDHex, "err", err)
-		return
-	}
-	time.Sleep(wakeSubmitDelay)
-	if _, err := write(wakeSubmitByte); err != nil {
-		s.logger().Warn("wake stdin write (submit) failed", "task_id", taskIDHex, "err", err)
+	if err := wake(); err != nil {
+		s.logger().Warn("wake write failed", "task_id", taskIDHex, "err", err)
 		return
 	}
 
@@ -1213,10 +1205,54 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		e2.lastWakeAt = now
 	}
 	s.mu.Unlock()
-	// Both writes landed in the PTY. This says the harness did its half — it
-	// does NOT say a turn started, which is the agent's decision and not
+	// The wake reached the agent's stdin. This says the harness did its half —
+	// it does NOT say a turn started, which is the agent's decision and not
 	// observable from here. That boundary is exactly what the log is for: with
 	// this line present and no turn, the next investigation starts at the
 	// agent instead of re-reading this file.
 	s.logger().Info("wake written", "task_id", taskIDHex)
 }
+
+// setWake installs the task's wake delivery once its agent's stdin exists.
+func (s *Session) setWake(taskIDHex string, wake func() error) {
+	s.mu.Lock()
+	if e, ok := s.reg.get(taskIDHex); ok && e != nil {
+		e.wake = wake
+	}
+	s.mu.Unlock()
+}
+
+// ptyWake types the marker into a PTY session and submits it: text, a pause,
+// then a lone Enter. See the wakeMarker / wakeSubmitDelay comments for why a
+// single combined write fails, and for the limits of that finding.
+func ptyWake(write func([]byte) (int, error)) func() error {
+	return func() error {
+		if _, err := write([]byte(wakeMarker)); err != nil {
+			return fmt.Errorf("text: %w", err)
+		}
+		time.Sleep(wakeSubmitDelay)
+		if _, err := write(wakeSubmitByte); err != nil {
+			return fmt.Errorf("submit: %w", err)
+		}
+		return nil
+	}
+}
+
+// streamWake hands the marker to an event-stream session as a user turn — the
+// neutral protocol's own message, which the adapter turns into its vendor's.
+// None of ptyWake's keystroke problem exists here: the line is a message, not
+// typing, and it goes in one write. That one write is also what keeps it from
+// interleaving with a client's line: the stdin it writes is agentexec's
+// io.Pipe, which serialises concurrent Writes whole, and a client's turn
+// arrives as one Stdin frame written in one call.
+func streamWake(write func([]byte) (int, error)) func() error {
+	w := streamagent.NewWriter(writeFunc(write))
+	return func() error {
+		return w.User(streamagent.UserTurn{Text: wakeMarker})
+	}
+}
+
+// writeFunc adapts agentexec's stdin write callback to an io.Writer.
+type writeFunc func([]byte) (int, error)
+
+func (f writeFunc) Write(p []byte) (int, error) { return f(p) }

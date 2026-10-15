@@ -55,6 +55,10 @@ type StreamTask struct {
 	// TaskStatus value.
 	OnPending func(n int)
 
+	// OnStdinWriter receives the adapter's stdin writer once the adapter is
+	// running — the path a wake takes into the session (Session.WakeStdin).
+	OnStdinWriter func(write func([]byte) (int, error))
+
 	mu      sync.Mutex
 	pending map[string]streamagent.Request
 	exit    *streamagent.Exit
@@ -136,7 +140,7 @@ func (t *StreamTask) Run(ctx context.Context, stream trsf.BidirectionalStream) e
 		argv[0], argv[1:], t.Dir,
 		false, // no PTY: this kind is events, not a terminal
 		t.Env,
-		agentexec.ExecuteOption{Audit: &streamTap{task: t}})
+		agentexec.ExecuteOption{Audit: &streamTap{task: t}, OnStdinWriter: t.OnStdinWriter})
 }
 
 func (t *StreamTask) notifyPending(n int) {
