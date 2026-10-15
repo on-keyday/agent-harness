@@ -115,21 +115,34 @@ decisions, not text.
 
 | Pane state | Keys (all from the chat) |
 | --- | --- |
-| normal | text editing; Enter sends `KindUser`; Ctrl+X interrupts |
-| approval pending | `a` allow · `d` deny reason · `1`–`9` allow + accept suggestion N |
-| question pending | Tab / Shift+Tab question · `1`–`9` pick · `o` free text · `r` reply · `d` deny · Enter sends |
+| normal | text editing; Enter sends `KindUser`; Esc (or Ctrl+X) interrupts |
+| approval pending | `a` allow · `d` deny reason · `1`–`9` allow + accept suggestion N · Esc interrupts |
+| question pending | Tab / Shift+Tab question · `1`–`9` pick · `o` free text · `r` reply · `d` deny · Enter sends · Esc interrupts |
 | a sub-editor (deny reason, free text, reply) | Enter keeps / sends; Esc returns to the request |
 
 To make that one implementation rather than two, the chat's interaction state —
 input, sub-mode, pending request, question answer, and the key handler that
 turns keys into protocol messages — moves out of `ChatModel` into a component
-both `ChatModel` and `StreamPane` hold. Two keys differ by surface, because
-they mean "leave" in the chat and there is nothing to leave in a pane:
+both `ChatModel` and `StreamPane` hold.
 
-- `Esc` in the normal state: the chat closes its overlay; a pane sends
-  `KindInterrupt`, which is what Esc does to the agent in a PTY pane.
-- `Ctrl+]`: a pane leaves input mode (the grid handles it before the pane sees
-  it, as today).
+**Leaving is `Ctrl+]` on every surface, and Esc is never "leave".** Today the
+chat overlay is the one TUI surface where Esc leaves: a PTY attach detaches on
+`Ctrl+]` (`tui/app.go`), the grid leaves input mode on `Ctrl+]`, and in an
+agent's own UI Esc interrupts. An operator moving between them presses `Ctrl+]`
+in the chat and gets nothing, and presses Esc in the chat meaning to interrupt
+and loses the view instead. So, in the chat overlay as well as in a pane:
+
+- `Ctrl+]` leaves — the chat closes its overlay (the task keeps running, as
+  today); in a pane the grid handles it before the pane sees it, as today.
+- Esc outside a sub-editor sends `KindInterrupt`. Ctrl+X stays as a second
+  spelling of the same.
+
+The key hints the chat prints (`questionHint`, the approval row, the status
+line) change with them.
+
+Esc while a request is pending interrupts rather than answering. What the
+adapter does with an interrupt while it holds an unanswered request is checked
+during implementation; if the request stays pending, the pane keeps showing it.
 
 The pending block (approval input, question options) is rendered at the pane's
 bottom, clipped like the chat's — the key row never scrolls away.
@@ -146,6 +159,10 @@ pending — the chat's approval or question form. `chatShowApproval` /
 `chatShowQuestion` take the element to render into instead of writing
 `#chat-approval`, so the cell gets the chat's form, not a second one. The
 header gets the same `‹stream›` / `⚑` markers.
+
+Esc in a cell's input — and in the main chat's input — sends the interrupt and
+calls `preventDefault`: the grid is a `<dialog>`, whose default Esc action is
+to close it, which is the same accident §4 removes from the TUI chat.
 
 The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 "there is exactly ONE chat"). It becomes a keyed slot map like
@@ -170,7 +187,8 @@ The wasm side today allows exactly one stream attach (`cli/streamchat_wasm.go`,
 | D4 | WebUI is in the same change | operator |
 | D5 | Inside input mode a stream pane takes the stream chat's keys, through one interaction component shared with `ChatModel` | this spec — REPLACES a first draft's numbered approval menu, a second key scheme the chat already made unnecessary |
 | D6 | `Ctrl+]` leaves pane state untouched (draft, answer in progress, deny reason survive) | this spec |
-| D7 | Esc in the normal state interrupts (the chat's Esc closes the overlay; a pane has none) | this spec |
+| D7 | Esc outside a sub-editor interrupts, in a pane and in the chat alike | operator (chat) / this spec (WebUI inputs) |
+| D12 | The TUI chat overlay leaves on `Ctrl+]`, not Esc, like a PTY attach and the grid's input mode | operator |
 | D8 | Questions ARE answered in a grid cell, with the chat's keys / form | operator — REVERSES a first draft that sent questions to the chat overlay: a PTY pane answers its agent's question UI in the same cell, so cell size was no reason |
 | D9 | Stream panes use the PTY pane's 128 KiB replay cap; the first undecodable line after attach is dropped | this spec |
 | D10 | `taskEntry.wakeWrite` is replaced by a per-path `wake func() error` | this spec |
