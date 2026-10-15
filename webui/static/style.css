@@ -1165,6 +1165,30 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   min-height: 120px;
   padding: 0.4em;
 }
+/* A grid cell over an event-stream session: the chat's own pieces (.chat-log,
+   .chat-approval, .chat-input-row, .chat-status) stacked in a fixed-height
+   column, the transcript taking what the others leave. The approval box
+   scrolls on its own so a long tool input cannot push the turn box out of the
+   cell. */
+.grid-cell-body.grid-stream-body {
+  display: flex;
+  flex-direction: column;
+  height: 40vh;
+  min-height: 240px;
+}
+.grid-stream-body .chat-log {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 4em;
+  font-size: 12px;
+}
+.grid-stream-body .chat-approval {
+  flex: 0 1 auto;
+  max-height: 55%;
+  overflow: auto;
+}
+.grid-stream-body .chat-approval pre { max-height: 8em; }
+.grid-stream-body .chat-input-row textarea { font-size: 12px; }
 
 @media (max-width: 600px) {
   .grid-modal {

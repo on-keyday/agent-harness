@@ -322,17 +322,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
-  // Mirrors protocol.IsPTYKind (runner/protocol/task_kind.go). Two kinds are
-  // sessions; only one drives a TERMINAL, so every site has to say which
-  // question it is asking — a bare `kind === "Interactive"` reads as an
-  // oversight the next reader will "fix" by adding "Stream" to it.
-  //
-  // The IsSessionKind half has no caller here yet, so it is not defined: an
-  // unused predicate is one more thing to keep in step with Go for nothing.
+  // Mirrors protocol.IsPTYKind / IsSessionKind (runner/protocol/task_kind.go).
+  // Two kinds are sessions; only one drives a TERMINAL, so every site has to
+  // say which question it is asking — a bare `kind === "Interactive"` reads as
+  // an oversight the next reader will "fix" by adding "Stream" to it.
   const isPTYKind = (t) => !!t && t.kind === "Interactive";
   // The other session kind. Spelled out for the same reason isPTYKind is: a
   // bare kind === "Stream" reads as an oversight the next reader will "fix".
   const isStreamKind = (t) => !!t && t.kind === "Stream";
+  const isSessionKind = (t) => isPTYKind(t) || isStreamKind(t);
 
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
   // The base's other half. Declared beside spawnBase rather than near its
@@ -489,7 +487,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
 
-  // Grid selection. A live interactive session is INCLUDED in the grid by
+  // Grid selection. A live session (either kind) is INCLUDED in the grid by
   // default; gridExcluded holds the ids the user unchecked. Keyed by id so it
   // survives the snapshot poll's task-list re-render, and a newly-created
   // session is auto-included. The global "グリッド表示" button opens the grid of
@@ -498,12 +496,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const gridShowBtn = document.getElementById("grid-show-btn");
   const gridAllOn   = document.getElementById("grid-all-on");
   const gridAllOff  = document.getElementById("grid-all-off");
-  const liveInteractiveTasks = () =>
+  const liveSessionTasks = () =>
     (lastTasks || []).filter(
-      // isPTYKind: the grid paints terminal panes.
-      (t) => isPTYKind(t) && (t.status === "Running" || t.status === "Detached"));
+      // isSessionKind: a PTY session tiles as a terminal, a stream session as
+      // its transcript (openSessionGrid).
+      (t) => isSessionKind(t) && (t.status === "Running" || t.status === "Detached"));
   gridShowBtn.addEventListener("click", () => {
-    const ids = liveInteractiveTasks()
+    const ids = liveSessionTasks()
       .filter((t) => !gridExcluded.has(t.id))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
@@ -512,7 +511,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   });
   gridAllOn.addEventListener("click", () => { gridExcluded.clear(); renderTaskList(lastTasks); });
   gridAllOff.addEventListener("click", () => {
-    for (const t of liveInteractiveTasks()) gridExcluded.add(t.id);
+    for (const t of liveSessionTasks()) gridExcluded.add(t.id);
     renderTaskList(lastTasks);
   });
 
@@ -3192,10 +3191,321 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
 
   const CHAT_LINE_LIMIT = 400;   // bounded transcript, like the TUI's
   let chatTaskId = "";           // "" = no chat attached
-  let chatPending = null;        // the request awaiting an answer, with its Input
-  let chatBusy = false;
 
-  const chatSetStatus = (t) => { if (chatStatus) chatStatus.textContent = t || ""; };
+  // createStreamView is one event-stream transcript with its approval and
+  // question control: the chat panel is one, and each grid cell over a stream
+  // session is another (openSessionGrid). Both drive the session the same way
+  // for the same reason the TUI's chat and grid pane share streamDriver — an
+  // approval answered in a cell must be the approval the chat would send.
+  //
+  // els is { log, approval, status }; taskId() names the task it drives (the
+  // chat's changes as it is reopened); onPending(req|null), if given, hears
+  // the pending request change — the grid cell marks its header with it.
+  function createStreamView(els, taskId, onPending) {
+    let pending = null;  // the request awaiting an answer, with its Input
+
+    const setStatus = (t) => { if (els.status) els.status.textContent = t || ""; };
+    const setPending = (req) => {
+      pending = req;
+      if (onPending) onPending(req);
+    };
+
+    const append = (text, cls) => {
+      const log = els.log;
+      if (!log) return;
+      const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+      const div = document.createElement("div");
+      div.className = cls || "c-text";
+      div.textContent = text;
+      log.appendChild(div);
+      while (log.childElementCount > CHAT_LINE_LIMIT) log.removeChild(log.firstChild);
+      // Only follow the tail if the reader was already there — scrolling up to
+      // read something must not be yanked back by the next event.
+      if (atBottom) log.scrollTop = log.scrollHeight;
+    };
+
+    // applyDisplay applies a streamagent.Display the wasm pump decided in Go
+    // (cli/streamchat_wasm.go displayForJS): the line, its tone as a `c-<tone>`
+    // class, and what it does to the status line. The page no longer words or
+    // classifies an event itself — the TUI chat reads the same Display, so the
+    // two chats cannot drift apart again (they already had once: a replayed
+    // event drove the status line in one of them).
+    const applyDisplay = (d) => {
+      if (!d) return false;
+      if (d.text) append(d.text, "c-" + (d.tone || "muted"));
+      if (d.setStatus) setStatus(d.status || "");
+      // A request settled anywhere — this view, another client, or before this
+      // view attached and replayed — is no longer waiting on anyone.
+      if (d.resolves && pending && pending.id === d.resolves) {
+        setPending(null);
+        showApproval();
+      }
+      return true;
+    };
+
+    // showQuestion renders a QUESTION request (the adapter filled
+    // req.questions): per question a radio row (pick one) or checkboxes (pick
+    // any) plus an "その他" text box, then a freeform reply and 送信 / 拒否. The
+    // controls are the kinds the page already uses; the wording of the notice
+    // and the rule that enables 送信 come from Go over the bridge.
+    const showQuestion = (req) => {
+      const box = els.approval;
+      box.replaceChildren();
+      const h = document.createElement("h3");
+      h.textContent = "❓ 質問に答えてください  (" + (req.id || "") + ")";
+      box.appendChild(h);
+      // Its own element, rebuilt on every render: listeners hang off it rather
+      // than off the approval box, which outlives each render and would collect
+      // one stale set per call.
+      const form = document.createElement("div");
+      box.appendChild(form);
+      const rows = [];
+      req.questions.forEach((q, i) => {
+        const fs = document.createElement("fieldset");
+        fs.className = "chat-question";
+        const lg = document.createElement("legend");
+        lg.textContent = (q.header ? q.header + ": " : "") + q.question +
+          (q.multi_select ? "（複数選択）" : "（1つ選択）");
+        fs.appendChild(lg);
+        const boxes = [];
+        (q.options || []).forEach((o) => {
+          const lab = document.createElement("label");
+          lab.className = "chat-question-opt";
+          const inp = document.createElement("input");
+          inp.type = q.multi_select ? "checkbox" : "radio";
+          // Scoped by the task as well: two cells can show the same request
+          // id's form, and radios sharing a name are one group page-wide.
+          inp.name = "q-" + taskId() + "-" + req.id + "-" + i;
+          inp.value = o.label;
+          lab.append(inp, " " + o.label);
+          if (o.description) {
+            const d = document.createElement("span");
+            d.className = "notify-meta";
+            d.textContent = " — " + o.description;
+            lab.appendChild(d);
+          }
+          fs.appendChild(lab);
+          boxes.push(inp);
+        });
+        const other = document.createElement("input");
+        other.type = "text";
+        other.placeholder = "その他（自分の言葉で答える）";
+        other.className = "chat-question-other";
+        fs.appendChild(other);
+        form.appendChild(fs);
+        rows.push({ q, boxes, other });
+      });
+      const reply = document.createElement("textarea");
+      reply.rows = 2;
+      reply.placeholder = "自由回答（どの質問にも当てはまらない返事）";
+      reply.className = "chat-question-reply";
+      form.appendChild(reply);
+      const answersOf = () => {
+        const out = {};
+        rows.forEach(({ q, boxes, other }) => {
+          const text = other.value.trim();
+          let vals = boxes.filter((b) => b.checked).map((b) => b.value);
+          if (text) vals = q.multi_select ? vals.concat([text]) : [text];
+          if (vals.length) out[q.question] = vals;
+        });
+        return out;
+      };
+      const btns = document.createElement("div");
+      btns.className = "chat-approval-btns";
+      const send = document.createElement("button");
+      send.type = "button";
+      send.textContent = "✔ 送信";
+      const refresh = () => {
+        send.disabled = !window.harness.questionComplete(
+          JSON.stringify(req), JSON.stringify(answersOf()), reply.value);
+      };
+      form.addEventListener("input", refresh);
+      form.addEventListener("change", refresh);
+      send.addEventListener("click", () => sendAnswer(req, answersOf(), reply.value.trim()));
+      const deny = document.createElement("button");
+      deny.type = "button";
+      deny.textContent = "✘ 拒否";
+      deny.title = "質問に答えない。理由はエージェントに verbatim で届く";
+      deny.addEventListener("click", () => {
+        const reason = window.prompt("答えない理由（エージェントがそのまま読みます。空でも可）");
+        if (reason === null) return;
+        answer("deny", reason, -1);
+      });
+      btns.append(send, deny);
+      box.appendChild(btns);
+      refresh();
+      box.hidden = false;
+    };
+
+    const sendAnswer = async (req, answers, reply) => {
+      const id = taskId();
+      if (!pending || !id || pending.id !== req.id) return;
+      setPending(null);
+      showApproval();
+      const parts = (req.questions || []).filter((q) => answers[q.question])
+        .map((q) => (q.header || q.question) + "=" + answers[q.question].join(", "));
+      if (reply) parts.push("reply: " + reply);
+      append("▶ 回答: " + parts.join("; "), "c-you");
+      setStatus("resuming…");
+      try {
+        await window.harness.streamAnswer(id, req.id, answers, reply);
+      } catch (err) {
+        append("✗ 回答を送れませんでした: " + err.message, "c-err");
+      }
+    };
+
+    // showApproval renders the pending request: the tool, its input WHOLE
+    // (this is the payload the log drops), and the choices as a button row —
+    // buttons because that is this surface's native control, where the TUI uses
+    // keys.
+    const showApproval = () => {
+      const box = els.approval;
+      if (!box) return;
+      if (!pending) { box.hidden = true; box.replaceChildren(); return; }
+      const req = pending;
+      if (req.questions && req.questions.length) { showQuestion(req); return; }
+      box.replaceChildren();
+      const h = document.createElement("h3");
+      h.textContent = "⚑ " + (req.tool || "?") + " を実行してよいか  (" + (req.id || "") + ")";
+      box.appendChild(h);
+      if (req.description) {
+        const d = document.createElement("div");
+        d.className = "notify-meta";
+        d.textContent = req.description;
+        box.appendChild(d);
+      }
+      if (req.input !== undefined) {
+        const pre = document.createElement("pre");
+        try { pre.textContent = JSON.stringify(req.input, null, 2); }
+        catch (_) { pre.textContent = String(req.input); }
+        box.appendChild(pre);
+      }
+      const row = document.createElement("div");
+      row.className = "chat-approval-btns";
+      const mk = (label, title, fn) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        if (title) b.title = title;
+        b.addEventListener("click", fn);
+        row.appendChild(b);
+      };
+      mk("✔ 許可", "このツール呼び出しを実行させる", () => answer("allow", "", -1));
+      mk("✘ 拒否", "実行させない。理由はエージェントに verbatim で届く", () => {
+        const reason = window.prompt("拒否の理由（エージェントがそのまま読みます。空でも可）") ;
+        if (reason === null) return; // cancelled — the request stays pending
+        answer("deny", reason, -1);
+      });
+      (req.suggestions || []).forEach((sg, i) => {
+        const label = [sg.type, sg.mode, sg.destination ? "(" + sg.destination + ")" : ""].filter(Boolean).join(" ");
+        mk("＋ " + label, "許可した上で、この提案も受け入れる（以後の挙動が変わる標準の変更）",
+           () => answer("allow", "", i));
+      });
+      box.appendChild(row);
+      box.hidden = false;
+    };
+
+    const answer = async (behavior, message, suggestion) => {
+      const id = taskId();
+      if (!pending || !id) return;
+      const req = pending;
+      setPending(null);
+      showApproval();
+      append((behavior === "deny" ? "▶ 拒否 " : "▶ 許可 ") + (req.tool || "") +
+             (message ? ": " + message : ""), behavior === "deny" ? "c-err" : "c-you");
+      setStatus("resuming…");
+      try {
+        await window.harness.streamApprove(id, req.id, behavior, message, suggestion);
+      } catch (err) {
+        append("✗ 応答を送れませんでした: " + err.message, "c-err");
+      }
+    };
+
+    // line folds one stream line in. Go decided its display (cli.LineDisplay
+    // over the bridge): the wording, the tone, the status-line effect, and —
+    // for a line that is not the protocol — the escaping. null means a decoded
+    // request, the one kind the page renders itself, because its payload and
+    // choices go into the approval control rather than onto a line.
+    const line = (raw, display) => {
+      if (applyDisplay(display)) return;
+      let msg = null;
+      try { msg = JSON.parse(raw); } catch (_) { return; }
+      if (msg.kind !== "request") return;
+      const req = msg.request || null;
+      // The same request again is a replay after a reattach: a form half
+      // filled in for it stays as it is.
+      const same = !!(req && pending && pending.id === req.id);
+      setPending(req);
+      if (req && req.questions && req.questions.length) {
+        append(window.harness.questionSummary(JSON.stringify(req)), "c-warn");
+      } else {
+        append("⚑ 承認待ち: " + ((req && req.tool) || "?"), "c-warn");
+      }
+      if (!same) showApproval();
+    };
+
+    const reset = () => {
+      setPending(null);
+      if (els.log) els.log.replaceChildren();
+      showApproval();
+    };
+
+    // send is a turn. No local echo: the adapter puts the turn on the stream,
+    // so this view shows it the way every other client and a later replay do.
+    const send = async (text) => {
+      const id = taskId();
+      if (!id || !text) return;
+      setStatus("");
+      try {
+        await window.harness.streamTurn(id, text);
+      } catch (err) {
+        append("✗ 送信できませんでした: " + err.message, "c-err");
+      }
+    };
+
+    const interrupt = async () => {
+      const id = taskId();
+      if (!id) return;
+      append("▶ 中断", "c-you");
+      try { await window.harness.streamInterrupt(id); }
+      catch (err) { append("✗ " + err.message, "c-err"); }
+    };
+
+    const finish = async () => {
+      const id = taskId();
+      if (!id) return;
+      append("▶ finish（このターンを完走して終了します）", "c-you");
+      try { await window.harness.streamFinish(id); }
+      catch (err) { append("✗ " + err.message, "c-err"); }
+    };
+
+    return {
+      line, reset, send, interrupt, finish, setStatus,
+      opened: () => setStatus("attached"),
+      closed: (err) => setStatus(err ? ("stream ended: " + err) : "stream ended"),
+    };
+  }
+
+  // wireStreamInput makes a textarea the turn box of view: Enter sends,
+  // Shift+Enter is a newline, and Esc interrupts. Esc never leaves: in a grid
+  // cell its default is to close the whole grid dialog, which is the accident
+  // an operator reaching for an interrupt used to get from the TUI chat too.
+  function wireStreamInput(input, view) {
+    const sendNow = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      view.send(text);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendNow(); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); view.interrupt(); }
+    });
+    return sendNow;
+  }
+
+  const chatView = createStreamView(
+    { log: chatLog, approval: chatApproval, status: chatStatus }, () => chatTaskId);
 
   // showChat swaps the terminal tab between the xterm and the chat. The touch
   // keys go with the xterm: they send terminal control bytes, which mean
@@ -3206,243 +3516,20 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (touchKeys) touchKeys.style.display = on ? "none" : "";
   };
 
-  const chatAppend = (text, cls) => {
-    if (!chatLog) return;
-    const atBottom = chatLog.scrollTop + chatLog.clientHeight >= chatLog.scrollHeight - 8;
-    const div = document.createElement("div");
-    div.className = cls || "c-text";
-    div.textContent = text;
-    chatLog.appendChild(div);
-    while (chatLog.childElementCount > CHAT_LINE_LIMIT) chatLog.removeChild(chatLog.firstChild);
-    // Only follow the tail if the reader was already there — scrolling up to
-    // read something must not be yanked back by the next event.
-    if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
-  };
-
-  // chatApplyDisplay applies a streamagent.Display the wasm pump decided in Go
-  // (cli/streamchat_wasm.go displayForJS): the line, its tone as a `c-<tone>`
-  // class, and what it does to the status line and busy state. The page no
-  // longer words or classifies an event itself — the TUI chat reads the same
-  // Display, so the two chats cannot drift apart again (they already had once:
-  // a replayed event drove the status line in one of them).
-  const chatApplyDisplay = (d) => {
-    if (!d) return false;
-    if (d.text) chatAppend(d.text, "c-" + (d.tone || "muted"));
-    if (d.setStatus) chatSetStatus(d.status || "");
-    if (d.idle) chatBusy = false;
-    // A request settled anywhere — this page, another client, or before this
-    // page attached and replayed — is no longer waiting on anyone.
-    if (d.resolves && chatPending && chatPending.id === d.resolves) {
-      chatPending = null;
-      chatShowApproval();
-    }
-    return true;
-  };
-
-  // chatShowApproval renders the pending request: the tool, its input WHOLE
-  // (this is the payload the log drops), and the choices as a button row —
-  // buttons because that is this surface's native control, where the TUI uses
-  // keys.
-  // chatShowQuestion renders a QUESTION request (the adapter filled
-  // req.questions): per question a radio row (pick one) or checkboxes (pick
-  // any) plus an "その他" text box, then a freeform reply and 送信 / 拒否. The
-  // controls are the kinds the page already uses; the wording of the notice
-  // and the rule that enables 送信 come from Go over the bridge.
-  const chatShowQuestion = (req) => {
-    chatApproval.replaceChildren();
-    const h = document.createElement("h3");
-    h.textContent = "❓ 質問に答えてください  (" + (req.id || "") + ")";
-    chatApproval.appendChild(h);
-    // Its own element, rebuilt on every render: listeners hang off it rather
-    // than off chatApproval, which outlives each render and would collect one
-    // stale set per call.
-    const form = document.createElement("div");
-    chatApproval.appendChild(form);
-    const rows = [];
-    req.questions.forEach((q, i) => {
-      const fs = document.createElement("fieldset");
-      fs.className = "chat-question";
-      const lg = document.createElement("legend");
-      lg.textContent = (q.header ? q.header + ": " : "") + q.question +
-        (q.multi_select ? "（複数選択）" : "（1つ選択）");
-      fs.appendChild(lg);
-      const boxes = [];
-      (q.options || []).forEach((o) => {
-        const lab = document.createElement("label");
-        lab.className = "chat-question-opt";
-        const inp = document.createElement("input");
-        inp.type = q.multi_select ? "checkbox" : "radio";
-        inp.name = "q-" + req.id + "-" + i;
-        inp.value = o.label;
-        lab.append(inp, " " + o.label);
-        if (o.description) {
-          const d = document.createElement("span");
-          d.className = "notify-meta";
-          d.textContent = " — " + o.description;
-          lab.appendChild(d);
-        }
-        fs.appendChild(lab);
-        boxes.push(inp);
-      });
-      const other = document.createElement("input");
-      other.type = "text";
-      other.placeholder = "その他（自分の言葉で答える）";
-      other.className = "chat-question-other";
-      fs.appendChild(other);
-      form.appendChild(fs);
-      rows.push({ q, boxes, other });
-    });
-    const reply = document.createElement("textarea");
-    reply.rows = 2;
-    reply.placeholder = "自由回答（どの質問にも当てはまらない返事）";
-    reply.className = "chat-question-reply";
-    form.appendChild(reply);
-    const answersOf = () => {
-      const out = {};
-      rows.forEach(({ q, boxes, other }) => {
-        const text = other.value.trim();
-        let vals = boxes.filter((b) => b.checked).map((b) => b.value);
-        if (text) vals = q.multi_select ? vals.concat([text]) : [text];
-        if (vals.length) out[q.question] = vals;
-      });
-      return out;
-    };
-    const btns = document.createElement("div");
-    btns.className = "chat-approval-btns";
-    const send = document.createElement("button");
-    send.type = "button";
-    send.textContent = "✔ 送信";
-    const refresh = () => {
-      send.disabled = !window.harness.questionComplete(
-        JSON.stringify(req), JSON.stringify(answersOf()), reply.value);
-    };
-    form.addEventListener("input", refresh);
-    form.addEventListener("change", refresh);
-    send.addEventListener("click", () => chatSendAnswer(req, answersOf(), reply.value.trim()));
-    const deny = document.createElement("button");
-    deny.type = "button";
-    deny.textContent = "✘ 拒否";
-    deny.title = "質問に答えない。理由はエージェントに verbatim で届く";
-    deny.addEventListener("click", () => {
-      const reason = window.prompt("答えない理由（エージェントがそのまま読みます。空でも可）");
-      if (reason === null) return;
-      chatAnswer("deny", reason, -1);
-    });
-    btns.append(send, deny);
-    chatApproval.appendChild(btns);
-    refresh();
-    chatApproval.hidden = false;
-  };
-
-  const chatSendAnswer = async (req, answers, reply) => {
-    if (!chatPending || !chatTaskId || chatPending.id !== req.id) return;
-    chatPending = null;
-    chatShowApproval();
-    const parts = (req.questions || []).filter((q) => answers[q.question])
-      .map((q) => (q.header || q.question) + "=" + answers[q.question].join(", "));
-    if (reply) parts.push("reply: " + reply);
-    chatAppend("▶ 回答: " + parts.join("; "), "c-you");
-    chatBusy = true;
-    chatSetStatus("resuming…");
-    try {
-      await window.harness.streamAnswer(chatTaskId, req.id, answers, reply);
-    } catch (err) {
-      chatAppend("✗ 回答を送れませんでした: " + err.message, "c-err");
-    }
-  };
-
-  const chatShowApproval = () => {
-    if (!chatApproval) return;
-    if (!chatPending) { chatApproval.hidden = true; chatApproval.replaceChildren(); return; }
-    const req = chatPending;
-    if (req.questions && req.questions.length) { chatShowQuestion(req); return; }
-    chatApproval.replaceChildren();
-    const h = document.createElement("h3");
-    h.textContent = "⚑ " + (req.tool || "?") + " を実行してよいか  (" + (req.id || "") + ")";
-    chatApproval.appendChild(h);
-    if (req.description) {
-      const d = document.createElement("div");
-      d.className = "notify-meta";
-      d.textContent = req.description;
-      chatApproval.appendChild(d);
-    }
-    if (req.input !== undefined) {
-      const pre = document.createElement("pre");
-      try { pre.textContent = JSON.stringify(req.input, null, 2); }
-      catch (_) { pre.textContent = String(req.input); }
-      chatApproval.appendChild(pre);
-    }
-    const row = document.createElement("div");
-    row.className = "chat-approval-btns";
-    const mk = (label, title, fn) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = label;
-      if (title) b.title = title;
-      b.addEventListener("click", fn);
-      row.appendChild(b);
-    };
-    mk("✔ 許可", "このツール呼び出しを実行させる", () => chatAnswer("allow", "", -1));
-    mk("✘ 拒否", "実行させない。理由はエージェントに verbatim で届く", () => {
-      const reason = window.prompt("拒否の理由（エージェントがそのまま読みます。空でも可）") ;
-      if (reason === null) return; // cancelled — the request stays pending
-      chatAnswer("deny", reason, -1);
-    });
-    (req.suggestions || []).forEach((sg, i) => {
-      const label = [sg.type, sg.mode, sg.destination ? "(" + sg.destination + ")" : ""].filter(Boolean).join(" ");
-      mk("＋ " + label, "許可した上で、この提案も受け入れる（以後の挙動が変わる標準の変更）",
-         () => chatAnswer("allow", "", i));
-    });
-    chatApproval.appendChild(row);
-    chatApproval.hidden = false;
-  };
-
-  const chatAnswer = async (behavior, message, suggestion) => {
-    if (!chatPending || !chatTaskId) return;
-    const req = chatPending;
-    chatPending = null;
-    chatShowApproval();
-    chatAppend((behavior === "deny" ? "▶ 拒否 " : "▶ 許可 ") + (req.tool || "") +
-               (message ? ": " + message : ""), behavior === "deny" ? "c-err" : "c-you");
-    chatBusy = true;
-    chatSetStatus("resuming…");
-    try {
-      await window.harness.streamApprove(chatTaskId, req.id, behavior, message, suggestion);
-    } catch (err) {
-      chatAppend("✗ 応答を送れませんでした: " + err.message, "c-err");
-    }
-  };
-
-  // The three JS hooks cli/streamchat_wasm.go calls. Globals, matching the
-  // harness_preview* pattern the xterm panes already use.
+  // The three JS hooks cli/streamchat_wasm.go calls for the chat. Globals,
+  // matching the harness_preview* pattern the xterm panes already use; a grid
+  // cell's are harness_streamPane* (openSessionGrid).
   window.harness_streamOpen = (taskID) => {
     if (taskID !== chatTaskId) return;
-    chatSetStatus("attached");
+    chatView.opened();
   };
   window.harness_streamLine = (taskID, line, display) => {
     if (taskID !== chatTaskId) return;
-    // Go decided this line's display (cli.LineDisplay over the bridge): the
-    // wording, the tone, the status-line effect, and — for a line that is not
-    // the protocol — the escaping. null means a decoded request, the one kind
-    // the page renders itself, because its payload and choices go into the
-    // approval control rather than onto a line.
-    if (chatApplyDisplay(display)) return;
-    let msg = null;
-    try { msg = JSON.parse(line); } catch (_) { return; }
-    if (msg.kind !== "request") return;
-    chatPending = msg.request || null;
-    chatBusy = false;
-    if (chatPending && chatPending.questions && chatPending.questions.length) {
-      chatAppend(window.harness.questionSummary(JSON.stringify(chatPending)), "c-warn");
-    } else {
-      chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
-    }
-    chatShowApproval();
+    chatView.line(line, display);
   };
   window.harness_streamClosed = (taskID, err) => {
     if (taskID !== chatTaskId) return;
-    chatBusy = false;
-    chatSetStatus(err ? ("stream ended: " + err) : "stream ended");
+    chatView.closed(err);
   };
 
   // openChatFor attaches the chat to a stream task and shows it.
@@ -3450,10 +3537,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (!taskID) return;
     try { window.harness.streamStop(); } catch (_) { /* nothing attached */ }
     chatTaskId = taskID;
-    chatPending = null;
-    chatBusy = false;
-    if (chatLog) chatLog.replaceChildren();
-    chatShowApproval();
+    chatView.reset();
     showChat(true);
     setActiveTab("terminal");
     if (attachedTask) attachedTask.textContent = `chat: ${taskID}`;
@@ -3461,11 +3545,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // for a while — the replay comes from the mux ring and a resume starts a
     // new one, while the agent reads its own history first. A blank panel there
     // reads as broken.
-    chatSetStatus("attaching… (resume 直後はエージェントが履歴を読み終えるまで無言のことがあります)");
+    chatView.setStatus("attaching… (resume 直後はエージェントが履歴を読み終えるまで無言のことがあります)");
     try {
       await window.harness.streamStart(taskID);
     } catch (err) {
-      chatSetStatus("attach failed: " + err.message);
+      chatView.setStatus("attach failed: " + err.message);
       showError(err);
     }
   };
@@ -3473,8 +3557,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const closeChat = () => {
     try { window.harness.streamStop(); } catch (_) { /* already closed */ }
     chatTaskId = "";
-    chatPending = null;
-    chatShowApproval();
+    chatView.reset();
     showChat(false);
   };
 
@@ -3493,40 +3576,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     term.reset();
   };
 
-  const chatSend = async () => {
-    if (!chatTaskId || !chatInput) return;
-    const text = chatInput.value.trim();
-    if (!text) return;
-    chatInput.value = "";
-    // No local echo: the adapter puts the turn on the stream, so this page
-    // shows it the way every other client and a later replay do.
-    chatBusy = true;
-    chatSetStatus("");
-    try {
-      await window.harness.streamTurn(chatTaskId, text);
-    } catch (err) {
-      chatAppend("✗ 送信できませんでした: " + err.message, "c-err");
-    }
-  };
-
+  // A textarea is the right control for free text — and it is the thing the
+  // TUI's one-line input cannot do.
+  const chatSend = chatInput ? wireStreamInput(chatInput, chatView) : () => {};
   document.getElementById("chat-send")?.addEventListener("click", chatSend);
-  // Enter sends; Shift+Enter is a newline. A textarea is the right control for
-  // free text — and it is the thing the TUI's one-line input cannot do.
-  chatInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chatSend(); }
-  });
-  document.getElementById("chat-interrupt")?.addEventListener("click", async () => {
-    if (!chatTaskId) return;
-    chatAppend("▶ 中断", "c-you");
-    try { await window.harness.streamInterrupt(chatTaskId); }
-    catch (err) { chatAppend("✗ " + err.message, "c-err"); }
-  });
-  document.getElementById("chat-finish")?.addEventListener("click", async () => {
-    if (!chatTaskId) return;
-    chatAppend("▶ finish（このターンを完走して終了します）", "c-you");
-    try { await window.harness.streamFinish(chatTaskId); }
-    catch (err) { chatAppend("✗ " + err.message, "c-err"); }
-  });
+  document.getElementById("chat-interrupt")?.addEventListener("click", () => chatView.interrupt());
+  document.getElementById("chat-finish")?.addEventListener("click", () => chatView.finish());
 
   const attachedTask = document.getElementById("attached-task");
   // currentSessionTaskId mirrors the task id of the session the terminal is
@@ -4854,23 +4909,83 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // dialog. openSessionGrid calls this directly and never closes/reopens
   // the dialog when it's already showing.
   function teardownGridPanes() {
-    for (const key of gridKeys) {
-      stopPane(key);
-      const p = previewPanes.get(key);
-      if (p) disposePaneTerm(p);
-      previewPanes.delete(key);
-    }
+    for (const key of gridKeys) stopGridPane(key);
     gridKeys = [];
   }
 
-  // liveInteractiveIds returns every live (Running/Detached) interactive
-  // session id, activity-desc (same ordering as the task list). Used by the
-  // `grid` command's no-arg path; the show button reads lastTasks directly.
-  async function liveInteractiveIds() {
+  // stopGridPane stops one cell's stream, whichever kind it is: a PTY cell is a
+  // previewPanes entry, a stream cell a streamPanes one.
+  function stopGridPane(key) {
+    if (streamPanes.has(key)) {
+      streamPanes.delete(key); // before the stop, so a racing hook finds nothing
+      window.harness.streamPaneStop(key);
+      return;
+    }
+    stopPane(key);
+    const p = previewPanes.get(key);
+    if (p) disposePaneTerm(p);
+    previewPanes.delete(key);
+  }
+
+  // streamPanes holds the grid cells over event-stream sessions, keyed like
+  // previewPanes ("grid:<taskId>"): each is a createStreamView over its own
+  // cowrite attach (harness.streamPaneStart), so a cell answers an approval or
+  // a question the way the chat does.
+  const streamPanes = new Map();
+
+  window.harness_streamPaneOpen = (key) => {
+    const c = streamPanes.get(key);
+    if (c) c.view.opened();
+  };
+  window.harness_streamPaneLine = (key, line, display) => {
+    const c = streamPanes.get(key);
+    if (c) c.view.line(line, display);
+  };
+  window.harness_streamPaneClosed = (key, err) => {
+    const c = streamPanes.get(key);
+    if (c) c.view.closed(err);
+  };
+
+  // buildStreamCell fills a grid cell's body with a stream session's
+  // transcript, its pending request's control, and a turn box, and attaches it.
+  // The header label carries the kind, and ⚑ while a request waits.
+  function buildStreamCell(id, key, body, label) {
+    body.classList.add("grid-stream-body");
+    const log = document.createElement("div");
+    log.className = "chat-log";
+    const approval = document.createElement("div");
+    approval.className = "chat-approval";
+    approval.hidden = true;
+    const input = document.createElement("textarea");
+    input.rows = 1;
+    input.placeholder = "message the agent… (Enter 送信 · Esc 中断)";
+    const row = document.createElement("div");
+    row.className = "chat-input-row";
+    row.appendChild(input);
+    const status = document.createElement("div");
+    status.className = "chat-status";
+    body.append(log, approval, row, status);
+    const paintLabel = (req) => {
+      label.textContent = id.slice(0, 8) + " ‹stream›" + (req ? " ⚑" : "");
+    };
+    paintLabel(null);
+    const view = createStreamView({ log, approval, status }, () => id, paintLabel);
+    wireStreamInput(input, view);
+    streamPanes.set(key, { view, input });
+    view.setStatus("attaching…");
+    window.harness.streamPaneStart(key, id).catch((err) => {
+      if (streamPanes.get(key)?.view === view) view.setStatus("attach failed: " + err.message);
+    });
+  }
+
+  // liveSessionIds returns every live (Running/Detached) session id,
+  // activity-desc (same ordering as the task list). Used by the `grid`
+  // command's no-arg path; the show button reads lastTasks directly.
+  async function liveSessionIds() {
     const snap = await window.harness.snapshot();
     return (snap.tasks || [])
-      // isPTYKind: feeds the same grid as above.
-      .filter((t) => isPTYKind(t) && (t.status === "Running" || t.status === "Detached"))
+      // isSessionKind: feeds the same grid as above.
+      .filter((t) => isSessionKind(t) && (t.status === "Running" || t.status === "Detached"))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
   }
@@ -4890,6 +5005,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const capped = [...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
     for (const id of capped) {
       const key = "grid:" + id;
+      const stream = isStreamKind((lastTasks || []).find((t) => t.id === id));
       const cell = document.createElement("div");
       cell.className = "grid-cell";
       const head = document.createElement("div");
@@ -4901,9 +5017,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const attach = document.createElement("button");
       attach.type = "button";
       attach.className = "grid-cell-btn";
-      attach.textContent = "↪";
-      attach.title = "リアタッチ";
-      attach.addEventListener("click", () => { closeSessionGrid(); reattachTo(id); });
+      // A stream session has no terminal to reattach: the cell's ↪ opens its
+      // chat, which is that kind's full-size view.
+      attach.textContent = stream ? "💬" : "↪";
+      attach.title = stream ? "チャット" : "リアタッチ";
+      attach.addEventListener("click", () => {
+        closeSessionGrid();
+        if (stream) openChatFor(id); else reattachTo(id);
+      });
       const notify = document.createElement("button");
       notify.type = "button";
       notify.className = "grid-cell-btn";
@@ -4928,7 +5049,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       body.className = "grid-cell-body";
       cell.append(head, body);
       gridBody.append(cell);
+      gridKeys.push(key);
 
+      if (stream) {
+        buildStreamCell(id, key, body, label);
+        continue;
+      }
       const p = {
         taskId: id, live: false, epoch: 0, term: null,
         bodyEl: body, scaleBox: null, spacer: null, noteEl: null,
@@ -4936,7 +5062,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         key, capReplay: true, // small crop: 128 KiB of replay is plenty
       };
       previewPanes.set(key, p);
-      gridKeys.push(key);
       startPane(key, p);
     }
     if (!gridModal.open) gridModal.showModal();
@@ -4950,7 +5075,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // req is {mode, anchor, ids} — see harness.gridSet. The wasm side answers
   // which TASKS and what the set is called, so the two surfaces cannot disagree
   // about either. WHICH of those tasks is tileable is decided here, by the same
-  // liveInteractiveTasks + gridExcluded pair the show button uses: the set
+  // liveSessionTasks + gridExcluded pair the show button uses: the set
   // picks the candidates, the per-session toggles still subtract from them.
   //
   // An empty result opens nothing. A modal that says "no sessions" costs a tap
@@ -4966,22 +5091,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     const inSet = new Set(res.ids || []);
     const label = res.label || "";
-    const ids = liveInteractiveTasks()
+    const ids = liveSessionTasks()
       .filter((t) => inSet.has(t.id) && !gridExcluded.has(t.id))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
     if (ids.length === 0) {
-      return `grid ${label}: no live interactive session in this set (${inSet.size} task(s) in it)`;
+      return `grid ${label}: no live session in this set (${inSet.size} task(s) in it)`;
     }
     openSessionGrid(ids, label);
     return `grid ${label}: ${ids.length} pane(s)` + (ids.length > 9 ? " (capped at 9)" : "");
   }
 
   function dismissPane(key, cell) {
-    stopPane(key);
-    const p = previewPanes.get(key);
-    if (p) disposePaneTerm(p);
-    previewPanes.delete(key);
+    stopGridPane(key);
     gridKeys = gridKeys.filter((k) => k !== key);
     cell.remove();
   }
@@ -4997,6 +5119,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // closing dialog, which is harmless but redundant; teardownGridPanes is
   // the correct, minimal action for this event.
   gridModal.addEventListener("close", teardownGridPanes);
+  // Esc in a stream cell's turn box interrupts that agent (wireStreamInput);
+  // it must not ALSO close the grid. The keydown's preventDefault is not
+  // relied on alone: the dialog's cancel is the close request itself.
+  gridModal.addEventListener("cancel", (ev) => {
+    const el = document.activeElement;
+    if (el && el.closest && el.closest(".grid-stream-body")) ev.preventDefault();
+  });
   // Backdrop click closes — same convention as the single-preview modal.
   gridModal.addEventListener("click", (ev) => {
     if (ev.target === gridModal) gridModal.close();
@@ -5285,23 +5414,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     const liveSession = t.status === "Running" || t.status === "Detached";
 
-    // A live event-stream session: the chat is this kind's Reattach — turns
-    // and approvals — and there is no terminal to preview or tile. Until this
-    // was added the sheet offered a stream task nothing at all, so the only way
-    // to open its chat was typing `session stream attach <id>`.
-    if (isStreamKind(t) && liveSession) {
-      addItem("💬 チャット", "", () => openChatFor(t.id));
-      addIdleNotify();
-    }
-
-    // Reattach / Preview / grid-include toggle / idle-notify — live interactive
-    // session only. Order: Reattach first, then Preview, then the grid toggle.
-    if (isPTYKind(t) && liveSession) {
-      addItem("↪ Reattach", "", () => reattachTo(t.id));
-      addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
-      // Grid include/exclude toggle (default included). Updates its own label in
-      // place so the whole sheet need not re-render on each click; the global
-      // "グリッド表示" button reads the same gridExcluded set.
+    // Grid include/exclude toggle (default included), for both live kinds — the
+    // grid tiles both. Updates its own label in place so the whole sheet need
+    // not re-render on each click; the global "グリッド表示" button reads the
+    // same gridExcluded set.
+    const addGridToggle = () => {
       const gridToggle = document.createElement("button");
       gridToggle.type = "button";
       gridToggle.className = "task-action";
@@ -5318,6 +5435,24 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         paintGridToggle();
       });
       sheet.appendChild(gridToggle);
+    };
+
+    // A live event-stream session: the chat is this kind's Reattach — turns
+    // and approvals — and there is no terminal to preview. Until this was
+    // added the sheet offered a stream task nothing at all, so the only way to
+    // open its chat was typing `session stream attach <id>`.
+    if (isStreamKind(t) && liveSession) {
+      addItem("💬 チャット", "", () => openChatFor(t.id));
+      addGridToggle();
+      addIdleNotify();
+    }
+
+    // Reattach / Preview / grid-include toggle / idle-notify — live interactive
+    // session only. Order: Reattach first, then Preview, then the grid toggle.
+    if (isPTYKind(t) && liveSession) {
+      addItem("↪ Reattach", "", () => reattachTo(t.id));
+      addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
+      addGridToggle();
       addIdleNotify();
     }
 

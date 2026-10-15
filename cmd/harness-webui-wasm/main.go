@@ -98,6 +98,8 @@ func main() {
 		"previewStart":       js.FuncOf(harnessPreviewStart),
 		"streamStart":        js.FuncOf(harnessStreamStart),
 		"streamStop":         js.FuncOf(harnessStreamStop),
+		"streamPaneStart":    js.FuncOf(harnessStreamPaneStart),
+		"streamPaneStop":     js.FuncOf(harnessStreamPaneStop),
 		"streamTurn":         js.FuncOf(harnessStreamTurn),
 		"streamApprove":      js.FuncOf(harnessStreamApprove),
 		"streamAnswer":       js.FuncOf(harnessStreamAnswer),
@@ -4122,6 +4124,48 @@ func harnessStreamStart(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessStreamPaneStart is harnessStreamStart for a grid cell: keyed (the
+// cell's paneKey, "grid:<taskId>"), reporting to the harness_streamPane* hooks,
+// with the ring replay capped like a PTY cell's. The write verbs below route by
+// task id, so a cell writes through them unchanged.
+//
+//	await harness.streamPaneStart(paneKey, taskIDHex)
+func harnessStreamPaneStart(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve, reject := promiseArgs[0], promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("streamPaneStart: want (paneKey, taskIDHex)"))
+				return
+			}
+			if err := c.StartStreamPane(rootCtx, args[0].String(), args[1].String()); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessStreamPaneStop closes a grid cell's attach. Synchronous and
+// idempotent, like harnessStreamStop.
+//
+//	harness.streamPaneStop(paneKey)
+func harnessStreamPaneStop(this js.Value, args []js.Value) any {
+	if len(args) > 0 {
+		cli.StopStreamSlot(args[0].String())
+	}
+	return js.Undefined()
 }
 
 // harnessStreamStop closes the chat attach. Synchronous and idempotent, like
