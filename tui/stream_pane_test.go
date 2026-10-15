@@ -83,3 +83,16 @@ func TestStreamPaneRenderFitsTheCell(t *testing.T) {
 		}
 	}
 }
+
+// A draft typed after the first render shows whole: the input's scroll is
+// computed against the width it holds at keystroke time, which the pane only
+// learns when it is rendered.
+func TestStreamPaneDraftIsNotCutToTheInitialWidth(t *testing.T) {
+	p := NewStreamPane("abcdef0123456789abcdef0123456789")
+	p.SetInputActive(true)
+	p.Render(100, 10)
+	p.Key(keyRunes("reply with exactly: GRID-OK"))
+	if out := stripANSI(p.Render(100, 10)); !strings.Contains(out, "reply with exactly: GRID-OK") {
+		t.Fatalf("draft cut short:\n%s", out)
+	}
+}

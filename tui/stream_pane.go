@@ -300,6 +300,12 @@ func (p *StreamPane) Render(width, height int) string {
 		return ""
 	}
 	p.d.width, p.d.gutter = width, 0
+	// Stored on the model, not only on the copy rendered below: textinput
+	// computes its horizontal scroll in Update against the Width it holds then,
+	// and the pane's input was created before any width was known — so a draft
+	// typed into it showed only its last eight columns. The chat does the same
+	// in SetSize; a pane learns its size here.
+	p.d.input.Width = p.d.inputWidth()
 
 	var tail []string
 	if st := p.d.statusText(); st != "" {
