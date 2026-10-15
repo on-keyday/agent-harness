@@ -1176,18 +1176,22 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   height: 40vh;
   min-height: 240px;
 }
+/* Basis 0: the transcript takes only what the other rows leave. With `auto`
+   its tall content claimed the cell and squeezed a pending approval down to its
+   title, buttons scrolled out of sight. */
 .grid-stream-body .chat-log {
   height: auto;
-  flex: 1 1 auto;
-  min-height: 4em;
+  flex: 1 1 0;
+  min-height: 3em;
   font-size: 12px;
 }
 .grid-stream-body .chat-approval {
   flex: 0 1 auto;
-  max-height: 55%;
+  max-height: 70%;
   overflow: auto;
+  margin-top: 4px;
 }
-.grid-stream-body .chat-approval pre { max-height: 8em; }
+.grid-stream-body .chat-approval pre { max-height: 6em; }
 .grid-stream-body .chat-input-row textarea { font-size: 12px; }
 
 @media (max-width: 600px) {
