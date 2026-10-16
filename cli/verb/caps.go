@@ -116,7 +116,8 @@ func CapDescription(c protocol.Capability) string {
 		return "publish to the agentboard in the operator's name (board send, board wake); " +
 			"NOT required for agent send"
 	case protocol.Capability_BoardPeer:
-		return "publish to topics outside the task's base set: peers' chat.<id>, free-form topics; " +
+		return "publish beyond the task's base set, within the bit's scope: the chat.<id> of tasks the scope covers, " +
+			"and free-form topics when the scope is global (--scope-for board_peer=ids:<task> for one target); " +
 			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it (board subscribers shows each task's contacts); never opens a tree.<id> it is not in"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
@@ -208,8 +209,10 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 		"property of the task, so it has no per-capability form: a verb can never\n"+
 		"reach further than what `ls` shows.\n"+
 		"An omitted --caps grants NONE of these: a spawn hands its child no\n"+
-		"control plane unless the flag names one (the data plane - agentboard,\n"+
-		"its own subtree's logs/ls - needs no capability and is always there).\n"+
+		"control plane unless the flag names one (the data plane - agentboard\n"+
+		"within its base set, its own subtree's logs/ls - needs no capability).\n"+
+		"board_peer is scoped like every other bit: it opens the chat.<id> of the\n"+
+		"tasks its scope covers, and free-form topics only with a global scope.\n"+
 		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n"+
 		"subtree membership follows the task's parent link (who spawned whom);\n"+
 		"`caps set-parent` re-points that link on a live task (--swap inverts\n"+

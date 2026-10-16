@@ -645,8 +645,17 @@ outside this task's reach …`, exit non-zero. Read it as "this topic needs
 board_peer", not "every send does" — the same line covers a send to a peer and
 not one to your creator. It is a fact about your grant, not a fault to work
 around: tell whoever spawned you (or the operator) which topic you need, and
-they can `caps set <your-task> --caps …,board_peer` on the live task. The
-operator sees your contacts too, on `board subscribers`. No bit opens a
+they can grant it on the live task.
+
+`board_peer` is **scoped like every other capability**: it opens another
+task's `chat.<id>` only when that task is inside the bit's scope, and a
+free-form topic only when that scope is global. So the grant that lets you
+report to exactly one task is `caps set <your-task> --caps …,board_peer
+--scope-for board_peer=ids:<that-task>`, and it reaches nobody else; reaching
+every peer and every free-form topic is `--scope-for board_peer=global`. A
+refusal that names `board_peer` while you hold it means the target is outside
+its scope — `harness-cli whoami` shows yours (`scope_by_cap` in `--json`).
+The operator sees your contacts too, on `board subscribers`. No bit opens a
 `tree.<id>` you are not in.
 
 Reading is open except for **other tasks' direct messages**: another task's

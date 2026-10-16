@@ -48,6 +48,41 @@ func (r storeReach) HasChild(parent protocol.TaskID, short string) bool {
 	return false
 }
 
+// PeerCovers asks actionSet — the control plane's own scope evaluation — for
+// tid's board_peer target set, and matches short against it. The child index
+// is built only for a subtree base, the one form that walks it.
+func (r storeReach) PeerCovers(tid protocol.TaskID, short string) bool {
+	e, ok := r.s.Get(hex.EncodeToString(tid.Id[:]))
+	if !ok {
+		return false
+	}
+	var children map[string][]string
+	if base, _, _ := e.Scope.ForCap(protocol.Capability_BoardPeer); base == protocol.ScopeBase_Subtree {
+		children = childIndexOf(r.s)
+	}
+	all, allowed := actionSet(e.ID, e.Scope, protocol.Capability_BoardPeer, children)
+	if all {
+		return true
+	}
+	for id := range allowed {
+		if strings.HasPrefix(id, short) {
+			return true
+		}
+	}
+	return false
+}
+
+// PeerGlobal reports a global board_peer scope, the form that opens free-form
+// topics (reach spec D16).
+func (r storeReach) PeerGlobal(tid protocol.TaskID) bool {
+	e, ok := r.s.Get(hex.EncodeToString(tid.Id[:]))
+	if !ok {
+		return false
+	}
+	base, _, _ := e.Scope.ForCap(protocol.Capability_BoardPeer)
+	return base == protocol.ScopeBase_Global
+}
+
 func (r storeReach) Len() int {
 	r.s.mu.RLock()
 	defer r.s.mu.RUnlock()

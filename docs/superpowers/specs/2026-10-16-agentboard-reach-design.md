@@ -63,6 +63,7 @@ the author while writing — those are the rows worth a second look.
 | D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set`, when one turns out to need to publish beyond its base set | operator |
 | D14 | ~~A refusal is answered as `not_permitted`, a status of its own on every refused verb~~ — **reversed** (see Amendment): a refusal is the ordinary `PermissionDenied` response naming `board_peer` or `board_observe`, the one every capability denial already uses | operator (reversal, 2026-10-16) |
 | D15 | `list_retained` on a topic the caller cannot read is not refused: it lists only the rows the caller published, and the response says so (`own_only`). A sender checking whether its message still sits on a peer's topic needs no bit | operator |
+| D16 | `board_peer` follows the task's scope and `--scope-for`, like every other bit; a free-form topic needs it with a global scope (Amendment, D16) | operator (scope); this spec (free-form) |
 
 ## 1. Topic namespaces
 
@@ -470,6 +471,42 @@ the operator decided to do exactly that when a task turns out to need it
   answers "does seq N exist?" for every seq. D14's list (send, subscribe,
   list_retained, wait) never named it.
 - `HasChild` scans the store, as §6 measured. No children index is added.
+
+## Amendment 2026-10-16 — `board_peer` follows scope (D16)
+
+**D16, operator (2026-10-16): `board_peer` is bounded by the task's scope, by
+the rules every other capability follows** — the task's action scope, narrowed
+per bit by `--scope-for`. No new grammar. As first built it ignored scope, so
+the only grant there was opened every peer and every free-form topic at once:
+an operator who wanted a task in another repository to report a harness bug
+to the harness agent had to let it write to every agent on the server, or
+route the permission through a contact (`board send --reply-to chat.<target>`),
+which records no grant anywhere, is visible only as a contact and dies at the
+next server restart.
+
+- **Peers:** with `board_peer`, a publish to `chat.<id>` / `chat.<id>.*` of a
+  task outside the base set passes when a task whose id begins with `<id>`
+  is in the caller's `board_peer` target set: `scopeSet`'s answer for that bit
+  (all, or self ∪ ids ∪ the subtree walk). The set is computed by the same
+  function the control plane uses, from the task rather than a connection, so
+  there is one scope implementation.
+- **Free-form topics need a global `board_peer` scope (this spec).** A topic
+  names no task, so no target set can contain it; requiring the unbounded form
+  keeps an `ids:`-scoped grant meaning exactly "those tasks". The alternative —
+  any `board_peer` opens every free-form topic — would let a grant scoped to
+  one task post to every group topic.
+- **Unchanged:** the base set needs no bit and ignores scope; no bit opens a
+  `tree.<id>` the task is not in (D7); reading is decided by `board_observe`,
+  which this amendment does not touch.
+- **What changes for an existing grant:** `--caps …,board_peer` on a task
+  with the default `subtree` scope now reaches only its own subtree's
+  `chat.<id>` beyond the base set. Today's reach is `--scope-for
+  board_peer=global`. When this was decided the only live task holding the bit
+  had a global scope, so nothing in service changed.
+- **The refusal** is the same `PermissionDenied` naming `board_peer`; the CLI
+  hint now says the grant must also cover the target (`--scope-for
+  board_peer=ids:<task>`) or be global for a free-form topic, because "requires
+  board_peer" is otherwise misread by a task that holds it.
 
 ## Out of scope
 

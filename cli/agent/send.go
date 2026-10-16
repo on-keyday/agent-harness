@@ -126,7 +126,10 @@ func reachHint(err error, topic string) error {
 		return fmt.Errorf("%w: %s is outside this task's reach. Without board_peer a task publishes to "+
 			"its own chat.<id> (and chat.<id>.*), its creator's and its direct children's chat.<id>, chat.operator, "+
 			"the reply route of a message addressed to it (agent contacts lists them), and tree.<id> namespaces it belongs to. "+
-			"Anything else needs the operator to grant board_peer (caps set <task> --caps …,board_peer)", err, topic)
+			"Anything else needs board_peer with a scope that covers it: another task's chat.<id> needs that task "+
+			"in the bit's scope (caps set <task> --caps …,board_peer --scope-for board_peer=ids:<target>), "+
+			"a free-form topic a global one (--scope-for board_peer=global). Holding board_peer is not enough "+
+			"when the target is outside its scope", err, topic)
 	case protocol.Capability_BoardObserve:
 		return fmt.Errorf("%w: %s carries another task's messages (its chat.<id>, chat.operator, or a tree.<id> "+
 			"this task is not in)", err, topic)

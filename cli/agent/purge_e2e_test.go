@@ -29,9 +29,10 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tid.Id[:]),
+			Capabilities:   uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
 
@@ -82,9 +83,10 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	// Inject an entry WITHOUT the purge bit.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Spawn | protocol.Capability_Prune | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tid.Id[:]),
+			Capabilities:   uint32(protocol.Capability_Spawn | protocol.Capability_Prune | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
 
@@ -124,9 +126,10 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tid.Id[:]),
+			Capabilities:   uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
 
@@ -185,10 +188,11 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 	// Explicitly NO caps.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
-			AgentProfile: "codex",
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tid.Id[:]),
+			Capabilities:   uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
+			AgentProfile:   "codex",
 		},
 	})
 

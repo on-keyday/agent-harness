@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -241,5 +242,48 @@ func TestAwaitIdleBoardSinkObeysTheRequestersReach(t *testing.T) {
 	// Its own topic is in reach; the arm then proceeds (and finds no session).
 	if resp := arm(agentboard.SelfTopic(me)); resp.Kind == protocol.TaskControlKind_PermissionDenied {
 		t.Error("arming a board sink on its own topic was denied")
+	}
+}
+
+// D16: board_peer opens what its scope covers, by the same rules every other
+// bit follows — the task's scope, narrowed per bit by --scope-for.
+func TestBoardPeerFollowsScope(t *testing.T) {
+	h, _, st, me := reachHandler(t, protocol.Capability_BoardPeer)
+	meHex := hex.EncodeToString(me.Id[:])
+	mk := func(creator protocol.TaskID) (string, protocol.TaskID) {
+		idHex := h.Tasks.Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
+			creator, "", protocol.RunnerSelector{}, nil, 0, Scope{}, "bash")
+		return idHex, hexToTaskID(t, idHex)
+	}
+	peerHex, peer := mk(protocol.TaskID{})
+	_, child := mk(me)
+	_, grandchild := mk(child)
+	can := func(topic string) bool { return h.Board.Publishable(st, topic) }
+
+	// The default scope is subtree: beyond the base set, only the subtree.
+	if !can(agentboard.SelfTopic(grandchild)) {
+		t.Error("subtree board_peer did not open a grandchild")
+	}
+	if can(agentboard.SelfTopic(peer)) || can("build.events") {
+		t.Error("subtree board_peer opened a peer or a free-form topic")
+	}
+
+	// --scope-for board_peer=none+ids:<peer>: that peer, nothing free-form.
+	setScope(t, h, meHex, Scope{Base: protocol.ScopeBase_Subtree, Overrides: []ScopeOverride{{
+		Caps: protocol.Capability_BoardPeer, Base: protocol.ScopeBase_None, IDs: []string{peerHex},
+	}}})
+	if !can(agentboard.SelfTopic(peer)) || !can(agentboard.SelfTopic(peer)+".side") {
+		t.Error("board_peer scoped to the peer did not open its chat.<id>")
+	}
+	if can(agentboard.SelfTopic(grandchild)) || can("build.events") {
+		t.Error("board_peer scoped to one peer opened something else")
+	}
+
+	// --scope-for board_peer=global: today's reach.
+	setScope(t, h, meHex, Scope{Base: protocol.ScopeBase_Subtree, Overrides: []ScopeOverride{{
+		Caps: protocol.Capability_BoardPeer, Base: protocol.ScopeBase_Global,
+	}}})
+	if !can(agentboard.SelfTopic(peer)) || !can("build.events") {
+		t.Error("global board_peer did not open a peer and a free-form topic")
 	}
 }

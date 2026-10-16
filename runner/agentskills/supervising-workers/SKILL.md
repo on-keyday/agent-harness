@@ -365,8 +365,13 @@ and the scope forms (`--json` for the machine-readable form).
   `chat.operator`, and to anyone who messaged it first (on its own `chat.<id>`,
   or in reply to it — not posters it merely read on a group topic). Messaging a sibling or
   any other peer it has no thread with, or a free-form topic, needs
-  `board_peer` — grant it at spawn (`--caps …,board_peer`) or later with
-  `caps set`. A team channel for you and your workers is
+  `board_peer`, **and the bit is scoped like any other**: it opens the
+  `chat.<id>` of the tasks its scope covers, and free-form topics only when
+  that scope is global. A worker's default `subtree` scope therefore does NOT
+  reach its siblings — they are yours, not its. Name them:
+  `--caps …,board_peer --scope-for board_peer=ids:<sibling>` (each id must be
+  inside your own scope, as for any grant), at spawn or later with `caps set`.
+  A team channel for you and your workers is
   `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
   subtree with no bit. The `harness-cli` skill's "Who you can reach" has the
   full rule.

@@ -3362,6 +3362,10 @@ enum Capability:
     # same message and destroys the bytes — so it rides here rather than
     # claiming a bit of its own. The consequence, stated because it is a real
     # limit: "may withdraw but may not destroy" is not a grantable shape.
+    #
+    # And board_contacts_clear, which forgets a task's contacts: another
+    # task's board state, as a retract is. That one names a TASK, so unlike
+    # the topic verbs it is bounded by this bit's scope.
     purge          = 0x800, "purge"
     # exec_view / exec_cowrite are the two weaker attach powers, split out of
     # what exec_attach used to grant wholesale. Default-off and appended, so no
@@ -3429,7 +3433,12 @@ enum Capability:
     # and the tree.<id>.* namespaces it belongs to. Without it a task can talk
     # to its own lineage and to whoever talked to it, and
     # cannot reach a peer or a free-form topic. It opens no tree.<id>.* the
-    # task is not a member of. Default-off, appended. See
+    # task is not a member of. Default-off, appended.
+    #
+    # It is scoped like every other bit (reach spec D16): the chat.<id> of a
+    # task is opened only when that task is in the bit's target set (the task
+    # scope, or its --scope-for override), and a free-form topic only when that
+    # scope is global. See
     # docs/superpowers/specs/2026-10-16-agentboard-reach-design.md.
     board_peer     = 0x80000, "board_peer"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the

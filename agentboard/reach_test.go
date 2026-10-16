@@ -16,10 +16,32 @@ import (
 type fakeReach struct {
 	creator map[protocol.TaskID]protocol.TaskID
 	caps    map[protocol.TaskID]protocol.Capability
+	// peerAll / peerIDs stand in for the board_peer scope: global, or the
+	// explicit target set. Neither set is a board_peer scope covering only
+	// the task itself.
+	peerAll map[protocol.TaskID]bool
+	peerIDs map[protocol.TaskID][]protocol.TaskID
 }
 
 func newFakeReach() *fakeReach {
-	return &fakeReach{creator: map[protocol.TaskID]protocol.TaskID{}, caps: map[protocol.TaskID]protocol.Capability{}}
+	return &fakeReach{
+		creator: map[protocol.TaskID]protocol.TaskID{}, caps: map[protocol.TaskID]protocol.Capability{},
+		peerAll: map[protocol.TaskID]bool{}, peerIDs: map[protocol.TaskID][]protocol.TaskID{},
+	}
+}
+
+func (f *fakeReach) PeerGlobal(t protocol.TaskID) bool { return f.peerAll[t] }
+
+func (f *fakeReach) PeerCovers(t protocol.TaskID, short string) bool {
+	if f.peerAll[t] {
+		return true
+	}
+	for _, id := range f.peerIDs[t] {
+		if hexTaskIDProto(id)[:selfTopicShortLen] == short {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeReach) add(tid, creator protocol.TaskID, caps protocol.Capability) {
@@ -192,12 +214,33 @@ func TestPublishableBaseSet(t *testing.T) {
 		}
 	}
 
+	// D16: board_peer opens what its scope covers. Held with a scope that
+	// covers nobody else, it opens nothing beyond the base set.
 	r.caps[me] = protocol.Capability_BoardPeer
-	if !b.Publishable(c, SelfTopic(peer)) || !b.Publishable(c, "build.events") {
-		t.Error("board_peer did not open a peer / free-form topic")
+	if b.Publishable(c, SelfTopic(peer)) || b.Publishable(c, "build.events") {
+		t.Error("board_peer with a scope covering no peer opened a peer / free-form topic")
+	}
+	// Scoped to one task: that task's chat.<id> and side channels, and nothing
+	// free-form.
+	r.peerIDs[me] = []protocol.TaskID{peer}
+	if !b.Publishable(c, SelfTopic(peer)) || !b.Publishable(c, SelfTopic(peer)+".side") {
+		t.Error("board_peer scoped to the peer did not open the peer's chat.<id>")
+	}
+	if b.Publishable(c, "build.events") {
+		t.Error("an ids-scoped board_peer opened a free-form topic")
+	}
+	// Global: every peer and every free-form topic, still no foreign tree.
+	r.peerAll[me] = true
+	if !b.Publishable(c, "build.events") {
+		t.Error("a global board_peer did not open a free-form topic")
 	}
 	if b.Publishable(c, treeOf(peer)) {
 		t.Error("board_peer opened a tree the task is not in (D7)")
+	}
+	// The scope alone is not the grant.
+	r.caps[me] = 0
+	if b.Publishable(c, SelfTopic(peer)) {
+		t.Error("a board_peer scope without the bit opened a peer")
 	}
 }
 

@@ -128,7 +128,22 @@ func e2eRecord(t *testing.T, srv *server.Server, tid protocol.TaskID, creator pr
 			ev.CreatorTaskID = hex.EncodeToString(e.CreatorTaskID.Id[:])
 		}
 	}
+	// board_peer opens what its scope covers (reach spec D16). A fixture that
+	// grants it means "publishes anywhere but a foreign tree", which is the
+	// global form; the default subtree scope would confine it to its own
+	// subtree.
+	if protocol.Capability(ev.Capabilities)&protocol.Capability_BoardPeer != 0 {
+		ev.ScopeOverrides = boardPeerGlobal()
+	}
 	srv.Tasks().ReplayEvents([]server.WALEvent{ev})
+}
+
+// boardPeerGlobal is --scope-for board_peer=global as a WAL record: what a
+// fixture granting board_peer means by it (reach spec D16).
+func boardPeerGlobal() []server.WALScopeOverride {
+	return []server.WALScopeOverride{{
+		Caps: uint32(protocol.Capability_BoardPeer), Base: uint8(protocol.ScopeBase_Global),
+	}}
 }
 
 // freePortE2E finds a free port on 127.0.0.1.

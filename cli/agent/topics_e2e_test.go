@@ -33,14 +33,16 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	// synthetic task_created event here to make the gate work the same way.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tidA.Id[:]),
-			Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tidA.Id[:]),
+			Capabilities:   uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tidB.Id[:]),
-			Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tidB.Id[:]),
+			Capabilities:   uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
 
@@ -95,9 +97,10 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	// Inject entry WITHOUT board_observe (Capability_None = 0).
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
-			Type:         "task_created",
-			TaskID:       hex.EncodeToString(tidC.Id[:]),
-			Capabilities: uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			Type:           "task_created",
+			TaskID:         hex.EncodeToString(tidC.Id[:]),
+			Capabilities:   uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
+			ScopeOverrides: boardPeerGlobal(),
 		},
 	})
 

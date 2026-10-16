@@ -22,6 +22,12 @@ type ReachSource interface {
 	HasChild(parent protocol.TaskID, short string) bool
 	// Len bounds the membership walk: no chain is longer than the store.
 	Len() int
+	// PeerCovers reports whether tid's board_peer target set — its scope
+	// for that bit — holds a task whose id begins with short (8 hex). True
+	// for a global scope. PeerGlobal reports that global scope, the one form
+	// that opens free-form topics (reach spec D16). Neither checks the bit.
+	PeerCovers(tid protocol.TaskID, short string) bool
+	PeerGlobal(tid protocol.TaskID) bool
 }
 
 // SetReach installs the source every reach check reads. A board without one
@@ -140,7 +146,33 @@ func (b *Board) Publishable(c *ConnState, topic string) bool {
 	if c.task.hasContact(topic) {
 		return true
 	}
-	return hasCap(r, self, protocol.Capability_BoardPeer)
+	if !hasCap(r, self, protocol.Capability_BoardPeer) {
+		return false
+	}
+	// D16: the bit opens what its scope covers. A task's chat.<id> namespace
+	// is covered when that task is in the target set; anything else names no
+	// task, so only the unbounded form opens it.
+	if short, ok := chatShortID(topic); ok {
+		return r.PeerCovers(self, short)
+	}
+	return r.PeerGlobal(self)
+}
+
+// chatShortID returns <id> for chat.<id> and chat.<id>.<suffix> when <id> is a
+// task's 8-hex short id.
+func chatShortID(topic string) (string, bool) {
+	rest, ok := strings.CutPrefix(topic, SelfTopicPrefix)
+	if !ok || len(rest) < selfTopicShortLen {
+		return "", false
+	}
+	short := rest[:selfTopicShortLen]
+	if len(rest) > selfTopicShortLen && rest[selfTopicShortLen] != '.' {
+		return "", false
+	}
+	if _, err := hex.DecodeString(short); err != nil {
+		return "", false
+	}
+	return short, true
 }
 
 // NoteDelivered records the reply route of every message handed to c's task

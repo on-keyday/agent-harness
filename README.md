@@ -975,7 +975,11 @@ to it (on its own `chat.<short-id>`, or replying to one of its messages), and
 `tree.<full-task-id>.<suffix>` for every task on its own ancestor
 chain. Anything else — a peer it has no thread with, a free-form topic — needs
 `board_peer`, and is refused with a message naming that bit rather than
-dropped. Those reply routes — a task's **contacts**, at most 64, the one that
+dropped. `board_peer` is scoped like every other bit: it opens the
+`chat.<short-id>` of the tasks its scope covers, and free-form topics only when
+that scope is global — so `--caps …,board_peer --scope-for
+board_peer=ids:<task>` lets a task report to that one task and nobody else,
+and `--scope-for board_peer=global` is the unrestricted form. Those reply routes — a task's **contacts**, at most 64, the one that
 has gone longest without writing again dropped first — are listed by `agent
 contacts` for the task itself and on every `board subscribers` row (CLI, TUI,
 WebUI) for the operator, which is what to read before granting `board_peer`.

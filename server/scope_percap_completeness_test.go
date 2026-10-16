@@ -93,18 +93,17 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		reason: "the agentboard is keyed by topic, which the task hierarchy does not " +
 			"contain, so no task scope can bound it -- see the 2026-08-20 design §8a",
 	},
-	protocol.Capability_Purge: {
-		kind:   capNoTargetResolution,
-		reason: "purge names a board TOPIC, for the same reason as board_observe",
-	},
+	// purge's topic verbs (board purge / retract and their thread forms) name a
+	// TOPIC, which no task scope bounds; board clear-contacts names a TASK and
+	// passes the bit to inScope by name. The literal is that call.
+	protocol.Capability_Purge: {kind: capResolvedLiteral},
 	protocol.Capability_BoardSend: {
 		kind:   capNoTargetResolution,
 		reason: "board_send names a board TOPIC, for the same reason as board_observe",
 	},
-	protocol.Capability_BoardPeer: {
-		kind:   capNoTargetResolution,
-		reason: "board_peer names a board TOPIC, for the same reason as board_observe",
-	},
+	// board_peer opens the chat.<id> of tasks in its target set (reach spec
+	// D16); the board's reach source resolves it through actionSet by name.
+	protocol.Capability_BoardPeer: {kind: capResolvedLiteral},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the
@@ -130,11 +129,14 @@ func serverSources(t *testing.T) string {
 	return sb.String()
 }
 
-// resolutionCallLines returns every source line that resolves a target set.
+// resolutionCallLines returns every source line that resolves a target set:
+// the handler's inScope / scopeSet, and actionSet, which the board's reach
+// source calls from a task rather than a connection (reach spec D16).
 func resolutionCallLines(src string) []string {
 	var out []string
 	for _, line := range strings.Split(src, "\n") {
-		if strings.Contains(line, ".inScope(") || strings.Contains(line, ".scopeSet(") {
+		if strings.Contains(line, ".inScope(") || strings.Contains(line, ".scopeSet(") ||
+			strings.Contains(line, "actionSet(") {
 			out = append(out, line)
 		}
 	}
@@ -185,6 +187,13 @@ func TestCapabilityTargetClassesMatchTheSource(t *testing.T) {
 		case capNoTargetResolution:
 			if class.reason == "" {
 				t.Errorf("%s: exempted without a reason — every exemption must be justified", bit)
+			}
+			// The exemption goes stale the moment some verb under the bit starts
+			// naming a task: purge sat here as "names a TOPIC" after board
+			// clear-contacts began passing it to inScope.
+			if appears("protocol."+bit.String()) || appears(capConstName(bit)) {
+				t.Errorf("%s is classified as naming no task, but a target resolution "+
+					"passes it — reclassify it", bit)
 			}
 		}
 	}

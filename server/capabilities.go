@@ -128,7 +128,13 @@ func (h *TaskHandler) callerCaps(connID string) protocol.Capability {
 // and by the cascade in set_caps. Both need it regardless of the caller's own
 // base, so it is factored out rather than reached through scopeSet.
 func (h *TaskHandler) childIndex() map[string][]string {
-	allTasks := h.Tasks.List(0)
+	return childIndexOf(h.Tasks)
+}
+
+// childIndexOf is childIndex over a store, for callers that hold one without
+// a handler — the board's reach source.
+func childIndexOf(s *TaskStore) map[string][]string {
+	allTasks := s.List(0)
 	children := make(map[string][]string, len(allTasks))
 	for _, t := range allTasks {
 		if t.CreatorTaskID.Id != ([16]byte{}) {
@@ -237,7 +243,14 @@ func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, chil
 	if want == protocol.Capability_None {
 		return h.visibilitySet(callerHex, scope)
 	}
+	return actionSet(callerHex, scope, want, children)
+}
 
+// actionSet is the ACTION branch of scopeSetWith, keyed by the task rather than
+// a connection: the target set scope gives the bit want. The board's reach
+// source calls it for board_peer (reach spec D16), so the board and the control
+// plane cannot disagree about what a scope covers.
+func actionSet(callerHex string, scope Scope, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
 	base, excludeSelf, ids := scope.ForCap(want)
 	if base == protocol.ScopeBase_Global {
 		return true, nil
