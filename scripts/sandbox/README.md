@@ -157,16 +157,37 @@ slot, or `runner.sh down` then `runner.sh up --agents sandbox-…`).
 
 The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 
-- the **repo root** (covers the task worktree + the shared `.git`, so git
-  worktree links and claude's cwd-hash session resume work);
+- the **task worktree** (rw) and the shared **`.git`**, so git worktree links
+  and claude's cwd-hash session resume work. The `.git` is **read-only** except
+  `objects/`, `refs/`, `logs/` and this worktree's own gitdir; the worktree's
+  `.git` file and its gitdir's `commondir`/`gitdir` are read-only too. The repo
+  root itself is not mounted: the main checkout and the other tasks' worktrees
+  are not in the container. See "git directories" under the security model;
 - **`~/.claude`** (dir) and **`~/.claude.json`** (file) — reuses your host login,
   session store, and config. Without the latter claude warns "config not found"
   and rewrites it every run.
 
 ## Security model (what's confined, what isn't)
 
-- **Confined:** filesystem outside the mounted repo, host processes, the rest of
-  your home. The agent sees only the repo it's working in (+ `~/.claude`).
+- **Confined:** filesystem outside the task worktree and the repo's `.git`, host
+  processes, the rest of your home. The agent sees only its own worktree (+
+  `~/.claude`).
+- **git directories (read-only where host git would execute them):** every git
+  directory the container can write is one the host later runs git in — your
+  push and `make build` in the main checkout, the runner's git in the worktree.
+  git runs what a git directory names (`hooks/`, `core.hooksPath` and
+  `core.fsmonitor` in `config`) and follows what it points at (the worktree's
+  `.git` file, a gitdir's `commondir`), so a writable one is code execution on
+  the host with the host's credentials. Hence the read-only `.git` above; commit,
+  stash, rebase, reset and fetch still work (measured 2026-10-16, podman 6.0.1,
+  git 2.55.0). **Cost:** deleting a ref fails inside the container
+  (`git branch -d`, `git tag -d`) — the files backend takes
+  `.git/packed-refs.lock` for every deletion, and a writable `.git` would let
+  the container create `.git/commondir` and redirect the main checkout's git.
+  Delete branches from the host. `git config` writes fail by design. Under the
+  runner's NoWorktree mode the cwd *is* the checkout the host builds, so there
+  is no boundary: only `hooks/` and `config` are made read-only there.
+  `probe.sh`'s `git_exec_surfaces` line reports each of these.
 - **Exposed (intentional):** the mounted repo worktree (that's where edits go),
   plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`,
   bind-mounted **read-write** (login/session/config; the container can read your

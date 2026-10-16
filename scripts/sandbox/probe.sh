@@ -79,6 +79,21 @@ add "host_mounts" "$(awk '$5 ~ /^\/(home|root|mnt|media|opt|srv)/ {print $5}' /p
 add "siblings_listing" "$(ls -1a "$(dirname "$repo")" 2>&1 | tr '\n' ',')"
 add "home_listing" "HOME=$HOME -> $(ls -1a "$HOME" 2>&1 | tr '\n' ',')"
 add "repo_writable" "$(touch "$repo/.probe_write" 2>&1 && echo yes-and-cleaned && rm -f "$repo/.probe_write" || echo NO)"
+# What host-side git executes or follows (see the workspace mounts in
+# agent-in-podman.sh). In a linked worktree every entry must read ro: a WRITABLE
+# one is a way to run code on the host the next time it runs git. `test -w`
+# answers through access(2), which reports EROFS, so nothing is written.
+gs=""
+if gd=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null) &&
+   gc=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+	for p in "$gc" "$gc/hooks" "$gc/config" "$gd/commondir" "$repo/.git"; do
+		[ -e "$p" ] || continue
+		if [ -w "$p" ]; then gs="$gs$p=WRITABLE,"; else gs="$gs$p=ro,"; fi
+	done
+else
+	gs="not a git repo"
+fi
+add "git_exec_surfaces" "$gs"
 add "etc_passwd_host_users" "$(getent passwd 2>/dev/null | wc -l) entries"
 # The mount lines themselves, as evidence behind config_auth above.
 add "agent_config_mount_lines" "$(grep -oE "$cfg_re" /proc/self/mountinfo 2>/dev/null | tr -d ' ' | tr '\n' ',')"

@@ -285,24 +285,67 @@ case "$AGENT" in
 esac
 
 # Bind-mount at IDENTICAL host paths so (a) claude's cwd-hash session resume and
-# (b) git's worktree gitdir link both resolve inside the container. We mount the
-# repo root (which covers the worktree + the shared .git) and, only if the
-# worktree lives outside that root, the worktree itself.
-declare -a MOUNTS=() MOUNT_PATHS=()
-add_mount() {
-  local p="$1" m
-  if [ "${#MOUNT_PATHS[@]}" -gt 0 ]; then
-    for m in "${MOUNT_PATHS[@]}"; do
-      case "$p/" in "$m"/*) return ;; esac # already covered by an outer mount
-    done
+# (b) git's worktree gitdir link both resolve inside the container.
+#
+# What is writable is narrower than "the repo", because every git directory the
+# container can write is one the HOST later runs git in: the operator's push and
+# `make build` in the main checkout, the runner's and the operator's git in this
+# worktree. git executes what a git directory names (hooks/, core.hooksPath and
+# core.fsmonitor in config) and follows what it points at (a worktree's `.git`
+# file, a gitdir's `commondir` — which may name a directory holding its own
+# config). A container that can write any of those runs code on the host, with
+# the host's credentials, the next time anything there runs `git status`.
+#
+# So for a linked worktree (the runner's default):
+#   - the common dir (<root>/.git) is mounted READ-ONLY, and the repo root is not
+#     mounted at all: the main checkout's files and the other tasks' worktrees
+#     are not in the container;
+#   - objects/ refs/ logs/ and this worktree's own gitdir are re-mounted rw —
+#     everything commit / stash / rebase / reset / fetch write;
+#   - that gitdir's commondir + gitdir files and the worktree's `.git` file are
+#     re-mounted ro (a file bind mount cannot be renamed over either: EBUSY).
+# Measured 2026-10-16 (podman 6.0.1, git 2.55.0) on a scratch repo with two
+# worktrees: those operations work in the container, and writes to hooks/,
+# config, <common>/commondir, <gitdir>/commondir and <worktree>/.git are refused.
+#
+# The cost: deleting a ref fails in here (`git branch -d`, `git tag -d`), because
+# the files backend takes <common>/packed-refs.lock for every deletion, and the
+# common dir is the one thing that cannot be writable — that would let the
+# container CREATE <common>/commondir and redirect the main checkout's git to a
+# directory of its choosing. `git config` writes fail too, by design.
+#
+# Not a linked worktree (NoWorktree mode: the cwd IS the checkout, its .git a
+# directory inside it): the agent edits the very files the host builds, so there
+# is no boundary to keep. hooks/ and config go ro so git itself is not the
+# vector; the rest stays writable.
+declare -a MOUNTS=() SEED_PATHS=()
+mount_rw() { MOUNTS+=( -v "$1:$1" ); }
+mount_ro() { MOUNTS+=( -v "$1:$1:ro" ); }
+if gitdir=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&
+   common=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  gitdir=$(readlink -f "$gitdir"); common=$(readlink -f "$common")
+  root=$(dirname "$common")
+  SEED_PATHS+=( "$root" )
+  if [ "$gitdir" != "$common" ]; then
+    # git creates logs/ on the first reflog write, which it cannot do under a ro
+    # common dir.
+    mkdir -p "$common/logs"
+    mount_ro "$common"
+    mount_rw "$common/objects"; mount_rw "$common/refs"; mount_rw "$common/logs"
+    mount_rw "$gitdir"
+    for f in commondir gitdir; do [ -f "$gitdir/$f" ] && mount_ro "$gitdir/$f"; done
+    mount_rw "$WT"
+    [ -f "$WT/.git" ] && mount_ro "$WT/.git"
+  else
+    mount_rw "$root"
+    case "$WT/" in "$root"/*) ;; *) mount_rw "$WT" ;; esac
+    mount_ro "$common/config"
+    [ -d "$common/hooks" ] && mount_ro "$common/hooks"
   fi
-  MOUNT_PATHS+=( "$p" )
-  MOUNTS+=( -v "$p:$p" )
-}
-if common=$(git -C "$WT" rev-parse --git-common-dir 2>/dev/null); then
-  add_mount "$(dirname "$(cd "$WT" && readlink -f "$common")")"
+else
+  SEED_PATHS+=( "$WT" )
+  mount_rw "$WT"
 fi
-add_mount "$WT"
 
 # Auth. Two modes, and which are AVAILABLE is a property of the agent (table):
 #
@@ -332,15 +375,16 @@ if [ -n "$TOKEN_FILE" ] && [ -s "$TOKEN_FILE" ] && [ "$force_mount" != 1 ]; then
   AGENT_HOME="$A_EPHEMERAL_HOME"
   # SANDBOX_SEED_CONFIG tells the in-container launcher to pre-seed onboarding +
   # trust-this-folder for the worktree (ephemeral home re-prompts otherwise).
-  # SANDBOX_SEED_PROJECTS carries the mounted roots, newline-separated. claude
+  # SANDBOX_SEED_PROJECTS carries the repo root, newline-separated. claude
   # keys "trust this folder" on the REPO ROOT, not the cwd: seeding only $PWD
   # (the task worktree) left every session opening on the safety-check dialog,
-  # and answering it wrote an entry for the repo root. The launcher seeds each
-  # of these plus its own $PWD.
+  # and answering it wrote an entry for the repo root. The root is no longer
+  # mounted (see the workspace mounts above), but the key is a path string.
+  # The launcher seeds each of these plus its own $PWD.
   AUTH=(
     --env "$A_TOKEN_ENV=$(cat "$TOKEN_FILE")"
     --env SANDBOX_SEED_CONFIG=1
-    --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${MOUNT_PATHS[@]}")"
+    --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")"
   )
 else
   # Mount every config path the table names, skipping ones the host lacks (a
