@@ -1,8 +1,8 @@
 # Agentboard reach: which topics a task may publish to and read — design
 
 Status: DECIDED (operator, 2026-10-16) except the rows marked **this spec**.
-D10 is conditional on the benchmark in §6; nothing past §6 is built until it
-has a result.
+D10 was conditional on the benchmark in §6, and the benchmark met it
+(2026-10-16, §6 Results). Nothing past §6 is built yet.
 
 ## Problem
 
@@ -57,7 +57,7 @@ the author while writing — those are the rows worth a second look.
 | D7 | `tree.<id>.<suffix>`, with `<id>` the full 32-hex task id: `<id>` and its subtree read and write it; a non-member reads it only with `board_observe` and never writes it, `board_peer` included | operator |
 | D8 | Membership is decided by walking the CALLER's `CreatorTaskID` chain upward, never by building the child index | this spec |
 | D9 | A chain broken by a pruned task ends membership; the WAL is not consulted | this spec |
-| D10 | Authorization is evaluated on every read, inside one predicate, so `caps set` and `caps set-parent` take effect without touching subscriptions — **conditional on §6** | operator |
+| D10 | Authorization is evaluated on every read, inside one predicate, so `caps set` and `caps set-parent` take effect without touching subscriptions. Conditional on §6, which met it: 0.010% of the reference at the acceptance scale | operator |
 | D11 | A message retained while the reader was authorized is not readable once it is not | operator (follows from D10) |
 | D12 | `board_peer = 0x80000`; `all` widens to `0xfffff` | this spec |
 | D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set` | this spec |
@@ -115,8 +115,8 @@ when `M.SenderKind` is agent. Nothing is added for an operator or server
 message without a `ReplyToTopic` (such a message is already `no_reply_route`).
 
 - **Where:** at the single point every agent read path goes through:
-  `deliveredRows` (`server/agent_taskcontrol.go:190`), used by wait, inbox,
-  inbox_advance and read_seq.
+  `deliveredBody` (`server/agent_taskcontrol.go`), which builds the rows wait,
+  inbox, inbox_advance and read_seq return.
 - **Lifetime:** `taskState`'s lifetime — it goes at `Revoke`. It does not live
   in the ring, so a message evicted by the TTL (`--agentboard-ttl`, 30 minutes
   after the topic's last publish) or by ring overflow (`--agentboard-ring`, 64)
@@ -226,6 +226,75 @@ documented limit of D10. If acceptance fails, D10 is reopened with the numbers,
 and the alternative — re-evaluating subscriptions when `caps set`,
 `caps set-parent` and prune change their inputs — comes back for decision.
 
+### Results (2026-10-16)
+
+Host: Intel N100, 4 cores, load average 1.6–2.6 during the run. Commands:
+
+```
+go test ./agentboard/ -run '^$' -bench 'BenchmarkReachBase' -benchmem -count 6 -benchtime 300ms
+go test ./server/     -run '^$' -bench 'BenchmarkReach'     -benchmem -count 6 -benchtime 200ms
+```
+
+Medians of six. The benchmarks are `agentboard/reach_bench_test.go` and
+`server/reach_bench_test.go`.
+
+**How it was measured, and where that differs from the list above.** The
+predicate does not exist yet, so the server benchmark carries a prototype of
+§5's read check and §2's publish base set. It reads the real `TaskStore`: its
+read lock, its hex-keyed map, and one hex encoding per hop. It is not wired
+into `Board.Send`. Instead the cost with it in place is composed: the board
+baseline, plus one check per subscriber on a publish, plus one per subscribed
+topic on a read. That composition leaves out the candidate slice that `Send`
+would gain (§5, Lock order). The read baseline is `Inbox`, not `InboxAdvance`:
+it runs the same pattern iteration, and it is idempotent, so it needs no
+republishing between iterations. The publish base-set check was not in the list
+above and was added, because it runs once on every publish.
+
+| Path | Measured |
+| --- | --- |
+| `Send` fan-out today, S = 1 / 10 / 100 | 0.86 / 2.52 / 21.2 µs |
+| `Inbox` today, R = 1 / 64 | 0.62 / 18.4 µs |
+| read check, free-form topic | 7–9 ns, any N, d |
+| read check, `chat.*` (needs a caps lookup when not self) | 0.13–0.32 µs |
+| read check, `tree.` member at depth d = 1 / 4 / 16 | 0.09–0.12 / 0.37–0.49 / 1.6–2.2 µs |
+| read check, `tree.` non-member at d = 1 / 4 / 16 | 0.23–0.32 / 0.56–0.70 / 1.9–2.1 µs |
+| the same, 4 goroutines (`RunParallel`), N = 100 / 10000, d = 4 | 0.51 / 0.51 µs |
+| membership via `childIndex`, N = 100 / 1000 / 10000 | 43 µs / 342 µs / 3.78 ms |
+| publish base set, destination is the creator, N = 100 – 10000 | 0.30–0.46 µs |
+| publish base set, destination is a child, N = 100 / 1000 / 10000 | 1.5 / 15 / 144 µs |
+| publish base set, miss (scans every task), N = 100 / 1000 / 10000 | 2.1 / 27 / 269 µs |
+
+**Reference.** Thirty `harness-cli agent send` calls from a bash task on a
+dummy harness on the same host, each timed with `date +%s%N` around the call:
+median **88.6 ms** (minimum 74, p90 120). That covers process start, dial, PSK
+handshake and the publish.
+
+**Verdict: met.** The worst case at the acceptance scale (N = 100, d = 4,
+S = 10) is a publish whose base-set check misses (2.1 µs), fanned out to ten
+subscribers on a `tree.` topic none of them belongs to (10 × 0.70 µs). That is
+9.1 µs, **0.010%** of the reference. The largest cell swept (N = 10000, d = 16,
+S = 100: 269 µs + 100 × 2.1 µs) is 0.48 ms, 0.54%. So **10% is not reached
+inside the swept range**. Extrapolated, not measured: 8.9 ms takes about
+3 × 10⁵ tasks through the base-set scan, or about 4 × 10⁴ subscriber-hops of
+tree walks per publish.
+
+What the numbers also say:
+
+- **D8 holds by three orders of magnitude.** The child index costs
+  43 µs–3.8 ms per check, against 0.4 µs for the walk at the same depth, and it
+  grows with N where the walk does not.
+- **The one term that grows with N is the base set's child lookup** (§2, "every
+  live task C whose CreatorTaskID is T"), which scans the store: about 27 ns per
+  task. It is far inside the budget at every size measured. If it ever matters,
+  a creator → children map kept by `TaskStore` makes it a lookup, at the price
+  of a second structure that `SetParent` and prune must keep in step.
+- **Relative to the server's own work the cost is not small.** At S = 10 the
+  check adds 9.1 µs to a 2.5 µs fan-out. It is negligible only against the
+  end-to-end cost, which is the criterion this section set.
+- **No lock contention showed.** Four goroutines on one store ran each check in
+  0.51 µs against 0.37–0.49 µs single-threaded. Concurrent writers to the store
+  were not part of the run.
+
 ## 7. Wire
 
 - `Capability.board_peer = 0x80000`; `all = 0xfffff` (D12). The `all` literal
@@ -251,12 +320,10 @@ hostname 7 bytes, profile `claude`, no reply route): 89 bytes a row, **1169
 bytes at 13 rows** — the UDP budget is about 1170. With `tree.<full-id>.build`
 as both topic and reply route: 162 bytes a row, over budget at 8 rows. Agents
 use whichever transport their runner connected on (`runner/servercandidates.go:28`),
-UDP included. Not yet seen failing live, and a dummy harness will not show it:
-loopback's MTU is 65536 (the same reason a 2000-byte exec line passed there on
-2026-10-10, `2026-10-10-exec-request-streamed-design.md`). This is
-an existing defect, fixed in its own change
-(`2026-10-16-board-row-responses-streamed-design.md`). This design does not depend on the
-fix, but D7's full id brings the failure closer, so the fix should land first.
+UDP included. That was an existing defect. It was reproduced in `scripts/netem-lab`
+and fixed in its own change, landed as `33d2d885`
+(`2026-10-16-board-row-responses-streamed-design.md`). The rows now travel
+on a stream, so D7's longer topics no longer move any datagram limit.
 
 ## 8. Surfaces
 
@@ -279,5 +346,5 @@ fix, but D7's full id brings the failure closer, so the fix should land first.
   stay on free-form names, readable by everyone and writable with `board_peer`.
 - Confining group topics outside `tree.` (Rd). If wanted, it is a separate read
   bit, not `board_observe`: `board_observe` also reads direct messages.
-- Fixing the delivery-row size (§7) — its own change.
+- Fixing the delivery-row size (§7) — its own change, landed.
 - The operator face (`board read` / `board send` / …), whose gates are unchanged.
