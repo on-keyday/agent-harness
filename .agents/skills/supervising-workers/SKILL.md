@@ -351,9 +351,11 @@ and the scope forms (`--json` for the machine-readable form).
   subtree — that is the shape the old `info_global` capability produced. It
   widens LOOKING only: you can see a task and still be refused when you try to
   cancel it.
-  The reverse — acting wider than you can see — is refused, because a
-  successful action discloses existence anyway, so the narrow visibility would
-  be decorative.
+  The reverse — acting wider than you can see — is allowed, deliberately:
+  `--scope none --scope-for exec_view=global` is a worker that can enumerate
+  nothing and look at any task whose id it is handed over the agentboard.
+  Task ids are 128 random bits, so a wide action rank buys no discovery, and
+  `whoami --json`'s `scope_by_cap` states the reach in full either way.
   `board topics`, `board read` and `board subscribers` are the one thing that
   stayed a capability, now named `board_observe`: the board is keyed by topic,
   which the task hierarchy does not contain, so no task scope can bound it. It
