@@ -159,3 +159,42 @@ func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 		}
 	}
 }
+
+// readableTargets keeps the tasks that may read topic. Called after b.mu is
+// released: the predicate takes the task store's lock (reach spec §5, Lock
+// order).
+func (b *Board) readableTargets(targets []*taskState, topic string) []*taskState {
+	r := b.reachSource()
+	if r == nil {
+		return targets
+	}
+	kept := targets[:0]
+	for _, ts := range targets {
+		_, tid, _, _ := ts.identity()
+		if b.readableFor(r, tid, topic) {
+			kept = append(kept, ts)
+		}
+	}
+	return kept
+}
+
+func (b *Board) readableTopic(ts *taskState, topic string) bool {
+	r := b.reachSource()
+	if r == nil {
+		return true
+	}
+	_, tid, _, _ := ts.identity()
+	return b.readableFor(r, tid, topic)
+}
+
+// readablePatterns drops the subscriptions ts may no longer read. The
+// patterns stay in ts; granting the bit back restores them.
+func (b *Board) readablePatterns(ts *taskState, patterns []string) []string {
+	kept := patterns[:0]
+	for _, p := range patterns {
+		if b.readableTopic(ts, p) {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}

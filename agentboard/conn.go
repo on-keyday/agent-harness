@@ -44,13 +44,6 @@ func (c *ConnState) ping() {
 	}
 }
 
-func (c *ConnState) matches(topic string) bool {
-	if c == nil || c.task == nil {
-		return false
-	}
-	return c.task.matches(topic)
-}
-
 // Identity returns the authenticated (RunnerID, TaskID, hostname, agentProfile)
 // captured at Attach time. The server uses this to attribute published messages
 // to the correct sender without trusting agent-supplied fields.

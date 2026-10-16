@@ -1,7 +1,9 @@
 package agentboard
 
 import (
+	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -235,5 +237,123 @@ func TestContactsAreBounded(t *testing.T) {
 	}
 	if !ts.hasContact(fmt.Sprintf("t.%d", maxContacts)) {
 		t.Error("the newest contact is missing")
+	}
+}
+
+func TestSendFanoutSkipsAnUnreadableSubscriber(t *testing.T) {
+	r := newFakeReach()
+	owner, snoop := tidN(1), tidN(2)
+	r.add(owner, protocol.TaskID{}, 0)
+	r.add(snoop, protocol.TaskID{}, protocol.Capability_BoardObserve)
+	b := reachBoard(t, r)
+	var woke []protocol.TaskID
+	b.SetOnDeliver(func(_ protocol.RunnerID, tid protocol.TaskID) { woke = append(woke, tid) })
+	co := b.Attach(protocol.RunnerID{}, owner, "h", "bash")
+	cs := b.Attach(protocol.RunnerID{}, snoop, "h", "bash")
+	if err := b.Subscribe(co, SelfTopic(owner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Subscribe(cs, SelfTopic(owner)); err != nil { // allowed: holds board_observe
+		t.Fatal(err)
+	}
+	r.caps[snoop] = 0 // caps set takes the bit away
+	if _, delivered, err := b.Send(SelfTopic(owner), []byte("x"), protocol.RunnerID{}, tidN(9), "h", "", 0); err != nil || delivered != 1 {
+		t.Fatalf("delivered = %d, %v; want 1 (the owner only)", delivered, err)
+	}
+	for _, w := range woke {
+		if w == snoop {
+			t.Error("a task without board_observe was woken for another task's topic")
+		}
+	}
+}
+
+func TestRevokedObserveHidesAndRestores(t *testing.T) {
+	r := newFakeReach()
+	owner, snoop := tidN(1), tidN(2)
+	r.add(owner, protocol.TaskID{}, 0)
+	r.add(snoop, protocol.TaskID{}, protocol.Capability_BoardObserve)
+	b := reachBoard(t, r)
+	cs := b.Attach(protocol.RunnerID{}, snoop, "h", "bash")
+	if err := b.Subscribe(cs, SelfTopic(owner)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Send(SelfTopic(owner), []byte("x"), protocol.RunnerID{}, tidN(9), "h", "", 0, WithNoWake()); err != nil {
+		t.Fatal(err)
+	}
+	r.caps[snoop] = 0
+	if msgs, _ := b.Inbox(cs, 0); len(msgs) != 0 {
+		t.Errorf("inbox after revoke returned %d rows (D11: already-retained must hide)", len(msgs))
+	}
+	if msgs := b.InboxAdvance(cs); len(msgs) != 0 {
+		t.Errorf("advance after revoke returned %d rows", len(msgs))
+	}
+	if b.Subscribes(cs, SelfTopic(owner)) {
+		t.Error("Subscribes (read_seq's check) still answers yes after revoke")
+	}
+	r.caps[snoop] = protocol.Capability_BoardObserve
+	if msgs := b.InboxAdvance(cs); len(msgs) != 1 {
+		t.Errorf("advance after re-grant returned %d rows, want 1: the revoked read moved the mark", len(msgs))
+	}
+}
+
+func TestSubscribeAndWaitRefuseAnUnreadableTopic(t *testing.T) {
+	r := newFakeReach()
+	me, peer := tidN(1), tidN(2)
+	r.add(me, protocol.TaskID{}, 0)
+	r.add(peer, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if err := b.Subscribe(c, SelfTopic(peer)); !errors.Is(err, ErrNotPermitted) {
+		t.Errorf("subscribe to a peer's topic: %v, want ErrNotPermitted", err)
+	}
+	if err := b.Subscribe(c, OperatorTopic); !errors.Is(err, ErrReservedTopic) {
+		t.Errorf("subscribe to chat.operator: %v, want ErrReservedTopic (unchanged)", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, _, err := b.Wait(ctx, c, OperatorTopic, 0, 0); !errors.Is(err, ErrNotPermitted) {
+		t.Errorf("wait on chat.operator: %v, want ErrNotPermitted", err)
+	}
+	if err := b.Subscribe(c, "build.events"); err != nil {
+		t.Errorf("subscribe to a group topic: %v, want nil", err)
+	}
+}
+
+func TestOperatorPublishStillReachesAConfinedTask(t *testing.T) {
+	r := newFakeReach()
+	me := tidN(1)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	b.SetOnDeliver(func(protocol.RunnerID, protocol.TaskID) {}) // Wake counts only emitted wakes
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if err := b.Subscribe(c, SelfTopic(me)); err != nil {
+		t.Fatal(err)
+	}
+	_, delivered, err := b.Send(SelfTopic(me), []byte("op"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0,
+		WithSenderKind(protocol.SenderKind_Operator))
+	if err != nil || delivered != 1 {
+		t.Fatalf("operator publish: delivered=%d err=%v, want 1", delivered, err)
+	}
+	if n := b.Wake(SelfTopic(me)); n != 1 {
+		t.Errorf("operator wake reached %d tasks, want 1", n)
+	}
+}
+
+func TestListSubscribersShowsOnlyWhoAPublishReaches(t *testing.T) {
+	r := newFakeReach()
+	owner, snoop := tidN(1), tidN(2)
+	r.add(owner, protocol.TaskID{}, 0)
+	r.add(snoop, protocol.TaskID{}, protocol.Capability_BoardObserve)
+	b := reachBoard(t, r)
+	co := b.Attach(protocol.RunnerID{}, owner, "h", "bash")
+	cs := b.Attach(protocol.RunnerID{}, snoop, "h", "bash")
+	for _, c := range []*ConnState{co, cs} {
+		if err := b.Subscribe(c, SelfTopic(owner)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.caps[snoop] = 0
+	if rows := b.ListSubscribers(SelfTopic(owner)); len(rows) != 1 {
+		t.Errorf("subscribers = %d, want 1: the list must match what a publish reaches", len(rows))
 	}
 }

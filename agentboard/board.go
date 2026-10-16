@@ -221,6 +221,9 @@ func (b *Board) Subscribe(c *ConnState, pattern string) error {
 	if pattern == OperatorTopic {
 		return ErrReservedTopic
 	}
+	if !b.readableTopic(c.task, pattern) {
+		return ErrNotPermitted
+	}
 	c.task.addPattern(pattern)
 	return nil
 }
@@ -286,6 +289,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		}
 	}
 	b.mu.Unlock()
+	targets = b.readableTargets(targets, topicName)
 
 	seq := b.seq.Add(1)
 	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
@@ -346,7 +350,7 @@ func (b *Board) Wake(topicName string) int {
 		}
 	}
 	b.mu.Unlock()
-	return b.deliver(targets, topicName, true)
+	return b.deliver(b.readableTargets(targets, topicName), topicName, true)
 }
 
 // Inbox returns retained messages for all topics the (rid, tid) taskState is
@@ -356,7 +360,7 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 	if c == nil || c.task == nil {
 		return nil, since
 	}
-	patterns := c.task.snapshotPatterns()
+	patterns := b.readablePatterns(c.task, c.task.snapshotPatterns())
 
 	b.mu.Lock()
 	all := make([]RetainedMessage, 0)
@@ -391,7 +395,7 @@ func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 	if c == nil || c.task == nil {
 		return nil
 	}
-	patterns := c.task.snapshotPatterns()
+	patterns := b.readablePatterns(c.task, c.task.snapshotPatterns())
 
 	b.mu.Lock()
 	found := make(map[string]*topic, len(patterns))
@@ -426,6 +430,9 @@ func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since, inReplyTo uint64) ([]RetainedMessage, bool, error) {
 	if c == nil || c.task == nil {
 		return nil, false, errors.New("not attached")
+	}
+	if !b.readableTopic(c.task, topicName) {
+		return nil, false, ErrNotPermitted
 	}
 	c.task.beginWait(topicName)
 	defer c.task.endWait(topicName)
@@ -753,7 +760,7 @@ func (b *Board) Subscribes(c *ConnState, topicName string) bool {
 	if c == nil || c.task == nil {
 		return false
 	}
-	return c.task.matches(topicName)
+	return c.task.matches(topicName) && b.readableTopic(c.task, topicName)
 }
 
 // Retained returns the retained message with this seq, from whichever topic
@@ -904,7 +911,7 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 
 	out := make([]SubscriberRow, 0, len(states))
 	for _, ts := range states {
-		if topic != "" && !ts.matches(topic) {
+		if topic != "" && (!ts.matches(topic) || !b.readableTopic(ts, topic)) {
 			continue
 		}
 		_, tid, host, profile := ts.identity()
