@@ -1263,7 +1263,7 @@ Expected: PASS. Existing server tests build boards without `SetBoard`, so they a
 
 ```bash
 git add server/
-git commit -m "server: reach from the task store; not_permitted on send, subscribe, wait, list_retained"
+git commit -m "server: reach from the task store; not_permitted on send, subscribe, wait; list_retained shows own rows"
 ```
 
 ---
