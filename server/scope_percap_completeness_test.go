@@ -101,6 +101,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		kind:   capNoTargetResolution,
 		reason: "board_send names a board TOPIC, for the same reason as board_observe",
 	},
+	protocol.Capability_BoardPeer: {
+		kind:   capNoTargetResolution,
+		reason: "board_peer names a board TOPIC, for the same reason as board_observe",
+	},
 }
 
 // serverSources concatenates the package's non-test sources, which is what the

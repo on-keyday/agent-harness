@@ -48,6 +48,9 @@ func GrantableCaps() []protocol.Capability {
 		// board_send after the other two board bits: it is the only one that
 		// WRITES, and what it writes carries the operator's name.
 		protocol.Capability_BoardSend,
+		// board_peer last among the board bits: it widens where an agent may
+		// publish, where board_send changes whose name it publishes in.
+		protocol.Capability_BoardPeer,
 		protocol.Capability_All,
 	}
 }
@@ -60,7 +63,8 @@ func GrantableCaps() []protocol.Capability {
 func CapDescription(c protocol.Capability) string {
 	switch c {
 	case protocol.Capability_None:
-		return "no capabilities; data-plane only (agentboard messaging, own task logs/ls)"
+		return "no capabilities; data-plane only (agentboard messaging within the task's base set — " +
+			"self, creator, direct children, chat.operator, whoever messaged it — and own task logs/ls)"
 	case protocol.Capability_Spawn:
 		return "submit tasks and open interactive sessions"
 	case protocol.Capability_Cancel:
@@ -99,8 +103,9 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_RunnerAdmin:
 		return "runner administration (server dial-runner)"
 	case protocol.Capability_BoardObserve:
-		return "list board topics, read a topic's retained messages, and list its subscribers; " +
-			"NOT required to send, subscribe, or read your own inbox"
+		return "list board topics, read a topic's retained messages, list its subscribers; " +
+			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +
+			"NOT required to send, to read your own inbox, or to read a group topic"
 	case protocol.Capability_Purge:
 		return "destroy an agentboard topic's retained-message buffer (agent purge / board purge) " +
 			"or every message of one conversation, across each topic it spans (board purge-thread); " +
@@ -109,6 +114,9 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_BoardSend:
 		return "publish to the agentboard in the operator's name (board send, board wake); " +
 			"NOT required for agent send"
+	case protocol.Capability_BoardPeer:
+		return "publish to topics outside the task's base set: peers' chat.<id>, free-form topics; " +
+			"NOT required for its own lineage, chat.operator, or replying to a message it received; never opens a tree.<id> it is not in"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:

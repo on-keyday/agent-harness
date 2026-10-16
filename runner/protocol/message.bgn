@@ -1428,6 +1428,9 @@ enum SendStatus:
     # The fallback (the author's chat.<short-id>) would be the chat topic of
     # a zero task id, so the server refuses instead of guessing.
     no_reply_route
+    # The topic the message would land on (after reply routing) is outside
+    # the sender's base set and the sender holds no board_peer.
+    not_permitted
 
 format AgentSendResponse:
     request_id :u32
@@ -1506,6 +1509,9 @@ enum SubscribeStatus:
     :u8
     ok
     bad_pattern
+    # The topic carries another task's messages and the caller holds no
+    # board_observe.
+    not_permitted
 
 format AgentSubscribeResponse:
     request_id :u32
@@ -1577,11 +1583,20 @@ format AgentWaitRequest:
 
 # stream_id: see BoardTopicsResponse. The stream carries a DeliveredBody,
 # empty on a timeout.
+enum WaitStatus:
+    :u8
+    ok
+    # The topic carries another task's messages and the caller holds no
+    # board_observe. Distinct from timed_out, which must keep meaning "nothing
+    # arrived".
+    not_permitted
+
 format AgentWaitResponse:
     request_id :u32
     timed_out :u8
     next_cursor :u64
     stream_id :u64
+    status :WaitStatus
 
 format AgentInboxRequest:
     request_id :u32
@@ -1636,11 +1651,15 @@ format SubscriptionsBody:
 # AgentListRetainedRequest enumerates a topic's retained ring as METADATA ONLY — no
 # payload bytes cross the wire. This is the content-blind way to identify which
 # retained message to purge (by seq / sender / size / time) without ingesting a
-# payload that might itself trip a moderation gate. No cap gate (helloed only),
-# like inbox/wait: it is a keyed read of an already-named topic (not a discovery
-# sweep — that is list_topics), and everything it surfaces is a strict subset of
-# what subscribing + inbox already returns uncapped. Destruction (purge) needs
-# Capability.purge; this read does not. Single named topic, not a board sweep.
+# payload that might itself trip a moderation gate. No cap gate (helloed only):
+# it is a keyed read of an already-named topic (not a discovery sweep — that is
+# list_topics), and what it surfaces is a subset of what the caller could read
+# anyway. On its own and group topics that is the whole ring, as subscribe +
+# inbox would return it. On a topic whose subscription is gated (another
+# task's chat.<id>, chat.operator, a tree.<id> it is not in, without
+# board_observe) it is only the rows the caller published, flagged by
+# own_only — which is what lets a sender check its own message on a peer's
+# topic. Destruction (purge) needs Capability.purge; this read does not.
 format AgentListRetainedRequest:
     request_id :u32
     topic_len :u16
@@ -1675,6 +1694,12 @@ format AgentListRetainedResponse:
     request_id :u32
     status :BoardStatus
     stream_id :u64
+    # own_only = 1: the caller cannot read this topic (another task's
+    # chat.<id>, chat.operator, or a tree.<id> it is not in, without
+    # board_observe), so the body lists only the rows the caller published.
+    # Without the bit a filtered list reads as the topic's whole ring.
+    own_only :u1
+    reserved :u7
 
 format RetainedBody:
     metas_len :u16
@@ -3272,8 +3297,12 @@ enum Capability:
     # third, because the board is keyed by topic and no task scope can bound
     # it. The WAL persists the number, so no record migrates.
     #
-    # "observe" rather than "read": the bit is not needed to send, to
-    # subscribe, or to read your own inbox -- only to observe OTHER agents'
+    # "observe" rather than "read": the bit is not needed to send, to read your
+    # own inbox, or to read a group topic. It IS needed to read another task's
+    # direct messages by any verb — subscribe, wait, inbox, read_seq on another
+    # task's chat.<id> / chat.<id>.*, on chat.operator, or on a tree.<id>.* the
+    # reader does not belong to — because those carry someone else's
+    # messages, which is what this bit always meant: observing OTHER agents'
     # topics, messages and subscribers. An agent denied "board_read" would go
     # debugging a messaging path that is working fine.
     board_observe  = 0x400, "board_observe"
@@ -3349,6 +3378,15 @@ enum Capability:
     # A different power from running an exec or viewing a session, so neither
     # exec_run nor exec_view implies it.
     exec_tap       = 0x40000, "exec_tap"
+    # board_peer authorizes publishing to a topic outside the task's BASE SET:
+    # its own chat.<id> and chat.<id>.*, its creator's and its direct
+    # children's chat.<id>, chat.operator, the reply routes of messages it was
+    # handed (contacts), and the tree.<id>.* namespaces it belongs to. Without
+    # it a task can talk to its own lineage and to whoever talked to it, and
+    # cannot reach a peer or a free-form topic. It opens no tree.<id>.* the
+    # task is not a member of. Default-off, appended. See
+    # docs/superpowers/specs/2026-10-16-agentboard-reach-design.md.
+    board_peer     = 0x80000, "board_peer"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -3358,7 +3396,7 @@ enum Capability:
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x7ffff, "all"
+    all            = 0xfffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
