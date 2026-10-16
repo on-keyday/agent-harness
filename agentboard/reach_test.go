@@ -2,6 +2,7 @@ package agentboard
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
@@ -156,5 +157,83 @@ func TestNilReachEnforcesNothing(t *testing.T) {
 	c := b.Attach(protocol.RunnerID{}, tidN(1), "h", "bash")
 	if !b.Readable(c, SelfTopic(tidN(2))) {
 		t.Error("a board with no reach source refused a read")
+	}
+}
+
+func TestPublishableBaseSet(t *testing.T) {
+	r := newFakeReach()
+	sup, me, child, peer := tidN(1), tidN(2), tidN(3), tidN(4)
+	r.add(sup, protocol.TaskID{}, 0)
+	r.add(me, sup, 0)
+	r.add(child, me, 0)
+	r.add(peer, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+
+	for _, tc := range []struct {
+		name, topic string
+		want        bool
+	}{
+		{"self", SelfTopic(me), true},
+		{"self side channel", SelfTopic(me) + ".x", true},
+		{"operator", OperatorTopic, true},
+		{"creator", SelfTopic(sup), true},
+		{"child", SelfTopic(child), true},
+		{"peer", SelfTopic(peer), false},
+		{"free-form", "build.events", false},
+		{"own tree", treeOf(me), true},
+		{"ancestor tree", treeOf(sup), true},
+		{"foreign tree", treeOf(peer), false},
+	} {
+		if got := b.Publishable(c, tc.topic); got != tc.want {
+			t.Errorf("%s: Publishable(%s) = %v, want %v", tc.name, tc.topic, got, tc.want)
+		}
+	}
+
+	r.caps[me] = protocol.Capability_BoardPeer
+	if !b.Publishable(c, SelfTopic(peer)) || !b.Publishable(c, "build.events") {
+		t.Error("board_peer did not open a peer / free-form topic")
+	}
+	if b.Publishable(c, treeOf(peer)) {
+		t.Error("board_peer opened a tree the task is not in (D7)")
+	}
+}
+
+func TestContactsOpenTheReplyRoute(t *testing.T) {
+	r := newFakeReach()
+	me, peer := tidN(2), tidN(4)
+	r.add(me, protocol.TaskID{}, 0)
+	r.add(peer, protocol.TaskID{}, protocol.Capability_BoardPeer)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if b.Publishable(c, SelfTopic(peer)) {
+		t.Fatal("peer reachable before it said anything")
+	}
+	b.NoteDelivered(c, []RetainedMessage{
+		{FromTask: peer, SenderKind: protocol.SenderKind_Agent},
+		{FromTask: peer, SenderKind: protocol.SenderKind_Agent, ReplyToTopic: "review.results"},
+		{SenderKind: protocol.SenderKind_Operator}, // no route, nothing added
+	})
+	if !b.Publishable(c, SelfTopic(peer)) {
+		t.Error("the sender's chat.<id> did not become a contact")
+	}
+	if !b.Publishable(c, "review.results") {
+		t.Error("a declared reply_to did not become a contact")
+	}
+	if b.Publishable(c, SelfTopic(protocol.TaskID{})) {
+		t.Error("an operator message without a reply route opened the zero task's topic")
+	}
+}
+
+func TestContactsAreBounded(t *testing.T) {
+	ts := newTaskState()
+	for i := 0; i < maxContacts+1; i++ {
+		ts.addContact(fmt.Sprintf("t.%d", i))
+	}
+	if ts.hasContact("t.0") {
+		t.Error("the oldest contact survived past the bound")
+	}
+	if !ts.hasContact(fmt.Sprintf("t.%d", maxContacts)) {
+		t.Error("the newest contact is missing")
 	}
 }

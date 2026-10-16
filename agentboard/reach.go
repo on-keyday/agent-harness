@@ -112,3 +112,50 @@ func (b *Board) readableFor(r ReachSource, self protocol.TaskID, topic string) b
 	}
 	return true
 }
+
+// Publishable is the spec's §2: may c's task publish to topic? The server asks
+// it with the topic resolveReplyTarget returned, so a reply is checked where
+// it will actually land (D4).
+func (b *Board) Publishable(c *ConnState, topic string) bool {
+	r := b.reachSource()
+	if r == nil {
+		return true
+	}
+	if c == nil || c.task == nil {
+		return false
+	}
+	_, self, _, _ := c.task.identity()
+	if x, ok := parseTreeTopic(topic); ok {
+		return b.member(r, self, x) // no bit opens a tree the task is not in (D7)
+	}
+	if isOwnChat(self, topic) || topic == OperatorTopic {
+		return true
+	}
+	if creator, ok := r.CreatorOf(self); ok && creator != (protocol.TaskID{}) && topic == SelfTopic(creator) {
+		return true
+	}
+	if short, ok := strings.CutPrefix(topic, SelfTopicPrefix); ok && len(short) == selfTopicShortLen && r.HasChild(self, short) {
+		return true
+	}
+	if c.task.hasContact(topic) {
+		return true
+	}
+	return hasCap(r, self, protocol.Capability_BoardPeer)
+}
+
+// NoteDelivered records the reply route of every message handed to c's task
+// (the spec's §3). The server calls it from the one place wait, inbox,
+// inbox_advance and read_seq build their rows.
+func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
+	if c == nil || c.task == nil {
+		return
+	}
+	for _, m := range msgs {
+		switch {
+		case m.ReplyToTopic != "":
+			c.task.addContact(m.ReplyToTopic)
+		case m.SenderKind == protocol.SenderKind_Agent:
+			c.task.addContact(SelfTopic(m.FromTask))
+		}
+	}
+}

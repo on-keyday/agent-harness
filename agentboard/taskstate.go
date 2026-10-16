@@ -29,12 +29,18 @@ type taskState struct {
 	// never touches it. Per topic rather than one scalar per task, because a
 	// reader covering ONE topic must not be able to claim progress on the
 	// others — that is exactly what the client-side cursor got wrong.
-	shown   map[string]uint64
-	conns   map[*ConnState]struct{}
-	rid     protocol.RunnerID
-	tid     protocol.TaskID
-	host    string
-	profile string
+	shown map[string]uint64
+	// contacts are reply routes of messages handed to this task (reach spec
+	// §3): the right to answer someone who spoke first, kept here rather than
+	// in the ring so a rotated-out message does not take it along. Bounded,
+	// oldest first out, because a sender picks ReplyToTopic freely.
+	contacts     map[string]struct{}
+	contactOrder []string
+	conns        map[*ConnState]struct{}
+	rid          protocol.RunnerID
+	tid          protocol.TaskID
+	host         string
+	profile      string
 }
 
 func newTaskState() *taskState {
@@ -42,8 +48,32 @@ func newTaskState() *taskState {
 		patterns: make(map[string]struct{}),
 		waiting:  make(map[string]int),
 		shown:    make(map[string]uint64),
+		contacts: make(map[string]struct{}),
 		conns:    make(map[*ConnState]struct{}),
 	}
+}
+
+const maxContacts = 64
+
+func (t *taskState) addContact(topic string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.contacts[topic]; ok {
+		return
+	}
+	if len(t.contactOrder) == maxContacts {
+		delete(t.contacts, t.contactOrder[0])
+		t.contactOrder = t.contactOrder[1:]
+	}
+	t.contacts[topic] = struct{}{}
+	t.contactOrder = append(t.contactOrder, topic)
+}
+
+func (t *taskState) hasContact(topic string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.contacts[topic]
+	return ok
 }
 
 // takeUnshown records msgs as shown for topic and returns the ones that were
