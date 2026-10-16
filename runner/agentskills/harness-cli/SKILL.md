@@ -651,8 +651,11 @@ they can grant it on the live task.
 task's `chat.<id>` only when that task is inside the bit's scope, and a
 free-form topic only when that scope is global. So the grant that lets you
 report to exactly one task is `caps set <your-task> --caps …,board_peer
---scope-for board_peer=ids:<that-task>`, and it reaches nobody else; reaching
-every peer and every free-form topic is `--scope-for board_peer=global`. A
+--scope <your current scope> --scope-for board_peer=ids:<that-task>`, and it
+reaches nobody else (`caps set` rewrites the whole scope, so it needs the base
+restated and every other override it should keep; at spawn the flag alone
+works). Reaching every peer and every free-form topic is `--scope-for
+board_peer=global`. A
 refusal that names `board_peer` while you hold it means the target is outside
 its scope — `harness-cli whoami` shows yours (`scope_by_cap` in `--json`).
 The operator sees your contacts too, on `board subscribers`. No bit opens a

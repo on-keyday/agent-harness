@@ -370,7 +370,9 @@ and the scope forms (`--json` for the machine-readable form).
   that scope is global. A worker's default `subtree` scope therefore does NOT
   reach its siblings — they are yours, not its. Name them:
   `--caps …,board_peer --scope-for board_peer=ids:<sibling>` (each id must be
-  inside your own scope, as for any grant), at spawn or later with `caps set`.
+  inside your own scope, as for any grant), at spawn or later with `caps set`
+  — which rewrites the whole scope, so it also needs `--scope <base>` and any
+  other override the worker should keep.
   A team channel for you and your workers is
   `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
   subtree with no bit. The `harness-cli` skill's "Who you can reach" has the

@@ -127,7 +127,7 @@ func reachHint(err error, topic string) error {
 			"its own chat.<id> (and chat.<id>.*), its creator's and its direct children's chat.<id>, chat.operator, "+
 			"the reply route of a message addressed to it (agent contacts lists them), and tree.<id> namespaces it belongs to. "+
 			"Anything else needs board_peer with a scope that covers it: another task's chat.<id> needs that task "+
-			"in the bit's scope (caps set <task> --caps …,board_peer --scope-for board_peer=ids:<target>), "+
+			"in the bit's scope (caps set <task> --caps …,board_peer --scope <its scope> --scope-for board_peer=ids:<target>), "+
 			"a free-form topic a global one (--scope-for board_peer=global). Holding board_peer is not enough "+
 			"when the target is outside its scope", err, topic)
 	case protocol.Capability_BoardObserve:
