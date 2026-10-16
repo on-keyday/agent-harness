@@ -514,7 +514,11 @@ enum TaskControlKind:
     # --- agentboard, agent face (folded in from the retired AgentMessageKind) ---
     #
     # Each verb below is keyed to the CALLER's own subscriptions, or to a
-    # message the caller published, and takes NO capability. That is the line
+    # message the caller published, and no KIND takes a capability (a publish
+    # outside the caller's base set needs board_peer, a read of another task's
+    # direct messages board_observe — decided per request by the board reach
+    # check, see docs/superpowers/specs/2026-10-16-agentboard-reach-design.md).
+    # That is the line
     # the agent_ prefix draws, and it is where the gates already sat: of the
     # twelve verbs on the retired enum, exactly two were capability-gated --
     # list_topics (board_observe) and purge (purge) -- and those two are not
@@ -1445,10 +1449,10 @@ format AgentSendResponse:
     # reports 1. Clamped to u16.
     #
     # This is a weak enumeration signal (publish to a name, learn whether
-    # anyone holds it), accepted on the same ground list_retained is ungated:
-    # subscribe takes no capability, so whoever knows a topic name can already
-    # subscribe and read its payloads via inbox. It reveals nothing to someone
-    # who cannot name the topic, so it is not a discovery sweep.
+    # anyone holds it). It is bounded by the sender's reach: a task learns it
+    # only for topics it may publish to (its base set, or anything with
+    # board_peer), and it reveals nothing to someone who cannot name the
+    # topic, so it is not a discovery sweep.
     delivered_to :u16
 
 # BoardSendRequest is agent_send's request on the operator face: the same

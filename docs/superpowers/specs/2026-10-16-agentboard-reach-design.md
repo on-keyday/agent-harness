@@ -397,7 +397,27 @@ the operator decided to do exactly that when a task turns out to need it
   not of every send. `agent send` appends which topic was out of reach and what
   is reachable. `own_only` (D15) stays: it is a filter, not a refusal.
 - `read_seq` keeps answering `not_found` for an unauthorized topic, not a
-  denial. Its schema comment explains why: a distinguishable refusal
+  denial.
+
+**Two publish paths the first implementation left open, found in review
+(this spec, 2026-10-16):**
+
+- **A declared `reply_to` must be publishable by its sender.** §3 makes a
+  delivered message's reply route a contact of whoever reads it, the sender
+  included. So a task with no bits could send its own `chat.<id>` a message
+  with `--reply-to chat.<victim>` (or any free-form name), read it, and hold
+  the route as a contact: `board_peer` bypassed by one task alone. `agent send`
+  now refuses a `reply_to` the sender could not publish to, with the same
+  `board_peer` denial, so a contact is never wider than what its asker could
+  reach. The consequence a confined task meets is that `--reply-to rr.dec-019`
+  needs `board_peer`, while `chat.<self>.<suffix>` needs nothing. That is D6's
+  convention.
+- **`await-idle --topic` publishes, so it obeys reach.** Its board sink posts
+  a `session_idle` row stamped with the requester and wakes the topic's
+  subscribers. It was gated only by the target's visibility, which a task
+  always passes for itself. It now refuses, at arm time, a topic its
+  requester could not publish to (`board_peer`). An operator connection, which
+  has no principal task, is exempt like the rest of the operator face. Its schema comment explains why: a distinguishable refusal
   answers "does seq N exist?" for every seq. D14's list (send, subscribe,
   list_retained, wait) never named it.
 - `HasChild` scans the store, as §6 measured. No children index is added.

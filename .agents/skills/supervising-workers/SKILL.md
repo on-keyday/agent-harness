@@ -230,7 +230,9 @@ or a menu all look the same at the byte level. `snapshot` once after the
 fire to see which; that needs `exec_view`. **Arming the watcher itself needs
 no capability at all** — it reports `last_output_at`, which `ls` already gives
 you — except `--notify`, which needs `notify` because it reaches the operator's
-egress.
+egress, and `--topic` on a topic outside your board reach, which needs
+`board_peer` because the fire publishes there in your name. Your own
+`chat.<short-id>` is always in reach.
 
 **Do not arm it for a peer you asked to report back.** A skill-aware claude
 worker runs `agent send` *during* its turn, so its reply reaches you while the

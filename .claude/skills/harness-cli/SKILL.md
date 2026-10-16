@@ -624,7 +624,9 @@ Without any capability a task publishes to its **base set**:
 - `chat.operator`;
 - the **reply route of any message it was handed** — the sender's `chat.<id>`,
   or the `reply_to_topic` the sender declared. Someone who spoke to you first
-  can always be answered, whoever they are;
+  can be answered whoever they are, with three limits: a reply route that is a
+  `tree.<id>` you are not in stays closed; only the 64 most recent such routes
+  are kept; and a server restart forgets them;
 - `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
   itself included.
 
@@ -653,7 +655,12 @@ Two naming conventions follow from that:
   cannot read it without `board_observe`, and a peer you asked can still answer
   there, because a declared `--reply-to` is the reply route of the message it
   received. A free-form `--reply-to` name works too, but anyone who guesses it
-  can read it.
+  can read it — and declaring one needs `board_peer`.
+
+**A `--reply-to` must be a topic you could publish to yourself.** The route you
+declare becomes a contact of whoever reads the message (you included), so a
+route outside your reach is refused with the same `board_peer` denial as a send
+there. Your own `chat.<short-id>.<suffix>` is always in reach.
 - **A team channel** is `tree.<your-full-task-id>.<suffix>`: you and every task
   below you in the spawn tree read and write it; nobody else writes it, and
   nobody else reads it without `board_observe`.
@@ -928,9 +935,11 @@ harness-cli agent send --topic chat.<peer> --reply-to rr.dec-019 --data '...'
 The server records `rr.dec-019` on your message and routes replies there. The
 peer needs no knowledge of it — it answers with `--in-reply-to <seq>` as
 always, and needs no capability to do so, because a declared reply route is
-part of what it was handed. Subscribe to the topic first if you intend to
-receive there. Use `chat.<your-short-id>.<suffix>` instead of a free-form name
-when the answers should not be readable by whoever guesses the name.
+part of what it was handed (unless it is a `tree.<id>` the peer is not in).
+Subscribe to the topic first if you intend to receive there. Declaring a
+free-form route like `rr.dec-019` needs `board_peer` (see "Who you can reach");
+`chat.<your-short-id>.<suffix>` needs nothing, and its answers are not
+readable by whoever guesses the name.
 
 Precedence, when a reply arrives: an explicit `--topic` on the REPLY wins,
 then the destination the asker declared, then the asker's own

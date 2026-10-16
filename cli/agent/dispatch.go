@@ -139,7 +139,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	}
 
 	if res.Err != nil {
-		return reachHint(res.Err, *topic)
+		return reachHint(res.Err, reachLabel(*topic, 0, *replyTo))
 	}
 	if kerr := expectKind(res.Resp, protocol.TaskControlKind_AgentSend); kerr != nil {
 		return kerr

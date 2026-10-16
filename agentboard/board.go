@@ -214,10 +214,10 @@ func (b *Board) Subscribe(c *ConnState, pattern string) error {
 	if c == nil || c.task == nil {
 		return errors.New("not attached")
 	}
-	// Wait is deliberately NOT refused the same way: a wait already reads any
-	// named topic's ring (knowing the name is the price of entry), and a task
-	// waiting on a topic is skipped by the wake loop. Subscription is what
-	// would put chat.operator into an inbox and wake a task on every reply.
+	// Subscribing to chat.operator is refused for everyone, board_observe
+	// included: it would put the operator's replies into an inbox and wake a
+	// task on every one. Waiting on it is refused only by the reach check
+	// below and in Wait, since a waiter is skipped by the wake loop.
 	if pattern == OperatorTopic {
 		return ErrReservedTopic
 	}

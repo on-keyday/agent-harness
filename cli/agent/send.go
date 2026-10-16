@@ -94,7 +94,20 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 	if err != nil {
 		return fmt.Errorf("agent: %w", err)
 	}
-	return sendResult(r, *topic, *inReplyTo, len(payload), source, stdout)
+	return sendResult(r, reachLabel(*topic, *inReplyTo, *replyTo), *inReplyTo, len(payload), source, stdout)
+}
+
+// reachLabel names what a board_peer denial of a send may be about: the
+// destination, and the declared --reply-to route, which must be reachable
+// too because it becomes the recipient's contact.
+func reachLabel(topic string, inReplyTo uint64, replyTo string) string {
+	if topic == "" {
+		topic = fmt.Sprintf("the reply route of seq %d", inReplyTo)
+	}
+	if replyTo != "" {
+		return fmt.Sprintf("%s or its --reply-to route %s", topic, replyTo)
+	}
+	return topic
 }
 
 // reachHint adds what a board reach denial means to the ordinary capability
@@ -125,9 +138,6 @@ func reachHint(err error, topic string) error {
 // status stands for. n and source describe the body that was published.
 func sendResult(r cli.TaskControlResult, topic string, inReplyTo uint64, n int, source string, stdout io.Writer) error {
 	if r.Err != nil {
-		if topic == "" {
-			topic = fmt.Sprintf("the reply route of seq %d", inReplyTo)
-		}
 		return reachHint(r.Err, topic)
 	}
 	if err := expectKind(r.Resp, protocol.TaskControlKind_AgentSend); err != nil {

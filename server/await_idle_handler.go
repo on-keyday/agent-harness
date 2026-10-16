@@ -81,8 +81,8 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		// not send via `harness-cli notify`. (The fire text is
 		// server-synthesized, so this is a noise vector, not spoofing — but
 		// an egress gate that depends on which RPC you arrive by is not a
-		// gate.) The board sink needs no extra cap: agentboard sends are
-		// deliberately ungated for authenticated agents.
+		// gate.) The board sink is a publish, so it takes the requester's
+		// board reach instead (below), as agent send does.
 		if !hasCap(h.callerCaps(conn.ConnectionID().String()), protocol.Capability_Notify) {
 			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_Notify)
 			return
@@ -90,6 +90,16 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	case protocol.AwaitIdleSink_Board:
 		if topic == "" || h.Board == nil {
 			respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
+			return
+		}
+		// The fire publishes a row stamped with the requester and wakes the
+		// topic's subscribers: a task may arm it only on a topic it could
+		// publish to itself (reach spec §2). An operator connection has no
+		// principal task and is not reach-checked, like the rest of the
+		// operator face.
+		if h.lookupPrincipal(conn.ConnectionID().String()).Id != ([16]byte{}) &&
+			!h.Board.Publishable(h.boardState(conn), topic) {
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_BoardPeer)
 			return
 		}
 	default:

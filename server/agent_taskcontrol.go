@@ -15,7 +15,11 @@ import (
 // The agentboard's AGENT face, on the task-control frame family.
 //
 // These verbs are keyed to the caller's own subscriptions, or to a message the
-// caller published, and take no capability. The two board verbs that are gated
+// caller published, and no request KIND needs a capability. Some requests do,
+// by what they name: a publish outside the caller's base set needs board_peer,
+// and a read of another task's direct messages board_observe (reach spec
+// 2026-10-16), refused through the same denyTaskControl as any capability.
+// The two board verbs that are gated
 // — board_topics and board_purge — live in board_handler.go beside the rest of
 // the operator face; the agent CLI reaches them by name rather than through a
 // duplicate of its own.
@@ -188,6 +192,16 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		// reply to a seq the sender never received resolves to a route it has
 		// no contact for (reach spec D4).
 		if !h.Board.Publishable(st, destTopic) {
+			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, protocol.Capability_BoardPeer)
+			return
+		}
+		// A declared reply route becomes the recipient's contact (§3), and the
+		// recipient may be the sender itself. So it may name only a topic the
+		// sender could publish to: otherwise a task with no bits sends itself
+		// a message with --reply-to <anything>, reads it, and holds that topic
+		// as a contact. This keeps a contact no wider than what its asker
+		// could reach.
+		if replyToTopic != "" && !h.Board.Publishable(st, replyToTopic) {
 			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, protocol.Capability_BoardPeer)
 			return
 		}

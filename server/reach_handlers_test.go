@@ -2,6 +2,7 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -160,5 +161,85 @@ func TestDeliveredRowsBecomeContacts(t *testing.T) {
 	h.handleAgentInboxAdvance(conn, 1)
 	if !h.Board.Publishable(st, agentboard.SelfTopic(peer)) {
 		t.Error("reading the peer's message through inbox_advance did not make it a contact")
+	}
+}
+
+// sendThroughHandler drives handleAgentSend with a one-byte body and waits for
+// its answer, which the handler sends from its own goroutine.
+func sendThroughHandler(t *testing.T, h *TaskHandler, conn *fakeConn, requestID uint32, r *protocol.AgentSendRequest) protocol.TaskControlResponse {
+	t.Helper()
+	before := len(conn.Sent())
+	r.RequestId = requestID
+	r.PayloadStreamId = 1
+	rc := &recvStreamConn{fakeConn: conn, st: &countingRecvStream{remaining: 1}}
+	h.handleAgentSend(rc, requestID, r)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(conn.Sent()) == before {
+		if time.Now().After(deadline) {
+			t.Fatal("handleAgentSend sent no response")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return lastTaskControlResponse(t, conn)
+}
+
+// A declared reply route becomes the recipient's contact (reach spec §3), so a
+// sender may only declare one it could publish to itself. Otherwise a task
+// with no bits sends itself a message with --reply-to <anything>, reads it,
+// and holds that topic as a contact: board_peer bypassed alone.
+func TestAgentSendRefusesAReplyToBeyondItsOwnReach(t *testing.T) {
+	h, conn, st, me := reachHandler(t, 0)
+	if err := h.Board.Subscribe(st, agentboard.SelfTopic(me)); err != nil {
+		t.Fatal(err)
+	}
+	for _, victim := range []string{"chat.deadbeef", "build.events"} {
+		r := &protocol.AgentSendRequest{}
+		r.SetTopic([]byte(agentboard.SelfTopic(me)))
+		r.SetReplyToTopic([]byte(victim))
+		resp := sendThroughHandler(t, h, conn, 9, r)
+		if resp.Kind != protocol.TaskControlKind_PermissionDenied || resp.PermissionDenied().RequiredCap != protocol.Capability_BoardPeer {
+			t.Errorf("self-send with reply_to %s answered %v, want the board_peer denial", victim, resp.Kind)
+		}
+		h.handleAgentInboxAdvance(conn, 10)
+		if h.Board.Publishable(st, victim) {
+			t.Errorf("%s became reachable through a self-declared reply route", victim)
+		}
+	}
+	// Declaring a route the sender can reach itself is fine: its own side channel.
+	r := &protocol.AgentSendRequest{}
+	r.SetTopic([]byte(agentboard.SelfTopic(me)))
+	r.SetReplyToTopic([]byte(agentboard.SelfTopic(me) + ".side"))
+	if resp := sendThroughHandler(t, h, conn, 11, r); resp.Kind != protocol.TaskControlKind_AgentSend || resp.AgentSend().Status != protocol.SendStatus_Ok {
+		t.Errorf("self-send with reply_to on its own side channel answered %v", resp.Kind)
+	}
+}
+
+// await-idle's board sink publishes a session_idle row stamped with the
+// requester and wakes the topic's subscribers. It is a publish, so it obeys
+// the requester's reach like agent send does; an operator connection (no
+// principal task) is not reach-checked, like the rest of the operator face.
+func TestAwaitIdleBoardSinkObeysTheRequestersReach(t *testing.T) {
+	h, conn, _, me := reachHandler(t, 0)
+	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): me}
+
+	arm := func(topic string) protocol.TaskControlResponse {
+		t.Helper()
+		req := protocol.AwaitIdleRequest{TaskId: me, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Board}
+		req.SetTopic([]byte(topic))
+		tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+		tcr.SetAwaitIdle(req)
+		before := len(conn.Sent())
+		h.Handle(conn, tcr.MustAppend(nil))
+		waitFor(t, func() bool { return len(conn.Sent()) > before })
+		return lastTaskControlResponse(t, conn)
+	}
+
+	if resp := arm("chat.deadbeef"); resp.Kind != protocol.TaskControlKind_PermissionDenied ||
+		resp.PermissionDenied().RequiredCap != protocol.Capability_BoardPeer {
+		t.Errorf("arming a board sink on a peer's topic answered %v, want the board_peer denial", resp.Kind)
+	}
+	// Its own topic is in reach; the arm then proceeds (and finds no session).
+	if resp := arm(agentboard.SelfTopic(me)); resp.Kind == protocol.TaskControlKind_PermissionDenied {
+		t.Error("arming a board sink on its own topic was denied")
 	}
 }
