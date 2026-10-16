@@ -126,16 +126,19 @@ type modalKeyMap struct {
 	BoardCompose     string
 	BoardReply       string
 	BoardWake        string
-	GitSetBase       string
-	GitStatus        string
-	GitNextFile      string
-	GitPrevFile      string
-	GitSubmodule     string
-	GitUp            string
-	GitOpenFile      string
-	ConnsTrsf        string
-	ConnsReadRunner  string
-	ConnsReadServer  string
+	// BoardForgetContact forgets the highlighted contact in the subscribers
+	// view, or every contact of the highlighted task.
+	BoardForgetContact string
+	GitSetBase         string
+	GitStatus          string
+	GitNextFile        string
+	GitPrevFile        string
+	GitSubmodule       string
+	GitUp              string
+	GitOpenFile        string
+	ConnsTrsf          string
+	ConnsReadRunner    string
+	ConnsReadServer    string
 }
 
 var modalKeys = modalKeyMap{
@@ -172,13 +175,16 @@ var modalKeys = modalKeyMap{
 	BoardCompose: "m",
 	BoardReply:   "a",
 	BoardWake:    "p",
-	GitSetBase:   "B",
-	GitStatus:    "s",
-	GitNextFile:  "n",
-	GitPrevFile:  "N",
-	GitSubmodule: "m",
-	GitUp:        "backspace",
-	GitOpenFile:  "o",
+	// x removes the highlighted thing, as it kills a forward and purges a
+	// topic; the views it means something in do not overlap.
+	BoardForgetContact: "x",
+	GitSetBase:         "B",
+	GitStatus:          "s",
+	GitNextFile:        "n",
+	GitPrevFile:        "N",
+	GitSubmodule:       "m",
+	GitUp:              "backspace",
+	GitOpenFile:        "o",
 	// Same letter and the same reasoning as ForwardTap: the trsf columns are a
 	// READING of the rows already on screen, not a stronger form of anything
 	// beside it.

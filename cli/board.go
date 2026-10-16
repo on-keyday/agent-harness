@@ -346,6 +346,60 @@ func (c *Client) BoardRetract(ctx context.Context, topic string, seq uint64) (bo
 	return br.Status != protocol.BoardStatus_NotFound, nil
 }
 
+// BoardContactsClear forgets one contact of the task (topic non-empty) or all
+// of them (topic empty). found is false when the task is outside the caller's
+// purge scope or the board holds no state for it -- the server does not tell
+// those apart. Requires Capability_Purge.
+func (c *Client) BoardContactsClear(ctx context.Context, taskIDHex, topic string) (removed int, found bool, err error) {
+	raw, err := hex.DecodeString(taskIDHex)
+	if err != nil || len(raw) != 16 {
+		return 0, false, fmt.Errorf("invalid task id %q: want 32 hex chars", taskIDHex)
+	}
+	r := protocol.BoardContactsClearRequest{}
+	copy(r.Task.Id[:], raw)
+	r.SetTopic([]byte(topic))
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardContactsClear}
+	req.SetBoardContactsClear(r)
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return 0, false, err
+	}
+	cr := resp.BoardContactsClear()
+	if cr == nil || resp.Kind != protocol.TaskControlKind_BoardContactsClear {
+		return 0, false, fmt.Errorf("BoardContactsClear: unexpected response kind=%v", resp.Kind)
+	}
+	return int(cr.Removed), cr.Status == protocol.BoardStatus_Ok, nil
+}
+
+// ClearContactsLabel is the one spelling of a clear-contacts result, shared by
+// the CLI, the TUI status line and the WebUI: the task, then what changed.
+func ClearContactsLabel(taskIDHex, topic string, removed int, found bool) string {
+	short := taskIDHex
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	switch {
+	case !found:
+		return fmt.Sprintf("clear-contacts %s: no such task on the board", short)
+	case topic == "":
+		return fmt.Sprintf("clear-contacts %s: removed all %d contact(s)", short, removed)
+	case removed == 0:
+		return fmt.Sprintf("clear-contacts %s: %s is not a contact (removed 0)", short, topic)
+	}
+	return fmt.Sprintf("clear-contacts %s: removed %s", short, topic)
+}
+
+// BoardContactsClear is a package-level fresh-dial wrapper for
+// (*Client).BoardContactsClear.
+func BoardContactsClear(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex, topic string) (int, bool, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return 0, false, err
+	}
+	defer c.Close()
+	return c.BoardContactsClear(ctx, taskIDHex, topic)
+}
+
 // BoardTopics is a package-level fresh-dial wrapper: it opens a new Client,
 // calls (*Client).BoardTopics, and closes the connection. Suitable for
 // short-lived CLI processes; long-lived consumers should hold a *Client.

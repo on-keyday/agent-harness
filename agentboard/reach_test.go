@@ -450,3 +450,39 @@ func TestContactsOnlyFromMessagesAddressedToTheReader(t *testing.T) {
 		t.Error("a message on my own side channel did not make its sender a contact")
 	}
 }
+
+// The operator forgets one route, or every route, of a task's contacts. A
+// forgotten route closes again for a task without board_peer.
+func TestClearContactsOneAndAll(t *testing.T) {
+	r := newFakeReach()
+	me, p1, p2 := tidN(2), tidN(4), tidN(5)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	b.NoteDelivered(c, []RetainedMessage{
+		{Topic: SelfTopic(me), FromTask: p1, SenderKind: protocol.SenderKind_Agent},
+		{Topic: SelfTopic(me), FromTask: p2, SenderKind: protocol.SenderKind_Agent},
+	})
+
+	if n, found := b.ClearContacts(me, SelfTopic(p1)); !found || n != 1 {
+		t.Fatalf("clear one = %d, %v; want 1, true", n, found)
+	}
+	if b.Publishable(c, SelfTopic(p1)) {
+		t.Error("a forgotten contact still opens its route")
+	}
+	if !b.Publishable(c, SelfTopic(p2)) {
+		t.Error("clearing one contact took another with it")
+	}
+	if n, found := b.ClearContacts(me, SelfTopic(p1)); !found || n != 0 {
+		t.Errorf("clearing a route that is not a contact = %d, %v; want 0, true", n, found)
+	}
+	if n, found := b.ClearContacts(me, ""); !found || n != 1 {
+		t.Errorf("clear all = %d, %v; want 1, true", n, found)
+	}
+	if got := b.Contacts(c); len(got) != 0 {
+		t.Errorf("contacts after clear all = %v", got)
+	}
+	if _, found := b.ClearContacts(tidN(9), ""); found {
+		t.Error("a task the board holds no state for reported found")
+	}
+}

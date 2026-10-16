@@ -140,6 +140,15 @@ topic pushed T's real correspondents out of the 64-entry bound.
   on `board subscribers` (`board_observe`) in the CLI, TUI and WebUI. Before
   this nothing showed it, so an operator deciding whether a task needs
   `board_peer` could not see what it already reached.
+- **Forgetting (operator, 2026-10-16):** `board clear-contacts <task>
+  [--topic T]` drops one contact, or every contact the task holds. Without
+  it, nothing but a server restart removed one: `caps set` taking
+  `board_peer` away left every route a peer had opened by writing first, and
+  a restart costs every task its board. It is gated on `purge` — it removes
+  another task's state, the class of `board retract` — and, because it names a
+  task, on that bit's scope: a task outside it answers `not_found`, the same
+  answer as one the board holds no state for. A forgotten route opens again
+  the next time someone addresses the task from it.
 - **Limit, stated because it is real:** after eviction, `--in-reply-to` still
   fails with `unknown_in_reply_to`, because the parent is gone. Contacts make
   the explicit `--topic <route>` fallback pass the check; they do not make the
@@ -332,6 +341,10 @@ What the numbers also say:
   bit) answers with a `ContactsBody` on a stream, and `BoardSubscriberRow`
   gains `contacts :[contacts_len :u8]BoardContact`. The row change lengthens
   the `board subscribers` body, so the order is again server first.
+- Forgetting (§3): `TaskControlKind.board_contacts_clear` (appended), request
+  `{task, topic}` with an empty topic meaning all, response `{status, removed
+  :u8}`. `requiredCap` maps it to `purge`, and `kindTargetClass` marks it
+  `targetGated`.
 - `scripts/wire-skew-check.sh` is run.
 
 **Interaction with the delivery-row size defect.** Wait, inbox, inbox_advance
@@ -366,6 +379,13 @@ on a stream, so D7's longer topics no longer move any datagram limit.
   through the subscribers of its `chat.<id>`. The task detail views do not
   show contacts: they render the `ls` snapshot, which comes from the task
   store, and contacts live on the board.
+- Forgetting is on the same view. The TUI subscribers view lists one contact
+  per line under its task and moves a cursor over both kinds of line; `x`
+  forgets the highlighted contact, or every contact on a task line. The list
+  is windowed to the modal's height. The WebUI puts × on each contact and
+  「全消去」 on each row, behind `confirm` as its other destructive buttons are;
+  the TUI asks nothing, as its `w` / `X` do not. All three print
+  `cli.ClearContactsLabel`.
 
 ## Amendment 2026-10-16 — found while planning
 

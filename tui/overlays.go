@@ -331,8 +331,14 @@ func (a *App) inBoardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 	} else if a.boardModal.Mode() == boardSubscribers {
-		if msg.String() == modalKeys.BoardSubscribers {
+		switch msg.String() {
+		case modalKeys.BoardSubscribers:
 			return DoBoardSubscribers(a.client, a.boardModal.CurTopic())
+		case modalKeys.BoardForgetContact:
+			if task, topic, ok := a.boardModal.SelectedContactTarget(); ok {
+				return DoBoardContactsClear(a.client, task, topic, a.boardModal.CurTopic())
+			}
+			return nil
 		}
 	} else if m := a.boardModal.Mode(); m == boardChainList || m == boardChains {
 		// w / X keep the meanings the modal already established -- withdraw and

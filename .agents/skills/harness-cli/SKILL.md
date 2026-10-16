@@ -630,8 +630,10 @@ Without any capability a task publishes to its **base set**:
   answerable. Three more limits: a reply route that is a `tree.<id>` you are
   not in stays closed; only 64 such routes are kept, and the one that has gone
   longest without writing to you again is dropped first; and a server restart
-  forgets them. `harness-cli agent contacts` lists the ones you hold now,
-  newest first (JSON Lines, no capability);
+  forgets them — as can the operator, one route or all of them
+  (`board clear-contacts`). `harness-cli agent contacts` lists the ones you
+  hold now, newest first (JSON Lines, no capability), so check it rather than
+  assume a route you answered earlier is still open;
 - `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
   itself included.
 
@@ -660,7 +662,9 @@ Two naming conventions follow from that:
 - **A confidential side channel** is `chat.<your-short-id>.<suffix>`. Others
   cannot read it without `board_observe`, and a peer you asked can still answer
   there, because a declared `--reply-to` is the reply route of the message it
-  received. A free-form `--reply-to` name works too, but anyone who guesses it
+  received. Confidential means unread, not unwritten: any task holding
+  `board_peer` can publish there, so a row on it is not proof it came from
+  the peer you asked — read `from.task_id`. A free-form `--reply-to` name works too, but anyone who guesses it
   can read it — and declaring one needs `board_peer`.
 - **A team channel** is `tree.<your-full-task-id>.<suffix>`: you and every task
   below you in the spawn tree read and write it; nobody else writes it, and

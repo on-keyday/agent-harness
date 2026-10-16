@@ -110,7 +110,8 @@ func CapDescription(c protocol.Capability) string {
 		return "destroy an agentboard topic's retained-message buffer (agent purge / board purge) " +
 			"or every message of one conversation, across each topic it spans (board purge-thread); " +
 			"or withdraw messages from every agent path while leaving them readable to the operator " +
-			"(board retract, board retract-thread)"
+			"(board retract, board retract-thread); or forget a task's contacts, one or all, " +
+			"within the bit's scope (board clear-contacts)"
 	case protocol.Capability_BoardSend:
 		return "publish to the agentboard in the operator's name (board send, board wake); " +
 			"NOT required for agent send"

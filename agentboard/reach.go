@@ -178,6 +178,26 @@ func (b *Board) Contacts(c *ConnState) []string {
 	return c.task.snapshotContacts()
 }
 
+// ClearContacts forgets topic from tid's contacts, or every contact when topic
+// is empty (the operator's board clear-contacts). found is false when the board
+// holds no state for tid. A task resumed on another runner has one state per
+// runner, so every one of them is cleared.
+func (b *Board) ClearContacts(tid protocol.TaskID, topic string) (removed int, found bool) {
+	want := hexTaskIDProto(tid)
+	b.mu.Lock()
+	var states []*taskState
+	for k, ts := range b.tasks {
+		if k.task == want {
+			states = append(states, ts)
+		}
+	}
+	b.mu.Unlock()
+	for _, ts := range states {
+		removed += ts.forgetContacts(topic)
+	}
+	return removed, len(states) > 0
+}
+
 // readableTargets keeps the tasks that may read topic. Called after b.mu is
 // released: the predicate takes the task store's lock (reach spec §5, Lock
 // order).

@@ -780,6 +780,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_retract variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_BoardContactsClear:
+		if r := req.BoardContactsClear(); r != nil {
+			h.handleBoardContactsClear(conn, req.RequestId, cid, r.Task, string(r.Topic))
+		} else {
+			slog.Error("board_contacts_clear variant is nil", "request_id", req.RequestId)
+		}
+
 	case protocol.TaskControlKind_BoardSubscribers:
 		var topic string
 		if bs := req.BoardSubscribers(); bs != nil {

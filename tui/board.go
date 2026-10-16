@@ -174,6 +174,27 @@ func DoBoardRetract(c *cli.Client, topic string, seq uint64) tea.Cmd {
 	}
 }
 
+// BoardContactsClearMsg carries the result of DoBoardContactsClear. Topic is
+// empty for "every contact of the task"; RefreshTopic is the subscribers view
+// to re-read afterwards.
+type BoardContactsClearMsg struct {
+	Task, Topic, RefreshTopic string
+	Removed                   int
+	Found                     bool
+	Err                       error
+}
+
+// DoBoardContactsClear forgets one contact of a task, or all of them, via the
+// long-lived client.
+func DoBoardContactsClear(c *cli.Client, task, topic, refreshTopic string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		n, found, err := c.BoardContactsClear(ctx, task, topic)
+		return BoardContactsClearMsg{Task: task, Topic: topic, RefreshTopic: refreshTopic, Removed: n, Found: found, Err: err}
+	}
+}
+
 // BoardThreadOpMsg carries the result of a thread-scoped retract or purge.
 // Verb is "retract" or "purge", for the status line.
 type BoardThreadOpMsg struct {
@@ -266,10 +287,15 @@ type BoardModal struct {
 	// differently — "published to and emptied" vs "never published" — and the
 	// message list and the content viewport must not disagree about which one
 	// this is.
-	curFound  bool
-	msgs      []cli.BoardMessage
-	subs      map[string]int           // per-topic subscriber count for the list
-	subRows   []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
+	curFound bool
+	msgs     []cli.BoardMessage
+	subs     map[string]int           // per-topic subscriber count for the list
+	subRows  []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
+	// subItems is what the subscribers cursor walks: each row's task line,
+	// then one line per contact. subCursor indexes it.
+	subItems  []subItem
+	subCursor int
+	height    int // the modal's rows, for windowing the subscribers list
 	msgCursor int
 	content   viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
 	// msgSubs is the subscriber set for curTopic, captured with the messages so
@@ -293,6 +319,12 @@ type BoardModal struct {
 	pendingStatus string
 	// compose is the open send/reply editor, nil when none is.
 	compose *boardCompose
+}
+
+// subItem is one selectable line of the subscribers view: a task line
+// (contact < 0) or one of that row's contacts.
+type subItem struct {
+	row, contact int
 }
 
 // takePendingStatus installs a status set before a refresh was scheduled.
@@ -371,6 +403,7 @@ func (m *BoardModal) SetSize(w, h int) {
 	m.topicsTable.SetHeight(h/2 - 4)
 	m.content.Width = w - 4
 	m.content.Height = h/2 - 4
+	m.height = h
 }
 
 // ApplyTopics replaces all rows with the given slice and rebuilds the topics
@@ -434,8 +467,35 @@ func (m *BoardModal) ApplySubscribers(topic string, rows []cli.BoardSubscriberRo
 	m.curTopic = topic
 	m.subRows = make([]cli.BoardSubscriberRow, len(rows))
 	copy(m.subRows, rows)
+	m.subItems = m.subItems[:0]
+	for i, r := range m.subRows {
+		m.subItems = append(m.subItems, subItem{row: i, contact: -1})
+		for j := range r.Contacts {
+			m.subItems = append(m.subItems, subItem{row: i, contact: j})
+		}
+	}
+	// Kept, not reset: a refresh after forgetting a contact should leave the
+	// cursor where the operator was working. Clamped because the list shrank.
+	if m.subCursor >= len(m.subItems) {
+		m.subCursor = max(len(m.subItems)-1, 0)
+	}
 	m.mode = boardSubscribers
-	m.status = ""
+	m.takePendingStatus()
+}
+
+// SelectedContactTarget is what x in the subscribers view acts on: the task of
+// the highlighted line, and the contact on it, or "" for a task line, which
+// means every contact that task holds.
+func (m *BoardModal) SelectedContactTarget() (task, topic string, ok bool) {
+	if m.subCursor < 0 || m.subCursor >= len(m.subItems) {
+		return "", "", false
+	}
+	it := m.subItems[m.subCursor]
+	r := m.subRows[it.row]
+	if it.contact >= 0 {
+		topic = r.Contacts[it.contact]
+	}
+	return r.TaskHex, topic, true
 }
 
 // ApplyChains groups the collected rows into conversations and switches to the
@@ -733,6 +793,21 @@ func (m BoardModal) Update(msg tea.Msg) (BoardModal, tea.Cmd) {
 		var cmd tea.Cmd
 		m.content, cmd = m.content.Update(msg)
 		return m, cmd
+
+	case boardSubscribers:
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.Type {
+			case tea.KeyUp:
+				if m.subCursor > 0 {
+					m.subCursor--
+				}
+			case tea.KeyDown:
+				if m.subCursor < len(m.subItems)-1 {
+					m.subCursor++
+				}
+			}
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -796,7 +871,20 @@ func (m BoardModal) View() string {
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 
 	case boardSubscribers:
-		var list strings.Builder
+		// One line per selectable item, plus a "contacts=-" line for a task with
+		// none. Built as lines so the list can be windowed around the cursor:
+		// one task can hold 64 contacts, and the box must not outgrow the
+		// terminal.
+		var lines []string
+		cursorLine := 0
+		mark := func(item int) string {
+			if item == m.subCursor {
+				cursorLine = len(lines)
+				return "> "
+			}
+			return "  "
+		}
+		item := 0
 		for _, r := range m.subRows {
 			short := r.TaskHex
 			if len(short) > 8 {
@@ -822,19 +910,30 @@ func (m BoardModal) View() string {
 				}
 				pats = strings.Join(parts, ",")
 			}
-			list.WriteString(fmt.Sprintf("  %s  host=%s  agent=%s  topics=%s\n", short, host, agentName, pats))
-			// Its own line, wrapped: up to 64 routes would push the row far
-			// past the box. What the operator reads before granting
-			// board_peer — "-" is a measurement, not missing data.
-			contacts := "contacts=" + strings.ReplaceAll(cli.ContactsLabel(r.Contacts), ",", ", ")
-			list.WriteString(MutedStyle.PaddingLeft(12).Width(m.content.Width).Render(contacts) + "\n")
+			lines = append(lines, fmt.Sprintf("%s%s  host=%s  agent=%s  topics=%s", mark(item), short, host, agentName, pats))
+			item++
+			// What the operator reads before granting board_peer, one route per
+			// line so each can be selected and forgotten. "-" is a
+			// measurement, not missing data.
+			if len(r.Contacts) == 0 {
+				lines = append(lines, MutedStyle.Render("            contacts=-"))
+			}
+			for _, ct := range r.Contacts {
+				lines = append(lines, mark(item)+MutedStyle.Render("          contact="+ct))
+				item++
+			}
 		}
 		if len(m.subRows) == 0 {
-			list.WriteString("  (nobody subscribes — a publish here reaches no inbox)\n")
+			lines = append(lines, "  (nobody subscribes — a publish here reaches no inbox)")
+		}
+		// Border, header, status and footer take 5 rows.
+		if room := m.height - 5; room > 0 && len(lines) > room {
+			start := min(max(cursorLine-room/2, 0), len(lines)-room)
+			lines = lines[start : start+room]
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
-		footer := FooterStyle.Render("s: refresh  Esc: back")
-		return box.Render(header + "\n" + list.String() + statusLine + "\n" + footer)
+		footer := FooterStyle.Render("↑/↓ select · " + modalKeys.BoardForgetContact + ": forget contact (on a task line: all its contacts)  s: refresh  Esc: back")
+		return box.Render(header + "\n" + strings.Join(lines, "\n") + statusLine + "\n" + footer)
 	case boardChainList:
 		var list strings.Builder
 		for i, conv := range m.chainConvs {

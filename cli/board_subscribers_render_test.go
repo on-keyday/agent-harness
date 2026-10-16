@@ -40,3 +40,25 @@ func TestRenderSubscriberRowsCarriesContacts(t *testing.T) {
 		}
 	}
 }
+
+// The clear-contacts result names the task and what changed, and keeps the
+// three outcomes apart: removed, nothing to remove, and no such task.
+func TestClearContactsLabel(t *testing.T) {
+	const id = "3996f12ceddf850c67914ccc8905ad1f"
+	for _, tc := range []struct {
+		topic   string
+		removed int
+		found   bool
+		want    string
+	}{
+		{"chat.079341a2", 1, true, "clear-contacts 3996f12c: removed chat.079341a2"},
+		{"chat.079341a2", 0, true, "clear-contacts 3996f12c: chat.079341a2 is not a contact (removed 0)"},
+		{"", 3, true, "clear-contacts 3996f12c: removed all 3 contact(s)"},
+		{"", 0, true, "clear-contacts 3996f12c: removed all 0 contact(s)"},
+		{"", 0, false, "clear-contacts 3996f12c: no such task on the board"},
+	} {
+		if got := ClearContactsLabel(id, tc.topic, tc.removed, tc.found); got != tc.want {
+			t.Errorf("ClearContactsLabel(%q, %d, %v) = %q, want %q", tc.topic, tc.removed, tc.found, got, tc.want)
+		}
+	}
+}

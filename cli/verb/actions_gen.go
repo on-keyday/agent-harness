@@ -72,7 +72,7 @@ type AgentSendAction struct {
 	Timeout time.Duration
 }
 
-// BoardAction is built by: board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
+// BoardAction is built by: board clear-contacts, board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
 type BoardAction struct {
 	ActionMarker
 	// JSON Lines instead of text
@@ -91,6 +91,7 @@ type BoardAction struct {
 	Conversation string
 	// print rows without bodies
 	HeadersOnly bool
+	Task        string
 }
 
 // BoardSendAction is built by: board send.
@@ -1736,6 +1737,16 @@ func init() {
 			}
 			return a, nil
 		},
+		"board clear-contacts\x00cli": func(b Bound) (Action, error) {
+			a := BoardAction{}
+			a.Sub = "clear-contacts"
+			a.Topic = b.Str("topic")
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.Task = b.Args[0]
+			}
+			return a, nil
+		},
 		"board purge\x00cli": func(b Bound) (Action, error) {
 			a := BoardAction{}
 			a.Sub = "purge"
@@ -3104,6 +3115,7 @@ const (
 	CmdBoardThread            = "board thread"
 	CmdBoardSubscribers       = "board subscribers"
 	CmdBoardRetract           = "board retract"
+	CmdBoardClearContacts     = "board clear-contacts"
 	CmdBoardPurge             = "board purge"
 	CmdBoardRetractThread     = "board retract-thread"
 	CmdBoardPurgeThread       = "board purge-thread"
@@ -3190,6 +3202,7 @@ const (
 	SubAwaitIdleLs     = "await-idle-ls"
 	SubCaps            = "caps"
 	SubClear           = "clear"
+	SubClearContacts   = "clear-contacts"
 	SubContacts        = "contacts"
 	SubDetach          = "detach"
 	SubDiag            = "diag"
@@ -4033,6 +4046,27 @@ func ParseCmdBoardRetract(sf Surface, args []string, ctx map[string]string) (Boa
 	sp, ok := Lookup("board", "retract")
 	if !ok {
 		return zero, fmt.Errorf("board retract: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(BoardAction)
+	return a, nil
+}
+
+func ParseCmdBoardClearContacts(sf Surface, args []string, ctx map[string]string) (BoardAction, error) {
+	var zero BoardAction
+	sp, ok := Lookup("board", "clear-contacts")
+	if !ok {
+		return zero, fmt.Errorf("board clear-contacts: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -5600,6 +5634,8 @@ type CLIDispatch[R any] interface {
 	BoardSubscribers(BoardAction) R
 	// board retract
 	BoardRetract(BoardAction) R
+	// board clear-contacts
+	BoardClearContacts(BoardAction) R
 	// board purge
 	BoardPurge(BoardAction) R
 	// board retract-thread
@@ -5917,6 +5953,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.BoardRetract(a), true, nil
+	case CmdBoardClearContacts:
+		a, perr := ParseCmdBoardClearContacts(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.BoardClearContacts(a), true, nil
 	case CmdBoardPurge:
 		a, perr := ParseCmdBoardPurge(CLI, args, ctx)
 		if perr != nil {
@@ -6346,6 +6388,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.BoardSubscribers(a), true
 		case "retract":
 			return h.BoardRetract(a), true
+		case "clear-contacts":
+			return h.BoardClearContacts(a), true
 		case "purge":
 			return h.BoardPurge(a), true
 		case "retract-thread":
@@ -6686,6 +6730,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdBoardRetract:
 			a, perr := ParseCmdBoardRetract(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdBoardClearContacts:
+			a, perr := ParseCmdBoardClearContacts(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

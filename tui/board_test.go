@@ -188,7 +188,7 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 	for _, want := range []string{
 		"subscribers of rr.dec-019 (2)", "aabbccdd", "host=host-A", "agent=codex", "host=-",
 		"chat.aabbccdd(shown=4200 pending=2)", "rr.dec-019(shown=0 pending=0)",
-		"contacts=chat.99887766", "contacts=-",
+		"contact=chat.99887766", "contacts=-",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q\n%s", want, view)
@@ -202,10 +202,25 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 		full = append(full, fmt.Sprintf("chat.%08x", i))
 	}
 	m.ApplySubscribers("x", []cli.BoardSubscriberRow{{TaskHex: "aabbccddeeff0011", Contacts: full}})
-	for _, line := range strings.Split(m.View(), "\n") {
+	lines := strings.Split(m.View(), "\n")
+	for _, line := range lines {
 		if w := lipgloss.Width(line); w > 100 {
 			t.Fatalf("a %d-column line in a 100-column modal:\n%s", w, line)
 		}
+	}
+	// One line per contact, so the list is windowed to the modal's height and
+	// follows the cursor.
+	if len(lines) > 30 {
+		t.Fatalf("%d lines in a 30-row modal", len(lines))
+	}
+	for i := 0; i < 64; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if task, topic, ok := m.SelectedContactTarget(); !ok || topic != full[63] || task != "aabbccddeeff0011" {
+		t.Errorf("after 64 downs the target is (%q, %q, %v), want the last contact", task, topic, ok)
+	}
+	if v := m.View(); !strings.Contains(v, "> ") || !strings.Contains(v, full[63]) {
+		t.Errorf("the window did not follow the cursor to the last contact:\n%s", v)
 	}
 
 	// An empty subscriber set is a finding, not a blank pane.
@@ -602,4 +617,46 @@ func TestBoardModal_ActionStatusSurvivesItsRefresh(t *testing.T) {
 			t.Errorf("SetStatus must NOT survive a refresh; only SetStatusAfterRefresh does:\n%s", m.View())
 		}
 	})
+}
+
+// The cursor walks task lines and contact lines alike: x on a contact forgets
+// that one, on a task line every contact the task holds. A task with no
+// contacts offers only its task line.
+func TestBoardSubscribersCursorSelectsContactTargets(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 40)
+	m.ApplySubscribers("chat.aaaaaaaa", []cli.BoardSubscriberRow{
+		{TaskHex: "aaaaaaaa00000000", Contacts: []string{"chat.11111111", "rr.x"}},
+		{TaskHex: "bbbbbbbb00000000"},
+	})
+	want := []struct{ task, topic string }{
+		{"aaaaaaaa00000000", ""},
+		{"aaaaaaaa00000000", "chat.11111111"},
+		{"aaaaaaaa00000000", "rr.x"},
+		{"bbbbbbbb00000000", ""},
+		{"bbbbbbbb00000000", ""}, // the last item holds
+	}
+	for i, w := range want {
+		if i > 0 {
+			m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		}
+		task, topic, ok := m.SelectedContactTarget()
+		if !ok || task != w.task || topic != w.topic {
+			t.Errorf("step %d: target (%q, %q, %v), want (%q, %q)", i, task, topic, ok, w.task, w.topic)
+		}
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if _, topic, _ := m.SelectedContactTarget(); topic != "rr.x" {
+		t.Errorf("up from the second task landed on %q, want rr.x", topic)
+	}
+	// A refresh keeps the result line an action set before it.
+	m.SetStatusAfterRefresh("clear-contacts aaaaaaaa: removed rr.x")
+	m.ApplySubscribers("chat.aaaaaaaa", []cli.BoardSubscriberRow{{TaskHex: "aaaaaaaa00000000", Contacts: []string{"chat.11111111"}}})
+	if v := m.View(); !strings.Contains(v, "removed rr.x") {
+		t.Errorf("the action result did not survive the refresh:\n%s", v)
+	}
+	if _, _, ok := m.SelectedContactTarget(); !ok {
+		t.Error("the cursor fell off the list when it shrank")
+	}
 }

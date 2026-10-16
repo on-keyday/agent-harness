@@ -812,6 +812,14 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.ApplySubscribers(msg.Topic, msg.Rows)
 		return a, nil
 
+	case BoardContactsClearMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("clear-contacts: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.SetStatusAfterRefresh(cli.ClearContactsLabel(msg.Task, msg.Topic, msg.Removed, msg.Found))
+		return a, DoBoardSubscribers(a.client, msg.RefreshTopic)
+
 	case BoardPurgeMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("purge: " + msg.Err.Error())

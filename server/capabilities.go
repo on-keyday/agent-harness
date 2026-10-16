@@ -35,21 +35,24 @@ import (
 // polling for the same fact. Its one side effect, sink=notify, is gated on
 // `notify` inside the handler.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Submit:           protocol.Capability_Spawn,
-	protocol.TaskControlKind_OpenInteractive:  protocol.Capability_Spawn,
-	protocol.TaskControlKind_Cancel:           protocol.Capability_Cancel,
-	protocol.TaskControlKind_PruneTasks:       protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:           protocol.Capability_Notify,
-	protocol.TaskControlKind_DialRunner:       protocol.Capability_RunnerAdmin,
-	protocol.TaskControlKind_BoardTopics:      protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardRead:        protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
-	protocol.TaskControlKind_BoardRetract:     protocol.Capability_Purge,
-	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardSend:        protocol.Capability_BoardSend,
-	protocol.TaskControlKind_BoardWake:        protocol.Capability_BoardSend,
-	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
-	protocol.TaskControlKind_OpenExecRun:      protocol.Capability_ExecRun,
+	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
+	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
+	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
+	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_BoardTopics:     protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardRead:       protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardPurge:      protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardRetract:    protocol.Capability_Purge,
+	// Forgetting a task's contacts removes another task's board state, the
+	// same class as withdrawing its message; the handler adds the scope gate.
+	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardSubscribers:   protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardSend:          protocol.Capability_BoardSend,
+	protocol.TaskControlKind_BoardWake:          protocol.Capability_BoardSend,
+	protocol.TaskControlKind_GitQuery:           protocol.Capability_FileRead,
+	protocol.TaskControlKind_OpenExecRun:        protocol.Capability_ExecRun,
 	// OpenForwardTap sits in this map, and NOT inline like KillPortForward's,
 	// because it is direction-INDEPENDENT: reading the payload of a -R forward
 	// is the same power as reading a -L one, so the bit is known without the

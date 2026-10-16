@@ -170,6 +170,25 @@ func (h *TaskHandler) handleBoardRetract(conn ConnHandle, requestID uint32, topi
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }
 
+// handleBoardContactsClear forgets one contact of a task, or all of them when
+// topic is empty. Cap (purge) is enforced centrally; this is the target gate:
+// a task outside the caller's purge scope answers not_found, the same answer as
+// one the board holds no state for, so the reply is no existence oracle.
+func (h *TaskHandler) handleBoardContactsClear(conn ConnHandle, requestID uint32, cid string, task protocol.TaskID, topic string) {
+	out := protocol.BoardContactsClearResponse{RequestId: requestID, Status: protocol.BoardStatus_NotFound}
+	taskHex := hex.EncodeToString(task.Id[:])
+	if h.Board != nil && h.inScope(cid, protocol.Capability_Purge, taskHex) {
+		if n, found := h.Board.ClearContacts(task, topic); found {
+			out.Status = protocol.BoardStatus_Ok
+			out.Removed = uint8(min(n, 255))
+			slog.Info("board clear-contacts", "task", taskHex, "topic", topic, "removed", n)
+		}
+	}
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardContactsClear, RequestId: requestID}
+	resp.SetBoardContactsClear(out)
+	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+}
+
 // handleBoardPurge drops a topic's ring (seq==0) or a single seq. Cap (purge)
 // enforced centrally.
 func (h *TaskHandler) handleBoardPurge(conn ConnHandle, requestID uint32, topic string, seq uint64) {

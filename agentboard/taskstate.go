@@ -78,6 +78,30 @@ func (t *taskState) addContact(topic string) {
 	t.contactOrder = append(t.contactOrder, topic)
 }
 
+// forgetContacts removes topic from the contacts, or every contact when topic
+// is empty, and reports how many went.
+func (t *taskState) forgetContacts(topic string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if topic == "" {
+		n := len(t.contactOrder)
+		t.contacts = make(map[string]struct{})
+		t.contactOrder = nil
+		return n
+	}
+	if _, ok := t.contacts[topic]; !ok {
+		return 0
+	}
+	delete(t.contacts, topic)
+	for i, c := range t.contactOrder {
+		if c == topic {
+			t.contactOrder = append(t.contactOrder[:i], t.contactOrder[i+1:]...)
+			break
+		}
+	}
+	return 1
+}
+
 // snapshotContacts copies the contacts newest first.
 func (t *taskState) snapshotContacts() []string {
 	t.mu.Lock()

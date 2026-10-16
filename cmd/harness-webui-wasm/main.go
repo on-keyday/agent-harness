@@ -153,6 +153,7 @@ func main() {
 		"boardThread":        js.FuncOf(harnessBoardThread),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"boardRetract":       js.FuncOf(harnessBoardRetract),
+		"boardContactsClear": js.FuncOf(harnessBoardContactsClear),
 		"boardSend":          js.FuncOf(harnessBoardSend),
 		"boardWake":          js.FuncOf(harnessBoardWake),
 		"boardRetractThread": js.FuncOf(harnessBoardThreadOp(cli.ThreadRetract, "boardRetractThread")),
@@ -1976,6 +1977,45 @@ func harnessBoardWake(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{"woken": n}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardContactsClear forgets one contact of a task, or all of them when
+// topic is empty:
+//
+//	harness.boardContactsClear(taskId, topic) -> Promise<{found, removed, label}>
+//
+// label is cli.ClearContactsLabel, so the page reports the result in the CLI's
+// and the TUI's words.
+func harnessBoardContactsClear(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("boardContactsClear: missing taskId/topic args"))
+				return
+			}
+			task, topic := args[0].String(), args[1].String()
+			n, found, err := c.BoardContactsClear(rootCtx, task, topic)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardContactsClear: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"found":   found,
+				"removed": n,
+				"label":   cli.ClearContactsLabel(task, topic, n, found),
+			}))
 		}()
 		return nil
 	})

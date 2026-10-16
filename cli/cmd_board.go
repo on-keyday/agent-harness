@@ -364,6 +364,22 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		}
 		fmt.Fprintf(out, "{\"status\":%q,\"topic\":%q,\"seq\":%d}\n", status, topic, *seq)
 
+	case verb.SubClearContacts:
+		removed, found, err := BoardContactsClear(ctx, cid, ba.Task, ba.Topic)
+		if err != nil {
+			return err
+		}
+		if ba.JSON {
+			status := "ok"
+			if !found {
+				status = "not_found"
+			}
+			return json.NewEncoder(out).Encode(map[string]any{
+				"status": status, "task_id": ba.Task, "topic": ba.Topic, "removed": removed,
+			})
+		}
+		fmt.Fprintln(out, ClearContactsLabel(ba.Task, ba.Topic, removed, found))
+
 	case verb.SubPurge:
 		// Permuted, and load-bearing rather than convenient: with stdlib
 		// parsing `board purge <topic> --seq N` -- the form the usage line

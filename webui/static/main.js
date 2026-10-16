@@ -5937,9 +5937,45 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         // The task's reply routes -- what it may publish to without
         // board_peer beyond its lineage -- on a line of their own that wraps:
         // there can be 64 of them. "-" is a measurement, not missing data.
+        // Each carries a forget button, and the line a forget-all one.
         const contacts = document.createElement("div");
         contacts.className = "board-sub-contacts";
-        contacts.textContent = `contacts=${(r.contacts && r.contacts.length) ? r.contacts.join(", ") : "-"}`;
+        const list = r.contacts || [];
+        contacts.appendChild(document.createTextNode(list.length ? "contacts=" : "contacts=-"));
+        const forget = async (topic) => {
+          const what = topic ? `contact ${topic}` : `all ${list.length} contact(s)`;
+          if (!window.confirm(`Forget ${what} of task ${id}?\n\n` +
+            `The task needs board_peer to publish there again until it is addressed from that route.`)) return;
+          try {
+            const res = await window.harness.boardContactsClear(r.taskId, topic);
+            appendCmdOutput(res.label);
+          } catch (err) {
+            appendCmdOutput(`boardContactsClear error: ${err.message}`);
+          }
+          renderBoardSubscribers();
+        };
+        for (const ct of list) {
+          const chip = document.createElement("span");
+          chip.className = "board-sub-contact";
+          chip.appendChild(document.createTextNode(ct));
+          const x = document.createElement("button");
+          x.type = "button";
+          x.className = "board-sub-contact-forget";
+          x.textContent = "\u00d7";
+          x.title = `Forget contact ${ct} of ${id}`;
+          x.addEventListener("click", () => forget(ct));
+          chip.appendChild(x);
+          contacts.appendChild(chip);
+        }
+        if (list.length) {
+          const all = document.createElement("button");
+          all.type = "button";
+          all.className = "board-sub-contacts-clear";
+          all.textContent = "全消去";
+          all.title = `Forget every contact of ${id}`;
+          all.addEventListener("click", () => forget(""));
+          contacts.appendChild(all);
+        }
         boardSubscribersEl.appendChild(contacts);
       }
     } catch (err) {

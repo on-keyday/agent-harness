@@ -35,23 +35,24 @@ const (
 )
 
 var kindCapClass = map[protocol.TaskControlKind]capClass{
-	protocol.TaskControlKind_Submit:           capInMap,
-	protocol.TaskControlKind_OpenInteractive:  capInMap,
-	protocol.TaskControlKind_Cancel:           capInMap,
-	protocol.TaskControlKind_PruneTasks:       capInMap,
-	protocol.TaskControlKind_Notify:           capInMap,
-	protocol.TaskControlKind_DialRunner:       capInMap,
-	protocol.TaskControlKind_BoardTopics:      capInMap,
-	protocol.TaskControlKind_BoardRead:        capInMap,
-	protocol.TaskControlKind_BoardPurge:       capInMap,
-	protocol.TaskControlKind_BoardRetract:     capInMap,
-	protocol.TaskControlKind_BoardSubscribers: capInMap,
-	protocol.TaskControlKind_BoardSend:        capInMap,
-	protocol.TaskControlKind_BoardWake:        capInMap,
-	protocol.TaskControlKind_GitQuery:         capInMap,
-	protocol.TaskControlKind_OpenExecRun:      capInMap,
-	protocol.TaskControlKind_OpenForwardTap:   capInMap,
-	protocol.TaskControlKind_OpenExecTap:      capInMap,
+	protocol.TaskControlKind_Submit:             capInMap,
+	protocol.TaskControlKind_OpenInteractive:    capInMap,
+	protocol.TaskControlKind_Cancel:             capInMap,
+	protocol.TaskControlKind_PruneTasks:         capInMap,
+	protocol.TaskControlKind_Notify:             capInMap,
+	protocol.TaskControlKind_DialRunner:         capInMap,
+	protocol.TaskControlKind_BoardTopics:        capInMap,
+	protocol.TaskControlKind_BoardRead:          capInMap,
+	protocol.TaskControlKind_BoardPurge:         capInMap,
+	protocol.TaskControlKind_BoardRetract:       capInMap,
+	protocol.TaskControlKind_BoardContactsClear: capInMap,
+	protocol.TaskControlKind_BoardSubscribers:   capInMap,
+	protocol.TaskControlKind_BoardSend:          capInMap,
+	protocol.TaskControlKind_BoardWake:          capInMap,
+	protocol.TaskControlKind_GitQuery:           capInMap,
+	protocol.TaskControlKind_OpenExecRun:        capInMap,
+	protocol.TaskControlKind_OpenForwardTap:     capInMap,
+	protocol.TaskControlKind_OpenExecTap:        capInMap,
 
 	// Direction-dependent: file_read or file_write is only known once the
 	// request's direction is decoded.
@@ -129,7 +130,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AgentListContacts); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_BoardContactsClear); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

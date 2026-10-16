@@ -1181,6 +1181,27 @@ var Verbs = []VerbSpec{
 		Examples: []string{"board retract chat.abcd1234 --seq 42"},
 	},
 	{
+		Path: []string{"board", "clear-contacts"},
+		ModalSurfaces: []ModalSurface{
+			// x on a task or contact line in the board modal's subscribers view.
+			{Surface: TUI, At: "tui/board.go:BoardModal"},
+			{Surface: WebUI, At: "webui/index.html#board-subscribers"},
+		},
+		Notes: []string{
+			"forget one contact of a task (--topic), or all of them; a forgotten route needs board_peer again until the task is addressed from it (cap: purge, scoped)",
+		},
+		CmdlineSurfaces: CLI,
+		Action:          "BoardAction",
+		Const:           map[string]string{"Sub": "clear-contacts"},
+		Args:            []Arg{{Name: "task", Type: ArgTaskID, Field: "Task"}},
+		Flags: []Flag{
+			{Name: "topic", Type: FlagString, Default: "", Field: "Topic",
+				Help: "the one contact to forget; omitted forgets every contact the task holds"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON instead of text"},
+		},
+		Examples: []string{"board clear-contacts <taskid32hex> --topic chat.abcd1234", "board clear-contacts <taskid32hex>"},
+	},
+	{
 		Path: []string{"board", "purge"},
 		ModalSurfaces: []ModalSurface{
 			// x on a topic / X on a message inside the board modal.

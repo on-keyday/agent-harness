@@ -1702,6 +1702,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
 .board-sub-empty { color: #999; font-style: italic; }
 .board-sub-contacts { color: #999; font-family: monospace; padding-left: 2.5em; white-space: normal; overflow-wrap: anywhere; }
+.board-sub-contact { display: inline-block; margin: 0 0.4em 0.2em 0; padding: 0 0.3em; border: 1px solid #444; border-radius: 3px; }
+.board-sub-contact-forget, .board-sub-contacts-clear { margin-left: 0.3em; padding: 0 0.35em; font-size: 0.8rem; color: #e0a0a0; background: #2a2a2a; border: 1px solid #555; border-radius: 3px; cursor: pointer; }
 /* A topic with nothing published is LESS than a normal one, so it reads
    dimmer, not brighter. The meaning is carried by its meta text
    ("nothing published yet"), so no colour has to be learned. */
