@@ -148,7 +148,11 @@ topic pushed T's real correspondents out of the 64-entry bound.
   another task's state, the class of `board retract` — and, because it names a
   task, on that bit's scope: a task outside it answers `not_found`, the same
   answer as one the board holds no state for. A forgotten route opens again
-  the next time someone addresses the task from it.
+  the next time someone addresses the task from it — in a message published
+  after the clear. The clear records the board's last issued seq as a floor,
+  and a message at or below it adds nothing back: a plain `agent inbox`
+  re-reads the whole ring, so without the floor the message that opened the
+  route reopened it on the next read (found on a dummy harness, 2026-10-16).
 - **Limit, stated because it is real:** after eviction, `--in-reply-to` still
   fails with `unknown_in_reply_to`, because the parent is gone. Contacts make
   the explicit `--topic <route>` fallback pass the check; they do not make the

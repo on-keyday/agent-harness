@@ -230,7 +230,7 @@ func TestContactsOpenTheReplyRoute(t *testing.T) {
 func TestContactsAreBounded(t *testing.T) {
 	ts := newTaskState()
 	for i := 0; i < maxContacts+1; i++ {
-		ts.addContact(fmt.Sprintf("t.%d", i))
+		ts.addContact(fmt.Sprintf("t.%d", i), 0)
 	}
 	if ts.hasContact("t.0") {
 		t.Error("the oldest contact survived past the bound")
@@ -245,10 +245,10 @@ func TestContactsAreBounded(t *testing.T) {
 func TestContactsEvictTheLeastRecentlyAdded(t *testing.T) {
 	ts := newTaskState()
 	for i := 0; i < maxContacts; i++ {
-		ts.addContact(fmt.Sprintf("t.%d", i))
+		ts.addContact(fmt.Sprintf("t.%d", i), 0)
 	}
-	ts.addContact("t.0")
-	ts.addContact("t.new")
+	ts.addContact("t.0", 0)
+	ts.addContact("t.new", 0)
 	if !ts.hasContact("t.0") {
 		t.Error("a contact re-added just before the overflow was evicted")
 	}
@@ -484,5 +484,47 @@ func TestClearContactsOneAndAll(t *testing.T) {
 	}
 	if _, found := b.ClearContacts(tidN(9), ""); found {
 		t.Error("a task the board holds no state for reported found")
+	}
+}
+
+// A plain inbox re-reads the whole ring, so the message that opened a route is
+// handed over again after the operator forgot it. Forgetting must hold until
+// a message published AFTER it arrives — found driving a dummy harness, where
+// the next `agent inbox` brought the route straight back.
+func TestForgottenContactIsNotRevivedByARetainedMessage(t *testing.T) {
+	r := newFakeReach()
+	me, peer := tidN(2), tidN(4)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if err := b.Subscribe(c, SelfTopic(me)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Send(SelfTopic(me), []byte("hi"), protocol.RunnerID{}, peer, "h", "", 0, WithNoWake()); err != nil {
+		t.Fatal(err)
+	}
+	read := func() {
+		msgs, _ := b.Inbox(c, 0)
+		b.NoteDelivered(c, msgs)
+	}
+	read()
+	if !b.Publishable(c, SelfTopic(peer)) {
+		t.Fatal("the first delivery did not open the route")
+	}
+	for _, topic := range []string{SelfTopic(peer), ""} { // one route, then all
+		if _, found := b.ClearContacts(me, topic); !found {
+			t.Fatal("task not found")
+		}
+		read() // the same retained message, handed over again
+		if b.Publishable(c, SelfTopic(peer)) {
+			t.Fatalf("clear(%q): re-reading a message older than the clear revived the route", topic)
+		}
+	}
+	if _, _, err := b.Send(SelfTopic(me), []byte("again"), protocol.RunnerID{}, peer, "h", "", 0, WithNoWake()); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	if !b.Publishable(c, SelfTopic(peer)) {
+		t.Error("a message published after the clear did not reopen the route")
 	}
 }

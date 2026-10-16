@@ -162,9 +162,9 @@ func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 		}
 		switch {
 		case m.ReplyToTopic != "":
-			c.task.addContact(m.ReplyToTopic)
+			c.task.addContact(m.ReplyToTopic, m.Seq)
 		case m.SenderKind == protocol.SenderKind_Agent:
-			c.task.addContact(SelfTopic(m.FromTask))
+			c.task.addContact(SelfTopic(m.FromTask), m.Seq)
 		}
 	}
 }
@@ -180,7 +180,8 @@ func (b *Board) Contacts(c *ConnState) []string {
 
 // ClearContacts forgets topic from tid's contacts, or every contact when topic
 // is empty (the operator's board clear-contacts). found is false when the board
-// holds no state for tid. A task resumed on another runner has one state per
+// holds no state for tid. The route stays forgotten until a message published
+// after this call is addressed to the task from it. A task resumed on another runner has one state per
 // runner, so every one of them is cleared.
 func (b *Board) ClearContacts(tid protocol.TaskID, topic string) (removed int, found bool) {
 	want := hexTaskIDProto(tid)
@@ -192,8 +193,9 @@ func (b *Board) ClearContacts(tid protocol.TaskID, topic string) (removed int, f
 		}
 	}
 	b.mu.Unlock()
+	floor := b.seq.Load()
 	for _, ts := range states {
-		removed += ts.forgetContacts(topic)
+		removed += ts.forgetContacts(topic, floor)
 	}
 	return removed, len(states) > 0
 }

@@ -38,6 +38,13 @@ type taskState struct {
 	// writing is not the one dropped. contactOrder runs oldest to newest.
 	contacts     map[string]struct{}
 	contactOrder []string
+	// contactFloor and routeFloor keep a forgotten contact forgotten. A plain
+	// inbox re-reads the whole ring, so the message that opened a route is
+	// handed over again after the operator cleared it; only a message whose
+	// seq is above the floor recorded at the clear may add it back.
+	// contactFloor covers every route (clear all), routeFloor one each.
+	contactFloor uint64
+	routeFloor   map[string]uint64
 	conns        map[*ConnState]struct{}
 	rid          protocol.RunnerID
 	tid          protocol.TaskID
@@ -57,9 +64,19 @@ func newTaskState() *taskState {
 
 const maxContacts = 64
 
-func (t *taskState) addContact(topic string) {
+// addContact records topic as a contact, from a message with this seq.
+func (t *taskState) addContact(topic string, seq uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.contactFloor != 0 && seq <= t.contactFloor {
+		return
+	}
+	if f, ok := t.routeFloor[topic]; ok {
+		if seq <= f {
+			return
+		}
+		delete(t.routeFloor, topic)
+	}
 	if _, ok := t.contacts[topic]; ok {
 		for i, c := range t.contactOrder {
 			if c == topic {
@@ -79,16 +96,23 @@ func (t *taskState) addContact(topic string) {
 }
 
 // forgetContacts removes topic from the contacts, or every contact when topic
-// is empty, and reports how many went.
-func (t *taskState) forgetContacts(topic string) int {
+// is empty, and reports how many went. floor is the board's last issued seq:
+// a message at or below it cannot add the route back.
+func (t *taskState) forgetContacts(topic string, floor uint64) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if topic == "" {
 		n := len(t.contactOrder)
 		t.contacts = make(map[string]struct{})
 		t.contactOrder = nil
+		t.contactFloor = floor
+		t.routeFloor = nil
 		return n
 	}
+	if t.routeFloor == nil {
+		t.routeFloor = make(map[string]uint64)
+	}
+	t.routeFloor[topic] = floor
 	if _, ok := t.contacts[topic]; !ok {
 		return 0
 	}
