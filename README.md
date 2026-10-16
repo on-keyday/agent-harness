@@ -840,8 +840,9 @@ Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, cancel, the three
 session-attach powers, file read / write, local / remote port-forward,
 reading a forward's or an exec's payload, notify, prune, purge, runner-admin, global
-info, publishing to the board as the operator) — and a **target scope**
-bounding WHICH tasks those capabilities may be pointed at.
+info, publishing to the board beyond the task's own lineage, publishing to the
+board as the operator) — and a **target scope** bounding WHICH tasks those
+capabilities may be pointed at.
 
 Attaching to a session is three capabilities, not one, because the three
 attach modes hand over three different powers. They are checked with
@@ -874,8 +875,9 @@ catalog.
 
 By default a spawned task gets **no capabilities at all**, scoped to
 **subtree** (itself + everything it spawns). An omitted `--caps` grants
-nothing — the task can still use the agentboard and read its own
-subtree's logs / `ls`, but every control-plane verb (spawn, cancel,
+nothing — the task can still message its own lineage on the agentboard
+(see **Board reach** below) and read its own subtree's logs / `ls`, but
+every control-plane verb (spawn, cancel,
 attach, file read/write, forwards, notify, prune, purge, runner-admin,
 global info) answers `permission denied` until something grants it.
 `--caps NAMES` and `--scope SPEC` (on `submit` / `session new` /
@@ -963,6 +965,23 @@ That only applies point-to-point (the message sat on the replier's own
 `chat.<short-id>`) — one subscriber's answer never withdraws a shared-topic
 publish the others may not have read. `agent send --no-retire-on-reply`
 opts a message out.
+
+### Board reach
+
+With no capability, a task **publishes** to its own `chat.<short-id>` (and
+`chat.<short-id>.<suffix>`), its creator's and its direct children's
+`chat.<short-id>`, `chat.operator`, the reply route of any message it was
+handed, and `tree.<full-task-id>.<suffix>` for every task on its own ancestor
+chain. Anything else — a peer it has no thread with, a free-form topic — needs
+`board_peer`, and is refused with a message naming that bit rather than
+dropped. **Reading** is open except for other tasks' direct messages: another
+task's `chat.<short-id>` (and its `.<suffix>` side channels), `chat.operator`,
+and a `tree.<id>` the reader is not in need `board_observe`, by any agent verb.
+`agent retained` on those lists only the caller's own messages instead of
+refusing, so a sender can still check whether its message sits on a peer's
+topic. Both are decided on every operation from the live spawn tree and grant,
+so `caps set` and `caps set-parent` take effect immediately. Design:
+`docs/superpowers/specs/2026-10-16-agentboard-reach-design.md`.
 
 ### Reading a conversation, not a topic
 

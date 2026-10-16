@@ -2752,3 +2752,45 @@ the snapshot's TAIL and saw no `rc=` — which read as a hang. The process had
 exited; the output was on row 1, above the window being read. When a terminal
 check looks like a hang, read the whole screen before reading the process
 table.
+
+### 2026-10-16 (pre-landing) — board reach: the `board_peer` capability, `list_retained` `own_only`
+
+A capability bit, one response field (`AgentListRetainedResponse.own_only`), and
+new refusals on agent `send` / `subscribe` / `wait`. No verb, flag or row was
+added. Walked 1–39 at the end of implementation. S1–S6 `n/a`: no agent added
+or launched differently.
+
+done:    5, 6, 9, 13, 15, 22, 23, 24, 29, 30, 35, 36, 37, 39
+omitted: 5 live (the TUI `a` picker enumerates `cli.CapsCatalog()`,
+         `tui/authoritypicker.go:191` — checked in code, not driven)
+
+- **5 / 6 / 9 / 22 / 23** — no edit. The TUI picker and the WebUI chips
+  enumerate the catalog, and the wasm snapshot carries raw bits. The WebUI
+  spawn form was opened on a dummy harness and shows a `board_peer` chip beside
+  `board_send` (screenshot `.playwright-mcp/webui-caps-board_peer.png`, kept).
+- **13 / 15** — `GrantableCaps` + `CapDescription` for `board_peer`. The
+  descriptions of `none` and `board_observe` were rewritten too, because both
+  described the board as reachable without a bit.
+- **24** — the semantics live per topic, not per verb: the same `agent send`
+  needs no bit to its lineage, to `chat.operator` or to a reply route, and
+  `board_peer` elsewhere. `list_retained` has two paths, whole ring vs own
+  rows, and says which (`own_only`).
+- **29 / 30** — a refusal names the topic and what IS reachable, appended to
+  the ordinary denial line. `agent retained` / `agent thread` say on stderr
+  when a list is own-rows-only.
+- **36** — `harness-cli` skill: a "Who you can reach" section, and the two
+  "no capability, because subscribe + inbox already expose it" sentences
+  (retained, thread) corrected where they stand. `supervising-workers`: the
+  `board_observe` bullet, a board-reach bullet, `board_send` / `board_peer`
+  in the granular-names list (`board_send` had been missing since it landed).
+- **39** — spec §8 rows: catalog ✓, skill ✓, README ✓.
+
+**What the walk did not produce and the operator did:** the first
+implementation answered refusals with `not_permitted` statuses of each verb's
+own, beside the harness's one capability denial (`denyTaskControl` →
+`CapabilityDeniedError`). Every 1–39 item read `done` against it. Nothing here
+asks whether a NEW refusal uses the existing refusal vocabulary, and the
+sibling it should have copied was a request-dependent denial
+(`await-idle --notify`), which a per-kind reading of "how are caps checked"
+does not reach. Reversed before landing (`757fe7a4`). Recorded rather than
+numbered, for a second instance to count against.

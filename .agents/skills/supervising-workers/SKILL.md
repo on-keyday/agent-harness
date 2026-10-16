@@ -322,7 +322,7 @@ and the scope forms (`--json` for the machine-readable form).
   — you can only grant a subset of what you yourself hold, and caps are
   monotonically non-increasing down a spawn chain.
 - **Omitted ⇒ none.** No `--caps` flag means the child gets NOTHING: it is a
-  data-plane-only worker (agentboard + its own logs/ls) and every
+  data-plane-only worker (agentboard within its base set + its own logs/ls) and every
   control-plane verb answers `permission denied`. Name what it needs —
   `--caps spawn,file_read`, or `--caps all` for an unattenuated child (still
   intersected with your own set). A worker you expect to spawn or supervise
@@ -355,7 +355,18 @@ and the scope forms (`--json` for the machine-readable form).
   `board topics`, `board read` and `board subscribers` are the one thing that
   stayed a capability, now named `board_observe`: the board is keyed by topic,
   which the task hierarchy does not contain, so no task scope can bound it. It
-  is NOT needed to send, to subscribe, or to read your own inbox.
+  is NOT needed to send, to read your own inbox, or to read a group topic; it
+  IS needed to read another task's direct messages (its `chat.<id>`,
+  `chat.operator`, a `tree.<id>` the reader is not in) by any agent verb.
+- **Board reach follows the spawn tree.** With no bits, a worker publishes to
+  its own `chat.<id>`, yours (its creator's), its own children's,
+  `chat.operator`, and to anyone who messaged it first. Messaging a sibling or
+  any other peer it has no thread with, or a free-form topic, needs
+  `board_peer` — grant it at spawn (`--caps …,board_peer`) or later with
+  `caps set`. A team channel for you and your workers is
+  `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
+  subtree with no bit. The `harness-cli` skill's "Who you can reach" has the
+  full rule.
 - **One capability can be narrowed below the others.** `--scope-for CAPS=SCOPE`
   (repeatable, capability lists must not overlap) gives named bits their own
   target set: `--scope-for exec_cowrite,file_write=descendants` is "may drive
@@ -386,7 +397,7 @@ and the scope forms (`--json` for the machine-readable form).
 Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_tap`, `notify`, `prune`,
-`runner_admin`, `board_observe`, `purge` — plus the aliases `none` / `all`. `harness-cli caps`
+`runner_admin`, `board_observe`, `purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
 `forward_tap` reads the PAYLOAD crossing a port forward (`forward tap`) —
 cleartext, so routinely Authorization headers and credentials. Holding a

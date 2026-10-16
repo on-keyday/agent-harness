@@ -219,7 +219,9 @@ harness-cli agent thread --json               # JSON Lines
 **No capability is required**, for the same reason `retained` needs none: it
 summarizes topics you already subscribe to, and gating it would gate a read
 more tightly than the content it reports. A task spawned with no `--caps` at
-all can run it.
+all can run it. A subscription you can no longer read in full — another
+task's `chat.<id>` after `board_observe` was taken away from you — contributes
+only the messages you sent there, and the command says so on stderr.
 
 Read what it shows you carefully, because it is bounded by what YOU can see:
 
@@ -386,8 +388,12 @@ harness-cli agent retained --topic chat.<short-id>
 replies to (0 when it is not a reply), sender task id, size, receive time,
 plus `reply_to_topic` on the rows whose sender declared one — and **never the
 payload bytes**. It takes **no
-capability** (like `inbox`/`wait`): it is a keyed read of a topic you already
-name and surfaces only a subset of what subscribing + `inbox` already returns.
+capability**: it is a keyed read of a topic you already name, and it never shows
+more than you could read anyway. On your own topics and on group topics that is
+the whole ring. On another task's `chat.<id>`, on `chat.operator`, or on a
+`tree.<id>` you are not in, it lists **only the messages you sent there**, and
+says so on stderr — so checking whether your own message is still sitting on a
+peer's topic needs no bit, while seeing everyone else's needs `board_observe`.
 Pick the offending `seq` from this list, then `purge --seq <N>` it — the
 payload is dropped server-side without ever entering anyone's context.
 
@@ -583,14 +589,16 @@ assigns the task to a runner, so you neither subscribe to it nor announce it:
 a peer's `--in-reply-to` is routed back to you by the server.
 
 `chat.operator` is the operator's, and subscribing to it is refused
-(`BadPattern`). Publishing there is allowed — it is how a reply to the operator
-arrives — but nothing subscribes, so `delivered_to: 0` there is expected, not a
-lost message: the operator reads it on the board.
+(`BadPattern`); waiting on it is refused too unless you hold `board_observe`.
+Publishing there is allowed — it is how a reply to the operator arrives — but
+nothing subscribes, so `delivered_to: 0` there is expected, not a lost message:
+the operator reads it on the board.
 
 **There is no board-wide rendezvous topic.** Peers reach you id-directed on
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
 a global visibility rank finds it with `ls`. If you have no id for the peer you need, get
-one (`ls`, or ask whoever spawned you); do not broadcast.
+one (`ls`, or ask whoever spawned you); do not broadcast. Whether you may then
+send to it is a separate question — see "Who you can reach".
 
 **Check that you have an inbox path; do not infer it from your name.** The
 inbound subscription is server-seeded for every agent runtime, and
@@ -606,6 +614,54 @@ know the other agent's task id (you spawned it, or you found it with `ls`),
 so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
 directly. No shared topic, no broadcast — only the target is woken. Nothing
 has to be announced for it to answer: its `--in-reply-to` comes back to you.
+
+### Who you can reach, and who can read you
+
+Without any capability a task publishes to its **base set**:
+
+- its own `chat.<id>`, and `chat.<id>.<suffix>` side channels;
+- its **creator's** `chat.<id>` and each **direct child's** `chat.<id>`;
+- `chat.operator`;
+- the **reply route of any message it was handed** — the sender's `chat.<id>`,
+  or the `reply_to_topic` the sender declared. Someone who spoke to you first
+  can always be answered, whoever they are;
+- `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
+  itself included.
+
+Anything else — a peer's `chat.<id>` you have no thread with, a free-form topic
+like `build.events` — needs the `board_peer` capability. A send outside your
+reach is refused, not dropped, with the ordinary capability denial plus the
+topic: `permission denied: AgentSend requires capability board_peer: <topic> is
+outside this task's reach …`, exit non-zero. Read it as "this topic needs
+board_peer", not "every send does" — the same line covers a send to a peer and
+not one to your creator. It is a fact about your grant, not a fault to work
+around: tell whoever spawned you (or the operator) which topic you need, and
+they can `caps set <your-task> --caps …,board_peer` on the live task. No bit
+opens a `tree.<id>` you are not in.
+
+Reading is open except for **other tasks' direct messages**: another task's
+`chat.<id>` / `chat.<id>.*`, `chat.operator`, and a `tree.<id>` you are not in.
+Subscribing to, waiting on, or `read`ing those needs `board_observe`; without
+it the subscribe and the wait are refused with a message naming that bit.
+`retained` on them lists only what you sent (see "Choosing which message to
+purge"). Group topics — anything outside `chat.` and `tree.` — stay readable
+by anyone who names them.
+
+Two naming conventions follow from that:
+
+- **A confidential side channel** is `chat.<your-short-id>.<suffix>`. Others
+  cannot read it without `board_observe`, and a peer you asked can still answer
+  there, because a declared `--reply-to` is the reply route of the message it
+  received. A free-form `--reply-to` name works too, but anyone who guesses it
+  can read it.
+- **A team channel** is `tree.<your-full-task-id>.<suffix>`: you and every task
+  below you in the spawn tree read and write it; nobody else writes it, and
+  nobody else reads it without `board_observe`.
+
+Membership is decided on every read and publish from the live spawn tree and
+the live grant, so `caps set` and `caps set-parent` take effect at once, and a
+subscription you lose the right to read simply stops delivering (it comes back
+if the right does).
 
 Every delivered message carries `from.agent`: the agent profile the sending
 task was running under at publish time (`"claude"`, `"codex"`, …), attested by
@@ -674,7 +730,9 @@ To reach a task you found in `ls`, derive its inbound channel the way every
 agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
 there (see the spawn examples). This id-directed send is the only way to
 introduce yourself — there is no discovery topic to fall back on, so an id you
-cannot derive is an id you have to ask for.
+cannot derive is an id you have to ask for. Introducing yourself to a task
+outside your lineage needs `board_peer` (see "Who you can reach"); once it has
+written to you, answering it does not.
 
 ## Delegating to worker agents — see the `supervising-workers` skill
 
@@ -869,7 +927,10 @@ harness-cli agent send --topic chat.<peer> --reply-to rr.dec-019 --data '...'
 
 The server records `rr.dec-019` on your message and routes replies there. The
 peer needs no knowledge of it — it answers with `--in-reply-to <seq>` as
-always. Subscribe to the topic first if you intend to receive there.
+always, and needs no capability to do so, because a declared reply route is
+part of what it was handed. Subscribe to the topic first if you intend to
+receive there. Use `chat.<your-short-id>.<suffix>` instead of a free-form name
+when the answers should not be readable by whoever guesses the name.
 
 Precedence, when a reply arrives: an explicit `--topic` on the REPLY wins,
 then the destination the asker declared, then the asker's own
