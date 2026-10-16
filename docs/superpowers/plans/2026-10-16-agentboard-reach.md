@@ -37,7 +37,7 @@
 
 | File | Responsibility | Task |
 | --- | --- | --- |
-| `runner/protocol/message.bgn` (+ regen `message.go`) | `board_peer`, `all`, the four `not_permitted` statuses, `AgentWaitResponse.status`, comment rewrites | 1 |
+| `runner/protocol/message.bgn` (+ regen `message.go`) | `board_peer`, `all`, `not_permitted` on send and subscribe, `WaitStatus` + `AgentWaitResponse.status`, `AgentListRetainedResponse.own_only`, comment rewrites | 1 |
 | `runner/protocol/capability_test.go` | `all` = OR of bits | 1 |
 | `cli/verb/caps.go` | grantable list and descriptions | 1 |
 | `server/scope_percap_completeness_test.go` | classification of the new bit | 1 |
@@ -64,7 +64,7 @@
 - Modify: `runner/protocol/capability_test.go`, `cli/verb/caps.go`, `server/scope_percap_completeness_test.go`
 
 **Interfaces:**
-- Produces: `protocol.Capability_BoardPeer`, `protocol.SendStatus_NotPermitted`, `protocol.SubscribeStatus_NotPermitted`, `protocol.BoardStatus_NotPermitted`, `protocol.WaitStatus` with `WaitStatus_Ok` / `WaitStatus_NotPermitted`, and `AgentWaitResponse.Status protocol.WaitStatus`.
+- Produces: `protocol.Capability_BoardPeer`, `protocol.SendStatus_NotPermitted`, `protocol.SubscribeStatus_NotPermitted`, `protocol.WaitStatus` with `WaitStatus_Ok` / `WaitStatus_NotPermitted`, `AgentWaitResponse.Status protocol.WaitStatus`, and `AgentListRetainedResponse.OwnOnly()` / `SetOwnOnly(bool)`.
 
 - [ ] **Step 1: Update the bit test first (it will not compile yet)**
 
@@ -97,7 +97,18 @@ Change `all = 0x7ffff` to `all = 0xfffff`. Rewrite the `board_observe` comment's
     # someone else's messages, which is what this bit always meant.
 ```
 
-Append `not_permitted` as the LAST member of `SendStatus`, `SubscribeStatus` and `BoardStatus`, each with a one-line comment naming the bit that would have allowed it (`board_peer` for send, `board_observe` for the other two). Add after `AgentWaitRequest`:
+Append `not_permitted` as the LAST member of `SendStatus` and `SubscribeStatus`, each with a one-line comment naming the bit that would have allowed it (`board_peer` for send, `board_observe` for subscribe). `BoardStatus` does NOT gain one (spec D15: `list_retained` filters instead of refusing). Append to `AgentListRetainedResponse`, after `stream_id :u64`:
+
+```
+    # own_only = 1: the caller cannot read this topic (another task's
+    # chat.<id>, chat.operator, or a tree.<id> it is not in, without
+    # board_observe), so the body lists only the rows the caller published.
+    # Without the bit a filtered list reads as the topic's whole ring.
+    own_only :u1
+    reserved :u7
+```
+
+Add after `AgentWaitRequest`:
 
 ```
 enum WaitStatus:
@@ -1043,15 +1054,47 @@ func TestAgentWaitAnswersNotPermitted(t *testing.T) {
 	}
 }
 
-func TestAgentListRetainedAnswersNotPermitted(t *testing.T) {
-	h, conn, _, _ := reachHandler(t, 0)
-	h.Board.Send("chat.deadbeef", []byte("x"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+// D15: on a topic the caller cannot read, list_retained lists only what the
+// caller published there, and says so.
+func TestAgentListRetainedOnAPeerTopicListsOwnRowsOnly(t *testing.T) {
+	h, conn, _, me := reachHandler(t, 0)
+	var other protocol.TaskID
+	other.Id[0] = 0x77
+	h.Board.Send("chat.deadbeef", []byte("mine"), protocol.RunnerID{}, me, "h", "", 0)
+	h.Board.Send("chat.deadbeef", []byte("theirs"), protocol.RunnerID{}, other, "h", "", 0)
 	r := &protocol.AgentListRetainedRequest{}
 	r.SetTopic([]byte("chat.deadbeef"))
 	h.handleAgentListRetained(conn, 1, r)
 	resp := lastTaskControlResponse(t, conn)
-	if got := resp.AgentListRetained(); got == nil || got.Status != protocol.BoardStatus_NotPermitted || got.StreamId != 0 {
-		t.Fatalf("list_retained = %+v, want not_permitted with no stream", got)
+	got := resp.AgentListRetained()
+	if got == nil || got.Status != protocol.BoardStatus_Ok || !got.OwnOnly() {
+		t.Fatalf("list_retained = %+v, want ok with own_only", got)
+	}
+	var body protocol.RetainedBody
+	conn.streamBody(t, got.StreamId, &body)
+	if len(body.Metas) != 1 || body.Metas[0].FromTask != me {
+		t.Fatalf("metas = %+v, want only the caller's one row", body.Metas)
+	}
+}
+
+// On its own topic the list is whole, and own_only stays 0.
+func TestAgentListRetainedOnItsOwnTopicIsWhole(t *testing.T) {
+	h, conn, _, me := reachHandler(t, 0)
+	var other protocol.TaskID
+	other.Id[0] = 0x77
+	h.Board.Send(agentboard.SelfTopic(me), []byte("x"), protocol.RunnerID{}, other, "h", "", 0)
+	r := &protocol.AgentListRetainedRequest{}
+	r.SetTopic([]byte(agentboard.SelfTopic(me)))
+	h.handleAgentListRetained(conn, 1, r)
+	resp := lastTaskControlResponse(t, conn)
+	got := resp.AgentListRetained()
+	if got == nil || got.OwnOnly() {
+		t.Fatalf("list_retained = %+v, want a whole list", got)
+	}
+	var body protocol.RetainedBody
+	conn.streamBody(t, got.StreamId, &body)
+	if len(body.Metas) != 1 {
+		t.Fatalf("metas = %d, want 1", len(body.Metas))
 	}
 }
 
@@ -1193,15 +1236,22 @@ func (r storeReach) Len() int {
 	}
 ```
 
-- `handleAgentListRetained`: before `h.Board.ListRetained`, resolve `st := h.boardState(conn)` and
+- `handleAgentListRetained` (spec D15): resolve `st := h.boardState(conn)` before `h.Board.ListRetained`, and filter rather than refuse:
 
 ```go
-	if !h.Board.Readable(st, string(r.Topic)) {
-		out.Status = protocol.BoardStatus_NotPermitted
-		respond(0)
-		return
-	}
+	ownOnly := !h.Board.Readable(st, string(r.Topic))
+	_, self, _, _ := st.Identity() // zero for a connection with no board identity
+	…
+			for _, m := range msgs {
+				if ownOnly && m.FromTask != self {
+					continue
+				}
+				…
+			}
+			out.SetOwnOnly(ownOnly)
 ```
+
+  A connection with no board identity (`st == nil`) gets `ownOnly` true and a zero `self`. Its own rows are then those from the zero task id, which are operator and server publishes. Narrow that: when `st == nil` and `ownOnly`, return an empty body.
 
 - Rewrite the comments that argue "no capability, because subscribe + inbox already expose it": the one above `handleAgentListRetained` in this file, and the orphaned `agentHandleListRetained` block at the end of `server/agent_handler.go`. Each states the new split in one sentence: open on your own and group topics, `board_observe` on another task's direct messages (spec §5).
 - `deliveredBody`: change the signature to `deliveredBody(b *agentboard.Board, st *agentboard.ConnState, msgs []agentboard.RetainedMessage) *protocol.DeliveredBody` and make its first line `b.NoteDelivered(st, msgs)`. Update its four callers (wait, inbox, inbox_advance, read_seq) to pass `h.Board, st` (wait's nil-identity branch passes `nil, nil, nil` — guard: `if b != nil { b.NoteDelivered(st, msgs) }`).
@@ -1255,8 +1305,8 @@ Wire them:
 - `dispatch.go`, before `sent.Status != protocol.SendStatus_Ok`: the same with `*topic`. After the wait round trip, `if r.Status == protocol.WaitStatus_NotPermitted { return readRefused(waitOn) }`.
 - `subscribe.go`, before `r.Status != protocol.SubscribeStatus_Ok`: `if r.Status == protocol.SubscribeStatus_NotPermitted { return readRefused(<pattern>) }`.
 - `wait.go`, before reading the body: `if r.Status == protocol.WaitStatus_NotPermitted { return readRefused(*topic) }`.
-- `retained.go`, a `case protocol.BoardStatus_NotPermitted: return readRefused(*topic)`.
-- `thread.go` `retainedMetas`, a `case protocol.BoardStatus_NotPermitted:` that writes `agent thread: skipping <topic>: needs board_observe` to stderr and returns `nil, nil, nil`. A subscription the task can no longer read must not end the whole thread view.
+- `retained.go`, when `r.OwnOnly()`: write to stderr `agent retained: <topic> carries another task's messages; listing only the ones this task sent (the rest needs board_observe)` before the rows, and change the empty-ring message in that case to `… holds none sent by this task`. stdout stays clean JSON Lines.
+- `thread.go` `retainedMetas`: when `r.OwnOnly()`, note `agent thread: <topic>: only this task's own messages are visible` on stderr and keep the rows. A subscription the task can no longer fully read must not end the whole thread view.
 
 - [ ] **Step 2: The e2e helper** (append to `cli/agent/agent_e2e_test.go`)
 
@@ -1343,7 +1393,7 @@ git commit -m "cli: name the reach a refused send or read needed; e2e agents get
 Read the whole `runner/agentskills/harness-cli/SKILL.md` first (1103 lines; Edit refuses a file you have not read in full). Add one section, beside the existing material about `chat.<short-id>`, titled `### Who you can reach, and who can read you`. It gives the base-set list from Task 6's `sendRefused` text, the confidential side channel convention (`chat.<your-short-id>.<suffix>`, D6), the `tree.<full-id>.<suffix>` team channel (members only, D7), and what `not_permitted` means on send vs on read. Wherever the skill currently tells an agent it can send to any topic, correct that sentence in place. Then copy over both mirrors.
 
 Two sentences become false and must be rewritten where they stand (they argue "no capability, because subscribe + inbox already expose it uncapped", and the change ends that premise for other tasks' direct messages):
-- the `agent retained` section (`### Choosing which message to purge`, today `:386-389`): "It takes **no capability** (like `inbox`/`wait`)…". It now needs none on your own topics and on group topics, and needs `board_observe` on another task's `chat.<id>`, on `chat.operator`, and on a `tree.<id>` you are not in.
+- the `agent retained` section (`### Choosing which message to purge`, today `:386-389`): "It takes **no capability** (like `inbox`/`wait`)…". It still takes none. On another task's `chat.<id>`, on `chat.operator`, or on a `tree.<id>` you are not in, it lists only the messages YOU sent, and says so on stderr (D15). That is what keeps `:291`'s "your `agent retained` … simply stop showing the message" and `:320`'s warning true for a confined task. Say that checking your own message on a peer's topic needs no bit, and that seeing everyone else's needs `board_observe`.
 - the `agent read` section (today `:219`): "**No capability is required**, for the same reason `retained` needs none". The same correction applies.
 
 Also grep the skill for `no capability`, `any topic`, `uncapped` and `subscribe` + `peer`, and settle each hit against the new rules. The two above are the ones found while planning, not a census.

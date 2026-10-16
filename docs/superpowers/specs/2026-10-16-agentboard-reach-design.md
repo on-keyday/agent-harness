@@ -62,6 +62,7 @@ the author while writing — those are the rows worth a second look.
 | D12 | `board_peer = 0x80000`; `all` widens to `0xfffff` | this spec |
 | D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set`, when one turns out to need to publish beyond its base set | operator |
 | D14 | A refusal is answered as `not_permitted`, a status of its own on every refused verb | this spec |
+| D15 | `list_retained` on a topic the caller cannot read is not refused: it lists only the rows the caller published, and the response says so (`own_only`). A sender checking whether its message still sits on a peer's topic needs no bit | operator |
 
 ## 1. Topic namespaces
 
@@ -303,8 +304,10 @@ What the numbers also say:
 - `board_observe`'s comment in `message.bgn` says it is "not needed to send, to
   subscribe, or to read your own inbox". It is rewritten: it is now needed to
   read another task's direct messages, by any verb.
-- `not_permitted` is appended to `SendStatus`, `SubscribeStatus` and
-  `BoardStatus` (list_retained) (D14). `AgentWaitResponse` has no status, and
+- `not_permitted` is appended to `SendStatus` and `SubscribeStatus` (D14).
+  `BoardStatus` was on this list until D15. `list_retained` now filters to the
+  caller's own rows instead of refusing, and `AgentListRetainedResponse` gains
+  `own_only :u1` to say so. `AgentWaitResponse` has no status, and
   `timed_out` must not carry a refusal, so it gains `status :WaitStatus`
   (`ok`, `not_permitted`) at its end. That changes the response's length, and
   how an old client decodes a longer response is not relied on: the order is
@@ -362,6 +365,17 @@ the operator decided to do exactly that when a task turns out to need it
   record (its ticket is registered at assignment), so this only bites test
   fixtures that register a ticket without creating the task. Those are moved
   to real records.
+- **D15, operator (2026-10-16): `list_retained` on an unreadable topic returns
+  the caller's own rows.** The `harness-cli` skill relies on a sender looking
+  at a peer's topic with `agent retained` to see whether its own message is
+  still there: a purge-cap retract makes it vanish from "your `agent retained`
+  and the peer's inbox", and the reply-retire section warns not to read its
+  absence as an ack. Refusing the read would end that. Rows whose `from_task`
+  is the caller are a subset of what the caller itself published, so returning
+  them exposes nothing. `AgentListRetainedResponse` gains `own_only :u1` so a
+  filtered list is never read as the topic's whole ring, and `list_retained`
+  therefore never answers `not_permitted`. D14's `BoardStatus.not_permitted`
+  is dropped from §7.
 - `read_seq` keeps answering `not_found` for an unauthorized topic, not
   `not_permitted`. Its schema comment explains why: a distinguishable refusal
   answers "does seq N exist?" for every seq. D14's list (send, subscribe,
