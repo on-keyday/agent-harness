@@ -36,6 +36,10 @@ type fakeConn struct {
 	// nil (degraded/test path). Tests that exercise the streaming path must set
 	// this before invoking the handler.
 	nextSendStreamID trsf.StreamID
+	// autoSendStreams makes every CreateSendStream succeed with a fresh id when
+	// nextSendStreamID is unset. The board's list responses always carry their
+	// rows on a stream, so a test of them needs one per handler call, not one.
+	autoSendStreams bool
 	// sendStreams collects every non-nil send stream so tests can assert
 	// the streamed body was written + EOF'd.
 	sendStreams []*recordingSendStream
@@ -65,11 +69,15 @@ func (f *fakeConn) Sent() [][]byte {
 // that exercise the streaming path must set nextSendStreamID before invoking
 // the handler.
 func (f *fakeConn) CreateSendStream() trsf.SendStream {
-	if f.nextSendStreamID == 0 {
+	id := f.nextSendStreamID
+	switch {
+	case id != 0:
+		f.nextSendStreamID = 0
+	case f.autoSendStreams:
+		id = trsf.StreamID(1000 + len(f.sendStreams))
+	default:
 		return nil
 	}
-	id := f.nextSendStreamID
-	f.nextSendStreamID = 0
 	s := &recordingSendStream{streamID: id, done: make(chan struct{})}
 	f.sendStreams = append(f.sendStreams, s)
 	return s
@@ -90,6 +98,18 @@ func (f *fakeConn) sendStreamBytes(t *testing.T, streamID uint64) []byte {
 	}
 	t.Fatalf("sendStreamBytes: stream id %d not found in sendStreams (len=%d)", streamID, len(f.sendStreams))
 	return nil
+}
+
+// streamBody decodes the <Response>Body a list-shaped board response's stream
+// carried — what cli.ReadResponseBody does on the client.
+func (f *fakeConn) streamBody(t *testing.T, streamID uint64, body interface{ DecodeExact([]byte) error }) {
+	t.Helper()
+	if streamID == 0 {
+		t.Fatal("response names no body stream")
+	}
+	if err := body.DecodeExact(f.sendStreamBytes(t, streamID)); err != nil {
+		t.Fatalf("decode body on stream %d: %v", streamID, err)
+	}
 }
 
 // lastTaskControlResponse decodes the last message sent on this conn as a

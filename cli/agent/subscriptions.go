@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -44,7 +45,11 @@ func SubscriptionsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer
 	if r == nil {
 		return errors.New("agent: subscriptions response variant is nil")
 	}
-	for _, s := range r.Subscriptions {
+	var body protocol.SubscriptionsBody
+	if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
+		return fmt.Errorf("subscriptions: %w", err)
+	}
+	for _, s := range body.Subscriptions {
 		rec := map[string]any{"pattern": string(s.Pattern)}
 		line, _ := json.Marshal(rec)
 		fmt.Fprintln(stdout, string(line))

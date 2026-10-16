@@ -9,13 +9,12 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // handleBoardTopics returns the agentboard topic overview (metadata only).
 // Cap (board_observe) is enforced centrally via requiredCap before dispatch.
 func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
-	out := protocol.BoardTopicsResponse{RequestId: requestID}
+	var rows []protocol.BoardTopicRow
 	for _, r := range h.Board.ListTopics() {
 		row := protocol.BoardTopicRow{
 			LastSeq:               r.LastSeq,
@@ -37,12 +36,15 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 				row.RetractedCount = uint16(n)
 			}
 		}
-		out.Topics = append(out.Topics, row)
+		rows = append(rows, row)
 	}
-	out.TopicsLen = uint16(len(out.Topics))
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardTopics, RequestId: requestID}
-	resp.SetBoardTopics(out)
-	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+	body := &protocol.BoardTopicsBody{}
+	body.SetTopics(rows)
+	respondWithBody(conn, "board_topics", body, func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardTopics, RequestId: requestID}
+		resp.SetBoardTopics(protocol.BoardTopicsResponse{RequestId: requestID, StreamId: streamID})
+		respondAgent(conn, resp)
+	})
 }
 
 // handleBoardSubscribers reports each task's agentboard subscription set,
@@ -55,7 +57,7 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 // board_topics does not narrow either, and a partial subscriber list would
 // answer "is anyone listening" wrongly rather than incompletely.
 func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, topic string) {
-	out := protocol.BoardSubscribersResponse{RequestId: requestID}
+	var rows []protocol.BoardSubscriberRow
 	for _, r := range h.Board.ListSubscribers(topic) {
 		row := protocol.BoardSubscriberRow{Task: r.Task}
 		row.SetHostname([]byte(r.Hostname))
@@ -73,39 +75,33 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 			patterns = append(patterns, sp)
 		}
 		row.SetPatterns(patterns)
-		out.Rows = append(out.Rows, row)
+		rows = append(rows, row)
 	}
-	out.RowsLen = uint16(len(out.Rows))
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardSubscribers, RequestId: requestID}
-	resp.SetBoardSubscribers(out)
-	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+	body := &protocol.BoardSubscribersBody{}
+	body.SetRows(rows)
+	respondWithBody(conn, "board_subscribers", body, func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardSubscribers, RequestId: requestID}
+		resp.SetBoardSubscribers(protocol.BoardSubscribersResponse{RequestId: requestID, StreamId: streamID})
+		respondAgent(conn, resp)
+	})
 }
 
-// handleBoardRead returns metadata for all retained messages in a topic plus a
-// server-initiated send-stream carrying the raw payloads in ring order.
-// Cap (board_observe) is enforced centrally via requiredCap before dispatch.
-//
-// Wire shape mirrors handleGetTaskLog: respond first with stream_id, then
-// write payloads asynchronously so the metadata response is never blocked by
-// stream I/O.
-//
-// Edge cases:
-//   - Topic not found → BoardStatus_NotFound, stream_id 0.
-//   - Topic found but ring is empty → BoardStatus_Ok, stream_id 0 (no stream).
-//   - conn.CreateSendStream() returns nil (degraded/test path) → metadata only.
+// handleBoardRead returns every retained message in a topic, bodies included,
+// as a BoardReadBody on a stream. Cap (board_observe) is enforced centrally via
+// requiredCap before dispatch. An unknown topic answers not_found with no
+// stream.
 func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic string) {
-	respond := func(status protocol.BoardStatus, streamID uint64, rows []protocol.BoardMessageRow) {
-		out := protocol.BoardReadResponse{RequestId: requestID, Status: status, StreamId: streamID}
-		out.Msgs = rows
-		out.MsgsLen = uint16(len(rows))
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardRead, RequestId: requestID}
-		resp.SetBoardRead(out)
-		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+	respond := func(status protocol.BoardStatus) func(streamID uint64) {
+		return func(streamID uint64) {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardRead, RequestId: requestID}
+			resp.SetBoardRead(protocol.BoardReadResponse{RequestId: requestID, Status: status, StreamId: streamID})
+			respondAgent(conn, resp)
+		}
 	}
 
 	msgs, found := h.Board.ListRetained(topic)
 	if !found {
-		respond(protocol.BoardStatus_NotFound, 0, nil)
+		respond(protocol.BoardStatus_NotFound)(0)
 		return
 	}
 	// The operator sees live AND withdrawn messages, in one seq-ordered list.
@@ -119,20 +115,15 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
 	}
 	rows := make([]protocol.BoardMessageRow, 0, len(msgs))
-	payloads := make([][]byte, 0, len(msgs))
 	for _, m := range msgs {
-		size := len(m.Payload)
-		if size > 0xffffffff {
-			size = 0xffffffff
-		}
 		row := protocol.BoardMessageRow{
 			Seq:              m.Seq,
 			InReplyTo:        m.InReplyTo,
 			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
-			Size:             uint32(size),
 			FromTask:         m.FromTask,
 			SenderKind:       m.SenderKind,
 		}
+		row.SetBody(m.Payload)
 		row.SetFromHostname([]byte(m.FromHostname))
 		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		row.SetReplyToTopic([]byte(m.ReplyToTopic))
@@ -146,33 +137,10 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 			row.RetractedByTask = m.RetractedByTask
 		}
 		rows = append(rows, row)
-		payloads = append(payloads, m.Payload)
 	}
-	if len(rows) == 0 {
-		respond(protocol.BoardStatus_Ok, 0, rows)
-		return
-	}
-	var stream trsf.SendStream = conn.CreateSendStream()
-	if stream == nil {
-		// Non-streaming connection (test/degraded): metadata only, no stream.
-		respond(protocol.BoardStatus_Ok, 0, rows)
-		return
-	}
-	respond(protocol.BoardStatus_Ok, uint64(stream.ID()), rows)
-	go func() {
-		for _, p := range payloads {
-			if len(p) > 0 {
-				if werr := writeStreamAll(stream, p); werr != nil {
-					slog.Warn("BoardRead: stream write failed", "topic", topic, "err", werr)
-					break
-				}
-			}
-		}
-		// Signal EOF on the stream so the client knows we're done.
-		if err := stream.AppendData(true); err != nil {
-			slog.Warn("BoardRead: stream EOF failed", "topic", topic, "err", err)
-		}
-	}()
+	body := &protocol.BoardReadBody{}
+	body.SetMsgs(rows)
+	respondWithBody(conn, "board_read", body, respond(protocol.BoardStatus_Ok))
 }
 
 // handleBoardRetract withdraws ONE retained message from a topic and leaves it

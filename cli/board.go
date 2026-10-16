@@ -9,7 +9,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
-	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // BoardTopicRow holds metadata for one topic returned by BoardTopics.
@@ -113,8 +112,12 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 	if bs == nil || resp.Kind != protocol.TaskControlKind_BoardSubscribers {
 		return nil, fmt.Errorf("BoardSubscribers: unexpected response kind=%v", resp.Kind)
 	}
-	out := make([]BoardSubscriberRow, 0, len(bs.Rows))
-	for _, r := range bs.Rows {
+	var body protocol.BoardSubscribersBody
+	if err := ReadResponseBody(ctx, c.Transport(), bs.StreamId, &body); err != nil {
+		return nil, fmt.Errorf("BoardSubscribers: %w", err)
+	}
+	out := make([]BoardSubscriberRow, 0, len(body.Rows))
+	for _, r := range body.Rows {
 		patterns := make([]BoardSubscriberPattern, 0, len(r.Patterns))
 		for _, p := range r.Patterns {
 			patterns = append(patterns, BoardSubscriberPattern{
@@ -208,8 +211,12 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 	if bt == nil || resp.Kind != protocol.TaskControlKind_BoardTopics {
 		return nil, fmt.Errorf("BoardTopics: unexpected response kind=%v", resp.Kind)
 	}
-	out := make([]BoardTopicRow, 0, len(bt.Topics))
-	for _, r := range bt.Topics {
+	var body protocol.BoardTopicsBody
+	if err := ReadResponseBody(ctx, c.Transport(), bt.StreamId, &body); err != nil {
+		return nil, fmt.Errorf("BoardTopics: %w", err)
+	}
+	out := make([]BoardTopicRow, 0, len(body.Topics))
+	for _, r := range body.Topics {
 		out = append(out, BoardTopicRow{
 			Name:              string(r.Name),
 			LastSeq:           r.LastSeq,
@@ -221,12 +228,8 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 	return out, nil
 }
 
-// BoardRead returns all retained messages for the named topic.
-// bool=false (not found) when the topic does not exist.
-// Payloads are retrieved from a server-initiated trsf send-stream and sliced
-// into per-message []byte values using the Size field of each metadata row.
-// The pattern mirrors (*Client).GetTaskLog: send request, receive metadata
-// response with a stream_id, then drain the stream until EOF.
+// BoardRead returns all retained messages for the named topic, bodies
+// included. bool=false (not found) when the topic does not exist.
 func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, bool, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardRead}
 	rr := protocol.BoardReadRequest{}
@@ -244,10 +247,13 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 	if br.Status == protocol.BoardStatus_NotFound {
 		return nil, false, nil
 	}
+	var body protocol.BoardReadBody
+	if err := ReadResponseBody(ctx, c.Transport(), br.StreamId, &body); err != nil {
+		return nil, true, fmt.Errorf("BoardRead: %w", err)
+	}
 
-	rows := make([]BoardMessage, len(br.Msgs))
-	total := 0
-	for i, m := range br.Msgs {
+	rows := make([]BoardMessage, len(body.Msgs))
+	for i, m := range body.Msgs {
 		rows[i] = BoardMessage{
 			Seq:              m.Seq,
 			InReplyTo:        m.InReplyTo,
@@ -257,6 +263,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 			SenderKind:       SenderKindName(m.SenderKind),
 			ReplyToTopic:     string(m.ReplyToTopic),
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
+			Payload:          m.Body,
 			Retracted:        m.Retracted(),
 			RetractedAtMs:    m.RetractedAtUnixMs,
 			RetractedBy:      m.RetractedBy,
@@ -266,40 +273,6 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 		// a task; the empty string is what every caller renders as "operator".
 		if m.RetractedByTask.Id != ([16]byte{}) {
 			rows[i].RetractedByTaskHex = hex.EncodeToString(m.RetractedByTask.Id[:])
-		}
-		total += int(m.Size)
-	}
-
-	if br.StreamId != 0 {
-		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(br.StreamId))
-		if st == nil {
-			return nil, true, fmt.Errorf("BoardRead: stream %d not visible after response", br.StreamId)
-		}
-		buf := make([]byte, 0, total)
-		for {
-			select {
-			case <-ctx.Done():
-				return nil, true, ctx.Err()
-			default:
-			}
-			data, eof, err := st.ReadDirect(64 * 1024)
-			if err != nil {
-				return nil, true, fmt.Errorf("BoardRead: stream read: %w", err)
-			}
-			buf = append(buf, data...)
-			if eof {
-				break
-			}
-		}
-		// Slice the concatenated stream bytes by each row's Size, in order.
-		off := 0
-		for i := range rows {
-			n := int(br.Msgs[i].Size)
-			if off+n > len(buf) {
-				n = len(buf) - off
-			}
-			rows[i].Payload = append([]byte(nil), buf[off:off+n]...)
-			off += n
 		}
 	}
 	return rows, true, nil

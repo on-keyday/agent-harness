@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -55,7 +56,11 @@ func TopicsWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error
 	if r == nil {
 		return errors.New("topics: response variant is nil")
 	}
-	for _, s := range r.Topics {
+	var body protocol.BoardTopicsBody
+	if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
+		return fmt.Errorf("topics: %w", err)
+	}
+	for _, s := range body.Topics {
 		rec := map[string]any{
 			"name":              string(s.Name),
 			"last_seq":          s.LastSeq,

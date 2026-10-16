@@ -85,11 +85,15 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 		fmt.Fprintf(os.Stderr, "agent retained: topic %q is not on the board (never published, or evicted / purged)\n", *topic)
 		return nil
 	case protocol.BoardStatus_Ok:
-		if len(r.Metas) == 0 {
+		var body protocol.RetainedBody
+		if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
+			return fmt.Errorf("retained: %w", err)
+		}
+		if len(body.Metas) == 0 {
 			fmt.Fprintf(os.Stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
 			return nil
 		}
-		for _, m := range r.Metas {
+		for _, m := range body.Metas {
 			// Marshalled rather than Fprintf'd: %q renders a GO string literal,
 			// which is not JSON for every input, and this line gained an optional
 			// field. A struct keeps the field ORDER the documented sample shows,

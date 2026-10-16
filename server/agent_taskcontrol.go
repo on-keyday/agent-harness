@@ -44,6 +44,47 @@ func respondAgent(conn ConnHandle, resp protocol.TaskControlResponse) {
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }
 
+// bodyEncoder is a <Response>Body format: the rows of a list-shaped board
+// response, which travel on a stream rather than in the response (see
+// BoardTopicsResponse in message.bgn for why).
+type bodyEncoder interface {
+	EncodeCopy(reserved []byte) ([]byte, error)
+}
+
+// respondWithBody sends a list-shaped board response, then its rows. respond
+// builds and sends the response carrying the stream id it is handed.
+//
+// Every such response on both faces goes through here, because the order is
+// the part that has to hold: the response first, then the body. The peer reads
+// a stream only once it has been told about it, so a body written before the
+// response lands only as far as the receive window, and past that the write
+// never completes — bodies here carry up to the board's per-message limit per
+// row. The write runs on its own goroutine: the handlers are driven from the
+// connection's receive loop, and a peer that stops reading must not stall it.
+//
+// An encode or stream-allocation failure answers stream id 0, which readers
+// report as an error rather than as an empty list.
+func respondWithBody(conn ConnHandle, what string, body bodyEncoder, respond func(streamID uint64)) {
+	b, err := body.EncodeCopy(nil)
+	if err != nil {
+		slog.Error("board response: encode body", "what", what, "err", err)
+		respond(0)
+		return
+	}
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		slog.Warn("board response: no send stream", "what", what)
+		respond(0)
+		return
+	}
+	respond(uint64(stream.ID()))
+	go func() {
+		if err := stream.AppendData(true, b); err != nil {
+			slog.Warn("board response: body write", "what", what, "stream", stream.ID(), "err", err)
+		}
+	}()
+}
+
 // handleAgentSubscribe registers or removes one exact-match subscription for
 // the calling agent. remove picks which; the two verbs differ in nothing else
 // and share a response format.
@@ -176,31 +217,14 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 	}()
 }
 
-// deliveredRows turns retained messages into wire rows, allocating and
-// ANNOUNCING one payload stream each without writing a byte.
-//
-// The split is the load-bearing part, and it is why wait / inbox /
-// inbox_advance / read_seq all go through here rather than each carrying their
-// own loop: the agent cannot read a stream it has not been told about, so a
-// body written before the response is a body nobody is draining, landing only
-// as far as the peer's receive window reaches. Past that the write never
-// completes and the message is undeliverable — a ceiling on the board's
-// per-message limit with no reason to exist. Callers send the response, THEN
-// hand the returned pending set to flushDeliveredPayloads.
-func deliveredRows(conn ConnHandle, msgs []agentboard.RetainedMessage, what string) ([]protocol.DeliveredMessage, []pendingPayload) {
-	delivered := make([]protocol.DeliveredMessage, 0, len(msgs))
-	pending := make([]pendingPayload, 0, len(msgs))
+// deliveredBody turns retained messages into the body wait / inbox /
+// inbox_advance / read_seq all return, payloads in their rows.
+func deliveredBody(msgs []agentboard.RetainedMessage) *protocol.DeliveredBody {
+	rows := make([]protocol.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
-		stream, streamID, werr := openDeliveredPayloadStream(conn)
-		if werr != nil {
-			slog.Warn("agent_taskcontrol: deliver stream", "what", what, "seq", m.Seq, "err", werr)
-			continue
-		}
-		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
 		dm := protocol.DeliveredMessage{
-			Seq:             m.Seq,
-			InReplyTo:       m.InReplyTo,
-			PayloadStreamId: streamID,
+			Seq:       m.Seq,
+			InReplyTo: m.InReplyTo,
 			// No conversion any more: RetainedMessage already holds protocol's
 			// ids, and the board's hand-copied types — which the old path
 			// converted to on every row — are gone.
@@ -209,12 +233,15 @@ func deliveredRows(conn ConnHandle, msgs []agentboard.RetainedMessage, what stri
 			SenderKind:   m.SenderKind,
 		}
 		dm.SetTopic([]byte(m.Topic))
+		dm.SetPayload(m.Payload)
 		dm.SetFromHostname([]byte(m.FromHostname))
 		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
-		delivered = append(delivered, dm)
+		rows = append(rows, dm)
 	}
-	return delivered, pending
+	body := &protocol.DeliveredBody{}
+	body.SetMsgs(rows)
+	return body
 }
 
 // handleAgentWait long-polls one topic.
@@ -225,11 +252,13 @@ func deliveredRows(conn ConnHandle, msgs []agentboard.RetainedMessage, what stri
 // handleAwaitIdle answers the same way.
 func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *protocol.AgentWaitRequest) {
 	out := protocol.AgentWaitResponse{RequestId: requestID, NextCursor: r.Since}
-	respond := func(pending []pendingPayload) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentWait, RequestId: requestID}
-		resp.SetAgentWait(out)
-		respondAgent(conn, resp)
-		go flushDeliveredPayloads(pending)
+	respond := func(msgs []agentboard.RetainedMessage) {
+		respondWithBody(conn, "wait", deliveredBody(msgs), func(streamID uint64) {
+			out.StreamId = streamID
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentWait, RequestId: requestID}
+			resp.SetAgentWait(out)
+			respondAgent(conn, resp)
+		})
 	}
 
 	st := h.boardState(conn)
@@ -243,7 +272,6 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 	defer cancel()
 	msgs, timedOut, _ := h.Board.Wait(ctx, st, string(r.Pattern), r.Since, r.InReplyTo)
 
-	delivered, pending := deliveredRows(conn, msgs, "wait")
 	if timedOut {
 		out.TimedOut = 1
 	}
@@ -252,8 +280,7 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 			out.NextCursor = m.Seq
 		}
 	}
-	out.SetMsgs(delivered)
-	respond(pending)
+	respond(msgs)
 }
 
 // handleAgentInbox reads every subscribed topic above the caller's cursor and
@@ -261,18 +288,16 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 // the same batch twice and it can never take a message away from the hook.
 func (h *TaskHandler) handleAgentInbox(conn ConnHandle, requestID uint32, r *protocol.AgentInboxRequest) {
 	out := protocol.AgentInboxResponse{RequestId: requestID, NextCursor: r.Since}
-	var pending []pendingPayload
+	var msgs []agentboard.RetainedMessage
 	if st := h.boardState(conn); st != nil && h.Board != nil {
-		msgs, next := h.Board.Inbox(st, r.Since)
-		var delivered []protocol.DeliveredMessage
-		delivered, pending = deliveredRows(conn, msgs, "inbox")
-		out.NextCursor = next
-		out.SetMsgs(delivered)
+		msgs, out.NextCursor = h.Board.Inbox(st, r.Since)
 	}
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInbox, RequestId: requestID}
-	resp.SetAgentInbox(out)
-	respondAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
+	respondWithBody(conn, "inbox", deliveredBody(msgs), func(streamID uint64) {
+		out.StreamId = streamID
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInbox, RequestId: requestID}
+		resp.SetAgentInbox(out)
+		respondAgent(conn, resp)
+	})
 }
 
 // handleAgentInboxAdvance is handleAgentInbox's body minus the caller's cursor
@@ -283,16 +308,16 @@ func (h *TaskHandler) handleAgentInbox(conn ConnHandle, requestID uint32, r *pro
 // delivered.
 func (h *TaskHandler) handleAgentInboxAdvance(conn ConnHandle, requestID uint32) {
 	out := protocol.AgentInboxAdvanceResponse{RequestId: requestID}
-	var pending []pendingPayload
+	var msgs []agentboard.RetainedMessage
 	if st := h.boardState(conn); st != nil && h.Board != nil {
-		var delivered []protocol.DeliveredMessage
-		delivered, pending = deliveredRows(conn, h.Board.InboxAdvance(st), "inbox_advance")
-		out.SetMsgs(delivered)
+		msgs = h.Board.InboxAdvance(st)
 	}
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInboxAdvance, RequestId: requestID}
-	resp.SetAgentInboxAdvance(out)
-	respondAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
+	respondWithBody(conn, "inbox_advance", deliveredBody(msgs), func(streamID uint64) {
+		out.StreamId = streamID
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInboxAdvance, RequestId: requestID}
+		resp.SetAgentInboxAdvance(out)
+		respondAgent(conn, resp)
+	})
 }
 
 // handleAgentReadSeq answers a request for ONE retained message by seq.
@@ -304,23 +329,21 @@ func (h *TaskHandler) handleAgentInboxAdvance(conn ConnHandle, requestID uint32)
 // seq N exist?" for every seq.
 func (h *TaskHandler) handleAgentReadSeq(conn ConnHandle, requestID uint32, r *protocol.AgentReadSeqRequest) {
 	out := protocol.AgentReadSeqResponse{RequestId: requestID, Status: protocol.AgentReadSeqStatus_NotFound}
-	var pending []pendingPayload
+	respond := func(streamID uint64) {
+		out.StreamId = streamID
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentReadSeq, RequestId: requestID}
+		resp.SetAgentReadSeq(out)
+		respondAgent(conn, resp)
+	}
 
 	if st := h.boardState(conn); st != nil && h.Board != nil {
 		if m, ok := h.Board.Retained(r.Seq); ok && h.Board.Subscribes(st, m.Topic) {
-			var delivered []protocol.DeliveredMessage
-			delivered, pending = deliveredRows(conn, []agentboard.RetainedMessage{m}, "read_seq")
-			if len(delivered) == 1 {
-				out.Status = protocol.AgentReadSeqStatus_Ok
-				out.SetMsgs(delivered)
-			}
+			out.Status = protocol.AgentReadSeqStatus_Ok
+			respondWithBody(conn, "read_seq", deliveredBody([]agentboard.RetainedMessage{m}), respond)
+			return
 		}
 	}
-
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentReadSeq, RequestId: requestID}
-	resp.SetAgentReadSeq(out)
-	respondAgent(conn, resp)
-	go flushDeliveredPayloads(pending)
+	respond(0)
 }
 
 // handleAgentListRetained returns a topic's retained ring as METADATA ONLY.
@@ -333,10 +356,17 @@ func (h *TaskHandler) handleAgentReadSeq(conn ConnHandle, requestID uint32, r *p
 // it summarizes. Destruction (board_purge) still needs the bit.
 func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32, r *protocol.AgentListRetainedRequest) {
 	out := protocol.AgentListRetainedResponse{RequestId: requestID, Status: protocol.BoardStatus_NotFound}
+	respond := func(streamID uint64) {
+		out.StreamId = streamID
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentListRetained, RequestId: requestID}
+		resp.SetAgentListRetained(out)
+		respondAgent(conn, resp)
+	}
 
 	if h.Board != nil {
 		if msgs, found := h.Board.ListRetained(string(r.Topic)); found {
 			out.Status = protocol.BoardStatus_Ok
+			metas := make([]protocol.RetainedMeta, 0, len(msgs))
 			for _, m := range msgs {
 				size := len(m.Payload)
 				if size > 0xffffffff {
@@ -354,15 +384,15 @@ func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32,
 				meta.SetFromHostname([]byte(m.FromHostname))
 				meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
 				meta.SetReplyToTopic([]byte(m.ReplyToTopic))
-				out.Metas = append(out.Metas, meta)
+				metas = append(metas, meta)
 			}
-			out.MetasLen = uint16(len(out.Metas))
+			body := &protocol.RetainedBody{}
+			body.SetMetas(metas)
+			respondWithBody(conn, "list_retained", body, respond)
+			return
 		}
 	}
-
-	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentListRetained, RequestId: requestID}
-	resp.SetAgentListRetained(out)
-	respondAgent(conn, resp)
+	respond(0)
 }
 
 // handleAgentRetract withdraws one message the CALLER published.
@@ -397,20 +427,22 @@ func (h *TaskHandler) handleAgentRetract(conn ConnHandle, requestID uint32, r *p
 // nothing" is the true answer for a connection with no board identity, and it
 // discloses nothing about anyone else.
 func (h *TaskHandler) handleAgentListSubscriptions(conn ConnHandle, requestID uint32) {
-	out := protocol.AgentListSubscriptionsResponse{RequestId: requestID}
+	var subs []protocol.AgentSubscriptionSummary
 	if st := h.boardState(conn); st != nil && h.Board != nil {
 		for _, p := range h.Board.ListSubscriptions(st) {
 			ss := protocol.AgentSubscriptionSummary{}
 			ss.SetPattern([]byte(p))
-			out.Subscriptions = append(out.Subscriptions, ss)
+			subs = append(subs, ss)
 		}
 	}
-	out.SubscriptionsLen = uint16(len(out.Subscriptions))
-
-	resp := protocol.TaskControlResponse{
-		Kind:      protocol.TaskControlKind_AgentListSubscriptions,
-		RequestId: requestID,
-	}
-	resp.SetAgentListSubscriptions(out)
-	respondAgent(conn, resp)
+	body := &protocol.SubscriptionsBody{}
+	body.SetSubscriptions(subs)
+	respondWithBody(conn, "list_subscriptions", body, func(streamID uint64) {
+		resp := protocol.TaskControlResponse{
+			Kind:      protocol.TaskControlKind_AgentListSubscriptions,
+			RequestId: requestID,
+		}
+		resp.SetAgentListSubscriptions(protocol.AgentListSubscriptionsResponse{RequestId: requestID, StreamId: streamID})
+		respondAgent(conn, resp)
+	})
 }

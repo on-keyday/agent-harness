@@ -52,7 +52,7 @@ func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 		return err
 	}
 	r := resp.AgentReadSeq()
-	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok || len(r.Msgs) == 0 {
+	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok {
 		// One sentence for four causes, because the server deliberately merges
 		// them: distinguishing "not on a topic you subscribe to" from "gone"
 		// would answer "does seq N exist?" for every seq on every ring.
@@ -60,11 +60,13 @@ func ReadWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 			"(64 messages) or its 30-minute TTL, was purged, or is on a topic this task "+
 			"does not subscribe to", seq)
 	}
-	m := r.Msgs[0]
-	payload, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
-	if perr != nil {
-		return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+	msgs, rerr := readDelivered(ctx, c, r.StreamId)
+	if rerr != nil {
+		return fmt.Errorf("read seq=%d: %w", seq, rerr)
 	}
-	emitMessageLine(stdout, m, payload)
+	if len(msgs) != 1 {
+		return fmt.Errorf("read seq=%d: server returned %d messages, want 1", seq, len(msgs))
+	}
+	emitMessageLine(stdout, msgs[0], msgs[0].Payload)
 	return nil
 }

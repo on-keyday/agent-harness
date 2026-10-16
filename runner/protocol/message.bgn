@@ -1159,8 +1159,23 @@ format BoardTopicRow:
     # if it still had live traffic.
     retracted_count :u16
 
+# Every list-shaped board response, on both faces, names the stream its rows
+# travel on instead of holding them. A task-control message is one objproto
+# message, which over UDP is ONE datagram, and one that does not fit (~1170
+# bytes) is dropped with no error at either end. Rows are unbounded in count —
+# 13 DeliveredMessage rows already fill the budget — so they grow past it
+# without anyone editing this file. The response keeps its scalars; stream_id
+# names a server-initiated send-stream carrying exactly one <Response>Body
+# format, then EOF. The server sends the response BEFORE writing the stream: a
+# peer drains only a stream it has been told about, so a body written first
+# lands only as far as the receive window. stream_id = 0 on a status that
+# answers ok means the server could not allocate a stream, which a reader
+# reports as an error. See docs/superpowers/specs/2026-10-16-board-row-responses-streamed-design.md.
 format BoardTopicsResponse:
     request_id :u32
+    stream_id :u64
+
+format BoardTopicsBody:
     topics_len :u16
     topics :[topics_len]BoardTopicRow
 
@@ -1211,7 +1226,12 @@ format BoardMessageRow:
     from_agent_profile_len :u8
     from_agent_profile :[from_agent_profile_len]u8
     received_at_unix_ms :u64
-    size :u32
+    # body is the message payload, in its row. It used to follow the rows on a
+    # stream of its own, every body laid end to end and sliced by a `size`
+    # field — a layout no format described. The rows are on a stream now
+    # (BoardReadBody), so the body rides with them.
+    body_len :u32
+    body :[body_len]u8
     # retracted marks a withdrawn message. A withdrawn message has left every
     # agent-facing path (deliver / inbox / wait / read_seq / list_retained) and
     # survives only here, so that a retract in seconds cannot shrink the window
@@ -1243,10 +1263,13 @@ format BoardMessageRow:
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
 
+# stream_id: see BoardTopicsResponse. 0 when status is not_found.
 format BoardReadResponse:
     request_id :u32
     status :BoardStatus
     stream_id :u64
+
+format BoardReadBody:
     msgs_len :u16
     msgs :[msgs_len]BoardMessageRow
 
@@ -1286,8 +1309,12 @@ format BoardSubscriberRow:
     patterns_len :u16
     patterns :[patterns_len]SubscriptionPattern
 
+# stream_id: see BoardTopicsResponse.
 format BoardSubscribersResponse:
     request_id :u32
+    stream_id :u64
+
+format BoardSubscribersBody:
     rows_len :u16
     rows :[rows_len]BoardSubscriberRow
 
@@ -1491,11 +1518,12 @@ format DeliveredMessage:
     in_reply_to :u64
     topic_len :u16
     topic :[topic_len]u8
-    # payload_stream_id references a server-initiated trsf send-stream
-    # carrying the delivered payload; agent reads from the matching
-    # receive stream until EOF. See AgentSendRequest.payload_stream_id for the
-    # rationale (UDP MTU; streamed instead of inline).
-    payload_stream_id :u64
+    # payload is the message body, in its row. It left the row once (for a
+    # payload_stream_id per message) because the rows rode in a datagram; they
+    # ride a stream now (DeliveredBody), so the body is back with them and a
+    # read is one stream instead of one per message.
+    payload_len :u32
+    payload :[payload_len]u8
     from_runner_id :RunnerID
     from_task_id :TaskID
     from_hostname_len :u8
@@ -1525,6 +1553,12 @@ format DeliveredMessage:
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
 
+# DeliveredBody is the stream body of wait, inbox, inbox_advance and read_seq —
+# one format for all four, because the rows are the same.
+format DeliveredBody:
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
 format AgentWaitRequest:
     request_id :u32
     pattern_len :u16
@@ -1541,22 +1575,23 @@ format AgentWaitRequest:
     # for the answer to this one.
     in_reply_to :u64
 
+# stream_id: see BoardTopicsResponse. The stream carries a DeliveredBody,
+# empty on a timeout.
 format AgentWaitResponse:
     request_id :u32
     timed_out :u8
     next_cursor :u64
-    msgs_len :u16
-    msgs :[msgs_len]DeliveredMessage
+    stream_id :u64
 
 format AgentInboxRequest:
     request_id :u32
     since :u64
 
+# stream_id: see BoardTopicsResponse. The stream carries a DeliveredBody.
 format AgentInboxResponse:
     request_id :u32
     next_cursor :u64
-    msgs_len :u16
-    msgs :[msgs_len]DeliveredMessage
+    stream_id :u64
 
 # AgentInboxAdvanceRequest asks for the messages on this task's subscribed topics
 # that the automatic injection path has not yet been given, and records them as
@@ -1574,10 +1609,13 @@ format AgentInboxResponse:
 format AgentInboxAdvanceRequest:
     request_id :u32
 
+# stream_id: see BoardTopicsResponse. The stream carries a DeliveredBody holding
+# exactly the rows this request recorded as given — the inline version lost
+# them for good when the response did not fit, because they were marked before
+# it was sent.
 format AgentInboxAdvanceResponse:
     request_id :u32
-    msgs_len :u16
-    msgs :[msgs_len]DeliveredMessage
+    stream_id :u64
 
 format AgentListSubscriptionsRequest:
     request_id :u32
@@ -1586,8 +1624,12 @@ format AgentSubscriptionSummary:
     pattern_len :u16
     pattern :[pattern_len]u8
 
+# stream_id: see BoardTopicsResponse.
 format AgentListSubscriptionsResponse:
     request_id :u32
+    stream_id :u64
+
+format SubscriptionsBody:
     subscriptions_len :u16
     subscriptions :[subscriptions_len]AgentSubscriptionSummary
 
@@ -1628,9 +1670,13 @@ format RetainedMeta:
     # task for an operator publish (zero for a real operator connection).
     sender_kind :SenderKind
 
+# stream_id: see BoardTopicsResponse. 0 when status is not_found.
 format AgentListRetainedResponse:
     request_id :u32
     status :BoardStatus
+    stream_id :u64
+
+format RetainedBody:
     metas_len :u16
     metas :[metas_len]RetainedMeta
 
@@ -1656,12 +1702,10 @@ enum AgentReadSeqStatus:
 format AgentReadSeqResponse:
     request_id :u32
     status :AgentReadSeqStatus
-    # 1 on ok, 0 otherwise. A count rather than a bare DeliveredMessage
-    # because the layout is fixed: an absent message would still have to
-    # encode one, with a payload_stream_id pointing at nothing. Mirrors
-    # AgentWaitResponse / AgentInboxResponse so the body rides the same stream path.
-    msgs_len :u16
-    msgs :[msgs_len]DeliveredMessage
+    # stream_id: see BoardTopicsResponse. 0 unless status is ok; then the
+    # stream carries a DeliveredBody holding the one message, the same body
+    # wait and inbox return, so one reader serves all four.
+    stream_id :u64
 
 # AgentRetractRequest withdraws ONE message the CALLER published, named by its
 # board-global seq. Withdrawal is a LOGICAL delete: the message leaves every

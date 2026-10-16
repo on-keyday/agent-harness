@@ -86,14 +86,14 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	if r == nil {
 		return errors.New("agent: wait response variant is nil")
 	}
-	for _, m := range r.Msgs {
-		payload, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
-		if perr != nil {
-			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-		}
-		emitMessageLine(stdout, m, payload)
+	msgs, err := readDelivered(ctx, c, r.StreamId)
+	if err != nil {
+		return fmt.Errorf("wait: %w", err)
 	}
-	if r.TimedOut == 1 && len(r.Msgs) == 0 {
+	for _, m := range msgs {
+		emitMessageLine(stdout, m, m.Payload)
+	}
+	if r.TimedOut == 1 && len(msgs) == 0 {
 		return errors.New("timeout")
 	}
 	return nil

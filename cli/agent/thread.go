@@ -140,8 +140,12 @@ func listSubscribedTopics(ctx context.Context, c *cli.Client) ([]string, error) 
 	if r == nil {
 		return nil, errors.New("agent: subscriptions response variant is nil")
 	}
-	out := make([]string, 0, len(r.Subscriptions))
-	for _, sub := range r.Subscriptions {
+	var body protocol.SubscriptionsBody
+	if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
+		return nil, fmt.Errorf("subscriptions: %w", err)
+	}
+	out := make([]string, 0, len(body.Subscriptions))
+	for _, sub := range body.Subscriptions {
 		out = append(out, string(sub.Pattern))
 	}
 	return out, nil
@@ -174,9 +178,13 @@ func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.Boar
 		// subscriber); it contributes no messages.
 		return nil, nil, nil
 	case protocol.BoardStatus_Ok:
-		out := make([]cli.BoardMessage, 0, len(r.Metas))
-		sizes := make(map[uint64]int, len(r.Metas))
-		for _, m := range r.Metas {
+		var body protocol.RetainedBody
+		if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
+			return nil, nil, fmt.Errorf("retained %s: %w", topic, err)
+		}
+		out := make([]cli.BoardMessage, 0, len(body.Metas))
+		sizes := make(map[uint64]int, len(body.Metas))
+		for _, m := range body.Metas {
 			out = append(out, cli.BoardMessage{
 				Seq:              m.Seq,
 				InReplyTo:        m.InReplyTo,
@@ -212,14 +220,17 @@ func fetchBody(ctx context.Context, c *cli.Client, seq uint64) ([]byte, error) {
 		return nil, err
 	}
 	r := resp.AgentReadSeq()
-	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok || len(r.Msgs) == 0 {
+	if r == nil || r.Status != protocol.AgentReadSeqStatus_Ok {
 		return nil, fmt.Errorf("seq %d: no readable body (it rotated out, or sits on a topic this task does not subscribe to)", seq)
 	}
-	payload, ferr := fetchDeliveredPayload(ctx, c.Transport(), r.Msgs[0].PayloadStreamId)
+	msgs, ferr := readDelivered(ctx, c, r.StreamId)
 	if ferr != nil {
-		return nil, fmt.Errorf("fetch payload seq=%d: %w", seq, ferr)
+		return nil, fmt.Errorf("read seq=%d: %w", seq, ferr)
 	}
-	return payload, nil
+	if len(msgs) != 1 {
+		return nil, fmt.Errorf("read seq=%d: server returned %d messages, want 1", seq, len(msgs))
+	}
+	return msgs[0].Payload, nil
 }
 
 // hexTask renders a TaskID the way BoardMessage exposes it.

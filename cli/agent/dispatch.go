@@ -201,14 +201,14 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	if r == nil {
 		return errors.New("agent: wait response variant is nil")
 	}
-	for _, m := range r.Msgs {
-		body, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
-		if perr != nil {
-			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-		}
-		emitMessageLine(stdout, m, body)
+	msgs, err := readDelivered(ctx, c, r.StreamId)
+	if err != nil {
+		return fmt.Errorf("dispatch reply: %w", err)
 	}
-	if r.TimedOut == 1 && len(r.Msgs) == 0 {
+	for _, m := range msgs {
+		emitMessageLine(stdout, m, m.Payload)
+	}
+	if r.TimedOut == 1 && len(msgs) == 0 {
 		return errors.New("dispatch reply timeout")
 	}
 	return nil

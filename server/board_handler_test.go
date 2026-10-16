@@ -19,8 +19,17 @@ func newBoardTestHandler(t *testing.T) (*TaskHandler, *fakeConn) {
 		Registry: NewRegistry(),
 		Board:    board,
 	}
-	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9950-1")}
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9950-1"), autoSendStreams: true}
 	return h, conn
+}
+
+// boardReadRows is board_read's rows: the response names a stream, and the
+// stream carries them.
+func boardReadRows(t *testing.T, conn *fakeConn, br *protocol.BoardReadResponse) []protocol.BoardMessageRow {
+	t.Helper()
+	var body protocol.BoardReadBody
+	conn.streamBody(t, br.StreamId, &body)
+	return body.Msgs
 }
 
 func TestHandleBoardTopics_ListsTopics(t *testing.T) {
@@ -36,8 +45,13 @@ func TestHandleBoardTopics_ListsTopics(t *testing.T) {
 		t.Fatalf("kind = %v", topicsResp.Kind)
 	}
 	bt := topicsResp.BoardTopics()
-	if bt == nil || bt.TopicsLen != 2 {
-		t.Fatalf("topics = %+v, want 2", bt)
+	if bt == nil {
+		t.Fatal("no board_topics variant")
+	}
+	var body protocol.BoardTopicsBody
+	conn.streamBody(t, bt.StreamId, &body)
+	if len(body.Topics) != 2 {
+		t.Fatalf("topics = %+v, want 2", body.Topics)
 	}
 }
 
@@ -75,24 +89,16 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 
-	// Configure the send stream ID so handleBoardRead gets a non-nil stream.
-	// (fakeConn.CreateSendStream returns nil when nextSendStreamID==0.)
-	conn.nextSendStreamID = 5
-
 	h.handleBoardRead(conn, 1, "chat.r")
 
 	resp := conn.lastTaskControlResponse(t)
 	br := resp.BoardRead()
-	if br == nil || br.Status != protocol.BoardStatus_Ok || br.MsgsLen != 2 {
-		t.Fatalf("board_read resp = %+v, want ok/2", br)
+	if br == nil || br.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("board_read resp = %+v, want ok", br)
 	}
-	if br.Msgs[0].Size != 5 || br.Msgs[1].Size != 5 {
-		t.Fatalf("sizes = %d,%d want 5,5", br.Msgs[0].Size, br.Msgs[1].Size)
-	}
-	// The recording conn captures the send-stream bytes; concatenation is row order.
-	got := conn.sendStreamBytes(t, br.StreamId)
-	if string(got) != "alphabravo" {
-		t.Fatalf("stream payload = %q, want alphabravo", got)
+	rows := boardReadRows(t, conn, br)
+	if len(rows) != 2 || string(rows[0].Body) != "alpha" || string(rows[1].Body) != "bravo" {
+		t.Fatalf("rows = %+v, want alpha then bravo", rows)
 	}
 
 	// unknown topic → not_found, stream_id 0
@@ -120,14 +126,15 @@ func TestHandleBoardRead_CarriesInReplyTo(t *testing.T) {
 	if br == nil || br.Status != protocol.BoardStatus_Ok {
 		t.Fatalf("board read = %+v, want ok", br)
 	}
-	if len(br.Msgs) != 2 {
-		t.Fatalf("msgs = %d, want 2", len(br.Msgs))
+	rows := boardReadRows(t, conn, br)
+	if len(rows) != 2 {
+		t.Fatalf("msgs = %d, want 2", len(rows))
 	}
-	if br.Msgs[0].InReplyTo != 0 {
-		t.Errorf("parent row InReplyTo = %d, want 0", br.Msgs[0].InReplyTo)
+	if rows[0].InReplyTo != 0 {
+		t.Errorf("parent row InReplyTo = %d, want 0", rows[0].InReplyTo)
 	}
-	if br.Msgs[1].InReplyTo != parent {
-		t.Errorf("reply row InReplyTo = %d, want %d", br.Msgs[1].InReplyTo, parent)
+	if rows[1].InReplyTo != parent {
+		t.Errorf("reply row InReplyTo = %d, want %d", rows[1].InReplyTo, parent)
 	}
 }
 
@@ -147,18 +154,26 @@ func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
 	}
 	h.Board.Attach(rid, bystander, "host-B", "codex")
 
-	h.handleBoardSubscribers(conn, 1, "")
-	allResp := lastTaskControlResponse(t, conn)
-	all := allResp.BoardSubscribers()
-	if all == nil || len(all.Rows) != 2 {
-		t.Fatalf("no-filter rows = %+v, want 2", all)
+	subscribers := func(requestID uint32, topic string) protocol.BoardSubscribersBody {
+		t.Helper()
+		h.handleBoardSubscribers(conn, requestID, topic)
+		resp := lastTaskControlResponse(t, conn)
+		bs := resp.BoardSubscribers()
+		if bs == nil {
+			t.Fatal("no board_subscribers variant")
+		}
+		var body protocol.BoardSubscribersBody
+		conn.streamBody(t, bs.StreamId, &body)
+		return body
 	}
 
-	h.handleBoardSubscribers(conn, 2, "rr.dec-019")
-	filteredResp := lastTaskControlResponse(t, conn)
-	filtered := filteredResp.BoardSubscribers()
-	if filtered == nil || len(filtered.Rows) != 1 {
-		t.Fatalf("filtered rows = %+v, want 1", filtered)
+	if all := subscribers(1, ""); len(all.Rows) != 2 {
+		t.Fatalf("no-filter rows = %+v, want 2", all.Rows)
+	}
+
+	filtered := subscribers(2, "rr.dec-019")
+	if len(filtered.Rows) != 1 {
+		t.Fatalf("filtered rows = %+v, want 1", filtered.Rows)
 	}
 	if filtered.Rows[0].Task.Id != listener.Id {
 		t.Errorf("task = %x, want %x", filtered.Rows[0].Task.Id, listener.Id)
@@ -194,16 +209,20 @@ func TestHandleBoardRead_CarriesReplyToTopic(t *testing.T) {
 
 	resp := lastTaskControlResponse(t, conn)
 	br := resp.BoardRead()
-	if br == nil || len(br.Msgs) != 2 {
-		t.Fatalf("board read = %+v, want 2 msgs", br)
+	if br == nil {
+		t.Fatal("no board_read variant")
 	}
-	if got := string(br.Msgs[0].ReplyToTopic); got != "rr.dec-019" {
+	rows := boardReadRows(t, conn, br)
+	if len(rows) != 2 {
+		t.Fatalf("board read = %+v, want 2 msgs", rows)
+	}
+	if got := string(rows[0].ReplyToTopic); got != "rr.dec-019" {
 		t.Errorf("declared row ReplyToTopic = %q, want rr.dec-019", got)
 	}
 	// Empty, not the sender's own topic: the row reports what was DECLARED, and
 	// substituting the fallback here would make "declared nothing" and
 	// "declared its own inbox" the same reading.
-	if got := string(br.Msgs[1].ReplyToTopic); got != "" {
+	if got := string(rows[1].ReplyToTopic); got != "" {
 		t.Errorf("undeclared row ReplyToTopic = %q, want empty", got)
 	}
 }
@@ -249,13 +268,16 @@ func TestHandleBoardRetract_WithdrawsAndKeepsItReadable(t *testing.T) {
 	}
 
 	// Still in the operator's read, payload included, marked with who took it.
-	conn.nextSendStreamID = 5
 	h.handleBoardRead(conn, 2, "chat.w")
 	br := boardReadResp(t, conn)
-	if br == nil || len(br.Msgs) != 1 {
-		t.Fatalf("board read = %+v, want 1 msg", br)
+	if br == nil {
+		t.Fatal("no board_read variant")
 	}
-	row := br.Msgs[0]
+	rows := boardReadRows(t, conn, br)
+	if len(rows) != 1 {
+		t.Fatalf("board read = %+v, want 1 msg", rows)
+	}
+	row := rows[0]
 	if !row.Retracted() {
 		t.Error("row is not marked retracted")
 	}
@@ -271,8 +293,8 @@ func TestHandleBoardRetract_WithdrawsAndKeepsItReadable(t *testing.T) {
 	if row.FromTask.Id != author.Id {
 		t.Errorf("from_task = %x, want the author %x", row.FromTask.Id, author.Id)
 	}
-	if got := conn.sendStreamBytes(t, br.StreamId); string(got) != "inconvenient" {
-		t.Errorf("withdrawn payload = %q, want the original bytes", got)
+	if string(row.Body) != "inconvenient" {
+		t.Errorf("withdrawn payload = %q, want the original bytes", row.Body)
 	}
 }
 
@@ -328,17 +350,20 @@ func TestHandleBoardRetract_OperatorClientHasNoTaskID(t *testing.T) {
 	if got := boardRetractResp(t, conn); got.Status != protocol.BoardStatus_Ok {
 		t.Fatalf("retract = %v, want ok", got.Status)
 	}
-	conn.nextSendStreamID = 5
 	h.handleBoardRead(conn, 2, "chat.op")
 	br := boardReadResp(t, conn)
-	if br == nil || len(br.Msgs) != 1 {
-		t.Fatalf("board read = %+v, want 1 msg", br)
+	if br == nil {
+		t.Fatal("no board_read variant")
 	}
-	if br.Msgs[0].RetractedBy != protocol.RetractedBy_PurgeCap {
-		t.Errorf("retracted_by = %v, want purge_cap", br.Msgs[0].RetractedBy)
+	rows := boardReadRows(t, conn, br)
+	if len(rows) != 1 {
+		t.Fatalf("board read = %+v, want 1 msg", rows)
 	}
-	if br.Msgs[0].RetractedByTask.Id != ([16]byte{}) {
-		t.Errorf("retracted_by_task = %x, want the zero id", br.Msgs[0].RetractedByTask.Id)
+	if rows[0].RetractedBy != protocol.RetractedBy_PurgeCap {
+		t.Errorf("retracted_by = %v, want purge_cap", rows[0].RetractedBy)
+	}
+	if rows[0].RetractedByTask.Id != ([16]byte{}) {
+		t.Errorf("retracted_by_task = %x, want the zero id", rows[0].RetractedByTask.Id)
 	}
 }
 

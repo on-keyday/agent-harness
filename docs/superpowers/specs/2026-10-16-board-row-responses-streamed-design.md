@@ -46,8 +46,8 @@ Agents use whichever transport their runner connected on
 (`runner/servercandidates.go:28`), UDP included. On inbox_advance the failure
 is worse than a lost read. `Board.InboxAdvance` marks rows as delivered when it
 collects them, before the response is sent, so the hook loses those messages
-from the automatic path for good. Not yet seen failing live. A dummy harness
-cannot show it, because loopback's MTU is 65536.
+from the automatic path for good. A dummy harness cannot show it, because
+loopback's MTU is 65536; `scripts/netem-lab` can, and did (Verification).
 
 `2026-05-09-udp-dualstack-design.md` §12.1 listed the Wait/Inbox envelope as a
 "remaining theoretical offender" and judged it "~5 KB at default — fits MTU".
@@ -127,7 +127,7 @@ snapshot writes its body first (`server/task_handler.go:1925-1953`) and gets
 away with it because a snapshot is small. These bodies are up to
 `--agentboard-max-payload` (1 MiB) per row, so all nine send the response
 first, then write the body and EOF on a goroutine, as
-`flushDeliveredPayloads` does today.
+`flushDeliveredPayloads` did for the per-message streams.
 
 On a stream-creation or encode failure, the response goes out with
 `stream_id = 0`, and the client reports that as an error. That is the
@@ -161,11 +161,19 @@ defect, and each has its own error text that callers match on.
 
 ## 4. Guard (D6)
 
-A test reads the generated `protocol` types and fails when a type named
-`…Response` has a slice-of-struct field and is not on an allowlist. Each
-allowlist entry carries the reason it may stay inline. That reason is what the
-next person adding a list to a response has to write, instead of finding out
-over UDP.
+`TestResponseRowsAreNotInline` (`runner/protocol/response_rows_test.go`) reads
+`message.bgn` and fails when a format named `…Response` or `…Result` holds a
+list of anything but bytes and is not on an allowlist. Each allowlist entry
+carries the reason it may stay inline. That reason is what the next person
+adding a list to a response has to write, instead of finding out over UDP. An
+entry whose format no longer holds a list fails too, so the list cannot go
+stale.
+
+It reads the schema rather than the generated Go, which an earlier draft of
+this section said. Go reflection cannot enumerate a package's types, and the
+schema is the file a person adding a field edits. Seen red first: against the
+schema before this change it named exactly the nine responses of D2 and
+accepted the six below.
 
 The allowlist starts with the six list-carrying responses this change leaves
 alone. Rough worst cases, computed from their formats and not measured:
@@ -202,26 +210,47 @@ wasm.
 
 ## Testing
 
-- **Size guard:** for each of the nine responses, the encoded response with
-  its body at the worst case (64 rows of 45-byte topics and reply routes; 1024
-  topic rows; …) is under 1170 bytes. Seen red first: the same test against
-  today's inline response fails at 14 delivery rows.
-- **Round trip:** every body decodes to the rows the server put in, bodies
-  included, whether the stream delivers it in one read or split mid-row.
-- **inbox_advance is not lossy:** rows collected and marked are the rows the
-  client receives.
-- **Live, reproduced first:** `scripts/netem-lab` with `--mtu 1500` puts a
-  real-MTU path between server and runner, which loopback is not, and needs no
-  root. With the runner on UDP, 20
-  messages published to one task's `chat.<id>` reach its inbox hook as 20
-  records. Before the change, that hook gets nothing and the 20 are marked
-  delivered. Run in the exact spelling of the `agent inbox` hook the runner
-  installs.
-- `board read`, `board topics`, `board subscribers`, `agent retained`,
-  `agent subscriptions` and `agent thread` run once through the CLI against a
-  dummy harness, plus the TUI's and the WebUI's board views. Those paths are
-  only reached through argv and UI, which Go tests do not execute
-  (implementation-pitfalls, Pitfall 13).
+- **Size and structure:** D6's guard, which makes an inline list a test
+  failure rather than a size to remember. With the rows gone, every one of the
+  nine responses is fixed-size. `TestAgentInboxAdvanceBodyCarriesEveryMarkedRow`
+  also asserts the encoded response stays under 1170 bytes with 40 rows queued.
+- **Round trip:** `TestBoardReadBodyRoundTrip` and `TestDeliveredBodyRoundTrip`
+  (`runner/protocol/board_view_test.go`), including an empty body that must not
+  swallow the row after it.
+- **inbox_advance is not lossy:** `TestAgentInboxAdvanceBodyCarriesEveryMarkedRow`
+  (`server/agent_taskcontrol_test.go`): 40 rows across five topics arrive in the
+  body, and a second advance returns none.
+- **Live, reproduced first:** `scripts/netem-lab`, with no `--mtu`: the lab's
+  veths have the default 1500-byte MTU, which is enough, since loopback's 65536 is
+  what hides the defect. Results under Verification.
+- `board read`, `board topics`, `board subscribers`, `board thread`,
+  `agent retained`, `agent subscriptions`, `agent read`, `agent inbox`,
+  `agent wait` and `agent thread` each run once through the CLI, over UDP in
+  the lab. Those paths are only reached through argv, which Go tests do not
+  execute (implementation-pitfalls, Pitfall 13). The TUI's and the WebUI's
+  board views were not run: neither has code of its own in this change, and
+  both reach these responses through the same `cli.Client` methods the CLI
+  verbs exercised.
+
+## Verification (2026-10-16)
+
+Lab: `scripts/netem-lab/netem-lab.py --name rows up --profile lan`, with
+binaries from `make build` in the worktree, so `bin/` holds this tree's code
+(`buildinfo.stampedDirty=1`). Every command ran through
+`netem-lab.py --name rows exec cli -- bin/harness-cli --server-cid "$CID" …`.
+Before the lab would start, `netem-lab.py` called `dummy_harness.bash_profile`,
+which `2efea7d8` had replaced with `agent_profiles_json`. It is fixed in this
+change.
+
+| Step | Before (`1d0efc33`) | After |
+| --- | --- | --- |
+| `board send --topic probe.rows --no-wake m$n` ×3, then `board read probe.rows` | 3 rows, 0.5 s | — |
+| the same with 40 messages | no output; killed by `timeout 40` (exit 124); nothing in the server log | 40 rows, 0.58 s |
+| 20 × `board send --topic chat.<task> --no-wake`, then `exec <task> -- harness-cli agent inbox --json --user-prompt-submit-hook` (the hook the runner installs, `runner/settings.go:38`) | no output for 30 s; `board subscribers` went from `pending=20` to `pending=0` — all 20 marked delivered and never received; a second run returned nothing | 20 records (`x1`…`x20`) in 0.51 s, then `pending=0` |
+
+The task was a detached bash session (`session new --agent bash -d`).
+`harness-cli exec` runs a command with that task's agent environment
+(`runner/exec_run.go:234`), which is how the hook was driven from inside it.
 
 ## Out of scope
 

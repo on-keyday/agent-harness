@@ -193,7 +193,8 @@ const payloadReadChunk = 64 * 1024
 var errPayloadTooLarge = errors.New("agent payload exceeds max")
 
 // readAgentPayloadStream resolves the receive stream by id and reads the body,
-// giving up once it exceeds max. Mirrors cli/agent/conn.go::FetchDeliveredPayload.
+// giving up once it exceeds max. The client's reader for the other direction is
+// cli.ReadResponseBody.
 func readAgentPayloadStream(conn ConnHandle, id uint64, max int) ([]byte, error) {
 	st, err := waitReceiveStream(conn, id)
 	if err != nil {
@@ -280,45 +281,6 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 		}
 	}
 	return 0
-}
-
-// pendingPayload is a delivery whose stream id has been announced but whose
-// body has not been written yet.
-type pendingPayload struct {
-	stream  trsf.SendStream
-	payload []byte
-}
-
-// openDeliveredPayloadStream allocates a server-initiated send-stream and
-// reports its id, writing nothing. Splitting allocation from the write is what
-// lets the Wait/Inbox responders announce every stream id first: the agent
-// cannot read a stream it has not been told about, so a body written ahead of
-// the response is a body nobody is draining, and it only lands at all because
-// the peer's receive window absorbs it. Past that window the write never
-// completes and the message is undeliverable — a ceiling on the board's
-// per-message limit that has no reason to exist.
-func openDeliveredPayloadStream(conn ConnHandle) (trsf.SendStream, uint64, error) {
-	stream := conn.CreateSendStream()
-	if stream == nil {
-		return nil, 0, fmt.Errorf("CreateSendStream returned nil")
-	}
-	return stream, uint64(stream.ID()), nil
-}
-
-// flushDeliveredPayloads writes each announced body + EOF. Call it only after
-// the response carrying the stream ids has been sent. Runs on its own
-// goroutine at the call sites: agentHandleInbox is driven straight from the
-// connection's receive loop, and a peer that stops reading must not stall it.
-func flushDeliveredPayloads(pending []pendingPayload) {
-	for _, p := range pending {
-		if werr := p.stream.AppendData(false, p.payload); werr != nil {
-			slog.Warn("agent_handler: delivered payload write", "stream", p.stream.ID(), "err", werr)
-			continue
-		}
-		if werr := p.stream.AppendData(true); werr != nil {
-			slog.Warn("agent_handler: delivered payload EOF", "stream", p.stream.ID(), "err", werr)
-		}
-	}
 }
 
 // agentHandleReadSeq answers a request for one retained message by seq.

@@ -1057,6 +1057,7 @@ func TestTopicsGated(t *testing.T) {
 
 	t.Run("board_observe_sees_topics", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_BoardObserve)
+		conn.autoSendStreams = true
 		h.Board = newTestBoard(t)
 		publishToBoard(t, h.Board)
 
@@ -1069,8 +1070,13 @@ func TestTopicsGated(t *testing.T) {
 			t.Fatalf("kind = %v, want board_topics", resp.Kind)
 		}
 		bt := resp.BoardTopics()
-		if bt == nil || bt.TopicsLen == 0 {
-			t.Fatalf("topics = %+v, want at least one", bt)
+		if bt == nil {
+			t.Fatal("no board_topics variant")
+		}
+		var body protocol.BoardTopicsBody
+		conn.streamBody(t, bt.StreamId, &body)
+		if len(body.Topics) == 0 {
+			t.Fatalf("topics = %+v, want at least one", body.Topics)
 		}
 	})
 }

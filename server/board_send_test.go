@@ -113,8 +113,11 @@ func TestHandleBoardRead_CarriesSenderKind(t *testing.T) {
 	}
 	h.handleBoardRead(conn, 1, "chat.sk")
 	br := boardReadResp(t, conn)
-	if br == nil || len(br.Msgs) != 1 || br.Msgs[0].SenderKind != protocol.SenderKind_Operator {
-		t.Fatalf("board read = %+v, want one operator row", br)
+	if br == nil {
+		t.Fatal("no board_read variant")
+	}
+	if rows := boardReadRows(t, conn, br); len(rows) != 1 || rows[0].SenderKind != protocol.SenderKind_Operator {
+		t.Fatalf("board read = %+v, want one operator row", rows)
 	}
 }
 

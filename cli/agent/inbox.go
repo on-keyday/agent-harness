@@ -77,32 +77,28 @@ func InboxWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 	if err := expectKind(resp, kind); err != nil {
 		return err
 	}
-	// Both answers carry the same row type under their own union field, so the
+	// Both answers name the same body under their own union field, so the
 	// accessor has to follow the kind that was asked for.
-	var msgs []protocol.DeliveredMessage
+	var streamID uint64
 	if *promptHook {
 		r := resp.AgentInboxAdvance()
 		if r == nil {
 			return fmt.Errorf("inbox: advance response variant is nil")
 		}
-		msgs = r.Msgs
+		streamID = r.StreamId
 	} else {
 		r := resp.AgentInbox()
 		if r == nil {
 			return fmt.Errorf("inbox: response variant is nil")
 		}
-		msgs = r.Msgs
+		streamID = r.StreamId
 	}
 
-	// Fetch all payloads up front so a write-time decode error doesn't leave
-	// half the inbox emitted.
-	payloads := make([][]byte, len(msgs))
-	for i, m := range msgs {
-		p, perr := fetchDeliveredPayload(ctx, c.Transport(), m.PayloadStreamId)
-		if perr != nil {
-			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
-		}
-		payloads[i] = p
+	// The whole body is read before anything is emitted, so a read error
+	// doesn't leave half the inbox emitted.
+	msgs, err := readDelivered(ctx, c, streamID)
+	if err != nil {
+		return fmt.Errorf("inbox: %w", err)
 	}
 	// Only the hook mode gets the inline guard: its output is spliced into the
 	// agent's next prompt, so an oversize body is context the agent never agreed
@@ -114,11 +110,11 @@ func InboxWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error 
 		emit = emitMessageLineForHook
 	}
 	var body bytes.Buffer
-	for i, m := range msgs {
+	for _, m := range msgs {
 		if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 			continue
 		}
-		emit(&body, m, payloads[i])
+		emit(&body, m, m.Payload)
 	}
 	if *promptHook {
 		emitUserPromptSubmitHookOutput(stdout, body.String())
