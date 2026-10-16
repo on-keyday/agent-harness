@@ -95,6 +95,19 @@ func TestReachE2E_ConfinedWorker(t *testing.T) {
 	if helperSeq == 0 {
 		t.Fatalf("worker's inbox lacks the helper's message: %s", inbox.String())
 	}
+	// The worker can see that list itself, newest first: the helper, then the
+	// supervisor, whose "to worker" was also addressed to it.
+	restore = setAgentEnv(addr, worker.rid, worker.tid, worker.ticket)
+	var contacts bytes.Buffer
+	err := agent.Contacts(ctx, nil, &contacts)
+	restore()
+	if err != nil {
+		t.Fatalf("worker contacts: %v", err)
+	}
+	want := `{"topic":"` + agentboard.SelfTopic(helper.tid) + `"}` + "\n" + `{"topic":"` + agentboard.SelfTopic(sup.tid) + `"}`
+	if strings.TrimSpace(contacts.String()) != want {
+		t.Errorf("worker contacts = %q, want exactly\n%s", contacts.String(), want)
+	}
 	if _, err := worker.send(ctx, addr, "--in-reply-to", itoa(helperSeq), "--data", "thanks"); err != nil {
 		t.Errorf("worker replying to a message it received: %v", err)
 	}

@@ -125,10 +125,11 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_AgentListRetained:      noTarget,
 	protocol.TaskControlKind_AgentReadSeq:           noTarget,
 	protocol.TaskControlKind_AgentRetract:           noTarget,
+	protocol.TaskControlKind_AgentListContacts:      noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_OpenExecTap); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AgentListContacts); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -143,16 +144,17 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// open_exec_tap is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught six appends now:
-// restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
+// agent_list_contacts is the last kind; if the enum grows past it the loops
+// above stop short and silently cover nothing new. It has caught seven appends
+// now: restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
-// await_idle_* kinds; board_send / board_wake; and open_exec_tap.
-func TestOpenExecTapIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_OpenExecTap) + 1)
+// await_idle_* kinds; board_send / board_wake; open_exec_tap; and
+// agent_list_contacts.
+func TestAgentListContactsIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AgentListContacts) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after open_exec_tap (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after agent_list_contacts (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

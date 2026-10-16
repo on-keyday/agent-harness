@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -127,6 +128,38 @@ func TestAgentListSubscriptionsOverTaskControl(t *testing.T) {
 	}
 	if !seen["chat.one"] || !seen["chat.two"] {
 		t.Errorf("patterns = %v, want both seeded topics", seen)
+	}
+}
+
+// The caller's own contacts, newest first, and nobody else's.
+func TestAgentListContactsOverTaskControl(t *testing.T) {
+	h, conn, st := newAgentTaskHandler(t)
+	_, self, _, _ := st.Identity()
+	var peer protocol.TaskID
+	peer.Id[0] = 0x77
+	h.Board.NoteDelivered(st, []agentboard.RetainedMessage{
+		{Topic: agentboard.SelfTopic(self), FromTask: peer, SenderKind: protocol.SenderKind_Agent},
+		{Topic: agentboard.SelfTopic(self), FromTask: peer, SenderKind: protocol.SenderKind_Agent, ReplyToTopic: "rr.answers"},
+	})
+
+	h.handleAgentListContacts(conn, 9)
+
+	resp := lastTaskControlResponse(t, conn)
+	if resp.Kind != protocol.TaskControlKind_AgentListContacts {
+		t.Fatalf("kind = %v", resp.Kind)
+	}
+	got := resp.AgentListContacts()
+	if got == nil {
+		t.Fatal("no agent_list_contacts variant")
+	}
+	var body protocol.ContactsBody
+	conn.streamBody(t, got.StreamId, &body)
+	var topics []string
+	for _, c := range body.Contacts {
+		topics = append(topics, string(c.Topic))
+	}
+	if want := []string{"rr.answers", agentboard.SelfTopic(peer)}; strings.Join(topics, " ") != strings.Join(want, " ") {
+		t.Errorf("contacts = %v, want %v", topics, want)
 	}
 }
 

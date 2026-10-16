@@ -2,7 +2,7 @@
 
 Status: DECIDED (operator, 2026-10-16) except the rows marked **this spec**.
 D10 was conditional on the benchmark in §6, and the benchmark met it
-(2026-10-16, §6 Results). Nothing past §6 is built yet.
+(2026-10-16, §6 Results). §1–§8 and the amendments are built.
 
 ## Problem
 
@@ -131,7 +131,15 @@ topic pushed T's real correspondents out of the 64-entry bound.
   does not take the right to answer it with it.
 - **Bound:** 64 entries, least recently added dropped first. A sender chooses
   `ReplyToTopic` freely, so without a bound one peer could grow another task's
-  state without limit.
+  state without limit. An entry added again counts as just added (operator,
+  2026-10-16): as first built, a re-add left it where it was, so the
+  correspondent who kept writing was the one dropped first. A publish through a
+  contact does not refresh it; only a message addressed to T does.
+- **Visible (operator, 2026-10-16):** the task reads its own list with
+  `agent contacts` (newest first, no bit), and the operator reads every task's
+  on `board subscribers` (`board_observe`) in the CLI, TUI and WebUI. Before
+  this nothing showed it, so an operator deciding whether a task needs
+  `board_peer` could not see what it already reached.
 - **Limit, stated because it is real:** after eviction, `--in-reply-to` still
   fails with `unknown_in_reply_to`, because the parent is gone. Contacts make
   the explicit `--topic <route>` fallback pass the check; they do not make the
@@ -320,6 +328,10 @@ What the numbers also say:
   longer response is not relied on: the order is server first, then clients,
   as for every response change in this repo.
 - Inbox and inbox_advance get no status. They return the authorized rows.
+- Contacts (§3, Visible): `TaskControlKind.agent_list_contacts` (appended, no
+  bit) answers with a `ContactsBody` on a stream, and `BoardSubscriberRow`
+  gains `contacts :[contacts_len :u8]BoardContact`. The row change lengthens
+  the `board subscribers` body, so the order is again server first.
 - `scripts/wire-skew-check.sh` is run.
 
 **Interaction with the delivery-row size defect.** Wait, inbox, inbox_advance
@@ -348,6 +360,12 @@ on a stream, so D7's longer topics no longer move any datagram limit.
 - The `harness-cli` skill (source: `runner/agentskills`, plus its mirrors) gains
   the namespaces of §1, the confidential-channel convention (D6), and what a
   `board_peer` / `board_observe` denial means.
+- Contacts are printed on each `board subscribers` row: `contacts=a,b` in the
+  CLI (`[]` in `--json`), a wrapped line under the row in the TUI and WebUI
+  modals, `-` when there are none. The TUI and WebUI reach a task's row
+  through the subscribers of its `chat.<id>`. The task detail views do not
+  show contacts: they render the `ls` snapshot, which comes from the task
+  store, and contacts live on the board.
 
 ## Amendment 2026-10-16 — found while planning
 

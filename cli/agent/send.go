@@ -125,7 +125,7 @@ func reachHint(err error, topic string) error {
 	case protocol.Capability_BoardPeer:
 		return fmt.Errorf("%w: %s is outside this task's reach. Without board_peer a task publishes to "+
 			"its own chat.<id> (and chat.<id>.*), its creator's and its direct children's chat.<id>, chat.operator, "+
-			"the reply route of a message addressed to it, and tree.<id> namespaces it belongs to. "+
+			"the reply route of a message addressed to it (agent contacts lists them), and tree.<id> namespaces it belongs to. "+
 			"Anything else needs the operator to grant board_peer (caps set <task> --caps …,board_peer)", err, topic)
 	case protocol.Capability_BoardObserve:
 		return fmt.Errorf("%w: %s carries another task's messages (its chat.<id>, chat.operator, or a tree.<id> "+

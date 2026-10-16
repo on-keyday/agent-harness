@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -170,7 +172,7 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 		{TaskHex: "aabbccddeeff0011", Hostname: "host-A", AgentProfile: "claude", Patterns: []cli.BoardSubscriberPattern{
 			{Name: "chat.aabbccdd", Shown: 4200, Pending: 2},
 			{Name: "rr.dec-019", Shown: 0, Pending: 0},
-		}},
+		}, Contacts: []string{"chat.99887766"}},
 		// Registered but never attached: empty hostname must render as "-".
 		{TaskHex: "1122334455667788", Hostname: "", AgentProfile: "codex", Patterns: []cli.BoardSubscriberPattern{
 			{Name: "rr.dec-019", Shown: 0, Pending: 0},
@@ -186,9 +188,23 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 	for _, want := range []string{
 		"subscribers of rr.dec-019 (2)", "aabbccdd", "host=host-A", "agent=codex", "host=-",
 		"chat.aabbccdd(shown=4200 pending=2)", "rr.dec-019(shown=0 pending=0)",
+		"contacts=chat.99887766", "contacts=-",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q\n%s", want, view)
+		}
+	}
+
+	// A full contact list (64 routes) wraps inside the box instead of widening
+	// it past the terminal.
+	var full []string
+	for i := 0; i < 64; i++ {
+		full = append(full, fmt.Sprintf("chat.%08x", i))
+	}
+	m.ApplySubscribers("x", []cli.BoardSubscriberRow{{TaskHex: "aabbccddeeff0011", Contacts: full}})
+	for _, line := range strings.Split(m.View(), "\n") {
+		if w := lipgloss.Width(line); w > 100 {
+			t.Fatalf("a %d-column line in a 100-column modal:\n%s", w, line)
 		}
 	}
 

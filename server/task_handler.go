@@ -882,6 +882,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleAgentSubscribe(conn, req.RequestId, string(au.Pattern), true)
 
+	case protocol.TaskControlKind_AgentListContacts:
+		if req.AgentListContacts() == nil {
+			slog.Error("TaskHandler: AgentListContacts variant is nil")
+			return
+		}
+		h.handleAgentListContacts(conn, req.RequestId)
+
 	case protocol.TaskControlKind_AgentListSubscriptions:
 		if req.AgentListSubscriptions() == nil {
 			slog.Error("TaskHandler: AgentListSubscriptions variant is nil")

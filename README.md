@@ -112,7 +112,7 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | read | thread | retained | retract
       | purge | dispatch | subscribe | unsubscribe | topics
-      | subscriptions}`. See `runner/agentskills/harness-cli/SKILL.md`
+      | subscriptions | contacts}`. See `runner/agentskills/harness-cli/SKILL.md`
       for conventions.
     - Workspace config: `workspace {save,ls,show}` reads and writes
       `.harness/config`, and the global `--config` / `--workspace` add a
@@ -975,7 +975,11 @@ to it (on its own `chat.<short-id>`, or replying to one of its messages), and
 `tree.<full-task-id>.<suffix>` for every task on its own ancestor
 chain. Anything else — a peer it has no thread with, a free-form topic — needs
 `board_peer`, and is refused with a message naming that bit rather than
-dropped. **Reading** is open except for other tasks' direct messages: another
+dropped. Those reply routes — a task's **contacts**, at most 64, the one that
+has gone longest without writing again dropped first — are listed by `agent
+contacts` for the task itself and on every `board subscribers` row (CLI, TUI,
+WebUI) for the operator, which is what to read before granting `board_peer`.
+**Reading** is open except for other tasks' direct messages: another
 task's `chat.<short-id>` (and its `.<suffix>` side channels), `chat.operator`,
 and a `tree.<id>` the reader is not in need `board_observe`, by any agent verb.
 `agent retained` on those lists only the caller's own messages instead of

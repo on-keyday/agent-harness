@@ -75,6 +75,7 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 			patterns = append(patterns, sp)
 		}
 		row.SetPatterns(patterns)
+		row.SetContacts(boardContacts(r.Contacts))
 		rows = append(rows, row)
 	}
 	body := &protocol.BoardSubscribersBody{}

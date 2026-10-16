@@ -335,43 +335,7 @@ func RunBoardAction(ctx context.Context, cid objproto.ConnectionID, ba verb.Boar
 		if err != nil {
 			return err
 		}
-		if ba.JSON {
-			// The patterns stay STRUCTURED here rather than collapsing into
-			// the text form's `name(shown=N pending=M)`, which a consumer
-			// would have to parse back out.
-			enc := json.NewEncoder(out)
-			for _, r := range rows {
-				pats := make([]map[string]any, 0, len(r.Patterns))
-				for _, p := range r.Patterns {
-					pats = append(pats, map[string]any{
-						"topic": p.Name, "shown": p.Shown, "pending": p.Pending,
-					})
-				}
-				if err := enc.Encode(map[string]any{
-					"task_id": r.TaskHex, "host": r.Hostname,
-					"agent": r.AgentProfile, "topics": pats,
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		for _, r := range rows {
-			// shown / pending per topic: how far the automatic injection path
-			// has reached for this task, and how much sits above it. This is
-			// the answer to "did the agent actually get my message" that used
-			// to require guessing at a cursor file on the runner host.
-			pats := "-"
-			if len(r.Patterns) > 0 {
-				parts := make([]string, 0, len(r.Patterns))
-				for _, p := range r.Patterns {
-					parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
-				}
-				pats = strings.Join(parts, ",")
-			}
-			fmt.Fprintf(out, "%s host=%s agent=%s topics=%s\n",
-				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)
-		}
+		return renderSubscriberRows(out, rows, ba.JSON)
 
 	case verb.SubWake:
 		n, err := BoardWake(ctx, cid, ba.Topic)
@@ -655,5 +619,51 @@ func RunBoardSend(ctx context.Context, cid objproto.ConnectionID, a verb.BoardSe
 		"bytes": len(payload), "source": source,
 	})
 	fmt.Fprintln(out, string(line))
+	return nil
+}
+
+// renderSubscriberRows writes `board subscribers` output, text or JSON Lines.
+func renderSubscriberRows(out io.Writer, rows []BoardSubscriberRow, asJSON bool) error {
+	if asJSON {
+		// The patterns stay STRUCTURED here rather than collapsing into the
+		// text form's `name(shown=N pending=M)`, which a consumer would have
+		// to parse back out.
+		enc := json.NewEncoder(out)
+		for _, r := range rows {
+			pats := make([]map[string]any, 0, len(r.Patterns))
+			for _, p := range r.Patterns {
+				pats = append(pats, map[string]any{
+					"topic": p.Name, "shown": p.Shown, "pending": p.Pending,
+				})
+			}
+			contacts := r.Contacts
+			if contacts == nil {
+				contacts = []string{}
+			}
+			if err := enc.Encode(map[string]any{
+				"task_id": r.TaskHex, "host": r.Hostname,
+				"agent": r.AgentProfile, "topics": pats, "contacts": contacts,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, r := range rows {
+		// shown / pending per topic: how far the automatic injection path has
+		// reached for this task, and how much sits above it. This is the
+		// answer to "did the agent actually get my message" that used to
+		// require guessing at a cursor file on the runner host.
+		pats := "-"
+		if len(r.Patterns) > 0 {
+			parts := make([]string, 0, len(r.Patterns))
+			for _, p := range r.Patterns {
+				parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
+			}
+			pats = strings.Join(parts, ",")
+		}
+		fmt.Fprintf(out, "%s host=%s agent=%s topics=%s contacts=%s\n",
+			r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats, ContactsLabel(r.Contacts))
+	}
 	return nil
 }

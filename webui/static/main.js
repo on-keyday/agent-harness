@@ -5934,6 +5934,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           : "-";
         line.textContent = `\u2022 ${id}  host=${host}  agent=${agent}  topics=${pats}`;
         boardSubscribersEl.appendChild(line);
+        // The task's reply routes -- what it may publish to without
+        // board_peer beyond its lineage -- on a line of their own that wraps:
+        // there can be 64 of them. "-" is a measurement, not missing data.
+        const contacts = document.createElement("div");
+        contacts.className = "board-sub-contacts";
+        contacts.textContent = `contacts=${(r.contacts && r.contacts.length) ? r.contacts.join(", ") : "-"}`;
+        boardSubscribersEl.appendChild(contacts);
       }
     } catch (err) {
       boardSubscribersEl.appendChild(boardSubHeading("subscribers"));

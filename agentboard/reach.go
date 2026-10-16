@@ -169,6 +169,15 @@ func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 	}
 }
 
+// Contacts returns c's task's contacts, newest first: the routes it may
+// answer without board_peer because someone addressed it from there.
+func (b *Board) Contacts(c *ConnState) []string {
+	if c == nil || c.task == nil {
+		return nil
+	}
+	return c.task.snapshotContacts()
+}
+
 // readableTargets keeps the tasks that may read topic. Called after b.mu is
 // released: the predicate takes the task store's lock (reach spec §5, Lock
 // order).

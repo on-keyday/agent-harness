@@ -470,6 +470,35 @@ func (h *TaskHandler) handleAgentRetract(conn ConnHandle, requestID uint32, r *p
 	respondAgent(conn, resp)
 }
 
+// handleAgentListContacts reports this agent's contacts, newest first: the
+// reply routes it may publish to without board_peer. Like list_subscriptions,
+// an unknown caller gets an empty list rather than a refusal.
+func (h *TaskHandler) handleAgentListContacts(conn ConnHandle, requestID uint32) {
+	var rows []protocol.BoardContact
+	if st := h.boardState(conn); st != nil && h.Board != nil {
+		rows = boardContacts(h.Board.Contacts(st))
+	}
+	body := &protocol.ContactsBody{}
+	body.SetContacts(rows)
+	respondWithBody(conn, "list_contacts", body, func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentListContacts, RequestId: requestID}
+		resp.SetAgentListContacts(protocol.AgentListContactsResponse{RequestId: requestID, StreamId: streamID})
+		respondAgent(conn, resp)
+	})
+}
+
+// boardContacts is the wire form of a contact list, shared by the agent's own
+// view and the operator's subscriber rows so the two cannot disagree.
+func boardContacts(topics []string) []protocol.BoardContact {
+	out := make([]protocol.BoardContact, 0, len(topics))
+	for _, t := range topics {
+		var c protocol.BoardContact
+		c.SetTopic([]byte(t))
+		out = append(out, c)
+	}
+	return out
+}
+
 // handleAgentListSubscriptions reports the patterns this agent receives on.
 //
 // An unknown caller gets an empty list, not a refusal: "you are subscribed to

@@ -33,7 +33,9 @@ type taskState struct {
 	// contacts are reply routes of messages handed to this task (reach spec
 	// §3): the right to answer someone who spoke first, kept here rather than
 	// in the ring so a rotated-out message does not take it along. Bounded,
-	// oldest first out, because a sender picks ReplyToTopic freely.
+	// because a sender picks ReplyToTopic freely; the least recently added
+	// goes first, and a re-add counts as an add, so a correspondent who keeps
+	// writing is not the one dropped. contactOrder runs oldest to newest.
 	contacts     map[string]struct{}
 	contactOrder []string
 	conns        map[*ConnState]struct{}
@@ -59,6 +61,13 @@ func (t *taskState) addContact(topic string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.contacts[topic]; ok {
+		for i, c := range t.contactOrder {
+			if c == topic {
+				t.contactOrder = append(t.contactOrder[:i], t.contactOrder[i+1:]...)
+				break
+			}
+		}
+		t.contactOrder = append(t.contactOrder, topic)
 		return
 	}
 	if len(t.contactOrder) == maxContacts {
@@ -67,6 +76,17 @@ func (t *taskState) addContact(topic string) {
 	}
 	t.contacts[topic] = struct{}{}
 	t.contactOrder = append(t.contactOrder, topic)
+}
+
+// snapshotContacts copies the contacts newest first.
+func (t *taskState) snapshotContacts() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]string, len(t.contactOrder))
+	for i, c := range t.contactOrder {
+		out[len(out)-1-i] = c
+	}
+	return out
 }
 
 func (t *taskState) hasContact(topic string) bool {

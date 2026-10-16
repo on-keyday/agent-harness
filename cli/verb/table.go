@@ -2623,6 +2623,17 @@ var Verbs = []VerbSpec{
 		Examples: []string{"agent subscriptions"},
 	},
 	{
+		Path: []string{"agent", "contacts"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in (the operator reads the same list on board subscribers)",
+		Notes: []string{
+			"list this agent's contacts, newest first (JSON Lines): reply routes it may publish to without board_peer because someone addressed it from there; at most 64, forgotten on server restart (no cap)",
+		},
+		Action:   "AgentAction",
+		Const:    map[string]string{"Sub": "contacts"},
+		Flags:    agentCommonFlags(),
+		Examples: []string{"agent contacts"},
+	},
+	{
 		Path: []string{"agent", "retained"}, CmdlineSurfaces: CLI,
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{

@@ -189,6 +189,18 @@ func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
 	if len(filtered.Rows[0].Patterns) != 1 {
 		t.Errorf("patterns = %d, want 1 (only the explicit subscribe; Attach does not seed)", len(filtered.Rows[0].Patterns))
 	}
+
+	// Contacts ride on the row: what the operator reads before granting
+	// board_peer.
+	var peer protocol.TaskID
+	peer.Id[0] = 9
+	h.Board.NoteDelivered(c, []agentboard.RetainedMessage{
+		{Topic: agentboard.SelfTopic(listener), FromTask: peer, SenderKind: protocol.SenderKind_Agent},
+	})
+	withContact := subscribers(3, "rr.dec-019")
+	if cs := withContact.Rows[0].Contacts; len(cs) != 1 || string(cs[0].Topic) != agentboard.SelfTopic(peer) {
+		t.Errorf("contacts = %+v, want [%s]", cs, agentboard.SelfTopic(peer))
+	}
 }
 
 // The operator surface is the only place the declared destination is visible.

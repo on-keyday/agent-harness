@@ -18,7 +18,7 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// AgentAction is built by: agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
+// AgentAction is built by: agent contacts, agent inbox, agent purge, agent read, agent retained, agent retract, agent subscribe, agent subscriptions, agent thread, agent topics, agent unsubscribe, agent wait.
 type AgentAction struct {
 	ActionMarker
 	// server ConnectionID (env: HARNESS_SERVER_CID)
@@ -2999,6 +2999,12 @@ func init() {
 			a.ServerCID = b.Str("server-cid")
 			return a, nil
 		},
+		"agent contacts\x00cli": func(b Bound) (Action, error) {
+			a := AgentAction{}
+			a.Sub = "contacts"
+			a.ServerCID = b.Str("server-cid")
+			return a, nil
+		},
 		"agent retained\x00cli": func(b Bound) (Action, error) {
 			a := AgentAction{}
 			a.Sub = "retained"
@@ -3160,6 +3166,7 @@ const (
 	CmdAgentUnsubscribe       = "agent unsubscribe"
 	CmdAgentTopics            = "agent topics"
 	CmdAgentSubscriptions     = "agent subscriptions"
+	CmdAgentContacts          = "agent contacts"
 	CmdAgentRetained          = "agent retained"
 	CmdAgentThread            = "agent thread"
 	CmdAgentPurge             = "agent purge"
@@ -3183,6 +3190,7 @@ const (
 	SubAwaitIdleLs     = "await-idle-ls"
 	SubCaps            = "caps"
 	SubClear           = "clear"
+	SubContacts        = "contacts"
 	SubDetach          = "detach"
 	SubDiag            = "diag"
 	SubDiff            = "diff"
@@ -5373,6 +5381,30 @@ func ParseCmdAgentSubscriptions(sf Surface, args []string, ctx map[string]string
 	return a, nil
 }
 
+func ParseCmdAgentContacts(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
+	var zero AgentAction
+	sp, ok := Lookup("agent", "contacts")
+	if !ok {
+		return zero, fmt.Errorf("agent contacts: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AgentAction)
+	if r := sp.Resolve(b, "server-cid", EnvLookup, WorkspaceLookup, ctx); r != "" {
+		a.ServerCID = r
+	}
+	return a, nil
+}
+
 func ParseCmdAgentRetained(sf Surface, args []string, ctx map[string]string) (AgentAction, error) {
 	var zero AgentAction
 	sp, ok := Lookup("agent", "retained")
@@ -5664,6 +5696,8 @@ type CLIDispatch[R any] interface {
 	AgentTopics(AgentAction) R
 	// agent subscriptions
 	AgentSubscriptions(AgentAction) R
+	// agent contacts
+	AgentContacts(AgentAction) R
 	// agent retained
 	AgentRetained(AgentAction) R
 	// agent thread
@@ -6171,6 +6205,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.AgentSubscriptions(a), true, nil
+	case CmdAgentContacts:
+		a, perr := ParseCmdAgentContacts(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AgentContacts(a), true, nil
 	case CmdAgentRetained:
 		a, perr := ParseCmdAgentRetained(CLI, args, ctx)
 		if perr != nil {
@@ -6417,6 +6457,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.AgentTopics(a), true
 		case "subscriptions":
 			return h.AgentSubscriptions(a), true
+		case "contacts":
+			return h.AgentContacts(a), true
 		case "retained":
 			return h.AgentRetained(a), true
 		case "thread":
@@ -6932,6 +6974,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdAgentSubscriptions:
 			a, perr := ParseCmdAgentSubscriptions(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAgentContacts:
+			a, perr := ParseCmdAgentContacts(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

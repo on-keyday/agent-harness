@@ -886,6 +886,9 @@ type SubscriberRow struct {
 	Hostname     string
 	AgentProfile string
 	Patterns     []SubscriberPattern
+	// Contacts are the task's reply routes, newest first (reach spec §3):
+	// what it may publish to without board_peer beyond its lineage.
+	Contacts []string
 }
 
 // ListSubscribers returns one row per task known to the board. A non-empty
@@ -938,6 +941,7 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 			Hostname:     host,
 			AgentProfile: profile,
 			Patterns:     pats,
+			Contacts:     ts.snapshotContacts(),
 		})
 	}
 	return out

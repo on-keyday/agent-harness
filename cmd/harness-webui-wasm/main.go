@@ -1551,7 +1551,7 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 // harnessBoardSubscribers lists each task's agentboard subscription set,
 // optionally narrowed to the tasks a publish to one topic would reach.
 //
-//	harness.boardSubscribers(topic?) -> Promise<[{taskId, hostname, agentProfile, patterns}]>
+//	harness.boardSubscribers(topic?) -> Promise<[{taskId, hostname, agentProfile, patterns, contacts}]>
 //
 // No u64 crosses this boundary, so unlike boardRead/boardTopics nothing here
 // needs the decimal-string treatment.
@@ -1576,6 +1576,10 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 			}
 			out := make([]any, 0, len(rows))
 			for _, r := range rows {
+				contacts := make([]any, 0, len(r.Contacts))
+				for _, ct := range r.Contacts {
+					contacts = append(contacts, ct)
+				}
 				pats := make([]any, 0, len(r.Patterns))
 				for _, pt := range r.Patterns {
 					pats = append(pats, map[string]any{
@@ -1595,6 +1599,8 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 					"hostname":     r.Hostname,
 					"agentProfile": r.AgentProfile,
 					"patterns":     pats,
+					// Reply routes, newest first; [] when there are none.
+					"contacts": contacts,
 				})
 			}
 			resolve.Invoke(js.ValueOf(out))

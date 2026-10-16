@@ -1701,6 +1701,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
 .board-sub-empty { color: #999; font-style: italic; }
+.board-sub-contacts { color: #999; font-family: monospace; padding-left: 2.5em; white-space: normal; overflow-wrap: anywhere; }
 /* A topic with nothing published is LESS than a normal one, so it reads
    dimmer, not brighter. The meaning is carried by its meta text
    ("nothing published yet"), so no colour has to be learned. */

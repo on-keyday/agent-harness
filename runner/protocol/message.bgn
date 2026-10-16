@@ -566,6 +566,11 @@ enum TaskControlKind:
                             # returns the stream its records arrive on.
                             # Gated on exec_tap. See
                             # docs/superpowers/specs/2026-10-09-exec-tap-design.md
+    agent_list_contacts     # appended: the caller's own contacts -- the reply
+                            # routes it may publish to without board_peer
+                            # because someone addressed it from there (reach
+                            # spec section 3). No capability: keyed to the
+                            # caller, like agent_list_subscriptions.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1312,6 +1317,16 @@ format BoardSubscriberRow:
     agent_profile :[agent_profile_len]u8
     patterns_len :u16
     patterns :[patterns_len]SubscriptionPattern
+    # contacts are the task's reply routes, newest first: what it may publish
+    # to without board_peer beyond its lineage (reach spec section 3). At most
+    # 64, the board's bound. This is what an operator reads before deciding
+    # whether a task needs board_peer at all.
+    contacts_len :u8
+    contacts :[contacts_len]BoardContact
+
+format BoardContact:
+    topic_len :u16
+    topic :[topic_len]u8
 
 # stream_id: see BoardTopicsResponse.
 format BoardSubscribersResponse:
@@ -1636,6 +1651,20 @@ format AgentListSubscriptionsResponse:
 format SubscriptionsBody:
     subscriptions_len :u16
     subscriptions :[subscriptions_len]AgentSubscriptionSummary
+
+format AgentListContactsRequest:
+    request_id :u32
+
+# stream_id: see BoardTopicsResponse. The stream carries a ContactsBody.
+format AgentListContactsResponse:
+    request_id :u32
+    stream_id :u64
+
+# contacts: newest first, the same rows BoardSubscriberRow.contacts shows the
+# operator for this task.
+format ContactsBody:
+    contacts_len :u8
+    contacts :[contacts_len]BoardContact
 
 # AgentListRetainedRequest enumerates a topic's retained ring as METADATA ONLY — no
 # payload bytes cross the wire. This is the content-blind way to identify which
@@ -2094,6 +2123,7 @@ format TaskControlRequest:
         TaskControlKind.board_send               => board_send               :BoardSendRequest
         TaskControlKind.board_wake               => board_wake               :BoardWakeRequest
         TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapRequest
+        TaskControlKind.agent_list_contacts      => agent_list_contacts      :AgentListContactsRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2168,6 +2198,7 @@ format TaskControlResponse:
         TaskControlKind.board_send               => board_send               :AgentSendResponse
         TaskControlKind.board_wake               => board_wake               :BoardWakeResponse
         TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapResponse
+        TaskControlKind.agent_list_contacts      => agent_list_contacts      :AgentListContactsResponse
 
 enum SetCapsStatus:
     :u8

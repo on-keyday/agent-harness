@@ -823,6 +823,11 @@ func (m BoardModal) View() string {
 				pats = strings.Join(parts, ",")
 			}
 			list.WriteString(fmt.Sprintf("  %s  host=%s  agent=%s  topics=%s\n", short, host, agentName, pats))
+			// Its own line, wrapped: up to 64 routes would push the row far
+			// past the box. What the operator reads before granting
+			// board_peer — "-" is a measurement, not missing data.
+			contacts := "contacts=" + strings.ReplaceAll(cli.ContactsLabel(r.Contacts), ",", ", ")
+			list.WriteString(MutedStyle.PaddingLeft(12).Width(m.content.Width).Render(contacts) + "\n")
 		}
 		if len(m.subRows) == 0 {
 			list.WriteString("  (nobody subscribes — a publish here reaches no inbox)\n")

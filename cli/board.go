@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -77,6 +78,18 @@ type BoardSubscriberRow struct {
 	Hostname     string
 	AgentProfile string
 	Patterns     []BoardSubscriberPattern
+	// Contacts are the task's reply routes, newest first as the board keeps
+	// them: what it may publish to without board_peer beyond its lineage.
+	Contacts []string
+}
+
+// ContactsLabel is a row's contacts as the text surfaces print them: "-" for
+// none, which is a measurement rather than missing data.
+func ContactsLabel(contacts []string) string {
+	if len(contacts) == 0 {
+		return "-"
+	}
+	return strings.Join(contacts, ",")
 }
 
 // BoardSubscriberPattern is one subscribed topic plus this task's delivery
@@ -127,11 +140,16 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 			})
 		}
 		sort.Slice(patterns, func(i, j int) bool { return patterns[i].Name < patterns[j].Name })
+		contacts := make([]string, 0, len(r.Contacts))
+		for _, ct := range r.Contacts {
+			contacts = append(contacts, string(ct.Topic))
+		}
 		out = append(out, BoardSubscriberRow{
 			TaskHex:      hex.EncodeToString(r.Task.Id[:]),
 			Hostname:     string(r.Hostname),
 			AgentProfile: string(r.AgentProfile),
 			Patterns:     patterns,
+			Contacts:     contacts,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TaskHex < out[j].TaskHex })

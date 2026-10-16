@@ -116,7 +116,7 @@ func CapDescription(c protocol.Capability) string {
 			"NOT required for agent send"
 	case protocol.Capability_BoardPeer:
 		return "publish to topics outside the task's base set: peers' chat.<id>, free-form topics; " +
-			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it; never opens a tree.<id> it is not in"
+			"NOT required for its own lineage, chat.operator, or replying to a message addressed to it (board subscribers shows each task's contacts); never opens a tree.<id> it is not in"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:

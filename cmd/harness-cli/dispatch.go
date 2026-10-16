@@ -583,6 +583,9 @@ func (h cliVerbs) AgentTopics(a verb.AgentAction) error {
 func (h cliVerbs) AgentSubscriptions(a verb.AgentAction) error {
 	return agent.SubscriptionsWith(h.ctx, a, os.Stdout)
 }
+func (h cliVerbs) AgentContacts(a verb.AgentAction) error {
+	return agent.ContactsWith(h.ctx, a, os.Stdout)
+}
 func (h cliVerbs) AgentRetained(a verb.AgentAction) error {
 	return agent.RetainedWith(h.ctx, a, os.Stdout)
 }

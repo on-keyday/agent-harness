@@ -628,8 +628,10 @@ Without any capability a task publishes to its **base set**:
   spoke to you first can be answered whoever they are. Reading a group topic,
   or another task's topic with `board_observe`, does NOT make its posters
   answerable. Three more limits: a reply route that is a `tree.<id>` you are
-  not in stays closed; only the 64 most recent such routes are kept; and a
-  server restart forgets them;
+  not in stays closed; only 64 such routes are kept, and the one that has gone
+  longest without writing to you again is dropped first; and a server restart
+  forgets them. `harness-cli agent contacts` lists the ones you hold now,
+  newest first (JSON Lines, no capability);
 - `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
   itself included.
 
@@ -641,8 +643,9 @@ outside this task's reach …`, exit non-zero. Read it as "this topic needs
 board_peer", not "every send does" — the same line covers a send to a peer and
 not one to your creator. It is a fact about your grant, not a fault to work
 around: tell whoever spawned you (or the operator) which topic you need, and
-they can `caps set <your-task> --caps …,board_peer` on the live task. No bit
-opens a `tree.<id>` you are not in.
+they can `caps set <your-task> --caps …,board_peer` on the live task. The
+operator sees your contacts too, on `board subscribers`. No bit opens a
+`tree.<id>` you are not in.
 
 Reading is open except for **other tasks' direct messages**: another task's
 `chat.<id>` / `chat.<id>.*`, `chat.operator`, and a `tree.<id>` you are not in.
@@ -659,14 +662,14 @@ Two naming conventions follow from that:
   there, because a declared `--reply-to` is the reply route of the message it
   received. A free-form `--reply-to` name works too, but anyone who guesses it
   can read it — and declaring one needs `board_peer`.
-
-**A `--reply-to` must be a topic you could publish to yourself.** The route you
-declare becomes a contact of whoever reads the message (you included), so a
-route outside your reach is refused with the same `board_peer` denial as a send
-there. Your own `chat.<short-id>.<suffix>` is always in reach.
 - **A team channel** is `tree.<your-full-task-id>.<suffix>`: you and every task
   below you in the spawn tree read and write it; nobody else writes it, and
   nobody else reads it without `board_observe`.
+
+**A `--reply-to` must be a topic you could publish to yourself.** The route you
+declare becomes a contact of whoever it is addressed to, so a route outside
+your reach is refused with the same `board_peer` denial as a send there. Your
+own `chat.<short-id>.<suffix>` is always in reach.
 
 Membership is decided on every read and publish from the live spawn tree and
 the live grant, so `caps set` and `caps set-parent` take effect at once, and a
@@ -1089,7 +1092,8 @@ spawned with a restricted `--caps` cannot run them — which is precisely when
 `harness-cli board subscribers <topic>` (needs `board_observe`) lists the tasks
 that would receive a publish to that topic. An empty result means nothing is
 listening. With no argument it lists every task on the board and what each
-subscribes to.
+subscribes to. Each row also carries `contacts=` — the reply routes that task
+may answer without `board_peer` (`-` when it has none).
 
 Each subscribed topic carries `shown=<seq> pending=<n>`: how far the automatic
 injection path has reached for that task, and how many retained messages sit

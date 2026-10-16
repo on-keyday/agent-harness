@@ -240,6 +240,60 @@ func TestContactsAreBounded(t *testing.T) {
 	}
 }
 
+// A correspondent who keeps writing must not be the one the bound drops: a
+// re-add moves it to the newest end, so the eviction takes the quietest route.
+func TestContactsEvictTheLeastRecentlyAdded(t *testing.T) {
+	ts := newTaskState()
+	for i := 0; i < maxContacts; i++ {
+		ts.addContact(fmt.Sprintf("t.%d", i))
+	}
+	ts.addContact("t.0")
+	ts.addContact("t.new")
+	if !ts.hasContact("t.0") {
+		t.Error("a contact re-added just before the overflow was evicted")
+	}
+	if ts.hasContact("t.1") {
+		t.Error("the least recently added contact survived the overflow")
+	}
+	got := ts.snapshotContacts()
+	if len(got) != maxContacts || got[0] != "t.new" || got[1] != "t.0" {
+		t.Errorf("snapshot = %d entries starting %q, want %d newest first [t.new t.0 …]", len(got), got[:2], maxContacts)
+	}
+}
+
+func TestContactsAndSubscriberRowsShowTheList(t *testing.T) {
+	r := newFakeReach()
+	me, peer := tidN(2), tidN(4)
+	r.add(me, protocol.TaskID{}, 0)
+	r.add(peer, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if got := b.Contacts(c); len(got) != 0 {
+		t.Fatalf("contacts before any message = %v, want none", got)
+	}
+	b.NoteDelivered(c, []RetainedMessage{
+		{Topic: SelfTopic(me), FromTask: peer, SenderKind: protocol.SenderKind_Agent},
+		{Topic: SelfTopic(me), FromTask: peer, SenderKind: protocol.SenderKind_Agent, ReplyToTopic: "review.results"},
+	})
+	want := []string{"review.results", SelfTopic(peer)}
+	if got := b.Contacts(c); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Contacts = %v, want %v", got, want)
+	}
+	found := false
+	for _, row := range b.ListSubscribers("") {
+		if row.Task != me {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row.Contacts) != fmt.Sprint(want) {
+			t.Errorf("subscriber row contacts = %v, want %v", row.Contacts, want)
+		}
+	}
+	if !found {
+		t.Error("no subscriber row for the task")
+	}
+}
+
 func TestSendFanoutSkipsAnUnreadableSubscriber(t *testing.T) {
 	r := newFakeReach()
 	owner, snoop := tidN(1), tidN(2)
@@ -379,8 +433,8 @@ func TestContactsOnlyFromMessagesAddressedToTheReader(t *testing.T) {
 	}
 	b.NoteDelivered(c, []RetainedMessage{
 		{Topic: "build.events", FromTask: other, SenderKind: protocol.SenderKind_Agent},            // group chatter
-		{Topic: SelfTopic(other), FromTask: tidN(6), SenderKind: protocol.SenderKind_Agent},       // observed DM
-		{Topic: "rr.q", FromTask: peer, SenderKind: protocol.SenderKind_Agent, InReplyTo: mine},   // answer to me
+		{Topic: SelfTopic(other), FromTask: tidN(6), SenderKind: protocol.SenderKind_Agent},        // observed DM
+		{Topic: "rr.q", FromTask: peer, SenderKind: protocol.SenderKind_Agent, InReplyTo: mine},    // answer to me
 		{Topic: SelfTopic(me) + ".side", FromTask: tidN(7), SenderKind: protocol.SenderKind_Agent}, // my side channel
 	})
 	if b.Publishable(c, SelfTopic(other)) {
