@@ -532,7 +532,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
     # absent `bash` agent is rejected at submit with a name you can act on.
     bash = dh.bash_bin()
     if bash:
-        runner_args += ["--agent-profiles", dh.bash_profile(bash)]
+        runner_args += ["--agent-profiles", dh.agent_profiles_json(["bash"])]
     if args.agent == "claude":
         runner_args += [
             "--agent-bin", "claude",
