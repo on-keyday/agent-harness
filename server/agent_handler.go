@@ -325,10 +325,9 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 // purge: the caller picks a seq by sender / size / time without ingesting a
 // payload that might itself trip a moderation gate.
 //
-// No capability gate (helloed only), like inbox/wait/send/subscribe. It is a
-// KEYED read of a topic the caller must already name — not a discovery sweep
-// (that is list_topics, which board_observe gates). Everything it surfaces (seq /
-// sender task id / size / time) is already obtainable uncapped by subscribing
-// and reading inbox/wait — metadata is a strict subset of that content — so a
-// cap here would gate a read more tightly than the content it summarizes, for
-// no gain. Destruction (purge) still needs Capability_Purge; reading does not.
+// No capability gate (helloed only). It is a KEYED read of a topic the caller
+// must already name — not a discovery sweep (that is list_topics, which
+// board_observe gates). It never surfaces more than the caller could read: the
+// whole ring on its own and group topics, only its own rows on a topic whose
+// subscription is gated (reach spec D15). Destruction (purge) still needs
+// Capability_Purge; reading does not.

@@ -1558,6 +1558,9 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 	s.taskHandler.Board = b
 	s.runnerHandler.Board = b
 	s.wireAgentBoardWake(b)
+	// Reach is decided from the task store on every board read and publish;
+	// without this the board enforces nothing (agentboard.SetReach).
+	b.SetReach(storeReach{s.tasks})
 }
 
 // sendAssign sends an AssignTask runner-control message to the runner identified by runnerID.

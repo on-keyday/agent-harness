@@ -106,7 +106,9 @@ func (h *TaskHandler) handleAgentSubscribe(conn ConnHandle, requestID uint32, pa
 	case remove:
 		h.Board.Unsubscribe(st, pattern)
 	default:
-		if err := h.Board.Subscribe(st, pattern); err != nil {
+		if err := h.Board.Subscribe(st, pattern); errors.Is(err, agentboard.ErrNotPermitted) {
+			out.Status = protocol.SubscribeStatus_NotPermitted
+		} else if err != nil {
 			out.Status = protocol.SubscribeStatus_BadPattern
 		}
 	}
@@ -174,9 +176,16 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 			return
 		}
 		fromRid, fromTid, fromHost, fromProfile := st.Identity()
-		destTopic, st := resolveReplyTarget(h.Board, topic, inReplyTo)
-		if st != protocol.SendStatus_Ok {
-			reply(st, 0, 0)
+		destTopic, rst := resolveReplyTarget(h.Board, topic, inReplyTo)
+		if rst != protocol.SendStatus_Ok {
+			reply(rst, 0, 0)
+			return
+		}
+		// Checked where the message will land, after the reply routing: a
+		// reply to a seq the sender never received resolves to a route it has
+		// no contact for (reach spec D4).
+		if !h.Board.Publishable(st, destTopic) {
+			reply(protocol.SendStatus_NotPermitted, 0, 0)
 			return
 		}
 		var sendOpts []agentboard.SendOption
@@ -218,8 +227,13 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 }
 
 // deliveredBody turns retained messages into the body wait / inbox /
-// inbox_advance / read_seq all return, payloads in their rows.
-func deliveredBody(msgs []agentboard.RetainedMessage) *protocol.DeliveredBody {
+// inbox_advance / read_seq all return, payloads in their rows. It is the one
+// place all four hand messages to a task, so it is also where their reply
+// routes become the task's contacts (reach spec §3).
+func deliveredBody(b *agentboard.Board, st *agentboard.ConnState, msgs []agentboard.RetainedMessage) *protocol.DeliveredBody {
+	if b != nil {
+		b.NoteDelivered(st, msgs)
+	}
 	rows := make([]protocol.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
 		dm := protocol.DeliveredMessage{
@@ -252,8 +266,9 @@ func deliveredBody(msgs []agentboard.RetainedMessage) *protocol.DeliveredBody {
 // handleAwaitIdle answers the same way.
 func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *protocol.AgentWaitRequest) {
 	out := protocol.AgentWaitResponse{RequestId: requestID, NextCursor: r.Since}
+	st := h.boardState(conn)
 	respond := func(msgs []agentboard.RetainedMessage) {
-		respondWithBody(conn, "wait", deliveredBody(msgs), func(streamID uint64) {
+		respondWithBody(conn, "wait", deliveredBody(h.Board, st, msgs), func(streamID uint64) {
 			out.StreamId = streamID
 			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentWait, RequestId: requestID}
 			resp.SetAgentWait(out)
@@ -261,7 +276,6 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 		})
 	}
 
-	st := h.boardState(conn)
 	if st == nil || h.Board == nil {
 		out.TimedOut = 1
 		respond(nil)
@@ -270,7 +284,12 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.TimeoutMs)*time.Millisecond)
 	defer cancel()
-	msgs, timedOut, _ := h.Board.Wait(ctx, st, string(r.Pattern), r.Since, r.InReplyTo)
+	msgs, timedOut, err := h.Board.Wait(ctx, st, string(r.Pattern), r.Since, r.InReplyTo)
+	if errors.Is(err, agentboard.ErrNotPermitted) {
+		out.Status = protocol.WaitStatus_NotPermitted
+		respond(nil)
+		return
+	}
 
 	if timedOut {
 		out.TimedOut = 1
@@ -289,10 +308,11 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 func (h *TaskHandler) handleAgentInbox(conn ConnHandle, requestID uint32, r *protocol.AgentInboxRequest) {
 	out := protocol.AgentInboxResponse{RequestId: requestID, NextCursor: r.Since}
 	var msgs []agentboard.RetainedMessage
-	if st := h.boardState(conn); st != nil && h.Board != nil {
+	st := h.boardState(conn)
+	if st != nil && h.Board != nil {
 		msgs, out.NextCursor = h.Board.Inbox(st, r.Since)
 	}
-	respondWithBody(conn, "inbox", deliveredBody(msgs), func(streamID uint64) {
+	respondWithBody(conn, "inbox", deliveredBody(h.Board, st, msgs), func(streamID uint64) {
 		out.StreamId = streamID
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInbox, RequestId: requestID}
 		resp.SetAgentInbox(out)
@@ -309,10 +329,11 @@ func (h *TaskHandler) handleAgentInbox(conn ConnHandle, requestID uint32, r *pro
 func (h *TaskHandler) handleAgentInboxAdvance(conn ConnHandle, requestID uint32) {
 	out := protocol.AgentInboxAdvanceResponse{RequestId: requestID}
 	var msgs []agentboard.RetainedMessage
-	if st := h.boardState(conn); st != nil && h.Board != nil {
+	st := h.boardState(conn)
+	if st != nil && h.Board != nil {
 		msgs = h.Board.InboxAdvance(st)
 	}
-	respondWithBody(conn, "inbox_advance", deliveredBody(msgs), func(streamID uint64) {
+	respondWithBody(conn, "inbox_advance", deliveredBody(h.Board, st, msgs), func(streamID uint64) {
 		out.StreamId = streamID
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentInboxAdvance, RequestId: requestID}
 		resp.SetAgentInboxAdvance(out)
@@ -339,7 +360,7 @@ func (h *TaskHandler) handleAgentReadSeq(conn ConnHandle, requestID uint32, r *p
 	if st := h.boardState(conn); st != nil && h.Board != nil {
 		if m, ok := h.Board.Retained(r.Seq); ok && h.Board.Subscribes(st, m.Topic) {
 			out.Status = protocol.AgentReadSeqStatus_Ok
-			respondWithBody(conn, "read_seq", deliveredBody([]agentboard.RetainedMessage{m}), respond)
+			respondWithBody(conn, "read_seq", deliveredBody(h.Board, st, []agentboard.RetainedMessage{m}), respond)
 			return
 		}
 	}
@@ -348,12 +369,15 @@ func (h *TaskHandler) handleAgentReadSeq(conn ConnHandle, requestID uint32, r *p
 
 // handleAgentListRetained returns a topic's retained ring as METADATA ONLY.
 //
-// No capability gate, like inbox/wait/send/subscribe: it is a KEYED read of a
-// topic the caller must already name — not a discovery sweep, which is
-// board_topics and which board_observe gates. Everything it surfaces (seq /
-// sender / size / time) is already obtainable uncapped by subscribing and
-// reading inbox, so a gate here would bind a read more tightly than the content
-// it summarizes. Destruction (board_purge) still needs the bit.
+// No capability gate: it is a KEYED read of a topic the caller must already
+// name — not a discovery sweep, which is board_topics and which board_observe
+// gates. What it surfaces is never more than the caller could read anyway. On
+// its own and group topics that is the whole ring, as subscribe + inbox would
+// return it. On a topic it cannot read (another task's chat.<id>,
+// chat.operator, a tree.<id> it is not in, without board_observe) it is only
+// the rows the caller published, flagged own_only — which lets a sender check
+// its own message on a peer's topic and exposes nothing else (reach spec D15).
+// Destruction (board_purge) still needs the bit.
 func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32, r *protocol.AgentListRetainedRequest) {
 	out := protocol.AgentListRetainedResponse{RequestId: requestID, Status: protocol.BoardStatus_NotFound}
 	respond := func(streamID uint64) {
@@ -364,10 +388,19 @@ func (h *TaskHandler) handleAgentListRetained(conn ConnHandle, requestID uint32,
 	}
 
 	if h.Board != nil {
+		st := h.boardState(conn)
+		ownOnly := !h.Board.Readable(st, string(r.Topic))
+		// Zero for a connection with no board identity, whose "own" rows
+		// would otherwise be every operator and server publish.
+		_, self, _, _ := st.Identity()
 		if msgs, found := h.Board.ListRetained(string(r.Topic)); found {
 			out.Status = protocol.BoardStatus_Ok
+			out.SetOwnOnly(ownOnly)
 			metas := make([]protocol.RetainedMeta, 0, len(msgs))
 			for _, m := range msgs {
+				if ownOnly && (st == nil || m.FromTask != self) {
+					continue
+				}
 				size := len(m.Payload)
 				if size > 0xffffffff {
 					size = 0xffffffff
