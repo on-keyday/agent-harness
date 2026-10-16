@@ -52,6 +52,7 @@ type Board struct {
 	// published topic). Used by the server to emit task_wake to the runners
 	// hosting those tasks. Called outside b.mu.
 	onDeliver func(protocol.RunnerID, protocol.TaskID)
+	reach     ReachSource // nil = no reach enforcement; see SetReach
 }
 
 func New(cfg Config) *Board {
