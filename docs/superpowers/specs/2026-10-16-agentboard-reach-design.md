@@ -60,7 +60,7 @@ the author while writing — those are the rows worth a second look.
 | D10 | Authorization is evaluated on every read, inside one predicate, so `caps set` and `caps set-parent` take effect without touching subscriptions. Conditional on §6, which met it: 0.010% of the reference at the acceptance scale | operator |
 | D11 | A message retained while the reader was authorized is not readable once it is not | operator (follows from D10) |
 | D12 | `board_peer = 0x80000`; `all` widens to `0xfffff` | this spec |
-| D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set` | this spec |
+| D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set`, when one turns out to need to publish beyond its base set | operator |
 | D14 | A refusal is answered as `not_permitted`, a status of its own on every refused verb | this spec |
 
 ## 1. Topic namespaces
@@ -330,15 +330,43 @@ on a stream, so D7's longer topics no longer move any datagram limit.
 - `board_peer` is parsed, printed and offered wherever capabilities are:
   `cli/verb/caps.go`, the CLI, TUI and WebUI caps editors and spawn forms, and
   the wasm bridge. The plan walks `surface-parity-checklist` item by item.
-- D13: wherever an operator surface prefills a spawn's caps, the prefill gains
-  `board_peer`, so a newly spawned top-level task keeps today's reach. A task
-  already running holds a persisted number without the bit. After the upgrade
-  it reaches only its base set until `caps set <id> --caps …` adds it. A
-  top-level task's base set has no creator entry, so peers in other trees stop
-  reaching each other until then.
+- D13 (as amended below): no surface prefills caps, so there is no prefill
+  to change. A task, new or already running, reaches only its base set until
+  `caps set <id> --caps …` adds `board_peer`. A top-level task's base set has
+  no creator entry, so peers in other trees stop reaching each other until
+  then.
 - The `harness-cli` skill (source: `runner/agentskills`, plus its mirrors) gains
   the namespaces of §1, the confidential-channel convention (D6), and what
   `not_permitted` means.
+
+## Amendment 2026-10-16 — found while planning
+
+**D13's first half described a surface that does not exist.** It said
+"operator spawn surfaces that prefill caps include `board_peer`". None
+prefills anything: the TUI's `sessionCaps` starts at `Capability_None`
+(`tui/app.go:370`), the WebUI's `spawnCaps` at 0 (`webui/static/main.js:322`,
+reset at `:3682`), and `ParseCaps("")` is `none` (`cli/verb/caps.go:275`), so
+every spawn on every surface starts with no bits. What D13 decided still holds,
+and with no prefill it means the following. A task — top-level or not — holds
+`board_peer` only when the operator names it, at spawn or with `caps set`, and
+the operator decided to do exactly that when a task turns out to need it
+(2026-10-16). §8's sentence about prefills is replaced by this one.
+
+**Decisions the spec left open, taken by the plan** (`this spec` provenance):
+
+- A `Board` with no reach source set enforces nothing. The server always sets
+  one in `SetBoard`, and a test asserts it does. The unit tests of the ring and
+  delivery mechanics construct bare boards and stay valid.
+- With the source set, a task the store does not know is treated as holding no
+  bits and having no creator, so it fails closed. A helloed agent always has a
+  record (its ticket is registered at assignment), so this only bites test
+  fixtures that register a ticket without creating the task. Those are moved
+  to real records.
+- `read_seq` keeps answering `not_found` for an unauthorized topic, not
+  `not_permitted`. Its schema comment explains why: a distinguishable refusal
+  answers "does seq N exist?" for every seq. D14's list (send, subscribe,
+  list_retained, wait) never named it.
+- `HasChild` scans the store, as §6 measured. No children index is added.
 
 ## Out of scope
 
