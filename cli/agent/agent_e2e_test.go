@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ func startServerE2EWithMaxPayload(t *testing.T, addr string, maxPayload int) (*a
 
 	s := server.New(server.Config{Addr: addr})
 	s.SetBoard(board)
+	e2eServers.Store(board, s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = s.Run(ctx) }()
@@ -63,6 +65,70 @@ func startServerE2EWithMaxPayload(t *testing.T, addr string, maxPayload int) (*a
 	})
 
 	return board, s
+}
+
+// e2eServers maps each test board to its server, so e2eRegister can give a
+// registered agent a task record without every test naming the server.
+var e2eServers sync.Map // *agentboard.Board -> *server.Server
+
+// e2eRegister registers an agent's ticket AND gives it a task record holding
+// board_peer. The board's reach check reads the store: an agent whose ticket
+// exists with no record holds nothing and reaches only itself, and these
+// tests were written when every topic was reachable. The record keeps the
+// test's fixed task id, which its topic names and env are derived from.
+func e2eRegister(t *testing.T, board *agentboard.Board, rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) {
+	t.Helper()
+	e2eRegisterAs(t, board, rid, tid, ticket, protocol.TaskID{}, protocol.Capability_BoardPeer)
+}
+
+// e2eRegisterAs is e2eRegister with the creator and caps under the caller's
+// control, for tests of reach itself.
+func e2eRegisterAs(t *testing.T, board *agentboard.Board, rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte,
+	creator protocol.TaskID, caps protocol.Capability) {
+	t.Helper()
+	v, ok := e2eServers.Load(board)
+	if !ok {
+		t.Fatal("e2eRegister: board was not made by startServerE2E")
+	}
+	e2eRecord(t, v.(*server.Server), tid, creator, caps)
+	board.Registry().Register(rid, tid, ticket)
+}
+
+// e2eRegisterTask is e2eRegister for a test that registers through
+// Board.RegisterTask (which also seeds the agent's chat.<id> subscription).
+func e2eRegisterTask(t *testing.T, board *agentboard.Board, rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte, profile string) {
+	t.Helper()
+	v, ok := e2eServers.Load(board)
+	if !ok {
+		t.Fatal("e2eRegisterTask: board was not made by startServerE2E")
+	}
+	e2eRecord(t, v.(*server.Server), tid, protocol.TaskID{}, protocol.Capability_BoardPeer)
+	board.RegisterTask(rid, tid, ticket, profile)
+}
+
+// e2eRecord writes tid's task record, or widens the one the test already
+// wrote: a test that set its own profile or caps keeps them, plus caps.
+func e2eRecord(t *testing.T, srv *server.Server, tid protocol.TaskID, creator protocol.TaskID, caps protocol.Capability) {
+	t.Helper()
+	idHex := hex.EncodeToString(tid.Id[:])
+	ev := server.WALEvent{
+		Type:         "task_created",
+		TaskID:       idHex,
+		Kind:         uint8(protocol.TaskKind_Interactive),
+		Capabilities: uint32(caps),
+		AgentProfile: "claude",
+	}
+	if creator != (protocol.TaskID{}) {
+		ev.CreatorTaskID = hex.EncodeToString(creator.Id[:])
+	}
+	if e, ok := srv.Tasks().Get(idHex); ok {
+		ev.AgentProfile = e.AgentProfile
+		ev.Capabilities = uint32(e.Capabilities | caps)
+		if e.CreatorTaskID != (protocol.TaskID{}) {
+			ev.CreatorTaskID = hex.EncodeToString(e.CreatorTaskID.Id[:])
+		}
+	}
+	srv.Tasks().ReplayEvents([]server.WALEvent{ev})
 }
 
 // freePortE2E finds a free port on 127.0.0.1.
@@ -144,8 +210,8 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9000, 1)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9001, 2)
 
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -214,8 +280,8 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
 	var ticketA, ticketB [16]byte
 	ticketA[0] = 0xA1
 	ticketB[0] = 0xB1
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -279,8 +345,8 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9002, 3)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9003, 4)
 
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -345,7 +411,7 @@ func TestAgentCLI_E2E_BadTicket(t *testing.T) {
 	tid := mkTidE2E(5)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9004, 5)
 
-	board.Registry().Register(rid, tid, goodTicket)
+	e2eRegister(t, board, rid, tid, goodTicket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

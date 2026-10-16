@@ -24,8 +24,8 @@ func TestAgentCLI_E2E_Sender_RoundTrip(t *testing.T) {
 	tidB := mkTidE2E(0x22)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9200, 21)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9201, 22)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -25,13 +25,13 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 	ticket[0] = 0x71
 	sender := mkTidE2E(0x71)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9600, 71)
-	board.Registry().Register(rid, sender, ticket)
+	e2eRegister(t, board, rid, sender, ticket)
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(sender.Id[:]),
-			Capabilities: uint32(protocol.Capability_None),
+			Capabilities: uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -42,11 +42,11 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 
 	// Subscribe so the sender's own since=0 read can see the topic — this is
 	// the re-read path a reset agent walks.
-	if err := agent.Subscribe(ctx, []string{"--topic", "chat.instruct"}, &bytes.Buffer{}); err != nil {
+	if err := agent.Subscribe(ctx, []string{"--topic", "instruct.e2e"}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	var sendOut bytes.Buffer
-	if err := agent.Send(ctx, []string{"--topic", "chat.instruct", "--data", `{"do":"the thing"}`}, nil, &sendOut); err != nil {
+	if err := agent.Send(ctx, []string{"--topic", "instruct.e2e", "--data", `{"do":"the thing"}`}, nil, &sendOut); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	seq := seqFromRetractTestOutput(t, sendOut.String())
@@ -77,7 +77,7 @@ func TestAgentCLI_E2E_Retract_NoCapabilityNeeded(t *testing.T) {
 
 	// Gone for agents, kept for the operator: that asymmetry is what lets an
 	// agent retract in seconds without shrinking the audit window.
-	withdrawn, found := board.ListRetracted("chat.instruct")
+	withdrawn, found := board.ListRetracted("instruct.e2e")
 	if !found || len(withdrawn) != 1 {
 		t.Fatalf("operator view = (%d withdrawn, found=%v), want (1, true)", len(withdrawn), found)
 	}
@@ -110,8 +110,8 @@ func TestAgentCLI_E2E_Retract_NotTheAuthor(t *testing.T) {
 	otherTicket[0] = 0x73
 	author := mkTidE2E(0x72)
 	other := mkTidE2E(0x73)
-	board.Registry().Register(rid, author, authorTicket)
-	board.Registry().Register(rid, other, otherTicket)
+	e2eRegister(t, board, rid, author, authorTicket)
+	e2eRegister(t, board, rid, other, otherTicket)
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{Type: "task_created", TaskID: hex.EncodeToString(author.Id[:]), Capabilities: uint32(protocol.Capability_All)},

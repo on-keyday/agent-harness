@@ -25,13 +25,13 @@ func TestAgentCLI_E2E_Purge_Granted(t *testing.T) {
 	ticket[0] = 0x61
 	tid := mkTidE2E(0x61)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9600, 61)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Purge),
+			Capabilities: uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -77,14 +77,14 @@ func TestAgentCLI_E2E_Purge_Denied(t *testing.T) {
 	ticket[0] = 0x62
 	tid := mkTidE2E(0x62)
 	rid := mkRidE2E([4]byte{5, 6, 7, 8}, 9601, 62)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	// Inject an entry WITHOUT the purge bit.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Spawn | protocol.Capability_Prune),
+			Capabilities: uint32(protocol.Capability_Spawn | protocol.Capability_Prune | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -120,13 +120,13 @@ func TestAgentCLI_E2E_Purge_Seq(t *testing.T) {
 	ticket[0] = 0x63
 	tid := mkTidE2E(0x63)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9602, 63)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_Purge),
+			Capabilities: uint32(protocol.Capability_Purge | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -180,14 +180,14 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 	ticket[0] = 0x64
 	tid := mkTidE2E(0x64)
 	rid := mkRidE2E([4]byte{5, 6, 7, 8}, 9603, 64)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	// Explicitly NO caps.
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tid.Id[:]),
-			Capabilities: uint32(protocol.Capability_None),
+			Capabilities: uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
 			AgentProfile: "codex",
 		},
 	})

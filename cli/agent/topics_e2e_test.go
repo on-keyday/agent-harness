@@ -24,8 +24,8 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	tidB := mkTidE2E(0x32)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9300, 31)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9301, 32)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	// Inject TaskStore entries so agentCallerCaps can resolve Capability_BoardObserve.
 	// In production, every agentboard agent has a TaskStore entry created at task
@@ -35,12 +35,12 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tidA.Id[:]),
-			Capabilities: uint32(protocol.Capability_BoardObserve),
+			Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
 		},
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tidB.Id[:]),
-			Capabilities: uint32(protocol.Capability_BoardObserve),
+			Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -90,14 +90,14 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	ticketC[0] = 0xA3
 	tidC := mkTidE2E(0x33)
 	ridC := mkRidE2E([4]byte{9, 10, 11, 12}, 9302, 33)
-	board.Registry().Register(ridC, tidC, ticketC)
+	e2eRegister(t, board, ridC, tidC, ticketC)
 
 	// Inject entry WITHOUT board_observe (Capability_None = 0).
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tidC.Id[:]),
-			Capabilities: uint32(protocol.Capability_None),
+			Capabilities: uint32(protocol.Capability_None | protocol.Capability_BoardPeer),
 		},
 	})
 
@@ -107,7 +107,7 @@ func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	ticketD[0] = 0xA4
 	tidD := mkTidE2E(0x34)
 	ridD := mkRidE2E([4]byte{1, 2, 3, 4}, 9303, 34)
-	board.Registry().Register(ridD, tidD, ticketD)
+	e2eRegister(t, board, ridD, tidD, ticketD)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

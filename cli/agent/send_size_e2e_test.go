@@ -27,7 +27,7 @@ func TestAgentCLI_E2E_SendOkLineReportsBytesAndSource(t *testing.T) {
 	tid := mkTidE2E(0x7A)
 	var ticket [16]byte
 	ticket[0] = 0x7A
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -122,7 +122,7 @@ func TestAgentCLI_E2E_OversizeRejectionNamesTheSize(t *testing.T) {
 	tid := mkTidE2E(0x7B)
 	var ticket [16]byte
 	ticket[0] = 0x7B
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

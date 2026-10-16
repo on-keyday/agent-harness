@@ -15,7 +15,7 @@ import (
 func TestSendResult_NoReplyRouteIsItsOwnError(t *testing.T) {
 	resp := &protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AgentSend}
 	resp.SetAgentSend(protocol.AgentSendResponse{Status: protocol.SendStatus_NoReplyRoute})
-	err := sendResult(cli.TaskControlResult{Resp: resp}, 42, 3, "positional", io.Discard)
+	err := sendResult(cli.TaskControlResult{Resp: resp}, "", 42, 3, "positional", io.Discard)
 	var nr *cli.NoReplyRouteError
 	if !errors.As(err, &nr) || nr.InReplyTo != 42 {
 		t.Fatalf("err = %v, want NoReplyRouteError for 42", err)

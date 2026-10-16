@@ -21,7 +21,7 @@ func TestAgentCLI_E2E_Inbox_PromptHook_NoMessages(t *testing.T) {
 	ticket[0] = 0xF0
 	tid := mkTidE2E(0x20)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9200, 20)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -56,8 +56,8 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	tidB := mkTidE2E(0x22)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9201, 21)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9202, 22)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -142,8 +142,8 @@ func TestAgentCLI_E2E_Inbox_ProseArrivesReadable(t *testing.T) {
 	tidB := mkTidE2E(0x24)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9203, 23)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9204, 24)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

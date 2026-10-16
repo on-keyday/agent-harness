@@ -30,8 +30,8 @@ func TestAgentCLI_E2E_Inbox_PromptHook_OmitsOversizeBody(t *testing.T) {
 	tidA, tidB := mkTidE2E(0x31), mkTidE2E(0x32)
 	var ticketA, ticketB [16]byte
 	ticketA[0], ticketB[0] = 0xE1, 0xE2
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

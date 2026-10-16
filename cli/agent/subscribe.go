@@ -77,6 +77,9 @@ func subscribeOrUnsubWith(ctx context.Context, a verb.AgentAction, stdout io.Wri
 	if r == nil {
 		return errors.New("agent: subscribe response variant is nil")
 	}
+	if r.Status == protocol.SubscribeStatus_NotPermitted {
+		return readRefused(*pattern)
+	}
 	if r.Status != protocol.SubscribeStatus_Ok {
 		return fmt.Errorf("subscribe failed: %v", r.Status)
 	}

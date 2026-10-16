@@ -89,7 +89,15 @@ func RetainedWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) err
 		if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
 			return fmt.Errorf("retained: %w", err)
 		}
+		if r.OwnOnly() {
+			fmt.Fprintf(os.Stderr, "agent retained: %s carries another task's messages; listing only the ones this task sent "+
+				"(the rest needs board_observe)\n", *topic)
+		}
 		if len(body.Metas) == 0 {
+			if r.OwnOnly() {
+				fmt.Fprintf(os.Stderr, "agent retained: topic %q holds none sent by this task\n", *topic)
+				return nil
+			}
 			fmt.Fprintf(os.Stderr, "agent retained: topic %q is on the board but holds no messages\n", *topic)
 			return nil
 		}

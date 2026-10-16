@@ -182,6 +182,11 @@ func retainedMetas(ctx context.Context, c *cli.Client, topic string) ([]cli.Boar
 		if err := cli.ReadResponseBody(ctx, c.Transport(), r.StreamId, &body); err != nil {
 			return nil, nil, fmt.Errorf("retained %s: %w", topic, err)
 		}
+		if r.OwnOnly() {
+			// A subscription this task can no longer fully read (board_observe
+			// was taken away): show what it sent there rather than end the view.
+			fmt.Fprintf(os.Stderr, "agent thread: %s: only this task's own messages are visible\n", topic)
+		}
 		out := make([]cli.BoardMessage, 0, len(body.Metas))
 		sizes := make(map[uint64]int, len(body.Metas))
 		for _, m := range body.Metas {

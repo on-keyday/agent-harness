@@ -86,6 +86,9 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	if r == nil {
 		return errors.New("agent: wait response variant is nil")
 	}
+	if r.Status == protocol.WaitStatus_NotPermitted {
+		return readRefused(*topic)
+	}
 	msgs, err := readDelivered(ctx, c, r.StreamId)
 	if err != nil {
 		return fmt.Errorf("wait: %w", err)

@@ -53,8 +53,8 @@ func TestAgentCLI_E2E_ReadSeq_ReturnsTheBodyOfOneMessage(t *testing.T) {
 	tidA, tidB := mkTidE2E(0x41), mkTidE2E(0x42)
 	var ticketA, ticketB [16]byte
 	ticketA[0], ticketB[0] = 0xA4, 0xB4
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -114,8 +114,8 @@ func TestAgentCLI_E2E_ReadSeq_RefusesATopicTheCallerDoesNotSubscribeTo(t *testin
 	tidA, tidC := mkTidE2E(0x51), mkTidE2E(0x53)
 	var ticketA, ticketC [16]byte
 	ticketA[0], ticketC[0] = 0xA5, 0xC5
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridC, tidC, ticketC)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridC, tidC, ticketC)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -32,8 +32,8 @@ func TestAgentCLI_E2E_DispatchIgnoresUnrelatedTraffic(t *testing.T) {
 	tidB := mkTidE2E(0x42)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9401, 41)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9402, 42)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -105,8 +105,8 @@ func TestAgentCLI_E2E_DispatchIgnoresReplyToAnotherSeq(t *testing.T) {
 	tidB := mkTidE2E(0x44)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9403, 43)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9404, 44)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -181,7 +181,7 @@ func TestAgentCLI_E2E_DispatchTimeoutBoundsTheWholeCall(t *testing.T) {
 	ticket[0] = 0xD5
 	tid := mkTidE2E(0x45)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9405, 45)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -227,8 +227,8 @@ func TestAgentCLI_E2E_DispatchReplyToWaitsWhereItDeclared(t *testing.T) {
 	tidB := mkTidE2E(0x56)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

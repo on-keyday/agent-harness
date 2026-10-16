@@ -25,7 +25,7 @@ func TestAgentCLI_E2E_OversizePayloadRejectedAsTooLarge(t *testing.T) {
 	tid := mkTidE2E(0x5A)
 	var ticket [16]byte
 	ticket[0] = 0x5A
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -63,7 +63,7 @@ func TestAgentCLI_E2E_PayloadBeyondFlowWindowStillAnswers(t *testing.T) {
 	tid := mkTidE2E(0x5B)
 	var ticket [16]byte
 	ticket[0] = 0x5B
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -115,8 +115,8 @@ func TestAgentCLI_E2E_DeliveryPastReceiveWindow(t *testing.T) {
 	tidA, tidB := mkTidE2E(0x6A), mkTidE2E(0x6B)
 	var ticketA, ticketB [16]byte
 	ticketA[0], ticketB[0] = 0x6A, 0x6B
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

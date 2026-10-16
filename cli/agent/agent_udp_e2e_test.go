@@ -43,6 +43,7 @@ func startUDPServerE2E(t *testing.T, udpAddr string) *agentboard.Board {
 
 	s := server.New(server.Config{UDPAddr: udpAddr})
 	s.SetBoard(board)
+	e2eServers.Store(board, s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = s.Run(ctx) }()
@@ -114,8 +115,8 @@ func TestAgentCLI_E2E_SendThenWait_UDP(t *testing.T) {
 	ridA := mkRidUDP_E2E([4]byte{1, 2, 3, 4}, 9600, 91)
 	ridB := mkRidUDP_E2E([4]byte{5, 6, 7, 8}, 9601, 92)
 
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

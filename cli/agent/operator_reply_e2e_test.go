@@ -25,7 +25,7 @@ func operatorReplyFixture(t *testing.T) (board *agentboard.Board, addr string, r
 	ticket[0] = 0xD1
 	tid = mkTidE2E(0x61)
 	rid = mkRidE2E([4]byte{1, 2, 3, 4}, 9601, 61)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 	return board, addr, rid, tid, ticket
 }
 

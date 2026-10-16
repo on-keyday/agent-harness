@@ -64,8 +64,8 @@ func TestAgentCLI_E2E_ReplyToRoutesAwayFromTheAskersInbox(t *testing.T) {
 	tidB := mkTidE2E(0x52)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9501, 51)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9502, 52)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -122,8 +122,8 @@ func TestAgentCLI_E2E_WithoutReplyToTheAnswerComesHome(t *testing.T) {
 	tidB := mkTidE2E(0x54)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9503, 53)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9504, 54)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -170,8 +170,8 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesReplyToTopic(t *testing.T) {
 	tidB := mkTidE2E(0x56)
 	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55)
 	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56)
-	board.Registry().Register(ridA, tidA, ticketA)
-	board.Registry().Register(ridB, tidB, ticketB)
+	e2eRegister(t, board, ridA, tidA, ticketA)
+	e2eRegister(t, board, ridB, tidB, ticketB)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

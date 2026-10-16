@@ -18,7 +18,7 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 	ticket[0] = 0xB1
 	tid := mkTidE2E(0x41)
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9400, 41)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -58,7 +58,7 @@ func TestAgentCLI_E2E_SubscribeSelf(t *testing.T) {
 	tid.Id[2] = 0xB2
 	tid.Id[3] = 0xC3
 	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9500, 51)
-	board.Registry().Register(rid, tid, ticket)
+	e2eRegister(t, board, rid, tid, ticket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
