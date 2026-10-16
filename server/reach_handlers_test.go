@@ -57,25 +57,20 @@ func TestSetBoardWiresReach(t *testing.T) {
 	}
 }
 
-func TestAgentSubscribeAnswersNotPermitted(t *testing.T) {
+// Reach refusals are the ordinary capability denial (reach spec D14, as
+// reversed): one response every surface already renders.
+func TestAgentSubscribeIsDeniedBoardObserve(t *testing.T) {
 	h, conn, _, _ := reachHandler(t, 0)
-	h.handleAgentSubscribe(conn, 1, "chat.deadbeef", false)
-	resp := lastTaskControlResponse(t, conn)
-	if got := resp.AgentSubscribe(); got == nil || got.Status != protocol.SubscribeStatus_NotPermitted {
-		t.Fatalf("status = %+v, want not_permitted", got)
-	}
+	h.handleAgentSubscribe(conn, 7, "chat.deadbeef", false)
+	assertPermissionDenied(t, conn, 7, protocol.Capability_BoardObserve)
 }
 
-func TestAgentWaitAnswersNotPermitted(t *testing.T) {
+func TestAgentWaitIsDeniedBoardObserve(t *testing.T) {
 	h, conn, _, _ := reachHandler(t, 0)
-	r := &protocol.AgentWaitRequest{TimeoutMs: 50}
+	r := &protocol.AgentWaitRequest{RequestId: 8, TimeoutMs: 50}
 	r.SetPattern([]byte(agentboard.OperatorTopic))
-	h.handleAgentWait(conn, 1, r)
-	resp := lastTaskControlResponse(t, conn)
-	got := resp.AgentWait()
-	if got == nil || got.Status != protocol.WaitStatus_NotPermitted || got.TimedOut != 0 {
-		t.Fatalf("wait = %+v, want not_permitted and not timed out", got)
-	}
+	h.handleAgentWait(conn, 8, r)
+	assertPermissionDenied(t, conn, 8, protocol.Capability_BoardObserve)
 }
 
 // D15: on a topic the caller cannot read, list_retained lists only what the

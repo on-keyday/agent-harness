@@ -77,7 +77,7 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	// await_idle's is.
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return err
+		return reachHint(err, *topic)
 	}
 	if err := expectKind(resp, protocol.TaskControlKind_AgentWait); err != nil {
 		return err
@@ -85,9 +85,6 @@ func WaitWith(ctx context.Context, a verb.AgentAction, stdout io.Writer) error {
 	r := resp.AgentWait()
 	if r == nil {
 		return errors.New("agent: wait response variant is nil")
-	}
-	if r.Status == protocol.WaitStatus_NotPermitted {
-		return readRefused(*topic)
 	}
 	msgs, err := readDelivered(ctx, c, r.StreamId)
 	if err != nil {

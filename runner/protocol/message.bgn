@@ -1428,9 +1428,6 @@ enum SendStatus:
     # The fallback (the author's chat.<short-id>) would be the chat topic of
     # a zero task id, so the server refuses instead of guessing.
     no_reply_route
-    # The topic the message would land on (after reply routing) is outside
-    # the sender's base set and the sender holds no board_peer.
-    not_permitted
 
 format AgentSendResponse:
     request_id :u32
@@ -1509,9 +1506,6 @@ enum SubscribeStatus:
     :u8
     ok
     bad_pattern
-    # The topic carries another task's messages and the caller holds no
-    # board_observe.
-    not_permitted
 
 format AgentSubscribeResponse:
     request_id :u32
@@ -1583,20 +1577,11 @@ format AgentWaitRequest:
 
 # stream_id: see BoardTopicsResponse. The stream carries a DeliveredBody,
 # empty on a timeout.
-enum WaitStatus:
-    :u8
-    ok
-    # The topic carries another task's messages and the caller holds no
-    # board_observe. Distinct from timed_out, which must keep meaning "nothing
-    # arrived".
-    not_permitted
-
 format AgentWaitResponse:
     request_id :u32
     timed_out :u8
     next_cursor :u64
     stream_id :u64
-    status :WaitStatus
 
 format AgentInboxRequest:
     request_id :u32

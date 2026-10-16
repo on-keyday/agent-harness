@@ -97,28 +97,38 @@ func SendWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, stdo
 	return sendResult(r, *topic, *inReplyTo, len(payload), source, stdout)
 }
 
-// sendRefused is SendStatus.not_permitted: the topic is outside this task's
-// reach. It names what IS reachable, because the agent reading it has to
-// choose between a reachable route and asking for the bit.
-func sendRefused(topic string) error {
-	return fmt.Errorf("send refused: %s is outside this task's reach. Without board_peer a task publishes to "+
-		"its own chat.<id> (and chat.<id>.*), its creator's and its direct children's chat.<id>, chat.operator, "+
-		"the reply route of a message it received, and tree.<id> namespaces it belongs to. "+
-		"Anything else needs the operator to grant board_peer (caps set <task> --caps …,board_peer)", topic)
-}
-
-// readRefused is not_permitted on a read: the topic carries another task's
-// messages.
-func readRefused(topic string) error {
-	return fmt.Errorf("refused: %s carries another task's messages (its chat.<id>, chat.operator, or a tree.<id> "+
-		"this task is not in); reading it needs board_observe", topic)
+// reachHint adds what a board reach denial means to the ordinary capability
+// denial, which names only the request kind and the bit. A send needs
+// board_peer for SOME topics and a read needs board_observe for some, so the
+// bare line would read as "every send needs board_peer"; this names the topic
+// and what IS reachable, because the agent reading it has to choose between a
+// reachable route and asking for the bit. Any other error passes through.
+func reachHint(err error, topic string) error {
+	var denied *cli.CapabilityDeniedError
+	if !errors.As(err, &denied) {
+		return err
+	}
+	switch denied.RequiredCap {
+	case protocol.Capability_BoardPeer:
+		return fmt.Errorf("%w: %s is outside this task's reach. Without board_peer a task publishes to "+
+			"its own chat.<id> (and chat.<id>.*), its creator's and its direct children's chat.<id>, chat.operator, "+
+			"the reply route of a message it received, and tree.<id> namespaces it belongs to. "+
+			"Anything else needs the operator to grant board_peer (caps set <task> --caps …,board_peer)", err, topic)
+	case protocol.Capability_BoardObserve:
+		return fmt.Errorf("%w: %s carries another task's messages (its chat.<id>, chat.operator, or a tree.<id> "+
+			"this task is not in)", err, topic)
+	}
+	return err
 }
 
 // sendResult renders a SendResponse: the ok line on stdout, or the error the
 // status stands for. n and source describe the body that was published.
 func sendResult(r cli.TaskControlResult, topic string, inReplyTo uint64, n int, source string, stdout io.Writer) error {
 	if r.Err != nil {
-		return r.Err
+		if topic == "" {
+			topic = fmt.Sprintf("the reply route of seq %d", inReplyTo)
+		}
+		return reachHint(r.Err, topic)
 	}
 	if err := expectKind(r.Resp, protocol.TaskControlKind_AgentSend); err != nil {
 		return err
@@ -134,12 +144,6 @@ func sendResult(r cli.TaskControlResult, topic string, inReplyTo uint64, n int, 
 	}
 	if resp.Status == protocol.SendStatus_NoReplyRoute {
 		return &cli.NoReplyRouteError{InReplyTo: inReplyTo}
-	}
-	if resp.Status == protocol.SendStatus_NotPermitted {
-		if topic == "" {
-			topic = fmt.Sprintf("the reply route of seq %d", inReplyTo)
-		}
-		return sendRefused(topic)
 	}
 	if resp.Status != protocol.SendStatus_Ok {
 		// The size belongs on the rejection too: PayloadTooLarge is the status

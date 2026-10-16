@@ -139,7 +139,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	}
 
 	if res.Err != nil {
-		return res.Err
+		return reachHint(res.Err, *topic)
 	}
 	if kerr := expectKind(res.Resp, protocol.TaskControlKind_AgentSend); kerr != nil {
 		return kerr
@@ -147,9 +147,6 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	sent := res.Resp.AgentSend()
 	if sent == nil {
 		return errors.New("agent: send response variant is nil")
-	}
-	if sent.Status == protocol.SendStatus_NotPermitted {
-		return sendRefused(*topic)
 	}
 	if sent.Status != protocol.SendStatus_Ok {
 		return fmt.Errorf("send failed: %v (%d bytes from %s)", sent.Status, len(payload), source)
@@ -195,7 +192,7 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 
 	waitResp, err := c.RoundTripTaskControl(ctx, waitReq)
 	if err != nil {
-		return err
+		return reachHint(err, waitOn)
 	}
 	if err := expectKind(waitResp, protocol.TaskControlKind_AgentWait); err != nil {
 		return err
@@ -203,9 +200,6 @@ func DispatchWith(ctx context.Context, a verb.AgentSendAction, stdin io.Reader, 
 	r := waitResp.AgentWait()
 	if r == nil {
 		return errors.New("agent: wait response variant is nil")
-	}
-	if r.Status == protocol.WaitStatus_NotPermitted {
-		return readRefused(waitOn)
 	}
 	msgs, err := readDelivered(ctx, c, r.StreamId)
 	if err != nil {

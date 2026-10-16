@@ -107,7 +107,10 @@ func (h *TaskHandler) handleAgentSubscribe(conn ConnHandle, requestID uint32, pa
 		h.Board.Unsubscribe(st, pattern)
 	default:
 		if err := h.Board.Subscribe(st, pattern); errors.Is(err, agentboard.ErrNotPermitted) {
-			out.Status = protocol.SubscribeStatus_NotPermitted
+			// The topic carries another task's messages: the ordinary
+			// capability denial, rendered by every surface the same way.
+			h.denyTaskControl(conn, kind, requestID, protocol.Capability_BoardObserve)
+			return
 		} else if err != nil {
 			out.Status = protocol.SubscribeStatus_BadPattern
 		}
@@ -185,7 +188,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		// reply to a seq the sender never received resolves to a route it has
 		// no contact for (reach spec D4).
 		if !h.Board.Publishable(st, destTopic) {
-			reply(protocol.SendStatus_NotPermitted, 0, 0)
+			h.denyTaskControl(conn, protocol.TaskControlKind_AgentSend, requestID, protocol.Capability_BoardPeer)
 			return
 		}
 		var sendOpts []agentboard.SendOption
@@ -286,8 +289,7 @@ func (h *TaskHandler) handleAgentWait(conn ConnHandle, requestID uint32, r *prot
 	defer cancel()
 	msgs, timedOut, err := h.Board.Wait(ctx, st, string(r.Pattern), r.Since, r.InReplyTo)
 	if errors.Is(err, agentboard.ErrNotPermitted) {
-		out.Status = protocol.WaitStatus_NotPermitted
-		respond(nil)
+		h.denyTaskControl(conn, protocol.TaskControlKind_AgentWait, requestID, protocol.Capability_BoardObserve)
 		return
 	}
 

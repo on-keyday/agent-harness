@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -64,9 +66,8 @@ func TestReachE2E_ConfinedWorker(t *testing.T) {
 	if _, err := sup.send(ctx, addr, "--topic", agentboard.SelfTopic(worker.tid), "--data", "to worker"); err != nil {
 		t.Errorf("supervisor → its child: %v", err)
 	}
-	if _, err := worker.send(ctx, addr, "--topic", agentboard.SelfTopic(peer.tid), "--data", "to peer"); err == nil ||
-		!strings.Contains(err.Error(), "board_peer") {
-		t.Errorf("worker → a peer: err = %v, want a refusal naming board_peer", err)
+	if _, err := worker.send(ctx, addr, "--topic", agentboard.SelfTopic(peer.tid), "--data", "to peer"); !deniedFor(err, protocol.Capability_BoardPeer) {
+		t.Errorf("worker → a peer: err = %v, want the capability denial for board_peer", err)
 	}
 	if _, err := helper.send(ctx, addr, "--topic", agentboard.SelfTopic(worker.tid), "--data", "from helper"); err != nil {
 		t.Errorf("board_peer holder → worker: %v", err)
@@ -100,13 +101,11 @@ func TestReachE2E_ConfinedWorker(t *testing.T) {
 
 	restore = setAgentEnv(addr, worker.rid, worker.tid, worker.ticket)
 	defer restore()
-	if err := agent.Subscribe(ctx, []string{"--topic", agentboard.SelfTopic(peer.tid)}, &bytes.Buffer{}); err == nil ||
-		!strings.Contains(err.Error(), "board_observe") {
-		t.Errorf("worker subscribing to a peer's topic: err = %v, want a refusal naming board_observe", err)
+	if err := agent.Subscribe(ctx, []string{"--topic", agentboard.SelfTopic(peer.tid)}, &bytes.Buffer{}); !deniedFor(err, protocol.Capability_BoardObserve) {
+		t.Errorf("worker subscribing to a peer's topic: err = %v, want the capability denial for board_observe", err)
 	}
-	if err := agent.Wait(ctx, []string{"--topic", agentboard.OperatorTopic, "--timeout", "1s"}, &bytes.Buffer{}); err == nil ||
-		!strings.Contains(err.Error(), "board_observe") {
-		t.Errorf("worker waiting on chat.operator: err = %v, want a refusal naming board_observe", err)
+	if err := agent.Wait(ctx, []string{"--topic", agentboard.OperatorTopic, "--timeout", "1s"}, &bytes.Buffer{}); !deniedFor(err, protocol.Capability_BoardObserve) {
+		t.Errorf("worker waiting on chat.operator: err = %v, want the capability denial for board_observe", err)
 	}
 	// D15: on the supervisor's topic the worker sees only its own message.
 	var retained bytes.Buffer
@@ -117,6 +116,14 @@ func TestReachE2E_ConfinedWorker(t *testing.T) {
 	if strings.TrimSpace(retained.String()) == "" || rows != 1 || !strings.Contains(retained.String(), `"from_task":"`+hexOf(worker.tid)+`"`) {
 		t.Errorf("worker's retained on chat.<sup> = %q, want exactly its own one row", retained.String())
 	}
+}
+
+// deniedFor reports whether err is the harness's one capability denial for
+// that bit — the shape every surface renders — rather than a status of the
+// verb's own (reach spec D14, as reversed).
+func deniedFor(err error, c protocol.Capability) bool {
+	var denied *cli.CapabilityDeniedError
+	return errors.As(err, &denied) && denied.RequiredCap == c
 }
 
 func hexOf(t protocol.TaskID) string {

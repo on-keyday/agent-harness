@@ -61,7 +61,7 @@ the author while writing — those are the rows worth a second look.
 | D11 | A message retained while the reader was authorized is not readable once it is not | operator (follows from D10) |
 | D12 | `board_peer = 0x80000`; `all` widens to `0xfffff` | this spec |
 | D13 | Operator spawn surfaces that prefill caps include `board_peer`. Live tasks are not migrated: after the upgrade they are re-granted with `caps set`, when one turns out to need to publish beyond its base set | operator |
-| D14 | A refusal is answered as `not_permitted`, a status of its own on every refused verb | this spec |
+| D14 | ~~A refusal is answered as `not_permitted`, a status of its own on every refused verb~~ — **reversed** (see Amendment): a refusal is the ordinary `PermissionDenied` response naming `board_peer` or `board_observe`, the one every capability denial already uses | operator (reversal, 2026-10-16) |
 | D15 | `list_retained` on a topic the caller cannot read is not refused: it lists only the rows the caller published, and the response says so (`own_only`). A sender checking whether its message still sits on a peer's topic needs no bit | operator |
 
 ## 1. Topic namespaces
@@ -176,7 +176,7 @@ wake must call the predicate:
 | `Subscribes` (`:755`), used by read_seq (`server/agent_taskcontrol.go:310`) | `taskState.matches` | yes |
 | `Inbox` (`:358`), `InboxAdvance` (`:393`) | iterates `snapshotPatterns()` | yes, per pattern |
 | `Wait` (`:434`), `list_retained` | reads the named topic's ring directly | yes |
-| `Subscribe` (`:209`) | adds the pattern | yes, so the caller is told `not_permitted` instead of a silent empty subscription |
+| `Subscribe` (`:209`) | adds the pattern | yes, so the caller is denied (`board_observe`) instead of getting a silent empty subscription |
 | `ListSubscribers` (`:906`, operator face) | `taskState.matches` | yes: its help says "only the tasks a publish there reaches", which is the authorized set |
 | `anyTaskMatchesLocked` (`:200`, cleanup at `Revoke`) | `taskState.matches` | no: a topic is deleted only when empty, so the raw set can only keep more |
 | `ListSubscriptions` (`:853`), and the per-task pattern list inside `ListSubscribers` (`:911`) | iterates `snapshotPatterns()` | no: they report the subscription set itself |
@@ -304,14 +304,14 @@ What the numbers also say:
 - `board_observe`'s comment in `message.bgn` says it is "not needed to send, to
   subscribe, or to read your own inbox". It is rewritten: it is now needed to
   read another task's direct messages, by any verb.
-- `not_permitted` is appended to `SendStatus` and `SubscribeStatus` (D14).
-  `BoardStatus` was on this list until D15. `list_retained` now filters to the
-  caller's own rows instead of refusing, and `AgentListRetainedResponse` gains
-  `own_only :u1` to say so. `AgentWaitResponse` has no status, and
-  `timed_out` must not carry a refusal, so it gains `status :WaitStatus`
-  (`ok`, `not_permitted`) at its end. That changes the response's length, and
-  how an old client decodes a longer response is not relied on: the order is
-  server first, then clients, as for every response change in this repo.
+- Refusals are the existing `PermissionDenied` response (D14, as reversed):
+  no status is added to any format. This item used to add `not_permitted` to
+  `SendStatus`, `SubscribeStatus` and `BoardStatus`, and a `WaitStatus` to
+  `AgentWaitResponse`. `list_retained` filters to the caller's own rows instead
+  of refusing (D15), and `AgentListRetainedResponse` gains `own_only :u1` to
+  say so. That changes the response's length, and how an old client decodes a
+  longer response is not relied on: the order is server first, then clients,
+  as for every response change in this repo.
 - Inbox and inbox_advance get no status. They return the authorized rows.
 - `scripts/wire-skew-check.sh` is run.
 
@@ -339,8 +339,8 @@ on a stream, so D7's longer topics no longer move any datagram limit.
   no creator entry, so peers in other trees stop reaching each other until
   then.
 - The `harness-cli` skill (source: `runner/agentskills`, plus its mirrors) gains
-  the namespaces of §1, the confidential-channel convention (D6), and what
-  `not_permitted` means.
+  the namespaces of §1, the confidential-channel convention (D6), and what a
+  `board_peer` / `board_observe` denial means.
 
 ## Amendment 2026-10-16 — found while planning
 
@@ -376,8 +376,28 @@ the operator decided to do exactly that when a task turns out to need it
   filtered list is never read as the topic's whole ring, and `list_retained`
   therefore never answers `not_permitted`. D14's `BoardStatus.not_permitted`
   is dropped from §7.
-- `read_seq` keeps answering `not_found` for an unauthorized topic, not
-  `not_permitted`. Its schema comment explains why: a distinguishable refusal
+- **D14 reversed, operator (2026-10-16): refusals use the unified denial.**
+  D14 gave each refused verb a `not_permitted` status of its own. Every other
+  capability refusal in the harness is one response: `denyTaskControl`
+  (`server/task_handler.go:320`) sends `PermissionDenied{requested_kind,
+  required_cap}`, and the client turns it into `*cli.CapabilityDeniedError` in
+  `RoundTripTaskControl` and `TaskControlWithPayload` (`cli/client.go:306-318`,
+  `:384-393`). Every surface therefore renders it one way, and the
+  `harness-cli` skill states that there is one denial wording. Refusals that
+  depend on the request rather than on its kind already go this way:
+  `await-idle --notify` needs `notify` while `await-idle` itself needs nothing
+  (`server/await_idle_handler.go:87`), and file transfer picks its cap by
+  direction (`task_handler.go:479`, `:645`). A reach refusal has the same
+  shape. D14 was written without checking that sibling, which planning should
+  have done. So: send answers `PermissionDenied` with `board_peer`, subscribe
+  and wait answer it with `board_observe`. `SendStatus`, `SubscribeStatus`
+  and `AgentWaitResponse` keep their pre-reach shape, and there is no
+  `WaitStatus`. The cost, accepted as it is for `await-idle`: the line reads
+  "AgentSend requires capability board_peer", which is true of this topic and
+  not of every send. `agent send` appends which topic was out of reach and what
+  is reachable. `own_only` (D15) stays: it is a filter, not a refusal.
+- `read_seq` keeps answering `not_found` for an unauthorized topic, not a
+  denial. Its schema comment explains why: a distinguishable refusal
   answers "does seq N exist?" for every seq. D14's list (send, subscribe,
   list_retained, wait) never named it.
 - `HasChild` scans the store, as §6 measured. No children index is added.
