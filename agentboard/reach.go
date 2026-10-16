@@ -144,13 +144,22 @@ func (b *Board) Publishable(c *ConnState, topic string) bool {
 }
 
 // NoteDelivered records the reply route of every message handed to c's task
-// (the spec's §3). The server calls it from the one place wait, inbox,
-// inbox_advance and read_seq build their rows.
+// that was addressed to it (the spec's §3, as amended): one on its own
+// chat.<id> / chat.<id>.*, or a reply to a message it sent. A message read off
+// a group topic, or off another task's topic with board_observe, adds nobody —
+// a read power must not become a publish power, and a busy group topic would
+// otherwise push real correspondents out of the bounded set. The server calls
+// it from the one place wait, inbox, inbox_advance and read_seq build their
+// rows.
 func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 	if c == nil || c.task == nil {
 		return
 	}
+	_, self, _, _ := c.task.identity()
 	for _, m := range msgs {
+		if !b.addressedTo(self, m) {
+			continue
+		}
 		switch {
 		case m.ReplyToTopic != "":
 			c.task.addContact(m.ReplyToTopic)
@@ -197,4 +206,17 @@ func (b *Board) readablePatterns(ts *taskState, patterns []string) []string {
 		}
 	}
 	return kept
+}
+
+// addressedTo reports whether m was meant for self: delivered on self's own
+// chat.<id> / chat.<id>.*, or answering a message self published.
+func (b *Board) addressedTo(self protocol.TaskID, m RetainedMessage) bool {
+	if isOwnChat(self, m.Topic) {
+		return true
+	}
+	if m.InReplyTo == 0 {
+		return false
+	}
+	parent, ok := b.ReplyParent(m.InReplyTo)
+	return ok && parent.FromTask == self
 }

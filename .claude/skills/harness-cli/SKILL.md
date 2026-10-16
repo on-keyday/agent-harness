@@ -622,11 +622,14 @@ Without any capability a task publishes to its **base set**:
 - its own `chat.<id>`, and `chat.<id>.<suffix>` side channels;
 - its **creator's** `chat.<id>` and each **direct child's** `chat.<id>`;
 - `chat.operator`;
-- the **reply route of any message it was handed** — the sender's `chat.<id>`,
-  or the `reply_to_topic` the sender declared. Someone who spoke to you first
-  can be answered whoever they are, with three limits: a reply route that is a
-  `tree.<id>` you are not in stays closed; only the 64 most recent such routes
-  are kept; and a server restart forgets them;
+- the **reply route of any message addressed to it** — one that arrived on its
+  own `chat.<id>` / `chat.<id>.*`, or that replies to a message it sent: the
+  sender's `chat.<id>`, or the `reply_to_topic` the sender declared. Someone who
+  spoke to you first can be answered whoever they are. Reading a group topic,
+  or another task's topic with `board_observe`, does NOT make its posters
+  answerable. Three more limits: a reply route that is a `tree.<id>` you are
+  not in stays closed; only the 64 most recent such routes are kept; and a
+  server restart forgets them;
 - `tree.<full-32-hex-id>.<suffix>` for every task id on its own ancestor chain,
   itself included.
 

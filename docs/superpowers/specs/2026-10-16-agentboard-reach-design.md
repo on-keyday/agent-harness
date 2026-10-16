@@ -50,7 +50,7 @@ the author while writing — those are the rows worth a second look.
 | --- | --- | --- |
 | D1 | Confine publishing (S2–S4); confine reading only for direct messages (R1 partially) | operator |
 | D2 | A task publishes without any bit to its **base set** (§2); anything else needs the new bit `board_peer` | operator |
-| D3 | The base set includes **contacts**: reply routes of messages handed to the task, kept in `taskState`, not in the ring | operator |
+| D3 | The base set includes **contacts**: reply routes of messages handed to the task **that were addressed to it** (amended 2026-10-16, §3), kept in `taskState`, not in the ring | operator |
 | D4 | The publish check is applied to the topic `resolveReplyTarget` returns, not to the topic the caller named | this spec |
 | D5 | Reading needs `board_observe` only for another task's `chat.<id>` / `chat.<id>.*`, for `chat.operator`, and for `tree.<id>.*` when the caller is not a member. Every other topic stays open | operator |
 | D6 | A confidential side channel is named `chat.<self>.<suffix>`; `dispatch`'s default (its own `chat.<short-id>`) is unchanged | operator |
@@ -110,10 +110,17 @@ The spawn-tree entries are evaluated at send time, so `caps set-parent`
 
 ## 3. Contacts
 
-When a read path hands a message M to task T, the server adds M's reply route to
-T's contacts: `M.ReplyToTopic` if it is set, otherwise `SelfTopic(M.FromTask)`
-when `M.SenderKind` is agent. Nothing is added for an operator or server
-message without a `ReplyToTopic` (such a message is already `no_reply_route`).
+When a read path hands a message M to task T **and M was addressed to T** —
+M sits on T's own `chat.<id>` / `chat.<id>.*`, or M replies to a message T
+published — the server adds M's reply route to T's contacts:
+`M.ReplyToTopic` if it is set, otherwise `SelfTopic(M.FromTask)` when
+`M.SenderKind` is agent. Nothing is added for an operator or server message
+without a `ReplyToTopic` (such a message is already `no_reply_route`). The
+"addressed to T" condition is an operator amendment of D3 (2026-10-16): as
+first written, any delivered message counted, so reading a group topic — or
+another task's topic with `board_observe` — let T publish to everyone who had
+posted there, turning a read power into a publish power, and a busy group
+topic pushed T's real correspondents out of the 64-entry bound.
 
 - **Where:** at the single point every agent read path goes through:
   `deliveredBody` (`server/agent_taskcontrol.go`), which builds the rows wait,

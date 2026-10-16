@@ -970,8 +970,9 @@ opts a message out.
 
 With no capability, a task **publishes** to its own `chat.<short-id>` (and
 `chat.<short-id>.<suffix>`), its creator's and its direct children's
-`chat.<short-id>`, `chat.operator`, the reply route of any message it was
-handed, and `tree.<full-task-id>.<suffix>` for every task on its own ancestor
+`chat.<short-id>`, `chat.operator`, the reply route of any message addressed
+to it (on its own `chat.<short-id>`, or replying to one of its messages), and
+`tree.<full-task-id>.<suffix>` for every task on its own ancestor
 chain. Anything else — a peer it has no thread with, a free-form topic — needs
 `board_peer`, and is refused with a message naming that bit rather than
 dropped. **Reading** is open except for other tasks' direct messages: another

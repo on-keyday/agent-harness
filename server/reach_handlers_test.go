@@ -122,7 +122,7 @@ func TestAgentListRetainedOnItsOwnTopicIsWhole(t *testing.T) {
 // else's topic, never handed to the replier, resolves to a route the replier
 // has no contact for.
 func TestAgentSendRefusesAGuessedReplyRoute(t *testing.T) {
-	h, _, st, _ := reachHandler(t, 0)
+	h, _, st, me := reachHandler(t, 0)
 	var stranger protocol.TaskID
 	stranger.Id[0] = 0x77
 	seq, _, err := h.Board.Send("chat.elsewhere", []byte("q"), protocol.RunnerID{}, stranger, "h", "", 0)
@@ -136,8 +136,8 @@ func TestAgentSendRefusesAGuessedReplyRoute(t *testing.T) {
 	if h.Board.Publishable(st, dest) {
 		t.Fatal("a reply to a never-delivered seq passed the reach check")
 	}
-	// Handed to the replier, the same route is a contact.
-	h.Board.NoteDelivered(st, []agentboard.RetainedMessage{{FromTask: stranger, SenderKind: protocol.SenderKind_Agent}})
+	// Addressed to the replier and handed to it, the same route is a contact.
+	h.Board.NoteDelivered(st, []agentboard.RetainedMessage{{Topic: agentboard.SelfTopic(me), FromTask: stranger, SenderKind: protocol.SenderKind_Agent}})
 	if !h.Board.Publishable(st, dest) {
 		t.Error("a reply to a delivered message was refused")
 	}

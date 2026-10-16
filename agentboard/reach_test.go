@@ -212,9 +212,9 @@ func TestContactsOpenTheReplyRoute(t *testing.T) {
 		t.Fatal("peer reachable before it said anything")
 	}
 	b.NoteDelivered(c, []RetainedMessage{
-		{FromTask: peer, SenderKind: protocol.SenderKind_Agent},
-		{FromTask: peer, SenderKind: protocol.SenderKind_Agent, ReplyToTopic: "review.results"},
-		{SenderKind: protocol.SenderKind_Operator}, // no route, nothing added
+		{Topic: SelfTopic(me), FromTask: peer, SenderKind: protocol.SenderKind_Agent},
+		{Topic: SelfTopic(me), FromTask: peer, SenderKind: protocol.SenderKind_Agent, ReplyToTopic: "review.results"},
+		{Topic: SelfTopic(me), SenderKind: protocol.SenderKind_Operator}, // no route, nothing added
 	})
 	if !b.Publishable(c, SelfTopic(peer)) {
 		t.Error("the sender's chat.<id> did not become a contact")
@@ -355,5 +355,44 @@ func TestListSubscribersShowsOnlyWhoAPublishReaches(t *testing.T) {
 	r.caps[snoop] = 0
 	if rows := b.ListSubscribers(SelfTopic(owner)); len(rows) != 1 {
 		t.Errorf("subscribers = %d, want 1: the list must match what a publish reaches", len(rows))
+	}
+}
+
+// A contact is the right to answer someone who addressed YOU: a message on
+// your own chat.<id> / chat.<id>.*, or a reply to a message you sent. Reading
+// a group topic, or another task's topic with board_observe, adds nobody —
+// otherwise a read power turns into a publish power, and a busy group topic
+// pushes real correspondents out of the 64-entry set.
+func TestContactsOnlyFromMessagesAddressedToTheReader(t *testing.T) {
+	r := newFakeReach()
+	me, peer, other := tidN(2), tidN(4), tidN(5)
+	r.add(me, protocol.TaskID{}, protocol.Capability_BoardObserve)
+	r.add(peer, protocol.TaskID{}, protocol.Capability_BoardPeer)
+	r.add(other, protocol.TaskID{}, protocol.Capability_BoardPeer)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+
+	// A question I asked on a group topic, and a peer's answer to it there.
+	mine, _, err := b.Send("rr.q", []byte("q?"), protocol.RunnerID{}, me, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.NoteDelivered(c, []RetainedMessage{
+		{Topic: "build.events", FromTask: other, SenderKind: protocol.SenderKind_Agent},            // group chatter
+		{Topic: SelfTopic(other), FromTask: tidN(6), SenderKind: protocol.SenderKind_Agent},       // observed DM
+		{Topic: "rr.q", FromTask: peer, SenderKind: protocol.SenderKind_Agent, InReplyTo: mine},   // answer to me
+		{Topic: SelfTopic(me) + ".side", FromTask: tidN(7), SenderKind: protocol.SenderKind_Agent}, // my side channel
+	})
+	if b.Publishable(c, SelfTopic(other)) {
+		t.Error("reading a group topic made its poster a contact")
+	}
+	if b.Publishable(c, SelfTopic(tidN(6))) {
+		t.Error("observing another task's direct message made its sender a contact")
+	}
+	if !b.Publishable(c, SelfTopic(peer)) {
+		t.Error("a reply to my own message, delivered on a group topic, did not make its sender a contact")
+	}
+	if !b.Publishable(c, SelfTopic(tidN(7))) {
+		t.Error("a message on my own side channel did not make its sender a contact")
 	}
 }

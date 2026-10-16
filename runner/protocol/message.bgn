@@ -3369,9 +3369,10 @@ enum Capability:
     exec_tap       = 0x40000, "exec_tap"
     # board_peer authorizes publishing to a topic outside the task's BASE SET:
     # its own chat.<id> and chat.<id>.*, its creator's and its direct
-    # children's chat.<id>, chat.operator, the reply routes of messages it was
-    # handed (contacts), and the tree.<id>.* namespaces it belongs to. Without
-    # it a task can talk to its own lineage and to whoever talked to it, and
+    # children's chat.<id>, chat.operator, the reply routes of messages
+    # addressed to it — on its own chat.<id>.*, or replying to it — (contacts),
+    # and the tree.<id>.* namespaces it belongs to. Without it a task can talk
+    # to its own lineage and to whoever talked to it, and
     # cannot reach a peer or a free-form topic. It opens no tree.<id>.* the
     # task is not a member of. Default-off, appended. See
     # docs/superpowers/specs/2026-10-16-agentboard-reach-design.md.

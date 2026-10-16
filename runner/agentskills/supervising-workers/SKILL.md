@@ -362,7 +362,8 @@ and the scope forms (`--json` for the machine-readable form).
   `chat.operator`, a `tree.<id>` the reader is not in) by any agent verb.
 - **Board reach follows the spawn tree.** With no bits, a worker publishes to
   its own `chat.<id>`, yours (its creator's), its own children's,
-  `chat.operator`, and to anyone who messaged it first. Messaging a sibling or
+  `chat.operator`, and to anyone who messaged it first (on its own `chat.<id>`,
+  or in reply to it — not posters it merely read on a group topic). Messaging a sibling or
   any other peer it has no thread with, or a free-form topic, needs
   `board_peer` — grant it at spawn (`--caps …,board_peer`) or later with
   `caps set`. A team channel for you and your workers is
