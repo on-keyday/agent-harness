@@ -237,6 +237,14 @@ it from the runner host's `bin/`), the TUI and the WebUI's wasm.
 - **The TUI command line's `submit` honours `--host` / `--runner` / `--ip`.**
   It parsed them and passed an empty host before; `DoSubmitWithOpts` now takes
   `SelectorOpts`, which made the drop visible.
+- **A `ByRunnerId` pin matches only the connection holding the identity**
+  (`Registry.selects`, used by `Candidates` and the scheduler). Found in the
+  final review: a reconnect takeover leaves the displaced connection
+  registered until its teardown, with the same identity, so a pick re-issued
+  by identity matched both and came back ambiguous again. D4's pin needs this
+  rule to resolve the tie the cid pin used to resolve.
+- **A TUI pick re-issues over the client held at pick time** (`pickerRetry`
+  takes the `*cli.Client`), since a reconnect replaces it.
 
 ## Verification (2026-10-17)
 
