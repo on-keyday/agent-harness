@@ -9,30 +9,20 @@ import (
 
 func TestFormatAmbiguousCandidates(t *testing.T) {
 	out := formatAmbiguousCandidates([]cli.RunnerCandidate{
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", ActiveTasks: 1, MaxTasks: 8},
-		{Cid: "ws:10.0.0.2:1-1", Hostname: "gmkhost-codex", MatchedRoot: "/repo", ActiveTasks: 0, MaxTasks: 8},
+		{RunnerID: strings.Repeat("a", 32), Cid: "ws:h:1-1", Hostname: "gmkhost", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude", "codex"}},
+		{Cid: "ws:h:2-2", Hostname: "gmkhost", MatchedRoot: "/r", MaxTasks: 8, Profiles: []string{"claude"}},
 	})
-	for _, want := range []string{"ws:10.0.0.1:1-1", "gmkhost-codex", "--runner", "/repo"} {
+	for _, want := range []string{"2 runners", "--runner " + strings.Repeat("a", 32), "--agent <claude|codex>", "--runner ws:h:2-2"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q:\n%s", want, out)
+			t.Fatalf("missing %q in:\n%s", want, out)
 		}
 	}
 }
 
-// Single multi-profile runner: the combos share a cid and differ only by agent,
-// so --runner cannot disambiguate — the hint must steer to --agent, and each
-// row must show its profile.
-func TestFormatAmbiguousCandidatesSameRunnerProfiles(t *testing.T) {
-	out := formatAmbiguousCandidates([]cli.RunnerCandidate{
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", Profile: "claude", MaxTasks: 8},
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", Profile: "codex", MaxTasks: 8},
-	})
-	for _, want := range []string{"ambiguous agent", "--agent claude", "--agent codex", "agent=claude", "agent=codex"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "--runner") {
-		t.Errorf("same-cid ambiguity should not suggest --runner:\n%s", out)
+// One runner: --runner is noise, and the agents are the whole choice.
+func TestFormatAmbiguousCandidatesOneRunner(t *testing.T) {
+	out := formatAmbiguousCandidates([]cli.RunnerCandidate{{Cid: "ws:h:1-1", Hostname: "h", Profiles: []string{"claude", "codex", "agy"}}})
+	if strings.Contains(out, "--runner") || !strings.Contains(out, "3 agents") || !strings.Contains(out, "--agent <claude|codex|agy>") {
+		t.Fatalf("got:\n%s", out)
 	}
 }

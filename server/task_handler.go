@@ -368,13 +368,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		creatorCaps := h.callerCaps(cid)
-		submitResp := h.handleSubmit(cid, sub, origin, creator, creatorCaps)
-
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
-		resp.SetSubmit(submitResp)
-
-		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		submitResp, body := h.handleSubmit(cid, sub, origin, creator, creatorCaps)
+		send := func(r protocol.SubmitResponse) {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
+			resp.SetSubmit(r)
+			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+		}
+		if body != nil {
+			respondWithBody(conn, "submit candidates", body, func(streamID uint64) {
+				submitResp.SetCandidatesStreamId(streamID)
+				send(submitResp)
+			})
+		} else {
+			send(submitResp)
+		}
 
 		if submitResp.Status == protocol.SubmitStatus_Ok && h.OnChange != nil {
 			h.OnChange()
@@ -458,11 +465,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		oiCreatorCaps := h.callerCaps(cid)
-		oresp := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps)
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
-		resp.SetOpenInteractive(oresp)
-		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		oresp, body := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps)
+		send := func(r protocol.OpenInteractiveResponse) {
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
+			resp.SetOpenInteractive(r)
+			conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+		}
+		if body != nil {
+			respondWithBody(conn, "open candidates", body, func(streamID uint64) {
+				oresp.SetCandidatesStreamId(streamID)
+				send(oresp)
+			})
+		} else {
+			send(oresp)
+		}
 
 	case protocol.TaskControlKind_OpenFileTransfer:
 		oft := req.OpenFileTransfer()
@@ -1028,7 +1044,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
-func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) (protocol.SubmitResponse, *protocol.RunnerCandidatesBody) {
 	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
 	// (so the runner re-attaches the worktree to the retained `harness/<id>`
 	// branch) instead of allocating a fresh one. The repo on the request is
@@ -1046,7 +1062,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	if !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
-		return resp
+		return resp, nil
 	}
 
 	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
@@ -1055,9 +1071,9 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}, nil
 	case len(cands) == 0:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}, nil
 	}
 
 	// Profile filter: only narrows candidates when the caller explicitly
@@ -1069,20 +1085,21 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 		if len(filtered) == 0 {
 			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
 			resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
-			return resp
+			return resp, nil
 		}
 		cands = filtered
 	}
 
 	if len(cands) > 1 {
-		hostnames := make([]string, len(cands))
+		combos := make([]interactiveCombo, len(cands))
 		for i, c := range cands {
-			hostnames[i] = c.Hostname
+			p := profile
+			if p == "" {
+				p = c.DefaultProfile()
+			}
+			combos[i] = interactiveCombo{Entry: c, Profile: p}
 		}
-		msg := []byte("ambiguous: " + strings.Join(hostnames, ", "))
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}
-		resp.SetErrorMsg(msg)
-		return resp
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}, candidatesBody(combos, repo)
 	}
 	bound := cands[0]
 	resolved := profile
@@ -1095,7 +1112,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
-	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}
+	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}, nil
 }
 
 // scopeRejectionMsg renders attenuateScope's `offender`. It carries two kinds
@@ -1135,14 +1152,14 @@ func scopeRejectionMsg(offender string) string {
 //  6. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
 //     resume_not_terminal / resume_not_found wire codes; the latter handles
 //     the (rare) race where the entry was pruned between steps 1 and 6.
-func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) (protocol.SubmitResponse, *protocol.RunnerCandidatesBody) {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 	// Resume is an operation on someone else's task, not a lookup: it re-queues
 	// that id under a prompt of the caller's choosing, and with
 	// resume_caps_override it rewrites the target's authority. Gate the target
 	// like any other, and report an out-of-scope task as absent.
 	if !h.inScope(cid, protocol.Capability_Spawn, idHex) {
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 	}
 	// The two halves of authority re-grant independently: caps behind
 	// resume_caps_override, scope behind scope_present — same shape as
@@ -1152,7 +1169,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
-		return resp
+		return resp, nil
 	}
 	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
 	// the submit path is valid regardless of the task's previously recorded
@@ -1160,14 +1177,14 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// below. Existence/terminal-state are the only preconditions here.
 	repo, _, ok := h.Tasks.PeekRepo(idHex)
 	if !ok {
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 	}
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}, nil
 	case len(cands) == 0:
-		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}, nil
 	}
 
 	// Unlike the fresh-submit path, an empty request profile on resume falls
@@ -1192,20 +1209,21 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 		if len(filtered) == 0 {
 			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
 			resp.SetErrorMsg(profileUnavailableMsg(resolved, cands))
-			return resp
+			return resp, nil
 		}
 		cands = filtered
 	}
 
 	if len(cands) > 1 {
-		hostnames := make([]string, len(cands))
+		combos := make([]interactiveCombo, len(cands))
 		for i, c := range cands {
-			hostnames[i] = c.Hostname
+			p := resolved
+			if p == "" {
+				p = c.DefaultProfile()
+			}
+			combos[i] = interactiveCombo{Entry: c, Profile: p}
 		}
-		msg := []byte("ambiguous: " + strings.Join(hostnames, ", "))
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}
-		resp.SetErrorMsg(msg)
-		return resp
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}, candidatesBody(combos, repo)
 	}
 	bound := cands[0]
 
@@ -1219,17 +1237,17 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
-			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 		case ResumeErrNotTerminal:
-			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}
+			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}, nil
 		default:
 			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
 			resp.SetErrorMsg([]byte(err.Error()))
-			return resp
+			return resp, nil
 		}
 	}
 	h.Tasks.SetResumeConversation(idHex, req.ResumeConversation())
-	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}
+	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}, nil
 }
 
 // filterByProfile narrows cands to those whose HasProfile(profile) is true.
@@ -1359,10 +1377,10 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.OpenInteractiveResponse {
-	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
+func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
+	errResp := func(status protocol.OpenInteractiveStatus) (protocol.OpenInteractiveResponse, *protocol.RunnerCandidatesBody) {
 		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
-		return protocol.OpenInteractiveResponse{Status: status}
+		return protocol.OpenInteractiveResponse{Status: status}, nil
 	}
 
 	// Resume vs fresh: on resume we ignore req.RepoPath and use the existing
@@ -1447,21 +1465,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// Ambiguous is an expected, user-recoverable condition (the caller
 		// re-issues pinned to a candidate cid + profile) — not a server-side error.
 		slog.Info("handleOpenInteractive: ambiguous", "repo", repo, "combos", len(combos))
-		resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
-		list := make([]protocol.RunnerCandidate, 0, len(combos))
-		for _, combo := range combos {
-			c := combo.Entry
-			var rc protocol.RunnerCandidate
-			rc.SetCid([]byte(c.ID.String()))
-			rc.SetHostname([]byte(c.Hostname))
-			rc.SetMatchedRoot([]byte(matchedRoot(c.AllowedRoots, repo)))
-			rc.ActiveTasks = uint16(len(c.ActiveTasks))
-			rc.MaxTasks = uint16(c.MaxTasks)
-			rc.SetProfile([]byte(combo.Profile)) // which (runner,profile) combo this row represents
-			list = append(list, rc)
-		}
-		resp.SetCandidates(list) // sets slice+len AND activates the ambiguous variant; direct field assignment fails encode
-		return resp
+		return protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}, candidatesBody(combos, repo)
 	}
 	runner := combos[0].Entry
 	resolved := combos[0].Profile
@@ -1638,7 +1642,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		Status:   protocol.OpenInteractiveStatus_Ok,
 		TaskId:   tid,
 		StreamId: uint64(tuiStream.ID()),
-	}
+	}, nil
 }
 
 // afterMuxStopped cleans up task and registry state once an interactive

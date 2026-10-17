@@ -82,40 +82,6 @@ func TestSubmitRequestAgentProfileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRunnerCandidateProfileRoundTrip verifies RunnerCandidate.Profile (the
-// new u16-length-prefixed field) survives a round-trip inside
-// OpenInteractiveResponse's ambiguous_runner conditional block, mirroring
-// candidate_roundtrip_test.go's existing coverage of the sibling fields.
-func TestRunnerCandidateProfileRoundTrip(t *testing.T) {
-	var c RunnerCandidate
-	c.SetCid([]byte("ws:192.168.3.14:34184-30218"))
-	c.SetHostname([]byte("gmkhost-codex"))
-	if !c.SetProfile([]byte("codex")) {
-		t.Fatal("SetProfile failed")
-	}
-
-	resp := OpenInteractiveResponse{Status: OpenInteractiveStatus_AmbiguousRunner}
-	if !resp.SetCandidates([]RunnerCandidate{c}) {
-		t.Fatalf("SetCandidates failed")
-	}
-
-	raw, err := resp.Append(nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	var got OpenInteractiveResponse
-	if _, err := got.Decode(raw); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	gotCandidates := got.Candidates()
-	if gotCandidates == nil || len(*gotCandidates) != 1 {
-		t.Fatalf("candidates=%v", gotCandidates)
-	}
-	if string((*gotCandidates)[0].Profile) != "codex" {
-		t.Fatalf("candidate profile mismatch: %+v", (*gotCandidates)[0])
-	}
-}
-
 // TestSubmitStatusProfileUnavailableRoundTrip verifies the new
 // SubmitStatus_ProfileUnavailable enum value round-trips like its siblings
 // (see psk_handshake_test.go's TestPskAuthResponseRoundTrip for the same

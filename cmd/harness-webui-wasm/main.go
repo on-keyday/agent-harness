@@ -2684,13 +2684,18 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				if errors.As(err, &are) {
 					cands := make([]any, 0, len(are.Candidates))
 					for _, cc := range are.Candidates {
+						profiles := make([]any, len(cc.Profiles))
+						for i, p := range cc.Profiles {
+							profiles[i] = p
+						}
+						// One object per RUNNER; profiles are the agents it offers.
+						// pin is what a pick re-issues with (identity, else cid),
+						// decided in Go so the page never chooses the form.
 						cands = append(cands, map[string]any{
-							"cid": cc.Cid, "hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
+							"runnerId": cc.RunnerID, "cid": cc.Cid, "pin": cc.Pin().Runner,
+							"hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
 							"activeTasks": cc.ActiveTasks, "maxTasks": cc.MaxTasks,
-							// profile is the agent profile this (runner,profile) combo
-							// represents (§4a); the picker modal shows it per-row and
-							// re-issues pinned to both cid and profile on selection.
-							"profile": cc.Profile,
+							"profiles": profiles,
 						})
 					}
 					jsErr := js.Global().Get("Error").New("ambiguous_runner")

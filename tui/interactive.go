@@ -90,8 +90,8 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 // candidate's runner (Cid) AND carry its Profile as the agent to run. This is
 // the (runner, profile) generalization of resumeSelectorOpts (§4a of the
 // multi-agent-profile design) — picking a picker row picks the agent too.
-func pickerSelection(c *cli.RunnerCandidate) (cli.SelectorOpts, string) {
-	return cli.SelectorOpts{Runner: c.Cid}, c.Profile
+func pickerSelection(c *cli.RunnerCombo) (cli.SelectorOpts, string) {
+	return cli.SelectorOpts{Runner: c.Candidate.Cid}, c.Profile
 }
 
 // resumeSelectorOpts returns the SelectorOpts the r/R resume keybinding

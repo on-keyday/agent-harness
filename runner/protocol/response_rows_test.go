@@ -19,8 +19,6 @@ var inlineRowsAllowed = map[string]string{
 	"RestoreTasksResponse": "not a board response, and its long rows (a whole prompt) " +
 		"come from oneshot tasks, which see little use; revisit when they do " +
 		"(2026-10-16-board-row-responses-streamed-design.md §4)",
-	"OpenInteractiveResponse": "candidates only on ambiguous_runner, about 95 bytes each: " +
-		"over budget at about 12 runners matching one root",
 	"RunnerHelloResponse": "16 bytes per re-adopted task: over budget at about 72 on one runner",
 	"SetCapsResponse":     "16 bytes per changed task: over budget at about 72 descendants at once",
 	"RunnerTrsfStateResponse": "one row per live connection on one runner, " +

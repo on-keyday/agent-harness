@@ -48,47 +48,6 @@ func respondAgent(conn ConnHandle, resp protocol.TaskControlResponse) {
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }
 
-// bodyEncoder is a <Response>Body format: the rows of a list-shaped board
-// response, which travel on a stream rather than in the response (see
-// BoardTopicsResponse in message.bgn for why).
-type bodyEncoder interface {
-	EncodeCopy(reserved []byte) ([]byte, error)
-}
-
-// respondWithBody sends a list-shaped board response, then its rows. respond
-// builds and sends the response carrying the stream id it is handed.
-//
-// Every such response on both faces goes through here, because the order is
-// the part that has to hold: the response first, then the body. The peer reads
-// a stream only once it has been told about it, so a body written before the
-// response lands only as far as the receive window, and past that the write
-// never completes — bodies here carry up to the board's per-message limit per
-// row. The write runs on its own goroutine: the handlers are driven from the
-// connection's receive loop, and a peer that stops reading must not stall it.
-//
-// An encode or stream-allocation failure answers stream id 0, which readers
-// report as an error rather than as an empty list.
-func respondWithBody(conn ConnHandle, what string, body bodyEncoder, respond func(streamID uint64)) {
-	b, err := body.EncodeCopy(nil)
-	if err != nil {
-		slog.Error("board response: encode body", "what", what, "err", err)
-		respond(0)
-		return
-	}
-	stream := conn.CreateSendStream()
-	if stream == nil {
-		slog.Warn("board response: no send stream", "what", what)
-		respond(0)
-		return
-	}
-	respond(uint64(stream.ID()))
-	go func() {
-		if err := stream.AppendData(true, b); err != nil {
-			slog.Warn("board response: body write", "what", what, "stream", stream.ID(), "err", err)
-		}
-	}()
-}
-
 // handleAgentSubscribe registers or removes one exact-match subscription for
 // the calling agent. remove picks which; the two verbs differ in nothing else
 // and share a response format.

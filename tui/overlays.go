@@ -735,7 +735,7 @@ func (a *App) inRunnerPicker(msg tea.KeyMsg) tea.Cmd {
 		p := a.pendingInteractive
 		sel, agentProfile := pickerSelection(c)
 		a.runnerPicker.Close()
-		pickLabel := c.Hostname + "  " + c.Cid
+		pickLabel := c.Candidate.Hostname + "  " + c.Candidate.Cid
 		if agentProfile != "" {
 			pickLabel += "  (" + agentProfile + ")"
 		}

@@ -163,7 +163,11 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	case protocol.OpenInteractiveStatus_RunnerBusy:
 		return "", fmt.Errorf("runner busy")
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:
-		return "", &AmbiguousRunnerError{Candidates: candidatesFromResponse(oiResp)}
+		cands, err := readCandidates(ctx, c.Transport(), oiResp.CandidatesStreamId())
+		if err != nil {
+			return "", err
+		}
+		return "", &AmbiguousRunnerError{Candidates: cands}
 	case protocol.OpenInteractiveStatus_PinnedNotFound:
 		return "", fmt.Errorf("pinned_not_found: the specified runner was not found: %w", ErrPinnedNotFound)
 	case protocol.OpenInteractiveStatus_ResumeNotFound:

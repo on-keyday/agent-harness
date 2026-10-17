@@ -84,14 +84,14 @@ func TestInteractiveReadyMsg_PickerArmGate(t *testing.T) {
 // forwarded to the Do* funnels). Mirrors TestResumeSelectorOpts for the
 // picker path.
 func TestPickerSelection(t *testing.T) {
-	c := &cli.RunnerCandidate{
+	c := &cli.RunnerCombo{Candidate: cli.RunnerCandidate{
 		Cid:         "ws:10.0.0.2:1-1",
 		Hostname:    "gmkhost-codex",
 		MatchedRoot: "/home/x/repo",
 		ActiveTasks: 1,
 		MaxTasks:    8,
-		Profile:     "codex",
-	}
+		Profiles:    []string{"codex"},
+	}, Profile: "codex"}
 	sel, agentProfile := pickerSelection(c)
 	wantSel := cli.SelectorOpts{Runner: "ws:10.0.0.2:1-1"}
 	if sel != wantSel {
@@ -108,7 +108,7 @@ func TestPickerSelection(t *testing.T) {
 }
 
 func TestPickerSelectionEmptyProfile(t *testing.T) {
-	c := &cli.RunnerCandidate{Cid: "ws:10.0.0.1:1-1", Hostname: "h1"}
+	c := &cli.RunnerCombo{Candidate: cli.RunnerCandidate{Cid: "ws:10.0.0.1:1-1", Hostname: "h1"}}
 	sel, agentProfile := pickerSelection(c)
 	if sel.Runner != "ws:10.0.0.1:1-1" {
 		t.Errorf("SelectorOpts.Runner = %q, want ws:10.0.0.1:1-1", sel.Runner)
@@ -183,8 +183,8 @@ func TestRunnerPickerPickDispatchesWithProfile(t *testing.T) {
 	a := New(Config{})
 	a.pendingInteractive = pendingInteractive{repo: "/repo"}
 	a.runnerPicker.Open([]cli.RunnerCandidate{
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", Profile: "claude"},
-		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", Profile: "codex"},
+		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", Profiles: []string{"claude"}},
+		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", Profiles: []string{"codex"}},
 	})
 
 	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})

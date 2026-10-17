@@ -67,7 +67,11 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, opts Sess
 		return nil, "", fmt.Errorf("OpenInteractive response variant missing")
 	}
 	if oir.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
-		return nil, "", &AmbiguousRunnerError{Candidates: candidatesFromResponse(oir)}
+		cands, err := readCandidates(ctx, c.Transport(), oir.CandidatesStreamId())
+		if err != nil {
+			return nil, "", err
+		}
+		return nil, "", &AmbiguousRunnerError{Candidates: cands}
 	}
 	if err := openInteractiveStatusError(repoPath, opts.AgentProfile, oir.Status); err != nil {
 		return nil, "", err

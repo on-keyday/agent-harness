@@ -20,41 +20,33 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// formatAmbiguousCandidates renders the candidate (runner, agent-profile) combos
-// for the non-TUI CLI: a table plus a per-row hint to re-run pinned. Each row
-// shows its agent profile — on a single multi-profile runner the rows share a
-// cid and differ only by agent, so --runner alone cannot disambiguate and the
-// hint must include --agent.
+// formatAmbiguousCandidates renders an ambiguous spawn's candidates for the
+// CLI: one line per runner with the flags that pin it. With one runner the
+// --runner flag is noise and is left out; --agent is shown whenever the row
+// offers a named agent.
 func formatAmbiguousCandidates(cands []cli.RunnerCandidate) string {
 	var b strings.Builder
-	sameCid := true
-	for _, c := range cands[1:] {
-		if c.Cid != cands[0].Cid {
-			sameCid = false
-			break
-		}
-	}
-	if sameCid && len(cands) > 1 {
-		fmt.Fprintf(&b, "ambiguous agent: %d profiles on this runner; re-run with --agent <name>:\n", len(cands))
+	if len(cands) == 1 {
+		fmt.Fprintf(&b, "ambiguous agent: %d agents on this runner; re-run with --agent <name>:\n", len(cands[0].Profiles))
 	} else {
-		fmt.Fprintf(&b, "ambiguous runner: %d (runner, agent) candidates match this repo; re-run pinned with the flags shown:\n", len(cands))
+		fmt.Fprintf(&b, "ambiguous runner: %d runners match this repo; re-run with the flags shown:\n", len(cands))
 	}
 	for _, c := range cands {
-		profile := c.Profile
-		if profile == "" {
-			profile = "(default)"
+		var hint []string
+		if len(cands) > 1 {
+			hint = append(hint, "--runner "+c.Pin().Runner)
 		}
-		hint := ""
-		if !sameCid {
-			hint = "--runner " + c.Cid
-		}
-		if c.Profile != "" {
-			if hint != "" {
-				hint += " "
+		agents := make([]string, len(c.Profiles))
+		for i, p := range c.Profiles {
+			if p == "" {
+				p = "(default)"
 			}
-			hint += "--agent " + c.Profile
+			agents[i] = p
 		}
-		fmt.Fprintf(&b, "  %-18s agent=%-10s [%d/%d]  %s  %s\n", c.Hostname, profile, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, hint)
+		if len(c.Profiles) > 1 || (len(c.Profiles) == 1 && c.Profiles[0] != "") {
+			hint = append(hint, "--agent <"+strings.Join(agents, "|")+">")
+		}
+		fmt.Fprintf(&b, "  %-18s [%d/%d]  %s  %s\n", c.Hostname, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, strings.Join(hint, " "))
 	}
 	return b.String()
 }

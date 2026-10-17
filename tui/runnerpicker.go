@@ -14,30 +14,30 @@ import (
 // pair, not a bare runner — picking a row pins both the runner (Cid) and the
 // agent (Profile) for the re-issued open.
 type RunnerPickerModel struct {
-	open       bool
-	candidates []cli.RunnerCandidate
+	open   bool
+	combos []cli.RunnerCombo
 }
 
 func (p *RunnerPickerModel) IsOpen() bool { return p.open }
 
 func (p *RunnerPickerModel) Open(cands []cli.RunnerCandidate) {
 	p.open = true
-	p.candidates = cands
+	p.combos = cli.FlattenCandidates(cands)
 }
 
-func (p *RunnerPickerModel) Close() { p.open = false; p.candidates = nil }
+func (p *RunnerPickerModel) Close() { p.open = false; p.combos = nil }
 
 // Pick maps a digit key ("1".."9") to a candidate, or nil if out of range /
 // not a digit.
-func (p *RunnerPickerModel) Pick(key string) *cli.RunnerCandidate {
+func (p *RunnerPickerModel) Pick(key string) *cli.RunnerCombo {
 	if len(key) != 1 || key[0] < '1' || key[0] > '9' {
 		return nil
 	}
 	idx := int(key[0] - '1')
-	if idx >= len(p.candidates) {
+	if idx >= len(p.combos) {
 		return nil
 	}
-	return &p.candidates[idx]
+	return &p.combos[idx]
 }
 
 func (p *RunnerPickerModel) View() string {
@@ -49,8 +49,9 @@ func (p *RunnerPickerModel) View() string {
 		BorderForeground(colorFocused).
 		Padding(1, 2)
 	body := "Ambiguous runner — pick one:\n\n"
-	for i, c := range p.candidates {
-		profile := c.Profile
+	for i, combo := range p.combos {
+		c := combo.Candidate
+		profile := combo.Profile
 		if profile == "" {
 			// Defensive fallback: every real combo from the server's
 			// expandInteractiveCombos already carries a resolved profile
