@@ -114,6 +114,26 @@ test("submit --runner and --ip reach the request", async () => {
 });
 
 // --caps none is a real grant of nothing, so presence decides, not truthiness.
+test("an ambiguous submit opens the picker with a submit re-issue", async () => {
+  const amb = Object.assign(new Error("ambiguous_runner"), {
+    code: "ambiguous_runner",
+    candidates: [{ pin: "ws:h:1-1", hostname: "h", profiles: ["claude", "codex"] }],
+  });
+  const { out, err, calls } = await run("submit --task t", { submit: amb });
+  assert.equal(err, undefined);
+  const r = calls.find((c) => c[0] === "routeAmbiguous");
+  assert.ok(r, "routeAmbiguous not called");
+  assert.equal(r[1], "ambiguous_runner");
+  assert.equal(r[3], "function");
+  assert.match(String(out), /pick a runner/);
+});
+
+test("a non-ambiguous submit failure still throws", async () => {
+  const { err, calls } = await run("submit --task t", { submit: new Error("no_runner") });
+  assert.match(String(err), /no_runner/);
+  assert.equal(calls.filter((c) => c[0] === "routeAmbiguous").length, 1);
+});
+
 test("submit without --caps leaves the chips to decide", async () => {
   const { calls } = await run("submit --task t");
   assert.equal(named(calls, "sessionReq")[0][1].caps, null);

@@ -1030,6 +1030,9 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {
+				if rejectAmbiguous(reject, err) {
+					return
+				}
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
 			}
@@ -1039,6 +1042,36 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// rejectAmbiguous rejects with the ambiguous_runner shape the page's picker
+// reads, and reports whether err was one. Both spawn exports use it. One
+// object per RUNNER; profiles are the agents it offers, and pin is what a
+// pick re-issues with (identity, else cid), decided here so the page never
+// chooses the form.
+func rejectAmbiguous(reject js.Value, err error) bool {
+	var are *cli.AmbiguousRunnerError
+	if !errors.As(err, &are) {
+		return false
+	}
+	cands := make([]any, 0, len(are.Candidates))
+	for _, cc := range are.Candidates {
+		profiles := make([]any, len(cc.Profiles))
+		for i, p := range cc.Profiles {
+			profiles[i] = p
+		}
+		cands = append(cands, map[string]any{
+			"runnerId": cc.RunnerID, "cid": cc.Cid, "pin": cc.Pin().Runner,
+			"hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
+			"activeTasks": cc.ActiveTasks, "maxTasks": cc.MaxTasks,
+			"profiles": profiles,
+		})
+	}
+	jsErr := js.Global().Get("Error").New("ambiguous_runner")
+	jsErr.Set("code", "ambiguous_runner")
+	jsErr.Set("candidates", js.ValueOf(cands))
+	reject.Invoke(jsErr)
+	return true
 }
 
 // harnessList returns the list output as a string.
@@ -2680,28 +2713,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			// exists to prevent. JS attaches the chat afterwards.
 			taskID, err := c.Interactive(rootCtx, repo, sopts)
 			if err != nil {
-				var are *cli.AmbiguousRunnerError
-				if errors.As(err, &are) {
-					cands := make([]any, 0, len(are.Candidates))
-					for _, cc := range are.Candidates {
-						profiles := make([]any, len(cc.Profiles))
-						for i, p := range cc.Profiles {
-							profiles[i] = p
-						}
-						// One object per RUNNER; profiles are the agents it offers.
-						// pin is what a pick re-issues with (identity, else cid),
-						// decided in Go so the page never chooses the form.
-						cands = append(cands, map[string]any{
-							"runnerId": cc.RunnerID, "cid": cc.Cid, "pin": cc.Pin().Runner,
-							"hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
-							"activeTasks": cc.ActiveTasks, "maxTasks": cc.MaxTasks,
-							"profiles": profiles,
-						})
-					}
-					jsErr := js.Global().Get("Error").New("ambiguous_runner")
-					jsErr.Set("code", "ambiguous_runner")
-					jsErr.Set("candidates", js.ValueOf(cands))
-					reject.Invoke(jsErr)
+				if rejectAmbiguous(reject, err) {
 					return
 				}
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))

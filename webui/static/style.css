@@ -1010,6 +1010,9 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   min-height: 2.4rem;
 }
 .picker-modal button:hover { background: #3a3a3a; }
+/* A runner block is a container, not a button: its agents are the
+   buttons, and a button inside a button is invalid markup. It keeps the
+   look the block had as a button. */
 .runner-choice {
   display: flex;
   width: 100%;
@@ -1020,6 +1023,17 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   padding: 0.55rem 0.65rem;
   text-align: left;
   box-sizing: border-box;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  margin-bottom: 0.5rem;
+}
+.runner-choice-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
 }
 .runner-choice-head {
   display: flex;
@@ -1038,6 +1052,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   color: #ce9178;
   font-family: monospace;
   font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
 }
 .runner-choice-load {
   flex: 0 0 auto;

@@ -2851,6 +2851,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     forwards: () => lastForwards || [],
     forwardLsView: (o) => forwardLsView(o),
     connsView: (o) => connsView(o),
+    routeAmbiguous: (e, req, reissue) => routeAmbiguous(e, req, reissue),
     findForwardEntry: (id) => findForwardEntry(id),
     toggleForwardTap: (f, wrap, btn, opts) => toggleForwardTap(f, wrap, btn, opts),
     tapOpen: (id) => openTaps.has(`fwd:${id}`),
@@ -4399,13 +4400,14 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   };
 
   // pickRunnerAndRetry shows the runner-picker modal for an ambiguous_runner
-  // rejection and, on a candidate click, re-issues startInteractive pinned by
-  // that candidate's cid. baseReq is the original compose-request plus
-  // (the request that just failed); host is cleared and runner
-  // set instead, because pinning by cid is unambiguous even when host is not
-  // (a hostname can itself be shared by >=2 runners, which is the whole
-  // reason this modal exists).
-  function pickRunnerAndRetry(candidates, baseReq) {
+  // rejection: one block per runner, one button per agent it offers. A click
+  // re-issues baseReq (the request that just failed) through reissue, pinned
+  // by the candidate's `pin` — its identity, or its cid for a runner without
+  // one, decided in Go so the page never chooses — and with that agent. host
+  // and ip are cleared: the pin is unambiguous even when a hostname is not (a
+  // hostname can itself be shared by >=2 runners, which is the whole reason
+  // this modal exists).
+  function pickRunnerAndRetry(candidates, baseReq, reissue) {
     const modal = document.getElementById("runner-picker-modal");
     const list = document.getElementById("runner-picker-list");
     const cancel = document.getElementById("runner-picker-cancel");
@@ -4428,82 +4430,78 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     list.innerHTML = "";
     candidates.forEach((c) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "runner-choice";
-      btn.innerHTML = "";
-      const head = document.createElement("span");
-      head.className = "runner-choice-head";
+      const row = document.createElement("div");
+      row.className = "runner-choice";
+      const top = document.createElement("span");
+      top.className = "runner-choice-head";
       const host = document.createElement("span");
       host.className = "runner-choice-host";
       host.textContent = c.hostname || "(unknown)";
-      // agent — each candidate row is a (runner, profile) combo (§4a); with a
-      // single multi-profile runner this is what makes the two rows distinct.
-      const agent = document.createElement("span");
-      agent.className = "runner-choice-agent";
-      agent.textContent = c.profile || "(default)";
       const load = document.createElement("span");
       load.className = "runner-choice-load";
       load.textContent = `[${c.activeTasks}/${c.maxTasks}]`;
-      head.append(host, agent, load);
+      top.append(host, load);
       const root = document.createElement("span");
       root.className = "runner-choice-root";
       root.textContent = c.matchedRoot || "(no matched root)";
       const cid = document.createElement("span");
       cid.className = "runner-choice-cid";
       cid.textContent = c.cid || "";
-      btn.append(head, root, cid);
-      btn.onclick = async (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        modal.close();
-        try {
-          // Pin by cid (host can itself be ambiguous) and by profile — this
-          // candidate row *is* the (runner, profile) combo the user picked
-          // (§4a), so agent overrides whatever baseReq carried. Clear host so
-          // the selector is unambiguous.
-          // baseReq came from sessionReq, so caps/resumeCapsOverride are already
-          // correct; only the picked (runner, profile) overrides differ.
-          const retryReq = { ...baseReq, host: "", runner: c.cid, agent: c.profile || "" };
-          const taskID = await window.harness.startInteractive(retryReq);
-          if (retryReq.eventStream) {
-            // The picker is a SECOND request build for the same intent, and it
-            // has to end where the first one would have. Without this an
-            // ambiguous --stream spawn silently became a PTY session: the flag
-            // rode the request correctly and the success path did not know
-            // about it. Exactly checklist 28a's shape — one input surface, two
-            // builds, one of them older than the field.
-            await openChatFor(taskID);
-            return;
+      const agents = document.createElement("div");
+      agents.className = "runner-choice-agents";
+      for (const p of (c.profiles && c.profiles.length ? c.profiles : [""])) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "runner-choice-agent";
+        btn.textContent = p || "(default)";
+        btn.onclick = async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          modal.close();
+          // baseReq came from sessionReq, so caps/resumeCapsOverride are
+          // already correct; only the picked (runner, agent) differ.
+          const retryReq = { ...baseReq, host: "", ip: "", runner: c.pin, agent: p };
+          try {
+            await reissue(retryReq);
+          } catch (e2) {
+            alert(`retry: ${e2.message}`);
           }
-          showTerminalView();
-          // mirrors the success path used by openInteractive; every
-          // interactive open is a detachable session now.
-          onInteractiveOpened(taskID, "session");
-        } catch (e2) {
-          alert(`startInteractive: ${e2.message}`);
-        }
-        // Same trailing fit/resize tail as openInteractive/reattachTo/
-        // resumeTaskById, run unconditionally so a freshly-attached PTY gets
-        // the actual terminal size instead of waiting on the next incidental
-        // ResizeObserver fire.
-        try { fit.fit(); } catch (_) { /* element not yet laid out */ }
-        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-      };
-      list.appendChild(btn);
+        };
+        agents.appendChild(btn);
+      }
+      row.append(top, root, cid, agents);
+      list.appendChild(row);
     });
     modal.showModal();
   }
 
+  // reissueInteractive is the default re-issue for an ambiguous interactive
+  // open: the same success tail the first open would have run. The picker is
+  // a SECOND request build for the same intent and has to end where the first
+  // would have — without the eventStream branch an ambiguous --stream spawn
+  // silently became a PTY session (checklist 28a's shape).
+  const reissueInteractive = async (retryReq) => {
+    const taskID = await window.harness.startInteractive(retryReq);
+    if (retryReq.eventStream) {
+      await openChatFor(taskID);
+      return;
+    }
+    showTerminalView();
+    onInteractiveOpened(taskID, "session");
+    // Same trailing fit/resize tail as openInteractive/reattachTo/
+    // resumeTaskById, so a freshly-attached PTY gets the actual terminal size.
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+  };
+
   // routeAmbiguous opens the runner-picker modal when e is an ambiguous_runner
   // rejection and returns true (the caller should then `return`); false
-  // otherwise. Shared by openInteractive AND the resume paths (resumeTaskById /
-  // doResume) so every interactive-open surface gets the picker — not just the
-  // Compose "Open" button. baseReq is the request that just failed; its
-  // resumeTaskId/claudeArgs are reused for the cid-pinned retry.
-  function routeAmbiguous(e, baseReq) {
+  // otherwise. Shared by openInteractive, the resume paths (resumeTaskById /
+  // doResume) and the command input's submit. baseReq is the request that just
+  // failed; reissue sends it again pinned, and defaults to an interactive open.
+  function routeAmbiguous(e, baseReq, reissue = reissueInteractive) {
     if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
-      pickRunnerAndRetry(e.candidates, baseReq);
+      pickRunnerAndRetry(e.candidates, baseReq, reissue);
       return true;
     }
     return false;
@@ -7322,7 +7320,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
       const task = b.flags.task || b.trail;
       if (!task) throw new Error("submit: missing task prompt");
       const scopeFor = (b.custom && b.custom["scope-for"]) || null;
-      out = await ctx.harness.submit(ctx.sessionReq({
+      const req = ctx.sessionReq({
         repo, task,
         host: b.flags.host || dropdownHost,
         // The three runner selectors are mutually exclusive in the
@@ -7337,7 +7335,20 @@ async function runVerbCommandDispatch(tokens, ctx) {
         scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
         resumeTaskId,
         resumeConversation: !!b.flags["resume-conversation"],
-      }));
+      });
+      try {
+        out = await ctx.harness.submit(req);
+      } catch (e) {
+        // More than one (runner, agent) choice matched: the same picker the
+        // interactive opens use, re-issuing THIS submit pinned.
+        if (ctx.routeAmbiguous(e, req, async (r) => {
+          ctx.echo(await ctx.harness.submit(r));
+        })) {
+          out = "submit: more than one runner/agent matches — pick a runner";
+          break;
+        }
+        throw e;
+      }
       break;
     }
     case "conns": {

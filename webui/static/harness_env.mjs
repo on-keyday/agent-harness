@@ -132,7 +132,11 @@ export function recordingCtx(page, overrides = {}) {
       if (pure.has(name)) return page.bridge[name];
       return async (...a) => {
         calls.push([name, ...a]);
-        return overrides[name] !== undefined ? overrides[name] : "";
+        // An Error override is THROWN, as the bridge rejects: that is how a
+        // test reaches the page's ambiguous_runner handling.
+        const o = overrides[name];
+        if (o instanceof Error) throw o;
+        return o !== undefined ? o : "";
       };
     },
     has: (_, name) => name in page.bridge,
@@ -186,6 +190,10 @@ export function recordingCtx(page, overrides = {}) {
     },
     setSpawnDefaults: (d) => { calls.push(["setSpawnDefaults", d]); },
     connsView: (o) => { calls.push(["connsView", o]); },
+    routeAmbiguous: (e, req, reissue) => {
+      calls.push(["routeAmbiguous", e && e.code, req, typeof reissue]);
+      return !!(e && e.code === "ambiguous_runner");
+    },
   };
   return ctx;
 }
