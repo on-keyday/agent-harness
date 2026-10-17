@@ -258,7 +258,8 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         out = expand_agents_preset("codex,claude", [])
         profiles = json.loads(out[out.index("--agent-profiles") + 1])
         claude = next(p for p in profiles if p["name"] == "claude")
-        self.assertTrue(claude["streamAdapter"].endswith("harness-stream-adapter"))
+        # stem, not endswith: on Windows the module names the adapter .exe.
+        self.assertEqual(Path(claude["streamAdapter"]).stem, "harness-stream-adapter")
         self.assertEqual(out[out.index("--agent-stream-adapter") + 1], "")
 
     def test_conflict_with_explicit_stream_adapter_rejected(self) -> None:
