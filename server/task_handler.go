@@ -1076,36 +1076,23 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}, nil
 	}
 
-	// Profile filter: only narrows candidates when the caller explicitly
-	// asked for a profile. An empty request profile means "any candidate is
-	// fine" — the eventual bound runner's own default is used below.
+	// The same rule as an interactive open (expandCombos): with no --agent
+	// and an unpinned selector, every advertised profile of every matching
+	// runner is a choice, so a multi-profile runner is ambiguous on its own.
+	// A pinned selector takes the runner's default, and an explicit --agent
+	// narrows to the runners advertising it.
 	profile := string(req.AgentProfile)
-	if profile != "" {
-		filtered := filterByProfile(cands, profile)
-		if len(filtered) == 0 {
-			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
-			resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
-			return resp, nil
-		}
-		cands = filtered
+	if profile != "" && len(filterByProfile(cands, profile)) == 0 {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
+		resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
+		return resp, nil
 	}
-
-	if len(cands) > 1 {
-		combos := make([]interactiveCombo, len(cands))
-		for i, c := range cands {
-			p := profile
-			if p == "" {
-				p = c.DefaultProfile()
-			}
-			combos[i] = interactiveCombo{Entry: c, Profile: p}
-		}
+	combos := expandCombos(cands, profile, req.Selector.Kind)
+	if len(combos) > 1 {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}, candidatesBody(combos, repo)
 	}
-	bound := cands[0]
-	resolved := profile
-	if resolved == "" {
-		resolved = bound.DefaultProfile()
-	}
+	bound := combos[0].Entry
+	resolved := combos[0].Profile
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
 	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), caps, scope, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
@@ -1271,7 +1258,7 @@ type interactiveCombo struct {
 	Profile string
 }
 
-// expandInteractiveCombos turns the roots/selector-matched candidate runners
+// expandCombos turns the roots/selector-matched candidate runners
 // into (runner, profile) combos, following the §4a/§4b rules:
 //
 //   - profile != "" (explicit --agent, or the resume-defaulted recorded
@@ -1282,7 +1269,7 @@ type interactiveCombo struct {
 //     combos → the picker fires and stays the agent selector (u/U experience).
 //   - profile == "" AND pinned (selector != Any): one combo per candidate using
 //     its DefaultProfile() — no expansion, the pin already chose the runner.
-func expandInteractiveCombos(cands []RunnerEntry, profile string, selKind protocol.RunnerSelectorKind) []interactiveCombo {
+func expandCombos(cands []RunnerEntry, profile string, selKind protocol.RunnerSelectorKind) []interactiveCombo {
 	var combos []interactiveCombo
 	switch {
 	case profile != "":
@@ -1435,7 +1422,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// explicitly switches (§4b), and the pin already chose the runner so
 	// there is no picker to fire. An UNPINNED resume (selector Kind == Any,
 	// e.g. TUI u/U) with an empty request profile must NOT default to the
-	// recorded profile: leaving it "" routes into expandInteractiveCombos's
+	// recorded profile: leaving it "" routes into expandCombos's
 	// Any-expansion branch below, which expands each candidate runner across
 	// its advertised profiles so the (runner, profile) picker can re-fire and
 	// let the caller pick a different agent. A fresh open (not resuming) with
@@ -1450,7 +1437,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Expand candidate runners into (runner, profile) combos (§4a). The picker
 	// unit is a combo, not a bare runner, so one multi-profile runner produces
 	// ≥2 combos and the picker (=the agent selector) still fires.
-	combos := expandInteractiveCombos(cands, profile, req.Selector.Kind)
+	combos := expandCombos(cands, profile, req.Selector.Kind)
 	switch {
 	case len(combos) == 0:
 		// len(cands) > 0 is guaranteed here (the cands==0 cases returned above),

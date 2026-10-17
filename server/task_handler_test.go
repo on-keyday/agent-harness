@@ -433,25 +433,57 @@ func TestSubmitProfileUnavailable(t *testing.T) {
 	}
 }
 
-func TestSubmitEmptyProfileUsesDefault(t *testing.T) {
-	h := newTestHandler(t) // runner advertising ["claude","codex"]
+// §2: a fresh oneshot with no --agent on one runner with two profiles is
+// ambiguous, with one row carrying both. It used to run the default.
+func TestSubmitNoAgentOnMultiProfileRunnerIsAmbiguous(t *testing.T) {
+	h := newTestHandler(t)
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
-
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
-	req.SetPrompt([]byte("x")) // no agent_profile
+	req.SetPrompt([]byte("x"))
+	resp, body := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.SubmitStatus_AmbiguousRunner || body == nil || len(body.Candidates) != 1 || len(body.Candidates[0].Profiles) != 2 {
+		t.Fatalf("status=%v body=%+v", resp.Status, body)
+	}
+}
+
+// One runner with ONE profile is not ambiguous and records that profile.
+func TestSubmitNoAgentOnSingleProfileRunnerRuns(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	req := &protocol.SubmitRequest{}
+	req.SetRepoPath([]byte("/repo"))
+	req.SetPrompt([]byte("x"))
+	resp, body := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.SubmitStatus_Ok || body != nil {
+		t.Fatalf("status=%v body=%v", resp.Status, body)
+	}
+	got, _ := h.Tasks.Get(hex.EncodeToString(resp.TaskId.Id[:]))
+	if got.AgentProfile != "claude" {
+		t.Fatalf("AgentProfile=%q", got.AgentProfile)
+	}
+}
+
+// A pinned selector with no --agent keeps using the runner's default (§2,
+// expandCombos' third rule) — the pin already chose.
+func TestSubmitPinnedNoAgentUsesDefault(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: tcid("A"), Identity: testRunnerID("A"), Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastTaskActivity: now, Conn: stubConn{}})
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
+	sel.SetRunnerId(testRunnerID("A"))
+	req := &protocol.SubmitRequest{Selector: sel}
+	req.SetRepoPath([]byte("/repo"))
+	req.SetPrompt([]byte("x"))
 	resp, _ := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
-		t.Fatalf("got %v", resp.Status)
+		t.Fatalf("status=%v", resp.Status)
 	}
-	taskIDHex := hex.EncodeToString(resp.TaskId.Id[:])
-	got, ok := h.Tasks.Get(taskIDHex)
-	if !ok {
-		t.Fatalf("task %q not found in store", taskIDHex)
-	}
+	got, _ := h.Tasks.Get(hex.EncodeToString(resp.TaskId.Id[:]))
 	if got.AgentProfile != "claude" {
-		t.Fatalf("AgentProfile=%q want %q (default/first)", got.AgentProfile, "claude")
+		t.Fatalf("AgentProfile=%q want the pinned runner's default", got.AgentProfile)
 	}
 }
 
@@ -896,7 +928,7 @@ func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
 // for the resume-profile-resolution bug (spec §4b): an UNPINNED resume
 // (selector Kind == Any, the TUI u/U path) with an empty agent_profile must
 // NOT default to the resumed task's recorded AgentProfile. Defaulting would
-// collapse expandInteractiveCombos to a single (runner, recorded-profile)
+// collapse expandCombos to a single (runner, recorded-profile)
 // combo and the picker would never fire, making "reopen under a different
 // agent" unreachable. Leaving profile "" instead routes into the Any-
 // expansion branch, which fans a single multi-profile runner out into one

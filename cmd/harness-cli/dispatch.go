@@ -176,7 +176,7 @@ func (h cliVerbs) Submit(a verb.SpawnAction) error {
 	return h.withClient(func(c *cli.Client) error {
 		id, err := c.Submit(h.ctx, a.Repo, a.Task, spawnOpts(a))
 		if err != nil {
-			return err
+			return exitOnAmbiguous(err)
 		}
 		fmt.Println(id)
 		return nil

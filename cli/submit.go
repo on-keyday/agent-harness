@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // Submit asks the server to enqueue a new task. Returns the assigned task ID
@@ -60,27 +61,28 @@ func (c *Client) roundTripSubmit(ctx context.Context, req *protocol.TaskControlR
 	if resp.Kind != protocol.TaskControlKind_Submit || s == nil {
 		return "", fmt.Errorf("unexpected response: %+v", resp)
 	}
-	if err := submitStatusError(s); err != nil {
+	if err := submitStatusError(ctx, c.Transport(), s); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(s.TaskId.Id[:]), nil
 }
 
 // submitStatusError converts a non-Ok SubmitResponse.Status into a Go error.
-// The ErrorMsg field (populated by the server for AmbiguousRunner) is included
-// when present.
-func submitStatusError(s *protocol.SubmitResponse) error {
+// An ambiguous answer becomes an *AmbiguousRunnerError carrying the candidates
+// read off the stream it names (tr); the ErrorMsg field is included for the
+// statuses that carry one.
+func submitStatusError(ctx context.Context, tr trsf.Transport, s *protocol.SubmitResponse) error {
 	switch s.Status {
 	case protocol.SubmitStatus_Ok:
 		return nil
 	case protocol.SubmitStatus_NoRunner:
 		return fmt.Errorf("submit no_runner: no runner is available for this repo")
 	case protocol.SubmitStatus_AmbiguousRunner:
-		msg := strings.TrimSpace(string(s.ErrorMsg))
-		if msg != "" {
-			return fmt.Errorf("submit ambiguous_runner: %s", msg)
+		cands, err := readCandidates(ctx, tr, s.CandidatesStreamId())
+		if err != nil {
+			return fmt.Errorf("submit %w", err)
 		}
-		return fmt.Errorf("submit ambiguous_runner: multiple runners match; pin one with --runner/--host/--ip")
+		return &AmbiguousRunnerError{Candidates: cands}
 	case protocol.SubmitStatus_PinnedNotFound:
 		return fmt.Errorf("submit pinned_not_found: the specified runner was not found")
 	case protocol.SubmitStatus_ResumeNotFound:

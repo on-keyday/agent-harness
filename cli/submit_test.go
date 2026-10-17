@@ -3,6 +3,9 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -111,7 +114,6 @@ func TestSubmitStatusError(t *testing.T) {
 	}{
 		{protocol.SubmitStatus_Ok, "", ""},
 		{protocol.SubmitStatus_NoRunner, "", "no_runner"},
-		{protocol.SubmitStatus_AmbiguousRunner, "matches: gmkhost, raspi", "ambiguous_runner"},
 		{protocol.SubmitStatus_PinnedNotFound, "", "pinned_not_found"},
 		{protocol.SubmitStatus_InternalError, "", "internal_error"},
 	}
@@ -121,7 +123,7 @@ func TestSubmitStatusError(t *testing.T) {
 			if tc.errMsg != "" {
 				sr.SetErrorMsg([]byte(tc.errMsg))
 			}
-			err := submitStatusError(sr)
+			err := submitStatusError(context.Background(), nil, sr)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected nil error, got %v", err)
@@ -134,13 +136,20 @@ func TestSubmitStatusError(t *testing.T) {
 			if !contains(err.Error(), tc.wantSub) {
 				t.Errorf("error %q does not contain %q", err.Error(), tc.wantSub)
 			}
-			// AmbiguousRunner should include the server-provided match list
-			if tc.status == protocol.SubmitStatus_AmbiguousRunner && tc.errMsg != "" {
-				if !contains(err.Error(), tc.errMsg) {
-					t.Errorf("error %q does not include match list %q", err.Error(), tc.errMsg)
-				}
-			}
 		})
+	}
+}
+
+// An ambiguous answer is the candidates on a stream; one that names no stream
+// is an error saying so, never an empty candidate list.
+func TestSubmitAmbiguousWithoutStreamIsAnError(t *testing.T) {
+	var resp protocol.SubmitResponse
+	resp.Status = protocol.SubmitStatus_AmbiguousRunner
+	resp.SetCandidatesStreamId(0)
+	err := submitStatusError(context.Background(), nil, &resp)
+	var are *AmbiguousRunnerError
+	if err == nil || errors.As(err, &are) || !strings.Contains(err.Error(), "candidate") {
+		t.Fatalf("stream id 0 must be a plain error naming the candidates: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -313,11 +314,21 @@ func TestIntegrationAmbiguousRunner(t *testing.T) {
 
 	// Both runners serve the same repo. With Any selector, submit should return ambiguous_runner.
 	_, err := c.Submit(context.Background(), repo, "echo test", cli.SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}})
-	if err == nil {
-		t.Fatal("expected ambiguous_runner error, got nil")
+	// The candidates arrive on a stream, one row per runner, across the real
+	// wire — not as a hostname string.
+	var are *cli.AmbiguousRunnerError
+	if !errors.As(err, &are) {
+		t.Fatalf("expected *cli.AmbiguousRunnerError, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ambiguous_runner") {
-		t.Fatalf("expected 'ambiguous_runner' in error, got: %v", err)
+	hosts := map[string]bool{}
+	for _, c := range are.Candidates {
+		hosts[c.Hostname] = true
+		if c.RunnerID == "" || len(c.Profiles) != 1 {
+			t.Fatalf("candidate %+v: want an identity and the runner's one profile", c)
+		}
+	}
+	if len(are.Candidates) != 2 || !hosts["h1"] || !hosts["h2"] {
+		t.Fatalf("candidates=%+v want h1 and h2", are.Candidates)
 	}
 }
 
