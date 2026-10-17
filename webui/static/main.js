@@ -664,7 +664,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderHostSelect(hostSelect, sortedRunners);
     knownAgentProfiles = collectAgentProfiles(sortedRunners);
     renderAgentSelect(agentSelect, knownAgentProfiles);
-    runnerList.textContent = renderRunners(sortedRunners);
+    renderRunnerRows(runnerList, sortedRunners);
     lastTaskTree = snap.taskTree || [];
     lastGrantEdges = snap.grantEdges || [];
     renderTaskList(snap.tasks);
@@ -7133,18 +7133,90 @@ function renderAgentSelect(sel, profiles) {
   populateAgentSelect(sel, profiles, sel.value);
 }
 
-function renderRunners(runners) {
-  if (!runners || runners.length === 0) return "(none)";
-  return runners.map(r => {
-    const roots = (r.roots && r.roots.length > 0) ? r.roots.join(", ") : "(any)";
-    let agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.join(",") : (r.agentBin || "-");
-    // "-" means the runner advertised no bin at all; "-+skills" would be noise.
-    if (r.skillsInjected && agents !== "-") agents += "+skills";
-    // os= is always shown, "unknown" included: a runner has a platform whether
-    // or not it reported one, and it decides which shell an `ssh host cmd`
+// runnerRowModel is what one runner row in the Runners list shows, before any
+// DOM: the list is rows like the task list's, and this keeps what a row says
+// separate from how it is drawn. A field a runner did not report reads as
+// that, not as blank: "-" host and id, "unknown" os, "(any)" roots.
+function runnerRowModel(r) {
+  let agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.slice() : [];
+  if (agents.length === 0 && r.agentBin) agents = [r.agentBin];
+  return {
+    status: r.status,
+    host: r.hostname || "-",
+    // Always shown, "unknown" included: a runner has a platform whether or
+    // not it reported one, and it decides which shell an `ssh host cmd`
     // reaches on it.
-    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  os=${r.goos || "unknown"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}  id=${r.id || "-"}  cid=${r.cid || "-"}`;
-  }).join("\n");
+    os: r.goos || "unknown",
+    load: `${r.tasks}/${r.maxTasks}`,
+    full: r.maxTasks > 0 && r.tasks >= r.maxTasks,
+    agents,
+    // "+skills" belongs to a runner that advertises an agent; with none it
+    // would be noise.
+    skills: !!r.skillsInjected && agents.length > 0,
+    roots: (r.roots && r.roots.length > 0) ? r.roots.slice() : ["(any)"],
+    id: r.id ? r.id.slice(0, 8) : "-",
+    cid: r.cid || "-",
+  };
+}
+
+function runnerStatusColor(status) {
+  switch (status) {
+    case "Idle":    return "#2d5";
+    case "Busy":    return "#e5c07b";
+    case "Offline": return "#888";
+    default:        return "#61afef";
+  }
+}
+
+// renderRunnerRows draws the Runners list into container, one row per runner:
+// status and host, then the agents it offers as chips, then its roots one per
+// line, then its id and connection. Display only — a runner row has no sheet.
+function renderRunnerRows(container, runners) {
+  container.innerHTML = "";
+  if (!runners || runners.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "task-empty";
+    empty.textContent = "(none)";
+    container.appendChild(empty);
+    return;
+  }
+  const span = (cls, text) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    el.textContent = text;
+    return el;
+  };
+  for (const r of runners) {
+    const m = runnerRowModel(r);
+    const row = document.createElement("div");
+    row.className = "runner-row";
+    row.title = r.id || "";
+
+    const line1 = document.createElement("div");
+    line1.className = "runner-row-line1";
+    const dot = span("task-status-dot", "");
+    dot.style.background = runnerStatusColor(m.status);
+    const st = span("task-status-label", m.status);
+    st.style.color = runnerStatusColor(m.status);
+    const load = span(m.full ? "runner-load is-full" : "runner-load", m.load);
+    line1.append(dot, st, span("runner-host", m.host), load, span("runner-os", m.os));
+
+    const agents = document.createElement("div");
+    agents.className = "runner-agents";
+    for (const a of m.agents) agents.appendChild(span("runner-agent-chip", a));
+    if (m.skills) agents.appendChild(span("runner-skills", "+skills"));
+
+    const roots = document.createElement("div");
+    roots.className = "runner-roots";
+    for (const root of m.roots) roots.appendChild(span("runner-root", root));
+
+    const meta = document.createElement("div");
+    meta.className = "task-row-meta";
+    meta.textContent = `${m.id}…  ${m.cid}`;
+
+    row.append(line1, agents, roots, meta);
+    container.appendChild(row);
+  }
 }
 
 function pad(s, n) {

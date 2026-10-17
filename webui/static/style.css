@@ -295,6 +295,18 @@ button:hover { background: #555; }
    desktop tab that now owns the whole viewport charged a wheel toll for no
    reason. Tall enough to traverse in one gesture, still capped. */
 .task-list { background:#111; padding:0.4rem; border-radius:4px; max-height:min(45vh, 520px); overflow:auto; font-size:0.85rem; }
+/* Runners list: rows like the task list's, display only (no sheet). */
+.runner-row { font-family: monospace; padding:0.45rem 0.5rem; border-radius:3px; word-break:break-all; border-bottom:1px solid #2a2a2a; }
+.runner-row-line1 { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+.runner-host { font-weight:bold; color:#d4d4d4; }
+.runner-load { font-size:0.75rem; color:#aaa; border:1px solid #444; border-radius:8px; padding:0 0.4rem; }
+.runner-load.is-full { color:#e5c07b; border-color:#8a6d2f; }
+.runner-os { font-size:0.75rem; color:#888; }
+.runner-agents { display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.25rem; }
+.runner-agent-chip { font-size:0.75rem; color:#9cdcfe; border:1px solid #33495a; border-radius:8px; padding:0 0.4rem; }
+.runner-skills { font-size:0.75rem; color:#888; }
+.runner-roots { display:flex; flex-direction:column; margin-top:0.2rem; }
+.runner-root { font-size:0.8rem; color:#bbb; }
 .task-row { font-family: monospace; padding:0.45rem 0.5rem; border-radius:3px; cursor:pointer; word-break:break-all; }
 .task-row-line1 { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
 .task-status-dot { width:0.6rem; height:0.6rem; border-radius:50%; flex:0 0 auto; }
