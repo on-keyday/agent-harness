@@ -115,6 +115,17 @@ Arguments: $ARGUMENTS
    per-agent bin+argv shapes are defined once in `scripts/agent_presets.py`
    (`KNOWN_AGENT_PRESETS`) — the single source of truth this doc references.
 
+   **`--agents all`** is the default for an agent slot: every preset this host
+   can launch, in table order, so the default profile is claude wherever it is
+   installed. "Can launch" is judged against the PATH `runner.py` runs with,
+   which is the PATH the runner inherits — for a registered slot, the unit's
+   frozen `Environment=PATH=…`. A preset is left out when its binary is not on
+   that PATH, and a `sandbox-*` one also when `podman` is not (whether the image
+   is built is not checked). The legacy `sandbox` alias is never included.
+   `--dry-run` shows what it expanded to. Every runner then offers several
+   agents, so a spawn without `--agent` answers `ambiguous_runner` with the
+   choices instead of picking one.
+
    **Event-stream tasks** (`session new --stream`, TaskKind `stream`) need the
    profile to name an adapter, and the presets supply it: `--agents` emits
    `--agent-stream-adapter` pointing at `bin/harness-stream-adapter` beside the

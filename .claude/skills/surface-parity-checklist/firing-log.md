@@ -2907,3 +2907,24 @@ naming `fake-claude.sh` restores it. The first run of the script had PASSED
 against a `bin/` built before the change, which proved nothing — the
 stale-binary trap, caught by checking the build time before believing the
 green.
+
+### 2026-10-17 (pre-landing) — `runner.py up --agents all`
+
+`all` expands to every preset this host can launch, judged against the PATH
+`runner.py` runs with (the one the runner inherits). No agent is added or
+changed; the trigger is a new way to choose which presets a slot carries.
+
+done:    **S1** (`launchable_presets` reads `KNOWN_AGENT_PRESETS` in table order
+         and gates each `sandbox-*` twin on podman AND its base agent's host
+         binary, since the wrapper script itself always exists), **S6**
+         (`.claude/commands/runner-up.md` gains the `--agents all` paragraph;
+         the sandbox README needs nothing — no wrapper, mount or egress change)
+omitted: S6's probe half — nothing new is claimed about the container.
+n/a:     1–39 (no verb, flag, field or UI surface; `runner.py` is not a
+         `cli/verb` command), S2–S5.
+missed:  —
+
+Verified live: a runner brought up with `--agents all` on a dummy harness
+registered `claude,codex,agy,opencode,pi,bash,sandbox-claude,sandbox-codex,
+sandbox-agy,sandbox-bash,sandbox-opencode` with no unresolvable-bin warning in
+its log, and a submit pinned to it with `--agent bash` ran.

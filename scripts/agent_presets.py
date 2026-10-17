@@ -397,6 +397,39 @@ class AgentsPresetError(ValueError):
     """Raised by expand_agents_preset for an unknown agent name or a flag conflict."""
 
 
+ALL = "all"
+
+
+def _launchable(name: str) -> bool:
+    """Whether this host can start preset *name*, judged by the PATH this
+    process has — which is the PATH agent-runner inherits and LookPaths
+    against at startup (runner/agent_profile.go ResolveBinPaths).
+
+    Checked here rather than left to the runner because the runner only WARNS
+    on an unresolvable bin: the profile would be advertised, offered by every
+    picker, and then fail each task.
+
+    A sandbox-* wrapper ships in this repo, so its own existence proves
+    nothing; it needs podman and the base agent's host binary, which the
+    wrapper bind-mounts. Whether the image is built is not checked. bash goes
+    through bash_bin(), because on Windows the bare name finds the WSL
+    launcher.
+    """
+    if name.startswith("sandbox-"):
+        return shutil.which("podman") is not None and _launchable(name[len("sandbox-"):])
+    if name == "bash":
+        b = bash_bin()
+        return bool(b) and shutil.which(b) is not None
+    return shutil.which(KNOWN_AGENT_PRESETS[name]["bin"]) is not None
+
+
+def launchable_presets() -> list[str]:
+    """Every preset this host can start, in table order — what ``--agents
+    all`` expands to. The first is the default profile. The legacy ``sandbox``
+    alias is left out: it is sandbox-claude a second time."""
+    return [n for n in KNOWN_AGENT_PRESETS if n != "sandbox" and _launchable(n)]
+
+
 def _has_flag(args: list[str], name: str) -> bool:
     eq_prefix = f"{name}="
     return any(a == name or a.startswith(eq_prefix) for a in args)
@@ -469,6 +502,10 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     runner.py goes through apply_agents_preset, which folds the caller's into
     the preset's instead of refusing.
 
+    ``all`` (alone) expands to launchable_presets(): every preset whose
+    binary this host can start, in table order, so the default profile is
+    the first of them (claude where it is installed).
+
     Raises AgentsPresetError for any name not in KNOWN_AGENT_PRESETS (e.g.
     "gemini" — no authoritative built-in argv exists in this repo for it;
     pass --agent-profiles JSON directly).
@@ -476,6 +513,15 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     names = [n.strip() for n in agents_csv.split(",") if n.strip()]
     if not names:
         raise AgentsPresetError("--agents requires at least one agent name")
+    if ALL in names:
+        if names != [ALL]:
+            raise AgentsPresetError(f"--agents {ALL} names every preset; do not combine it with others: {names!r}")
+        names = launchable_presets()
+        if not names:
+            raise AgentsPresetError(
+                f"--agents {ALL}: no preset's binary is on this PATH "
+                f"(known presets: {sorted(KNOWN_AGENT_PRESETS)})"
+            )
 
     unknown = [n for n in names if n not in KNOWN_AGENT_PRESETS]
     if unknown:

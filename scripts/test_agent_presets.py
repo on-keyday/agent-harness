@@ -421,6 +421,75 @@ class ApplyAgentsPresetTest(unittest.TestCase):
             )
 
 
+class AllAgentsTest(unittest.TestCase):
+    """`--agents all`: every preset this host can launch, nothing it cannot."""
+
+    def _expand(self, on_path: set[str], existing: list[str] | None = None) -> list[str]:
+        def fake_which(cmd: str, *a, **kw):
+            return f"/usr/bin/{cmd}" if cmd in on_path else None
+
+        with mock.patch.object(shutil, "which", fake_which):
+            return expand_agents_preset("all", existing or [])
+
+    @staticmethod
+    def _names(out: list[str]) -> list[str]:
+        default = Path(out[out.index("--agent-bin") + 1]).name
+        extra = []
+        if "--agent-profiles" in out:
+            extra = [p["name"] for p in json.loads(out[out.index("--agent-profiles") + 1])]
+        return [default] + extra
+
+    def test_every_launchable_preset_in_table_order(self) -> None:
+        if os.name == "nt":
+            self.skipTest("bash resolution differs on Windows; see BashBinTest")
+        out = self._expand({"claude", "codex", "agy", "opencode", "pi", "bash", "podman"})
+        self.assertEqual(
+            self._names(out),
+            [
+                "claude", "codex", "agy", "opencode", "pi", "bash",
+                "sandbox-claude", "sandbox-codex", "sandbox-agy",
+                "sandbox-bash", "sandbox-opencode",
+            ],
+        )
+
+    def test_missing_bins_are_left_out(self) -> None:
+        # agent-runner only WARNS on an unresolvable bin, so a profile for a
+        # missing agent would be offered and then fail every task.
+        out = self._expand({"claude", "codex", "podman"})
+        self.assertEqual(
+            self._names(out), ["claude", "codex", "sandbox-claude", "sandbox-codex"]
+        )
+
+    def test_no_podman_means_no_sandbox_profiles(self) -> None:
+        # The wrappers ship in the repo, so their own existence says nothing.
+        out = self._expand({"claude", "codex"})
+        self.assertEqual(self._names(out), ["claude", "codex"])
+
+    def test_legacy_sandbox_alias_is_not_a_second_profile(self) -> None:
+        out = self._expand({"claude", "podman"})
+        self.assertNotIn("sandbox", self._names(out))
+
+    def test_first_launchable_becomes_the_default(self) -> None:
+        out = self._expand({"codex"})
+        self.assertEqual(out[out.index("--agent-bin") + 1], "codex")
+        self.assertNotIn("--agent-profiles", out)
+
+    def test_nothing_launchable_is_an_error(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            self._expand(set())
+
+    def test_all_does_not_combine_with_names(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            expand_agents_preset("all,claude", [])
+
+    def test_caller_agent_args_allowed_because_the_default_is_claude(self) -> None:
+        out = self._expand({"claude", "podman"}, ["--agent-args", "--model x"])
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        self.assertEqual(
+            profiles[0]["agentArgs"], SANDBOX_AGENT_ARGS["claude"]
+        )
+
+
 class BashBinTest(unittest.TestCase):
     """`bash` must never be resolved by name on Windows.
 

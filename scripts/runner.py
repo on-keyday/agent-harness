@@ -21,9 +21,9 @@ up / down / restart act on whichever slot ``--as`` selects.
 script otherwise forwards verbatim. The first name becomes the default
 profile (``--agent-bin`` + argv-template flags); any remaining names are
 serialized into a single ``--agent-profiles`` JSON flag. Only names with a
-known, authoritative argv shape are supported (currently ``claude``,
-``codex``, ``bash`` — see ``scripts/agent_presets.py`` and
-``.claude/commands/runner-up.md``); an unknown name (e.g. ``gemini``, which
+known, authoritative argv shape are supported (see ``scripts/agent_presets.py``
+and ``.claude/commands/runner-up.md``); ``--agents all`` alone expands to every
+preset this host can launch. An unknown name (e.g. ``gemini``, which
 has no built-in preset anywhere in this repo) is a hard error telling you
 to pass ``--agent-profiles`` JSON directly instead of guessing. ``--agents``
 also refuses to run alongside an explicit ``--agent-bin`` / ``--agent-*-argv``
