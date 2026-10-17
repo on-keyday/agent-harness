@@ -49,9 +49,10 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       CONNECT proxy (cmd/sandbox-connect-proxy); the agent gets no raw
 #                       egress and its API/WebFetch funnel through the proxy.
 #                       Takes precedence over --firewall if both are given.
-#   --proxy-log[=PATH]  with --firewall-proxy: append the proxy's ALLOW/DENY/BUSY
+#   --proxy-log[=PATH]  with --firewall-proxy: write the proxy's ALLOW/DENY/BUSY
 #                       lines to a HOST file instead of the container's stderr —
 #                       PATH, or by default ${TMPDIR:-/tmp}/sandbox-proxy-<task>.log.
+#                       Each container start truncates it.
 #                       Under an interactive session that stderr IS the agent's
 #                       PTY, so every line is drawn over the TUI; agy retries
 #                       play.googleapis.com/log twice every 5s and its UI becomes
@@ -548,11 +549,12 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
     [ -n "${SANDBOX_PROXY_ALLOW:-}" ] && FW+=( --env SANDBOX_PROXY_ALLOW="$SANDBOX_PROXY_ALLOW" )
     if [ -n "$proxy_log" ]; then
       # Created here, as the host user, so the bind mount has a FILE to land on
-      # (podman would otherwise create a directory). Append, with a header per
-      # container: a resumed task reuses its file, and an explicit PATH may be
-      # shared by every session of a slot.
-      if ! echo "$(date "+%F %T") agent=$AGENT task=${HARNESS_TASK_ID:-?}" >>"$proxy_log"; then
-        echo "[agent-in-podman] --proxy-log: cannot append to $proxy_log" >&2
+      # (podman would otherwise create a directory). Truncated, not appended:
+      # the agent can read the bind-mounted file, and a resumed task reuses its
+      # path, so appending let every incarnation read the earlier ones' traffic
+      # and grew the file without bound.
+      if ! echo "$(date "+%F %T") agent=$AGENT task=${HARNESS_TASK_ID:-?}" >"$proxy_log"; then
+        echo "[agent-in-podman] --proxy-log: cannot write $proxy_log" >&2
         exit 2
       fi
       FW+=( -v "$(readlink -f "$proxy_log"):/run/sandbox-proxy.log"

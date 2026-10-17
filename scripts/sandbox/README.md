@@ -353,11 +353,13 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   container's stderr, which in an interactive session is the agent's PTY: the
   lines are drawn straight over the TUI. agy makes this unusable, because it
   retries `POST https://play.googleapis.com/log` (Clearcut) twice every 5s and
-  every attempt is a `DENY`. Pass **`--proxy-log`** to append them to a host
+  every attempt is a `DENY`. Pass **`--proxy-log`** to write them to a host
   file instead: `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log` by default, or
-  `--proxy-log=PATH`. Each container adds a header line naming the agent and
-  task id; sessions given the same PATH interleave. The runner log's
-  `[agent-in-podman]` summary line names the file. Nothing deletes these files.
+  `--proxy-log=PATH`. Each container start truncates the file and writes a
+  header line naming the agent and task id, so it holds the current run only:
+  the file is bind-mounted into the container, and the agent can read it.
+  The runner log's `[agent-in-podman]` summary line names the file. Nothing
+  deletes these files.
   The redirect lives in `entrypoint.sh`, so it takes effect only after
   `build.sh` rebuilds the image.
 
