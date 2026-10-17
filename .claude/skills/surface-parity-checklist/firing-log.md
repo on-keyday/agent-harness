@@ -2948,3 +2948,19 @@ missed:  —
 
 Checked in a browser at 1280px and 390px against a runner with eleven agents
 and two roots: chips wrap, roots stack, no horizontal scroll.
+
+### 2026-10-17 `49e73ae1` + `c21322af` — `all` refuses slot `--agent-args`; a runner row lists its tasks
+
+done:    **S1** (`_refuse_slot_agent_args_with_all`: refused by meaning — the
+         flags reach only the default, unsandboxed profile — not by a list of
+         skip-flag names, which differ per agent and have several spellings),
+         **S6** (runner-up.md), 32 (`runnerTasks` joins on identity with the
+         same live rule as `tasksOnRunner`; the jump reuses `revealTaskInList`)
+omitted: 18a — the TUI runner table still has no task column, as before this
+         change (the TUI's own route to a runner's tasks is the conns view).
+n/a:     everything else (no wire, verb or task field).
+missed:  —
+
+Before landing the refusal, every `--agents all` unit was checked to carry no
+`--agent-args` (10 units, 0 hits): the guard would otherwise have turned the
+next restart of one into a slot that does not come up.
