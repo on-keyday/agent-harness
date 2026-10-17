@@ -273,16 +273,13 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # key found for the selected model" at exit 1, and bare `pi` renders
         # its TUI under a PTY. Without a PTY it exits 0 immediately — neither
         # agy's "could not open TTY" error nor opencode's hang.
-        # NOT verified, because this machine has no credential yet: that a
-        # one-shot exits 0 with the response on stdout, and that --continue
-        # recalls the previous turn. Both need a provider login first.
+        # VERIFIED against pi 1.0.3 with a provider credential (2026-10-17),
+        # through the sandbox-pi wrapper: a one-shot exits 0 with the response
+        # on stdout, and --continue recalls the previous turn.
         #
-        # No sandbox-pi twin: deliberately absent from the derivation tuple
-        # below. scripts/sandbox/agent-in-podman.sh has no `pi` arm and there
-        # is no pi-in-podman.sh symlink, and its default arm is AGENT=claude —
-        # a derived twin would silently run Claude Code while the task row read
-        # agent=sandbox-pi. Leaving it out makes `--agents sandbox-pi` an error
-        # instead of a wrong binary.
+        # The sandbox-pi twin below needs the wrapper's own `pi` arm: the
+        # wrapper's default arm is AGENT=claude, so a twin without that arm
+        # would run Claude Code while the task row read agent=sandbox-pi.
         "oneshotArgv": "{args} --print -- {prompt}",
         "resumeOneshotArgv": "{args} --continue --print -- {prompt}",
         "interactiveArgv": "{args}",
@@ -362,8 +359,9 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # unsandboxed agent. Each flag was
 # checked against the real CLI's --help on every subcommand its templates use
 # (claude; codex 0.162.1 top-level/exec/exec resume/resume; agy 1.3.5;
-# opencode 1.18.18 top-level/run). What it does INSIDE the container is not
-# measured beyond claude, which the sandbox slot has run with it all along.
+# opencode 1.18.18 top-level/run; pi 1.0.3). What it does INSIDE the container
+# is measured for claude, which the sandbox slot has run with it all along, and
+# for pi (2026-10-17: no trust dialog, the injected skills load).
 #
 # `streamAdapter` rides the derivation unchanged, and must: the adapter is a
 # HOST process that execs the wrapper as its agent argv, so the container never
@@ -380,6 +378,13 @@ _SANDBOX_AGENT_ARGS = {
     "agy": "--dangerously-skip-permissions",
     "bash": "",
     "opencode": "--auto",
+    # pi asks nothing per tool call; what it asks is whether to trust the
+    # project folder, and every harness worktree carries the injected
+    # .agents/skills that its trust gate covers. Unanswered, an interactive task
+    # opens on that dialog, and --print (which cannot show it) skips the skills
+    # silently unless ~/.pi/agent/trust.json already trusts the path. Each task
+    # is a new worktree path, so a saved answer never carries to the next one.
+    "pi": "--approve",
 }
 
 for _base, _args in _SANDBOX_AGENT_ARGS.items():

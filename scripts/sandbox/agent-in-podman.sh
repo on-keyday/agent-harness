@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-in-podman.sh — an `--agent-bin` target that runs a real coding agent
-# (claude / codex / agy / opencode, or a plain bash shell) inside a ROOTLESS
+# (claude / codex / agy / opencode / pi, or a plain bash shell) inside a ROOTLESS
 # podman container, confining its command execution while keeping worktree edits
 # owned by the host user.
 #
@@ -33,7 +33,7 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 
 # Consume our own control flags from the arg stream (NOT agent flags, so they
 # must not reach the agent). Pass them via `--agent-arg` / runner `--agent-args`:
-#   --sandbox-agent N   which agent: claude | codex | agy | bash | opencode. Normally
+#   --sandbox-agent N   which agent: claude | codex | agy | bash | opencode | pi. Normally
 #                       you do NOT pass this: the agent comes from the name this
 #                       script was invoked as (<agent>-in-podman.sh symlinks),
 #                       which is the only selector every runner launch path
@@ -83,6 +83,7 @@ case "$(basename "$0")" in
   agy-in-podman.sh)      AGENT=agy ;;
   bash-in-podman.sh)     AGENT=bash ;;
   opencode-in-podman.sh) AGENT=opencode ;;
+  pi-in-podman.sh)       AGENT=pi ;;
   *)                     AGENT=claude ;;   # agent-in-podman.sh itself
 esac
 bridge_cli=1
@@ -118,6 +119,8 @@ if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 #   A_CONTAINER_BIN  where the agent is exposed inside the container
 #   A_IMAGE_FALLBACK 1 = the image ships a usable copy if the host bin is absent
 #   A_CONFIG_MOUNTS  host paths bind-mounted at IDENTICAL paths in mount auth
+#   A_RO_MOUNTS      host paths bind-mounted read-only at IDENTICAL paths on
+#                    every run: an agent that is a package directory, not one file
 #   A_TOKEN_FILE     revocable-token file; "" = this agent has no token auth
 #   A_TOKEN_ENV      env var the token is handed to podman as
 #   A_ALWAYS_ENV     NAME=VALUE passed on every run
@@ -125,7 +128,7 @@ if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 #   A_DOMAINS        comma-separated egress domains this agent needs
 #   A_HOME           HOME inside the container when NOT using token auth
 #   A_EPHEMERAL_HOME HOME under token auth (the image's own writable home)
-declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=()
+declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
 A_EPHEMERAL_HOME=""
 case "$AGENT" in
   claude)
@@ -266,6 +269,60 @@ case "$AGENT" in
     A_DOMAINS="opencode.ai,models.opencode.ai"
     A_HOME="$HOME_DIR"
     ;;
+  pi)
+    # pi is a node PACKAGE, not a single binary: dist/bundle/cli.js loads its
+    # siblings and node_modules/ by relative path, so the one-file bridge the
+    # others use cannot carry it. The whole package directory is mounted ro at
+    # its host path and cli.js is exec'd there; its `#!/usr/bin/env node` finds
+    # the image's node (v22.22.3, inside pi's engines >= 22.19.0).
+    #
+    # Which package: HARNESS_SANDBOX_PI_PKG if set; else the one `pi` on PATH
+    # links to (npm's global install makes bin/pi a symlink to cli.js); else,
+    # when `pi` is a wrapper script pinning an interpreter (as under nvm), the
+    # highest-versioned copy among the nvm installs.
+    pi_pkg="${HARNESS_SANDBOX_PI_PKG:-}"
+    if [ -z "$pi_pkg" ] && pi_cli=$(readlink -f "$(command -v pi 2>/dev/null)" 2>/dev/null); then
+      case "$pi_cli" in */dist/bundle/cli.js) pi_pkg="${pi_cli%/dist/bundle/cli.js}" ;; esac
+    fi
+    if [ -z "$pi_pkg" ]; then
+      pi_pkg=$(for d in "$HOME_DIR"/.nvm/versions/node/*/lib/node_modules/@earendil-works/pi-coding-agent; do
+                 v=$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)".*/\1/p' "$d/package.json" 2>/dev/null | head -n1)
+                 [ -n "$v" ] && printf '%s %s\n' "$v" "$d"
+               done | sort -V | tail -n1 | cut -d' ' -f2-)
+    fi
+    if [ -z "$pi_pkg" ] || [ ! -f "$pi_pkg/dist/bundle/cli.js" ]; then
+      echo "[agent-in-podman] pi: no pi-coding-agent package found (set HARNESS_SANDBOX_PI_PKG)" >&2
+      exit 2
+    fi
+    A_HOST_BIN=""
+    A_CONTAINER_BIN="$pi_pkg/dist/bundle/cli.js"
+    A_IMAGE_FALLBACK=0
+    A_RO_MOUNTS=( "$pi_pkg" )
+    # ~/.pi holds auth.json, settings.json, trust.json and sessions/<cwd>/,
+    # which --continue reads.
+    A_CONFIG_MOUNTS=( "$HOME_DIR/.pi" )
+    A_TOKEN_FILE=""
+    A_TOKEN_ENV=""
+    # The pi.dev version check, on every run: the ro package cannot be updated
+    # from in here, so the "Update Available" banner it produces is noise. Under
+    # a firewall also PI_OFFLINE, pi's own switch for its remaining automatic
+    # traffic (the model catalog refresh), which plays the role
+    # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC does for claude.
+    A_ALWAYS_ENV=( PI_SKIP_VERSION_CHECK=1 )
+    A_FW_ENV=( PI_OFFLINE=1 )
+    # MEASURED 2026-10-17 (pi 1.0.3), same procedure as codex above: with this
+    # list empty, the proxy's only DENY lines were openrouter.ai:443 — the
+    # provider this host's ~/.pi/agent/settings.json names — and, from an
+    # interactive session, pi.dev:443 (the version check the env above now
+    # turns off). openrouter.ai is THIS host's provider, not pi's: pi dials
+    # whichever provider ~/.pi/agent is configured for, so the list is a
+    # per-host setting. HARNESS_SANDBOX_PI_DOMAINS (comma-separated, in the
+    # runner's env) REPLACES it, for both firewall modes; SANDBOX_PROXY_ALLOW
+    # would cover --firewall-proxy only. Find the host to name by running once
+    # under --firewall-proxy --proxy-log and reading the DENY lines.
+    A_DOMAINS="${HARNESS_SANDBOX_PI_DOMAINS:-openrouter.ai}"
+    A_HOME="$HOME_DIR"
+    ;;
   bash)
     # A shell sandbox, not a conversational agent: nothing to bridge, nothing to
     # authenticate. HOME is the image's own so a stray write lands somewhere
@@ -279,7 +336,7 @@ case "$AGENT" in
     A_HOME=/home/node
     ;;
   *)
-    echo "[agent-in-podman] unknown --sandbox-agent '$AGENT' (want: claude|codex|agy|bash|opencode)" >&2
+    echo "[agent-in-podman] unknown --sandbox-agent '$AGENT' (want: claude|codex|agy|bash|opencode|pi)" >&2
     exit 2
     ;;
 esac
@@ -538,10 +595,14 @@ if [ -n "$A_HOST_BIN" ] && [ "$image_agent" != 1 ]; then
     echo "[agent-in-podman] $AGENT: no host binary at $A_HOST_BIN and no image fallback" >&2
     exit 2
   fi
-elif [ -z "$A_HOST_BIN" ] && [ "$A_IMAGE_FALLBACK" != 1 ]; then
+elif [ -z "$A_HOST_BIN" ] && [ "$A_IMAGE_FALLBACK" != 1 ] && [ "${#A_RO_MOUNTS[@]}" -eq 0 ]; then
   echo "[agent-in-podman] $AGENT: no host binary and no image fallback" >&2
   exit 2
 fi
+for m in "${A_RO_MOUNTS[@]}"; do
+  HOSTBIN+=( -v "$m:$m:ro" )
+  agent_src="host:$m"
+done
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
 fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"

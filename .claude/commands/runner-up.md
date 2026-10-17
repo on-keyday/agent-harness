@@ -29,7 +29,7 @@ Arguments: $ARGUMENTS
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--agents sandbox` (bin+argv+agentArgs from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
-   | `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
+   | `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` / `sandbox-pi` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
    | `opencode`   | `--agents opencode` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-opencode` when roots overlap a Claude slot) | OpenCode CLI runner (**1.18.18+ only**, see below) |
@@ -60,8 +60,8 @@ Arguments: $ARGUMENTS
    into `logs` exactly like the corresponding host slot — spawn it with bare
    `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
    progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
-   One wrapper serves all five: which agent runs is `--sandbox-agent <name>`,
-   which the preset supplies. codex, agy and opencode are **mount-auth only**
+   One wrapper serves all six: which agent runs is `--sandbox-agent <name>`,
+   which the preset supplies. codex, agy, opencode and pi are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
    exists for them) — see `scripts/sandbox/README.md`. Optional wrapper
    controls, passed per task with `--agent-arg` (any profile) or per slot with
@@ -241,12 +241,15 @@ Arguments: $ARGUMENTS
      directory, and a harness worktree is a fresh directory every time.
      Non-interactive modes never prompt: they silently *ignore* those project
      resources unless the run passes `--approve`/`-a` or global settings set
-     `defaultProjectTrust: "always"`. Pass `-a` via `--agent-args` if a one-shot
-     is meant to load them.
+     `defaultProjectTrust: "always"`. Pass `-a` per task (`--agent-arg -a`) if
+     a one-shot is meant to load them; an `--agents all` slot refuses it as
+     `--agent-args`.
 
-   There is deliberately **no `sandbox-pi`** — see the comment on the preset for
-   why a derived twin without a `pi-in-podman.sh` symlink would silently run
-   Claude Code instead.
+   **`sandbox-pi`** runs the host's pi package in the podman container and
+   carries `--approve` as its `agentArgs`: inside the container the trust
+   prompt protects nothing, and without it every task would open on that dialog
+   or lose the injected skills. How the wrapper finds the package, and what pi
+   needs through `--firewall-proxy`, is in `scripts/sandbox/README.md`.
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its argv (defined in `scripts/agent_presets.py`) runs

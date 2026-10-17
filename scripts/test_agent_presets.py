@@ -276,7 +276,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         # slot silently behaves unlike its unsandboxed twin — which is how the
         # first sandbox preset lost stream-json progress and delivered a whole
         # one-shot as one final blob.
-        for base in ("claude", "codex", "agy", "bash", "opencode"):
+        for base in ("claude", "codex", "agy", "bash", "opencode", "pi"):
             with self.subTest(base=base):
                 sb = expand_agents_preset(f"sandbox-{base}", [])
                 plain = expand_agents_preset(base, [])
@@ -332,6 +332,7 @@ SANDBOX_AGENT_ARGS = {
     "agy": ["--dangerously-skip-permissions"],
     "opencode": ["--auto"],
     "bash": [],
+    "pi": ["--approve"],
 }
 
 
@@ -460,7 +461,7 @@ class AllAgentsTest(unittest.TestCase):
             [
                 "claude", "codex", "agy", "opencode", "pi", "bash",
                 "sandbox-claude", "sandbox-codex", "sandbox-agy",
-                "sandbox-bash", "sandbox-opencode",
+                "sandbox-bash", "sandbox-opencode", "sandbox-pi",
             ],
         )
 

@@ -55,7 +55,7 @@ else fw="none (open egress)"; fi
 # a plain `opencode` component, so it is matched via those parents rather than by
 # a bare `opencode` alternative — which would also match any mounted worktree
 # that happens to be named opencode.
-cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini|(\.config|\.cache|\.local/(share|state))/opencode)( |$)'
+cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini|\.pi|(\.config|\.cache|\.local/(share|state))/opencode)( |$)'
 if grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
 	auth="mount (host agent config bind-mounted rw; persists past the container)"
 else

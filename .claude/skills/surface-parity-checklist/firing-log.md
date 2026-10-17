@@ -2984,3 +2984,70 @@ Verified on this Windows host: `runner.py up --agents all --dry-run` expands to
 `claude,codex,opencode,bash,cmd` with `cmd`'s bin `C:\WINDOWS\System32\cmd.exe`
 (backslashed). Not yet verified live: a task dispatched to the `cmd` profile
 of an `all` slot.
+
+### 2026-10-17 (pre-landing) — `sandbox-pi`
+
+Operator ask. A new agent in the podman wrapper, so S1–S6 fire.
+
+done:    **S1** (`"pi": "--approve"` in `_SANDBOX_AGENT_ARGS`; the pi entry's
+         "no sandbox-pi twin" comment replaced. `--approve` was checked against
+         pi 1.0.3's `--help`), **S2** (`pi-in-podman.sh` symlink plus a
+         `basename` arm), **S3** (a `pi` arm plus a new table field,
+         `A_RO_MOUNTS`. pi is a node package, so its whole directory is mounted
+         read-only at the host path, because the one-file bridge cannot carry
+         it. The package is located through `HARNESS_SANDBOX_PI_PKG`, then
+         `pi`'s symlink, then the highest nvm copy. Mount-auth only, `~/.pi`),
+         **S4** (`A_DOMAINS`, `A_FW_ENV` and `A_ALWAYS_ENV` measured under
+         `--firewall-proxy`; see below), **S6** (README agent table, the pi
+         paragraph, the mount-auth-only lists, a `--approve` paragraph and the
+         runner example; runner-up.md's table row, the "all six" count and the
+         pi section. **probe.sh**: see below)
+omitted: —
+n/a:     1–39 (no verb, flag, field or UI surface). S5 (no new `HARNESS_*`
+         variable reaches the agent: the two new ones are read by the wrapper
+         on the host and not forwarded by name. They still ride in by prefix,
+         harmlessly).
+missed:  —
+
+**S6's verifier half found a real gap.** `probe.sh`'s `cfg_re`, which decides
+`config_auth`, did not know `~/.pi`, so a sandbox-pi probe would have reported
+`token-or-ephemeral` for a container with `~/.pi` mounted read-write. That
+understates the exposure. Fixed, and run inside sandbox-pi: it reads `mount`
+and lists `/home/…/.pi`.
+
+**S4 was measured, not copied.** Two runs:
+
+- A one-shot run with the list empty showed only `openrouter.ai:443` DENY lines.
+- An interactive session added `pi.dev:443`, the version check.
+
+That check is turned off with `PI_SKIP_VERSION_CHECK` (always: the read-only
+package cannot update). `PI_OFFLINE` is set under a firewall, pi's own switch
+for its catalog refresh. After that, the same interactive run reached only
+openrouter.ai. Both firewall modes passed a one-shot.
+
+openrouter.ai is the provider of the host it was measured on, not pi's. So the
+list is overridable per host (`HARNESS_SANDBOX_PI_DOMAINS`, both modes). The
+override was verified by replacing the list and watching openrouter.ai get
+refused.
+
+**What no item asked and the live run found: pi's project-trust dialog.** An
+interactive sandbox-pi task opened on "Trust project folder?", because the
+runner injects `.agents/skills` into every worktree and pi gates project skills
+behind trust. A keystroke sent to drive the session answered the dialog "Trust".
+That wrote the dummy worktree's path into the HOST's `~/.pi/agent/trust.json`
+through the read-write mount, and the entry is still there.
+
+`--approve` removes the dialog. It also makes `--print` load the skills, which
+it skips silently on an untrusted path. Verified after the change: no dialog,
+and pi listed the six injected skills. S1's wording ("act-without-asking flag")
+covered it only because "asking" turned out to include a trust prompt. Recorded
+for a second instance to count against: **an agent's prompt that is not about
+tool permissions can still be what the sandbox flag must remove.**
+
+Verified live on a dummy harness in worktree mode, with a runner whose profiles
+came from `agent_profiles_json(["bash","sandbox-pi"])`:
+
+- a one-shot ran in the linked worktree with harness-cli bridged;
+- `--resume-conversation` recalled the codeword;
+- an interactive session took a turn through `session send`;
+- pi wrote a file in the worktree, which the host saw as owned by its own user.

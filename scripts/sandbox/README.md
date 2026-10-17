@@ -1,7 +1,7 @@
 # Agent sandbox kit (rootless podman)
 
-Run a runner's spawned agent — **claude, codex, agy, opencode, or a plain bash
-shell** — confined inside a **rootless podman** container instead of on the host,
+Run a runner's spawned agent — **claude, codex, agy, opencode, pi, or a plain
+bash shell** — confined inside a **rootless podman** container instead of on the host,
 to shrink the blast radius of an agent that runs with
 `--dangerously-skip-permissions`. No harness core changes: it plugs in through
 the existing `--agent-bin` seam.
@@ -19,6 +19,7 @@ running the wrong agent looks identical to the right one in every listing.
 | codex | `~/.local/bin/codex` | `~/.codex` | **no** | no |
 | agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
 | opencode | `/usr/bin/opencode` | `~/.config/opencode` + `~/.local/share/opencode` + `~/.cache/opencode` + `~/.local/state/opencode` | **no** | no |
+| pi | the `pi-coding-agent` package directory (ro) | `~/.pi` | **no** | no |
 | bash | — (the image's own) | — | — | yes |
 
 No agent is installed into the image: the host binary is bind-mounted over the
@@ -36,12 +37,33 @@ curl/npm installer puts a *separate* copy at `~/.opencode/bin/opencode` and
 prepends that to `PATH` in `~/.bashrc`, so a machine with both silently runs the
 older one everywhere, this wrapper included.
 
-**codex, agy and opencode are mount-auth only.** None has a known
+pi is a node **package**, not one binary: its `dist/bundle/cli.js` loads its
+siblings and `node_modules/` by relative path, so the whole package directory
+is mounted read-only at its host path and `cli.js` runs there on the image's
+node (v22.22.3; pi requires >= 22.19). The package is
+`HARNESS_SANDBOX_PI_PKG` if set, else the one the `pi` on `PATH` links to, else
+the highest-versioned copy under `~/.nvm/versions/node/*` — the case where `pi`
+is a wrapper script pinning an nvm interpreter rather than npm's symlink.
+`--print`, `--continue` and an interactive session were verified on pi 1.0.3
+(2026-10-17), as was `--firewall-proxy`, through which pi needs only its
+provider host. **The allowlisted `openrouter.ai` is the provider of the host
+this was measured on, not pi's**: on a host whose `~/.pi/agent` uses another
+provider, set `HARNESS_SANDBOX_PI_DOMAINS=<host>[,<host>…]` in the runner's
+environment. It replaces the list in both firewall modes (`SANDBOX_PROXY_ALLOW`
+would reach `--firewall-proxy` only). To find the name, run once with
+`--firewall-proxy --proxy-log` and read the `DENY` lines. The wrapper turns off pi's version check on every run
+(`PI_SKIP_VERSION_CHECK`; the read-only package cannot be updated from inside)
+and its remaining automatic traffic under a firewall (`PI_OFFLINE`).
+
+**codex, agy, opencode and pi are mount-auth only.** None has a known
 revocable-token mode of the kind claude's `setup-token` provides, so running them
 here puts that provider's credentials in the container with no narrower option:
 `~/.codex/auth.json` for codex, `~/.gemini` for agy — the latter shared with
 gemini-cli, so it carries that product's credentials too (tier-ineligible on
-this host, but present) — and `~/.local/share/opencode/auth.json` for opencode.
+this host, but present) — `~/.local/share/opencode/auth.json` for opencode, and
+`~/.pi/agent/auth.json` for pi. The `~/.pi` mount is also read-write for
+`settings.json` and `extensions/`, which the host's own pi loads and runs — the
+same host-execution surface `~/.claude`'s hooks are under mount auth.
 `--firewall-proxy` is the mitigation that matters for them, since it removes
 raw-socket egress entirely.
 
@@ -75,9 +97,10 @@ worth knowing before you type the name you expected to work.
 
 **What each agent actually writes, measured through a real runner slot:**
 
-- **bash**, **claude** and **opencode** write into the task worktree, owned by the
-  host user (`kforfk:kforfk`) — this is what `--userns=keep-id` buys, verified end
-  to end. opencode measured 2026-08-19: asked for a file in the cwd, it wrote one
+- **bash**, **claude**, **opencode** and **pi** write into the task worktree,
+  owned by the host user (`kforfk:kforfk`) — this is what `--userns=keep-id`
+  buys, verified end to end. pi measured 2026-10-17 the same way as opencode
+  below, with no prompt to answer. opencode measured 2026-08-19: asked for a file in the cwd, it wrote one
   containing `node` and the worktree path, and the host saw it as `kforfk:kforfk`.
   It needs `--auto` (its own auto-approve-permissions flag) to act without a
   prompt in one-shot mode; the `sandbox-opencode` preset passes it.
@@ -106,6 +129,14 @@ only, so an extra `sandbox-codex` profile never received its flag. The same
 limit still applies to the wrapper controls below: runner `--agent-args
 "--firewall"` reaches the default profile only, while a per-task `--agent-arg`
 reaches whichever profile the task runs.
+
+pi's is `--approve`, and it answers a different question: pi asks nothing per
+tool call, but asks whether to trust the project folder, and the
+`.agents/skills` the runner injects into every worktree is behind that gate.
+Without it an interactive task opened on pi's "Trust project folder?" dialog,
+and `--print`, which cannot show the dialog, skips the skills silently unless
+`~/.pi/agent/trust.json` already trusts the path. Answering the dialog writes
+the worktree's path into that file, on the host, once per task.
 
 ## Why podman (not docker)
 
@@ -144,7 +175,7 @@ so a slot gets them without hand-typing `--agent-bin`:
 
 ```sh
 scripts/runner.sh up --as sandboxed \
-  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-opencode,sandbox-bash \
+  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-opencode,sandbox-pi,sandbox-bash \
   --roots "$HOME/workspace/<repo>"
 ```
 
@@ -210,7 +241,7 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 
 ### Authentication
 
-- **Mount auth (default, and the ONLY mode for codex, agy and opencode):** bind-mounts the
+- **Mount auth (default, and the ONLY mode for codex, agy, opencode and pi):** bind-mounts the
   agent's config paths (see the table above) so the sandbox reuses your host
   login + session resume. Simplest, but the personal **refresh token** is in
   the container — combined with open egress + untrusted input that's a real
