@@ -372,6 +372,38 @@ func TestSchedulerHonorsAgentProfile(t *testing.T) {
 	}
 }
 
+// Review Focus 4: a pick pinned by identity survives the runner reconnecting
+// under a new connection id while the task waits in the queue.
+func TestSchedulerIdentityPinSurvivesReconnect(t *testing.T) {
+	reg := NewRegistry()
+	id := testRunnerID("A")
+	first := idleRunner("A", "h1", []string{"claude"})
+	first.Identity = id
+	reg.Add(first)
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
+	sel.SetRunnerId(id)
+	store := NewTaskStore()
+	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, tcid("A").String(), sel, nil, protocol.Capability_All, Scope{}, "claude")
+
+	// The runner restarts its connection before anything is dispatched.
+	reg.Remove(tcid("A"))
+	again := idleRunner("A2", "h1", []string{"claude"})
+	again.Identity = id
+	reg.Add(again)
+
+	var captured []assignPair
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
+		return nil
+	})
+	s.Tick()
+	if len(captured) != 1 || captured[0] != (assignPair{tcid("A2"), taskID}) {
+		t.Fatalf("identity-pinned task assigned to %v, want A2/%s", captured, taskID)
+	}
+}
+
 // TestSchedulerPinnedTaskDoesNotBlockQueue: skipping ineligible tasks must not
 // turn into head-of-line blocking. An older task pinned to an absent runner has
 // to be stepped over, not allowed to stall every later task on that root.

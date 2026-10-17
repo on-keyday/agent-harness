@@ -85,13 +85,10 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 	}
 }
 
-// pickerSelection returns the SelectorOpts and agentProfile a runner-picker
-// selection re-issues the pending interactive open with: pin to the chosen
-// candidate's runner (Cid) AND carry its Profile as the agent to run. This is
-// the (runner, profile) generalization of resumeSelectorOpts (§4a of the
-// multi-agent-profile design) — picking a picker row picks the agent too.
+// pickerSelection is what a runner-picker pick re-issues with: the chosen
+// runner, pinned the way RunnerCandidate.Pin decides, and its agent.
 func pickerSelection(c *cli.RunnerCombo) (cli.SelectorOpts, string) {
-	return cli.SelectorOpts{Runner: c.Candidate.Cid}, c.Profile
+	return c.Candidate.Pin(), c.Profile
 }
 
 // resumeSelectorOpts returns the SelectorOpts the r/R resume keybinding

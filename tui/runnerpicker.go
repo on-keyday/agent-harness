@@ -54,7 +54,7 @@ func (p *RunnerPickerModel) View() string {
 		profile := combo.Profile
 		if profile == "" {
 			// Defensive fallback: every real combo from the server's
-			// expandInteractiveCombos already carries a resolved profile
+			// expandCombos already carries a resolved profile
 			// (DefaultProfile/AgentBin), so this only fires for a
 			// legacy/malformed response.
 			profile = "(default)"

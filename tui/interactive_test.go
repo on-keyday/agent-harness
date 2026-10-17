@@ -92,8 +92,9 @@ func TestPickerSelection(t *testing.T) {
 		MaxTasks:    8,
 		Profiles:    []string{"codex"},
 	}, Profile: "codex"}
+	c.Candidate.RunnerID = strings.Repeat("cd", 16)
 	sel, agentProfile := pickerSelection(c)
-	wantSel := cli.SelectorOpts{Runner: "ws:10.0.0.2:1-1"}
+	wantSel := cli.SelectorOpts{Runner: strings.Repeat("cd", 16)} // identity, not the cid
 	if sel != wantSel {
 		t.Errorf("SelectorOpts = %+v, want %+v", sel, wantSel)
 	}

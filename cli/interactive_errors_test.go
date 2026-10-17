@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -56,5 +57,19 @@ func TestAmbiguousRunnerErrorIsAs(t *testing.T) {
 	}
 	if err.Error() == "" {
 		t.Fatal("empty Error() string")
+	}
+}
+
+func TestPinPrefersIdentity(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	if got := (RunnerCandidate{RunnerID: id, Cid: "ws:h:1-1"}).Pin(); got.Runner != id {
+		t.Fatalf("Pin=%+v want identity", got)
+	}
+	if got := (RunnerCandidate{Cid: "ws:h:1-1"}).Pin(); got.Runner != "ws:h:1-1" {
+		t.Fatalf("Pin=%+v want cid for a runner with no identity", got)
+	}
+	sel, err := BuildSelector(RunnerCandidate{RunnerID: id}.Pin())
+	if err != nil || sel.Kind != protocol.RunnerSelectorKind_ByRunnerId {
+		t.Fatalf("identity pin builds %v (%v), want ByRunnerId", sel.Kind, err)
 	}
 }
