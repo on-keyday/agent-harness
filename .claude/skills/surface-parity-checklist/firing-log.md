@@ -2928,3 +2928,23 @@ Verified live: a runner brought up with `--agents all` on a dummy harness
 registered `claude,codex,agy,opencode,pi,bash,sandbox-claude,sandbox-codex,
 sandbox-agy,sandbox-bash,sandbox-opencode` with no unresolvable-bin warning in
 its log, and a submit pinned to it with `--agent bash` ran.
+
+### 2026-10-17 `1a246d07` — the WebUI Runners list becomes rows
+
+Operator ask: make the runner list read like the task list. Display only; no
+field is added anywhere.
+
+done:    31 (a field a runner did not report reads as `-` / `unknown` /
+         `(any)`, never blank; `0/2` prints its zero), 32 (`runnerRowModel` is
+         the one statement of what a row says; the DOM is drawn from it and the
+         node tests pin it), 34a (agents are chips, the same kind of control as
+         the task row's badges)
+omitted: 18a — the TUI runner table's Agent column truncates
+         (`bash,sandbo…`) now that a runner carries every preset. Same
+         readability problem on the TUI side; not asked for, recorded so it is
+         not mistaken for done.
+n/a:     1–17, 19–30, 33, 34, 35–39 (no verb, flag, wire field or task field).
+missed:  —
+
+Checked in a browser at 1280px and 390px against a runner with eleven agents
+and two roots: chips wrap, roots stack, no horizontal scroll.
