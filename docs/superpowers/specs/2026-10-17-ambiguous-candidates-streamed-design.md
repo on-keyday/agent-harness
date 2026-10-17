@@ -221,3 +221,60 @@ it from the runner host's `bin/`), the TUI and the WebUI's wasm.
   lists distinct profile NAMES, so it stays around 100 bytes with every preset
   advertised.
 - A send-side size check on responses (the board change's reasoning holds).
+
+## Amendment (2026-10-17, during implementation)
+
+- **The oneshot resume path keeps its runner-level check.** §2 says the
+  resume rows are unchanged; running resume through `expandCombos` as well
+  would have newly expanded a legacy task whose recorded profile is empty.
+  `handleSubmitResume` therefore still asks "more than one runner?" and
+  returns the candidates, each offering the recorded profile or the runner's
+  default.
+- **The TUI re-issue travels in the result message.** `pendingInteractive` and
+  `pickerArmed` are gone; `InteractiveReadyMsg.Retry` and
+  `SubmitResultMsg.Retry` carry the function that re-issues the request that
+  failed. `RunnerPickerModel.Key` returns the pick's label for the result line.
+- **The TUI command line's `submit` honours `--host` / `--runner` / `--ip`.**
+  It parsed them and passed an empty host before; `DoSubmitWithOpts` now takes
+  `SelectorOpts`, which made the drop visible.
+
+## Verification (2026-10-17)
+
+**Over UDP, before and after** — `scripts/netem-lab/netem-lab.py --name amb up
+--profile lan -- --agent-profiles <16 names>` (the runner advertised 17 with
+the lab's own default), then from the lab's client namespace:
+
+| Command | Before (`d4186f09`) | After (`70e27871`) |
+| --- | --- | --- |
+| `harness-cli session new -d --repo $REPO` | no output, killed by `timeout 30` (exit 124); server log `handleOpenInteractive: ambiguous ... combos=17` | the candidate table, exit 3, 354 ms |
+| `harness-cli submit --repo $REPO --task x` | — | the candidate table, exit 3, 281 ms |
+| `harness-cli submit --agent python ...` | — | a task id, exit 0 |
+
+The "after" rows used this tree's `bin/harness-cli` by absolute path. The lab's
+`exec cli -- harness-cli` resolves PATH, which here was an older build: against
+the new server it decoded zero candidates and its old formatter panicked on
+`cands[1:]`. That is §6's old-client case, and the reason the deploy order puts
+`make build` on every runner host right after the server.
+
+**Every surface in §5, on a dummy harness** with two runners on one root
+(`python,bash` and `bash,sandbox-bash`):
+
+- CLI: `session new -d` and `submit` printed the two-line table with
+  `--runner <identity> --agent <…|…>` and exited 3; `submit --runner <id>
+  --agent bash` from that table ran on the named runner.
+- TUI (this tree's `harness-tui` inside a dummy session, driven by keystroke):
+  `S` opened step 1 with both runners; `j`, Enter opened step 2 on the second;
+  `1` opened `bash` there — `ls --json` shows the task `from=tui` assigned to
+  that runner, and the result line read `pinned runner: dummy-amb … (bash)`.
+  The command line's `submit --task echo-from-tui` opened the same picker;
+  `1`, `2` submitted to `gmkhost`/`bash` with the prompt intact.
+- WebUI (Playwright): Compose's open with the default agent showed one block
+  per runner with an agent button each; clicking `bash` under `dummy-amb`
+  opened it there. The command input's `submit --task echo-webui` opened the
+  same modal and the pick submitted to `gmkhost`/`bash`. At 390px the modal is
+  390 wide with no horizontal scroll. Screenshots (not committed):
+  `webui-ambiguous-picker-1280.png`, `webui-ambiguous-picker-390.png` in the
+  worktree root.
+
+**Wire skew:** `scripts/wire-skew-check.sh` — PASS (`1bd0e9fe -> 70e27871`).
+The runner decodes none of the changed formats.
