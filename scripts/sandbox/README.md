@@ -80,13 +80,13 @@ worth knowing before you type the name you expected to work.
   to end. opencode measured 2026-08-19: asked for a file in the cwd, it wrote one
   containing `node` and the worktree path, and the host saw it as `kforfk:kforfk`.
   It needs `--auto` (its own auto-approve-permissions flag) to act without a
-  prompt in one-shot mode — the caller's business via `--agent-args`, exactly as
-  `--dangerously-skip-permissions` is for claude.
+  prompt in one-shot mode; the `sandbox-opencode` preset passes it.
 - **codex** refused: its own sandbox reports the environment read-only for
   `codex exec`, and its edit tool fails with `codex-code-mode-host` not found
-  (that helper is not in the image). Give it its own approval/sandbox flags via
-  `--agent-args` if you want it writing in the worktree — the wrapper will not
-  decide that for you.
+  (that helper is not in the image). That was measured WITHOUT approval/sandbox
+  flags. Since 2026-10-17 the `sandbox-codex` preset passes
+  `--dangerously-bypass-approvals-and-sandbox`, which turns codex's own sandbox
+  off; whether that makes it write in the worktree has not been measured.
 - **agy** created the file in `~/.gemini/antigravity-cli/scratch/`, NOT in the
   worktree — and since mount auth bind-mounts `~/.gemini` read-write, that write
   landed on the **host's real config directory** and outlived the container.
@@ -95,8 +95,17 @@ worth knowing before you type the name you expected to work.
 
 **codex brings its own sandbox.** It warns `could not find bubblewrap on PATH …
 will use the bundled bubblewrap` and then works — nested inside podman. The
-wrapper does not disable it: approval / sandbox flags are the caller's business
-via `--agent-args`, exactly as `--dangerously-skip-permissions` is for claude.
+wrapper does not disable it; the `sandbox-codex` preset does, through the flag
+above.
+
+**Each agent's act-without-asking flag is on the PRESET, not the slot.** Every
+`sandbox-*` preset carries it as the profile's `agentArgs` (`_SANDBOX_AGENT_ARGS`
+in `scripts/agent_presets.py`); no unsandboxed preset carries one. It used to be
+the slot's `--agent-args`, which agent-runner applies to the default profile
+only, so an extra `sandbox-codex` profile never received its flag. The same
+limit still applies to the wrapper controls below: runner `--agent-args
+"--firewall"` reaches the default profile only, while a per-task `--agent-arg`
+reaches whichever profile the task runs.
 
 ## Why podman (not docker)
 
@@ -140,8 +149,8 @@ scripts/runner.sh up --as sandboxed \
 ```
 
 `sandbox` remains an alias of `sandbox-claude`. Each preset is DERIVED from its
-base agent's entry with only `bin` changed and `--sandbox-agent <name>`
-prefixed, so a sandboxed slot cannot drift from its unsandboxed twin — the
+base agent's entry with only `bin` and `agentArgs` changed, so a sandboxed slot
+cannot drift from its unsandboxed twin — the
 first version of this preset did drift, and one-shot progress arrived as a
 single final blob instead of streamed events.
 

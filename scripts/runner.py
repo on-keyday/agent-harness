@@ -54,7 +54,7 @@ from __future__ import annotations
 import shlex
 import sys
 
-from agent_presets import AgentsPresetError, expand_agents_preset
+from agent_presets import AgentsPresetError, apply_agents_preset
 from bootstrap import ensure_venv
 
 ensure_venv()
@@ -124,7 +124,7 @@ def main(argv: list[str]) -> int:
         agents_csv, rest = _parse_agents(rest)
         if agents_csv:
             try:
-                rest = expand_agents_preset(agents_csv, rest) + rest
+                rest = apply_agents_preset(agents_csv, rest)
             except AgentsPresetError as exc:
                 sys.stderr.write(f"runner.py: {exc}\n")
                 sys.exit(2)

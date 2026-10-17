@@ -2794,3 +2794,66 @@ sibling it should have copied was a request-dependent denial
 (`await-idle --notify`), which a per-kind reading of "how are caps checked"
 does not reach. Reversed before landing (`757fe7a4`). Recorded rather than
 numbered, for a second instance to count against.
+
+### 2026-10-17 (pre-landing) — each `sandbox-*` preset carries its agent's act-without-asking flag
+
+The flag moves from runner `--agent-args` into the preset's `agentArgs`, so an
+extra `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` profile receives one
+at all. The operator decided sandbox profiles may share a slot with
+unsandboxed ones. No UI surface, wire field or verb changes, so 1–39 is
+almost all `n/a`.
+
+done:    **S1** (`_SANDBOX_AGENT_ARGS` replaces the derivation tuple; the
+         twin's derived fields are now `bin` + `agentArgs`, and S1's own
+         wording is updated to say so), **S6** (`scripts/sandbox/README.md`:
+         the per-agent paragraphs that said "the caller's business via
+         `--agent-args`", the derivation sentence, and a paragraph on why the
+         flag is on the profile; `.claude/commands/runner-up.md`: the
+         `sandbox` row, the preset paragraph, the wrapper-controls sentence,
+         `{args}`, and the opencode `--auto` note), 24 (runner `--agent-args`
+         has a meaning per path, written down in runner-up.md and
+         `scripts/sandbox/README.md`:
+         it is the DEFAULT profile's baseline, while an extra profile's
+         baseline is its preset `agentArgs`), 33 (a slot's own `--agent-args`
+         beside a sandbox default is FOLDED into the preset's flag rather
+         than refused or silently replaced — see below)
+omitted: 35 — the top-level README's Sandboxing section says the presets
+         "carry the wrapper path and each agent's argv". That is still true,
+         and the flag's details live in `scripts/sandbox/README.md`, which
+         that section points at.
+         S6's probe half — `probe.sh` gains no line. Inside the container,
+         each flag is measured for claude only (the existing slot), and the
+         README says the other three are unmeasured instead of adding a
+         claim.
+n/a:     1–23, 25–28a, 29–32, 34–34a, 36–39 (no verb, flag, field, wire value
+         or UI control; no agent-facing skill names `--agent-args` or a
+         sandbox preset, grepped `runner/agentskills/`). S2–S5 (no agent
+         added or renamed, wrapper and its agent table untouched, no egress,
+         env or addressing change).
+missed:  —
+
+**Item 33 changed the design before landing.** The first implementation
+REFUSED a caller's `--agent-args` whenever the default preset carried its own,
+following the all-or-nothing conflict policy every other preset flag has. A
+grep of the flag's callers turned up that runner `--agent-args` is also how a
+sandbox slot hands the WRAPPER its own controls (`--firewall`,
+`--omit-harness-cli`). The refusal would have taken those away from every
+sandbox-default slot. `apply_agents_preset` now folds the two (preset tokens
+first, a caller token already present dropped), and `expand_agents_preset`
+keeps the refusal for direct callers that cannot fold. The live sandbox slot
+passes exactly the flag the preset now carries, and its `--dry-run` expands to
+one copy of it.
+
+**S6's upgrade step applies here.** A running slot's recorded argv has no
+`agentArgs` on its extra profiles, and `build_and_restart_all.py` replays that
+argv. The extras gain their flags only when the slot is brought up through
+`runner.py` again (`systemctl --user restart` for a registered slot).
+
+**Verified live on a dummy harness.** A runner brought up with `runner.py up
+--agents bash,sandbox-codex,sandbox-claude --agent-args --norc` registered all
+three profiles. A detached `session new --agent sandbox-codex` started a
+container whose argv ended `sandbox-agent-launch.sh --no-daemon
+--dangerously-bypass-approvals-and-sandbox`. The default bash profile kept
+`--norc`. codex accepted the flag and stopped at its own folder-trust screen,
+which the flag does not cover. A harness worktree is a new folder each time,
+so an interactive `sandbox-codex` will ask for trust on every fresh session.

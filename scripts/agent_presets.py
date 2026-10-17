@@ -97,7 +97,8 @@ _STREAM_ADAPTER = str(
 )
 
 # name -> {bin, oneshotArgv, resumeOneshotArgv, interactiveArgv,
-# resumeInteractiveArgv, logFormat, streamAdapter}. The argv values are the
+# resumeInteractiveArgv, logFormat, streamAdapter, agentArgs}. agentArgs is
+# empty here and set only by the sandbox derivation below. The argv values are the
 # flag-STRING template form ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
 # default profile — see cmd/agent-runner/main.go parseAgentArgsFlag). For
 # extra profiles (carried via --agent-profiles JSON) expand_agents_preset()
@@ -136,6 +137,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         # refuses an argv that already names one, so the oneshot templates and
         # the event-stream launch stay independent.
         "streamAdapter": _STREAM_ADAPTER,
+        "agentArgs": "",
     },
     "codex": {
         "bin": "codex",
@@ -159,6 +161,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "resume --last --no-daemon {args}",
         "logFormat": "codex-jsonl",
         "streamAdapter": "",
+        "agentArgs": "",
     },
     "agy": {
         "bin": "agy",
@@ -187,6 +190,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
+        "agentArgs": "",
     },
     "opencode": {
         "bin": "opencode",
@@ -224,6 +228,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
+        "agentArgs": "",
     },
     "pi": {
         "bin": "pi",
@@ -284,6 +289,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
         "streamAdapter": "",
+        "agentArgs": "",
     },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
@@ -304,16 +310,18 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
         "streamAdapter": "",
+        "agentArgs": "",
     },
 }
 
 # The podman sandbox runs the SAME agent binaries through a wrapper that is a
 # pure pass-through (scripts/sandbox/README.md), so each sandbox-* preset is
-# DERIVED from its base entry rather than copied: ONLY `bin` changes, to that
-# agent's <agent>-in-podman.sh symlink. Spawned without this derivation, the
-# first sandbox slot fell back to the runner's raw defaults and one-shot
-# progress was invisible — a whole task arrived as one final blob instead of
-# streamed events.
+# DERIVED from its base entry rather than copied: its argv templates, log
+# format and adapter stay the base's, and only `bin` (that agent's
+# <agent>-in-podman.sh symlink) and `agentArgs` (below) change. Spawned without
+# this derivation, the first sandbox slot fell back to the runner's raw
+# defaults and one-shot progress was invisible — a whole task arrived as one
+# final blob instead of streamed events.
 #
 # The agent is carried by the BIN, not by a flag in the argv templates. A fresh
 # interactive launch once used NO argv template, so a template-borne selector
@@ -327,9 +335,19 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # every profile bin — a path is in fact the better-behaved form there — and
 # runner/connect.go reports agentBinBase(bin) for display).
 #
-# --agent-args is NOT part of a preset: the sandbox slot's
-# --dangerously-skip-permissions is the caller's choice and --agent-args does
-# not collide with --agents (see _CONFLICTING_FLAGS).
+# `agentArgs` is each sandboxed agent's own act-without-asking flag, and is
+# empty on every unsandboxed preset: the container is the boundary, so the
+# prompt it removes protects nothing there, and on the host it would. It was
+# the caller's `--agent-args` until 2026-10-17 (operator, deciding that
+# sandbox-* profiles may share a slot with unsandboxed ones), and that could
+# not work: agent-runner applies --agent-args to the DEFAULT profile only
+# (cmd/agent-runner/main.go), so the extra sandbox-codex/agy profiles never got
+# theirs, and with the host claude as default the flag would land on the
+# unsandboxed agent. Each flag was
+# checked against the real CLI's --help on every subcommand its templates use
+# (claude; codex 0.162.1 top-level/exec/exec resume/resume; agy 1.3.5;
+# opencode 1.18.18 top-level/run). What it does INSIDE the container is not
+# measured beyond claude, which the sandbox slot has run with it all along.
 #
 # `streamAdapter` rides the derivation unchanged, and must: the adapter is a
 # HOST process that execs the wrapper as its agent argv, so the container never
@@ -340,9 +358,18 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # path is what was E2E-verified.
 _SANDBOX_DIR = Path(__file__).resolve().parent / "sandbox"
 
-for _base in ("claude", "codex", "agy", "bash", "opencode"):
+_SANDBOX_AGENT_ARGS = {
+    "claude": "--dangerously-skip-permissions",
+    "codex": "--dangerously-bypass-approvals-and-sandbox",
+    "agy": "--dangerously-skip-permissions",
+    "bash": "",
+    "opencode": "--auto",
+}
+
+for _base, _args in _SANDBOX_AGENT_ARGS.items():
     _entry = dict(KNOWN_AGENT_PRESETS[_base])
     _entry["bin"] = str(_SANDBOX_DIR / f"{_base}-in-podman.sh")
+    _entry["agentArgs"] = _args
     KNOWN_AGENT_PRESETS[f"sandbox-{_base}"] = _entry
 
 # Back-compat: `sandbox` is what the claude-only kit was called, and existing
@@ -397,6 +424,7 @@ def agent_profiles_json(names: list[str]) -> str:
                 "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
                 "logFormat": p["logFormat"],
                 "streamAdapter": p["streamAdapter"],
+                "agentArgs": p["agentArgs"].split(),
             }
         )
     return json.dumps(profiles)
@@ -416,14 +444,16 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     would silently misfire on a non-Claude default bin. The last two are
     emitted even when the preset's value is empty, so ``--dry-run`` states
     that the agent has no decoder / no event-stream adapter rather than
-    leaving the reader to infer it from an absent flag.
+    leaving the reader to infer it from an absent flag. ``--agent-args`` is
+    emitted only when the default preset carries agentArgs (a sandbox-*
+    preset), because emitting it empty would collide with a caller's own.
 
     Any REMAINING names are serialized into a single ``--agent-profiles``
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
     name/bin/oneshotArgv/resumeOneshotArgv/interactiveArgv/
-    resumeInteractiveArgv/logFormat/streamAdapter, argv fields as JSON string arrays
-    (runner/agent_profile.go).
+    resumeInteractiveArgv/logFormat/streamAdapter/agentArgs, argv fields as
+    JSON string arrays (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--claude-bin/--agent-oneshot-argv/
@@ -433,6 +463,11 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     AgentsPresetError instead of silently overriding or merging. --agents is
     an all-or-nothing shortcut for the known presets; use the explicit
     per-flag form instead of mixing it with --agents in the same invocation.
+    A caller's --agent-args/--claude-args is refused on the same grounds when
+    the default preset carries its own (Go's flag package keeps the last
+    value, so one would silently replace the other), and allowed otherwise.
+    runner.py goes through apply_agents_preset, which folds the caller's into
+    the preset's instead of refusing.
 
     Raises AgentsPresetError for any name not in KNOWN_AGENT_PRESETS (e.g.
     "gemini" — no authoritative built-in argv exists in this repo for it;
@@ -449,14 +484,17 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
             f"directly (known presets: {sorted(KNOWN_AGENT_PRESETS)})"
         )
 
-    conflicting = [f for f in _CONFLICTING_FLAGS if _has_flag(existing_args, f)]
+    default = KNOWN_AGENT_PRESETS[names[0]]
+    flags = _CONFLICTING_FLAGS
+    if default["agentArgs"]:
+        flags += ("--agent-args", "--claude-args")
+    conflicting = [f for f in flags if _has_flag(existing_args, f)]
     if conflicting:
         raise AgentsPresetError(
             f"--agents conflicts with explicit {conflicting}; pass one or "
             "the other, not both, in a single runner.py up invocation"
         )
 
-    default = KNOWN_AGENT_PRESETS[names[0]]
     out: list[str] = [
         "--agent-bin", default["bin"],
         "--agent-oneshot-argv", default["oneshotArgv"],
@@ -466,9 +504,54 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-log-format", default["logFormat"],
         "--agent-stream-adapter", default["streamAdapter"],
     ]
+    if default["agentArgs"]:
+        out += ["--agent-args", default["agentArgs"]]
 
     extra_names = names[1:]
     if extra_names:
         out += ["--agent-profiles", agent_profiles_json(extra_names)]
 
     return out
+
+
+_AGENT_ARGS_FLAGS = ("--agent-args", "--claude-args")
+
+
+def apply_agents_preset(agents_csv: str, args: list[str]) -> list[str]:
+    """runner.py's entry point: the expanded preset flags followed by *args*,
+    with a caller's --agent-args FOLDED into the default preset's own.
+
+    Folded rather than refused because runner --agent-args is also how a
+    sandbox slot hands the wrapper its own control flags (`--firewall`,
+    `--omit-harness-cli`; scripts/sandbox/README.md), which must keep working
+    beside the preset's skip-the-prompt flag. The preset's tokens come first,
+    and a caller token equal to one of them is dropped, so a slot still passing
+    the flag the preset now carries does not hand the agent it twice.
+
+    When the default preset carries no agentArgs this is
+    ``expand_agents_preset(agents_csv, args) + args`` unchanged.
+    """
+    caller: str | None = None
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in _AGENT_ARGS_FLAGS and i + 1 < len(args):
+            caller = args[i + 1]  # repeated: the last wins, as in Go's flag package
+            i += 2
+            continue
+        name, eq, value = a.partition("=")
+        if eq and name in _AGENT_ARGS_FLAGS:
+            caller = value
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+
+    out = expand_agents_preset(agents_csv, rest)
+    if caller is None or "--agent-args" not in out:
+        return expand_agents_preset(agents_csv, args) + args
+    at = out.index("--agent-args") + 1
+    preset = out[at].split()
+    out[at] = " ".join(preset + [t for t in caller.split() if t not in preset])
+    return out + rest

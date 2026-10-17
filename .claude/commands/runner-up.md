@@ -28,7 +28,7 @@ Arguments: $ARGUMENTS
    | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | POSIX shell runner — Linux / macOS, and Windows via Git Bash (see below) |
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
-   | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
+   | `sandbox`    | `--agents sandbox` (bin+argv+agentArgs from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
    | `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
@@ -42,10 +42,16 @@ Arguments: $ARGUMENTS
    default). Prerequisites before spawning: `podman` installed and the image
    built once via `scripts/sandbox/build.sh`. one-shot is verified; interactive
    is bridged via a conditional `podman -t` (worth confirming on real use; see
-   `scripts/sandbox/README.md`). The preset
-   defaults `--agent-args "--dangerously-skip-permissions"` — safe here because
-   the container is the boundary and keep-id runs claude non-root (so the flag is
-   accepted); the wrapper itself stays a pure pass-through. Because it IS a
+   `scripts/sandbox/README.md`). Each `sandbox-*` preset carries its agent's own
+   act-without-asking flag as the profile's `agentArgs` (`_SANDBOX_AGENT_ARGS`
+   in `scripts/agent_presets.py`) — safe here because the container is the
+   boundary and keep-id runs claude non-root (so claude's flag is accepted). It
+   is on the PROFILE, not on runner `--agent-args`, because agent-runner applies
+   `--agent-args` to the default profile only: an extra `sandbox-codex` never saw
+   it, and a slot whose default is the host claude would have handed the flag to
+   the unsandboxed agent. A slot's own `--agent-args` is still accepted and is
+   appended to the default preset's (a token already there is not repeated). The
+   wrapper itself stays a pure pass-through. Because it IS a
    pass-through, each preset carries its BASE agent's argv templates, log
    format and event-stream adapter (`sandbox` = `sandbox-claude` = claude's
    `claude-stream-json`, `sandbox-codex` = `codex-jsonl`, and so on — the
@@ -58,7 +64,8 @@ Arguments: $ARGUMENTS
    which the preset supplies. codex, agy and opencode are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
    exists for them) — see `scripts/sandbox/README.md`. Optional wrapper
-   controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
+   controls, passed per task with `--agent-arg` (any profile) or per slot with
+   runner `--agent-args` (the DEFAULT profile only): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
    `--proxy-log[=PATH]` (with `--firewall-proxy`: the proxy's DENY/ALLOW lines
@@ -92,7 +99,8 @@ Arguments: $ARGUMENTS
      in one shared per-user daemon that kept the environment of the codex that
      started it, so each codex task acts with THAT task's `HARNESS_*`
      identity. `codex exec` never uses the daemon and rejects the flag.
-   - `{args}` = runner-global `--agent-args` + per-task `--agent-arg`;
+   - `{args}` = the profile's baseline (runner `--agent-args` for the default
+     profile, the preset's `agentArgs` for an extra one) + per-task `--agent-arg`;
      `{prompt}` = the one-shot prompt as a single argv element. Templates are
      shlex-split and executed via argv, not a shell.
 
@@ -162,8 +170,9 @@ Arguments: $ARGUMENTS
      running argv) will pick up the change. Edit the unit or re-register.
 
    Also: opencode's auto-approve-permissions flag is `--auto`, the analogue of
-   claude's `--dangerously-skip-permissions`. Like that flag it is the caller's
-   choice via `--agent-args`, not part of the preset.
+   claude's `--dangerously-skip-permissions`. Like that flag it is part of the
+   `sandbox-opencode` preset and of no host preset: on the host it stays the
+   caller's choice via `--agent-args`.
 
    **Pi preset details.** Same source of truth as above — the literal argv
    lives only in `scripts/agent_presets.py`. Its shape is agy's: `--print` is a

@@ -379,11 +379,15 @@ domains; changing what env the runner hands an agent; changing the
 `HARNESS_SERVER_CID` format or the server's addressing.
 
 S1. Preset derivation — `scripts/agent_presets.py`: `KNOWN_AGENT_PRESETS`
-    plus the `for _base in (…)` tuple that derives each `sandbox-<base>`.
-    A new agent added to the map alone gets NO sandbox twin. The twin must
-    stay DERIVED (only `bin` changes) — the first hand-copied version
-    drifted and one-shot progress arrived as a single final blob instead
-    of streamed events.
+    plus `_SANDBOX_AGENT_ARGS`, whose keys are the bases that get a
+    `sandbox-<base>` twin and whose values are each twin's act-without-asking
+    flag. A new agent added to the map alone gets NO sandbox twin. The twin
+    must stay DERIVED (only `bin` and `agentArgs` change) — the first
+    hand-copied version drifted and one-shot progress arrived as a single
+    final blob instead of streamed events. A twin's flag is checked against
+    the real CLI's `--help` on every subcommand its templates use, and goes
+    in `agentArgs`, never in runner `--agent-args`, which reaches the default
+    profile only.
 S2. Wrapper dispatch — `scripts/sandbox/agent-in-podman.sh` selects the
     agent from `basename $0`, so each agent needs its
     `<base>-in-podman.sh` symlink next to it. The default arm is

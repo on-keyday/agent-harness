@@ -312,6 +312,115 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         )
 
 
+# Each sandboxed agent's own "act without asking" flag. The container is the
+# boundary, so the prompt the flag removes protects nothing there.
+SANDBOX_AGENT_ARGS = {
+    "claude": ["--dangerously-skip-permissions"],
+    "codex": ["--dangerously-bypass-approvals-and-sandbox"],
+    "agy": ["--dangerously-skip-permissions"],
+    "opencode": ["--auto"],
+    "bash": [],
+}
+
+
+class SandboxAgentArgsTest(unittest.TestCase):
+    """A sandbox-* preset carries its agent's skip-the-prompt flag itself.
+
+    It used to be the caller's `--agent-args`, which agent-runner applies to
+    the DEFAULT profile only: on a slot whose default was sandbox-claude, the
+    extra sandbox-codex / sandbox-agy profiles never received theirs, and on a
+    slot whose default is the host claude the same flag would have landed on
+    the UNSANDBOXED agent.
+    """
+
+    def test_extra_profiles_carry_their_own_agent_args(self) -> None:
+        out = expand_agents_preset(
+            "claude," + ",".join(f"sandbox-{b}" for b in SANDBOX_AGENT_ARGS), []
+        )
+        profiles = {
+            p["name"]: p for p in json.loads(out[out.index("--agent-profiles") + 1])
+        }
+        for base, args in SANDBOX_AGENT_ARGS.items():
+            with self.subTest(base=base):
+                self.assertEqual(profiles[f"sandbox-{base}"]["agentArgs"], args)
+
+    def test_unsandboxed_presets_carry_none(self) -> None:
+        # The flags are safe only behind the container. A host agent with one
+        # would act unprompted on the host.
+        out = expand_agents_preset("codex,claude,agy,opencode,pi,bash", [])
+        self.assertNotIn("--agent-args", out)
+        for p in json.loads(out[out.index("--agent-profiles") + 1]):
+            with self.subTest(agent=p["name"]):
+                self.assertEqual(p["agentArgs"], [])
+
+    def test_default_sandbox_profile_emits_agent_args(self) -> None:
+        out = expand_agents_preset("sandbox-claude", [])
+        self.assertEqual(
+            out[out.index("--agent-args") + 1], "--dangerously-skip-permissions"
+        )
+
+    def test_caller_agent_args_refused_when_the_default_carries_its_own(self) -> None:
+        # Go's flag package keeps the LAST value, so a second --agent-args
+        # would silently replace the preset's instead of adding to it.
+        for flag in ("--agent-args", "--claude-args"):
+            with self.subTest(flag=flag), self.assertRaises(AgentsPresetError):
+                expand_agents_preset(
+                    "sandbox-claude", [flag, "--dangerously-skip-permissions"]
+                )
+
+    def test_caller_agent_args_still_allowed_on_a_plain_default(self) -> None:
+        out = expand_agents_preset("claude,codex", ["--agent-args", "--model x"])
+        self.assertNotIn("--agent-args", out)
+
+
+class ApplyAgentsPresetTest(unittest.TestCase):
+    """runner.py folds a caller's --agent-args into the preset's.
+
+    A sandbox slot's --agent-args is also how the wrapper gets its OWN control
+    flags (--firewall, --omit-harness-cli), so refusing it would take those
+    away from every slot whose default is a sandbox-* preset.
+    """
+
+    @staticmethod
+    def _agent_args(out: list[str]) -> list[str]:
+        values = [out[i + 1] for i, a in enumerate(out) if a == "--agent-args"]
+        return values
+
+    def test_wrapper_flags_join_the_preset_flag(self) -> None:
+        for spelling in (["--agent-args", "--firewall"], ["--agent-args=--firewall"],
+                         ["--claude-args", "--firewall"]):
+            with self.subTest(spelling=spelling):
+                out = agent_presets.apply_agents_preset(
+                    "sandbox-claude", ["--max-tasks", "8"] + spelling
+                )
+                # Exactly one, so Go's last-wins cannot drop either half.
+                self.assertEqual(
+                    self._agent_args(out), ["--dangerously-skip-permissions --firewall"]
+                )
+                self.assertNotIn("--claude-args", out)
+                self.assertEqual(out[-2:], ["--max-tasks", "8"])
+
+    def test_the_flag_the_preset_now_carries_is_not_doubled(self) -> None:
+        # The live sandbox slot still passes it explicitly.
+        out = agent_presets.apply_agents_preset(
+            "sandbox-claude,sandbox-codex", ["--agent-args", "--dangerously-skip-permissions"]
+        )
+        self.assertEqual(self._agent_args(out), ["--dangerously-skip-permissions"])
+
+    def test_plain_default_passes_caller_args_through(self) -> None:
+        args = ["--agent-args", "--model x", "--max-tasks", "8"]
+        self.assertEqual(
+            agent_presets.apply_agents_preset("claude,codex", args),
+            expand_agents_preset("claude,codex", args) + args,
+        )
+
+    def test_conflicts_still_refused(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            agent_presets.apply_agents_preset(
+                "sandbox-claude", ["--agent-args", "--firewall", "--agent-bin", "x"]
+            )
+
+
 class BashBinTest(unittest.TestCase):
     """`bash` must never be resolved by name on Windows.
 

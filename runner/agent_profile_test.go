@@ -115,6 +115,49 @@ func TestParseAgentProfilesJSONCarriesStreamAdapter(t *testing.T) {
 	}
 }
 
+// TestExtraProfileAgentArgsReachEveryLaunch feeds the --agent-profiles JSON
+// shape scripts/agent_presets.py emits for a sandbox-* twin: its
+// act-without-asking flag rides `agentArgs`, because runner --agent-args
+// reaches the default profile only. The flag must land in the argv of every
+// launch mode, ahead of the per-task extras.
+func TestExtraProfileAgentArgsReachEveryLaunch(t *testing.T) {
+	extra, err := ParseAgentProfilesJSON(`[{"name":"sandbox-codex","bin":"codex-in-podman.sh",` +
+		`"agentArgs":["--dangerously-bypass-approvals-and-sandbox"],` +
+		`"oneshotArgv":["exec","--json","{args}","{prompt}"],` +
+		`"resumeOneshotArgv":["exec","--json","resume","--last","{args}","{prompt}"],` +
+		`"interactiveArgv":["--no-daemon","{args}"],` +
+		`"resumeInteractiveArgv":["resume","--last","--no-daemon","{args}"]}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := NewProfileSet(AgentProfile{Name: "claude", Bin: "claude"}, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		oneshot, resume bool
+		want            string
+	}{
+		{true, false, "exec --json --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
+		{true, true, "exec --json resume --last --dangerously-bypass-approvals-and-sandbox --task-flag do it"},
+		{false, false, "--no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag"},
+		{false, true, "resume --last --no-daemon --dangerously-bypass-approvals-and-sandbox --task-flag"},
+	} {
+		_, argv, err := resolveExec(ps, "sandbox-codex", c.oneshot, c.resume, []string{"--task-flag"}, "do it")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(argv, " "); got != c.want {
+			t.Errorf("oneshot=%v resume=%v: argv %q, want %q", c.oneshot, c.resume, got, c.want)
+		}
+	}
+	// The default profile's empty baseline must not borrow the extra's flag.
+	_, argv, _ := resolveExec(ps, "", false, false, nil, "")
+	if strings.Contains(strings.Join(argv, " "), "dangerously") {
+		t.Errorf("default profile argv %v carries the sandbox flag", argv)
+	}
+}
+
 func TestUnresolvableStreamAdapters(t *testing.T) {
 	binDir := t.TempDir()
 	adapter := filepath.Join(binDir, "fake-stream-adapter")
