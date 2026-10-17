@@ -664,10 +664,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderHostSelect(hostSelect, sortedRunners);
     knownAgentProfiles = collectAgentProfiles(sortedRunners);
     renderAgentSelect(agentSelect, knownAgentProfiles);
-    renderRunnerRows(runnerList, sortedRunners);
     lastTaskTree = snap.taskTree || [];
     lastGrantEdges = snap.grantEdges || [];
     renderTaskList(snap.tasks);
+    // After renderTaskList, so a task line's jump finds the row it opens.
+    renderRunnerRows(runnerList, sortedRunners, {
+      tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList,
+    });
     renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
@@ -7159,6 +7162,17 @@ function runnerRowModel(r) {
   };
 }
 
+// runnerTasks is the live tasks a runner holds, for its row in the Runners
+// list: joined on identity (task.assignedTo is the runner's id), live only and
+// in id order — the rule tasksOnRunner applies for the connection view.
+function runnerTasks(tasks, runnerId) {
+  if (!runnerId) return [];
+  return (tasks || [])
+    .filter((t) => isActiveTask(t) && t.assignedTo === runnerId)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((t) => ({ id: t.id, status: t.status, agent: agentLabel(t.agentProfile, t.skillsInjected), repoPath: t.repoPath || "" }));
+}
+
 function runnerStatusColor(status) {
   switch (status) {
     case "Idle":    return "#2d5";
@@ -7170,8 +7184,11 @@ function runnerStatusColor(status) {
 
 // renderRunnerRows draws the Runners list into container, one row per runner:
 // status and host, then the agents it offers as chips, then its roots one per
-// line, then its id and connection. Display only — a runner row has no sheet.
-function renderRunnerRows(container, runners) {
+// line, then its id and connection, then the live tasks it holds. The runner
+// row itself is display only; a task line jumps to that task's row (via.onTask).
+// via carries what lives in the page's scope: tasks, statusColor, repoTail.
+function renderRunnerRows(container, runners, via) {
+  const v = via || {};
   container.innerHTML = "";
   if (!runners || runners.length === 0) {
     const empty = document.createElement("div");
@@ -7215,6 +7232,20 @@ function renderRunnerRows(container, runners) {
     meta.textContent = `${m.id}…  ${m.cid}`;
 
     row.append(line1, agents, roots, meta);
+    // Nothing for a runner holding no task: its load already reads 0/N.
+    for (const t of runnerTasks(v.tasks, r.id)) {
+      const line = document.createElement("div");
+      line.className = "runner-task";
+      line.title = t.id;
+      const tdot = span("task-status-dot", "");
+      if (v.statusColor) tdot.style.background = v.statusColor(t.status);
+      const tst = span("task-status-label", t.status);
+      if (v.statusColor) tst.style.color = v.statusColor(t.status);
+      line.append(tdot, tst, span("runner-task-id", t.id.slice(0, 8) + "…"), span("task-agent", t.agent),
+        span("runner-task-repo", v.repoTail ? v.repoTail(t.repoPath) : t.repoPath));
+      if (v.onTask) line.addEventListener("click", () => v.onTask(t.id));
+      row.appendChild(line);
+    }
     container.appendChild(row);
   }
 }

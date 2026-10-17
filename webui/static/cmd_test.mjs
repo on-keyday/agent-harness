@@ -570,3 +570,19 @@ test("a runner row falls back where a runner reported nothing", () => {
      ["-", "unknown", ["claude"], ["(any)"], "-", "-", false]);
   eq(page.runnerRowModel({ status: "Idle", tasks: 0, maxTasks: 4 }).agents, []);
 });
+
+// A runner row lists the live tasks that runner holds: joined on identity
+// (task.assignedTo == runner.id), live only, in id order — the rule the
+// connection view's tasksOnRunner applies to a connection.
+test("a runner's live tasks are joined on its identity", () => {
+  const R = "a".repeat(32), OTHER = "b".repeat(32);
+  const tasks = [
+    { id: "f" + "0".repeat(31), status: "Running",  assignedTo: R,     agentProfile: "codex",  repoPath: "/w/x" },
+    { id: "1" + "0".repeat(31), status: "Detached", assignedTo: R,     agentProfile: "claude", repoPath: "/w/y" },
+    { id: "2" + "0".repeat(31), status: "Failed",   assignedTo: R,     agentProfile: "claude", repoPath: "/w/y" },
+    { id: "3" + "0".repeat(31), status: "Running",  assignedTo: OTHER, agentProfile: "claude", repoPath: "/w/z" },
+  ];
+  eq(page.runnerTasks(tasks, R).map((t) => [t.id[0], t.status, t.agent]),
+     [["1", "Detached", "claude"], ["f", "Running", "codex"]]);
+  eq(page.runnerTasks(tasks, ""), []);
+});
