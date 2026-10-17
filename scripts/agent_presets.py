@@ -516,6 +516,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     if ALL in names:
         if names != [ALL]:
             raise AgentsPresetError(f"--agents {ALL} names every preset; do not combine it with others: {names!r}")
+        _refuse_slot_agent_args_with_all(existing_args)
         names = launchable_presets()
         if not names:
             raise AgentsPresetError(
@@ -563,6 +564,25 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
 _AGENT_ARGS_FLAGS = ("--agent-args", "--claude-args")
 
 
+def _refuse_slot_agent_args_with_all(args: list[str]) -> None:
+    """An `all` slot takes no runner --agent-args. agent-runner applies them
+    to the DEFAULT profile only, which here is one agent of many — the
+    unsandboxed claude — so whatever they say, they reach the wrong
+    audience: a skip-the-prompt flag meant for a sandbox lands on the host
+    agent, a wrapper control reaches a claude that does not know it, a
+    --model reaches one agent. Refused by that meaning, not by matching flag
+    names, which differ per agent and have several spellings each. Per-task
+    --agent-arg reaches the agent a task actually runs; the sandbox presets
+    carry their own flags.
+    """
+    if any(_has_flag(args, f) for f in _AGENT_ARGS_FLAGS):
+        raise AgentsPresetError(
+            f"--agents {ALL} does not take --agent-args: they would reach only the default "
+            "profile (the unsandboxed agent). Pass per-task --agent-arg instead; the "
+            "sandbox-* presets already carry their own flags"
+        )
+
+
 def apply_agents_preset(agents_csv: str, args: list[str]) -> list[str]:
     """runner.py's entry point: the expanded preset flags followed by *args*,
     with a caller's --agent-args FOLDED into the default preset's own.
@@ -577,6 +597,8 @@ def apply_agents_preset(agents_csv: str, args: list[str]) -> list[str]:
     When the default preset carries no agentArgs this is
     ``expand_agents_preset(agents_csv, args) + args`` unchanged.
     """
+    if [n.strip() for n in agents_csv.split(",") if n.strip()] == [ALL]:
+        _refuse_slot_agent_args_with_all(args)
     caller: str | None = None
     rest: list[str] = []
     i = 0

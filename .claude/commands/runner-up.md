@@ -124,7 +124,11 @@ Arguments: $ARGUMENTS
    is built is not checked). The legacy `sandbox` alias is never included.
    `--dry-run` shows what it expanded to. Every runner then offers several
    agents, so a spawn without `--agent` answers `ambiguous_runner` with the
-   choices instead of picking one.
+   choices instead of picking one. An `all` slot **refuses** `--agent-args` /
+   `--claude-args`: they would reach only the default profile, the
+   unsandboxed claude, so a skip-the-prompt flag meant for the sandbox would
+   run the host agent without prompts. Use per-task `--agent-arg`; the
+   sandbox-* presets carry their own flags.
 
    **Event-stream tasks** (`session new --stream`, TaskKind `stream`) need the
    profile to name an adapter, and the presets supply it: `--agents` emits

@@ -482,12 +482,31 @@ class AllAgentsTest(unittest.TestCase):
         with self.assertRaises(AgentsPresetError):
             expand_agents_preset("all,claude", [])
 
-    def test_caller_agent_args_allowed_because_the_default_is_claude(self) -> None:
-        out = self._expand({"claude", "podman"}, ["--agent-args", "--model x"])
-        profiles = json.loads(out[out.index("--agent-profiles") + 1])
-        self.assertEqual(
-            profiles[0]["agentArgs"], SANDBOX_AGENT_ARGS["claude"]
-        )
+
+class AllRefusesSlotAgentArgsTest(unittest.TestCase):
+    """An `all` slot refuses runner --agent-args, whatever they contain.
+
+    agent-runner hands --agent-args to the DEFAULT profile only, which in an
+    `all` slot is one agent out of eleven — the unsandboxed claude. A
+    skip-the-prompt flag meant for the sandbox lands there, a wrapper control
+    (--firewall) reaches a claude that does not know it, and a --model reaches
+    one agent. Refused by meaning rather than by matching flag names, which
+    differ per agent and have more than one spelling each.
+    """
+
+    def test_expand_refuses(self) -> None:
+        for flag in (["--agent-args", "--model x"], ["--claude-args=--x"]):
+            with self.subTest(flag=flag), self.assertRaises(AgentsPresetError) as ctx:
+                expand_agents_preset("all", flag)
+            self.assertIn("--agent-arg", str(ctx.exception))
+
+    def test_apply_refuses_instead_of_folding(self) -> None:
+        with self.assertRaises(AgentsPresetError):
+            agent_presets.apply_agents_preset("all", ["--agent-args", "--dangerously-skip-permissions"])
+
+    def test_named_lists_still_take_agent_args(self) -> None:
+        out = agent_presets.apply_agents_preset("claude,codex", ["--agent-args", "--model x"])
+        self.assertIn("--agent-args", out)
 
 
 class BashBinTest(unittest.TestCase):
