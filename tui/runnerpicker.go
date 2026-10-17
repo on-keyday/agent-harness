@@ -11,8 +11,10 @@ import (
 
 // pickerRetry re-issues the request that came back ambiguous, pinned to what
 // the operator picked. It travels with the failing request's own result
-// message, so a picker can never re-issue some other request.
-type pickerRetry func(sel cli.SelectorOpts, agent string) tea.Cmd
+// message, so a picker can never re-issue some other request. c is the client
+// the TUI holds AT PICK TIME: a reconnect between the answer and the keypress
+// replaces it (BindClientMsg), and the one the request went out on is dead.
+type pickerRetry func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd
 
 // RunnerPickerModel is shown when a spawn comes back ambiguous_runner. Step 1
 // picks a runner, step 2 an agent on it; a step with one choice is skipped.
@@ -35,10 +37,10 @@ func (p *RunnerPickerModel) Close() { *p = RunnerPickerModel{} }
 
 // Open starts a pick. It returns the retry's Cmd straight away when there is
 // nothing to choose.
-func (p *RunnerPickerModel) Open(cands []cli.RunnerCandidate, retry pickerRetry) tea.Cmd {
+func (p *RunnerPickerModel) Open(cands []cli.RunnerCandidate, retry pickerRetry, c *cli.Client) tea.Cmd {
 	*p = RunnerPickerModel{open: true, cands: cands, retry: retry, runner: -1}
 	if len(cands) == 1 {
-		return p.chooseRunner(0)
+		return p.chooseRunner(0, c)
 	}
 	return nil
 }
@@ -50,33 +52,34 @@ func (p *RunnerPickerModel) rows() int {
 	return len(p.cands[p.runner].Profiles)
 }
 
-func (p *RunnerPickerModel) chooseRunner(i int) tea.Cmd {
+func (p *RunnerPickerModel) chooseRunner(i int, client *cli.Client) tea.Cmd {
 	p.runner, p.cursor = i, 0
 	if len(p.cands[i].Profiles) == 1 {
-		return p.chooseAgent(0)
+		return p.chooseAgent(0, client)
 	}
 	return nil
 }
 
-func (p *RunnerPickerModel) chooseAgent(i int) tea.Cmd {
+func (p *RunnerPickerModel) chooseAgent(i int, client *cli.Client) tea.Cmd {
 	c := p.cands[p.runner]
-	cmd := p.retry(c.Pin(), c.Profiles[i])
+	cmd := p.retry(client, c.Pin(), c.Profiles[i])
 	p.Close()
 	p.picked = c.Hostname + "  " + c.Cid + "  (" + agentLabels(c.Profiles[i : i+1])[0] + ")"
 	return cmd
 }
 
-func (p *RunnerPickerModel) choose(i int) tea.Cmd {
+func (p *RunnerPickerModel) choose(i int, client *cli.Client) tea.Cmd {
 	if p.runner < 0 {
-		return p.chooseRunner(i)
+		return p.chooseRunner(i, client)
 	}
-	return p.chooseAgent(i)
+	return p.chooseAgent(i, client)
 }
 
-// Key handles one key while open. The label is non-empty when the key
-// re-issued the request, naming what was picked (the caller logs it).
-func (p *RunnerPickerModel) Key(key string) (tea.Cmd, string) {
-	cmd, picked := p.key(key)
+// Key handles one key while open. client is the TUI's current one, which a
+// pick re-issues over. The label is non-empty when the key re-issued the
+// request, naming what was picked (the caller logs it).
+func (p *RunnerPickerModel) Key(key string, client *cli.Client) (tea.Cmd, string) {
+	cmd, picked := p.key(key, client)
 	if !picked {
 		return cmd, ""
 	}
@@ -85,7 +88,7 @@ func (p *RunnerPickerModel) Key(key string) (tea.Cmd, string) {
 	return cmd, label
 }
 
-func (p *RunnerPickerModel) key(key string) (tea.Cmd, bool) {
+func (p *RunnerPickerModel) key(key string, client *cli.Client) (tea.Cmd, bool) {
 	switch key {
 	case "esc":
 		if p.runner >= 0 && len(p.cands) > 1 {
@@ -105,12 +108,12 @@ func (p *RunnerPickerModel) key(key string) (tea.Cmd, bool) {
 		}
 		return nil, false
 	case "enter":
-		cmd := p.choose(p.cursor)
+		cmd := p.choose(p.cursor, client)
 		return cmd, !p.open
 	}
 	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
 		if i := int(key[0] - '1'); i < p.rows() {
-			cmd := p.choose(i)
+			cmd := p.choose(i, client)
 			return cmd, !p.open
 		}
 	}

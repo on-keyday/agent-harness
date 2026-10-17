@@ -990,7 +990,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			var are *cli.AmbiguousRunnerError
 			if msg.Retry != nil && errors.As(msg.Err, &are) {
-				return a, a.runnerPicker.Open(are.Candidates, msg.Retry)
+				return a, a.runnerPicker.Open(are.Candidates, msg.Retry, a.client)
 			}
 			a.cmdresult.Append(ErrorStyle.Render("submit failed: " + msg.Err.Error()))
 			return a, nil
@@ -1284,7 +1284,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			var are *cli.AmbiguousRunnerError
 			if msg.Retry != nil && errors.As(msg.Err, &are) {
-				return a, a.runnerPicker.Open(are.Candidates, msg.Retry)
+				return a, a.runnerPicker.Open(are.Candidates, msg.Retry, a.client)
 			}
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
 			return a, nil

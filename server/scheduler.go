@@ -89,7 +89,7 @@ func (s *Scheduler) Tick() {
 		// is the pin that binds.
 		runnerEntry := runner
 		eligible := func(t TaskEntry) bool {
-			if !selectorMatches(t.Selector, &runnerEntry) {
+			if !s.reg.Selects(t.Selector, &runnerEntry) {
 				return false
 			}
 			return t.AgentProfile == "" || runnerEntry.HasProfile(t.AgentProfile)

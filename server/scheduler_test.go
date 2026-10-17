@@ -404,6 +404,45 @@ func TestSchedulerIdentityPinSurvivesReconnect(t *testing.T) {
 	}
 }
 
+// A reconnect takeover leaves the displaced connection in the registry until
+// its teardown arrives (up to the dead-peer GC on UDP). A ByRunnerId pin —
+// what every picker re-issues with — must match only the connection holding
+// the identity, or the re-issue is as ambiguous as the first answer and the
+// scheduler may bind a dead connection.
+func TestRunnerIDPinMatchesOnlyTheIdentityHolder(t *testing.T) {
+	reg := NewRegistry()
+	id := testRunnerID("A")
+	old := idleRunner("A", "h1", []string{"claude"})
+	old.Identity = id
+	reg.Add(old)
+	cur := idleRunner("A2", "h1", []string{"claude"})
+	cur.Identity = id
+	reg.Add(cur) // takeover; "A" is not torn down yet
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
+	sel.SetRunnerId(id)
+	got := reg.Candidates("/x/repo", sel)
+	if len(got) != 1 || got[0].ID != tcid("A2") {
+		t.Fatalf("candidates=%v want only A2, the identity's holder", got)
+	}
+	if n := len(reg.Candidates("/x/repo", protocol.RunnerSelector{})); n != 2 {
+		t.Fatalf("Any still lists both connections, got %d", n)
+	}
+
+	store := NewTaskStore()
+	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, tcid("A2").String(), sel, nil, protocol.Capability_All, Scope{}, "claude")
+	var captured []assignPair
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		captured = append(captured, assignPair{runnerID, tID})
+		return nil
+	})
+	s.Tick()
+	if len(captured) != 1 || captured[0] != (assignPair{tcid("A2"), taskID}) {
+		t.Fatalf("identity-pinned task assigned to %v, want A2/%s", captured, taskID)
+	}
+}
+
 // TestSchedulerPinnedTaskDoesNotBlockQueue: skipping ineligible tasks must not
 // turn into head-of-line blocking. An older task pinned to an absent runner has
 // to be stepped over, not allowed to stall every later task on that root.

@@ -68,6 +68,24 @@ func TestAmbiguousResultOpensPickerOnlyWithRetry(t *testing.T) {
 	}
 }
 
+// A pick re-issues over the client the TUI holds WHEN THE PICK HAPPENS. A
+// reconnect between the ambiguous answer and the keypress replaces a.client
+// (BindClientMsg); the old one is dead.
+func TestPickerRetryUsesTheClientAtPickTime(t *testing.T) {
+	first, second := &cli.Client{}, &cli.Client{}
+	var r pickRec
+	a := New(Config{})
+	a.client = first
+	m, _ := a.Update(InteractiveReadyMsg{Err: &cli.AmbiguousRunnerError{Candidates: twoRunners}, Retry: r.retry})
+	a = m.(*App)
+	m, _ = a.Update(BindClientMsg{Client: second})
+	a = m.(*App)
+	a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // runner b: one agent, fires
+	if r.n != 1 || r.client != second {
+		t.Fatalf("retry ran %d time(s) with client %p, want the rebound %p", r.n, r.client, second)
+	}
+}
+
 // withRetry stamps the retry onto the result of the request it wraps.
 func TestWithRetryStampsTheResult(t *testing.T) {
 	var r pickRec
@@ -129,7 +147,7 @@ func TestRunnerPickerPickDispatchesWithProfile(t *testing.T) {
 	a.runnerPicker.Open([]cli.RunnerCandidate{
 		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", Profiles: []string{"claude"}},
 		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", Profiles: []string{"codex"}},
-	}, r.retry)
+	}, r.retry, nil)
 
 	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	a = m.(*App)

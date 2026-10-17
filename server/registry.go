@@ -327,7 +327,7 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	var matches []scored
 	maxScore := 0
 	for _, e := range r.runners {
-		if !selectorMatches(sel, e) {
+		if !r.selects(sel, e) {
 			continue
 		}
 		score := bestRootScore(e.AllowedRoots, repo)
@@ -367,6 +367,30 @@ func bestRootScore(roots []string, repo string) int {
 		}
 	}
 	return best
+}
+
+// selects is selectorMatches plus the one rule it cannot decide alone: a
+// ByRunnerId pin matches only the connection that HOLDS the identity. A
+// takeover leaves the displaced connection in r.runners until its teardown
+// arrives — up to the dead-peer GC on UDP — and both entries carry the same
+// Identity, so without this a pin (what every picker re-issues with) matched
+// both: the re-issue came back as ambiguous as the first answer, and the
+// scheduler could bind the dead connection. Caller holds r.mu.
+func (r *Registry) selects(sel protocol.RunnerSelector, e *RunnerEntry) bool {
+	if !selectorMatches(sel, e) {
+		return false
+	}
+	if sel.Kind == protocol.RunnerSelectorKind_ByRunnerId {
+		return r.byIdentity[e.Identity] == e.ID
+	}
+	return true
+}
+
+// Selects is selects for a caller holding a snapshot rather than the lock.
+func (r *Registry) Selects(sel protocol.RunnerSelector, e *RunnerEntry) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.selects(sel, e)
 }
 
 func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {

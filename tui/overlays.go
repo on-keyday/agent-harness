@@ -728,7 +728,7 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 // steps back and then cancels. A pick runs the retry the ambiguous result
 // carried.
 func (a *App) inRunnerPicker(msg tea.KeyMsg) tea.Cmd {
-	cmd, label := a.runnerPicker.Key(msg.String())
+	cmd, label := a.runnerPicker.Key(msg.String(), a.client)
 	if label != "" {
 		a.cmdresult.Append(OKStyle.Render("pinned runner: ") + label)
 	} else if msg.Type == tea.KeyEsc && !a.runnerPicker.IsOpen() {

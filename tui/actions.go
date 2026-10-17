@@ -183,9 +183,9 @@ func (a *App) onInteractive(msg tea.KeyMsg) (tea.Cmd, bool) {
 // `S` (capital) opens a new detachable interactive PTY session in the
 // default repo (equivalent to `harness-cli session new`).
 func (a *App) onSession(msg tea.KeyMsg) (tea.Cmd, bool) {
-	c, repo, auth := a.client, a.defaultRepo, a.authority()
-	return withRetry(DoOpenDetachableSession(c, repo, cli.SelectorOpts{}, nil, "", auth, false, false, ""),
-		func(sel cli.SelectorOpts, agent string) tea.Cmd {
+	repo, auth := a.defaultRepo, a.authority()
+	return withRetry(DoOpenDetachableSession(a.client, repo, cli.SelectorOpts{}, nil, "", auth, false, false, ""),
+		func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
 			return DoOpenDetachableSession(c, repo, sel, nil, "", auth, false, false, agent)
 		}), true
 }
@@ -365,7 +365,7 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// another runner ties on this repo's roots score. u/U deliberately
 		// use Any instead, which can reopen the ambiguous runner picker.
 		c, id, auth, conv := a.client, a.tasks.SelectedID(), a.authority(), act.ResumeConversation
-		retry := func(sel cli.SelectorOpts, agent string) tea.Cmd {
+		retry := func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
 			return DoOpenDetachableSession(c, "", sel, nil, id, auth, false, conv, agent)
 		}
 		if unpinnedResume {

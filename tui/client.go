@@ -179,7 +179,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOp
 			msg := SubmitResultMsg{Err: err, Echo: echo}
 			var are *cli.AmbiguousRunnerError
 			if errors.As(err, &are) {
-				msg.Retry = func(sel cli.SelectorOpts, agent string) tea.Cmd {
+				msg.Retry = func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
 					return DoSubmitWithOpts(c, repo, prompt, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, agent)
 				}
 			}
