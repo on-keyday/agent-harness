@@ -312,6 +312,22 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "streamAdapter": "",
         "agentArgs": "",
     },
+    # The Windows command prompt, the same argv the hand-written `cmd` slot in
+    # runner-up.md has always run with, so `--agents all` on Windows carries it
+    # beside Git Bash. Absolute and BACKSLASHED: a forward-slash cmd.exe path
+    # registers fine and every task dispatched to it dies at spawn. On any other
+    # OS the path resolves to nothing, so `all` leaves it out there. No
+    # sandbox-cmd twin: the podman container is Linux.
+    "cmd": {
+        "bin": os.environ.get("SystemRoot", "C:\\Windows") + "\\System32\\cmd.exe",
+        "oneshotArgv": "{args} /c {prompt}",
+        "resumeOneshotArgv": "{args} /c {prompt}",
+        "interactiveArgv": "{args}",
+        "resumeInteractiveArgv": "{args}",
+        "logFormat": "",
+        "streamAdapter": "",
+        "agentArgs": "",
+    },
 }
 
 # The podman sandbox runs the SAME agent binaries through a wrapper that is a

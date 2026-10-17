@@ -148,6 +148,17 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertNotIn("--no-worktree", out)
         self.assertNotIn("--roots", out)
 
+    def test_cmd_preset_matches_the_hand_written_cmd_slot(self) -> None:
+        out = expand_agents_preset("cmd", [])
+        emitted = out[out.index("--agent-bin") + 1]
+        # Backslashed: a forward-slash cmd.exe path registers and then every
+        # task dispatched to it dies at spawn.
+        self.assertTrue(emitted.endswith("\\System32\\cmd.exe"), emitted)
+        self.assertNotIn("/", emitted)
+        self.assertEqual(out[out.index("--agent-oneshot-argv") + 1], "{args} /c {prompt}")
+        self.assertEqual(out[out.index("--agent-resume-oneshot-argv") + 1], "{args} /c {prompt}")
+        self.assertNotIn("--no-worktree", out)
+
     def test_unknown_agent_rejected_not_fabricated(self) -> None:
         with self.assertRaises(AgentsPresetError) as ctx:
             expand_agents_preset("gemini", [])
@@ -451,6 +462,13 @@ class AllAgentsTest(unittest.TestCase):
                 "sandbox-bash", "sandbox-opencode",
             ],
         )
+
+    def test_cmd_joins_all_where_cmd_exe_exists(self) -> None:
+        # Its bin is an absolute Windows path, so on any other host it never
+        # resolves and `all` leaves it out without an OS check of its own.
+        cmd = agent_presets.KNOWN_AGENT_PRESETS["cmd"]["bin"]
+        self.assertEqual(self._names(self._expand({"claude", "bash", cmd}))[-1], "cmd")
+        self.assertNotIn("cmd", self._names(self._expand({"claude", "bash"})))
 
     def test_missing_bins_are_left_out(self) -> None:
         # agent-runner only WARNS on an unresolvable bin, so a profile for a

@@ -122,6 +122,12 @@ Arguments: $ARGUMENTS
    frozen `Environment=PATH=…`. A preset is left out when its binary is not on
    that PATH, and a `sandbox-*` one also when `podman` is not (whether the image
    is built is not checked). The legacy `sandbox` alias is never included.
+   On Windows that includes **both shells**: `bash` (Git for Windows' bash,
+   never the WSL launcher — see the bash details below) and `cmd` (the same
+   bin + argv as the `cmd` tag row above, as a preset; its bin path resolves on
+   no other OS, so `all` leaves it out there). The dedicated `cmd` slot with
+   `--no-worktree --roots C:/workspace` is still its own slot: in an `all`
+   slot a `cmd` task runs in that slot's roots and worktree like any agent.
    `--dry-run` shows what it expanded to. Every runner then offers several
    agents, so a spawn without `--agent` answers `ambiguous_runner` with the
    choices instead of picking one. An `all` slot **refuses** `--agent-args` /

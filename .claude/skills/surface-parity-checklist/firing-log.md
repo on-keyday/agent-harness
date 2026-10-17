@@ -2964,3 +2964,23 @@ missed:  —
 Before landing the refusal, every `--agents all` unit was checked to carry no
 `--agent-args` (10 units, 0 hits): the guard would otherwise have turned the
 next restart of one into a slot that does not come up.
+
+### 2026-10-17 (pre-landing) — a `cmd` preset, so a Windows `all` slot carries it
+
+Operator ask: the default (`--agents all`) setup on Windows should offer cmd
+beside Git Bash. Adds an agent, so S1–S6 fire.
+
+done:    **S1** (`cmd` entry in `KNOWN_AGENT_PRESETS`, same bin + argv as the
+         hand-written `cmd` slot; deliberately NOT in `_SANDBOX_AGENT_ARGS` —
+         the podman container is Linux, so there is no twin to derive),
+         **S6** (`.claude/commands/runner-up.md` `all` paragraph names both
+         Windows shells)
+omitted: —
+n/a:     1–39 (no verb, flag, field or UI surface), S2–S5 (no wrapper,
+         mount, egress or env change — cmd has no sandbox twin).
+missed:  —
+
+Verified on this Windows host: `runner.py up --agents all --dry-run` expands to
+`claude,codex,opencode,bash,cmd` with `cmd`'s bin `C:\WINDOWS\System32\cmd.exe`
+(backslashed). Not yet verified live: a task dispatched to the `cmd` profile
+of an `all` slot.
