@@ -183,12 +183,11 @@ func (a *App) onInteractive(msg tea.KeyMsg) (tea.Cmd, bool) {
 // `S` (capital) opens a new detachable interactive PTY session in the
 // default repo (equivalent to `harness-cli session new`).
 func (a *App) onSession(msg tea.KeyMsg) (tea.Cmd, bool) {
-	a.pendingInteractive = pendingInteractive{
-		repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
-		auth: a.authority(), capsOverride: false,
-	}
-	a.pickerArmed = true
-	return DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.authority(), false, false, ""), true
+	c, repo, auth := a.client, a.defaultRepo, a.authority()
+	return withRetry(DoOpenDetachableSession(c, repo, cli.SelectorOpts{}, nil, "", auth, false, false, ""),
+		func(sel cli.SelectorOpts, agent string) tea.Cmd {
+			return DoOpenDetachableSession(c, repo, sel, nil, "", auth, false, false, agent)
+		}), true
 }
 
 // `G` opens the read-only git view for the selected task: its commit
@@ -365,22 +364,20 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// ran on (t.AssignedTo) so resume stays one keypress even when
 		// another runner ties on this repo's roots score. u/U deliberately
 		// use Any instead, which can reopen the ambiguous runner picker.
-		a.pendingInteractive = pendingInteractive{
-			repo: "", resumeTaskID: a.tasks.SelectedID(),
-			extraArgs: nil, auth: a.authority(), capsOverride: false,
-			resumeConversation: act.ResumeConversation,
+		c, id, auth, conv := a.client, a.tasks.SelectedID(), a.authority(), act.ResumeConversation
+		retry := func(sel cli.SelectorOpts, agent string) tea.Cmd {
+			return DoOpenDetachableSession(c, "", sel, nil, id, auth, false, conv, agent)
 		}
-		a.pickerArmed = true
 		if unpinnedResume {
 			// Unpinned (u/U): leave agentProfile unresolved — the
 			// (runner, profile) picker (§4a) supplies both when the
 			// combo set is ambiguous, exactly like the Any-selector
 			// runner pin above.
-			return DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, ""), true
+			return withRetry(DoOpenDetachableSession(c, "", cli.SelectorOpts{}, nil, id, auth, false, conv, ""), retry), true
 		}
 		// Pinned (r/R): default to the task's own recorded profile
 		// (§4b) so the pinned path stays one keypress — no picker.
-		return DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, string(t.AgentProfile)), true
+		return withRetry(DoResumeSession(c, t.AssignedTo, nil, id, auth, false, conv, string(t.AgentProfile)), retry), true
 	case actionNone:
 		a.cmdresult.Append(WarnStyle.Render(act.Hint))
 		return nil, true

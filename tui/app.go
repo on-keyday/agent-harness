@@ -186,21 +186,9 @@ type App struct {
 	// `a`) and the session-default authority (`caps` / `scope`, no args).
 	authorityPicker AuthorityPickerModel
 
-	// runnerPicker shows candidate runners when an interactive open returns
-	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
+	// runnerPicker shows the candidates of an ambiguous spawn; a pick runs the
+	// Retry the ambiguous result carried (InteractiveReadyMsg / SubmitResultMsg).
 	runnerPicker RunnerPickerModel
-	// pendingInteractive holds the params of the in-flight interactive open so
-	// the picker can re-issue it pinned to a chosen runner.
-	pendingInteractive pendingInteractive
-	// pickerArmed is true only while an in-flight interactive open was
-	// dispatched from one of the two sites that also populate
-	// pendingInteractive (the `S` key and the resume cases of `r`/`R`/`u`/`U`).
-	// InteractiveReadyMsg's handler checks-and-clears this so an AmbiguousRunner
-	// from any OTHER interactive-open path (`i`, InteractiveAction,
-	// SessionNewAction, X11) falls back to a flat error instead of opening the
-	// picker with stale or zero pendingInteractive. See the S/resume scope note on
-	// the InteractiveReadyMsg case below.
-	pickerArmed bool
 
 	// log-following state
 	logsCancel context.CancelFunc
@@ -280,15 +268,6 @@ func (a App) spawnAuthority(explicit *protocol.TaskScope, overrides []protocol.S
 // not name its own: the caps mask paired with the target scope.
 func (a *App) authority() Authority {
 	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides}
-}
-
-type pendingInteractive struct {
-	repo               string
-	resumeTaskID       string
-	extraArgs          []string
-	auth               Authority
-	capsOverride       bool
-	resumeConversation bool
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -1009,6 +988,10 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SubmitResultMsg:
 		if msg.Err != nil {
+			var are *cli.AmbiguousRunnerError
+			if msg.Retry != nil && errors.As(msg.Err, &are) {
+				return a, a.runnerPicker.Open(are.Candidates, msg.Retry)
+			}
 			a.cmdresult.Append(ErrorStyle.Render("submit failed: " + msg.Err.Error()))
 			return a, nil
 		}
@@ -1295,18 +1278,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.openChat(msg.TaskID)
 
 	case InteractiveReadyMsg:
-		// armed is true only when this open was dispatched from the `S` key
-		// or the resume cases of `r`/`R`/`u`/`U` (the only sites that set
-		// pendingInteractive). Capture-and-clear here so a stray AmbiguousRunner
-		// from an unrelated in-flight open (e.g. a slow `i` request that
-		// resolves after a later `S`) can't misuse this cycle's arm state.
-		armed := a.pickerArmed
-		a.pickerArmed = false
+		// Only the opens that offer a picker (`S` and the r/R/u/U resumes)
+		// stamp a Retry on their result; every other path keeps an ambiguous
+		// answer a flat error.
 		if msg.Err != nil {
 			var are *cli.AmbiguousRunnerError
-			if armed && errors.As(msg.Err, &are) {
-				a.runnerPicker.Open(are.Candidates)
-				return a, nil
+			if msg.Retry != nil && errors.As(msg.Err, &are) {
+				return a, a.runnerPicker.Open(are.Candidates, msg.Retry)
 			}
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
 			return a, nil
@@ -2221,7 +2199,7 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
 	switch v.Kind {
 	case verb.KindSubmit:
-		return a, DoSubmitWithOpts(a.client, repo, v.Task, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
 	case verb.KindInteractive:
 		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
 	}

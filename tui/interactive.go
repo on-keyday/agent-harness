@@ -30,6 +30,23 @@ type InteractiveReadyMsg struct {
 	// the Ready handler surfaces it as a status line (stderr would corrupt the
 	// alt-screen). Non-x11 paths leave it "".
 	X11Warn string
+	// Retry re-issues this open pinned to a picked runner and agent. Set (by
+	// withRetry) only on the paths that offer a picker — `S` and the r/R/u/U
+	// resumes; nil elsewhere, which keeps an ambiguous answer a flat error.
+	Retry pickerRetry
+}
+
+// withRetry stamps retry onto the InteractiveReadyMsg cmd produces, so an
+// ambiguous answer to THIS request can be re-issued from the picker.
+func withRetry(cmd tea.Cmd, retry pickerRetry) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		if m, ok := msg.(InteractiveReadyMsg); ok {
+			m.Retry = retry
+			return m
+		}
+		return msg
+	}
 }
 
 // InteractiveDoneMsg lands after the handover returns — claude has exited or
@@ -83,12 +100,6 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		}))
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
-}
-
-// pickerSelection is what a runner-picker pick re-issues with: the chosen
-// runner, pinned the way RunnerCandidate.Pin decides, and its agent.
-func pickerSelection(c *cli.RunnerCombo) (cli.SelectorOpts, string) {
-	return c.Candidate.Pin(), c.Profile
 }
 
 // resumeSelectorOpts returns the SelectorOpts the r/R resume keybinding

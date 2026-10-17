@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -31,95 +30,55 @@ func TestResumeSelectorOpts(t *testing.T) {
 	}
 }
 
-// TestInteractiveReadyMsg_PickerArmGate guards the fix for the "picker
-// mis-arms on out-of-scope interactive-open paths" review finding: only the
-// two dispatch sites that populate pendingInteractive (the `S` key and the
-// actionResume case of `r`/`R`) may open the runner picker on an
-// AmbiguousRunner error. Every other interactive-open path (`i`,
-// verb.SpawnAction, verb.SpawnAction, X11) must fall back to the flat
-// cmdresult error line instead, since pendingInteractive was never (re)armed
-// for them and could carry a stale resumeTaskID from a prior r/R.
-func TestInteractiveReadyMsg_PickerArmGate(t *testing.T) {
-	ambigErr := &cli.AmbiguousRunnerError{Candidates: []cli.RunnerCandidate{
-		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", ActiveTasks: 0, MaxTasks: 8},
-		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", ActiveTasks: 0, MaxTasks: 8},
-	}}
+// An ambiguous result opens the picker only when it carries a retry; one
+// without (the `i`, InteractiveAction, X11 paths) stays a flat error. The
+// retry rides the failing request's own message, so there is no armed flag
+// that a slow, unrelated open could find set.
+func TestAmbiguousResultOpensPickerOnlyWithRetry(t *testing.T) {
+	are := &cli.AmbiguousRunnerError{Candidates: twoRunners}
+	var r pickRec
 
-	t.Run("unarmed falls back to flat error", func(t *testing.T) {
-		a := New(Config{})
-		m, _ := a.Update(InteractiveReadyMsg{Err: ambigErr})
-		a = m.(*App)
-		if a.runnerPicker.IsOpen() {
-			t.Fatal("runner picker should NOT open for an unarmed interactive-open path")
-		}
-		found := false
-		for _, line := range a.cmdresult.lines {
-			if strings.Contains(line, "open interactive failed") {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatal("expected a flat 'open interactive failed' cmdresult line")
-		}
-	})
-
-	t.Run("armed opens the picker", func(t *testing.T) {
-		a := New(Config{})
-		a.pickerArmed = true
-		m, _ := a.Update(InteractiveReadyMsg{Err: ambigErr})
-		a = m.(*App)
-		if !a.runnerPicker.IsOpen() {
-			t.Fatal("runner picker should open when the in-flight open was armed")
-		}
-		if a.pickerArmed {
-			t.Fatal("pickerArmed should be cleared after handling InteractiveReadyMsg")
-		}
-	})
-}
-
-// TestPickerSelection guards the (runner, profile) generalization of the
-// ambiguous-runner picker (§4a of the multi-agent-profile design): choosing
-// a candidate row must re-issue pinned to BOTH the chosen Cid (as
-// SelectorOpts{Runner: cid}) AND the chosen Profile (as the agentProfile
-// forwarded to the Do* funnels). Mirrors TestResumeSelectorOpts for the
-// picker path.
-func TestPickerSelection(t *testing.T) {
-	c := &cli.RunnerCombo{Candidate: cli.RunnerCandidate{
-		Cid:         "ws:10.0.0.2:1-1",
-		Hostname:    "gmkhost-codex",
-		MatchedRoot: "/home/x/repo",
-		ActiveTasks: 1,
-		MaxTasks:    8,
-		Profiles:    []string{"codex"},
-	}, Profile: "codex"}
-	c.Candidate.RunnerID = strings.Repeat("cd", 16)
-	sel, agentProfile := pickerSelection(c)
-	wantSel := cli.SelectorOpts{Runner: strings.Repeat("cd", 16)} // identity, not the cid
-	if sel != wantSel {
-		t.Errorf("SelectorOpts = %+v, want %+v", sel, wantSel)
+	a := New(Config{})
+	m, _ := a.Update(InteractiveReadyMsg{Err: are})
+	a = m.(*App)
+	if a.runnerPicker.IsOpen() {
+		t.Fatal("no retry: picker must not open")
 	}
-	if agentProfile != c.Profile {
-		t.Errorf("agentProfile = %q, want candidate.Profile = %q", agentProfile, c.Profile)
+	found := false
+	for _, line := range a.cmdresult.lines {
+		if strings.Contains(line, "open interactive failed") {
+			found = true
+		}
 	}
-	// Round-trips back through the same selector-building path used
-	// elsewhere (--runner / u / U reissue).
-	if _, err := cli.BuildSelector(sel); err != nil {
-		t.Errorf("BuildSelector(%+v): %v", sel, err)
+	if !found {
+		t.Fatal("no retry: expected the flat 'open interactive failed' line")
+	}
+
+	m, _ = a.Update(InteractiveReadyMsg{Err: are, Retry: r.retry})
+	a = m.(*App)
+	if !a.runnerPicker.IsOpen() {
+		t.Fatal("retry present: picker must open")
+	}
+	a.runnerPicker.Close()
+
+	m, _ = a.Update(SubmitResultMsg{Err: are, Retry: r.retry})
+	a = m.(*App)
+	if !a.runnerPicker.IsOpen() {
+		t.Fatal("submit result with a retry must open the picker")
 	}
 }
 
-func TestPickerSelectionEmptyProfile(t *testing.T) {
-	c := &cli.RunnerCombo{Candidate: cli.RunnerCandidate{Cid: "ws:10.0.0.1:1-1", Hostname: "h1"}}
-	sel, agentProfile := pickerSelection(c)
-	if sel.Runner != "ws:10.0.0.1:1-1" {
-		t.Errorf("SelectorOpts.Runner = %q, want ws:10.0.0.1:1-1", sel.Runner)
-	}
-	if agentProfile != "" {
-		t.Errorf("agentProfile = %q, want empty (candidate.Profile was empty)", agentProfile)
+// withRetry stamps the retry onto the result of the request it wraps.
+func TestWithRetryStampsTheResult(t *testing.T) {
+	var r pickRec
+	cmd := withRetry(func() tea.Msg { return InteractiveReadyMsg{TaskID: "t"} }, r.retry)
+	msg, ok := cmd().(InteractiveReadyMsg)
+	if !ok || msg.Retry == nil || msg.TaskID != "t" {
+		t.Fatalf("msg=%+v", msg)
 	}
 }
 
-func TestUnpinnedResumeKeyArmsPickerWithAnySelector(t *testing.T) {
+func TestUnpinnedResumeKeyDispatchesAResume(t *testing.T) {
 	a := New(Config{})
 	var tid protocol.TaskID
 	for i := range tid.Id {
@@ -136,16 +95,6 @@ func TestUnpinnedResumeKeyArmsPickerWithAnySelector(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("u should dispatch a resume command")
 	}
-	if !a.pickerArmed {
-		t.Fatal("u should arm the ambiguous-runner picker")
-	}
-	wantID := hex.EncodeToString(tid.Id[:])
-	if a.pendingInteractive.resumeTaskID != wantID {
-		t.Fatalf("resumeTaskID = %q, want %q", a.pendingInteractive.resumeTaskID, wantID)
-	}
-	if a.pendingInteractive.resumeConversation != true {
-		t.Fatal("u should request conversation resume")
-	}
 }
 
 func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
@@ -160,9 +109,6 @@ func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("u on a live session should not dispatch reattach")
 	}
-	if a.pickerArmed {
-		t.Fatal("u on a live session should not arm the picker")
-	}
 	found := false
 	for _, line := range a.cmdresult.lines {
 		if strings.Contains(line, "pick a finished task") {
@@ -174,24 +120,21 @@ func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
 	}
 }
 
-// TestRunnerPickerPickDispatchesWithProfile drives the picker digit-press
-// through App.Update end to end: opening the picker with (runner, profile)
-// combos and pressing a digit must dispatch a command AND surface the picked
-// profile in the cmdresult label, confirming app.go's Pick handler actually
-// threads pickerSelection's agentProfile through (not just the pure
-// function in isolation).
+// TestRunnerPickerPickDispatchesWithProfile drives a pick through App.Update:
+// the digit reaches the picker, the retry is called with the chosen agent,
+// and the result line names the runner and the agent.
 func TestRunnerPickerPickDispatchesWithProfile(t *testing.T) {
 	a := New(Config{})
-	a.pendingInteractive = pendingInteractive{repo: "/repo"}
+	var r pickRec
 	a.runnerPicker.Open([]cli.RunnerCandidate{
 		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", Profiles: []string{"claude"}},
 		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", Profiles: []string{"codex"}},
-	})
+	}, r.retry)
 
 	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	a = m.(*App)
-	if cmd == nil {
-		t.Fatal("picking a candidate should dispatch a command")
+	if cmd == nil || r.agent != "codex" || r.sel.Runner != "ws:10.0.0.2:1-1" {
+		t.Fatalf("cmd=%v pick=%+v", cmd != nil, r)
 	}
 	if a.runnerPicker.IsOpen() {
 		t.Fatal("picker should close after a pick")

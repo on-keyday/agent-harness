@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -24,6 +25,9 @@ type SubmitResultMsg struct {
 	TaskID string
 	Err    error
 	Echo   string // human-readable echo of the request, e.g. "submit --repo /r \"prompt\""
+	// Retry re-issues this submit pinned to a picked runner and agent. Set
+	// only on an ambiguous_runner answer.
+	Retry pickerRetry
 }
 
 type CancelResultMsg struct {
@@ -138,10 +142,10 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 }
 
 func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", auth, false, false, "")
+	return DoSubmitWithOpts(c, repo, prompt, cli.SelectorOpts{}, nil, "", auth, false, false, "")
 }
 
-// DoSubmitWithOpts issues a Submit RPC with an optional hostname pin,
+// DoSubmitWithOpts issues a Submit RPC with an optional runner selector,
 // optional per-task extra claude args, and optional resume target id. When
 // host is non-empty a ByHostname selector is built; otherwise Any is used.
 // extraArgs are forwarded verbatim to the runner and appended to its
@@ -152,17 +156,17 @@ func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh submit).
-// agentProfile selects a named agent profile (e.g. "codex"); "" defers to the
-// bound runner's default (or, on resume with an empty profile, the resumed
-// task's own recorded profile — resolved server-side). Submit has no picker
-// (§4a scope boundary): a profile no runner serves comes back as the flat
-// SubmitStatus.profile_unavailable, surfaced as an error here.
-func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+// agentProfile selects a named agent profile (e.g. "codex"). "" with an
+// unpinned selector lets the server answer ambiguous_runner when more than
+// one (runner, agent) choice matches; the result then carries a Retry the
+// runner picker re-issues through. On resume, "" means the task's recorded
+// profile (resolved server-side).
+func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		echo := buildSubmitEcho(repo, prompt, host, extraArgs, resumeTaskID, agentProfile)
-		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+		echo := buildSubmitEcho(repo, prompt, selOpts.Host, extraArgs, resumeTaskID, agentProfile)
+		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
@@ -172,7 +176,14 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		}))
 		if err != nil {
-			return SubmitResultMsg{Err: err, Echo: echo}
+			msg := SubmitResultMsg{Err: err, Echo: echo}
+			var are *cli.AmbiguousRunnerError
+			if errors.As(err, &are) {
+				msg.Retry = func(sel cli.SelectorOpts, agent string) tea.Cmd {
+					return DoSubmitWithOpts(c, repo, prompt, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, agent)
+				}
+			}
+			return msg
 		}
 		return SubmitResultMsg{TaskID: id, Echo: echo}
 	}

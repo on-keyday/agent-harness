@@ -464,7 +464,7 @@ func (h tuiVerbs) spawnPrologue(v verb.SpawnAction) (repo string, auth Authority
 
 func (h tuiVerbs) Submit(v verb.SpawnAction) tea.Cmd {
 	repo, auth, capsOverride := h.spawnPrologue(v)
-	return DoSubmitWithOpts(h.a.client, repo, v.Task, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	return DoSubmitWithOpts(h.a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
 }
 
 func (h tuiVerbs) Interactive(v verb.SpawnAction) tea.Cmd {

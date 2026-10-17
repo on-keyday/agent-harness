@@ -527,7 +527,7 @@ func (a *App) inSubmitPopup(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 			return nil
 		}
-		return DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.authority(), false, resumeConversation, agent)
+		return DoSubmitWithOpts(a.client, repo, prompt, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, agent)
 	case tea.KeyTab:
 		a.popup.CycleRepo(+1)
 		return nil
@@ -724,25 +724,17 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// Runner picker intercepts keys when open (digit picks, Esc cancels).
+// Runner picker intercepts keys when open: digits or j/k+Enter pick, Esc
+// steps back and then cancels. A pick runs the retry the ambiguous result
+// carried.
 func (a *App) inRunnerPicker(msg tea.KeyMsg) tea.Cmd {
-	if msg.Type == tea.KeyEsc {
-		a.runnerPicker.Close()
+	cmd, label := a.runnerPicker.Key(msg.String())
+	if label != "" {
+		a.cmdresult.Append(OKStyle.Render("pinned runner: ") + label)
+	} else if msg.Type == tea.KeyEsc && !a.runnerPicker.IsOpen() {
 		a.cmdresult.Append(WarnStyle.Render("runner pick cancelled"))
-		return nil
 	}
-	if c := a.runnerPicker.Pick(msg.String()); c != nil {
-		p := a.pendingInteractive
-		sel, agentProfile := pickerSelection(c)
-		a.runnerPicker.Close()
-		pickLabel := c.Candidate.Hostname + "  " + c.Candidate.Cid
-		if agentProfile != "" {
-			pickLabel += "  (" + agentProfile + ")"
-		}
-		a.cmdresult.Append(OKStyle.Render("pinned runner: ") + pickLabel)
-		return DoOpenDetachableSession(a.client, p.repo, sel, p.extraArgs, p.resumeTaskID, p.auth, p.capsOverride, p.resumeConversation, agentProfile)
-	}
-	return nil
+	return cmd
 }
 
 // Forward-stop picker intercepts keys when open (digit selects, Esc cancels).
