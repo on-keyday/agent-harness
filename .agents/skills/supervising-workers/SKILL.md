@@ -279,8 +279,24 @@ To coordinate a *claude worker* (hand it tasks / corrections), still prefer
 puppeteer its keyboard. (The human may also attach in parallel; that's expected.)
 
 `session ls` lists only detachable interactive sessions; the top-level `ls`
-shows every task (including one-shots). When more than one runner can serve the
-repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
+shows every task (including one-shots).
+
+**A spawn can answer `ambiguous_runner`.** `session new`, `interactive` and
+`submit` all do, with exit status 3, whenever more than one (runner, agent)
+choice matches: several runners serve the repo, or one runner offers several
+agents and you passed no `--agent`. stderr then lists one line per runner, with
+the flags that pin it:
+
+```
+ambiguous runner: 2 runners match this repo; re-run with the flags shown:
+  gmkhost            [1/8]  /path/to/repo  --runner <32-hex id> --agent <claude|codex>
+  gmkhost            [0/8]  /path/to/repo  --runner <32-hex id> --agent <claude>
+```
+
+Re-run with one line's `--runner` and one of its `--agent` names. Pass
+`--agent` up front when you know which agent you want; it avoids the round trip.
+`--host <name>` / `--ip <addr>` also pin, but two runners on one host share a
+hostname, which is why the table gives `--runner`.
 
 ### Pruning tasks you spawned
 
@@ -437,8 +453,12 @@ for anything collaborative; reach for `submit` only for genuinely narrow,
 no-intervention jobs.
 
 ```bash
-harness-cli submit --repo /path/to/repo --task "one-line job ..."
+harness-cli submit --repo /path/to/repo --agent claude --task "one-line job ..."
 ```
+
+Without `--agent`, a runner offering several agents answers `ambiguous_runner`
+(exit 3) instead of picking one for you — see "A spawn can answer
+`ambiguous_runner`" above.
 
 Because a submitted task gives you no live channel, you observe it from outside:
 

@@ -2857,3 +2857,53 @@ container whose argv ended `sandbox-agent-launch.sh --no-daemon
 `--norc`. codex accepted the flag and stopped at its own folder-trust screen,
 which the flag does not cover. A harness worktree is a new folder each time,
 so an interactive `sandbox-codex` will ask for trust on every fresh session.
+
+### 2026-10-17 (pre-landing) — ambiguous-spawn candidates on a stream, one rule for interactive and submit
+
+Spec: `2026-10-17-ambiguous-candidates-streamed-design.md`. A wire change
+(candidates move to a stream body, one row per runner), a rule change (a fresh
+submit with no `--agent` is ambiguous on a multi-profile runner), and the
+picker on every surface's submit path. S1–S6 `n/a`: no agent added or launched
+differently.
+
+done:    3, 5 (TUI picker: two steps, j/k+Enter past nine rows), 6 (WebUI
+         modal: a block per runner, a button per agent), 7 (the command input's
+         `submit` routes to the same picker), 8 (both wasm spawn exports reject
+         through one `rejectAmbiguous`), 10 (CLI `submit` and `session new`
+         share `formatAmbiguousCandidates` and exit 3), 24 (§2's table: the rule
+         per path, the two resume rows unchanged — see the ruling below), 27
+         (`readCandidates` is the one reader, native and wasm), **28a** (see
+         below), 29, 30, 31 (an unnamed legacy profile prints `(default)`;
+         `[0/8]` prints its zero), 32 (`RunnerCandidate.Pin` is the one pin
+         decision, the wasm hands the page `pin` rather than letting JS choose),
+         33 (a stream id of 0 is an error, never an empty candidate list), 34a
+         (agents are buttons like the modal's Cancel; the runner block became a
+         container, so no button nests in a button), 36 (`supervising-workers`:
+         how an `ambiguous_runner` answer reads and how to re-run), 37, 39
+omitted: 35 — the README's quick start runs a runner with one profile, where a
+         bare `submit` still binds, and the README describes no ambiguous-runner
+         answer to correct.
+         4 — the picker's j/k/Enter are picker-local keys, like the board
+         modal's, outside `mainKeyMap`; covered by `tui/runnerpicker_test.go`.
+n/a:     1, 2, 9, 11–23 (no flag, no task or runner field), 25 (the stream id
+         sits inside the `ambiguous_runner` branch, so status is its presence),
+         26 (a pick re-issues the failing request's own authority, captured at
+         dispatch, not the session defaults), 28, 34, 38.
+missed:  —
+
+**28a caught a pre-existing drop while the funnel was being changed.** The
+TUI command line's `submit` (`tui/dispatch.go`, and `runSpawnAction` in
+`tui/app.go`) parsed `--host` / `--runner` / `--ip` from the declaration and
+handed `DoSubmitWithOpts` an empty host in their place, so a pinned submit typed
+there went to any runner. Changing the parameter from a host string to
+`SelectorOpts` is what made the drop visible: the call sites had to name what
+they passed.
+
+**A live negative control on the rule.** `scripts/e2e-oneshot-progress.sh`
+submitted its claude probe with no `--agent` to a three-profile runner. With
+the probe left bare against this tree's `bin/`, the real CLI printed
+`ambiguous agent: 3 agents on this runner` and the script stopped at setup;
+naming `fake-claude.sh` restores it. The first run of the script had PASSED
+against a `bin/` built before the change, which proved nothing — the
+stale-binary trap, caught by checking the build time before believing the
+green.

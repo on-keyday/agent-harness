@@ -330,7 +330,9 @@ ts_of()     { printf '%s\n' "$1" | awk '{print $1}'; }
 
 echo
 echo "e2e-oneshot-progress: [1/3] claude-shaped profile (claude-stream-json)"
-read -r CLAUDE_ID CLAUDE_SUBMIT_TS < <(submit_probe "" "e2e claude probe") \
+# Named, not left empty: with three profiles on one runner a submit with no
+# --agent answers ambiguous_runner instead of picking the default.
+read -r CLAUDE_ID CLAUDE_SUBMIT_TS < <(submit_probe fake-claude.sh "e2e claude probe") \
   || setup_err "submit to the default (claude-shaped) profile failed"
 # Tail the log topic live, timestamped on arrival. Content assertions use the
 # persisted log instead (below) — this capture exists only to timestamp the
