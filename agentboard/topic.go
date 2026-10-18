@@ -57,6 +57,9 @@ type RetainedMessage struct {
 	// the server, which is where the point-to-point condition can be evaluated;
 	// the board only remembers what the author asked for.
 	NoRetireOnReply bool
+	// NoContact carries SendRequest.no_contact: the author asked that handing
+	// this message over make no contact of either route (reach spec D17).
+	NoContact bool
 }
 
 // topic holds a bounded ring of recent messages plus metadata used for TTL eviction.
@@ -108,6 +111,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		ReplyToTopic:     cfg.replyToTopic,
 		ReceivedAt:       now,
 		NoRetireOnReply:  cfg.noRetireOnReply,
+		NoContact:        cfg.noContact,
 	})
 }
 

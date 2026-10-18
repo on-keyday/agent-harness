@@ -14,7 +14,7 @@ against, which are now the files next to it.
 
 ```bash
 python3 examples/memory-viewer/memviewer.py --check           # findings, as text
-python3 examples/memory-viewer/memviewer.py --serve --port 0  # browser; 0 picks a free port
+python3 examples/memory-viewer/memviewer.py --serve           # browser, on 8765; --port 0 picks a free one
 python3 examples/memory-viewer/memviewer.py -o out.html       # one self-contained page
 ```
 
@@ -25,10 +25,15 @@ start: an edit to `memviewer.py` needs a restart, not a reload.
 ## The harness-cli part
 
 Three calls. `ls --json` for the destination list, `board topics` for whether
-anyone is subscribed to each, and `agent send --topic chat.<8-hex> --data -` to
-publish. Everything else in the file is the viewer.
+anyone is subscribed to each, and `agent send --no-contact --topic chat.<8-hex>
+--data -` to publish. Everything else in the file is the viewer.
 
-Three things it does that are worth copying into the next tool:
+Four things it does that are worth copying into the next tool:
+
+- **It opens no reply route.** The send runs in the name of whichever task's
+  environment launched the viewer, and nothing in the viewer reads a reply.
+  Without `--no-contact` the recipient would gain that task's `chat.<id>` as a
+  contact — a route to answer through that nobody is waiting on.
 
 - **The send panel exists only on a loopback bind.** `--host` off loopback
   makes the page reachable by other machines, and a form that publishes to the

@@ -627,7 +627,9 @@ Without any capability a task publishes to its **base set**:
   sender's `chat.<id>`, or the `reply_to_topic` the sender declared. Someone who
   spoke to you first can be answered whoever they are. Reading a group topic,
   or another task's topic with `board_observe`, does NOT make its posters
-  answerable. Three more limits: a reply route that is a `tree.<id>` you are
+  answerable, and neither does a message sent with `agent send --no-contact` —
+  the flag for a sender that will read no answer, such as a tool publishing in
+  a task's name. Three more limits: a reply route that is a `tree.<id>` you are
   not in stays closed; only 64 such routes are kept, and the one that has gone
   longest without writing to you again is dropped first; and a server restart
   forgets them — as can the operator, one route or all of them

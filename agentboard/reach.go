@@ -180,7 +180,8 @@ func chatShortID(topic string) (string, bool) {
 // chat.<id> / chat.<id>.*, or a reply to a message it sent. A message read off
 // a group topic, or off another task's topic with board_observe, adds nobody —
 // a read power must not become a publish power, and a busy group topic would
-// otherwise push real correspondents out of the bounded set. The server calls
+// otherwise push real correspondents out of the bounded set. Nor does one sent
+// with NoContact (D17). The server calls
 // it from the one place wait, inbox, inbox_advance and read_seq build their
 // rows.
 func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
@@ -189,7 +190,7 @@ func (b *Board) NoteDelivered(c *ConnState, msgs []RetainedMessage) {
 	}
 	_, self, _, _ := c.task.identity()
 	for _, m := range msgs {
-		if !b.addressedTo(self, m) {
+		if m.NoContact || !b.addressedTo(self, m) {
 			continue
 		}
 		switch {

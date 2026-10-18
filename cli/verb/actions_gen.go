@@ -65,6 +65,8 @@ type AgentSendAction struct {
 	InReplyTo uint64
 	// keep this message on the board even after its recipient replies
 	NoRetireOnReply bool
+	// open no reply route: the recipient gains no contact from this message (for a tool that waits for no …
+	NoContact bool
 	// the message body is free-form; --data or stdin are the alternatives
 	Positional string
 	Kind       string
@@ -2164,6 +2166,7 @@ func init() {
 			a.ReplyTo = b.Str("reply-to")
 			a.InReplyTo = uint64Of(b.Flags["in-reply-to"])
 			a.NoRetireOnReply = b.Bool("no-retire-on-reply")
+			a.NoContact = b.Bool("no-contact")
 			a.Positional = b.Trail
 			return a, nil
 		},

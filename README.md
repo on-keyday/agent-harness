@@ -986,7 +986,10 @@ WebUI) for the operator, which is what to read before granting `board_peer`.
 `board clear-contacts <task> [--topic T]` forgets one of them, or all (gated on
 `purge` and its scope; TUI: `x` in the subscribers view; WebUI: × and 「全消去」
 on the row) — the only way to close a route short of a server restart, since
-`caps set` removing `board_peer` leaves contacts alone.
+`caps set` removing `board_peer` leaves contacts alone. A message sent with
+`agent send --no-contact` adds no contact at all — for a tool that publishes in
+a task's name and reads no answer; it refuses no reply that the recipient's
+reach allows anyway.
 **Reading** is open except for other tasks' direct messages: another
 task's `chat.<short-id>` (and its `.<suffix>` side channels), `chat.operator`,
 and a `tree.<id>` the reader is not in need `board_observe`, by any agent verb.

@@ -128,6 +128,7 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 	inReplyTo := r.InReplyTo
 	replyToTopic := string(r.ReplyToTopic)
 	noRetire := r.NoRetireOnReply()
+	noContact := r.NoContact()
 	streamID := r.PayloadStreamId
 
 	go func() {
@@ -167,6 +168,9 @@ func (h *TaskHandler) handleAgentSend(conn ConnHandle, requestID uint32, r *prot
 		var sendOpts []agentboard.SendOption
 		if noRetire {
 			sendOpts = append(sendOpts, agentboard.NoRetireOnReply())
+		}
+		if noContact {
+			sendOpts = append(sendOpts, agentboard.NoContact())
 		}
 		// Where the SENDER wants replies to this message to go. Recorded on the
 		// retained entry and read back by resolveReplyTarget, so the replier

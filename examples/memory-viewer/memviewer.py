@@ -2276,9 +2276,11 @@ class Handler(BaseHTTPRequestHandler):
         text = compose(mem, ix, ix_name, comment,bool(req.get("meta")), bool(req.get("body")))
         # --data - reads the body from stdin. The trailing-words form would
         # let a body that starts with a dash be re-read as a flag, and the
-        # verb's own notes call that out.
+        # verb's own notes call that out. --no-contact: nothing here reads a
+        # reply (TOOL_NOTE), so the launching task's chat.<id> must not become
+        # a reply route in the recipient's contacts.
         n = len(text.encode("utf-8"))
-        ok, out, err = _cli(["agent", "send", "--topic", topic, "--data", "-"], stdin=text)
+        ok, out, err = _cli(["agent", "send", "--no-contact", "--topic", topic, "--data", "-"], stdin=text)
         warn = ""
         if ok and n > HOOK_INLINE_LIMIT:
             warn = (f"{n}B は inline 上限 {HOOK_INLINE_LIMIT}B 超 — 届いてはいるが相手の"

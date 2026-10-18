@@ -270,6 +270,38 @@ func TestContactsOpenTheReplyRoute(t *testing.T) {
 	}
 }
 
+// A message sent with NoContact opens neither of its routes (D17): not the
+// declared reply_to, not the sender's chat.<id>. The plain message read in the
+// same inbox is the control that the delivery path does add a contact.
+func TestNoContactMessageOpensNoRoute(t *testing.T) {
+	r := newFakeReach()
+	me, peer, other := tidN(2), tidN(4), tidN(5)
+	r.add(me, protocol.TaskID{}, 0)
+	b := reachBoard(t, r)
+	c := b.Attach(protocol.RunnerID{}, me, "h", "bash")
+	if err := b.Subscribe(c, SelfTopic(me)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Send(SelfTopic(me), []byte("fyi"), protocol.RunnerID{}, peer, "h", "", 0,
+		NoContact(), WithReplyTo("review.results"), WithNoWake()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Send(SelfTopic(me), []byte("q?"), protocol.RunnerID{}, other, "h", "", 0, WithNoWake()); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := b.Inbox(c, 0)
+	b.NoteDelivered(c, msgs)
+	if b.Publishable(c, SelfTopic(peer)) {
+		t.Error("a NoContact message made its sender a contact")
+	}
+	if b.Publishable(c, "review.results") {
+		t.Error("a NoContact message made its declared reply_to a contact")
+	}
+	if !b.Publishable(c, SelfTopic(other)) {
+		t.Error("the plain message read alongside it did not make its sender a contact")
+	}
+}
+
 func TestContactsAreBounded(t *testing.T) {
 	ts := newTaskState()
 	for i := 0; i < maxContacts+1; i++ {

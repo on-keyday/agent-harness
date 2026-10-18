@@ -1443,7 +1443,15 @@ format AgentSendRequest:
     # a shared topic is never auto-retired however this bit is set, because one
     # subscriber's reply says nothing about whether the others have read it.
     no_retire_on_reply :u1
-    reserved :u7
+    # no_contact asks that handing this message over make no contact of either
+    # of its reply routes -- not reply_to_topic, not the sender's
+    # chat.<short-id> (agentboard reach spec, D17). For a tool that publishes
+    # in a task's name and waits for no answer. It refuses no reply: one still
+    # passes wherever the replier's reach allows it without the contact.
+    # Negative for the reason no_retire_on_reply is. A server built before it
+    # reads the bit as reserved and ignores it, so the contact is made anyway.
+    no_contact :u1
+    reserved :u6
     # reply_to_topic is where a reply to THIS message is routed. Empty = the
     # sender's own chat.<short-id>, which is what every message did before this
     # field existed and what one still does when it says nothing.

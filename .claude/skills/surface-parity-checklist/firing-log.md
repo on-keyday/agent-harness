@@ -3051,3 +3051,23 @@ came from `agent_profiles_json(["bash","sandbox-pi"])`:
 - `--resume-conversation` recalled the codeword;
 - an interactive session took a turn through `session send`;
 - pi wrote a file in the worktree, which the host saw as owned by its own user.
+
+### 2026-10-18 (pre-landing) — `agent send --no-contact` (reach spec D17)
+
+Operator ask: memviewer's send should not make the launching task a contact of
+the recipient. A new agent-face option plus a request bit.
+
+done:    1 (`agentSendFlags(false)` row, so `send` only), 24 (`dispatch` does
+         not declare it: it waits for the reply whose route the flag exists not
+         to open — pinned by `TestNoContactIsOnlyOnAgentSend`), 27 + 28a (two
+         `AgentSendRequest{` builds in production: `send.go` sets the bit,
+         `dispatch.go` is the omitted path above), 35 (README Board reach),
+         36 (`harness-cli` and `harness-cli-from-a-tool` skills, both mirrors),
+         37 (reach spec Amendment D17)
+omitted: 4–7 — `agent send` is CLI-only (`NoModalSurface` already says no TUI
+         action or WebUI element reaches it); the operator face (`board send`,
+         TUI/WebUI composers) gets nothing, because an operator message without
+         `--reply-to` already makes no contact (spec D17).
+n/a:     everything else (no task/runner field, no persistence: the board is in
+         memory; 25: negative bit, zero = old behaviour, no set-style RPC).
+missed:  —

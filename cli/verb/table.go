@@ -1618,6 +1618,7 @@ var Verbs = []VerbSpec{
 			"The ok line reports bytes and source, so a body that went out wrong says so at once.",
 			"delivered_to counts subscribers. On chat.operator it is always 0 and that is the reply arriving: nothing can subscribe there, and the operator reads it on the board.",
 			"--reply-to R routes replies to THIS message to R instead of your own chat.<short-id>; the peer answers with --in-reply-to alone.",
+			"--no-contact adds neither route to the recipient's contacts. A reply is not refused: it still passes wherever the recipient's reach allows it without the contact.",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "AgentSendAction",
@@ -2834,6 +2835,10 @@ func agentSendFlags(withTimeout bool) []Flag {
 			Help: "seq of the message being replied to; with it, --topic may be omitted (the server routes the reply where that message asked)"},
 		Flag{Name: "no-retire-on-reply", Type: FlagBool, Default: false, Field: "NoRetireOnReply",
 			Help: "keep this message on the board even after its recipient replies"},
+		// Not on dispatch: it waits for the reply this flag exists not to
+		// open a route for (reach spec D17).
+		Flag{Name: "no-contact", Type: FlagBool, Default: false, Field: "NoContact",
+			Help: "open no reply route: the recipient gains no contact from this message (for a tool that waits for no answer)"},
 	)
 }
 

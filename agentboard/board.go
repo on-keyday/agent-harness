@@ -579,6 +579,7 @@ type sendConfig struct {
 	replyToTopic    string
 	senderKind      protocol.SenderKind
 	noWake          bool
+	noContact       bool
 }
 
 // NoRetireOnReply marks the message as one that must survive being answered:
@@ -588,6 +589,13 @@ type sendConfig struct {
 // on its own.
 func NoRetireOnReply() SendOption {
 	return func(c *sendConfig) { c.noRetireOnReply = true }
+}
+
+// NoContact marks the message as one that opens no reply route: NoteDelivered
+// adds neither its ReplyToTopic nor its sender's chat.<id> to the recipient's
+// contacts (reach spec D17). Negative for the reason NoRetireOnReply is.
+func NoContact() SendOption {
+	return func(c *sendConfig) { c.noContact = true }
 }
 
 // WithReplyTo records where replies to this message should be routed, for

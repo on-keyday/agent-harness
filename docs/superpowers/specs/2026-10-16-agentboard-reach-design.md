@@ -64,6 +64,7 @@ the author while writing — those are the rows worth a second look.
 | D14 | ~~A refusal is answered as `not_permitted`, a status of its own on every refused verb~~ — **reversed** (see Amendment): a refusal is the ordinary `PermissionDenied` response naming `board_peer` or `board_observe`, the one every capability denial already uses | operator (reversal, 2026-10-16) |
 | D15 | `list_retained` on a topic the caller cannot read is not refused: it lists only the rows the caller published, and the response says so (`own_only`). A sender checking whether its message still sits on a peer's topic needs no bit | operator |
 | D16 | `board_peer` follows the task's scope and `--scope-for`, like every other bit; a free-form topic needs it with a global scope (Amendment, D16) | operator (scope); this spec (free-form) |
+| D17 | `agent send --no-contact` publishes a message that adds nothing to its recipient's contacts (Amendment, D17) | operator |
 
 ## 1. Topic namespaces
 
@@ -507,6 +508,48 @@ next server restart.
   hint now says the grant must also cover the target (`--scope-for
   board_peer=ids:<task>`) or be global for a free-form topic, because "requires
   board_peer" is otherwise misread by a task that holds it.
+
+## Amendment 2026-10-18 — a send that opens no reply route (D17)
+
+**D17, operator (2026-10-18): `agent send --no-contact` publishes a message
+that adds nothing to its recipient's contacts.** The case is a tool that
+publishes in a task's name and has no inbox of its own. The memory viewer
+(`examples/memory-viewer/memviewer.py`) sends from whichever task's environment
+launched it, so §3 makes that task's `chat.<id>` a contact of every recipient:
+a reply route nobody is waiting on. What the operator wants is a send that
+expects no reply; not making the contact is the means chosen for it.
+
+- **What it skips:** both routes of §3, `M.ReplyToTopic` and
+  `SelfTopic(M.FromTask)`. The bit is frozen on the retained entry
+  (`RetainedMessage.NoContact`) and `NoteDelivered` passes over such a message.
+  Nothing else about the message changes: it is delivered, wakes its
+  subscribers and is retired on reply as before.
+- **What it does not do (operator, 2026-10-18):** a reply is not refused.
+  `--in-reply-to` resolves as before and passes whenever §2 passes without the
+  contact — the sender is the recipient's creator or child, or the recipient
+  itself, or the recipient's `board_peer` covers it. Two further means were
+  proposed and not taken: refusing every reply with `no_reply_route`, as for an
+  operator message without a route, and telling the recipient that the message
+  has no route (a bit on `DeliveredMessage`). A task without `board_peer` whose
+  reply is refused gets the ordinary denial naming `board_peer`, which is true
+  of that topic; granting it is an operator act.
+- **A contact already held stays.** The bit governs what this message adds. A
+  route the recipient holds from an earlier message is untouched;
+  `board clear-contacts` removes it.
+- **`--reply-to` combines with it (this spec).** The declared route still
+  decides where `--in-reply-to` lands; it just does not become a contact.
+  `--reply-to chat.operator` is in every base set, so a reply there always
+  passes; any other route passes only when §2 does.
+- **Agent face, `send` only (this spec).** `agent dispatch` blocks for the
+  reply to the message it sends, and this flag exists not to open the route
+  that reply would take, so `dispatch` does not offer it. The operator face
+  has nothing to add: an operator message without `--reply-to` already adds
+  no contact, and one with it is sent in order to open that route.
+- **Wire:** `AgentSendRequest.no_contact :u1`, taken from `reserved` (now
+  `:u6`), negative so that zero keeps §3's behaviour. The layout does not
+  change. A server built before it decodes the bit into `reserved` without
+  checking it, so a new client sending to an old server gets the contact made
+  anyway, with no error. Upgrade the server first, as for every change here.
 
 ## Out of scope
 

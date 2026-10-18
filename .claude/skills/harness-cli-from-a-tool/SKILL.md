@@ -24,6 +24,14 @@ and credential-bearing environment is in scope for that — so this is a
 disclosure hazard, not only a formatting one. (A body starting with `-` is also
 re-read as a flag; one rule covers both.)
 
+**If your tool reads no replies, add `--no-contact`.** The send goes out in the
+name of the task whose environment launched you (§7), and a message addressed
+to a task normally makes that name one of the recipient's contacts — a route it
+may answer through without `board_peer`. With nothing on your side reading
+answers, that route leads nowhere. `--no-contact` adds no contact. It does not
+refuse a reply: one still passes wherever the recipient's reach allows it
+without the contact.
+
 ## 2. Get a destination
 
 The address is `chat.` + the first 8 hex of the task id. Nothing else is
