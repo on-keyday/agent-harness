@@ -1534,8 +1534,7 @@ Run WS+UDP dualstack if you want both.
   want; set it for an agent whose interactive entry point needs a
   subcommand, and the runner then also requires
   `--agent-resume-interactive-argv` so the resume open cannot silently
-  drop that subcommand. `--claude-bin` remains as a
-  deprecated alias for `--agent-bin`; `--no-worktree --agent-bin
+  drop that subcommand. `--no-worktree --agent-bin
   {bash,cmd.exe,powershell.exe}` is also a supported pattern for
   generic-process sandbox slots.
 

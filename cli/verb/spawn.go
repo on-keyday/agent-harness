@@ -62,11 +62,8 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope",
 		},
 		{
-			// --claude-arg is the deprecated spelling and accumulates into the
-			// SAME list: the CLI renamed it and the TUI kept only the old
-			// name, which is the drift this declaration ends.
-			Name: "agent-arg", Aliases: []string{"claude-arg"}, Type: FlagString, Custom: argListValue, Field: "ExtraArgs",
-			Help: "extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args); --claude-arg is a deprecated alias for it",
+			Name: "agent-arg", Type: FlagString, Custom: argListValue, Field: "ExtraArgs",
+			Help: "extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)",
 		},
 		// Runner pinning. Absent from the TUI's submit before the migration.
 		{Name: "runner", Type: FlagString, Default: "", Field: "Runner",
@@ -148,7 +145,7 @@ func spawnValidate(b Bound) error {
 	return nil
 }
 
-// argListValue backs --agent-arg / --claude-arg.
+// argListValue backs --agent-arg.
 var argListValue = &CustomValue{
 	New: func() flag.Value { return &stringList{} },
 	Get: func(v flag.Value) any {

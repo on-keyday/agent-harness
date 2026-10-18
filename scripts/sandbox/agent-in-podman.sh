@@ -457,7 +457,7 @@ else
   [ "${#A_CONFIG_MOUNTS[@]}" -eq 0 ] && auth_mode="none"
 fi
 # Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
-# runner forwards via --claude-args / submit --claude-arg) arrive in "$@". The
+# runner forwards via --agent-args / submit --agent-arg) arrive in "$@". The
 # container is the confinement boundary; the runner owns claude's arg policy.
 #
 # TTY: the runner runs an interactive session under a real PTY (exec.ExecuteCommand

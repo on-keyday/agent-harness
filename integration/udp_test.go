@@ -108,7 +108,7 @@ func startDualStackServer(t *testing.T) (wsCID, udpCID objproto.ConnectionID, ca
 // thin variant of startRunner that doesn't assume WS.
 func startRunnerWithCID(t *testing.T, serverCID objproto.ConnectionID, repo, hostname string) *runnerHandle {
 	t.Helper()
-	claudeBin, err := filepath.Abs("../testdata/fake-claude.sh")
+	agentBin, err := filepath.Abs("../testdata/fake-claude.sh")
 	if err != nil {
 		t.Fatalf("resolve fake-claude.sh: %v", err)
 	}
@@ -122,7 +122,7 @@ func startRunnerWithCID(t *testing.T, serverCID objproto.ConnectionID, repo, hos
 			AllowedRoots:     []string{repo},
 			MaxTasks:         1,
 			Hostname:         hostname,
-			Profiles:         singleAgentProfile(claudeBin),
+			Profiles:         singleAgentProfile(agentBin),
 		})
 	}()
 

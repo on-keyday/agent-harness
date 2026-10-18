@@ -80,7 +80,7 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
 	oi.Selector = opts.Selector
-	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(opts.ExtraArgs)
+	oi.ExtraArgs = protocol.AgentArgsFromStrings(opts.ExtraArgs)
 	oi.RequestedCaps = opts.Caps
 	oi.SetResumeCapsOverride(opts.ResumeCapsOverride)
 	oi.SetResumeConversation(opts.ResumeConversation)

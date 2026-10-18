@@ -106,9 +106,9 @@ func flagLabel(f Flag) string {
 
 // helpFlagColumn caps how far the description column is pushed right. A verb
 // whose longest spelling is wider than this puts that one flag on its own
-// line, rather than indenting every other description past it: `--agent-arg,
-// --claude-arg AGENT-ARG` is 35 columns and would otherwise move `--task`'s
-// description a third of the way across the terminal.
+// line, rather than indenting every other description past it: ssh-gateway's
+// `--authorized-keys AUTHORIZED-KEYS` is 33 columns and would otherwise move
+// every other description a third of the way across the terminal.
 const helpFlagColumn = 24
 
 // HelpBlock renders the answer to `<verb> -h`: everything UsageLines carries,

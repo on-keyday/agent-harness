@@ -361,12 +361,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   //   override re-grants caps on RESUME and is a no-op / misleading otherwise.
   // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
   function sessionReq({ repo = "", task = "", host = "", runner = "", ip = "", agent = "",
-                        claudeArgs = [], resumeTaskId = "", resumeConversation = false,
+                        agentArgs = [], resumeTaskId = "", resumeConversation = false,
                         eventStream = false,
                         caps = null, scope = null, scopeFor = null }) {
     const req = {
       repo, task, host, agent,
-      claudeArgs,
+      agentArgs,
       resumeTaskId,
       resumeConversation,
       // TaskKind_Stream: structured events instead of a PTY. The wasm side
@@ -409,7 +409,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const runnerSelect = document.getElementById("runner-select");
   const hostSelect   = document.getElementById("host-select");
   const agentSelect  = document.getElementById("agent-select");
-  const claudeArgs   = document.getElementById("claude-args-input");
+  const agentArgs    = document.getElementById("agent-args-input");
   // Single unified task-id field, shared by reattach (target a detached
   // session) and resume (reuse a terminal task's worktree via Submit / Open).
   const taskIdInput  = document.getElementById("task-id-input");
@@ -515,11 +515,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderTaskList(lastTasks);
   });
 
-  // currentClaudeArgs returns the shell-tokenised args from the input box.
+  // currentAgentArgs returns the shell-tokenised args from the input box.
   // Reused by submit (cmdline) and Open buttons so the user only edits one field.
-  const currentClaudeArgs = () => {
-    if (!claudeArgs) return [];
-    const raw = claudeArgs.value.trim();
+  const currentAgentArgs = () => {
+    if (!agentArgs) return [];
+    const raw = agentArgs.value.trim();
     if (!raw) return [];
     return tokenize(raw);
   };
@@ -2843,7 +2843,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     composeHost: () => (hostSelect ? hostSelect.value || "" : ""),
     composeAgent: () => (agentSelect ? agentSelect.value || "" : ""),
     resumeTaskID: () => currentResumeTaskID(),
-    claudeArgs: () => currentClaudeArgs(),
+    agentArgs: () => currentAgentArgs(),
     sessionReq: (o) => sessionReq(o),
     setParentMessage: (id, swap, r) => setParentMessage(id, swap, r),
     filteredTaskRows: () =>
@@ -3605,7 +3605,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     repo: runnerSelect.value || "",
     host: hostSelect ? (hostSelect.value || "") : "",
     agent: agentSelect ? (agentSelect.value || "") : "",
-    claudeArgs: currentClaudeArgs(),
+    agentArgs: currentAgentArgs(),
     resumeTaskId: currentResumeTaskID(),
     // Compose was the one surface with no way to say this. The task sheet
     // offers all four combinations as buttons and the command input takes
@@ -4370,13 +4370,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // session and asks the runner to resume the agent conversation too.
   const resumeTaskById = async (id) => {
     if (!id) return;
-    const args = currentClaudeArgs();
+    const args = currentAgentArgs();
     // agent reuses the Compose dropdown's current selection (this quick-resume
     // path — from the notification feed — only has the task id, not the task's
     // own AgentProfile, so it can't default per-task the way buildTaskSheet's
     // per-row dropdown does).
     const agent = agentSelect ? (agentSelect.value || "") : "";
-    const req = sessionReq({ agent, claudeArgs: args, resumeTaskId: id, resumeConversation: true });
+    const req = sessionReq({ agent, agentArgs: args, resumeTaskId: id, resumeConversation: true });
     try {
       const taskID = await window.harness.startInteractive(req);
       showTerminalView();
@@ -5475,7 +5475,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
-    // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a
+    // Reflect the Compose "Extra agent args" box (same as Submit / Open) so a
     // resume can carry --permission-mode etc. without going through the cmdline.
     // Assigned variants mirror the TUI's r/R; any-runner variants mirror u/U and
     // intentionally skip t.assignedTo so the ambiguous runner picker can reopen.
@@ -5504,8 +5504,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       agentRow.append(agentLabel, agentSel);
       sheet.appendChild(agentRow);
 
-      const doResume = async (claudeArgs, note, resumeConversation = false, runner = "") => {
-        const req = sessionReq({ agent: agentSel.value || "", claudeArgs, resumeTaskId: t.id, resumeConversation, runner });
+      const doResume = async (agentArgs, note, resumeConversation = false, runner = "") => {
+        const req = sessionReq({ agent: agentSel.value || "", agentArgs, resumeTaskId: t.id, resumeConversation, runner });
         try {
           const id = await window.harness.startInteractive(req);
           showTerminalView();
@@ -5521,11 +5521,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };
       if (assignedRunner) {
-        addItem("▶ Resume assigned", "", () => doResume(currentClaudeArgs(), "resumed assigned", false, assignedRunner));
-        addItem("▶ Resume conversation assigned", "", () => doResume(currentClaudeArgs(), "resumed conversation assigned", true, assignedRunner));
+        addItem("▶ Resume assigned", "", () => doResume(currentAgentArgs(), "resumed assigned", false, assignedRunner));
+        addItem("▶ Resume conversation assigned", "", () => doResume(currentAgentArgs(), "resumed conversation assigned", true, assignedRunner));
       }
-      addItem("▶ Resume any runner", "", () => doResume(currentClaudeArgs(), "resumed any runner"));
-      addItem("▶ Resume conversation any runner", "", () => doResume(currentClaudeArgs(), "resumed conversation any runner", true));
+      addItem("▶ Resume any runner", "", () => doResume(currentAgentArgs(), "resumed any runner"));
+      addItem("▶ Resume conversation any runner", "", () => doResume(currentAgentArgs(), "resumed conversation any runner", true));
     }
 
     // Files — always available.
@@ -7431,7 +7431,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         runner: b.flags.runner || "",
         ip: b.flags.ip || "",
         agent: b.flags.agent || ctx.composeAgent(),
-        claudeArgs: (b.custom && b.custom["agent-arg"]) || ctx.claudeArgs(),
+        agentArgs: (b.custom && b.custom["agent-arg"]) || ctx.agentArgs(),
         // b.set, not truthiness: --caps none is a real grant of nothing.
         caps: b.set && b.set.caps ? b.flags.caps : null,
         scope: b.set && b.set.scope ? b.flags.scope : null,

@@ -134,7 +134,7 @@ func TestSubmitRequestResumeRoundTrip(t *testing.T) {
 	}
 	orig.SetRepoPath([]byte("/r"))
 	orig.SetPrompt([]byte("p"))
-	orig.ExtraArgs = protocol.ClaudeArgsFromStrings([]string{"--resume", "uuid-1"})
+	orig.ExtraArgs = protocol.AgentArgsFromStrings([]string{"--resume", "uuid-1"})
 	var resumeID protocol.TaskID
 	for i := range resumeID.Id {
 		resumeID.Id[i] = byte(i + 1)

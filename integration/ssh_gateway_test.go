@@ -39,9 +39,9 @@ func TestSSHGatewayE2E(t *testing.T) {
 	serverCID := startServer(t)
 	repo := tempRepo(t)
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  2,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeSlowPath(t),
+		MaxTasks: 2,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeSlowPath(t),
 	})
 
 	c := dialClient(t, serverCID)

@@ -158,7 +158,7 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) (*protocol
 
 	body := protocol.AssignTaskBody{
 		AuthTicket: ticket,
-		ExtraArgs:  protocol.ClaudeArgsFromStrings(task.ExtraArgs),
+		ExtraArgs:  protocol.AgentArgsFromStrings(task.ExtraArgs),
 	}
 	body.SetResumeConversation(task.ResumeConversation)
 	body.SetRepoPath([]byte(task.RepoPath))

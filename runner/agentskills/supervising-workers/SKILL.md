@@ -79,8 +79,6 @@ safety boundaries (it is not the same as `bypassPermissions`). Use it
 as the default for delegated work; reserve narrower modes for cases
 where you have an explicit reason.
 
-`--claude-arg` remains accepted as a deprecated alias for older scripts.
-
 ### Give the session a PTY size if its agent draws a TUI
 
 ```bash

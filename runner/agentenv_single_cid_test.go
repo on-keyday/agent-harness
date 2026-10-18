@@ -37,10 +37,10 @@ func TestSpawnedAgentGetsOneServerCIDNotTheCandidateList(t *testing.T) {
 
 	live := mustParseCID(t, "ws:127.0.0.1:8539-31062")
 	p := &Process{
-		ClaudeBin: script,
-		CWD:       dir,
-		Timeout:   10 * time.Second,
-		Env:       BuildAgentEnv(AgentEnvSpec{ServerCID: live}),
+		AgentBin: script,
+		CWD:      dir,
+		Timeout:  10 * time.Second,
+		Env:      BuildAgentEnv(AgentEnvSpec{ServerCID: live}),
 	}
 
 	var mu sync.Mutex

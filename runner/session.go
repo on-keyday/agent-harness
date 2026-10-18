@@ -525,8 +525,7 @@ func (s *Session) DeliverChainedRelayResponse(resp protocol.ChainedRelayResponse
 // prompt ignored). resume selects the resume-conversation argv templates.
 // extra is the caller-supplied per-task extra args; it is merged after the
 // profile's own AgentArgs baseline (profile args first, per-task extras
-// last, so a per-task flag wins on conflict — same ordering as the old
-// session-level ExtraClaudeArgs/body.ExtraArgs merge).
+// last, so a per-task flag wins on conflict).
 //
 // Returns an error (never a silent fallback to the default profile) if the
 // profile name is unknown or its argv templates are invalid — callers must
@@ -719,7 +718,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
 	// flags are largely last-wins).
 	proc := &Process{
-		ClaudeBin:                 agentProfile.Bin,
+		AgentBin:                  agentProfile.Bin,
 		CWD:                       dir,
 		Timeout:                   s.Timeout,
 		ExtraArgs:                 mergeExtraArgs(agentProfile.AgentArgs, body.ExtraArgs.AsStrings()),

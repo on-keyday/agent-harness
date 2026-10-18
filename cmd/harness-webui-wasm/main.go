@@ -970,7 +970,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			opts := args[0]
 			repo := opts.Get("repo").String()
 			task := opts.Get("task").String()
-			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
+			extraArgs := jsArrayToStringSlice(opts.Get("agentArgs"))
 			resumeVal := opts.Get("resumeTaskId")
 			resumeTaskID := ""
 			if resumeVal.Type() == js.TypeString {
@@ -2637,7 +2637,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			// js.Value.String() on a non-string type stringifies as "<TYPE>"
 			// rather than "" (see syscall/js), so gate on Type() explicitly
 			// instead of comparing the stringified form.
-			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
+			extraArgs := jsArrayToStringSlice(opts.Get("agentArgs"))
 			selOpts, selErr := selectorFromOpts(opts)
 			if selErr != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", selErr))

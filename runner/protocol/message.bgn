@@ -59,21 +59,21 @@ format AllowedRoot:
     path_len :u16
     path :[path_len]u8
 
-# ClaudeArg is one CLI argument forwarded verbatim to the spawned claude process.
+# AgentArg is one CLI argument forwarded verbatim to the spawned agent process.
 # Per-arg length is u16 so individual flags / values can be up to 64KiB; in
 # practice they are short (`--resume <uuid>`, `--add-dir <path>`).
-format ClaudeArg:
+format AgentArg:
     arg_len :u16
     arg :[arg_len]u8
 
-# ClaudeArgs is a length-prefixed list of per-task extra CLI arguments.
+# AgentArgs is a length-prefixed list of per-task extra CLI arguments.
 # Inserted by clients (cli / tui / webui) at submit / open-interactive time;
 # carried through SubmitRequest / OpenInteractiveRequest to AssignTask /
 # OpenExecRunnerRequest so the runner can append them to the runner-global
-# --claude-args baseline before exec'ing claude.
-format ClaudeArgs:
+# --agent-args baseline before exec'ing the agent.
+format AgentArgs:
     args_len :u16
-    args :[args_len]ClaudeArg
+    args :[args_len]AgentArg
 
 # AgentProfileName is one named agent-profile a runner advertises (e.g.
 # "claude" / "codex" / a custom launch profile). Carried in RunnerHello /
@@ -109,7 +109,7 @@ format RunnerHello:
     max_tasks :u16
     allowed_roots_len :u8
     allowed_roots :[allowed_roots_len]AllowedRoot
-    # basename of the agent binary the runner runs (--claude-bin): "claude" /
+    # basename of the agent binary the runner runs (--agent-bin): "claude" /
     # "gemini" / "codex" / "bash" / ... . Empty = unknown.
     agent_bin_len :u8
     agent_bin :[agent_bin_len]u8
@@ -119,7 +119,7 @@ format RunnerHello:
     skills_injected :u1
     reserved :u7
     # named agent profiles this runner can launch a session under (empty =
-    # runner has no profile concept beyond its single --claude-bin).
+    # runner has no profile concept beyond its single --agent-bin).
     agent_profiles_len :u8
     agent_profiles :[agent_profiles_len]AgentProfileName
     # Appended at the END: what this process is still holding. The server reads
@@ -274,7 +274,7 @@ format AssignTaskBody:
     repo_path :[repo_path_len]u8
     prompt_len :u32
     prompt :[prompt_len]u8
-    extra_args :ClaudeArgs
+    extra_args :AgentArgs
     resume_conversation :u1
     reserved :u7
     # agent_profile: same semantics as SubmitRequest.agent_profile.
@@ -303,7 +303,7 @@ format OpenExecRunnerRequest:
                       # runner; runner looks it up via
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
-    extra_args :ClaudeArgs
+    extra_args :AgentArgs
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
     resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
     # relayed from OpenInteractiveRequest.event_stream: run the profile's
@@ -1012,7 +1012,7 @@ format SubmitRequest:
     selector :RunnerSelector
     prompt_len :u32
     prompt :[prompt_len]u8
-    extra_args :ClaudeArgs
+    extra_args :AgentArgs
     # requested_caps is a Capability bitmask the spawning principal requests for
     # this task. The server computes caps_child = caps_creator ∩ requested_caps.
     # Use Capability.all (0xfff) to inherit the creator's full set (the default
@@ -1036,12 +1036,12 @@ format SubmitRequest:
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
     # the runner re-attaches its worktree to the retained `harness/<id>` branch
     # — claude's project key (~/.claude/projects/<cwd-hash>/) therefore lines
-    # up with the previous run, which is what makes `--claude-arg --resume
+    # up with the previous run, which is what makes `--agent-arg --resume
     # <session-uuid>` actually work after the 2.1.123 picker regression.
     resume_task_id :TaskID
     # agent_profile selects a named agent profile advertised by the target
     # runner (see AgentProfileName / RunnerHello.agent_profiles). Empty =
-    # runner default (--claude-bin).
+    # runner default (--agent-bin).
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
     # scope bounds which tasks this task's capabilities may target; see
@@ -1827,7 +1827,7 @@ format OpenInteractiveRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     selector :RunnerSelector
-    extra_args :ClaudeArgs
+    extra_args :AgentArgs
     # requested_caps: same semantics as SubmitRequest.requested_caps.
     requested_caps :Capability
     # See SubmitRequest.resume_task_id — same semantics, applied to the
@@ -4086,7 +4086,7 @@ format GitQueryResult:
 # goes in a separate trsf stream).
 # ---------------------------------------------------------------------------
 
-# ExecArg is one argv element. u16 per element matches ClaudeArg, for the same
+# ExecArg is one argv element. u16 per element matches AgentArg, for the same
 # reason: individual arguments are short in practice and 64 KiB is past any
 # real one.
 format ExecArg:

@@ -31,7 +31,7 @@ func TestExecRunLongCommandOverBothTransports(t *testing.T) {
 
 	wsCID, udpCID, _ := startDualStackServer(t)
 	repo := tempRepo(t)
-	startRunner(t, udpCID, runnerOpts{MaxTasks: 2, Roots: []string{repo}, ClaudeBin: fakeClaudeSlowPath(t)})
+	startRunner(t, udpCID, runnerOpts{MaxTasks: 2, Roots: []string{repo}, AgentBin: fakeClaudeSlowPath(t)})
 
 	wsClient := dialClient(t, wsCID)
 	taskID := openLiveSession(t, wsClient, repo)

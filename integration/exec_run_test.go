@@ -36,9 +36,9 @@ func TestExecRunE2E(t *testing.T) {
 		// Four: the main task, plus the dirty and clean ones the terminal-task
 		// cases open. At two, the last openLiveSession got runner_busy and the
 		// case failed for capacity rather than for what it asserts.
-		MaxTasks:  4,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeSlowPath(t),
+		MaxTasks: 4,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeSlowPath(t),
 	})
 
 	c := dialClient(t, serverCID)

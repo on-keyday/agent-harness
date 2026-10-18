@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -130,8 +130,8 @@ Arguments: $ARGUMENTS
    slot a `cmd` task runs in that slot's roots and worktree like any agent.
    `--dry-run` shows what it expanded to. Every runner then offers several
    agents, so a spawn without `--agent` answers `ambiguous_runner` with the
-   choices instead of picking one. An `all` slot **refuses** `--agent-args` /
-   `--claude-args`: they would reach only the default profile, the
+   choices instead of picking one. An `all` slot **refuses** `--agent-args`:
+   they would reach only the default profile, the
    unsandboxed claude, so a skip-the-prompt flag meant for the sandbox would
    run the host agent without prompts. Use per-task `--agent-arg`; the
    sandbox-* presets carry their own flags.
@@ -268,7 +268,7 @@ Arguments: $ARGUMENTS
    This is the absolute-path rule below, applied to the one preset that was
    still ignoring it.
 
-   **Windows: always specify `--agent-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
+   **Windows: always specify `--agent-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `agent-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
    **Use forward slashes (`/`) in Windows paths**, not backslashes. The agent (claude) sometimes executes shell commands via git-bash on Windows, where backslashes in path literals get interpreted as escape sequences and produce subtly broken commands. Forward slashes are accepted by every Windows shell (cmd, powershell, git-bash) and every Windows API that takes a path string, so they are the safe portable form. Do not "normalize" the slashes back to `\` when writing into this file or into command lines.
 

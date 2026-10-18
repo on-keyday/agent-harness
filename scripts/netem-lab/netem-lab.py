@@ -536,7 +536,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
     if args.agent == "claude":
         runner_args += [
             "--agent-bin", "claude",
-            "--claude-args", f"--model {args.model}",
+            "--agent-args", f"--model {args.model}",
             "--agent-oneshot-argv",
             "--output-format stream-json --verbose {args} -p {prompt}",
             "--agent-resume-oneshot-argv",

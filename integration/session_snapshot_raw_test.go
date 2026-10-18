@@ -40,9 +40,9 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 	serverCID := startServer(t)
 	repo := tempRepo(t)
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeAnsiPath(t),
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeAnsiPath(t),
 	})
 
 	c1 := dialClient(t, serverCID)

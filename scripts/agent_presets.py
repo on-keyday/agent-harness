@@ -123,7 +123,7 @@ _STREAM_ADAPTER = str(
 KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "bin": "claude",
-        # --output-format/--verbose precede {args} so a per-task --claude-args
+        # --output-format/--verbose precede {args} so a per-task --agent-arg
         # can still override them (claude flags are last-wins). Verified
         # against claude 2.1.220: --output-format stream-json --verbose is
         # accepted ahead of -p.
@@ -403,7 +403,6 @@ KNOWN_AGENT_PRESETS["sandbox"] = dict(KNOWN_AGENT_PRESETS["sandbox-claude"])
 # the conflict policy rationale).
 _CONFLICTING_FLAGS = (
     "--agent-bin",
-    "--claude-bin",
     "--agent-oneshot-argv",
     "--agent-resume-oneshot-argv",
     "--agent-interactive-argv",
@@ -510,14 +509,14 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     JSON string arrays (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
-    --agent-bin/--claude-bin/--agent-oneshot-argv/
+    --agent-bin/--agent-oneshot-argv/
     --agent-resume-oneshot-argv/--agent-interactive-argv/
     --agent-resume-interactive-argv/
     --agent-log-format/--agent-stream-adapter/--agent-profiles, this raises
     AgentsPresetError instead of silently overriding or merging. --agents is
     an all-or-nothing shortcut for the known presets; use the explicit
     per-flag form instead of mixing it with --agents in the same invocation.
-    A caller's --agent-args/--claude-args is refused on the same grounds when
+    A caller's --agent-args is refused on the same grounds when
     the default preset carries its own (Go's flag package keeps the last
     value, so one would silently replace the other), and allowed otherwise.
     runner.py goes through apply_agents_preset, which folds the caller's into
@@ -555,7 +554,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     default = KNOWN_AGENT_PRESETS[names[0]]
     flags = _CONFLICTING_FLAGS
     if default["agentArgs"]:
-        flags += ("--agent-args", "--claude-args")
+        flags += (_AGENT_ARGS_FLAG,)
     conflicting = [f for f in flags if _has_flag(existing_args, f)]
     if conflicting:
         raise AgentsPresetError(
@@ -582,7 +581,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     return out
 
 
-_AGENT_ARGS_FLAGS = ("--agent-args", "--claude-args")
+_AGENT_ARGS_FLAG = "--agent-args"
 
 
 def _refuse_slot_agent_args_with_all(args: list[str]) -> None:
@@ -596,7 +595,7 @@ def _refuse_slot_agent_args_with_all(args: list[str]) -> None:
     --agent-arg reaches the agent a task actually runs; the sandbox presets
     carry their own flags.
     """
-    if any(_has_flag(args, f) for f in _AGENT_ARGS_FLAGS):
+    if _has_flag(args, _AGENT_ARGS_FLAG):
         raise AgentsPresetError(
             f"--agents {ALL} does not take --agent-args: they would reach only the default "
             "profile (the unsandboxed agent). Pass per-task --agent-arg instead; the "
@@ -625,12 +624,12 @@ def apply_agents_preset(agents_csv: str, args: list[str]) -> list[str]:
     i = 0
     while i < len(args):
         a = args[i]
-        if a in _AGENT_ARGS_FLAGS and i + 1 < len(args):
+        if a == _AGENT_ARGS_FLAG and i + 1 < len(args):
             caller = args[i + 1]  # repeated: the last wins, as in Go's flag package
             i += 2
             continue
         name, eq, value = a.partition("=")
-        if eq and name in _AGENT_ARGS_FLAGS:
+        if eq and name == _AGENT_ARGS_FLAG:
             caller = value
             i += 1
             continue

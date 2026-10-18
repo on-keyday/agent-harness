@@ -48,8 +48,8 @@ func TestParseSubmitMissingPrompt(t *testing.T) {
 	}
 }
 
-func TestParseSubmitWithClaudeArgs(t *testing.T) {
-	got, err := ParseCommand(`submit --claude-arg --resume --claude-arg deadbeef "do work"`, "/cwd")
+func TestParseSubmitWithAgentArgs(t *testing.T) {
+	got, err := ParseCommand(`submit --agent-arg --resume --agent-arg deadbeef "do work"`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +107,8 @@ func TestParseSubmitDefaultAgentEmpty(t *testing.T) {
 	}
 }
 
-func TestParseInteractiveWithClaudeArgs(t *testing.T) {
-	got, err := ParseCommand(`interactive --repo /r --claude-arg --add-dir --claude-arg /other`, "/cwd")
+func TestParseInteractiveWithAgentArgs(t *testing.T) {
+	got, err := ParseCommand(`interactive --repo /r --agent-arg --add-dir --agent-arg /other`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}

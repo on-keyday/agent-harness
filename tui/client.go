@@ -146,10 +146,10 @@ func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
 }
 
 // DoSubmitWithOpts issues a Submit RPC with an optional runner selector,
-// optional per-task extra claude args, and optional resume target id. When
+// optional per-task extra agent args, and optional resume target id. When
 // host is non-empty a ByHostname selector is built; otherwise Any is used.
 // extraArgs are forwarded verbatim to the runner and appended to its
-// --claude-args baseline at exec time. resumeTaskID, when non-empty, asks
+// --agent-args baseline at exec time. resumeTaskID, when non-empty, asks
 // the server to reuse that terminal task's id and worktree branch.
 // auth carries RequestedCaps and the target scope; pass
 // Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
@@ -201,7 +201,7 @@ func buildSubmitEcho(repo, prompt, host string, extraArgs []string, resumeTaskID
 		annot += fmt.Sprintf(" --agent %q", agentProfile)
 	}
 	if len(extraArgs) > 0 {
-		annot += fmt.Sprintf(" (+%d claude-args)", len(extraArgs))
+		annot += fmt.Sprintf(" (+%d agent-args)", len(extraArgs))
 	}
 	if resumeTaskID != "" {
 		annot += fmt.Sprintf(" --resume %s", shortTaskID(resumeTaskID))

@@ -484,7 +484,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
         # lacked the event-stream adapter, so every stream task on a claude
         # dummy failed with "no stream adapter configured".
         runner_args += expand_agents_preset("claude", [])
-        runner_args += ["--claude-args", f"--model {model}"]
+        runner_args += ["--agent-args", f"--model {model}"]
     else:
         fake = tmp / "fake-claude.py"
         fake.write_text(FAKE_AGENT, encoding="utf-8")

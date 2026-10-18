@@ -12,7 +12,7 @@ import (
 
 // popupFocus tracks which sub-field of the submit popup currently receives
 // keystrokes. Cycled by Ctrl+E. The textarea (prompt) is the primary focus;
-// the args field is one shlex-parsed line of per-task --claude-arg values;
+// the args field is one shlex-parsed line of per-task --agent-arg values;
 // the resume field holds an optional 32-hex task id to revive.
 type popupFocus int
 
@@ -49,7 +49,7 @@ func NewPopup(defaultRepo string) PopupModel {
 	ta.SetWidth(60)
 	ta.SetHeight(10)
 	args := textinput.New()
-	args.Placeholder = "extra claude args (shell-quoted; e.g. --resume <uuid> --add-dir /repo)"
+	args.Placeholder = "extra agent args (shell-quoted; e.g. --resume <uuid> --add-dir /repo)"
 	args.CharLimit = 4096
 	args.Width = 60
 	resume := textinput.New()

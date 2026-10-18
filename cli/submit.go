@@ -40,7 +40,7 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.SetRepoPath([]byte(repo))
 	sub.SetPrompt([]byte(prompt))
 	sub.Selector = opts.Selector
-	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(opts.ExtraArgs)
+	sub.ExtraArgs = protocol.AgentArgsFromStrings(opts.ExtraArgs)
 	sub.RequestedCaps = opts.Caps
 	sub.SetResumeCapsOverride(opts.ResumeCapsOverride)
 	sub.SetResumeConversation(opts.ResumeConversation)

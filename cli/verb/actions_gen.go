@@ -622,7 +622,7 @@ type SpawnAction struct {
 	Agent string
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
-	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args); -…
+	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
 	ExtraArgs []string
 	// pin to a specific runner by ConnectionID (the id= value from `ls`)
 	Runner string

@@ -49,13 +49,13 @@ func (h *persistRunnerHandle) DropCurrentConn() {
 func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts) *persistRunnerHandle {
 	t.Helper()
 
-	claudeBin := opts.ClaudeBin
-	if claudeBin == "" {
+	agentBin := opts.AgentBin
+	if agentBin == "" {
 		abs, err := filepath.Abs("../testdata/fake-claude.sh")
 		if err != nil {
 			t.Fatalf("resolve fake-claude.sh: %v", err)
 		}
-		claudeBin = abs
+		agentBin = abs
 	}
 
 	roots := opts.Roots
@@ -70,7 +70,7 @@ func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, 
 		AllowedRoots:     roots,
 		MaxTasks:         maxTasks,
 		Hostname:         opts.Hostname,
-		Profiles:         singleAgentProfile(claudeBin),
+		Profiles:         singleAgentProfile(agentBin),
 		PingInterval:     2 * time.Second,
 	}
 
@@ -211,7 +211,7 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 
 	serverCID, _ := startServerAt(t, addr)
 
-	claudeBin, err := filepath.Abs("../testdata/fake-claude.sh")
+	agentBin, err := filepath.Abs("../testdata/fake-claude.sh")
 	if err != nil {
 		t.Fatalf("fake-claude path: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 			AllowedRoots:     []string{repo},
 			MaxTasks:         1,
 			Hostname:         "no-persist-test",
-			Profiles:         singleAgentProfile(claudeBin),
+			Profiles:         singleAgentProfile(agentBin),
 		})
 	}()
 

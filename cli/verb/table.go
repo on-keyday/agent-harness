@@ -1367,10 +1367,9 @@ var Verbs = []VerbSpec{
 	//
 	// One shape, three verbs. The inventory found the TUI's submit had no
 	// --runner/--host/--ip at all and its session new no --repo/--rows/--cols,
-	// and that none of the three accepted --agent-arg -- only the CLI's
-	// deprecated --claude-arg spelling, because the TUI's copy was written
-	// before the rename and its comment still says so. Declaring the family
-	// once gives every surface the same set.
+	// and that the TUI's copies accepted only --claude-arg, the spelling the
+	// CLI had already renamed to --agent-arg (the old spelling is gone now).
+	// Declaring the family once gives every surface the same set.
 	{
 		Path:          []string{"submit"},
 		WebUIDispatch: WebUIDispatch{Fn: "submit"},

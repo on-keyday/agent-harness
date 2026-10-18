@@ -78,9 +78,9 @@ func TestSessionDetachReattach(t *testing.T) {
 	repo := tempRepo(t)
 
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeSlowPath(t),
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeSlowPath(t),
 	})
 
 	// Client 1: open the detachable session.
@@ -173,9 +173,9 @@ func TestSessionDetach_RingBufferWrap(t *testing.T) {
 	repo := tempRepo(t)
 
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeLoudPath(t),
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeLoudPath(t),
 	})
 
 	c1 := dialClient(t, serverCID)
@@ -271,9 +271,9 @@ func TestSessionDetach_RunnerDeath_MarksFailed(t *testing.T) {
 	repo := tempRepo(t)
 
 	rh := startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeSlowPath(t),
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeSlowPath(t),
 	})
 
 	c1 := dialClient(t, serverCID)

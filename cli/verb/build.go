@@ -26,8 +26,8 @@ func (v VerbSpec) NewFlagSet(eh ErrorHandling) *flag.FlagSet {
 		names := append([]string{f.Name}, f.Aliases...)
 		if f.Custom != nil {
 			// One value shared by every spelling, same as the typed cases:
-			// --agent-arg and its deprecated alias --claude-arg accumulate
-			// into ONE list, in the order the flags appear.
+			// a repeatable flag's aliases accumulate into ONE list, in the
+			// order the flags appear.
 			val := f.Custom.New()
 			for _, n := range names {
 				fs.Var(val, n, f.Help)

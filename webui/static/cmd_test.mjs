@@ -100,7 +100,7 @@ test("submit carries every declared flag, not the dropdowns", async () => {
   assert.equal(req.caps, "spawn,file_read");
   assert.equal(req.scope, "global");
   eq(req.scopeFor, ["spawn=none"]);
-  eq(req.claudeArgs, ["-x"]);
+  eq(req.agentArgs, ["-x"]);
   assert.equal(req.resumeTaskId, ID);
   assert.equal(req.resumeConversation, true);
   assert.equal(req.task, "do the thing");

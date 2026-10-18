@@ -51,8 +51,8 @@ type mainConfig struct {
 	ServerCID                  string
 	Roots                      string
 	MaxTasks                   int
-	ClaudeBin                  string
-	ClaudeArgs                 string
+	AgentBin                   string
+	AgentArgs                  string
 	AgentOneshotArgv           string
 	AgentResumeOneshotArgv     string
 	AgentInteractiveArgv       string
@@ -85,7 +85,7 @@ type mainConfig struct {
 	serverCIDExplicit bool
 
 	// Profiles is derived (not flag-bound): built in main() after flag
-	// parsing from the default single-agent flags (ClaudeBin/ClaudeArgs/
+	// parsing from the default single-agent flags (AgentBin/AgentArgs/
 	// AgentOneshotArgv/...) plus AgentProfilesJSON, then threaded into
 	// runCfg.Profiles (runner.Config) below.
 	Profiles runner.ProfileSet
@@ -111,7 +111,7 @@ func newMainConfig() *mainConfig {
 		ServerCID:     "ws:127.0.0.1:8539-*",
 		Roots:         ".",
 		MaxTasks:      1,
-		ClaudeBin:     "claude",
+		AgentBin:      "claude",
 		WSPath:        "/ws",
 		Persist:       true,
 		PingInterval:  15 * time.Second,
@@ -125,10 +125,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen. Takes a comma-separated list, tried in order until one answers, and re-tried from the top on every reconnect — for a runner that moves between networks (a LAN address first, a tailnet one after it). harness-cli/TUI/WebUI take a single address: the operator who moved knows which network they are on, and this runner may come back up with nobody present. Agents are unaffected either way; they are handed the ONE address this runner connected on.")
 	fs.StringVar(&c.Roots, "roots", c.Roots, "comma-separated list of absolute repo root paths this runner serves")
 	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
-	fs.StringVar(&c.ClaudeBin, "agent-bin", c.ClaudeBin, "path to the agent binary")
-	fs.StringVar(&c.ClaudeBin, "claude-bin", c.ClaudeBin, "deprecated alias for --agent-bin")
-	fs.StringVar(&c.ClaudeArgs, "agent-args", c.ClaudeArgs, "extra args passed to the agent before the task args (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
-	fs.StringVar(&c.ClaudeArgs, "claude-args", c.ClaudeArgs, "deprecated alias for --agent-args")
+	fs.StringVar(&c.AgentBin, "agent-bin", c.AgentBin, "path to the agent binary")
+	fs.StringVar(&c.AgentArgs, "agent-args", c.AgentArgs, "extra args passed to the agent before the task args (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
 	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentInteractiveArgv, "agent-interactive-argv", c.AgentInteractiveArgv, "argv template for FRESH interactive opens; token {args}; default \"{args}\" (the bare binary, which is right for claude/codex/agy/a shell) — set it for an agent whose interactive entry point needs a subcommand, e.g. \"chat {args}\"")
@@ -366,9 +364,9 @@ func main() {
 	// `--agent-bin C:/.../claude.exe` and `--agent-bin claude` advertise the
 	// same profile name across the mixed-OS fleet.
 	defaultProfile := runner.AgentProfile{
-		Name:                  protocol.NormalizeAgentProfileName(filepath.Base(cfg.ClaudeBin)),
-		Bin:                   cfg.ClaudeBin,
-		AgentArgs:             strings.Fields(cfg.ClaudeArgs),
+		Name:                  protocol.NormalizeAgentProfileName(filepath.Base(cfg.AgentBin)),
+		Bin:                   cfg.AgentBin,
+		AgentArgs:             strings.Fields(cfg.AgentArgs),
 		OneshotArgv:           oneshotArgv,
 		ResumeOneshotArgv:     resumeOneshotArgv,
 		InteractiveArgv:       interactiveArgv,

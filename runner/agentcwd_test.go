@@ -50,9 +50,9 @@ func TestProcess_RunSetsPWDToCWD(t *testing.T) {
 	t.Setenv("PWD", stalePWD)
 
 	p := &Process{
-		ClaudeBin: os.Args[0],
-		CWD:       taskDir,
-		Env:       []string{"HARNESS_PWD_HELPER=1"},
+		AgentBin: os.Args[0],
+		CWD:      taskDir,
+		Env:      []string{"HARNESS_PWD_HELPER=1"},
 		// The prompt and args land after "--" so the child's flag parser
 		// ignores them; without that it rejects the template's own tokens
 		// before any test body runs.

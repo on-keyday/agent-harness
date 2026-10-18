@@ -50,7 +50,7 @@ func TestRunClaudeWithExtraArgs(t *testing.T) {
 		mu.Unlock()
 	}
 	p := &Process{
-		ClaudeBin: fakeClaudePath(t),
+		AgentBin:  fakeClaudePath(t),
 		CWD:       dir,
 		Timeout:   5 * time.Second,
 		ExtraArgs: []string{"--dangerously-skip-permissions"},
@@ -91,9 +91,9 @@ func TestRunClaudeStreamsLogs(t *testing.T) {
 	}
 
 	p := &Process{
-		ClaudeBin: fakeClaudePath(t),
-		CWD:       dir,
-		Timeout:   5 * time.Second,
+		AgentBin: fakeClaudePath(t),
+		CWD:      dir,
+		Timeout:  5 * time.Second,
 	}
 	exit, err := p.Run(context.Background(), "hello", sink)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestRunClaudeNonZeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Process{ClaudeBin: abs, CWD: dir, Timeout: 5 * time.Second}
+	p := &Process{AgentBin: abs, CWD: dir, Timeout: 5 * time.Second}
 	exit, err := p.Run(context.Background(), "x", func([]byte) {})
 	if err != nil {
 		t.Fatal(err)
@@ -152,9 +152,9 @@ func TestRunClaudeTimeout(t *testing.T) {
 	os.WriteFile(sleepWrapper, []byte("#!/bin/bash\nsleep 60\n"), 0o755)
 
 	p := &Process{
-		ClaudeBin: sleepWrapper,
-		CWD:       dir,
-		Timeout:   500 * time.Millisecond,
+		AgentBin: sleepWrapper,
+		CWD:      dir,
+		Timeout:  500 * time.Millisecond,
 	}
 	start := time.Now()
 	exit, err := p.Run(context.Background(), "x", func([]byte) {})
@@ -173,9 +173,9 @@ func TestRunClaudeTimeout(t *testing.T) {
 func TestProcess_RunSetsEnv(t *testing.T) {
 	fake := writeFakeClaude(t, `echo "TASK_ID=$HARNESS_TASK_ID"`)
 	p := &Process{
-		ClaudeBin: fake,
-		CWD:       t.TempDir(),
-		Env:       []string{"HARNESS_TASK_ID=deadbeef"},
+		AgentBin: fake,
+		CWD:      t.TempDir(),
+		Env:      []string{"HARNESS_TASK_ID=deadbeef"},
 	}
 	var out []byte
 	sink := func(data []byte) { out = append(out, data...) }
@@ -204,7 +204,7 @@ func TestProcessDecodesStdoutAndLeavesStderrRaw(t *testing.T) {
 	}
 
 	p := &Process{
-		ClaudeBin:           script,
+		AgentBin:            script,
 		CWD:                 t.TempDir(),
 		Timeout:             30 * time.Second,
 		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -244,7 +244,7 @@ func TestProcessPassthroughWhenNoLogFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &Process{
-		ClaudeBin:           script,
+		AgentBin:            script,
 		CWD:                 t.TempDir(),
 		Timeout:             30 * time.Second,
 		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -286,7 +286,7 @@ func TestProcessStdoutVerbatimWhenNoDecoderApplies(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := &Process{
-				ClaudeBin:           script,
+				AgentBin:            script,
 				CWD:                 t.TempDir(),
 				Timeout:             30 * time.Second,
 				OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -326,7 +326,7 @@ func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &Process{
-		ClaudeBin:           script,
+		AgentBin:            script,
 		CWD:                 t.TempDir(),
 		Timeout:             30 * time.Second,
 		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -396,7 +396,7 @@ func TestProcessDoesNotTruncateFastExitBurst(t *testing.T) {
 			defer wg.Done()
 			for r := 0; r < roundsPerWorker; r++ {
 				p := &Process{
-					ClaudeBin:           script,
+					AgentBin:            script,
 					CWD:                 t.TempDir(),
 					Timeout:             5 * time.Second,
 					OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -451,7 +451,7 @@ func TestProcessLeavesStdinClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &Process{
-		ClaudeBin:           script,
+		AgentBin:            script,
 		CWD:                 t.TempDir(),
 		Timeout:             10 * time.Second,
 		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
@@ -501,8 +501,8 @@ func TestProcessSuccessfulExitNotReportedAsFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &Process{
-		ClaudeBin: script,
-		CWD:       t.TempDir(),
+		AgentBin: script,
+		CWD:      t.TempDir(),
 		// Comfortably longer than cmd.WaitDelay (5s) so the run's own ctx
 		// timeout cannot fire first and take the Cancel/SIGTERM path instead
 		// of the plain WaitDelay-expiry path this test exercises.

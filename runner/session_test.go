@@ -24,7 +24,7 @@ import (
 // singleProfile builds a minimal ProfileSet with one profile ("default") at
 // the given bin path and no argv templates (buildOneshotArgs/
 // buildInteractiveArgs fall back to their built-in defaults). This is the
-// test-local equivalent of the old Session.ClaudeBin single-binary field,
+// test-local equivalent of the old Session.AgentBin single-binary field,
 // now that Session carries a full ProfileSet.
 func singleProfile(t *testing.T, bin string) ProfileSet {
 	t.Helper()
@@ -924,7 +924,7 @@ func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
 }
 
 // TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
-// but for the interactive PTY path. Uses /bin/true as ClaudeBin and the existing
+// but for the interactive PTY path. Uses /bin/true as AgentBin and the existing
 // noopBidiStream so the exec terminates immediately; we only verify the
 // runner-side wiring (no worktree create error, WorktreeDir == repoPath, no
 // .harness-worktrees/, no .claude/).

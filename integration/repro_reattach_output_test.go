@@ -58,9 +58,9 @@ func TestSessionReattach_PostReattachOutput(t *testing.T) {
 	repo := tempRepo(t)
 
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudeBurstThenTickPath(t), // 1.5 MiB burst → tick mode
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudeBurstThenTickPath(t), // 1.5 MiB burst → tick mode
 	})
 
 	// Client 1: open detachable session.

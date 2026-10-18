@@ -320,35 +320,35 @@ func (s *AllowedRoot) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type ClaudeArg struct {
+type AgentArg struct {
 	ArgLen uint16
 	Arg    []uint8
 }
 
-func (c *ClaudeArg) SetArg(tmp21277 []uint8) bool {
+func (a *AgentArg) SetArg(tmp21277 []uint8) bool {
 	if len(tmp21277) > int(65535) {
 		return false
 	}
-	c.ArgLen = uint16(len(tmp21277))
-	c.Arg = tmp21277
+	a.ArgLen = uint16(len(tmp21277))
+	a.Arg = tmp21277
 	return true
 }
 
-func (c *ClaudeArg) Write(tmp5094 io.Writer) error {
+func (a *AgentArg) Write(tmp5094 io.Writer) error {
 	tmp23043 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp23043[:], uint16(c.ArgLen))
+	binary.BigEndian.PutUint16(tmp23043[:], uint16(a.ArgLen))
 	if _, err := tmp5094.Write(tmp23043[:2]); err != nil {
 		return err
 	}
-	if len(c.Arg) != int(int(c.ArgLen)) {
-		return fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(int(c.ArgLen)), len(c.Arg))
+	if len(a.Arg) != int(int(a.ArgLen)) {
+		return fmt.Errorf("size mismatch when writing field \"AgentArg::Arg\": expected %d, got %d", int(int(a.ArgLen)), len(a.Arg))
 	}
-	if _, err := tmp5094.Write(c.Arg); err != nil {
+	if _, err := tmp5094.Write(a.Arg); err != nil {
 		return err
 	}
 	return nil
 }
-func (s *ClaudeArg) EncodeCopy(reserved []byte) ([]byte, error) {
+func (s *AgentArg) EncodeCopy(reserved []byte) ([]byte, error) {
 	buf := bytes.NewBuffer(reserved)
 	err := s.Write(buf)
 	if err != nil {
@@ -356,32 +356,32 @@ func (s *ClaudeArg) EncodeCopy(reserved []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-func (s *ClaudeArg) MustEncodeCopy(reserved []byte) []byte {
+func (s *AgentArg) MustEncodeCopy(reserved []byte) []byte {
 	buf, err := s.EncodeCopy(reserved)
 	if err != nil {
 		panic(err)
 	}
 	return buf
 }
-func (c *ClaudeArg) EncodeSlice(tmp5094 []byte, tmp5094Offset *int) error {
+func (a *AgentArg) EncodeSlice(tmp5094 []byte, tmp5094Offset *int) error {
 	tmp23043 := []uint8{}
 	if len(tmp5094)-*tmp5094Offset < int(2) {
-		return errors.New("not enough space to reserve data for field \"ClaudeArg::ArgLen\"")
+		return errors.New("not enough space to reserve data for field \"AgentArg::ArgLen\"")
 	}
 	tmp23043 = tmp5094[*tmp5094Offset : *tmp5094Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp23043[:], uint16(c.ArgLen))
+	binary.BigEndian.PutUint16(tmp23043[:], uint16(a.ArgLen))
 	*tmp5094Offset += int(2)
-	if len(c.Arg) != int(int(c.ArgLen)) {
-		return fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(int(c.ArgLen)), len(c.Arg))
+	if len(a.Arg) != int(int(a.ArgLen)) {
+		return fmt.Errorf("size mismatch when writing field \"AgentArg::Arg\": expected %d, got %d", int(int(a.ArgLen)), len(a.Arg))
 	}
-	if len(tmp5094)-*tmp5094Offset < int(0+int(c.ArgLen)) {
-		return errors.New("not enough space to write for field \"ClaudeArg::Arg\"")
+	if len(tmp5094)-*tmp5094Offset < int(0+int(a.ArgLen)) {
+		return errors.New("not enough space to write for field \"AgentArg::Arg\"")
 	}
-	copy(tmp5094[*tmp5094Offset:*tmp5094Offset+int(int(c.ArgLen))], c.Arg)
-	*tmp5094Offset += int(int(c.ArgLen))
+	copy(tmp5094[*tmp5094Offset:*tmp5094Offset+int(int(a.ArgLen))], a.Arg)
+	*tmp5094Offset += int(int(a.ArgLen))
 	return nil
 }
-func (s *ClaudeArg) Encode(buf []byte) ([]byte, error) {
+func (s *AgentArg) Encode(buf []byte) ([]byte, error) {
 	var offset int
 	err := s.EncodeSlice(buf, &offset)
 	if err != nil {
@@ -389,24 +389,24 @@ func (s *ClaudeArg) Encode(buf []byte) ([]byte, error) {
 	}
 	return buf[:offset], nil
 }
-func (s *ClaudeArg) MustEncode(reserved []byte) []byte {
+func (s *AgentArg) MustEncode(reserved []byte) []byte {
 	buf, err := s.Encode(reserved)
 	if err != nil {
 		panic(err)
 	}
 	return buf
 }
-func (c *ClaudeArg) Append(tmp5094 []byte) ([]byte, error) {
+func (a *AgentArg) Append(tmp5094 []byte) ([]byte, error) {
 	tmp23043 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp23043[:], uint16(c.ArgLen))
+	binary.BigEndian.PutUint16(tmp23043[:], uint16(a.ArgLen))
 	tmp5094 = append(tmp5094, tmp23043[:2]...)
-	if len(c.Arg) != int(int(c.ArgLen)) {
-		return nil, fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(int(c.ArgLen)), len(c.Arg))
+	if len(a.Arg) != int(int(a.ArgLen)) {
+		return nil, fmt.Errorf("size mismatch when writing field \"AgentArg::Arg\": expected %d, got %d", int(int(a.ArgLen)), len(a.Arg))
 	}
-	tmp5094 = append(tmp5094, c.Arg...)
+	tmp5094 = append(tmp5094, a.Arg...)
 	return tmp5094, nil
 }
-func (s *ClaudeArg) MustAppend(buf []byte) []byte {
+func (s *AgentArg) MustAppend(buf []byte) []byte {
 	var err error
 	buf, err = s.Append(buf)
 	if err != nil {
@@ -415,12 +415,12 @@ func (s *ClaudeArg) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClaudeArg) Read(tmp5092 io.Reader) error {
+func (a *AgentArg) Read(tmp5092 io.Reader) error {
 	tmp23057 := [2]uint8{}
 	if _, err := io.ReadFull(tmp5092, tmp23057[0:0+2]); err != nil {
 		return err
 	}
-	c.ArgLen = binary.BigEndian.Uint16(tmp23057[:])
+	a.ArgLen = binary.BigEndian.Uint16(tmp23057[:])
 	if seeker, ok := tmp5092.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -434,25 +434,25 @@ func (c *ClaudeArg) Read(tmp5092 io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if (endOffset - current) < int64(int(c.ArgLen)) {
-			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(c.ArgLen)))
+		if (endOffset - current) < int64(int(a.ArgLen)) {
+			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(a.ArgLen)))
 		}
-		c.Arg = make([]byte, int(c.ArgLen))
-		if _, err := io.ReadFull(tmp5092, c.Arg[0:0+int(c.ArgLen)]); err != nil {
+		a.Arg = make([]byte, int(a.ArgLen))
+		if _, err := io.ReadFull(tmp5092, a.Arg[0:0+int(a.ArgLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
 		io_temp_86110 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_86110, tmp5092, int64(int(c.ArgLen))); err != nil {
+		if _, err := io.CopyN(io_temp_86110, tmp5092, int64(int(a.ArgLen))); err != nil {
 			return err
 		}
-		c.Arg = io_temp_86110.Bytes()
+		a.Arg = io_temp_86110.Bytes()
 	}
 	return nil
 }
-func (s *ClaudeArg) DecodeCopy(buf []byte) ([]byte, error) {
+func (s *AgentArg) DecodeCopy(buf []byte) ([]byte, error) {
 	r := bytes.NewReader(buf)
 	err := s.Read(r)
 	if err != nil {
@@ -460,7 +460,7 @@ func (s *ClaudeArg) DecodeCopy(buf []byte) ([]byte, error) {
 	}
 	return buf[int(r.Size())-r.Len():], nil
 }
-func (s *ClaudeArg) DecodeExactCopy(buf []byte) error {
+func (s *AgentArg) DecodeExactCopy(buf []byte) error {
 	remain, err := s.DecodeCopy(buf)
 	if err != nil {
 		return err
@@ -470,22 +470,22 @@ func (s *ClaudeArg) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClaudeArg) DecodeSlice(tmp5092 []byte, tmp5092Offset *int) error {
+func (a *AgentArg) DecodeSlice(tmp5092 []byte, tmp5092Offset *int) error {
 	tmp23057 := []uint8{}
 	if len(tmp5092)-*tmp5092Offset < 2 {
-		return errors.New("not enough data to read for field \"ClaudeArg::ArgLen\"")
+		return errors.New("not enough data to read for field \"AgentArg::ArgLen\"")
 	}
 	tmp23057 = tmp5092[*tmp5092Offset : *tmp5092Offset+2]
 	*tmp5092Offset += int(2)
-	c.ArgLen = binary.BigEndian.Uint16(tmp23057[:])
-	if len(tmp5092)-*tmp5092Offset < int(c.ArgLen) {
-		return errors.New("not enough data to read for field \"ClaudeArg::Arg\"")
+	a.ArgLen = binary.BigEndian.Uint16(tmp23057[:])
+	if len(tmp5092)-*tmp5092Offset < int(a.ArgLen) {
+		return errors.New("not enough data to read for field \"AgentArg::Arg\"")
 	}
-	c.Arg = tmp5092[*tmp5092Offset : *tmp5092Offset+int(c.ArgLen)]
-	*tmp5092Offset += int(int(c.ArgLen))
+	a.Arg = tmp5092[*tmp5092Offset : *tmp5092Offset+int(a.ArgLen)]
+	*tmp5092Offset += int(int(a.ArgLen))
 	return nil
 }
-func (s *ClaudeArg) Decode(buf []byte) ([]byte, error) {
+func (s *AgentArg) Decode(buf []byte) ([]byte, error) {
 	var offset int
 	err := s.DecodeSlice(buf, &offset)
 	if err != nil {
@@ -493,7 +493,7 @@ func (s *ClaudeArg) Decode(buf []byte) ([]byte, error) {
 	}
 	return buf[offset:], nil
 }
-func (s *ClaudeArg) DecodeExact(buf []byte) error {
+func (s *AgentArg) DecodeExact(buf []byte) error {
 	remain, err := s.Decode(buf)
 	if err != nil {
 		return err
@@ -504,32 +504,32 @@ func (s *ClaudeArg) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type ClaudeArgs struct {
+type AgentArgs struct {
 	ArgsLen uint16
-	Args    []ClaudeArg
+	Args    []AgentArg
 }
 
-func (c *ClaudeArgs) SetArgs(tmp21276 []ClaudeArg) bool {
+func (a *AgentArgs) SetArgs(tmp21276 []AgentArg) bool {
 	if len(tmp21276) > int(65535) {
 		return false
 	}
-	c.ArgsLen = uint16(len(tmp21276))
-	c.Args = tmp21276
+	a.ArgsLen = uint16(len(tmp21276))
+	a.Args = tmp21276
 	return true
 }
 
-func (c *ClaudeArgs) Write(tmp1736 io.Writer) error {
+func (a *AgentArgs) Write(tmp1736 io.Writer) error {
 	tmp22993 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp22993[:], uint16(c.ArgsLen))
+	binary.BigEndian.PutUint16(tmp22993[:], uint16(a.ArgsLen))
 	if _, err := tmp1736.Write(tmp22993[:2]); err != nil {
 		return err
 	}
-	if len(c.Args) != int(int(c.ArgsLen)) {
-		return fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(int(c.ArgsLen)), len(c.Args))
+	if len(a.Args) != int(int(a.ArgsLen)) {
+		return fmt.Errorf("size mismatch when writing field \"AgentArgs::Args\": expected %d, got %d", int(int(a.ArgsLen)), len(a.Args))
 	}
 	tmp151 := int(0)
-	for tmp151 < int(c.ArgsLen) {
-		tmp22979 := c.Args[tmp151].Write(tmp1736)
+	for tmp151 < int(a.ArgsLen) {
+		tmp22979 := a.Args[tmp151].Write(tmp1736)
 		if tmp22979 != nil {
 			return tmp22979
 		}
@@ -537,7 +537,7 @@ func (c *ClaudeArgs) Write(tmp1736 io.Writer) error {
 	}
 	return nil
 }
-func (s *ClaudeArgs) EncodeCopy(reserved []byte) ([]byte, error) {
+func (s *AgentArgs) EncodeCopy(reserved []byte) ([]byte, error) {
 	buf := bytes.NewBuffer(reserved)
 	err := s.Write(buf)
 	if err != nil {
@@ -545,27 +545,27 @@ func (s *ClaudeArgs) EncodeCopy(reserved []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-func (s *ClaudeArgs) MustEncodeCopy(reserved []byte) []byte {
+func (s *AgentArgs) MustEncodeCopy(reserved []byte) []byte {
 	buf, err := s.EncodeCopy(reserved)
 	if err != nil {
 		panic(err)
 	}
 	return buf
 }
-func (c *ClaudeArgs) EncodeSlice(tmp1736 []byte, tmp1736Offset *int) error {
+func (a *AgentArgs) EncodeSlice(tmp1736 []byte, tmp1736Offset *int) error {
 	tmp22993 := []uint8{}
 	if len(tmp1736)-*tmp1736Offset < int(2) {
-		return errors.New("not enough space to reserve data for field \"ClaudeArgs::ArgsLen\"")
+		return errors.New("not enough space to reserve data for field \"AgentArgs::ArgsLen\"")
 	}
 	tmp22993 = tmp1736[*tmp1736Offset : *tmp1736Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp22993[:], uint16(c.ArgsLen))
+	binary.BigEndian.PutUint16(tmp22993[:], uint16(a.ArgsLen))
 	*tmp1736Offset += int(2)
-	if len(c.Args) != int(int(c.ArgsLen)) {
-		return fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(int(c.ArgsLen)), len(c.Args))
+	if len(a.Args) != int(int(a.ArgsLen)) {
+		return fmt.Errorf("size mismatch when writing field \"AgentArgs::Args\": expected %d, got %d", int(int(a.ArgsLen)), len(a.Args))
 	}
 	tmp151 := int(0)
-	for tmp151 < int(c.ArgsLen) {
-		tmp22979 := c.Args[tmp151].EncodeSlice(tmp1736, tmp1736Offset)
+	for tmp151 < int(a.ArgsLen) {
+		tmp22979 := a.Args[tmp151].EncodeSlice(tmp1736, tmp1736Offset)
 		if tmp22979 != nil {
 			return tmp22979
 		}
@@ -573,7 +573,7 @@ func (c *ClaudeArgs) EncodeSlice(tmp1736 []byte, tmp1736Offset *int) error {
 	}
 	return nil
 }
-func (s *ClaudeArgs) Encode(buf []byte) ([]byte, error) {
+func (s *AgentArgs) Encode(buf []byte) ([]byte, error) {
 	var offset int
 	err := s.EncodeSlice(buf, &offset)
 	if err != nil {
@@ -581,24 +581,24 @@ func (s *ClaudeArgs) Encode(buf []byte) ([]byte, error) {
 	}
 	return buf[:offset], nil
 }
-func (s *ClaudeArgs) MustEncode(reserved []byte) []byte {
+func (s *AgentArgs) MustEncode(reserved []byte) []byte {
 	buf, err := s.Encode(reserved)
 	if err != nil {
 		panic(err)
 	}
 	return buf
 }
-func (c *ClaudeArgs) Append(tmp1736 []byte) ([]byte, error) {
+func (a *AgentArgs) Append(tmp1736 []byte) ([]byte, error) {
 	tmp22993 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp22993[:], uint16(c.ArgsLen))
+	binary.BigEndian.PutUint16(tmp22993[:], uint16(a.ArgsLen))
 	tmp1736 = append(tmp1736, tmp22993[:2]...)
-	if len(c.Args) != int(int(c.ArgsLen)) {
-		return nil, fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(int(c.ArgsLen)), len(c.Args))
+	if len(a.Args) != int(int(a.ArgsLen)) {
+		return nil, fmt.Errorf("size mismatch when writing field \"AgentArgs::Args\": expected %d, got %d", int(int(a.ArgsLen)), len(a.Args))
 	}
 	tmp151 := int(0)
-	for tmp151 < int(c.ArgsLen) {
+	for tmp151 < int(a.ArgsLen) {
 		var tmp22979 error
-		tmp1736, tmp22979 = c.Args[tmp151].Append(tmp1736)
+		tmp1736, tmp22979 = a.Args[tmp151].Append(tmp1736)
 
 		if tmp22979 != nil {
 			return nil, tmp22979
@@ -607,7 +607,7 @@ func (c *ClaudeArgs) Append(tmp1736 []byte) ([]byte, error) {
 	}
 	return tmp1736, nil
 }
-func (s *ClaudeArgs) MustAppend(buf []byte) []byte {
+func (s *AgentArgs) MustAppend(buf []byte) []byte {
 	var err error
 	buf, err = s.Append(buf)
 	if err != nil {
@@ -616,25 +616,25 @@ func (s *ClaudeArgs) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClaudeArgs) Read(tmp1737 io.Reader) error {
+func (a *AgentArgs) Read(tmp1737 io.Reader) error {
 	tmp23017 := [2]uint8{}
 	if _, err := io.ReadFull(tmp1737, tmp23017[0:0+2]); err != nil {
 		return err
 	}
-	c.ArgsLen = binary.BigEndian.Uint16(tmp23017[:])
+	a.ArgsLen = binary.BigEndian.Uint16(tmp23017[:])
 	tmp8729 := int(0)
-	for tmp8729 < int(c.ArgsLen) {
-		tmp23006 := ClaudeArg{}
+	for tmp8729 < int(a.ArgsLen) {
+		tmp23006 := AgentArg{}
 		tmp22860 := tmp23006.Read(tmp1737)
 		if tmp22860 != nil {
 			return tmp22860
 		}
-		c.Args = append(c.Args, tmp23006)
+		a.Args = append(a.Args, tmp23006)
 		tmp8729 = tmp8729 + int(1)
 	}
 	return nil
 }
-func (s *ClaudeArgs) DecodeCopy(buf []byte) ([]byte, error) {
+func (s *AgentArgs) DecodeCopy(buf []byte) ([]byte, error) {
 	r := bytes.NewReader(buf)
 	err := s.Read(r)
 	if err != nil {
@@ -642,7 +642,7 @@ func (s *ClaudeArgs) DecodeCopy(buf []byte) ([]byte, error) {
 	}
 	return buf[int(r.Size())-r.Len():], nil
 }
-func (s *ClaudeArgs) DecodeExactCopy(buf []byte) error {
+func (s *AgentArgs) DecodeExactCopy(buf []byte) error {
 	remain, err := s.DecodeCopy(buf)
 	if err != nil {
 		return err
@@ -652,27 +652,27 @@ func (s *ClaudeArgs) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClaudeArgs) DecodeSlice(tmp1737 []byte, tmp1737Offset *int) error {
+func (a *AgentArgs) DecodeSlice(tmp1737 []byte, tmp1737Offset *int) error {
 	tmp23017 := []uint8{}
 	if len(tmp1737)-*tmp1737Offset < 2 {
-		return errors.New("not enough data to read for field \"ClaudeArgs::ArgsLen\"")
+		return errors.New("not enough data to read for field \"AgentArgs::ArgsLen\"")
 	}
 	tmp23017 = tmp1737[*tmp1737Offset : *tmp1737Offset+2]
 	*tmp1737Offset += int(2)
-	c.ArgsLen = binary.BigEndian.Uint16(tmp23017[:])
+	a.ArgsLen = binary.BigEndian.Uint16(tmp23017[:])
 	tmp8729 := int(0)
-	for tmp8729 < int(c.ArgsLen) {
-		tmp23006 := ClaudeArg{}
+	for tmp8729 < int(a.ArgsLen) {
+		tmp23006 := AgentArg{}
 		tmp22860 := tmp23006.DecodeSlice(tmp1737, tmp1737Offset)
 		if tmp22860 != nil {
 			return tmp22860
 		}
-		c.Args = append(c.Args, tmp23006)
+		a.Args = append(a.Args, tmp23006)
 		tmp8729 = tmp8729 + int(1)
 	}
 	return nil
 }
-func (s *ClaudeArgs) Decode(buf []byte) ([]byte, error) {
+func (s *AgentArgs) Decode(buf []byte) ([]byte, error) {
 	var offset int
 	err := s.DecodeSlice(buf, &offset)
 	if err != nil {
@@ -680,7 +680,7 @@ func (s *ClaudeArgs) Decode(buf []byte) ([]byte, error) {
 	}
 	return buf[offset:], nil
 }
-func (s *ClaudeArgs) DecodeExact(buf []byte) error {
+func (s *AgentArgs) DecodeExact(buf []byte) error {
 	remain, err := s.Decode(buf)
 	if err != nil {
 		return err
@@ -3685,7 +3685,7 @@ type AssignTaskBody struct {
 	RepoPath        []uint8
 	PromptLen       uint32
 	Prompt          []uint8
-	ExtraArgs       ClaudeArgs
+	ExtraArgs       AgentArgs
 	tmp3510         uint8
 	AgentProfileLen uint8
 	AgentProfile    []uint8
@@ -4545,7 +4545,7 @@ type OpenExecRunnerRequest struct {
 	RepoPathLen     uint16
 	RepoPath        []uint8
 	StreamId        uint64
-	ExtraArgs       ClaudeArgs
+	ExtraArgs       AgentArgs
 	tmp1247         uint8
 	AgentProfileLen uint8
 	AgentProfile    []uint8
@@ -16848,7 +16848,7 @@ type SubmitRequest struct {
 	Selector        RunnerSelector
 	PromptLen       uint32
 	Prompt          []uint8
-	ExtraArgs       ClaudeArgs
+	ExtraArgs       AgentArgs
 	RequestedCaps   Capability
 	tmp1908         uint8
 	ResumeTaskId    TaskID
@@ -31904,7 +31904,7 @@ type OpenInteractiveRequest struct {
 	RepoPathLen     uint16
 	RepoPath        []uint8
 	Selector        RunnerSelector
-	ExtraArgs       ClaudeArgs
+	ExtraArgs       AgentArgs
 	RequestedCaps   Capability
 	tmp793          uint8
 	ResumeTaskId    TaskID

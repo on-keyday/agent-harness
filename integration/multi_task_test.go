@@ -95,23 +95,23 @@ func (r *runnerHandle) Hostname() string { return r.hostname }
 
 // runnerOpts configures a test runner.
 type runnerOpts struct {
-	MaxTasks  int
-	Roots     []string
-	Hostname  string
-	ClaudeBin string // defaults to fake-claude.sh
+	MaxTasks int
+	Roots    []string
+	Hostname string
+	AgentBin string // defaults to fake-claude.sh
 }
 
 // startRunner starts a runner connected to serverCID with the given options.
 func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts) *runnerHandle {
 	t.Helper()
 
-	claudeBin := opts.ClaudeBin
-	if claudeBin == "" {
+	agentBin := opts.AgentBin
+	if agentBin == "" {
 		abs, err := filepath.Abs("../testdata/fake-claude.sh")
 		if err != nil {
 			t.Fatalf("resolve fake-claude.sh: %v", err)
 		}
-		claudeBin = abs
+		agentBin = abs
 	}
 
 	roots := opts.Roots
@@ -129,7 +129,7 @@ func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts)
 			AllowedRoots:     roots,
 			MaxTasks:         maxTasks,
 			Hostname:         opts.Hostname,
-			Profiles:         singleAgentProfile(claudeBin),
+			Profiles:         singleAgentProfile(agentBin),
 		})
 	}()
 
@@ -254,9 +254,9 @@ func TestIntegrationCapacityQueueing(t *testing.T) {
 	// The slow runner holds id1 while id2 stays Queued.
 	slowBin := fakeClaudeSlowPath(t)
 	slowRunner := startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: slowBin,
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: slowBin,
 	})
 
 	c := dialClient(t, serverCID)
@@ -283,9 +283,9 @@ func TestIntegrationCapacityQueueing(t *testing.T) {
 
 	// Start a fast runner so the scheduler can dispatch id2.
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: fakeClaudePath(t),
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: fakeClaudePath(t),
 	})
 
 	// id2 should now auto-dispatch to the fast runner and Succeed.
@@ -402,9 +402,9 @@ func TestIntegrationCancelKillsClaude(t *testing.T) {
 
 	slowBin := fakeClaudeSlowPath(t)
 	startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  1,
-		Roots:     []string{repo},
-		ClaudeBin: slowBin,
+		MaxTasks: 1,
+		Roots:    []string{repo},
+		AgentBin: slowBin,
 	})
 
 	c := dialClient(t, serverCID)
@@ -458,9 +458,9 @@ func TestIntegrationDisconnectMarksTasksFailed(t *testing.T) {
 
 	slowBin := fakeClaudeSlowPath(t)
 	r := startRunner(t, serverCID, runnerOpts{
-		MaxTasks:  4,
-		Roots:     []string{repo},
-		ClaudeBin: slowBin,
+		MaxTasks: 4,
+		Roots:    []string{repo},
+		AgentBin: slowBin,
 	})
 
 	c := dialClient(t, serverCID)

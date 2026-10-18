@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestClaudeArgsRoundTripStrings(t *testing.T) {
+func TestAgentArgsRoundTripStrings(t *testing.T) {
 	cases := [][]string{
 		nil,
 		{},
@@ -14,7 +14,7 @@ func TestClaudeArgsRoundTripStrings(t *testing.T) {
 		{"--add-dir", "/path with spaces", "--allowedTools", "bash,ls"},
 	}
 	for i, in := range cases {
-		ca := ClaudeArgsFromStrings(in)
+		ca := AgentArgsFromStrings(in)
 		out := ca.AsStrings()
 		// AsStrings() returns nil for empty input by contract; nil and []
 		// are equivalent for our use, so normalize before comparing.
@@ -37,7 +37,7 @@ func TestAssignTaskBodyRoundTripWithExtraArgs(t *testing.T) {
 	}
 	orig.SetRepoPath([]byte("/repo/foo"))
 	orig.SetPrompt([]byte("multi\nline\nprompt"))
-	orig.ExtraArgs = ClaudeArgsFromStrings([]string{"--resume", "uuid-123", "--add-dir", "/x"})
+	orig.ExtraArgs = AgentArgsFromStrings([]string{"--resume", "uuid-123", "--add-dir", "/x"})
 
 	wire := orig.MustAppend(nil)
 
@@ -61,7 +61,7 @@ func TestAssignTaskBodyRoundTripWithExtraArgs(t *testing.T) {
 func TestSubmitRequestEmptyExtraArgs(t *testing.T) {
 	// Verify that an empty extra-args list encodes to a single u16(0) length
 	// prefix and round-trips cleanly — the common case for callers that
-	// don't supply --claude-arg.
+	// don't supply --agent-arg.
 	orig := SubmitRequest{
 		PromptLen: 4,
 		Prompt:    []byte("test"),

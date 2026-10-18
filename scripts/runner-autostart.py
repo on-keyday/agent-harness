@@ -46,7 +46,7 @@ Examples::
     scripts/runner-autostart.py register --tag pdf2md \\
         --roots /home/user/workspace/pdf2md --max-tasks 4
     scripts/runner-autostart.py register \\
-        --hostname gmkhost-bash --no-worktree --claude-bin bash \\
+        --hostname gmkhost-bash --no-worktree --agent-bin bash \\
         --roots /home/user/workspace
 
 Server CID:

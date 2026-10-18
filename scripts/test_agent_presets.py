@@ -197,7 +197,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             out[out.index("--agent-log-format") + 1], "claude-stream-json"
         )
         oneshot = out[out.index("--agent-oneshot-argv") + 1]
-        # Flags precede {args} so a per-task --claude-args can still override them.
+        # Flags precede {args} so a per-task --agent-arg can still override them.
         self.assertTrue(
             oneshot.startswith("--output-format stream-json --verbose {args}")
         )
@@ -375,11 +375,10 @@ class SandboxAgentArgsTest(unittest.TestCase):
     def test_caller_agent_args_refused_when_the_default_carries_its_own(self) -> None:
         # Go's flag package keeps the LAST value, so a second --agent-args
         # would silently replace the preset's instead of adding to it.
-        for flag in ("--agent-args", "--claude-args"):
-            with self.subTest(flag=flag), self.assertRaises(AgentsPresetError):
-                expand_agents_preset(
-                    "sandbox-claude", [flag, "--dangerously-skip-permissions"]
-                )
+        with self.assertRaises(AgentsPresetError):
+            expand_agents_preset(
+                "sandbox-claude", ["--agent-args", "--dangerously-skip-permissions"]
+            )
 
     def test_caller_agent_args_still_allowed_on_a_plain_default(self) -> None:
         out = expand_agents_preset("claude,codex", ["--agent-args", "--model x"])
@@ -400,8 +399,7 @@ class ApplyAgentsPresetTest(unittest.TestCase):
         return values
 
     def test_wrapper_flags_join_the_preset_flag(self) -> None:
-        for spelling in (["--agent-args", "--firewall"], ["--agent-args=--firewall"],
-                         ["--claude-args", "--firewall"]):
+        for spelling in (["--agent-args", "--firewall"], ["--agent-args=--firewall"]):
             with self.subTest(spelling=spelling):
                 out = agent_presets.apply_agents_preset(
                     "sandbox-claude", ["--max-tasks", "8"] + spelling
@@ -410,7 +408,6 @@ class ApplyAgentsPresetTest(unittest.TestCase):
                 self.assertEqual(
                     self._agent_args(out), ["--dangerously-skip-permissions --firewall"]
                 )
-                self.assertNotIn("--claude-args", out)
                 self.assertEqual(out[-2:], ["--max-tasks", "8"])
 
     def test_the_flag_the_preset_now_carries_is_not_doubled(self) -> None:
@@ -515,7 +512,7 @@ class AllRefusesSlotAgentArgsTest(unittest.TestCase):
     """
 
     def test_expand_refuses(self) -> None:
-        for flag in (["--agent-args", "--model x"], ["--claude-args=--x"]):
+        for flag in (["--agent-args", "--model x"], ["--agent-args=--x"]):
             with self.subTest(flag=flag), self.assertRaises(AgentsPresetError) as ctx:
                 expand_agents_preset("all", flag)
             self.assertIn("--agent-arg", str(ctx.exception))

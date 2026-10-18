@@ -856,7 +856,6 @@ agent-runner flags):
   handshake or the JSON `kind` convention. Reply routing survives it: the
   destination is resolved server-side from `--in-reply-to`, so a peer that
   passes the seq back needs no convention at all.
-  `--claude-bin` remains accepted as a deprecated alias.
 - Agent command lines are template-driven. Claude defaults use
   `--continue` for resume-conversation, but non-Claude runners should set
   `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and

@@ -123,9 +123,9 @@ func (w *decodedLineWriter) flush() {
 	w.buf = nil
 }
 
-// Process wraps a single execution of the claude binary in a worktree.
+// Process wraps a single execution of the agent binary in a worktree.
 type Process struct {
-	ClaudeBin                 string        // path to the claude executable (or fake-claude.sh in tests)
+	AgentBin                  string        // path to the agent executable (or fake-claude.sh in tests)
 	CWD                       string        // worktree directory; cmd.Dir = CWD
 	Timeout                   time.Duration // max wall time; if zero, defaults to 30 minutes
 	ExtraArgs                 []string      // runner-global args plus per-task args
@@ -139,7 +139,7 @@ type Process struct {
 	LogFormat string
 }
 
-// Run starts ClaudeBin with `-p <prompt>`, captures stdout and stderr line-by-line,
+// Run starts AgentBin with `-p <prompt>`, captures stdout and stderr line-by-line,
 // and returns the process exit code. stderr is always forwarded to sink verbatim
 // (with an "[err]" prefix, original line bytes and terminator untouched). stdout is
 // forwarded the same way — verbatim, "[out]"-prefixed — when LogFormat is empty or
@@ -167,7 +167,7 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	// window on the operator's desktop for the life of the task. The attachable
 	// agent is not this function; it goes through
 	// agentexec.ExecuteCommandWithOption, which carries the flag itself.
-	cmd := hostcmd.CommandContext(runCtx, p.ClaudeBin, args...)
+	cmd := hostcmd.CommandContext(runCtx, p.AgentBin, args...)
 	cmd.Dir = p.CWD
 	// PWD comes from cmd.Dir's own source so the two cannot drift; see
 	// AgentCwdEnv for why the chdir alone leaves some agents pointed at the

@@ -26,11 +26,11 @@ import (
 
 // agentBinBase is the basename of the agent binary the runner runs, for peer
 // identification over the wire. Empty stays empty (callers treat "" as unknown).
-func agentBinBase(claudeBin string) string {
-	if claudeBin == "" {
+func agentBinBase(agentBin string) string {
+	if agentBin == "" {
 		return ""
 	}
-	return filepath.Base(claudeBin)
+	return filepath.Base(agentBin)
 }
 
 // skillsInjected reports whether the runner injects .claude/{settings.json,skills}

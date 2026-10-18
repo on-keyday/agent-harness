@@ -51,7 +51,7 @@ type RunnerEntry struct {
 	GOOS         string
 	AllowedRoots []string // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
 	MaxTasks     int      // from RunnerHello.max_tasks (>=1)
-	AgentBin     string   // from RunnerHello.agent_bin (basename of --claude-bin)
+	AgentBin     string   // from RunnerHello.agent_bin (basename of --agent-bin)
 	// AgentProfiles is the ordered list of agent profile names advertised in
 	// RunnerHello.AgentProfiles. The first entry is this runner's default
 	// (see DefaultProfile). Empty for legacy runners that don't advertise any

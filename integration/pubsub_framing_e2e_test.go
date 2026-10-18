@@ -35,7 +35,7 @@ func TestPubsubFraming_LongArgvExecEventReachesTheTUIWhole(t *testing.T) {
 
 	wsCID, udpCID, _ := startDualStackServer(t)
 	repo := tempRepo(t)
-	startRunner(t, wsCID, runnerOpts{MaxTasks: 2, Roots: []string{repo}, ClaudeBin: fakeClaudeSlowPath(t)})
+	startRunner(t, wsCID, runnerOpts{MaxTasks: 2, Roots: []string{repo}, AgentBin: fakeClaudeSlowPath(t)})
 	c := dialClient(t, udpCID)
 	taskID := openLiveSession(t, c, repo)
 
