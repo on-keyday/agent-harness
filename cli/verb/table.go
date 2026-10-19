@@ -1596,12 +1596,18 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path: []string{"progress"},
-		NoModalSurface: "an operator connection has no principal, so the server refuses every write from the TUI or WebUI (no_principal); " +
-			"only an agent inside a task can set its own line",
+		// Writing a line is CLI-only (only a task's own connection may), but
+		// emptying another task's line is an operator action too: the TUI key
+		// and the WebUI sheet item reach that half.
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/actions.go:onProgressClear"},
+			{Surface: WebUI, At: "webui/index.html#task-list"},
+		},
 		Notes: []string{
 			"set THIS task's self-reported progress line (which task, which stage): one line, at most 256 bytes, no control characters",
 			"shown in every task list beside the window title, with its age; --clear empties it",
-			"only from inside a task: the server writes the caller's own row and refuses an operator connection",
+			"writing is only from inside a task: the server writes the caller's own row and refuses an operator connection",
+			"--clear --task <id> empties ANOTHER task's line: needs cancel with that task in its scope (the operator holds every bit)",
 		},
 		Action:          "ProgressAction",
 		CmdlineSurfaces: CLI,
@@ -1609,8 +1615,9 @@ var Verbs = []VerbSpec{
 			Reason: "the progress line is free-form"},
 		Flags: []Flag{
 			{Name: "clear", Type: FlagBool, Default: false, Field: "Clear", Help: "empty the line instead of setting it"},
+			{Name: "task", Type: FlagString, Default: "", Field: "Task", Help: "with --clear: empty this task's line instead of your own (needs cancel on it)"},
 		},
-		Examples: []string{"progress fixing the parser / writing tests", "progress --clear"},
+		Examples: []string{"progress fixing the parser / writing tests", "progress --clear", "progress --clear --task aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
 		Path:           []string{"agent", "send"},

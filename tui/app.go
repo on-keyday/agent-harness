@@ -1073,6 +1073,18 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case ProgressClearMsg:
+		short := shortTaskID(msg.TaskID)
+		switch {
+		case msg.Err != nil:
+			a.cmdresult.Append(ErrorStyle.Render("clear progress " + short + ": " + msg.Err.Error()))
+		case msg.Status == protocol.ProgressSetStatus_Ok:
+			a.cmdresult.Append(OKStyle.Render("cleared progress of " + short))
+		default:
+			a.cmdresult.Append(WarnStyle.Render("clear progress " + short + ": " + cli.ProgressSetStatusString(msg.Status)))
+		}
+		return a, nil
+
 	case AwaitProgressResultMsg:
 		short := shortTaskID(msg.TaskID)
 		if msg.Err != nil {

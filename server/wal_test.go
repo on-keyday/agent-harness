@@ -179,8 +179,6 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 		ExtraArgs:      []string{"--flag"},
 		HoldID:         "0f0e0d0c0b0a09080706050403020100",
 		HoldDeadlineNs: 1234567891,
-		Progress:       "stage 2",
-		ProgressAt:     1234567892,
 		Ts:             1234567890,
 		Selector:       sel,
 	}

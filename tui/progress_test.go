@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
 	"testing"
 	"time"
 
@@ -124,5 +125,28 @@ func TestProgressAgeAdvancesLocally(t *testing.T) {
 	sel := a.tasks.SelectedTask()
 	if sel == nil || sel.ProgressAgeMs < 600000 {
 		t.Fatalf("rendered age = %v, want >= 10m after 10m locally", sel)
+	}
+}
+
+// X empties the selected task's line (the server checks cancel + scope); the
+// key exists in the tasks pane and says what it does when nothing is selected.
+func TestProgressClearKey(t *testing.T) {
+	found := false
+	for _, b := range mainKeyBindings {
+		for _, k := range b.Keys {
+			if k == mainKeys.ProgressClear && b.Scope == scopeTasks {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no tasks-pane binding for the progress-clear key")
+	}
+	a := New(Config{})
+	if _, handled := a.onProgressClear(tea.KeyMsg{}); !handled {
+		t.Fatal("onProgressClear did not handle the key")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "no task selected") {
+		t.Errorf("no selection should say so, got %q", a.cmdresult.lines)
 	}
 }

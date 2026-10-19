@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -38,6 +39,29 @@ func ProgressSet(ctx context.Context, peerCID objproto.ConnectionID, text string
 	}
 	defer c.Close()
 	return c.ProgressSet(ctx, text, clear)
+}
+
+// ProgressClear empties ANOTHER task's progress line. Needs the cancel bit
+// with the target in its scope (the operator holds every bit); a target
+// outside it answers not_found.
+func (c *Client) ProgressClear(ctx context.Context, taskIDHex string) (*protocol.ProgressSetResponse, error) {
+	raw, err := hex.DecodeString(taskIDHex)
+	if err != nil || len(raw) != 16 {
+		return nil, fmt.Errorf("invalid task id %q (want 32 hex chars)", taskIDHex)
+	}
+	var tid protocol.TaskID
+	copy(tid.Id[:], raw)
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear}
+	req.SetProgressClear(protocol.ProgressClearRequest{TaskId: tid})
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := resp.ProgressClear()
+	if resp.Kind != protocol.TaskControlKind_ProgressClear || out == nil {
+		return nil, fmt.Errorf("unexpected response kind: %v", resp.Kind)
+	}
+	return out, nil
 }
 
 // ProgressSetStatusString is the status in the schema's snake_case.

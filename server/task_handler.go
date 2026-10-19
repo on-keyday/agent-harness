@@ -894,6 +894,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_ProgressSet:
 		h.handleProgressSet(conn, &req)
 
+	case protocol.TaskControlKind_ProgressClear:
+		h.handleProgressClear(conn, &req)
+
 	case protocol.TaskControlKind_TrsfState:
 		ts := req.TrsfState()
 		if ts == nil {

@@ -420,6 +420,8 @@ type ProgressAction struct {
 	ActionMarker
 	// empty the line instead of setting it
 	Clear bool
+	// with --clear: empty this task's line instead of your own (needs cancel on it)
+	Task string
 	// the progress line is free-form
 	Text string
 }
@@ -2130,6 +2132,7 @@ func init() {
 		"progress\x00cli": func(b Bound) (Action, error) {
 			a := ProgressAction{}
 			a.Clear = b.Bool("clear")
+			a.Task = b.Str("task")
 			a.Text = b.Trail
 			return a, nil
 		},

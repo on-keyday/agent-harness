@@ -583,6 +583,10 @@ enum TaskControlKind:
                             # See docs/superpowers/specs/2026-10-19-task-progress-design.md
     await_progress          # appended: one-shot watcher on a task's next
                             # progress write. Gated like await_idle.
+    progress_clear          # appended: clear ANOTHER task's progress line.
+                            # Gated on cancel, target-gated on cancel's scope:
+                            # whoever may end the task may empty its status
+                            # line. The operator holds every bit.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -965,13 +969,15 @@ format TaskInfo:
     # went away.
     hold_deadline_ns :u64
     # progress is the task's self-reported line (progress_set), written by the
-    # agent about its own task. STORED (WAL task_progress), so it survives a
-    # restart, a resume and the task's end. Empty = never written or cleared;
-    # progress_at separates the two.
+    # agent about its own task. Kept in memory, carried across a DELIBERATE
+    # restart by the progress snapshot the stopping server writes beside its
+    # held captures (lost on a crash); it survives a resume and the task's
+    # end. Empty = never written or cleared; progress_at separates the two.
     progress_len :u16
     progress :[progress_len]u8
     progress_at :u64          # unix nanos, SERVER clock, of the last write
-                              # (set or clear). 0 = never written.
+                              # (set or clear, own or progress_clear). 0 =
+                              # never written.
     progress_age_ms :u64      # server-computed now - progress_at, so cross-host
                               # clock skew cannot distort it, as output_idle_ms.
                               # Meaningless when progress_at == 0.
@@ -2200,6 +2206,13 @@ enum ProgressSetStatus:
                               # clear=1 with text. Refused, never sanitized.
     not_found = 3             # principal's task is no longer in the store
 
+# progress_clear: empty another task's line, as that task's own --clear would
+# (a fresh stamp; armed await-progress watchers fire). Answered with
+# ProgressSetResponse: ok, or not_found for an unknown task or one outside the
+# caller's cancel scope. A missing cancel bit is permission_denied.
+format ProgressClearRequest:
+    task_id :TaskID
+
 format ProgressSetResponse:
     status :ProgressSetStatus
     progress_at :u64          # the stamp written (unix nanos, server clock); 0 unless ok
@@ -2289,6 +2302,7 @@ format TaskControlRequest:
         TaskControlKind.board_contacts_clear     => board_contacts_clear     :BoardContactsClearRequest
         TaskControlKind.progress_set             => progress_set             :ProgressSetRequest
         TaskControlKind.await_progress           => await_progress           :AwaitProgressRequest
+        TaskControlKind.progress_clear           => progress_clear           :ProgressClearRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2367,6 +2381,7 @@ format TaskControlResponse:
         TaskControlKind.board_contacts_clear     => board_contacts_clear     :BoardContactsClearResponse
         TaskControlKind.progress_set             => progress_set             :ProgressSetResponse
         TaskControlKind.await_progress           => await_progress           :AwaitProgressResponse
+        TaskControlKind.progress_clear           => progress_clear           :ProgressSetResponse
 
 enum SetCapsStatus:
     :u8

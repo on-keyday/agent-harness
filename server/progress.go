@@ -76,6 +76,39 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 	respond(protocol.ProgressSetStatus_Ok, snap.ProgressAt)
 }
 
+// handleProgressClear empties ANOTHER task's line, as that task's own --clear
+// would: a fresh stamp, the task_progress event, and its armed watchers fire.
+// The cancel bit was checked by the generic gate (requiredCap); the target
+// must be inside cancel's scope, and one outside it is reported as absent, as
+// cancel itself reports it.
+func (h *TaskHandler) handleProgressClear(conn ConnHandle, req *protocol.TaskControlRequest) {
+	respond := func(status protocol.ProgressSetStatus, at int64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ProgressClear, RequestId: req.RequestId}
+		resp.SetProgressClear(protocol.ProgressSetResponse{Status: status, ProgressAt: uint64(at)})
+		conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+	}
+	pc := req.ProgressClear()
+	if pc == nil {
+		respond(protocol.ProgressSetStatus_BadText, 0)
+		return
+	}
+	taskHex := hex.EncodeToString(pc.TaskId.Id[:])
+	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_Cancel, taskHex) {
+		respond(protocol.ProgressSetStatus_NotFound, 0)
+		return
+	}
+	snap, ok := h.Tasks.SetProgress(taskHex, "", time.Now().UnixNano())
+	if !ok {
+		respond(protocol.ProgressSetStatus_NotFound, 0)
+		return
+	}
+	if h.OnTaskProgress != nil {
+		h.OnTaskProgress(taskHex)
+	}
+	h.fireProgressWatchers(taskHex, protocol.AwaitProgressStatus_Fired, "", snap.ProgressAt)
+	respond(protocol.ProgressSetStatus_Ok, snap.ProgressAt)
+}
+
 // progressAgeMs is now - progressAt on the server clock, as output_idle_ms is,
 // so a client on another host never subtracts across clocks. 0 when never
 // written, which the wire documents as meaningless beside progress_at == 0.

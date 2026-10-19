@@ -141,6 +141,7 @@ func main() {
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"awaitProgress":      js.FuncOf(harnessAwaitProgress),
+		"progressClear":      js.FuncOf(harnessProgressClear),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
 		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
@@ -3210,6 +3211,40 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 				"status":       cli.AwaitIdleStatusString(resp.Status),
 				"lastOutputAt": float64(resp.LastOutputAt),
 				"watcherId":    float64(resp.WatcherId),
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessProgressClear empties another task's progress line (cancel + scope
+// on the server).
+//
+//	harness.progressClear(taskId) -> Promise<{status, progressAt}>
+func harnessProgressClear(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("progressClear: missing task id"))
+				return
+			}
+			resp, err := c.ProgressClear(rootCtx, args[0].String())
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("progressClear: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":     cli.ProgressSetStatusString(resp.Status),
+				"progressAt": strconv.FormatUint(resp.ProgressAt, 10),
 			}))
 		}()
 		return nil

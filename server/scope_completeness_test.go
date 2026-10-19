@@ -70,6 +70,9 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// await_progress names a task and resolves it through inScope, as
 	// await_idle does.
 	protocol.TaskControlKind_AwaitProgress: targetGated,
+	// progress_clear names another task and resolves it through cancel's
+	// scope before touching it.
+	protocol.TaskControlKind_ProgressClear: targetGated,
 	// prune names a set of tasks, or sweeps by age; filtered to the caller's
 	// scope in the PruneFn closure.
 	protocol.TaskControlKind_PruneTasks: targetGated,
@@ -138,7 +141,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_AwaitProgress); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_ProgressClear); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -153,17 +156,18 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// await_progress is the last kind; if the enum grows past it the loops above
-// stop short and silently cover nothing new. It has caught nine appends now:
+// progress_clear is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught ten appends now:
 // restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
-// agent_list_contacts; board_contacts_clear; and progress_set / await_progress.
-func TestAwaitProgressIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AwaitProgress) + 1)
+// agent_list_contacts; board_contacts_clear; progress_set / await_progress;
+// and progress_clear.
+func TestProgressClearIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ProgressClear) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after await_progress (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after progress_clear (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

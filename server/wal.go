@@ -106,12 +106,7 @@ type WALEvent struct {
 	// so the two are never compared: this one exists so a restart that took
 	// too long fails the task instead of offering it.
 	HoldDeadlineNs int64 `json:"hold_deadline_ns,omitempty"`
-	// Progress / ProgressAt are the task's self-reported line and the server
-	// stamp of its last write, carried by task_progress as a snapshot of both
-	// (a clear writes Progress "" with a fresh stamp).
-	Progress   string `json:"progress,omitempty"`
-	ProgressAt int64  `json:"progress_at,omitempty"`
-	Ts         int64  `json:"ts"` // unix nano
+	Ts             int64 `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -161,8 +156,6 @@ type walEventJSON struct {
 	ExtraArgs           []string           `json:"extra_args,omitempty"`
 	HoldID              string             `json:"hold_id,omitempty"`
 	HoldDeadlineNs      int64              `json:"hold_deadline_ns,omitempty"`
-	Progress            string             `json:"progress,omitempty"`
-	ProgressAt          int64              `json:"progress_at,omitempty"`
 	Ts                  int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -201,8 +194,6 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ExtraArgs:           e.ExtraArgs,
 		HoldID:              e.HoldID,
 		HoldDeadlineNs:      e.HoldDeadlineNs,
-		Progress:            e.Progress,
-		ProgressAt:          e.ProgressAt,
 		Ts:                  e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -247,8 +238,6 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ExtraArgs = j.ExtraArgs
 	e.HoldID = j.HoldID
 	e.HoldDeadlineNs = j.HoldDeadlineNs
-	e.Progress = j.Progress
-	e.ProgressAt = j.ProgressAt
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

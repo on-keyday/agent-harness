@@ -717,6 +717,23 @@ func (h cliVerbs) Progress(a verb.ProgressAction) error {
 	if a.Clear == (a.Text != "") {
 		return fmt.Errorf("progress: give a line, or --clear (not both, not neither)")
 	}
+	if a.Task != "" {
+		if !a.Clear {
+			return fmt.Errorf("progress: --task only clears another task's line; a task writes only its own")
+		}
+		var resp *protocol.ProgressSetResponse
+		if err := h.withClient(func(c *cli.Client) error {
+			var err error
+			resp, err = c.ProgressClear(h.ctx, a.Task)
+			return err
+		}); err != nil {
+			return err
+		}
+		if resp.Status != protocol.ProgressSetStatus_Ok {
+			return fmt.Errorf("progress --clear --task %s: %s", a.Task, cli.ProgressSetStatusString(resp.Status))
+		}
+		return nil
+	}
 	resp, err := cli.ProgressSet(h.ctx, h.cid(), a.Text, a.Clear)
 	if err != nil {
 		return err

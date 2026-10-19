@@ -370,6 +370,22 @@ func (a *App) onAwaitProgress(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoAwaitProgress(a.appCtx, a.client, taskID, t.ProgressAt, sink, ""), true
 }
 
+// `X` empties the selected task's progress line — for a stale line its task
+// will not replace. The server checks cancel and its scope; a refusal lands
+// as a result line.
+func (a *App) onProgressClear(msg tea.KeyMsg) (tea.Cmd, bool) {
+	taskID := a.tasks.SelectedID()
+	if taskID == "" {
+		a.cmdresult.Append(WarnStyle.Render("clear progress: no task selected"))
+		return nil, true
+	}
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("clear progress: not connected"))
+		return nil, true
+	}
+	return DoProgressClear(a.client, taskID), true
+}
+
 // `d` opens the detail popup for the focused row (runners or tasks).
 func (a *App) onDetail(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch a.focus {

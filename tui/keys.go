@@ -54,6 +54,7 @@ type mainKeyMap struct {
 	AwaitIdleNotify        string
 	AwaitProgress          string
 	AwaitProgressNotify    string
+	ProgressClear          string
 	ForwardLocal           string
 	ForwardLocalStop       string
 	ForwardRemote          string
@@ -93,6 +94,7 @@ var mainKeys = mainKeyMap{
 	AwaitIdleNotify:        "W",
 	AwaitProgress:          "m",
 	AwaitProgressNotify:    "M",
+	ProgressClear:          "X",
 	ForwardLocal:           "p",
 	ForwardLocalStop:       "P",
 	ForwardRemote:          "b",
@@ -265,6 +267,8 @@ var mainKeyBindings = []keyBinding{
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
 	{Keys: []string{mainKeys.AwaitProgress, mainKeys.AwaitProgressNotify}, Scope: scopeTasks, Do: (*App).onAwaitProgress,
 		Short: "m/M await-progress", Long: "arm a one-shot watcher on the selected task's next progress line; a line written since this row was drawn fires at once (M notifies the operator)"},
+	{Keys: []string{mainKeys.ProgressClear}, Scope: scopeTasks, Do: (*App).onProgressClear,
+		Short: "X clear progress", Long: "empty the selected task's progress line (needs cancel on it; the operator has it)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Do: (*App).onFilePicker, OutsideHint: "file picker: focus the tasks pane first", Short: "F files", Long: "open the file picker on the selected task's worktree"},
 	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Do: (*App).onGit, OutsideHint: "git: focus the tasks pane first", Short: "G git", Long: "browse the selected task's git state — commit log, diff, status — read-only, without touching its shell"},
 	{Keys: []string{mainKeys.ForwardLocal, mainKeys.ForwardLocalStop}, Scope: scopeTasks, Do: (*App).onForward,

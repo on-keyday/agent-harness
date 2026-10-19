@@ -468,6 +468,27 @@ func DoIdleWatcherList(c *cli.Client, taskFilter string, toCmdresult bool, only 
 	}
 }
 
+// ProgressClearMsg carries the outcome of emptying a task's progress line.
+type ProgressClearMsg struct {
+	TaskID string
+	Status protocol.ProgressSetStatus
+	Err    error
+}
+
+// DoProgressClear empties another task's progress line over the persistent
+// client.
+func DoProgressClear(c *cli.Client, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := c.ProgressClear(ctx, taskID)
+		if err != nil {
+			return ProgressClearMsg{TaskID: taskID, Err: err}
+		}
+		return ProgressClearMsg{TaskID: taskID, Status: resp.Status}
+	}
+}
+
 // AwaitProgressResultMsg carries the outcome of an await-progress arm: for
 // the reply sink it arrives when the watcher fires, for notify/board at once
 // with Status=Armed.

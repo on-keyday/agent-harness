@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,7 +150,10 @@ func TestProgressSet_ClearKeepsStamp(t *testing.T) {
 	}
 }
 
-func TestProgressSet_SurvivesWALReplay(t *testing.T) {
+// Progress is not history: a write appends nothing to the WAL (a looping
+// agent must not grow it), and a deliberate stop hands the lines to the next
+// server through one snapshot file instead.
+func TestSetProgress_WritesNoWALRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tasks.wal")
 	w, err := OpenWAL(path)
 	if err != nil {
@@ -159,20 +163,51 @@ func TestProgressSet_SurvivesWALReplay(t *testing.T) {
 	s.SetWAL(w)
 	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
-	if _, ok := s.SetProgress(id, "stage 3", 12345); !ok {
-		t.Fatal("SetProgress on a live task returned false")
-	}
+	before, _, _ := ReadWAL(path)
+	s.SetProgress(id, "stage 3", 12345)
 	w.Close()
+	after, _, _ := ReadWAL(path)
+	if len(after) != len(before) {
+		t.Fatalf("WAL grew from %d to %d records on a progress write", len(before), len(after))
+	}
+}
 
-	events, _, err := ReadWAL(path)
+func TestProgressSnapshot_CarriesAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "tasks.wal")
+	w, err := OpenWAL(walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := NewTaskStore()
-	r.ReplayEvents(events)
-	e, ok := r.Get(id)
-	if !ok || e.Progress != "stage 3" || e.ProgressAt != 12345 {
-		t.Fatalf("replayed entry = %q@%d (found=%v), want stage 3@12345", e.Progress, e.ProgressAt, ok)
+	old := NewTaskStore()
+	old.SetWAL(w)
+	id := old.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	never := old.Create("/repo", "q", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	old.SetProgress(id, "stage 3", 12345)
+	if err := writeProgressSnapshot(dir, old); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	events, _, err := ReadWAL(walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := NewTaskStore()
+	next.ReplayEvents(events)
+	if n, err := loadProgressSnapshot(dir, next); err != nil || n != 1 {
+		t.Fatalf("loadProgressSnapshot = %d, %v; want 1 line applied", n, err)
+	}
+	if e, _ := next.Get(id); e.Progress != "stage 3" || e.ProgressAt != 12345 {
+		t.Fatalf("after restart = %q@%d, want stage 3@12345", e.Progress, e.ProgressAt)
+	}
+	if e, _ := next.Get(never); e.ProgressAt != 0 {
+		t.Fatalf("a task that never wrote got a stamp %d", e.ProgressAt)
+	}
+	if _, err := os.Stat(progressSnapshotPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("snapshot file still present after load (err=%v); a later crash would resurrect it", err)
 	}
 }
 
@@ -254,5 +289,79 @@ func TestSetProgress_StampNeverGoesBackwards(t *testing.T) {
 func TestProgressAgeMs_FutureStampIsZero(t *testing.T) {
 	if got := progressAgeMs(time.Now().Add(time.Hour).UnixNano()); got != 0 {
 		t.Fatalf("age of a future stamp = %d, want 0", got)
+	}
+}
+
+// progress_clear empties ANOTHER task's line. Gated on cancel and its scope:
+// whoever may end the task may empty its status line (the operator holds
+// every bit).
+func TestProgressClear_Gates(t *testing.T) {
+	h := newTestHandler(t)
+	parent := h.Tasks.Create("/repo", "parent", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Cancel, Scope{}, "")
+	child := h.Tasks.Create("/repo", "child", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
+		hexToTaskID(t, parent), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	stranger := h.Tasks.Create("/repo", "stranger", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	for _, id := range []string{child, stranger, parent} {
+		h.Tasks.SetProgress(id, "line of "+id[:4], 10)
+	}
+	clear := func(conn *fakeConn, target string) protocol.TaskControlResponse {
+		before := len(conn.Sent())
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 9}
+		req.SetProgressClear(protocol.ProgressClearRequest{TaskId: hexToTaskID(t, target)})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		waitFor(t, func() bool { return len(conn.Sent()) == before+1 })
+		return lastTaskControlResponse(t, conn)
+	}
+	pConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9761-1")}
+	cConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9762-1")}
+	op := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9763-1")}
+	h.principals = map[string]protocol.TaskID{
+		pConn.ConnectionID().String(): hexToTaskID(t, parent),
+		cConn.ConnectionID().String(): hexToTaskID(t, child),
+	}
+
+	// A parent holding cancel clears its child's line.
+	if r := clear(pConn, child); r.ProgressClear() == nil || r.ProgressClear().Status != protocol.ProgressSetStatus_Ok {
+		t.Fatalf("parent with cancel → %+v, want ok", r)
+	}
+	if e, _ := h.Tasks.Get(child); e.Progress != "" || e.ProgressAt <= 10 {
+		t.Fatalf("child after clear = %q@%d, want empty with a fresh stamp", e.Progress, e.ProgressAt)
+	}
+	// ...but not a task outside its cancel scope: absent, as cancel answers.
+	if r := clear(pConn, stranger); r.ProgressClear() == nil || r.ProgressClear().Status != protocol.ProgressSetStatus_NotFound {
+		t.Fatalf("out of scope → %+v, want not_found", r)
+	}
+	if e, _ := h.Tasks.Get(stranger); e.Progress == "" {
+		t.Fatal("an out-of-scope clear changed the stranger's line")
+	}
+	// A task without cancel is refused by the bit.
+	if r := clear(cConn, parent); r.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("no cancel → kind %v, want permission_denied", r.Kind)
+	}
+	// The operator clears anything.
+	if r := clear(op, stranger); r.ProgressClear() == nil || r.ProgressClear().Status != protocol.ProgressSetStatus_Ok {
+		t.Fatalf("operator → %+v, want ok", r)
+	}
+}
+
+// A clear is a write: it fires the target's armed watchers and its event.
+func TestProgressClear_FiresWatchersAndEvent(t *testing.T) {
+	f := newProgressFixture(t)
+	f.set(t, "stage 1", false)
+	var events []string
+	f.h.OnTaskProgress = func(id string) { events = append(events, id) }
+	watcher := operatorConn("9764")
+	before := armProgress(t, f.h, watcher, f.tHex, 0, protocol.AwaitSink_Reply, "")
+	op := operatorConn("9765")
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ProgressClear, RequestId: 3}
+	req.SetProgressClear(protocol.ProgressClearRequest{TaskId: hexToTaskID(t, f.tHex)})
+	f.h.Handle(op, encodeTaskControlRequest(t, req))
+	if got := awaitProgressReply(t, watcher, before); got.Status != protocol.AwaitProgressStatus_Fired || len(got.Progress) != 0 {
+		t.Fatalf("watcher = %+v, want fired with an empty line", got)
+	}
+	if len(events) != 1 || events[0] != f.tHex {
+		t.Fatalf("events = %v, want one task_progress for the target", events)
 	}
 }

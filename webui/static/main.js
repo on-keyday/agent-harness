@@ -5593,6 +5593,20 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       });
     }
 
+    // Empty a stale line its task will not replace. The server checks cancel
+    // and its scope; a refusal is reported like any other.
+    if (canClearProgress(t)) {
+      addItem("🧹 進捗を消す", "", async () => {
+        try {
+          const r = await window.harness.progressClear(t.id);
+          appendCmdOutput(`clear progress ${t.id.slice(0, 12)}: ${r.status}`, true);
+          refreshSnapshot();
+        } catch (e) {
+          appendCmdOutput(`clear progress: ${e.message}`, true);
+        }
+      });
+    }
+
     addItem("▦ この配下をグリッド", "", async () => {
       appendCmdOutput(await openGridSet({ mode: "subtree", anchor: t.id }), true);
     });
@@ -7412,6 +7426,12 @@ function taskEventBanner(line) {
 // can be watched.
 function canArmProgress(t) {
   return !["Succeeded", "Failed", "Cancelled"].includes(t.status);
+}
+
+// canClearProgress: the sheet offers to empty a line only when there is one;
+// whether this operator may (cancel + scope) is the server's answer.
+function canClearProgress(t) {
+  return !!t.progress && t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "";
 }
 
 // runnerRowModel is what one runner row in the Runners list shows, before any

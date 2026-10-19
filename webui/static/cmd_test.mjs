@@ -635,6 +635,14 @@ test("task sheet: await-progress offered on any live task, oneshot included", ()
   eq(page.canArmProgress({ status: "Succeeded", kind: "Oneshot" }), false);
 });
 
+// The sheet offers to empty a task's line only when there is one to empty;
+// the server decides whether this operator may (cancel + scope).
+test("task sheet: clear-progress offered only for a written, non-empty line", () => {
+  eq(page.canClearProgress({ progress: "stage", progressAt: "12" }), true);
+  eq(page.canClearProgress({ progress: "", progressAt: "12" }), false);
+  eq(page.canClearProgress({ progress: "", progressAt: "0" }), false);
+});
+
 // The runner list is rows like the task list, built from one model per
 // runner. The model is what the row shows; the DOM is a projection of it.
 test("a runner row: agents as a list, roots one per line, load and status", () => {

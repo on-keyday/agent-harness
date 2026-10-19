@@ -113,9 +113,10 @@ type TaskEntry struct {
 	RingBufferBytes uint64
 	// Progress is the task's self-reported line (progress_set), written by
 	// the agent about its own task; ProgressAt is the server's unix-nano
-	// stamp of the last write, set or clear (0 = never written). Stored in
-	// the WAL (task_progress), so both survive a restart, a resume and the
-	// task's end.
+	// stamp of the last write, set or clear (0 = never written). Memory
+	// only: a deliberate stop hands both to the next server through the
+	// progress snapshot (progress_snapshot.go), a crash loses them. They
+	// survive a resume and the task's end.
 	Progress   string
 	ProgressAt int64
 }
@@ -274,17 +275,16 @@ func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, 
 	}
 }
 
-// SetProgress records a task's self-reported line and the stamp of the write,
-// and appends one task_progress WAL record carrying both — a snapshot, as
-// writeCapsChangedLocked's is, so replay never pairs one write's text with
-// another's stamp. Any status is accepted: a line written just before the task
-// ended is the one worth keeping.
+// SetProgress records a task's self-reported line and the stamp of the write.
+// Any status is accepted: a line written just before the task ended is the one
+// worth keeping. Nothing goes to the WAL — a progress line is state, not
+// history, and a looping agent must not grow the log; a deliberate stop hands
+// the lines over in one snapshot (progress_snapshot.go).
 //
 // The stamp only ever increases: two writes from one task can race, and the
 // later clock reading may reach the lock first, while await-progress's
 // baseline (since_progress_at) relies on "newer" meaning "written later". The
-// WAL record is written under the same lock so the file's order is the
-// memory's order. The returned entry carries the stamp actually stored.
+// returned entry carries the stamp actually stored.
 func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,16 +297,43 @@ func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
 	}
 	t.Progress = text
 	t.ProgressAt = at
-	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{
-			Type: "task_progress", TaskID: id,
-			Progress: text, ProgressAt: at,
-			Ts: time.Now().UnixNano(),
-		}); err != nil {
-			slog.Error("WAL write failed", "op", "task_progress", "task_id", id, "err", err)
+	return *t, true
+}
+
+// progressLine is one task's line as the snapshot carries it.
+type progressLine struct {
+	TaskID     string `json:"task_id"`
+	Progress   string `json:"progress"`
+	ProgressAt int64  `json:"progress_at"`
+}
+
+// progressLines returns every task that has ever written a line (cleared ones
+// included: a clear is a write, with its own stamp).
+func (s *TaskStore) progressLines() []progressLine {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []progressLine
+	for id, t := range s.tasks {
+		if t.ProgressAt != 0 {
+			out = append(out, progressLine{TaskID: id, Progress: t.Progress, ProgressAt: t.ProgressAt})
 		}
 	}
-	return *t, true
+	return out
+}
+
+// restoreProgress puts back a line the previous server held, verbatim — no
+// stamp bump and no event: nothing was written, it is being remembered.
+// false when the task is not in the store (pruned, or never replayed).
+func (s *TaskStore) restoreProgress(l progressLine) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[l.TaskID]
+	if !ok {
+		return false
+	}
+	t.Progress = l.Progress
+	t.ProgressAt = l.ProgressAt
+	return true
 }
 
 // SetCaps rewrites a live task's authority: the capability bitmask, the scope,
@@ -1146,11 +1173,6 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.ErrorMsg = ev.DiffInfo
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
-			}
-		case "task_progress":
-			if t, ok := s.tasks[ev.TaskID]; ok {
-				t.Progress = ev.Progress
-				t.ProgressAt = ev.ProgressAt
 			}
 		case "task_held":
 			// A held task is alive on a runner that has no server to report

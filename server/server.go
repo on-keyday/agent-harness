@@ -854,6 +854,13 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		if events != nil {
 			s.tasks.ReplayEvents(events)
 		}
+		// Progress lines are not in the WAL: the previous server, if it was
+		// stopped deliberately, left them in a snapshot beside it.
+		if n, perr := loadProgressSnapshot(s.cfg.DataDir, s.tasks); perr != nil {
+			s.cfg.Logger.Warn("progress snapshot not applied", "err", perr)
+		} else if n > 0 {
+			s.cfg.Logger.Info("progress snapshot applied", "tasks", n)
+		}
 		// Detached survivors cannot be restored: SessionMux state was in-memory.
 		// Per spec §9, mark them Cancelled.
 		for _, t := range s.tasks.List(0) {
@@ -1131,6 +1138,13 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			if s.tasks.CountByStatus(protocol.TaskStatus_Held) == 0 {
 				if held := s.RunHoldSequence(); held > 0 {
 					s.cfg.Logger.Info("shutdown: tasks held for the next server", "count", held)
+				}
+			}
+			// Every deliberate stop, held or full: a finished task's last line
+			// is worth keeping either way. A crash never reaches here.
+			if s.cfg.DataDir != "" {
+				if err := writeProgressSnapshot(s.cfg.DataDir, s.tasks); err != nil {
+					s.cfg.Logger.Warn("shutdown: progress snapshot not written", "err", err)
 				}
 			}
 			sessionsCancel()
