@@ -39,7 +39,6 @@
       <button type="button" class="tab-btn" data-tab="notify">通知</button>
       <button type="button" class="tab-btn" data-tab="conns">接続</button>
       <button type="button" class="tab-btn" data-tab="board">Board</button>
-      <button type="button" class="tab-btn" data-tab="audit">権限</button>
     </nav>
     <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
@@ -52,6 +51,12 @@
         <button type="button" id="task-chip-finished" class="task-chip">Finished</button>
         <button type="button" id="task-chip-all" class="task-chip">All</button>
         <button type="button" id="task-chip-tree" class="task-chip" title="親子（作成者）順に並べる。ツリー中は状態フィルタを無視して可視タスクを全部出す">🌳 ツリー</button>
+        <!-- Marks the holders of one capability in the tree (ended tasks too:
+             a resume brings their recorded caps back). Filled from
+             harness.capsAuditOrder(). -->
+        <select id="task-tree-bit" title="ツリー上でこの権限を持つタスクを強調">
+          <option value="0">権限で強調: なし</option>
+        </select>
         <input id="task-filter-input" type="search" placeholder="filter: repo / id / status (space = AND)">
       </div>
       <div class="grid-control-bar">
@@ -65,6 +70,26 @@
            the list below — a task card is tall, so an indented list never reads
            as a hierarchy. -->
       <div id="task-tree-graph" class="task-tree-graph" hidden aria-label="Task creator tree"></div>
+      <!-- caps audit: per capability, the tasks holding it, strongest first.
+           Rows come from harness.capsAudit (cli.CapsAudit), the same rows the
+           CLI prints and the TUI's i modal draws. A holder leads into the tree
+           above; re-grant is that task's own sheet. -->
+      <details id="caps-audit">
+        <summary>権限の棚卸し</summary>
+        <div class="audit-legend">
+          scope の色: <span class="sc global">global</span>
+          <span class="sc subtree">subtree / descendants</span>
+          <span class="sc narrow">none / ids:</span>
+          — <code>*</code> は --scope-for で絞った bit、<code>global（固定）</code> は scope で絞れない bit。bit を押すと展開、持ち主を押すとツリーで位置を示す。
+        </div>
+        <div class="actions">
+          <label><input type="checkbox" id="caps-audit-ended"> 終了した task も</label>
+          <label><input type="checkbox" id="caps-audit-empty"> 持ち主 0 の bit も</label>
+          <button type="button" id="caps-audit-refresh">↻ Refresh</button>
+        </div>
+        <div id="caps-audit-error" class="task-err" hidden></div>
+        <div id="caps-audit-rows"></div>
+      </details>
 <div id="task-list" class="task-list"></div>
     </section>
     <section id="compose" data-tabgroup="tasks">
@@ -355,26 +380,6 @@
         <div id="board-chains-window" class="board-chains-window"></div>
         <div id="board-chains-rows" class="board-chains-rows"></div>
       </div>
-    </section>
-    <section id="caps-audit" data-tabgroup="audit">
-      <h2>権限</h2>
-      <!-- caps audit: per capability, the tasks holding it, strongest first.
-           Rows come from harness.capsAudit (cli.CapsAudit), the same rows the
-           CLI prints and the TUI's i modal draws. -->
-      <div class="audit-legend">
-        scope の色: <span class="sc global">global</span>
-        <span class="sc subtree">subtree / descendants</span>
-        <span class="sc narrow">none / ids:</span>
-        <span class="sc none">scope 対象外</span>
-        — <code>*</code> は --scope-for で絞った bit。bit を押すと展開、持ち主を押すと再付与。
-      </div>
-      <div class="actions">
-        <label><input type="checkbox" id="caps-audit-ended"> 終了した task も</label>
-        <label><input type="checkbox" id="caps-audit-empty"> 持ち主 0 の bit も</label>
-        <button type="button" id="caps-audit-refresh">↻ Refresh</button>
-      </div>
-      <div id="caps-audit-error" class="task-err" hidden></div>
-      <div id="caps-audit-rows"></div>
     </section>
     <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>

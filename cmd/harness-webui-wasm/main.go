@@ -145,6 +145,7 @@ func main() {
 		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
 		"capsAudit":          js.FuncOf(harnessCapsAudit),
 		"capsAuditText":      js.FuncOf(harnessCapsAuditText),
+		"capsAuditOrder":     js.FuncOf(harnessCapsAuditOrder),
 		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
 		"scopeSpec":          js.FuncOf(harnessScopeSpec),
@@ -894,6 +895,34 @@ func harnessCapsAudit(this js.Value, args []js.Value) any {
 	})
 }
 
+// tierMarkOf is cli.TierMark's text, "" for a mask with no granular bit.
+func tierMarkOf(caps protocol.Capability) string {
+	mark, _, _ := cli.TierMark(caps)
+	return mark
+}
+
+// tierClassOf names the mark's tier for the page's CSS: strong | mid | weak,
+// "" when there is no mark.
+func tierClassOf(caps protocol.Capability) string {
+	_, tier, ok := cli.TierMark(caps)
+	if !ok {
+		return ""
+	}
+	return [...]string{"strong", "mid", "weak"}[tier]
+}
+
+// harnessCapsAuditOrder is every granular bit in the audit's order, strongest
+// tier first, for the tree's 「権限で強調」 selector. Pure: a compiled-in table.
+//
+//	harness.capsAuditOrder() -> [{name, bit, tier}]
+func harnessCapsAuditOrder(this js.Value, args []js.Value) any {
+	var out []any
+	for _, c := range verb.AuditOrder() {
+		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint32(c)), "tier": verb.CapTierOf(c).Label()})
+	}
+	return js.ValueOf(out)
+}
+
 // harnessCapsAuditText is `caps audit` in the command input: the CLI's text
 // (or JSON Lines) from the same writer.
 //
@@ -1343,7 +1372,12 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// dialog seeds its chips/radios/checklist from these —
 					// back-parsing label forms like "all,-spawn" would mean
 					// re-implementing ParseCaps in JS.
-					"capsBits":  float64(uint32(t.Capabilities)),
+					"capsBits": float64(uint32(t.Capabilities)),
+					// The tree node's capability mark, rendered once in Go
+					// (cli.TierMark, the TUI's too) so the page holds no copy
+					// of the tier table.
+					"tierMark":  tierMarkOf(t.Capabilities),
+					"tierClass": tierClassOf(t.Capabilities),
 					"scopeBase": t.Scope.Base.String(),
 					"scopeIds":  scopeIDStrings(t.Scope),
 					// exclude_self is the action base's other half.

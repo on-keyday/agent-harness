@@ -126,7 +126,7 @@ export function recordingCtx(page, overrides = {}) {
   // duration parser -- recording it would test that the page calls the
   // grammar rather than that the grammar answers.
   const pure = new Set(["parseCommand", "parseGit", "pathsForSurface",
-    "capsCatalog", "parseAuthority", "parseDurationMs"]);
+    "capsCatalog", "parseAuthority", "parseDurationMs", "capsAuditOrder"]);
   const harness = new Proxy({}, {
     get: (_, name) => {
       if (pure.has(name)) return page.bridge[name];

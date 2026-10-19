@@ -438,6 +438,53 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // set of disconnected fragments pretending to be a hierarchy.
   let taskTreeMode = false;
   let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
+  // 権限で強調: the capability whose holders the tree marks (0 = none), and a
+  // task the caps audit just pointed at, pulsed for a moment.
+  const taskTreeBit = document.getElementById("task-tree-bit");
+  const capsAuditDetails = document.getElementById("caps-audit");
+  let treeFocusId = "";
+  let treeFocusTimer = 0;
+  // drawTaskTree is the ONE call into renderTaskTreeGraph, so the chip, the
+  // snapshot poll, the selector and the audit cannot draw it differently.
+  function drawTaskTree() {
+    fillTaskTreeBit();
+    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks,
+      taskStatusColor, revealTaskInList,
+      { markBit: Number(taskTreeBit && taskTreeBit.value) || 0, focusId: treeFocusId });
+  }
+  // The selector's bits come from the bridge (verb.AuditOrder), filled once
+  // the wasm is up.
+  function fillTaskTreeBit() {
+    if (!taskTreeBit || taskTreeBit.options.length > 1) return;
+    if (!window.harness || typeof window.harness.capsAuditOrder !== "function") return;
+    for (const c of window.harness.capsAuditOrder()) {
+      const o = document.createElement("option");
+      o.value = String(c.bit);
+      o.dataset.name = c.name;
+      o.textContent = `${c.name} (${c.tier})`;
+      taskTreeBit.append(o);
+    }
+  }
+  if (taskTreeBit) taskTreeBit.addEventListener("change", drawTaskTree);
+  // showTaskInTree is where a caps audit holder leads: the tree, marked for
+  // that holder's capability, with the node brought into view and pulsed.
+  // Re-grant is then that node's own task sheet.
+  function showTaskInTree(id, capName) {
+    fillTaskTreeBit();
+    const opt = taskTreeBit && [...taskTreeBit.options].find((o) => o.dataset.name === capName);
+    if (opt) taskTreeBit.value = opt.value;
+    if (!taskTreeMode) {
+      taskTreeMode = true;
+      taskTreeChip.classList.add("is-active");
+    }
+    treeFocusId = id;
+    drawTaskTree();
+    const node = document.querySelector(`#task-tree-graph .tt-node[data-task-id="${id}"]`);
+    if (node) node.scrollIntoView({ block: "center", inline: "center" });
+    clearTimeout(treeFocusTimer);
+    treeFocusTimer = setTimeout(() => { treeFocusId = ""; drawTaskTree(); }, 2000);
+    return !!node;
+  }
   let lastGrantEdges = [];         // id-named grants between tasks (cli.BuildTaskGrants)
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
   const expandedExecCommands = new Set(); // exec ids whose command is shown whole
@@ -490,7 +537,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
-      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
+      drawTaskTree();
     });
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
@@ -679,10 +726,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderRunnerRows(runnerList, sortedRunners, {
       tasks: snap.tasks, statusColor: taskStatusColor, repoTail, onTask: revealTaskInList,
     });
-    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
+    drawTaskTree();
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
-    if (window.__refreshCapsAudit && document.body.dataset.activeTab === "audit") {
+    if (window.__refreshCapsAudit && capsAuditDetails && capsAuditDetails.open) {
       window.__refreshCapsAudit();
     }
     renderRawTaskSelect(snap.tasks);
@@ -6948,10 +6995,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Keep the git task dropdown in step with the snapshot poll.
   window.__renderGitTaskSelect = renderGitTaskSelect;
 
-  // 権限 tab: who holds which capability. Rows come from harness.capsAudit
-  // (cli.CapsAudit) on each call; this side keeps only the toggles and which
-  // bits are expanded. Labels carry prompt text, so everything is built with
-  // textContent, never innerHTML.
+  // 権限の棚卸し (under the task tree): who holds which capability. Rows come
+  // from harness.capsAudit (cli.CapsAudit) on each call; this side keeps only
+  // the toggles and which bits are expanded. Labels carry prompt text, so
+  // everything is built with textContent, never innerHTML.
   const capsAuditRows = document.getElementById("caps-audit-rows");
   const capsAuditError = document.getElementById("caps-audit-error");
   const capsAuditEnded = document.getElementById("caps-audit-ended");
@@ -6965,9 +7012,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (text !== undefined) e.textContent = text;
     return e;
   };
-  const auditScopeChip = (h) => h.scope_kind === "none"
-    ? auditEl("span", "sc none", "scope 対象外")
-    : auditEl("span", "sc " + h.breadth, h.scope + (h.override ? " *" : ""));
+  // The text is the CLI's own scope cell (scope_text); a bit no task scope
+  // bounds reads global（固定） and is coloured as global.
+  const auditScopeChip = (h) =>
+    auditEl("span", "sc " + (h.scope_kind === "none" ? "global" : h.breadth), h.scope_text);
   const renderCapsAudit = (rows) => {
     capsAuditRows.replaceChildren();
     if (!rows.length) {
@@ -7035,11 +7083,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   capsAuditRows.addEventListener("click", (e) => {
     const chip = e.target.closest(".audit-holder");
     if (chip) {
-      const t = lastTasks.find((x) => x.id === chip.dataset.taskId);
-      if (t) openRegrantDialog(t);
-      else {
+      const cap = chip.closest(".audit-cap").querySelector(".head").dataset.cap;
+      if (!showTaskInTree(chip.dataset.taskId, cap)) {
         capsAuditError.textContent = "caps audit: task " + chip.dataset.taskId.slice(0, 8) +
-          " is not in the task list";
+          " is not in the tree";
         capsAuditError.hidden = false;
       }
       return;
@@ -7052,9 +7099,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       renderCapsAudit(capsAuditLast);
     }
   });
-  tabbar.addEventListener("click", (e) => {
-    const btn = e.target.closest(".tab-btn");
-    if (btn && btn.dataset.tab === "audit") refreshCapsAudit();
+  capsAuditDetails.addEventListener("toggle", () => {
+    if (capsAuditDetails.open) refreshCapsAudit();
   });
 
   // Activate whichever board view is showing when the board tab is selected.
@@ -8894,7 +8940,9 @@ function repoBasename(p) {
 // grantEdges and each node's global / offscreen are the authority the creator
 // edges do not show (cli.BuildTaskGrants): a task naming another by id in its
 // scope, or reaching every task through a global base.
-function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect) {
+// opts.markBit marks the holders of one capability (a ring; the rest dimmed),
+// ended tasks included. opts.focusId pulses the node the caps audit pointed at.
+function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, opts = {}) {
   const host = document.getElementById("task-tree-graph");
   if (!host) return;
   // nodes null/empty is how the caller says "the toggle is off": the state
@@ -9043,10 +9091,16 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect) {
   for (const n of nodes) {
     const p = pos.get(n.id);
     const t = byID.get(n.id);
+    const markBit = opts.markBit || 0;
+    const holds = markBit !== 0 && t && (t.capsBits & markBit) === markBit;
     const g = svgEl("g", {
-      class: "tt-node" + (n.orphan ? " tt-orphan" : ""),
+      class: "tt-node" + (n.orphan ? " tt-orphan" : "") +
+        (markBit !== 0 && !holds ? " tt-dim" : "") +
+        (n.id === opts.focusId ? " tt-focus" : ""),
       transform: `translate(${p.x},${p.y})`,
+      "data-task-id": n.id,
     });
+    if (holds || n.id === opts.focusId) g.appendChild(svgEl("circle", { r: R + 8, class: "tt-holds-ring" }));
     // Global reach has no target to draw an edge to, so it is a ring on the
     // node itself — under the dot, so the status colour stays readable.
     if (n.global) g.appendChild(svgEl("circle", { r: R + 4, class: `tt-global tt-global-${n.global}` }));
@@ -9060,6 +9114,14 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect) {
     const label = svgEl("text", { class: "tt-label", y: -R - 6 });
     label.textContent = (n.orphan ? "† " : "") + n.id.slice(0, 8);
     g.appendChild(label);
+
+    // The strongest tier the task holds and how many bits at it (cli.TierMark,
+    // rendered in Go). Ended tasks too: a resume brings the caps back.
+    if (t && t.tierMark) {
+      const tier = svgEl("text", { class: `tt-tier tt-tier-${t.tierClass}`, x: R + 5, y: -R + 1 });
+      tier.textContent = t.tierMark;
+      g.appendChild(tier);
+    }
 
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
     sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}` : "(gone)";

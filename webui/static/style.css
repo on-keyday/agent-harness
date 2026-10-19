@@ -390,8 +390,7 @@ body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
 body[data-active-tab="git"]      [data-tabgroup]:not([data-tabgroup="git"]),
 body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]),
 body[data-active-tab="conns"]    [data-tabgroup]:not([data-tabgroup="conns"]),
-body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]),
-body[data-active-tab="audit"]    [data-tabgroup]:not([data-tabgroup="audit"]) {
+body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   display: none;
 }
 
@@ -2407,9 +2406,11 @@ body[data-active-tab="audit"]    [data-tabgroup]:not([data-tabgroup="audit"]) {
 .board-chain-conv-btn:hover:not(:disabled) { background: #3a3a3a; }
 .board-chain-conv-btn:disabled { opacity: 0.5; cursor: default; }
 
-/* 権限 tab (caps audit): one block per capability, strongest first. Scope
-   chips are coloured by the breadth of the action rank; a bit no task scope
-   bounds is grey. */
+/* Caps audit (the タスク tab's 権限の棚卸し): one block per capability,
+   strongest first. Scope chips are coloured by the breadth of the action rank;
+   a bit no task scope bounds is global（固定）, red like global. */
+#caps-audit { margin: 8px 0; }
+#caps-audit > summary { cursor: pointer; font-weight: bold; padding: 4px 0; }
 .audit-legend { font-size: 12px; opacity: .85; margin-bottom: 8px; line-height: 1.8; }
 .audit-cap { border: 1px solid #3a3a3a; border-radius: 6px; margin: 6px 0; }
 .audit-cap > .head {
@@ -2439,4 +2440,15 @@ body[data-active-tab="audit"]    [data-tabgroup]:not([data-tabgroup="audit"]) {
 .sc.global { background: #5a2a2a; color: #f2a3a3; }
 .sc.subtree { background: #4a3f1e; color: #e5c07b; }
 .sc.narrow { background: #2e3a2e; color: #9fcf8f; }
-.sc.none { background: #333; color: #aaa; }
+/* Tree marks: the tier mark beside a node's id, the holders of the bit chosen
+   in 権限で強調 (ring) against the rest (dimmed), and a holder the audit just
+   pointed at (pulse). */
+.tt-tier { font-size: 10px; font-weight: bold; }
+.tt-tier-strong { fill: #f2a3a3; }
+.tt-tier-mid { fill: #e5c07b; }
+.tt-tier-weak { fill: #9fcf8f; }
+.tt-node.tt-dim { opacity: .35; }
+.tt-holds-ring { fill: none; stroke: #ffd88a; stroke-width: 2; }
+.tt-node.tt-focus .tt-holds-ring, .tt-node.tt-focus .tt-dot { animation: tt-pulse .5s ease-in-out 4 alternate; }
+@keyframes tt-pulse { from { stroke-width: 2; } to { stroke-width: 6; } }
+#task-tree-bit { max-width: 100%; }

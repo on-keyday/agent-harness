@@ -322,6 +322,17 @@ test("`caps audit` reaches the audit text with its flags", async () => {
   eq(focused.calls, [["capsAuditText", { all: true, empty: false, cap: "spawn", json: false }]]);
 });
 
+test("capsAuditOrder lists every bit strongest first", () => {
+  const order = plain(page.bridge.capsAuditOrder());
+  assert.equal(order.length, plain(page.bridge.capList()).length);
+  assert.equal(order[0].name, "spawn");
+  assert.equal(order[0].tier, "強");
+  const rank = { "強": 0, "中": 1, "弱": 2 };
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(rank[order[i].tier] >= rank[order[i - 1].tier], `${order[i].name} is stronger than ${order[i - 1].name}`);
+  }
+});
+
 test("`caps --json` reaches the JSON renderer", async () => {
   const { out, err } = await run("caps --json");
   assert.equal(err, undefined);
