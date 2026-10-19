@@ -454,3 +454,63 @@ Before landing: `make` targets, `scripts/wire-skew-check.sh`.
   `--scope-for exec_control=ids:A` can view and cowrite anything in its base
   scope. Whether to move attach to the D19 rule is a separate question; the
   seat check here reads only `exec_control`'s scope and is unaffected either way.
+
+## Amendment — what shipped, 2026-10-19
+
+Commits `8ac42634..834f4062` (plan: `docs/superpowers/plans/2026-10-19-resume-caps.md`).
+
+### Where the shipped code differs from the text above
+
+- **§ Surfaces, WebUI command input.** The row said `--exact` and `-d` reach the
+  browser through the wasm bridge's parse. Only `--exact` does, and only on
+  `submit`: `interactive` and `session new` are not WebUI command-line verbs
+  (`CmdlineSurfaces: CLI | TUI`). The browser's one detached open is the
+  event-stream button, and that is what moved onto `detached`
+  (`cli/open_interactive_wasm.go`). An exact submit from the command input drops
+  the Compose agent, args and re-grant flags, and is exempt from the page's own
+  "missing task prompt" check.
+- **The workspace resume opens detached too.** `DoResumeSessionDetached` (TUI
+  `workspace apply`) was an open-then-drop the text did not list;
+  `openResumeWithRetry` now sends `detached` when its request asks for it.
+- **`capTargetClasses` uses `via: "resumeBit"`**, the loop variable on the
+  `inScope` line, not `"resumeRequestBits"`: the source scan reads only the line
+  that holds the `inScope` call.
+- **`winSizeFrame`** (`server/session_mux.go`) builds the window-size frame a
+  client used to send, byte for byte as objtrsf's `SetTerminalWindowSize`.
+- **`waitStreamCompleted` is gone** from `cmd/harness-cli`: its only callers
+  were the two open-then-drop paths `OpenDetached` replaced.
+
+### Verification
+
+`make check`, `make wasm-check`, `make vet`, `make test` (Go suite + 83 JS
+tests) all exit 0, run with every `HARNESS_*` variable unset. The task's own
+`HARNESS_SERVER_PUBKEY` otherwise fails ~70 E2E tests in `cli` and `cli/agent`
+with "signature does not verify" on unchanged code.
+`scripts/wire-skew-check.sh`: PASS, with both skew directions
+handshake-compatible.
+
+Live, `scripts/dummy-harness.sh up --detach --agent fake`, plus a second
+`agent-runner` launched with the first one's argv and environ, so two runners
+served the same root with the same profiles:
+
+1. The operator ran `session new -d --agent bash --runner <R1> --rows 30 --cols
+   100` → X, Detached at once.
+2. A `submit --agent bash --caps exec_cowrite,resume_exact --scope ids:X` task ran
+   a script. `whoami` showed `caps=resume_exact,exec_cowrite scope=ids:X`;
+   `session send -enter X exit` turned X `Succeeded`.
+3. `session new --resume X --exact -d` → printed X, rc=0, X `Detached` with
+   `resumed_by=agent`; `session send -enter X 'echo ok-from-revived'` showed in
+   `session snapshot`. `ls --json` gave `assigned_to` = R1 with both runners
+   advertising `bash` (D18).
+4. Same agent: `session new --resume X -d --agent bash` → "permission denied:
+   OpenInteractive requires capability resume"; `session new -d --agent bash`
+   → "… requires capability spawn"; `session new --resume X --exact` (no `-d`)
+   → "… requires capability exec_control".
+5. `session new -d --rows 40 --cols 150` → `session exec <id> 'stty size'` printed
+   `40 150` (D14). `harness-tui` run inside a 45x200 dummy session typed
+   `session new -d --agent bash --runner <R1>` on its command line → "started
+   detached", the task `Detached` with `from=tui`, `stty size` `45 200`.
+
+**Not verified live:** the WebUI's detached event-stream open. The dummy's
+default profile names no stream adapter, so a stream session cannot run there.
+That path compiles under `make wasm-check`, and the page's command tests pass.
