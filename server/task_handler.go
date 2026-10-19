@@ -1064,6 +1064,9 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	if !isZeroTaskID(req.ResumeTaskId) {
 		return h.handleSubmitResume(cid, req, origin, creatorCaps)
 	}
+	if req.ResumeExact() {
+		return exactMismatchResponse("--resume (an exact resume names the task it restores)"), nil
+	}
 
 	// Request validation before runner resolution: whether the caller may ask
 	// for this scope does not depend on which runners happen to be up, and
@@ -1177,6 +1180,23 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	if !ok {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 	}
+	prompt, args := string(req.Prompt), req.ExtraArgs.AsStrings()
+	var exactRec *TaskEntry
+	if req.ResumeExact() {
+		rec, ok := h.Tasks.Get(idHex)
+		if !ok {
+			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
+		}
+		if field := exactMismatch(exactFields{
+			Prompt: prompt, ExtraArgs: args, AgentProfile: string(req.AgentProfile),
+			CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+			Kind: protocol.TaskKind_Oneshot,
+		}, rec); field != "" {
+			return exactMismatchResponse(field), nil
+		}
+		exactRec = &rec
+		prompt, args = rec.Prompt, rec.ExtraArgs
+	}
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
@@ -1195,6 +1215,9 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 			resolved = existing.AgentProfile
 		}
 	}
+	if exactRec != nil {
+		resolved = exactRec.AgentProfile
+	}
 
 	// Same profile filter as the fresh-submit path, applied BEFORE the
 	// ambiguity check below: narrows cands whenever there's a profile to
@@ -1210,6 +1233,9 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 			return resp, nil
 		}
 		cands = filtered
+	}
+	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
+		cands = preferLastRunner(cands, exactRec.AssignedTo)
 	}
 
 	if len(cands) > 1 {
@@ -1232,7 +1258,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1259,6 +1285,62 @@ func filterByProfile(cands []RunnerEntry, profile string) []RunnerEntry {
 		}
 	}
 	return out
+}
+
+// exactFields are the settings an exact resume request must leave empty, plus
+// the kind the request's path opens. Both handlers fill it from their request.
+type exactFields struct {
+	Prompt       string
+	ExtraArgs    []string
+	AgentProfile string
+	CapsOverride bool
+	ScopePresent bool
+	Kind         protocol.TaskKind
+}
+
+// exactMismatch names the first setting an exact resume request carries, or the
+// kind if the path does not open what the task was recorded as; "" when the
+// request is a valid exact resume of rec. A setting is refused rather than
+// ignored: a typed option either takes effect or errors.
+func exactMismatch(req exactFields, rec TaskEntry) string {
+	switch {
+	case req.Prompt != "":
+		return "prompt"
+	case len(req.ExtraArgs) != 0:
+		return "--agent-arg"
+	case req.AgentProfile != "":
+		return "--agent"
+	case req.CapsOverride:
+		return "--caps"
+	case req.ScopePresent:
+		return "--scope"
+	case req.Kind != rec.Kind:
+		return "kind (the task was recorded as " + rec.Kind.String() + ")"
+	}
+	return ""
+}
+
+// exactMismatchResponse is the submit path's answer to exactMismatch.
+func exactMismatchResponse(field string) protocol.SubmitResponse {
+	resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeExactMismatch}
+	resp.SetErrorMsg([]byte("resume_exact: " + field + " is a setting; an exact resume takes the task's recorded one"))
+	return resp
+}
+
+// preferLastRunner narrows cands to the runner the task last ran on when it is
+// among them, else returns cands unchanged. An exact resume with an Any
+// selector uses it: every fleet slot advertises every preset, so Any alone is
+// ambiguous, and another host's runner lacks the task's worktree.
+func preferLastRunner(cands []RunnerEntry, last protocol.RunnerID) []RunnerEntry {
+	if last == (protocol.RunnerID{}) {
+		return cands
+	}
+	for _, c := range cands {
+		if c.Identity == last {
+			return []RunnerEntry{c}
+		}
+	}
+	return cands
 }
 
 // interactiveCombo is one (runner, profile) candidate for the interactive
@@ -1395,8 +1477,13 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 
 	resuming := !isZeroTaskID(req.ResumeTaskId)
+	if req.ResumeExact() && !resuming {
+		return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
+	}
 	var repo string
 	var existingTaskIDHex string
+	args := req.ExtraArgs.AsStrings()
+	var exactRec *TaskEntry
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 		// Same target gate as the oneshot resume path — see handleSubmitResume.
@@ -1414,6 +1501,21 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
 		existingTaskIDHex = idHex
+		if req.ResumeExact() {
+			rec, ok := h.Tasks.Get(idHex)
+			if !ok {
+				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+			}
+			if exactMismatch(exactFields{
+				ExtraArgs: args, AgentProfile: string(req.AgentProfile),
+				CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+				Kind: interactiveKind(req),
+			}, rec) != "" {
+				return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
+			}
+			exactRec = &rec
+			args = rec.ExtraArgs
+		}
 	} else {
 		repo = path.Clean(string(req.RepoPath))
 	}
@@ -1424,6 +1526,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
 	case len(cands) == 0:
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+	}
+	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
+		cands = preferLastRunner(cands, exactRec.AssignedTo)
 	}
 
 	// Resolve the requested agent profile. On a PINNED resume (selector Kind
@@ -1443,6 +1548,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		if existing, ok := h.Tasks.Get(existingTaskIDHex); ok {
 			profile = existing.AgentProfile
 		}
+	}
+	if exactRec != nil {
+		// The recorded profile is a setting: an exact resume never re-fires
+		// the picker, pinned or not.
+		profile = exactRec.AgentProfile
 	}
 
 	// Expand candidate runners into (runner, profile) combos (§4a). The picker
@@ -1490,7 +1600,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1562,7 +1672,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		TaskId:     tid,
 		StreamId:   uint64(runnerStream.ID()),
 		AuthTicket: ticket,
-		ExtraArgs:  req.ExtraArgs,
+		// The args the task runs with: the request's, or the record's on an
+		// exact resume. Tasks.Resume stored the same slice.
+		ExtraArgs: protocol.AgentArgsFromStrings(args),
 	}
 	oer.SetResumeConversation(req.ResumeConversation())
 	// Relay the kind. The runner refuses it when the resolved profile has no
