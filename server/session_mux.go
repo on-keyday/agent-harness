@@ -957,6 +957,18 @@ func winSizeOf(fb []byte) (cols, rows int, ok bool) {
 	return int(ws.Columns), int(ws.Rows), true
 }
 
+// winSizeFrame encodes a TerminalWindowSize control frame, header included —
+// the bytes a client's CommandExecutionStream.SetTerminalWindowSize writes. The
+// server builds one itself only for a detached open, which has no client to
+// send it.
+func winSizeFrame(rows, cols uint16) []byte {
+	ctrl := frame.Control{Type: frame.ControlType_TerminalWindowSize}
+	ctrl.SetTerminalWindowSize(frame.TerminalWindowSize{Rows: rows, Columns: cols})
+	enc := ctrl.MustAppend(nil)
+	hdr := frame.FrameHeader{Type: frame.FrameType_Control, Len: uint32(len(enc))}
+	return append(hdr.MustAppend(nil), enc...)
+}
+
 // frameIsWinSize reports whether fb is a complete TerminalWindowSize control frame.
 func frameIsWinSize(fb []byte) bool {
 	_, _, ok := winSizeOf(fb)

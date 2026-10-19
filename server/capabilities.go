@@ -136,6 +136,33 @@ func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex stri
 	return false
 }
 
+// scopeCoversNewChild reports whether a task the caller is about to create — its
+// direct child — would fall inside the caller's target set for c. Decided from
+// the scope alone because the child does not exist yet: a subtree base (with or
+// without self) and a global one reach every child, while a none base reaches
+// only listed ids, and an id list cannot name a task that has no id yet.
+// TestScopeCoversNewChildAgreesWithActionSet holds it to actionSet.
+func scopeCoversNewChild(s Scope, c protocol.Capability) bool {
+	base, _, _ := s.ForCap(c)
+	return base == protocol.ScopeBase_Subtree || base == protocol.ScopeBase_Global
+}
+
+// controlSeatAllowed is the scope half of an attached open: the opener takes
+// the session's control seat, so the task must be inside its exec_control
+// scope, as for an attach --control. resumeHex is "" for a fresh open, whose
+// task does not exist yet. The bit half is checked in the dispatch case.
+func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
+	pid := h.lookupPrincipal(cid)
+	if pid.Id == ([16]byte{}) {
+		return true // operator: global
+	}
+	if resumeHex != "" {
+		return h.inScope(cid, attachModeScopeCap(protocol.AttachMode_Control), resumeHex)
+	}
+	self, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	return ok && scopeCoversNewChild(self.Scope, protocol.Capability_ExecControl)
+}
+
 // hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct
 // from hasCap (which requires every bit) because attachModeCap returns
 // alternatives that satisfy the same request.

@@ -473,6 +473,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
 			return
 		}
+		// An attached open hands the opener the control seat, so it needs what
+		// an attach --control needs. Detached opens attach nobody.
+		if want := attachModeCap(protocol.AttachMode_Control); !oi.Detached() && !hasAnyCap(h.callerCaps(cid), want) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			return
+		}
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		oiCreatorCaps := h.callerCaps(cid)
@@ -1520,6 +1526,13 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		repo = path.Clean(string(req.RepoPath))
 	}
 
+	// The scope half of the seat (the bit half is in the dispatch case): the
+	// task must be inside the opener's exec_control scope. Decided before
+	// anything is created, so a refusal leaves no task behind.
+	if !req.Detached() && !h.controlSeatAllowed(cid, existingTaskIDHex) {
+		return errResp(protocol.OpenInteractiveStatus_DetachRequired)
+	}
+
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
@@ -1584,8 +1597,9 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 
 	// tuiConn is nil in test invocations that only exercise the error paths above.
-	// A nil conn here indicates a programming error in production callers.
-	if tuiConn == nil {
+	// A nil conn here indicates a programming error in production callers — on
+	// an attached open; a detached one creates no client stream.
+	if tuiConn == nil && !req.Detached() {
 		slog.Error("handleOpenInteractive: tuiConn is nil on Ok path")
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
@@ -1648,20 +1662,29 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, resolved)
 
-	tuiStream := tuiConn.CreateBidirectionalStream()
-	if tuiStream == nil {
-		finishWithError("create client-side stream failed")
-		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	// A detached open creates no client stream: nobody takes the seat.
+	var tuiStream trsf.BidirectionalStream
+	closeTui := func() {
+		if tuiStream != nil {
+			_ = tuiStream.CloseBoth()
+		}
+	}
+	if !req.Detached() {
+		tuiStream = tuiConn.CreateBidirectionalStream()
+		if tuiStream == nil {
+			finishWithError("create client-side stream failed")
+			return errResp(protocol.OpenInteractiveStatus_InternalError)
+		}
 	}
 	runnerConn := runner.Conn
 	if runnerConn == nil {
-		_ = tuiStream.CloseBoth()
+		closeTui()
 		finishWithError("runner conn nil")
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 	runnerStream := runnerConn.CreateBidirectionalStream()
 	if runnerStream == nil {
-		_ = tuiStream.CloseBoth()
+		closeTui()
 		finishWithError("create runner-side stream failed")
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
@@ -1684,9 +1707,15 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	oer.SetRepoPath([]byte(repo))
 	oer.SetAgentProfile([]byte(resolved)) // server-resolved profile the runner execs with (empty → runner default)
 	if req.X11Enabled() && req.EventStream() {
-		_ = tuiStream.CloseBoth()
+		closeTui()
 		_ = runnerStream.CloseBoth()
 		finishWithError("x11 forwarding is a terminal feature and an event-stream task has no terminal")
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	}
+	if req.X11Enabled() && req.Detached() {
+		closeTui()
+		_ = runnerStream.CloseBoth()
+		finishWithError("x11 forwarding needs a live client to host the tunnel, and a detached open has none")
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 	if req.X11Enabled() {
@@ -1697,7 +1726,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}
 	rreq.SetOpenExec(oer)
 	if err := sendRunnerRequest(runnerConn, &rreq); err != nil {
-		_ = tuiStream.CloseBoth()
+		closeTui()
 		_ = runnerStream.CloseBoth()
 		finishWithError("send open_exec to runner: " + err.Error())
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
@@ -1711,7 +1740,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Sessions must be wired before calling handleOpenInteractive. A nil
 	// Sessions registry is a programming error.
 	if h.Sessions == nil {
-		_ = tuiStream.CloseBoth()
+		closeTui()
 		_ = runnerStream.CloseBoth()
 		finishWithError("Sessions registry not wired (programming error)")
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
@@ -1733,7 +1762,18 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	mux := NewSessionMux(parentCtx, taskIDHex, interactiveKind(req), runnerStream, NewRingBuffer(ringSize), hooks)
 	h.Sessions.Add(taskIDHex, mux)
 
-	if err := mux.Attach(parentCtx, tuiStream); err != nil {
+	if req.Detached() {
+		// Nobody attaches, so the OnDetach hook that moves an attached open to
+		// Detached when its client leaves never fires; set it here.
+		_ = h.Tasks.SetDetached(taskIDHex)
+		// The size a client would have sent on its stream, applied as that
+		// stream's first frame would have been.
+		if r, c := req.InitialRows(), req.InitialCols(); r != nil && c != nil && *r != 0 && *c != 0 {
+			if err := mux.applyWinSizeFrame(winSizeFrame(*r, *c)); err != nil {
+				slog.Warn("handleOpenInteractive: initial size", "task", taskIDHex, "err", err)
+			}
+		}
+	} else if err := mux.Attach(parentCtx, tuiStream); err != nil {
 		mux.Stop()
 		h.Sessions.Remove(taskIDHex)
 		finishWithError("initial attach failed: " + err.Error())
@@ -1749,8 +1789,10 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	}()
 
 	resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_Ok, TaskId: tid}
-	resp.SetAttached(true)
-	resp.SetStreamId(uint64(tuiStream.ID()))
+	if tuiStream != nil {
+		resp.SetAttached(true)
+		resp.SetStreamId(uint64(tuiStream.ID()))
+	}
 	return resp, nil
 }
 
