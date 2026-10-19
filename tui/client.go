@@ -109,6 +109,11 @@ type sessionRequest struct {
 	// detached open — the interactive handover splices a terminal, which this
 	// kind does not have.
 	EventStream bool
+	// ResumeExact resumes with the task's recorded settings (--exact).
+	ResumeExact bool
+	// Detached opens without attaching: no stream comes back, and the initial
+	// size rides in the request (cli.SessionOpts.Detached).
+	Detached bool
 }
 
 // opts folds an Authority and a sessionRequest into the cli.SessionOpts the
@@ -134,6 +139,8 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		InitialRows:        r.InitialRows,
 		InitialCols:        r.InitialCols,
 		EventStream:        r.EventStream,
+		ResumeExact:        r.ResumeExact,
+		Detached:           r.Detached,
 		Caps:               a.Caps,
 		Scope:              a.Scope,
 		Overrides:          a.Overrides,
@@ -142,7 +149,7 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 }
 
 func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, cli.SelectorOpts{}, nil, "", auth, false, false, "")
+	return DoSubmitWithOpts(c, repo, prompt, cli.SelectorOpts{}, nil, "", auth, false, false, false, "")
 }
 
 // DoSubmitWithOpts issues a Submit RPC with an optional runner selector,
@@ -161,7 +168,7 @@ func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
 // one (runner, agent) choice matches; the result then carries a Retry the
 // runner picker re-issues through. On resume, "" means the task's recorded
 // profile (resolved server-side).
-func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -174,13 +181,14 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt string, selOpts cli.SelectorOp
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+			ResumeExact: exact,
 		}))
 		if err != nil {
 			msg := SubmitResultMsg{Err: err, Echo: echo}
 			var are *cli.AmbiguousRunnerError
 			if errors.As(err, &are) {
 				msg.Retry = func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
-					return DoSubmitWithOpts(c, repo, prompt, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, agent)
+					return DoSubmitWithOpts(c, repo, prompt, sel, extraArgs, resumeTaskID, auth, resumeCapsOverride, resumeConversation, exact, agent)
 				}
 			}
 			return msg

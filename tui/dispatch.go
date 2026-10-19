@@ -464,12 +464,12 @@ func (h tuiVerbs) spawnPrologue(v verb.SpawnAction) (repo string, auth Authority
 
 func (h tuiVerbs) Submit(v verb.SpawnAction) tea.Cmd {
 	repo, auth, capsOverride := h.spawnPrologue(v)
-	return DoSubmitWithOpts(h.a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	return DoSubmitWithOpts(h.a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 }
 
 func (h tuiVerbs) Interactive(v verb.SpawnAction) tea.Cmd {
 	repo, auth, capsOverride := h.spawnPrologue(v)
-	return DoOpenInteractiveWithOpts(h.a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	return DoOpenInteractiveWithOpts(h.a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 }
 
 func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
@@ -477,13 +477,13 @@ func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 	repo, auth, capsOverride := h.spawnPrologue(v)
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 	if v.X11 {
-		return DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Agent)
+		return DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
 	if v.Detach {
-		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
+		return DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
-	return DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	return DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 }
 
 // --- session -----------------------------------------------------------

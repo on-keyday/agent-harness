@@ -2199,19 +2199,19 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
 	switch v.Kind {
 	case verb.KindSubmit:
-		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	case verb.KindInteractive:
-		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 	if v.X11 {
-		return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Agent)
+		return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, int(v.X11Display), a.program, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
 	if v.Detach {
-		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
+		return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
 	}
 	// Stream without Detach cannot reach here: the declaration refuses it.
-	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Agent)
+	return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 }
 
 // cmdlinePlaceholder is the cmdline's ghost text: a width-limited SUMMARY, so

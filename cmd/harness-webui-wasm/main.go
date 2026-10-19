@@ -1016,6 +1016,10 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
+			resumeExact := false
+			if re := opts.Get("resumeExact"); re.Type() == js.TypeBoolean {
+				resumeExact = re.Bool()
+			}
 			// agent selects a named agent profile advertised by the target
 			// runner (multi-agent-profile design §6); empty = runner default
 			// / (on resume) the resumed task's own profile.
@@ -1028,6 +1032,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				Caps: caps, Scope: scope, Overrides: overrides,
 				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+				ResumeExact: resumeExact,
 			})
 			if err != nil {
 				if rejectAmbiguous(reject, err) {
@@ -2678,6 +2683,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
+			resumeExact := false
+			if re := opts.Get("resumeExact"); re.Type() == js.TypeBoolean {
+				resumeExact = re.Bool()
+			}
 			// agent selects a named agent profile advertised by the target
 			// runner (multi-agent-profile design §6); empty = runner default
 			// / (on resume) the resumed task's own profile.
@@ -2704,6 +2713,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				Caps: caps, Scope: scope, Overrides: overrides,
 				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+				ResumeExact: resumeExact,
 				InitialRows: initRows, InitialCols: initCols,
 				EventStream: eventStream,
 			}

@@ -106,6 +106,16 @@ test("submit carries every declared flag, not the dropdowns", async () => {
   assert.equal(req.task, "do the thing");
 });
 
+// --exact: the record's settings, so the request must say so and carry none
+// of the Compose state's.
+test("submit --exact reaches the request", async () => {
+  const { calls, err } = await run(`submit --resume ${ID} --exact`);
+  assert.equal(err, undefined, "submit --resume <id> --exact is refused");
+  const [, req] = named(calls, "sessionReq")[0];
+  assert.equal(req.resumeExact, true);
+  assert.equal(req.resumeTaskId, ID);
+});
+
 test("submit --runner and --ip reach the request", async () => {
   const r = await run(`submit --runner ws:h:1-2 --task t`);
   assert.equal(named(r.calls, "sessionReq")[0][1].runner, "ws:h:1-2");

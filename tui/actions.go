@@ -184,9 +184,9 @@ func (a *App) onInteractive(msg tea.KeyMsg) (tea.Cmd, bool) {
 // default repo (equivalent to `harness-cli session new`).
 func (a *App) onSession(msg tea.KeyMsg) (tea.Cmd, bool) {
 	repo, auth := a.defaultRepo, a.authority()
-	return withRetry(DoOpenDetachableSession(a.client, repo, cli.SelectorOpts{}, nil, "", auth, false, false, ""),
+	return withRetry(DoOpenDetachableSession(a.client, repo, cli.SelectorOpts{}, nil, "", auth, false, false, false, ""),
 		func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
-			return DoOpenDetachableSession(c, repo, sel, nil, "", auth, false, false, agent)
+			return DoOpenDetachableSession(c, repo, sel, nil, "", auth, false, false, false, agent)
 		}), true
 }
 
@@ -366,18 +366,18 @@ func (a *App) onResume(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// use Any instead, which can reopen the ambiguous runner picker.
 		c, id, auth, conv := a.client, a.tasks.SelectedID(), a.authority(), act.ResumeConversation
 		retry := func(c *cli.Client, sel cli.SelectorOpts, agent string) tea.Cmd {
-			return DoOpenDetachableSession(c, "", sel, nil, id, auth, false, conv, agent)
+			return DoOpenDetachableSession(c, "", sel, nil, id, auth, false, conv, false, agent)
 		}
 		if unpinnedResume {
 			// Unpinned (u/U): leave agentProfile unresolved — the
 			// (runner, profile) picker (§4a) supplies both when the
 			// combo set is ambiguous, exactly like the Any-selector
 			// runner pin above.
-			return withRetry(DoOpenDetachableSession(c, "", cli.SelectorOpts{}, nil, id, auth, false, conv, ""), retry), true
+			return withRetry(DoOpenDetachableSession(c, "", cli.SelectorOpts{}, nil, id, auth, false, conv, false, ""), retry), true
 		}
 		// Pinned (r/R): default to the task's own recorded profile
 		// (§4b) so the pinned path stays one keypress — no picker.
-		return withRetry(DoResumeSession(c, t.AssignedTo, nil, id, auth, false, conv, string(t.AgentProfile)), retry), true
+		return withRetry(DoResumeSession(c, t.AssignedTo, nil, id, auth, false, conv, false, string(t.AgentProfile)), retry), true
 	case actionNone:
 		a.cmdresult.Append(WarnStyle.Render(act.Hint))
 		return nil, true

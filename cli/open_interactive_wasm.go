@@ -128,6 +128,13 @@ const detachDrainTimeout = time.Second
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
 func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts) (string, error) {
+	// An event-stream session has no PTY to mount, and the browser holds
+	// exactly one xterm: splicing raw NDJSON into the terminal the operator
+	// uses for real PTY sessions is what this prevents. It is opened detached,
+	// so no stream comes back, and the chat attaches on its own.
+	if opts.EventStream {
+		opts.Detached = true
+	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := buildOpenInteractiveRequest(repo, opts)
 	resumeTaskID := opts.ResumeTaskID
@@ -174,11 +181,18 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return "", fmt.Errorf("resume_not_found: the specified resume task id is unknown")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
 		return "", fmt.Errorf("resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
+	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
+		return "", fmt.Errorf("resume_exact_mismatch: an exact resume takes the task's recorded settings and kind")
+	case protocol.OpenInteractiveStatus_DetachRequired:
+		return "", fmt.Errorf("detach_required: you may open this task but not hold its seat (outside your exec_control scope)")
 	default:
 		return "", fmt.Errorf("server-side error opening interactive (status=%d)", oiResp.Status)
 	}
 
 	taskIDHex := hex.EncodeToString(oiResp.TaskId.Id[:])
+	if opts.Detached {
+		return taskIDHex, nil
+	}
 	sid := oiResp.StreamId()
 	if !oiResp.Attached() || sid == nil {
 		return taskIDHex, fmt.Errorf("OpenInteractive: server opened the session detached; no stream")
@@ -190,16 +204,6 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return taskIDHex, fmt.Errorf("stream %d not visible after OpenInteractive", streamID)
 	}
 
-	if opts.EventStream {
-		// An event-stream session has no PTY to mount, and the browser holds
-		// exactly one xterm: installing this would splice raw NDJSON into the
-		// terminal the operator uses for real PTY sessions. Open, drop the
-		// stream, and let the chat attach on its own — the same open-then-follow
-		// shape the CLI's `session new --stream` uses, and the reason the TUI
-		// refuses the non-detach combination outright.
-		_ = stream.Close()
-		return taskIDHex, nil
-	}
 
 	sessCtx, cancel := context.WithCancel(ctx)
 	session := &InteractiveSession{

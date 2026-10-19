@@ -527,7 +527,7 @@ func (a *App) inSubmitPopup(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 			return nil
 		}
-		return DoSubmitWithOpts(a.client, repo, prompt, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, agent)
+		return DoSubmitWithOpts(a.client, repo, prompt, cli.SelectorOpts{Host: host}, extraArgs, resumeID, a.authority(), false, resumeConversation, false, agent)
 	case tea.KeyTab:
 		a.popup.CycleRepo(+1)
 		return nil

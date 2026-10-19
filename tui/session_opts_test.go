@@ -223,3 +223,13 @@ func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 		t.Errorf("round trip = %v/%v, want %v/%v", back.Caps, back.Base, ov.Caps, ov.Base)
 	}
 }
+
+// --exact and a detached open are request fields like the others: the one
+// builder must carry both, or a TUI exact resume reaches the server as a plain
+// one and a detached start as an attached open.
+func TestAuthorityOptsCarriesExactAndDetached(t *testing.T) {
+	o := Authority{}.opts(sessionRequest{ResumeExact: true, Detached: true})
+	if !o.ResumeExact || !o.Detached {
+		t.Fatalf("opts = ResumeExact %v Detached %v, want both", o.ResumeExact, o.Detached)
+	}
+}

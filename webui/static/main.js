@@ -362,8 +362,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
   function sessionReq({ repo = "", task = "", host = "", runner = "", ip = "", agent = "",
                         agentArgs = [], resumeTaskId = "", resumeConversation = false,
-                        eventStream = false,
+                        eventStream = false, resumeExact = false,
                         caps = null, scope = null, scopeFor = null }) {
+    // An exact resume takes the task's recorded agent, args, caps and scope,
+    // and the server refuses a request that carries any of them, so none of
+    // the Compose state rides along.
+    if (resumeExact) {
+      agent = "";
+      agentArgs = [];
+    }
     const req = {
       repo, task, host, agent,
       agentArgs,
@@ -383,8 +390,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // applying the Compose scope picker's leftover state to a resumed
       // task would be the exact invisible rewrite scope_present exists to
       // prevent.
-      resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false,
-      scopePresent: resumeTaskId ? applyCapsOnResume : false,
+      resumeCapsOverride: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
+      scopePresent: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
+      resumeExact,
     };
     if (runner) req.runner = runner;
     if (ip) req.ip = ip;
@@ -7421,7 +7429,9 @@ async function runVerbCommandDispatch(tokens, ctx) {
         throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
       }
       const task = b.flags.task || b.trail;
-      if (!task) throw new Error("submit: missing task prompt");
+      // --exact runs the task's recorded prompt; the declaration already
+      // refuses one typed beside it.
+      if (!task && !b.flags.exact) throw new Error("submit: missing task prompt");
       const scopeFor = (b.custom && b.custom["scope-for"]) || null;
       const req = ctx.sessionReq({
         repo, task,
@@ -7438,6 +7448,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
         resumeTaskId,
         resumeConversation: !!b.flags["resume-conversation"],
+        resumeExact: !!b.flags.exact,
       });
       try {
         out = await ctx.harness.submit(req);
