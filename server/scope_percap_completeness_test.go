@@ -56,7 +56,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// Capability_Resume is a prefix of Capability_ResumeExact.
 	protocol.Capability_Resume:      {kind: capResolvedVia, via: "resumeBit"},
 	protocol.Capability_ResumeExact: {kind: capResolvedVia, via: "resumeBit"},
-	protocol.Capability_Prune:  {kind: capResolvedLiteral},
+	protocol.Capability_Prune:       {kind: capResolvedLiteral},
 
 	// Chosen at runtime, so passed as a variable rather than by name.
 	protocol.Capability_FileRead:      {kind: capResolvedVia, via: "lfNeed"},

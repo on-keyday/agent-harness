@@ -74,7 +74,7 @@ func (f *resumeFixture) open(t *testing.T, resume string, exact bool) protocol.T
 	oi.SetDetached(true)
 	oi.SetInitialRows(0) // the size block exists under detached; 0 = no size
 	oi.SetInitialCols(0)
-	req :=&protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: f.reqID}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: f.reqID}
 	req.SetOpenInteractive(oi)
 	f.h.Handle(f.conn, encodeTaskControlRequest(t, req))
 	return lastTaskControlResponse(t, f.conn)

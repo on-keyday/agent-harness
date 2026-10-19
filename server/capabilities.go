@@ -40,14 +40,14 @@ import (
 // polling for the same fact. Its one side effect, sink=notify, is gated on
 // `notify` inside the handler.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
-	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
-	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
-	protocol.TaskControlKind_BoardTopics:     protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardRead:       protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardPurge:      protocol.Capability_Purge,
-	protocol.TaskControlKind_BoardRetract:    protocol.Capability_Purge,
+	protocol.TaskControlKind_Cancel:       protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:   protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:       protocol.Capability_Notify,
+	protocol.TaskControlKind_DialRunner:   protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_BoardTopics:  protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardRead:    protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardPurge:   protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardRetract: protocol.Capability_Purge,
 	// Forgetting a task's contacts removes another task's board state, the
 	// same class as withdrawing its message; the handler adds the scope gate.
 	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_Purge,
