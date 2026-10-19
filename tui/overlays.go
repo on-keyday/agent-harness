@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/hex"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,7 @@ var appOverlays = []overlay{
 	{func(a *App) bool { return a.tap.IsOpen() }, (*App).inTap},
 	{func(a *App) bool { return a.execsModal.IsOpen() }, (*App).inExecsModal},
 	{func(a *App) bool { return a.idleWatchersModal.IsOpen() }, (*App).inIdleWatchersModal},
+	{func(a *App) bool { return a.capsAuditModal.IsOpen() }, (*App).inCapsAuditModal},
 	{func(a *App) bool { return a.forwardsModal.IsOpen() }, (*App).inForwardsModal},
 	{func(a *App) bool { return a.grid.IsOpen() }, (*App).inGrid},
 	{func(a *App) bool { return a.chat.IsOpen() }, (*App).inChat},
@@ -893,4 +895,36 @@ func (a *App) inRawModal(msg tea.KeyMsg) tea.Cmd {
 	var rmcmd tea.Cmd
 	a.rawModal, rmcmd = a.rawModal.Update(msg)
 	return rmcmd
+}
+
+// Caps audit: move, expand a capability, or hand a holder to the re-grant
+// picker (the `a` key's), closing the audit so the picker is what is seen.
+func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "q":
+		a.capsAuditModal.Close()
+	case "up", "k":
+		a.capsAuditModal.Move(-1)
+	case "down", "j":
+		a.capsAuditModal.Move(1)
+	case "a":
+		a.capsAuditModal.ToggleEnded()
+	case "e":
+		a.capsAuditModal.ToggleEmpty()
+	case "enter":
+		id, ok := a.capsAuditModal.Enter()
+		if !ok {
+			return nil
+		}
+		for _, t := range a.tasks.Rows() {
+			if hex.EncodeToString(t.Id.Id[:]) == id {
+				a.capsAuditModal.Close()
+				a.authorityPicker.SetSize(a.width, a.height)
+				a.authorityPicker.OpenRegrant(t, a.tasks.Rows())
+				return nil
+			}
+		}
+		a.cmdresult.Append(WarnStyle.Render("caps audit: task " + id[:8] + " is no longer listed"))
+	}
+	return nil
 }

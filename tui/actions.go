@@ -109,6 +109,17 @@ func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoIdleWatcherList(a.client, "", false), true
 }
 
+// `i` opens the caps audit over the task table's rows.
+func (a *App) onCapsAudit(msg tea.KeyMsg) (tea.Cmd, bool) {
+	a.openCapsAudit(false, false, 0)
+	return nil, true
+}
+
+func (a *App) openCapsAudit(includeEnded, includeEmpty bool, focus protocol.Capability) {
+	a.capsAuditModal.SetSize(a.width, a.height)
+	a.capsAuditModal.Open(a.tasks.Rows(), includeEnded, includeEmpty, focus)
+}
+
 // `g` opens the live session viewer grid: a full-screen overlay
 // tiling read-only PaneStreamers for the live interactive sessions,
 // replacing the task-list view (task-list model state is preserved

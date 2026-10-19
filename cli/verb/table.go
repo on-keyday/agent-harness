@@ -2104,8 +2104,10 @@ var Verbs = []VerbSpec{
 	{
 		// Who holds which capability, one row per bit, strongest first. The
 		// rows come from cli.CapsAudit; every surface renders the same rows.
-		Path: []string{"caps", "audit"}, CmdlineSurfaces: CLI,
-		NoModalSurface: "the TUI modal and the WebUI tab are added with their own tasks",
+		Path: []string{"caps", "audit"}, CmdlineSurfaces: CLI | TUI,
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/capsauditmodal.go:CapsAuditModal"},
+		},
 		Notes: []string{
 			"list, per capability, the tasks holding it and the scope it reaches; --cap NAME adds the command that would revoke it",
 		},

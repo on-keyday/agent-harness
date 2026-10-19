@@ -2451,6 +2451,14 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"caps audit\x00tui": func(b Bound) (Action, error) {
+			a := CapsAuditAction{}
+			a.All = b.Bool("all")
+			a.Empty = b.Bool("empty")
+			a.Cap = b.Str("cap")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
 			a := SetDefaultsAction{}
 			if b.Set["caps"] {
@@ -7127,6 +7135,8 @@ type TUIDispatch[R any] interface {
 	Repo(ScreenAction) R
 	// caps set
 	CapsSet(SetCapsAction) R
+	// caps audit
+	CapsAudit(CapsAuditAction) R
 	// caps set-defaults (also: scope)
 	CapsSetDefaults(SetDefaultsAction) R
 	// caps set-parent
@@ -7470,6 +7480,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsSet(a), true, nil
+	case CmdCapsAudit:
+		a, perr := ParseCmdCapsAudit(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsAudit(a), true, nil
 	case CmdCapsSetDefaults:
 		a, perr := ParseCmdCapsSetDefaults(TUI, args, ctx)
 		if perr != nil {
@@ -7726,6 +7742,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		}
 	case SetCapsAction:
 		return h.CapsSet(a), true
+	case CapsAuditAction:
+		return h.CapsAudit(a), true
 	case SetDefaultsAction:
 		return h.CapsSetDefaults(a), true
 	case SetParentAction:
@@ -8054,6 +8072,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCapsSet:
 			a, perr := ParseCmdCapsSet(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsAudit:
+			a, perr := ParseCmdCapsAudit(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

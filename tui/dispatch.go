@@ -800,6 +800,17 @@ func (h tuiVerbs) Caps(v verb.CatalogAction) tea.Cmd {
 	return nil
 }
 
+// CapsAudit opens the caps audit modal; --all / --empty / --cap set its
+// starting toggles and the expanded bit. --json has nothing to shape here.
+func (h tuiVerbs) CapsAudit(v verb.CapsAuditAction) tea.Cmd {
+	var focus protocol.Capability
+	if v.Cap != "" {
+		focus, _ = verb.ParseCaps(v.Cap) // Validate already proved it one bit
+	}
+	h.a.openCapsAudit(v.All, v.Empty, focus)
+	return nil
+}
+
 // CapsSetDefaults sets what a spawn from THIS session carries when its own
 // line names no --caps / --scope. Also answers the shorter `scope`.
 //

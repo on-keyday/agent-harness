@@ -101,6 +101,8 @@ type App struct {
 	execsModal ExecsModal
 	// idleWatchersModal lists armed await-idle watchers; opened with `I`.
 	idleWatchersModal IdleWatchersModal
+	// capsAuditModal lists, per capability, the tasks holding it; opened with `i`.
+	capsAuditModal CapsAuditModal
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -336,6 +338,7 @@ func New(cfg Config) *App {
 		forwardsModal:     NewForwardsModal(),
 		execsModal:        NewExecsModal(),
 		idleWatchersModal: NewIdleWatchersModal(),
+		capsAuditModal:    NewCapsAuditModal(),
 		rawModal:          NewRawConnectModal(),
 		boardModal:        NewBoardModal(),
 		gitModal:          NewGitModal(),
@@ -1499,6 +1502,7 @@ func (a *App) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.tap.SetSize(a.width, a.height)
 	a.execsModal.SetSize(a.width, a.height)
 	a.idleWatchersModal.SetSize(a.width, a.height)
+	a.capsAuditModal.SetSize(a.width, a.height)
 	a.boardModal.SetSize(a.width, a.height)
 	a.gitModal.SetSize(a.width, a.height)
 	a.grid.SetSize(a.width, a.height)
@@ -1843,6 +1847,9 @@ func (a *App) View() string {
 	if a.idleWatchersModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.idleWatchersModal.View())
 	}
+	if a.capsAuditModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.capsAuditModal.View())
+	}
 	if a.forwardsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardsModal.View())
 	}
@@ -1963,6 +1970,9 @@ func (a *App) refreshTasksTable() {
 		all = all[:100]
 	}
 	a.tasks.SetRows(all, a.runnersSnapshot)
+	if a.capsAuditModal.IsOpen() {
+		a.capsAuditModal.SetTasks(a.tasks.Rows())
+	}
 }
 
 // openGrid is the ONE way this TUI opens the session viewer: the keys and the
