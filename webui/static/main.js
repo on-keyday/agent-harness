@@ -5407,7 +5407,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         if (now.progress !== null) {
           const p = document.createElement("span");
           p.className = "task-progress";
-          p.textContent = now.progress === "" ? "(cleared)" : now.progress;
+          p.textContent = now.progress;
           const a = document.createElement("span");
           a.className = "task-progress-age";
           a.textContent = ` ${now.age}`;
@@ -7386,12 +7386,11 @@ function renderAgentSelect(sel, profiles) {
 
 // taskNowModel is the "now" line under a task row: the task's self-reported
 // progress with its server-computed age, and its window title. null means
-// "not reported" and is not drawn; "" is a measurement and is. Progress is
-// gated on the stamp (progressAt is a decimal string, "0" = never written),
-// so a cleared line still shows its age; the title on a live terminal, so an
-// untitled one still shows. Ages mirror cli.AgeStr.
+// "not shown". Progress shows only when there is a line to read — never
+// written ("0" stamp) and cleared (empty text) both show nothing, as in the
+// CLI and the TUI; the title shows on a live terminal. Ages mirror cli.AgeStr.
 function taskNowModel(t) {
-  const written = t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "";
+  const written = t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "" && !!t.progress;
   let age = null;
   if (written) {
     const ms = t.progressAgeMs || 0;

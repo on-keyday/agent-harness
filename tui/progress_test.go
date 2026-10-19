@@ -150,3 +150,12 @@ func TestProgressClearKey(t *testing.T) {
 		t.Errorf("no selection should say so, got %q", a.cmdresult.lines)
 	}
 }
+
+// A cleared line is not shown in the detail popup either; the stamp is still
+// on the wire for --since.
+func TestTaskDetail_ClearedLineNotShown(t *testing.T) {
+	d := formatTaskDetail(progressTask(protocol.TaskKind_Interactive, "", 9, false, ""), nil)
+	if strings.Contains(d, "progress:") {
+		t.Errorf("detail shows a cleared line:\n%s", d)
+	}
+}

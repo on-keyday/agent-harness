@@ -66,6 +66,7 @@ the author chose it while writing; those rows are the ones to check.
 | D24 | Clients age `progress_age_ms` locally from the receipt time, as the idle badge is, and every surface strips control characters from progress and title itself — the event path can carry bytes a subscriber published (see Non-goals) | this spec (final review) |
 | D25 | The WebUI arms `await-progress` from each non-terminal task's sheet (oneshot included) as well as from the attached-session button; the WebUI passes `progress_at` as a decimal string, since a nanosecond stamp does not fit a JS number | this spec (final review) |
 | D26 | Progress is memory-only. A DELIBERATE stop (held or full) writes every task's line to `<data-dir>/progress.json` beside the held captures; the next server applies it after the WAL replay and deletes it. A crash loses the lines | operator (chose this over WAL-per-write and over WAL-at-stop; "a crash loses them" accepted) |
+| D28 | A cleared (empty) line shows NOTHING on the human surfaces — CLI `ls` text, TUI Doing column and detail, WebUI row — exactly as a line never written. The WebUI had drawn "(cleared) 1m ago" and the CLI `progress="" (age)`, which told a reader nothing. `ls --json` and the wire keep `progress_at`, which `--since` and scripts need | operator |
 | D27 | Another task's line can be EMPTIED (never written) by a caller holding `cancel` with the target in cancel's scope — whoever may end the task may empty its status line; the operator holds every bit. New kind `progress_clear {task_id}`, answered with `ProgressSetResponse`; out of scope is `not_found`, a missing bit `permission_denied`. It acts as the task's own `--clear` (fresh stamp, event, watchers fire). Surfaces: `progress --clear --task <id>`, TUI `X`, WebUI sheet "🧹 進捗を消す". Replaces the Non-goal "writing another task's progress, including by the operator" for the clearing half | operator (the operator-only first draft was withdrawn: it had no reason beyond not touching the caps model) |
 
 ## Non-goals
@@ -282,7 +283,7 @@ is the minimum, not a substitute.
 
 | Surface | Progress / title display | Write | Await-progress |
 | --- | --- | --- | --- |
-| CLI `ls` text (`cli/list.go` `taskLine`) | `progress="…" (12m ago)` when `progress_at != 0`; `title="…"` when `live_terminal` is set, even if empty | — | — |
+| CLI `ls` text (`cli/list.go` `taskLine`) | `progress="…" (12m ago)` when the line is non-empty (D28); `title="…"` when `live_terminal` is set, even if empty | — | — |
 | CLI `ls --json` / `session ls` (`taskJSON`) | `progress`, `progress_at`, `progress_age_ms`, `live_terminal`, `title`, always present | — | — |
 | CLI verbs | — | `progress`, `progress --clear`; `progress --clear --task <id>` empties another task's line (D27) | `await-progress`, `ls`, `kill` |
 | TUI task table (`tui/tasks.go`) | the Doing column (D22): progress with its locally aged age (D24), else `(title) …`, else the prompt | — | `m` arms it (`M` via notify); the `I` modal lists both conditions with a "waits for" column |

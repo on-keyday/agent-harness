@@ -601,15 +601,15 @@ test("await-progress arms with the baseline; ls shows only progress rows; kill t
 });
 
 // The "now" line under a task row: the task's own progress with its age,
-// then its window title. Gated like the CLI: progress on the stamp (a cleared
-// line is a write and still shows its age), title on a live terminal.
+// then its window title. An empty (cleared) line is not drawn, as for one
+// never written; the title shows on a live terminal.
 test("task now-line: progress with age, title for a live terminal", () => {
   eq(page.taskNowModel({ progress: "stage 2", progressAt: "17", progressAgeMs: 720000, liveTerminal: true, title: "✳ topic" }),
     { progress: "stage 2", age: "12m ago", title: "✳ topic" });
   eq(page.taskNowModel({ progress: "", progressAt: "0", progressAgeMs: 0, liveTerminal: false, title: "" }),
     { progress: null, age: null, title: null });
   eq(page.taskNowModel({ progress: "", progressAt: "9", progressAgeMs: 3000, liveTerminal: true, title: "" }),
-    { progress: "", age: "3s ago", title: "" });
+    { progress: null, age: null, title: "" });
 });
 
 // The watcher panel lists both conditions out of one registry: a progress

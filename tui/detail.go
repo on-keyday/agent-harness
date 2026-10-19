@@ -212,8 +212,8 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 		fmt.Fprintf(&sb, "last output:   %s\n", formatNanoTs(t.LastOutputAt))
 	}
 	// The task's own line, beside last output so the reader can judge how
-	// stale it is; gated on the stamp, since a cleared line is a write.
-	if t.ProgressAt != 0 {
+	// stale it is. Not shown once cleared, as in the table and the WebUI.
+	if t.ProgressAt != 0 && len(t.Progress) > 0 {
 		fmt.Fprintf(&sb, "progress:      %q (%s)\n", string(t.Progress), cli.AgeStr(t.ProgressAgeMs))
 	}
 	// Printed for every live terminal, empty included: "untitled" is a
