@@ -116,18 +116,45 @@ func TestTreeIDCellCarriesTierMark(t *testing.T) {
 	}
 	m.SetTree(true)
 	m.SetRows([]protocol.TaskInfo{task}, nil)
-	if cell := m.table.Rows()[0][1]; !strings.HasSuffix(cell, " 強2") {
-		t.Errorf("tree ID cell %q does not end with the tier mark 強2", cell)
+	if cell := m.table.Rows()[0][1]; !strings.HasPrefix(cell, "強2") {
+		t.Errorf("tree ID cell %q does not lead with the tier mark 強2", cell)
 	}
 }
 
-// Review Focus 1: no granular bit, no mark and no trailing space.
+// Review Focus 1: no granular bit, no mark — only the blank tier slot that
+// keeps the gutters aligned with the rows that have one.
 func TestTreeIDCellNoMarkForNoCaps(t *testing.T) {
 	m := NewTasks()
 	m.SetTree(true)
 	m.SetSize(160, 20)
 	m.SetRows([]protocol.TaskInfo{tuiTask('a', 0, 10)}, nil)
-	if cell := m.table.Rows()[0][1]; cell != "61000000" {
-		t.Errorf("tree ID cell = %q, want the bare id8", cell)
+	if cell := m.table.Rows()[0][1]; cell != "     61000000" {
+		t.Errorf("tree ID cell = %q, want the blank tier slot and the id8", cell)
+	}
+}
+
+// The marks must survive the panel's real width: bubbles truncates a cell from
+// the right, so marks after a deep gutter + id were cut to "…" at 120–160
+// columns and a marked holder read as unmarked.
+func TestTreeMarksSurviveNarrowPanels(t *testing.T) {
+	root := tuiTask('a', 0, 10)
+	root.Capabilities = protocol.Capability_Spawn | protocol.Capability_Purge
+	child := tuiTask('b', 'a', 20)
+	child.Capabilities = protocol.Capability_Spawn
+	grand := tuiTask('c', 'b', 30)
+	grand.Capabilities = protocol.Capability_Spawn
+	for _, panel := range []int{58, 78} { // a 120- and a 160-column terminal's half
+		m := NewTasks()
+		m.SetTree(true)
+		m.SetSize(panel, 20)
+		m.SetMark(protocol.Capability_Spawn)
+		m.SetRows([]protocol.TaskInfo{root, child, grand}, nil)
+		view := m.View()
+		if n := strings.Count(view, "◆"); n != 3+1 { // three rows + the header
+			t.Errorf("panel %d: %d ◆ in the view, want 3 rows and the header:\n%s", panel, n, view)
+		}
+		if n := strings.Count(view, "強"); n != 3 {
+			t.Errorf("panel %d: %d tier marks in the view, want 3:\n%s", panel, n, view)
+		}
 	}
 }

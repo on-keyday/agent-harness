@@ -134,7 +134,13 @@ func (a *App) setTreeMode(on bool) {
 // `a` re-grants it.
 func (a *App) jumpToTask(id string) {
 	a.capsAuditModal.Close()
-	a.auditPins = a.withCreatorChains([]string{id})
+	// A mark still showing keeps its holders pinned: its header claims every
+	// holder is marked, so none may drop out of the table under it.
+	ids := []string{id}
+	if c := a.tasks.mark; c != 0 {
+		ids = append(ids, a.holdersOf(c)...)
+	}
+	a.auditPins = a.withCreatorChains(ids)
 	if !a.tasks.TreeMode() {
 		a.setTreeMode(true)
 	}
@@ -147,19 +153,24 @@ func (a *App) jumpToTask(id string) {
 // ended ones included — a resume brings their recorded caps back.
 func (a *App) markBit(c protocol.Capability) {
 	a.capsAuditModal.Close()
-	var ids []string
-	for id, t := range a.tasksByID {
-		if t.Capabilities&c == c {
-			ids = append(ids, id)
-		}
-	}
-	a.auditPins = a.withCreatorChains(ids)
+	a.auditPins = a.withCreatorChains(a.holdersOf(c))
 	if !a.tasks.TreeMode() {
 		a.setTreeMode(true)
 	}
 	a.tasks.SetMark(c)
 	a.refreshTasksTable()
 	a.setFocus(focusTasks)
+}
+
+// holdersOf is every listed task holding c, ended ones included.
+func (a *App) holdersOf(c protocol.Capability) []string {
+	var ids []string
+	for id, t := range a.tasksByID {
+		if t.Capabilities&c == c {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // withCreatorChains is ids plus every creator above each, up to a root, a

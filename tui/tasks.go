@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -308,13 +309,7 @@ func (m *TasksModel) rebuild() {
 		if m.tree && i < len(gutter) {
 			// 8 hex is what `by=` has always shown, so a reader comparing the
 			// tree against a log line sees the same prefix.
-			idCell = gutter[i] + idHex[:8]
-			if m.mark != 0 && t.Capabilities&m.mark == m.mark {
-				idCell += " ◆"
-			}
-			if mark, _, ok := cli.TierMark(t.Capabilities); ok {
-				idCell += " " + mark
-			}
+			idCell = treeMarks(t.Capabilities, m.mark) + gutter[i] + idHex[:8]
 		}
 		row := table.Row{
 			taskStatusStr(t.Status),
@@ -337,6 +332,23 @@ func (m *TasksModel) rebuild() {
 	// setTableRows, not table.SetRows: it carries the negative-cursor lift that
 	// keeps this table from rendering one row short. See its doc comment.
 	setTableRows(&m.table, rows)
+}
+
+// treeMarks is the fixed-width head of a tree-order ID cell: a ◆ slot while a
+// capability is marked, then the tier mark padded to four cells. It leads the
+// cell because bubbles truncates a cell from the RIGHT — after a deep gutter
+// and the id the marks were cut to "…" at 120–160 columns, and a marked holder
+// read as unmarked. Fixed width keeps the gutters of every row aligned.
+func treeMarks(caps, marked protocol.Capability) string {
+	head := ""
+	if marked != 0 {
+		head = "  "
+		if caps&marked == marked {
+			head = "◆ "
+		}
+	}
+	mark, _, _ := cli.TierMark(caps)
+	return head + mark + strings.Repeat(" ", 4-runewidth.StringWidth(mark)) + " "
 }
 
 // observerCell renders the Obs column: what is working on this task. Observers

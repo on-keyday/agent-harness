@@ -323,8 +323,14 @@ The audit ran on the live fleet the day it landed, and it raised two problems.
 - **WebUI tier mark.** It sits right of the node, outside the highlight ring,
   vertically centred. Placed above-right, it overlapped the id label; the live
   check measured zero overlaps after the move.
-- **TUI tree columns.** The ID column is 28 wide and Repo 18, so the gutter,
-  `◆` and the tier mark fit.
+- **TUI tree columns.** The marks lead the ID cell, in fixed-width slots:
+  `◆ 強3  └─ 03fac1f4`. The tasks panel is half the terminal and bubbles
+  truncates a cell from the right. With the marks at the end, `◆` and the tier
+  mark were cut to `…` on deeper rows at 120–160 columns, so a marked holder
+  looked unmarked (found by the final review). The fixed slots keep every
+  row's gutter aligned. The ID column is 28 wide and Repo 18.
+- **A jump keeps an active mark's holders pinned**, because the header still
+  claims they are marked.
 - **Verified live** on a dummy harness with these tasks:
   - an ended `spawn` holder;
   - an old-`all`-like task;

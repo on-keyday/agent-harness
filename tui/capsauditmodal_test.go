@@ -322,3 +322,15 @@ func TestCapsAuditTMarksAnOldHolder(t *testing.T) {
 		t.Fatalf("old notify holder: listed=%v cell=%q; want it pinned and marked", ok, cell)
 	}
 }
+
+// A jump must not drop the rows a still-active mark pinned: the header keeps
+// claiming ◆ notify, so its old holder has to stay listed.
+func TestCapsAuditJumpKeepsTheMarkedHolders(t *testing.T) {
+	a, sp := auditApp(t)
+	holder, _ := oldTasks(a, true)
+	a.markBit(protocol.Capability_Notify)
+	a.jumpToTask(sp)
+	if cell, ok := idCell(a, FormatTaskID(holder)); !ok || !strings.Contains(cell, "◆") {
+		t.Fatalf("after a jump the old notify holder is listed=%v cell=%q; want it still pinned and marked", ok, cell)
+	}
+}
