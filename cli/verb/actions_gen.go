@@ -610,6 +610,8 @@ type SpawnAction struct {
 	ResumeTaskID string
 	// with --resume, also ask the runner to resume the agent's own conversation state
 	ResumeConversation bool
+	// with --resume: resume exactly as recorded — no new prompt, args, agent, caps or scope (needs only …
+	Exact bool
 	// whether --caps was typed, which its zero value cannot say
 	CapsPresent bool
 	// comma-separated capability names to grant (e.g. spawn,file_read / all / none)
@@ -1802,6 +1804,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -1842,6 +1845,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -1882,6 +1886,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -1922,6 +1927,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -1960,6 +1966,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -1998,6 +2005,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))
@@ -2040,6 +2048,7 @@ func init() {
 			a.Repo = b.Str("repo")
 			a.ResumeTaskID = b.Str("resume")
 			a.ResumeConversation = b.Bool("resume-conversation")
+			a.Exact = b.Bool("exact")
 			a.CapsPresent = b.Set["caps"]
 			if b.Set["caps"] {
 				v, err := parseCapsFlag(b.Str("caps"))

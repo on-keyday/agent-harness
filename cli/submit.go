@@ -49,6 +49,7 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.Overrides = opts.Overrides
 	sub.OverridesLen = uint8(len(opts.Overrides))
 	sub.SetScopePresent(opts.ScopePresent)
+	sub.SetResumeExact(opts.ResumeExact)
 	return sub
 }
 
@@ -89,6 +90,9 @@ func submitStatusError(ctx context.Context, tr trsf.Transport, s *protocol.Submi
 		return fmt.Errorf("submit resume_not_found: the specified resume task id is unknown (was it pruned, or is the kind a mismatch?)")
 	case protocol.SubmitStatus_ResumeNotTerminal:
 		return fmt.Errorf("submit resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
+	case protocol.SubmitStatus_ResumeExactMismatch:
+		return fmt.Errorf("submit resume_exact_mismatch: an exact resume takes the task's recorded settings; drop the setting flags or drop --exact (%s)",
+			strings.TrimSpace(string(s.ErrorMsg)))
 	case protocol.SubmitStatus_InternalError:
 		msg := strings.TrimSpace(string(s.ErrorMsg))
 		if msg != "" {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -37,5 +38,52 @@ func TestSessionOptsCapsResolution(t *testing.T) {
 				t.Errorf("buildOpenInteractiveRequest.RequestedCaps = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A detached open carries its size in the request (there is no stream to carry
+// it); an attached one does not, because its client sends the size itself.
+func TestBuildOpenInteractiveRequestDetached(t *testing.T) {
+	det := buildOpenInteractiveRequest("/r", SessionOpts{Detached: true, InitialRows: 40, InitialCols: 150})
+	if !det.Detached() {
+		t.Fatal("Detached not set on the request")
+	}
+	if r, c := det.InitialRows(), det.InitialCols(); r == nil || c == nil || *r != 40 || *c != 150 {
+		t.Fatalf("initial size %v x %v, want 40 x 150", r, c)
+	}
+	if _, err := det.Append(nil); err != nil {
+		t.Fatalf("detached request does not encode: %v", err)
+	}
+	att := buildOpenInteractiveRequest("/r", SessionOpts{InitialRows: 40, InitialCols: 150})
+	if att.Detached() || att.InitialRows() != nil {
+		t.Fatal("an attached open carries a size block")
+	}
+}
+
+func TestBuildRequestsCarryResumeExact(t *testing.T) {
+	opts := SessionOpts{ResumeExact: true}
+	sub := buildSubmitRequest("/r", "", opts)
+	if !sub.ResumeExact() {
+		t.Error("buildSubmitRequest dropped ResumeExact")
+	}
+	oi := buildOpenInteractiveRequest("/r", opts)
+	if !oi.ResumeExact() {
+		t.Error("buildOpenInteractiveRequest dropped ResumeExact")
+	}
+}
+
+// The two new refusals name what to do about them.
+func TestStatusErrorsNameTheFix(t *testing.T) {
+	sub := &protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeExactMismatch}
+	sub.SetErrorMsg([]byte("resume_exact: --agent-arg is a setting"))
+	err := submitStatusError(nil, nil, sub)
+	if err == nil || !strings.Contains(err.Error(), "--exact") || !strings.Contains(err.Error(), "--agent-arg") {
+		t.Errorf("submit mismatch: %v, want it to name --exact and the server's field", err)
+	}
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeExactMismatch); err == nil || !strings.Contains(err.Error(), "--exact") {
+		t.Errorf("open mismatch: %v, want it to name --exact", err)
+	}
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_DetachRequired); err == nil || !strings.Contains(err.Error(), "-d") {
+		t.Errorf("detach_required: %v, want it to name -d", err)
 	}
 }

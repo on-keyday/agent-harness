@@ -41,6 +41,8 @@ func spawnFlags(k spawnKind) []Flag {
 			Help: "task id (32 hex) to resume — the server reuses the id and worktree branch, so the agent's project key matches the previous run"},
 		{Name: "resume-conversation", Type: FlagBool, Default: false, Field: "ResumeConversation",
 			Help: "with --resume, also ask the runner to resume the agent's own conversation state"},
+		{Name: "exact", Type: FlagBool, Default: false, Field: "Exact",
+			Help: "with --resume: resume exactly as recorded — no new prompt, args, agent, caps or scope (needs only resume_exact)"},
 		{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
 			FieldType: "*protocol.Capability", Convert: "parseCapsFlag", PresenceField: "CapsPresent",
 			Help: "comma-separated capability names to grant (e.g. spawn,file_read / all / none)"},
@@ -109,8 +111,18 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 		Flags:  []string{"runner", "host", "ip"},
 		Reason: "they each name one runner, and two of them name two",
 	}}
+	// --exact takes the task's recorded settings, so every flag that sets one
+	// contradicts it. The prompt as trailing words is refused in Validate.
+	exactConflicts := []string{"agent", "agent-arg", "caps", "scope", "scope-for"}
 	if k == spawnSubmit {
-		return excl, nil // a queued submit has no terminal, so none of the rest apply
+		exactConflicts = append(exactConflicts, "task")
+	}
+	for _, f := range exactConflicts {
+		excl = append(excl, Rule{Flags: []string{"exact", f}, Reason: "an exact resume takes the task's recorded settings"})
+	}
+	exactNeeds := Requirement{Flags: []string{"exact"}, Needs: "resume", Reason: "an exact resume names the task it restores"}
+	if k == spawnSubmit {
+		return excl, []Requirement{exactNeeds} // a queued submit has no terminal, so none of the rest apply
 	}
 	if k != spawnSessionNew {
 		// --detach and --stream exist only on `session new`, so the rules
@@ -118,7 +130,7 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 		// `interactive` looked harmless -- b.Set is false for a flag the verb
 		// does not have -- but it reads as a constraint an operator could
 		// trip, and there is no line that trips it.
-		return excl, nil
+		return excl, []Requirement{exactNeeds}
 	}
 	excl = append(excl,
 		Rule{Flags: []string{"x11", "detach"},
@@ -126,7 +138,7 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 		Rule{Flags: []string{"stream", "x11"},
 			Reason: "X11 is a terminal-session concept; the server refuses the pair too"},
 	)
-	return excl, []Requirement{{
+	return excl, []Requirement{exactNeeds, {
 		Flags: []string{"stream"}, Needs: "detach",
 		Reason: "an event-stream session has no terminal to attach; follow it with `session stream attach`",
 	}}

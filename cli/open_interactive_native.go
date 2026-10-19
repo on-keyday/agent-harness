@@ -37,43 +37,8 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string, opts Sess
 // non-X11 sessions; when set, x11_enabled + the X11Forward block (display +
 // cookie) are sent.
 func (c *Client) openInteractive(ctx context.Context, repoPath string, opts SessionOpts, x11 *X11Request) (*agentexec.CommandExecutionStream, string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
-	oi := buildOpenInteractiveRequest(repoPath, opts)
-	resumeTaskID := opts.ResumeTaskID
-	if resumeTaskID != "" {
-		tid, err := parseTaskIDHex(resumeTaskID)
-		if err != nil {
-			return nil, "", fmt.Errorf("OpenInteractive: parse resume id: %w", err)
-		}
-		oi.ResumeTaskId = tid
-	}
-	if x11 != nil {
-		oi.SetX11Enabled(true) // set the discriminator BEFORE the embedded block
-		f := protocol.X11Forward{Display: uint16(x11.Display)}
-		f.SetCookie(x11.Cookie)
-		oi.SetX11(f)
-	}
-	req.SetOpenInteractive(oi)
-
-	resp, err := c.RoundTripTaskControl(ctx, req)
+	oir, err := c.roundTripOpen(ctx, repoPath, opts, x11)
 	if err != nil {
-		return nil, "", err
-	}
-	if resp.Kind != protocol.TaskControlKind_OpenInteractive {
-		return nil, "", fmt.Errorf("expected OpenInteractive response, got kind=%v", resp.Kind)
-	}
-	oir := resp.OpenInteractive()
-	if oir == nil {
-		return nil, "", fmt.Errorf("OpenInteractive response variant missing")
-	}
-	if oir.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
-		cands, err := readCandidates(ctx, c.Transport(), oir.CandidatesStreamId())
-		if err != nil {
-			return nil, "", err
-		}
-		return nil, "", &AmbiguousRunnerError{Candidates: cands}
-	}
-	if err := openInteractiveStatusError(repoPath, opts.AgentProfile, oir.Status); err != nil {
 		return nil, "", err
 	}
 
@@ -88,14 +53,72 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, opts Sess
 		return nil, taskIDHex, fmt.Errorf("exec stream %d not visible after OpenInteractive", *sid)
 	}
 	stream := agentexec.NewCommandExecutionStream(st)
-	// Size the PTY here, in the one place every native interactive open funnels
-	// through, so a detached open gets it too — that open closes the stream
-	// immediately, and it is the last moment anyone without exec_control can
-	// touch this session.
+	// Size the PTY here, in the one place every native attached open funnels
+	// through. A detached open (OpenDetached) has no stream and sends its size
+	// in the request instead.
 	if err := applyInitialWindowSize(stream, opts); err != nil {
 		return nil, taskIDHex, fmt.Errorf("OpenInteractive: initial window size: %w", err)
 	}
 	return stream, taskIDHex, nil
+}
+
+// OpenDetached opens a session without attaching to it and returns the task
+// id. The server creates no stream toward this client, so the caller never
+// holds the session's control seat — which is what lets a caller without
+// exec_control start one. opts.InitialRows / InitialCols travel in the request.
+func (c *Client) OpenDetached(ctx context.Context, repoPath string, opts SessionOpts) (string, error) {
+	opts.Detached = true
+	oir, err := c.roundTripOpen(ctx, repoPath, opts, nil)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(oir.TaskId.Id[:]), nil
+}
+
+// roundTripOpen sends one OpenInteractive request and turns every non-ok answer
+// into an error, an ambiguous one into an *AmbiguousRunnerError. Shared by the
+// attached and the detached open so the two cannot map statuses differently.
+func (c *Client) roundTripOpen(ctx context.Context, repoPath string, opts SessionOpts, x11 *X11Request) (*protocol.OpenInteractiveResponse, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
+	oi := buildOpenInteractiveRequest(repoPath, opts)
+	resumeTaskID := opts.ResumeTaskID
+	if resumeTaskID != "" {
+		tid, err := parseTaskIDHex(resumeTaskID)
+		if err != nil {
+			return nil, fmt.Errorf("OpenInteractive: parse resume id: %w", err)
+		}
+		oi.ResumeTaskId = tid
+	}
+	if x11 != nil {
+		oi.SetX11Enabled(true) // set the discriminator BEFORE the embedded block
+		f := protocol.X11Forward{Display: uint16(x11.Display)}
+		f.SetCookie(x11.Cookie)
+		oi.SetX11(f)
+	}
+	req.SetOpenInteractive(oi)
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Kind != protocol.TaskControlKind_OpenInteractive {
+		return nil, fmt.Errorf("expected OpenInteractive response, got kind=%v", resp.Kind)
+	}
+	oir := resp.OpenInteractive()
+	if oir == nil {
+		return nil, fmt.Errorf("OpenInteractive response variant missing")
+	}
+	if oir.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
+		cands, err := readCandidates(ctx, c.Transport(), oir.CandidatesStreamId())
+		if err != nil {
+			return nil, err
+		}
+		return nil, &AmbiguousRunnerError{Candidates: cands}
+	}
+	if err := openInteractiveStatusError(repoPath, opts.AgentProfile, oir.Status); err != nil {
+		return nil, err
+	}
+	return oir, nil
 }
 
 // openInteractiveStatusError converts a non-Ok OpenInteractiveStatus into a
@@ -121,6 +144,10 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 		return fmt.Errorf("interactive resume_not_found: the specified resume task id is unknown (was it pruned, or is the kind a mismatch?)")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
 		return fmt.Errorf("interactive resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
+	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
+		return fmt.Errorf("interactive resume_exact_mismatch: an exact resume takes the task's recorded settings and kind; drop the setting flags (or --stream to match the task) or drop --exact")
+	case protocol.OpenInteractiveStatus_DetachRequired:
+		return fmt.Errorf("interactive detach_required: you may open this task but not hold its seat (it is outside your exec_control scope); add -d")
 	case protocol.OpenInteractiveStatus_InternalError:
 		return fmt.Errorf("interactive internal_error")
 	default:

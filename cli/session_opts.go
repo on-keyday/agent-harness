@@ -69,6 +69,15 @@ type SessionOpts struct {
 	// ResumeCapsOverride — the two halves of authority re-grant separately.
 	// Ignored on create.
 	ScopePresent bool
+	// ResumeExact, on a resume, takes every setting from the task's record:
+	// the request must then carry no prompt, args, agent, caps or scope
+	// re-grant, and needs only the resume_exact capability.
+	ResumeExact bool
+	// Detached opens the session without attaching the caller: the server
+	// creates no client stream, so the caller never holds the control seat
+	// (which needs exec_control). The initial size then travels in the request,
+	// because there is no stream to carry the window-size frame.
+	Detached bool
 }
 
 // buildOpenInteractiveRequest constructs the wire OpenInteractiveRequest from
@@ -90,5 +99,11 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.OverridesLen = uint8(len(opts.Overrides))
 	oi.SetScopePresent(opts.ScopePresent)
 	oi.SetEventStream(opts.EventStream)
+	oi.SetResumeExact(opts.ResumeExact)
+	if opts.Detached {
+		oi.SetDetached(true) // the discriminator before its block
+		oi.SetInitialRows(opts.InitialRows)
+		oi.SetInitialCols(opts.InitialCols)
+	}
 	return oi
 }

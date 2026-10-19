@@ -33,5 +33,6 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		ResumeCapsOverride: a.ResumeTaskID != "" && a.CapsPresent,
 		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
 		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
+		ResumeExact:        a.Exact,
 	}
 }

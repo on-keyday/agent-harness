@@ -1402,6 +1402,14 @@ var Verbs = []VerbSpec{
 			if err := spawnValidate(b); err != nil {
 				return fmt.Errorf("submit: %w", err)
 			}
+			if b.Bool("exact") {
+				// The record's prompt is the one that runs; --task is refused
+				// by a Rule, the trailing words here.
+				if b.Trail != "" {
+					return fmt.Errorf("submit: --exact runs the task's recorded prompt; drop the prompt words or drop --exact")
+				}
+				return nil
+			}
 			if b.Str("task") == "" && b.Trail == "" {
 				return fmt.Errorf("submit: a prompt is required, as --task or as the trailing words")
 			}

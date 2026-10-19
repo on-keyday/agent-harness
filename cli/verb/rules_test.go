@@ -70,6 +70,16 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"session new", []string{"--repo", "/r", "--x11", "--x11-display", "100"}, "0..99"},
 		{"session new", []string{"--repo", "/r", "--runner", "a", "--host", "b"}, "mutually exclusive"},
 		{"interactive", []string{"--repo", "/r", "--runner", "a", "--ip", "1.2.3.4"}, "mutually exclusive"},
+		// --exact takes the task's recorded settings, so it needs a task and
+		// refuses every setting flag; a prompt is a setting too.
+		{"session new", []string{"--repo", "/r", "--exact"}, "needs --resume"},
+		{"submit", []string{"--resume", id, "--exact", "--task", "x"}, "mutually exclusive"},
+		{"submit", []string{"--resume", id, "--exact", "do", "it"}, "--exact"},
+		{"session new", []string{"--resume", id, "--exact", "--agent", "bash"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--agent-arg", "--x"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--caps", "none"}, "mutually exclusive"},
+		{"interactive", []string{"--resume", id, "--exact", "--scope", "none"}, "mutually exclusive"},
+		{"interactive", []string{"--resume", id, "--exact", "--scope-for", "cancel=none"}, "mutually exclusive"},
 
 		// grid: --descendants needs something to take the descendants OF, and
 		// --under names ONE subtree.
@@ -136,6 +146,9 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"submit", []string{"--repo", "/r", "--task", "do it"}},
 		{"submit", []string{"--repo", "/r", "do", "it"}}, // the prompt as trailing words
 		{"session new", []string{"--repo", "/r", "--stream", "--detach"}},
+		{"session new", []string{"--resume", id, "--exact", "-d"}},
+		{"interactive", []string{"--resume", id, "--exact"}},
+		{"submit", []string{"--resume", id, "--exact"}}, // no prompt: the record's is used
 		{"grid", nil},
 		{"grid", []string{"--under", id, "--descendants"}},
 		{"grid", []string{id}},

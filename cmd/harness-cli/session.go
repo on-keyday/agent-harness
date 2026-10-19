@@ -391,20 +391,12 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 	defer c.Close()
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractive(ctx, repoVal, sopts)
+		// The server attaches nobody and takes the initial size from the
+		// request, so there is no stream to drain before this process exits.
+		taskIDHex, err := c.OpenDetached(ctx, repoVal, sopts)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
-		_ = stream.Close() // immediately detach → server transitions Running -> Detached
-		// This process exits on the next line, and exiting takes the transport
-		// down with it. sendStream.Close() only FLAGS eof — anything still in
-		// the send buffer (notably the initial window-size frame written by
-		// OpenInteractive) has not left yet, so exiting here silently drops it.
-		// Measured: `session new --rows 40 --cols 150 -d` produced a PTY of
-		// `0 0`, and a blind 300ms sleep in this spot produced `40 150`.
-		// Completed() is the real condition that sleep was approximating: eof
-		// sent AND every sent range acknowledged.
-		waitStreamCompleted(stream, 2*time.Second)
 		fmt.Println(taskIDHex)
 		return nil
 	}
@@ -424,12 +416,10 @@ func runSessionNewWith(cid objproto.ConnectionID, a verb.SpawnAction) error {
 		// raw NDJSON. "Open and stay" for an event-stream session means open
 		// detached, then FOLLOW the events — same rendering as
 		// `session stream attach`, which is also the command to come back with.
-		st, taskIDHex, err := c.OpenInteractive(ctx, repoVal, sopts)
+		taskIDHex, err := c.OpenDetached(ctx, repoVal, sopts)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
-		_ = st.Close()
-		waitStreamCompleted(st, 2*time.Second)
 		fmt.Fprintf(os.Stderr, "harness-cli: stream session %s started\n", taskIDHex)
 		return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
 	}
@@ -718,21 +708,6 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	}
 	os.Exit(1) // not_found / bad_request
 	return nil
-}
-
-// waitStreamCompleted blocks until s reports its data fully sent and
-// acknowledged, or until timeout. Polling is the available mechanism: the
-// stream exposes Completed() but no completion signal to wait on.
-//
-// The timeout is a bound, not an expectation — on a healthy link this returns
-// in a few milliseconds. Exceeding it means the frames did not make it, which
-// is not worth failing the detach over: the session itself is already open and
-// usable, only the size hint is lost.
-func waitStreamCompleted(s interface{ Completed() bool }, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for !s.Completed() && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
 }
 
 // parseResizeSpec parses "ROWSxCOLS" (e.g. "40x150"). One flag rather than a
