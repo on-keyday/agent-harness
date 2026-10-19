@@ -1402,7 +1402,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         ? `${Math.max(0, Math.round((now - w.armed_unix_ms) / 1000))}s`
         : "-";
       const sink = w.sink === "board" ? `board ${w.topic}` : w.sink;
-      for (const text of [`#${w.watcher_id}`, taskShort, sink, `${w.threshold_ms}ms`, age, `by ${w.by}`]) {
+      for (const text of [`#${w.watcher_id}`, taskShort, sink, watcherWaitsFor(w), age, `by ${w.by}`]) {
         const cell = document.createElement("span");
         cell.className = "forward-cell";
         cell.textContent = text;
@@ -1415,7 +1415,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       kill.addEventListener("click", async () => {
         // Confirmed: the operator sees every agent's watchers, so this row
         // may be someone else's insurance.
-        if (!window.confirm(`Kill await-idle watcher #${w.watcher_id} on ${taskShort}?`)) return;
+        if (!window.confirm(`Kill ${w.condition === "progress" ? "await-progress" : "await-idle"} watcher #${w.watcher_id} on ${taskShort}?`)) return;
         kill.disabled = true;
         try {
           await window.harness.awaitIdleKill(w.watcher_id);
@@ -2365,8 +2365,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // banner AND the snapshot kick (the 5s poll keeps the table current);
       // rendering each edge would spam the cmd output.
       if (evt.line && evt.line.includes("kind=TaskActivity")) return;
-      const banner = `[${new Date().toISOString()}] ${evt.line}`;
-      appendCmdOutput(banner);
+      // A progress write changes the row's text, so it refreshes — but it is
+      // routine, so it prints no banner (taskEventBanner).
+      const line = taskEventBanner(evt.line);
+      if (line !== null) appendCmdOutput(`[${new Date().toISOString()}] ${line}`);
     } catch (e) { /* ignore */ }
     refreshSnapshot();
   };
@@ -5576,6 +5578,21 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Two buttons, because the second is not a refinement of the first: it is
     // for when THIS session is already on screen in another terminal and its
     // workers are what is missing.
+    // await-progress on any task that can still write, oneshot included —
+    // the reason the verb is top-level rather than under `session`. The
+    // baseline is the row's progressAt (exact decimal string), so a line
+    // written since the list was drawn fires at once.
+    if (canArmProgress(t)) {
+      addItem("📝 進捗で通知", "", async () => {
+        try {
+          const r = await window.harness.awaitProgress({ taskId: t.id, since: t.progressAt || "0", sink: "notify" });
+          appendCmdOutput(`await-progress ${t.id.slice(0, 12)}: ${r.status}${r.watcherId ? ` (watcher ${r.watcherId})` : ""}`, true);
+        } catch (e) {
+          appendCmdOutput(`await-progress: ${e.message}`, true);
+        }
+      });
+    }
+
     addItem("▦ この配下をグリッド", "", async () => {
       appendCmdOutput(await openGridSet({ mode: "subtree", anchor: t.id }), true);
     });
@@ -7373,6 +7390,28 @@ function taskNowModel(t) {
     age,
     title: t.liveTerminal ? (t.title || "") : null,
   };
+}
+
+// watcherWaitsFor is the condition cell of a watcher row: await-idle and
+// await-progress share one registry, and only idle watchers have a threshold.
+function watcherWaitsFor(w) {
+  return w.condition === "progress" ? "progress" : `idle ${w.threshold_ms}ms`;
+}
+
+// taskEventBanner is the command-output line for a task event, or null for a
+// routine one: a busy/idle edge or a progress write fires per session per
+// change, and a banner each time would bury the lifecycle lines. The caller
+// still refreshes for the routine kinds that change a row's text.
+function taskEventBanner(line) {
+  if (!line || line.includes("kind=TaskActivity") || line.includes("kind=TaskProgress")) return null;
+  return line;
+}
+
+// canArmProgress: await-progress needs no live session (a oneshot task writes
+// progress too), so any task that can still write — any non-terminal one —
+// can be watched.
+function canArmProgress(t) {
+  return !["Succeeded", "Failed", "Cancelled"].includes(t.status);
 }
 
 // runnerRowModel is what one runner row in the Runners list shows, before any

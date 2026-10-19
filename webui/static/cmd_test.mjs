@@ -612,6 +612,29 @@ test("task now-line: progress with age, title for a live terminal", () => {
     { progress: "", age: "3s ago", title: "" });
 });
 
+// The watcher panel lists both conditions out of one registry: a progress
+// watcher has no threshold and must not read as "idle 0ms".
+test("watcher panel: the condition cell", () => {
+  eq(page.watcherWaitsFor({ condition: "progress", threshold_ms: 0 }), "progress");
+  eq(page.watcherWaitsFor({ condition: "idle", threshold_ms: 2500 }), "idle 2500ms");
+});
+
+// A progress write is routine, like a busy/idle edge: it refreshes the list
+// but must not print a banner per write per visible task.
+test("task event banner: routine kinds print nothing", () => {
+  eq(page.taskEventBanner("task abc kind=TaskProgress status=Running"), null);
+  eq(page.taskEventBanner("task abc kind=TaskActivity status=Running"), null);
+  assert.match(String(page.taskEventBanner("task abc kind=TaskEnded status=Succeeded")), /TaskEnded/);
+});
+
+// await-progress needs no live session (a oneshot writes progress too), so
+// the sheet offers it on every task that can still write: any non-terminal one.
+test("task sheet: await-progress offered on any live task, oneshot included", () => {
+  eq(page.canArmProgress({ status: "Running", kind: "Oneshot" }), true);
+  eq(page.canArmProgress({ status: "Detached", kind: "Interactive" }), true);
+  eq(page.canArmProgress({ status: "Succeeded", kind: "Oneshot" }), false);
+});
+
 // The runner list is rows like the task list, built from one model per
 // runner. The model is what the row shows; the DOM is a projection of it.
 test("a runner row: agents as a list, roots one per line, load and status", () => {

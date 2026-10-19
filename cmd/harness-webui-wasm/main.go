@@ -1551,6 +1551,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"sink":         cli.AwaitIdleSinkString(w.Sink),
 					"topic":        string(w.Topic),
 					"threshold_ms": float64(w.ThresholdMs),
+					"condition":    cli.AwaitConditionString(w.Condition),
 					// RAW, for the exec rows' reason: the page re-renders per poll.
 					"armed_unix_ms": float64(w.ArmedUnixMs),
 					"by":            cli.AwaitIdleWatcherBy(w),
