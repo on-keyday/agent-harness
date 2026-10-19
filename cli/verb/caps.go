@@ -89,7 +89,7 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_ExecControl:
 		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite; opening a session without -d needs it"
 	case protocol.Capability_ExecResize:
-		return "resize a session's PTY as a viewer or cowriter, while no control client is attached (orthogonal to the three above; control owns the size whenever it holds the seat)"
+		return "resize a session's PTY as a viewer or cowriter, while no control client is attached, on the sessions inside this bit's own scope (--scope-for exec_resize narrows it; orthogonal to the three above; control owns the size whenever it holds the seat)"
 	case protocol.Capability_ExecRun:
 		return "run a command in a task's worktree as its own process (exec), separate from the session's PTY; also stops one (exec kill)"
 	case protocol.Capability_FileRead:

@@ -85,11 +85,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	// pass the bit by name.
 	protocol.Capability_ExecRun: {kind: capResolvedLiteral},
 
-	protocol.Capability_ExecResize: {
-		kind: capNoTargetResolution,
-		reason: "resize rides an ATTACHED stream; the attach that opened it was " +
-			"already target-gated, and there is no separate request naming a task",
-	},
+	// exec_resize rides an attach, but its target is checked against its OWN
+	// scope when the attach decides whether the observer's resizes are honoured
+	// (resizeAllowed), so --scope-for exec_resize narrows it.
+	protocol.Capability_ExecResize: {kind: capResolvedLiteral},
 	protocol.Capability_Notify: {
 		kind:   capNoTargetResolution,
 		reason: "a notification names no task; its origin is stamped from the sender",

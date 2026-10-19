@@ -95,6 +95,8 @@ func (c *Client) SessionResize(ctx context.Context, taskIDHex string, rows, cols
 // ResizeRejectedHint is the operator-facing explanation for an unapplied
 // resize. There are exactly two reasons and the client cannot tell them apart
 // — the server discards the frame silently either way — so it names both
-// rather than guessing.
-const ResizeRejectedHint = "not applied: resizing from a non-control attach needs the exec_resize capability, " +
+// rather than guessing. The first has two halves since exec_resize is scoped:
+// holding the bit is not enough when the session is outside its scope.
+const ResizeRejectedHint = "not applied: resizing from a non-control attach needs exec_resize over this session " +
+	"(the bit, with the session inside its scope — see whoami's scope_by_cap), " +
 	"and applies only while no control client is attached (the control attach owns the size whenever it holds the seat)"

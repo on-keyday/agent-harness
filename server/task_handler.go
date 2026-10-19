@@ -1922,7 +1922,7 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	// here because this is the only point the principal is known — the frames
 	// themselves carry no identity. A CONTROL attach needs no bit: owning the
 	// PTY size is what control means.
-	allowResize := hasCap(h.callerCaps(conn.ConnectionID().String()), protocol.Capability_ExecResize)
+	allowResize := h.resizeAllowed(conn.ConnectionID().String(), idHex)
 	attach := mux.Attach
 	switch req.Mode {
 	case protocol.AttachMode_View:

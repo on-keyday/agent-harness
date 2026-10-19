@@ -163,6 +163,16 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 	return ok && scopeCoversNewChild(self.Scope, protocol.Capability_ExecControl)
 }
 
+// resizeAllowed reports whether an observer attach by cid to targetHex may
+// resize the session's PTY: the bit, and the target inside the bit's OWN scope.
+// It used to read the bit alone, so the attach's scope bounded it and
+// `--scope-for exec_resize=…` was accepted and changed nothing; "may drive A
+// and B, may resize only A" was not grantable.
+func (h *TaskHandler) resizeAllowed(cid, targetHex string) bool {
+	return hasCap(h.callerCaps(cid), protocol.Capability_ExecResize) &&
+		h.inScope(cid, protocol.Capability_ExecResize, targetHex)
+}
+
 // hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct
 // from hasCap (which requires every bit) because attachModeCap returns
 // alternatives that satisfy the same request.

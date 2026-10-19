@@ -862,7 +862,10 @@ it" are both grantable, and neither implies the other. It is honoured only
 while **no control client is attached** — the size belongs to the control seat
 whenever someone holds it, and this lets an observer stand in for an unattended
 session rather than fight the human whose terminal defines the size. A control
-attach needs no such bit; owning the size is what control means.
+attach needs no such bit; owning the size is what control means. Like every
+other bit it is scoped: an observer's resize is honoured only on a session
+inside `exec_resize`'s own scope, so `--caps exec_cowrite,exec_resize
+--scope-for exec_resize=ids:<A>` drives several sessions and resizes only A.
 
 `exec_control` is the former `exec_attach` under a name that says which of
 the three it is; it keeps the same bit, so every task already holding it
