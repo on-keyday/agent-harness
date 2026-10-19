@@ -790,9 +790,11 @@ harness-cli notify --level error "make check failed on the lint runner"
 ```
 
 `--level` is `info` (default) / `warn` / `error`; `--title` sets an optional
-heading. Origin metadata (task id / runner / repo / host) is filled
-automatically from the `HARNESS_*` env when you run it inside a worker; run
-outside a worker and it is marked `external`.
+heading. Origin metadata (task id / runner / repo / host) is filled in by the
+server from the connection that sent it, not from anything the client sends —
+your `HARNESS_*` env is not read, so a notify always names the task that
+really sent it. A connection that is not a task (the operator's) is marked
+`external`.
 
 **Keep it to one short line.** It is a fire-and-forget, one-way ping — NOT a
 question and NOT a request/response. Send it and end the turn; do not wait for
@@ -800,6 +802,32 @@ anything back. Over-long text is truncated to fit the transport, and detail
 belongs in the task log, not the notification. Use it to surface "I'm done",
 "I'm blocked and need a decision", or "this failed" to an away-from-keyboard
 operator.
+
+## Reporting what you are doing (`progress`)
+
+`harness-cli progress` sets one line on your OWN task row saying what you are
+working on. It is shown next to your task in every task list — CLI `ls`
+(`progress="…" (12m ago)`), the TUI, the WebUI — with its age, to the operator
+and to any task that can see yours.
+
+```bash
+harness-cli progress "auth refactor: tests green, writing the migration"
+harness-cli progress --clear
+```
+
+- **When:** whenever the task, or your stage within it, changes. How often is
+  your call; nothing polls you for it.
+- **What:** one line that names the task and the stage — readable by someone
+  who has not seen your conversation. At most 256 bytes of UTF-8 with no
+  control characters; anything else is refused (`bad_text`), not trimmed.
+- **`--clear`** when the line no longer applies, rather than leaving a stale
+  stage on the row.
+
+It writes the task the connection belongs to; there is no task-id argument,
+and a connection that is not a task (the operator's) is refused with
+`no_principal`. The line persists across a server restart, a resume and the
+end of the task. It is not a board message; a supervisor that wants to act on
+your next write arms `await-progress` on your task (see `supervising-workers`).
 
 ## How a body reaches the receiver — and never reading base64 by eye
 

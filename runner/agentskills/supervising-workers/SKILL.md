@@ -207,7 +207,7 @@ against `ls` before acting on it.
 ### Listing and killing your sessions
 
 ```bash
-harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
+harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
@@ -215,6 +215,7 @@ harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combin
 harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends"
 harness-cli session await-idle ls                # the watchers you have armed
 harness-cli session await-idle kill <watcher-id> # disarm one
+harness-cli await-progress --since <progress_at> --topic chat.<your-short-id> <id>  # one-shot "tell me its next stage" (any task kind)
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
 
@@ -229,7 +230,11 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
   when `last_output_at > 0`), plus an `activity` string (`busy` / `idle:Xs`)
   when output has been seen. The top-level `ls` renders the same as an
   `act=busy` / `act=idle:Xs` badge, and `ls --json` carries the identical
-  `activity` / `output_idle_ms` / `last_output_at` fields.
+  `activity` / `output_idle_ms` / `last_output_at` fields. Every row, of any
+  task kind, also carries the worker's self-reported `progress` line,
+  `progress_at` (unix nanos, server clock; 0 = never written) and
+  `progress_age_ms`, plus the live window `title` — read it only when
+  `live_terminal` is true; false means no live terminal session.
 - **Push (one-shot)**: `session await-idle <id>` fires ONCE as soon as the
   session is quiescent for the threshold (default 2500ms; `--threshold-ms N`
   to override), then disarms itself. It is level-triggered, not edge-triggered:
@@ -279,6 +284,30 @@ Arm it when **no reply is coming**:
 
 `await-idle` is the completion signal for the keyboard channel. The agentboard
 channel already has one: the reply.
+
+**Waiting for a worker's next stage — `await-progress`.** Idle says the PTY
+went quiet, not that the worker moved on. A worker that writes `harness-cli
+progress` (the `harness-cli` skill) gives you a stage edge instead, on any task
+kind — a one-shot `submit` task has no session to go idle, but it can write
+progress. Take the baseline from `ls --json`, then arm:
+
+```bash
+AT=$(harness-cli ls --json | jq -r --arg id "$TASK_ID" '.tasks[] | select(.id==$id) | .progress_at')
+harness-cli await-progress --since "$AT" --topic chat.<your-short-id> "$TASK_ID"
+```
+
+It fires once on the next write, set or clear — at once if the worker has
+written since `$AT`, so a write landing between your `ls` and the arm is not
+missed (omit `--since` to wait for the first write after arming). The `--topic`
+fire publishes
+`{"kind":"task_progress","task":"<32-hex>","progress":"<text>","progress_at_unix_ms":N,"status":"fired"|"task_ended"}`.
+Sinks and gates are await-idle's: the default long-polls and prints one
+`{"status","progress","progress_at","watcher_id"}` object (exit 0 fired, 3
+`task_ended`, 4 `cancelled`) — scripts only, never from an agent turn;
+`--notify` needs `notify`; `--topic` needs board reach to that topic. The
+target must be a task you can see. `await-progress ls` / `await-progress kill
+<id>` share one registry with `session await-idle`, so either `kill` disarms
+either kind of watcher.
 
 **Reading / driving a session as the agent (you have no TTY).** `session attach`
 runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
