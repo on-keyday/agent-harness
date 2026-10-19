@@ -49,7 +49,8 @@ the author chose it while writing; those rows are the ones to check.
 | D8 | `tasks.status` / `task.<id>.status` become filtered by the same predicate as `handleList` (§ Events) | this spec; operator did not object when told it was included |
 | D9 | A one-shot watcher that fires on the target's next progress write, shaped like `await-idle` | operator asked for "something like await-idle"; the shape is this spec |
 | D10 | CLI spelling: `harness-cli progress <text>...` writes; `harness-cli progress --clear` clears; `harness-cli await-progress [--notify] [--topic T] <task-id>` arms, with `await-progress ls` / `await-progress kill`. Top-level rather than the `session await-progress` shown in conversation, because a oneshot task has no session and may report progress too | this spec |
-| D11 | Progress is stored (WAL record `task_progress`), survives restart, resume and task end, and disappears with prune. Title is live-only: read from the mux at List / event time, empty when there is no live terminal session | this spec |
+| ~~D11~~ | ~~Progress is stored (WAL record `task_progress`), survives restart, resume and task end~~ — **withdrawn** 2026-10-19 after landing, replaced by D26: a WAL record per write grew the log without bound, and the line is state, not history | this spec, withdrawn by operator |
+| D11′ | Title is live-only: read from the mux at List / event time, empty when there is no live terminal session. Progress disappears with prune | this spec |
 | D12 | Progress text: at most 256 bytes, valid UTF-8, no C0 / DEL / C1 control characters. A violation is refused, not sanitized, so the agent learns its text did not land | this spec |
 | D13 | Title on the wire: C0 / DEL / C1 removed and truncated to 256 bytes on a UTF-8 boundary, server-side | this spec |
 | D14 | Parent-hop rows (`redactParentTaskInfo`) lose progress and title. They are content, like the prompt that row already loses, not liveness | this spec |
@@ -64,11 +65,14 @@ the author chose it while writing; those rows are the ones to check.
 | D23 | `progress_at` only ever increases: `SetProgress` stamps under the store lock (a later write never stores an earlier clock reading) and writes the WAL record under the same lock. A stored stamp ahead of the server clock reports age 0 | this spec (mid-plan review) |
 | D24 | Clients age `progress_age_ms` locally from the receipt time, as the idle badge is, and every surface strips control characters from progress and title itself — the event path can carry bytes a subscriber published (see Non-goals) | this spec (final review) |
 | D25 | The WebUI arms `await-progress` from each non-terminal task's sheet (oneshot included) as well as from the attached-session button; the WebUI passes `progress_at` as a decimal string, since a nanosecond stamp does not fit a JS number | this spec (final review) |
+| D26 | Progress is memory-only. A DELIBERATE stop (held or full) writes every task's line to `<data-dir>/progress.json` beside the held captures; the next server applies it after the WAL replay and deletes it. A crash loses the lines | operator (chose this over WAL-per-write and over WAL-at-stop; "a crash loses them" accepted) |
+| D27 | Another task's line can be EMPTIED (never written) by a caller holding `cancel` with the target in cancel's scope — whoever may end the task may empty its status line; the operator holds every bit. New kind `progress_clear {task_id}`, answered with `ProgressSetResponse`; out of scope is `not_found`, a missing bit `permission_denied`. It acts as the task's own `--clear` (fresh stamp, event, watchers fire). Surfaces: `progress --clear --task <id>`, TUI `X`, WebUI sheet "🧹 進捗を消す". Replaces the Non-goal "writing another task's progress, including by the operator" for the clearing half | operator (the operator-only first draft was withdrawn: it had no reason beyond not touching the caps model) |
 
 ## Non-goals
 
 - A history of progress lines. The board is the place for a log.
-- Writing another task's progress, including by the operator.
+- Writing another task's progress, including by the operator. (Emptying it is
+  allowed, under D27.)
 - Fixing `await-idle` for agents that spin the title while blocked on input
   (the output never goes quiescent). Raised in the same conversation; deferred
   by the operator.
@@ -199,11 +203,12 @@ AwaitIdleWatcherInfo += condition :AwaitCondition   # threshold_ms is 0 for prog
 
 ### Progress
 
-- `TaskEntry` gains `Progress string` and `ProgressAt int64`.
-  `TaskStore.SetProgress(id, text, at)` writes one `task_progress` WAL record
-  carrying both (a snapshot, like `writeCapsChangedLocked`), and replay assigns
-  both. An older server replaying a newer WAL drops the record: the replay
-  switch has no `default` (`server/taskstore.go:1048`).
+- `TaskEntry` gains `Progress string` and `ProgressAt int64`, memory-only
+  (D26). `TaskStore.SetProgress(id, text, at)` stamps monotonically (D23) and
+  writes nothing to the WAL. `server/progress_snapshot.go` writes and loads
+  `<data-dir>/progress.json`; the write is a deferred hook on `serve` gated on
+  ctx cancellation OR `shuttingDown`, because a held stop leaves the loop
+  through the http-server exit before the root context is cancelled.
 - `handleProgressSet` takes the principal from `lookupPrincipal(cid)`, validates
   the text (D12), calls `SetProgress`, publishes `task_progress`, then fires any
   progress watchers on that task.
@@ -279,7 +284,7 @@ is the minimum, not a substitute.
 | --- | --- | --- | --- |
 | CLI `ls` text (`cli/list.go` `taskLine`) | `progress="…" (12m ago)` when `progress_at != 0`; `title="…"` when `live_terminal` is set, even if empty | — | — |
 | CLI `ls --json` / `session ls` (`taskJSON`) | `progress`, `progress_at`, `progress_age_ms`, `live_terminal`, `title`, always present | — | — |
-| CLI verbs | — | `progress`, `progress --clear` | `await-progress`, `ls`, `kill` |
+| CLI verbs | — | `progress`, `progress --clear`; `progress --clear --task <id>` empties another task's line (D27) | `await-progress`, `ls`, `kill` |
 | TUI task table (`tui/tasks.go`) | the Doing column (D22): progress with its locally aged age (D24), else `(title) …`, else the prompt | — | `m` arms it (`M` via notify); the `I` modal lists both conditions with a "waits for" column |
 | TUI detail popup (`tui/detail.go`) | both, with progress age next to last-output age | — | — |
 | TUI cmdline (`tui/cmdline.go`) | — | — | `await-progress` wherever `await-idle` is accepted |
@@ -288,6 +293,8 @@ is the minimum, not a substitute.
 
 Writing progress has no TUI / WebUI surface: the operator's connection has no
 principal (D7), so it would always be refused. That omission is deliberate.
+Emptying one does (D27): TUI `X` on the selected task, and the WebUI task
+sheet's "🧹 進捗を消す" when the task has a non-empty line.
 
 Every rendering of progress and title goes through the surface's existing
 escaping for untrusted text; the server-side rules (D12, D13) are not a
@@ -311,6 +318,9 @@ text.
   that it works.
 - An old `harness-cli notify` against the new server sends bytes the new
   `NotifyRequest` does not describe. That is the accepted skew cost of D16.
+- A WAL written by a build that still logged `task_progress` (landed as
+  4d1735e2) replays without error: the record type is unknown to the replay
+  switch, which has no `default`, so it is skipped and those lines are lost.
 - Tests at the operator's entry layer: the `progress` and `await-progress`
   argv as the help prints it, against `scripts/dummy-harness.sh`
   (implementation-pitfalls, Pitfall 13).
