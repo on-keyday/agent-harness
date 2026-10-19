@@ -67,6 +67,8 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-cli` — request/control surface:
     - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
       `prune-local`, `watch`.
+    - Progress: `progress` (a task sets its own one-line status) and
+      `await-progress` (fire on its next write); see Quick start 4b.
     - Interactive: `session {new,attach,ls,kill}` (semantics in Quick
       start 5).
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
@@ -242,6 +244,26 @@ bin/harness-cli cancel <task-id>
 bin/harness-cli prune --before 168h     # forget terminal tasks older than 7d
 bin/harness-cli prune-local --before 168h   # remove old local worktrees
 
+# 4b. Progress: a task states which task it is on and at which stage, in one
+# line (≤256 bytes, no control characters). Only from inside a task — the server
+# writes the caller's own row, so an operator connection gets no_principal. The
+# line survives a server restart, a resume and the task's end. `ls` shows it as
+# progress="…" (12m ago); `ls --json` carries progress / progress_at /
+# progress_age_ms, plus title (the live window title) and live_terminal. The TUI
+# "Doing" column shows the progress line, else the window title marked
+# "(title)", else the prompt; the WebUI task row shows it too.
+bin/harness-cli progress fixing the parser / writing tests
+bin/harness-cli progress --clear
+# Hear the task's next write (set or clear). Works on any task, oneshot
+# included; same long-poll / --topic / --notify shape as `session await-idle`
+# (5 below) and the same watcher registry, so either verb's ls / kill sees both.
+# --since takes a progress_at from `ls --json` and fires at once if the task has
+# written since. Exit: 0 fired or armed, 3 task_ended, 4 cancelled. TUI: `m` on
+# the selected task, `M` to fire as an operator notification.
+bin/harness-cli await-progress [--since <progress_at>] [--notify | --topic T] <task-id>
+bin/harness-cli await-progress ls [--task <task-id>] [--json]
+bin/harness-cli await-progress kill <watcher-id>
+
 # 5. Open a detachable session: a PTY claude spliced to your terminal that
 # SURVIVES client disconnect (Detached) — reattach from any client via
 # `session attach <id>`. `-d` opens it without attaching anyone: the server
@@ -264,7 +286,8 @@ bin/harness-cli session kill   <task-id>
 # arm a server-side watcher and return its watcher_id at once. An armed watcher
 # can be listed and taken back: an agent sees the ones it armed, the operator
 # all of them. A killed one delivers nothing, and a caller still blocked on it
-# gets "cancelled" (exit 4). TUI: `I`; WebUI: the Connections tab.
+# gets "cancelled" (exit 4). TUI: `I` (lists await-idle and await-progress
+# watchers, each with its condition); WebUI: the Connections tab.
 bin/harness-cli session await-idle <task-id> [--topic T | --notify]
 bin/harness-cli session await-idle ls [--task <task-id>] [--json]
 bin/harness-cli session await-idle kill <watcher-id>
@@ -408,8 +431,10 @@ bin/harness-cli forward tap <forward-id> --text --dir to-target
 
 # 8. Notifications. Push a short status ping — from inside a task or by hand —
 # that shows in the TUI / WebUI notification feed and `notify-watch`. Fire-and-
-# forget; --level is info|warn|error, --title is optional. Origin (task / runner
-# / repo / host) is auto-filled from HARNESS_* when run inside a worker.
+# forget; --level is info|warn|error, --title is optional. The server derives
+# the sender (task id / runner / hostname / repo) from the connection's
+# authenticated identity — HARNESS_* is not read — and a connection with no task
+# identity (the operator's) is `external`.
 bin/harness-cli notify --level warn "need a decision on approach X"
 bin/harness-cli notify-watch          # stream notifications (ring backlog + live)
 
@@ -1314,14 +1339,17 @@ tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
 Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
 follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `i`
-who holds which capability (`caps audit`), `G` git, `F` files, `q` quit. **The authoritative list is the TUI itself**:
+who holds which capability (`caps audit`), `m`/`M` arm `await-progress` on the
+selected task (`M` fires as an operator notification), `I` the armed watchers
+(await-idle and await-progress, each with its condition), `G` git, `F` files,
+`q` quit. **The authoritative list is the TUI itself**:
 the footer shows the keys that work in the focused pane and `?` shows
 everything — both render from the same table the dispatcher uses
 (`tui/keys.go`, test-enforced), so unlike a README table they cannot go
 stale.
 
 The cmdline accepts `submit / session {new,attach,ls,kill}
-/ session await-idle [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
+/ session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / caps audit / workspace {save,apply,ls,show}
@@ -1533,8 +1561,8 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
 - **Notifications** — the live notification feed (ring backlog + live),
   plus a form to post one by hand (level / title / body).
 - **Connections** — the radial topology (desktop) or grouped list
-  (mobile), the port-forward, running-exec and armed await-idle watcher
-  lists, Raw connect, and a
+  (mobile), the port-forward, running-exec and armed watcher (await-idle /
+  await-progress, each with its condition) lists, Raw connect, and a
   collapsed **trsf — transport state** panel: the same connections'
   cwnd / srtt / loss and where each run loop's time goes, with its own
   target and interval pickers. It is read only while expanded, so a
