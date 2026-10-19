@@ -823,11 +823,18 @@ harness-cli progress --clear
 - **`--clear`** when the line no longer applies, rather than leaving a stale
   stage on the row.
 
-It writes the task the connection belongs to; there is no task-id argument,
-and a connection that is not a task (the operator's) is refused with
-`no_principal`. The line persists across a server restart, a resume and the
-end of the task. It is not a board message; a supervisor that wants to act on
-your next write arms `await-progress` on your task (see `supervising-workers`).
+Setting text writes the task the connection belongs to; there is no task-id
+argument for it, and a connection that is not a task (the operator's) is
+refused with `no_principal`. Emptying is the one exception:
+`harness-cli progress --clear --task <id>` empties ANOTHER task's line, as
+that task's own `--clear` would. It needs `cancel` with that task in its scope
+— the operator, or a supervisor holding cancel over you, can empty yours; out
+of scope reads `not_found`, no cancel is a permission denial.
+
+The line is held in server memory, not in the WAL: it survives a resume, the
+end of the task and a deliberate server restart, but a server crash loses it.
+It is not a board message; a supervisor that wants to act on your next write
+arms `await-progress` on your task (see `supervising-workers`).
 
 ## How a body reaches the receiver — and never reading base64 by eye
 

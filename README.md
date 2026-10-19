@@ -67,7 +67,8 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-cli` — request/control surface:
     - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
       `prune-local`, `watch`.
-    - Progress: `progress` (a task sets its own one-line status) and
+    - Progress: `progress` (a task sets its own one-line status;
+      `--clear --task <id>` empties another's, gated on `cancel`) and
       `await-progress` (fire on its next write); see Quick start 4b.
     - Interactive: `session {new,attach,ls,kill}` (semantics in Quick
       start 5).
@@ -247,13 +248,25 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # 4b. Progress: a task states which task it is on and at which stage, in one
 # line (≤256 bytes, no control characters). Only from inside a task — the server
 # writes the caller's own row, so an operator connection gets no_principal. The
-# line survives a server restart, a resume and the task's end. `ls` shows it as
+# line is held in memory, not in the WAL: a deliberate server stop (held or
+# full) writes every task's line to <data-dir>/progress.json, which the next
+# server applies after the WAL replay and deletes. So it survives a resume, the
+# task's end and a deliberate restart; a crash loses it. `ls` shows it as
 # progress="…" (12m ago); `ls --json` carries progress / progress_at /
 # progress_age_ms, plus title (the live window title) and live_terminal. The TUI
 # "Doing" column shows the progress line, else the window title marked
 # "(title)", else the prompt; the WebUI task row shows it too.
 bin/harness-cli progress fixing the parser / writing tests
 bin/harness-cli progress --clear
+# Emptying ANOTHER task's line (a stale one its task will not replace) needs
+# cancel with that task in cancel's scope — the operator holds every bit, and a
+# supervisor holding cancel over its workers can clear theirs. Out of scope
+# answers not_found, no cancel is a permission denial. It acts like the task's
+# own --clear: a fresh progress_at, a task_progress event, and armed
+# await-progress watchers fire. Setting text stays the task's own. TUI: `X` on
+# the selected task; WebUI: 「🧹 進捗を消す」 on the task sheet (shown while the
+# task has a line).
+bin/harness-cli progress --clear --task <task-id>
 # Hear the task's next write (set or clear). Works on any task, oneshot
 # included; same long-poll / --topic / --notify shape as `session await-idle`
 # (5 below) and the same watcher registry, so either verb's ls / kill sees both.
@@ -1340,7 +1353,8 @@ Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
 follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `i`
 who holds which capability (`caps audit`), `m`/`M` arm `await-progress` on the
-selected task (`M` fires as an operator notification), `I` the armed watchers
+selected task (`M` fires as an operator notification), `X` empties its
+progress line, `I` the armed watchers
 (await-idle and await-progress, each with its condition), `G` git, `F` files,
 `q` quit. **The authoritative list is the TUI itself**:
 the footer shows the keys that work in the focused pane and `?` shows

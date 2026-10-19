@@ -309,6 +309,14 @@ target must be a task you can see. `await-progress ls` / `await-progress kill
 <id>` share one registry with `session await-idle`, so either `kill` disarms
 either kind of watcher.
 
+A worker's line outlives its stage — it survives a resume, the end of the task
+and a deliberate server restart (a crash loses it). To empty a stale one
+yourself, `harness-cli progress --clear --task "$TASK_ID"`: it needs `cancel`
+with that task in cancel's scope (out of scope reads `not_found`, no `cancel`
+is a permission denial) and behaves like the worker's own `--clear` — a fresh
+`progress_at`, so armed `await-progress` watchers fire. Setting text is the
+worker's alone.
+
 **Reading / driving a session as the agent (you have no TTY).** `session attach`
 runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
 to the remote PTY — it needs a real interactive TTY, which the human operator has
