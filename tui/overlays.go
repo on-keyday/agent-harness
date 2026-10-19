@@ -900,6 +900,17 @@ func (a *App) inRawModal(msg tea.KeyMsg) tea.Cmd {
 // Caps audit: move, expand a capability, or hand a holder to the re-grant
 // picker (the `a` key's), closing the audit so the picker is what is seen.
 func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
+	// A fast `jj` arrives as one KeyRunes message; take it a key at a time.
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		var cmds []tea.Cmd
+		for _, r := range msg.Runes {
+			if !a.capsAuditModal.IsOpen() {
+				break
+			}
+			cmds = append(cmds, a.inCapsAuditModal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}))
+		}
+		return tea.Batch(cmds...)
+	}
 	switch msg.String() {
 	case "esc", "q":
 		a.capsAuditModal.Close()

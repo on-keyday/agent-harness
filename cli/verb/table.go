@@ -2118,7 +2118,9 @@ var Verbs = []VerbSpec{
 			{Name: "all", Type: FlagBool, Default: false, Field: "All", Help: "include ended tasks"},
 			{Name: "empty", Type: FlagBool, Default: false, Field: "Empty", Help: "include capabilities nobody holds"},
 			{Name: "cap", Type: FlagString, Default: "", Field: "Cap", Help: "show one capability, each holder with the caps set line that would revoke it"},
-			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines, one row per capability"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason: "the TUI answers with its modal, which has no JSON form; the WebUI prints the lines into its command output as `caps --json` does",
+				Help:          "JSON Lines, one row per capability"},
 		},
 		Validate: func(b Bound) error {
 			name := b.Str("cap")

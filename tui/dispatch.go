@@ -801,7 +801,7 @@ func (h tuiVerbs) Caps(v verb.CatalogAction) tea.Cmd {
 }
 
 // CapsAudit opens the caps audit modal; --all / --empty / --cap set its
-// starting toggles and the expanded bit. --json has nothing to shape here.
+// starting toggles and the expanded bit.
 func (h tuiVerbs) CapsAudit(v verb.CapsAuditAction) tea.Cmd {
 	var focus protocol.Capability
 	if v.Cap != "" {

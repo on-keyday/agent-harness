@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -88,5 +89,31 @@ func TestCapsAuditModalScopeNone(t *testing.T) {
 	}
 	if !strings.Contains(a.capsAuditModal.View(), "scope 対象外") {
 		t.Fatalf("board_observe holder lacks the scope-none mark:\n%s", a.capsAuditModal.View())
+	}
+}
+
+// surface-parity item 32: the frame's width comes from the terminal, so
+// expanding a bit (longer holder lines) neither moves the frame nor wraps.
+func TestCapsAuditModalFrameIsFixed(t *testing.T) {
+	a, _ := auditApp(t)
+	a.width = 90
+	a = press(t, a, runes("i"))
+	before := lipgloss.Width(a.capsAuditModal.View())
+	a = press(t, a, enter)
+	after := a.capsAuditModal.View()
+	if w := lipgloss.Width(after); w != before || w != 90 {
+		t.Fatalf("frame width %d before expanding, %d after; want both 90", before, w)
+	}
+	if h := lipgloss.Height(after); h > a.height {
+		t.Fatalf("modal is %d lines on a %d-line terminal", h, a.height)
+	}
+}
+
+// surface-parity item 5: a fast `jj` arrives as ONE KeyRunes message.
+func TestCapsAuditModalBatchedRunes(t *testing.T) {
+	a, _ := auditApp(t)
+	a = press(t, a, runes("i"), runes("jj"))
+	if got := a.capsAuditModal.cursor; got != 2 {
+		t.Fatalf("cursor after a batched jj = %d, want 2", got)
 	}
 }

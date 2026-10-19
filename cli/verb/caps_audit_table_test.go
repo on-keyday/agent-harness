@@ -71,3 +71,14 @@ func TestTierTableMatchesTheSpec(t *testing.T) {
 		t.Errorf("resume_exact implied by %v, want resume", got)
 	}
 }
+
+// surface-parity item 33: the TUI answers with its modal, so a --json it
+// cannot honour is refused there rather than dropped.
+func TestCapsAuditJSONIsNotATUIFlag(t *testing.T) {
+	if _, err := ParseCmdCapsAudit(TUI, []string{"--json"}, nil); err == nil {
+		t.Fatal("caps audit --json parsed on the TUI, which has no JSON form to give")
+	}
+	if _, err := ParseCmdCapsAudit(WebUI, []string{"--json"}, nil); err != nil {
+		t.Fatalf("caps audit --json on the WebUI: %v", err)
+	}
+}

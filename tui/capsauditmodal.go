@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -118,9 +119,13 @@ func (m CapsAuditModal) View() string {
 	if m.includeEnded {
 		which = "live and ended tasks"
 	}
-	header := HeaderStyle.Render("capabilities — who holds them (" + which + ")")
-	footer := FooterStyle.Render("enter: expand / re-grant holder · a: ended tasks · e: unheld bits · Esc: close")
-	box := PanelStyleFocused.Padding(0, 1)
+	// The frame's width is the terminal's, never the content's: expanding a
+	// bit lengthens lines, and each is cut to the inner width instead.
+	inner := m.width - 4 // border + padding
+	clip := lipgloss.NewStyle().MaxWidth(inner)
+	header := clip.Render(HeaderStyle.Render("capabilities — who holds them (" + which + ")"))
+	footer := clip.Render(FooterStyle.Render("enter: expand / re-grant holder · a: ended tasks · e: unheld bits · Esc: close"))
+	box := PanelStyleFocused.Padding(0, 1).Width(m.width - 2)
 	if len(m.lines) == 0 {
 		return box.Render(header + "\n" + "no task holds a capability (a: include ended tasks)" + "\n" + footer)
 	}
@@ -138,7 +143,7 @@ func (m CapsAuditModal) View() string {
 		if i == m.cursor {
 			s = CursorStyle.Render(s)
 		}
-		rows = append(rows, s)
+		rows = append(rows, clip.Render(s))
 	}
 	rows = visibleWindow(rows, m.cursor, m.height-6)
 	return box.Render(header + "\n" + strings.Join(rows, "\n") + "\n" + footer)

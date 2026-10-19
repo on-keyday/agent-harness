@@ -6999,7 +6999,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (capsAuditOpen.has(r.cap) && r.holders.length) {
         const detail = auditEl("div", "audit-detail");
         for (const h of r.holders) {
-          const line = auditEl("div", "", h.label + " — 親 " + (h.parent || "operator") + " / scope ");
+          const line = auditEl("div", "", h.label + " — 親 " + h.parent + " / scope ");
           line.append(auditScopeChip(h));
           if (h.override) line.append(" (task 全体は " + h.task_scope + ")");
           line.append(" / " + (h.live ? "live" : "ended"));
