@@ -83,6 +83,8 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		// spawn names no task, so an override for it would bound nothing; the
 		// refusal points at the bits that do bound a resume.
 		{"session new", []string{"--repo", "/r", "--scope-for", "spawn=none"}, "resume"},
+		{"caps audit", []string{"--cap", "bogus"}, "unknown capability"},
+		{"caps audit", []string{"--cap", "spawn,cancel"}, "one capability"},
 		{"caps set", []string{id, "--scope", "subtree", "--scope-for", "spawn,cancel=none"}, "resume"},
 
 		// grid: --descendants needs something to take the descendants OF, and
@@ -150,6 +152,8 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"submit", []string{"--repo", "/r", "--task", "do it"}},
 		{"submit", []string{"--repo", "/r", "do", "it"}}, // the prompt as trailing words
 		{"session new", []string{"--repo", "/r", "--stream", "--detach"}},
+		{"caps audit", nil},
+		{"caps audit", []string{"--all", "--empty", "--cap", "spawn", "--json"}},
 		{"session new", []string{"--resume", id, "--exact", "-d"}},
 		{"submit", []string{"--resume", id, "--exact", "--runner", "a"}},
 		{"submit", []string{"--resume", id, "--exact"}}, // no prompt: the record's is used

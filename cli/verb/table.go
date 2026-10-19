@@ -6,6 +6,8 @@ import (
 	"math"
 	"strconv"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Verbs is the declaration: one entry per verb path, and the single place a
@@ -2098,6 +2100,37 @@ var Verbs = []VerbSpec{
 				Help: "on a narrowing, leave the affected tasks' connections open"},
 		},
 		Examples: []string{"caps set aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps spawn,file_read"},
+	},
+	{
+		// Who holds which capability, one row per bit, strongest first. The
+		// rows come from cli.CapsAudit; every surface renders the same rows.
+		Path: []string{"caps", "audit"}, CmdlineSurfaces: CLI,
+		NoModalSurface: "the TUI modal and the WebUI tab are added with their own tasks",
+		Notes: []string{
+			"list, per capability, the tasks holding it and the scope it reaches; --cap NAME adds the command that would revoke it",
+		},
+		Action: "CapsAuditAction",
+		Flags: []Flag{
+			{Name: "all", Type: FlagBool, Default: false, Field: "All", Help: "include ended tasks"},
+			{Name: "empty", Type: FlagBool, Default: false, Field: "Empty", Help: "include capabilities nobody holds"},
+			{Name: "cap", Type: FlagString, Default: "", Field: "Cap", Help: "show one capability, each holder with the caps set line that would revoke it"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", Help: "JSON Lines, one row per capability"},
+		},
+		Validate: func(b Bound) error {
+			name := b.Str("cap")
+			if name == "" {
+				return nil
+			}
+			c, err := ParseCaps(name)
+			if err != nil {
+				return fmt.Errorf("caps audit --cap: %w", err)
+			}
+			if c == protocol.Capability_None || c == protocol.Capability_All || c&(c-1) != 0 {
+				return fmt.Errorf("caps audit --cap %q: name one capability", name)
+			}
+			return nil
+		},
+		Examples: []string{"caps audit", "caps audit --cap spawn", "caps audit --all --json"},
 	},
 	{
 		// The session's SPAWN DEFAULTS: what a submit / session

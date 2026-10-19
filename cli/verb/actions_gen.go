@@ -123,6 +123,19 @@ type CancelAction struct {
 	TaskID string
 }
 
+// CapsAuditAction is built by: caps audit.
+type CapsAuditAction struct {
+	ActionMarker
+	// include ended tasks
+	All bool
+	// include capabilities nobody holds
+	Empty bool
+	// show one capability, each holder with the caps set line that would revoke it
+	Cap string
+	// JSON Lines, one row per capability
+	JSON bool
+}
+
 // CatalogAction is built by: caps, notify-watch, skill, skill ls, version, watch, whoami.
 type CatalogAction struct {
 	ActionMarker
@@ -2430,6 +2443,14 @@ func init() {
 			}
 			return a, nil
 		},
+		"caps audit\x00cli": func(b Bound) (Action, error) {
+			a := CapsAuditAction{}
+			a.All = b.Bool("all")
+			a.Empty = b.Bool("empty")
+			a.Cap = b.Str("cap")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
 			a := SetDefaultsAction{}
 			if b.Set["caps"] {
@@ -3089,6 +3110,7 @@ const (
 	CmdDiag                   = "diag"
 	CmdRepo                   = "repo"
 	CmdCapsSet                = "caps set"
+	CmdCapsAudit              = "caps audit"
 	CmdCapsSetDefaults        = "caps set-defaults"
 	CmdScope                  = "scope"
 	CmdCapsSetParent          = "caps set-parent"
@@ -4843,6 +4865,27 @@ func ParseCmdCapsSet(sf Surface, args []string, ctx map[string]string) (SetCapsA
 	return a, nil
 }
 
+func ParseCmdCapsAudit(sf Surface, args []string, ctx map[string]string) (CapsAuditAction, error) {
+	var zero CapsAuditAction
+	sp, ok := Lookup("caps", "audit")
+	if !ok {
+		return zero, fmt.Errorf("caps audit: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CapsAuditAction)
+	return a, nil
+}
+
 func ParseCmdCapsSetDefaults(sf Surface, args []string, ctx map[string]string) (SetDefaultsAction, error) {
 	var zero SetDefaultsAction
 	sp, ok := Lookup("caps", "set-defaults")
@@ -5598,6 +5641,8 @@ type CLIDispatch[R any] interface {
 	Restore(RestoreAction) R
 	// caps set
 	CapsSet(SetCapsAction) R
+	// caps audit
+	CapsAudit(CapsAuditAction) R
 	// caps set-parent
 	CapsSetParent(SetParentAction) R
 	// session attach
@@ -6027,6 +6072,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsSet(a), true, nil
+	case CmdCapsAudit:
+		a, perr := ParseCmdCapsAudit(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsAudit(a), true, nil
 	case CmdCapsSetParent:
 		a, perr := ParseCmdCapsSetParent(CLI, args, ctx)
 		if perr != nil {
@@ -6383,6 +6434,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.Restore(a), true
 	case SetCapsAction:
 		return h.CapsSet(a), true
+	case CapsAuditAction:
+		return h.CapsAudit(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
 	case AgentAction:
@@ -6796,6 +6849,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCapsSet:
 			a, perr := ParseCmdCapsSet(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsAudit:
+			a, perr := ParseCmdCapsAudit(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
