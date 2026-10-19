@@ -5396,6 +5396,29 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       }
 
       row.append(line1, meta);
+      // What the task says it is doing, then what its program titled itself.
+      // textContent only: both strings come from the task.
+      const now = taskNowModel(t);
+      if (now.progress !== null || now.title !== null) {
+        const nowEl = document.createElement("div");
+        nowEl.className = "task-now";
+        if (now.progress !== null) {
+          const p = document.createElement("span");
+          p.className = "task-progress";
+          p.textContent = now.progress === "" ? "(cleared)" : now.progress;
+          const a = document.createElement("span");
+          a.className = "task-progress-age";
+          a.textContent = ` ${now.age}`;
+          nowEl.append(p, a);
+        }
+        if (now.title !== null && now.title !== "") {
+          const ti = document.createElement("span");
+          ti.className = "task-title";
+          ti.textContent = now.title;
+          nowEl.appendChild(ti);
+        }
+        row.appendChild(nowEl);
+      }
       if (t.prompt) {
         const promptEl = document.createElement("div");
         promptEl.className = "task-prompt";
@@ -7328,6 +7351,28 @@ function populateAgentSelect(sel, profiles, selected, extra) {
 function renderAgentSelect(sel, profiles) {
   if (!sel) return;
   populateAgentSelect(sel, profiles, sel.value);
+}
+
+// taskNowModel is the "now" line under a task row: the task's self-reported
+// progress with its server-computed age, and its window title. null means
+// "not reported" and is not drawn; "" is a measurement and is. Progress is
+// gated on the stamp (progressAt is a decimal string, "0" = never written),
+// so a cleared line still shows its age; the title on a live terminal, so an
+// untitled one still shows. Ages mirror cli.AgeStr.
+function taskNowModel(t) {
+  const written = t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "";
+  let age = null;
+  if (written) {
+    const ms = t.progressAgeMs || 0;
+    if (ms >= 3600000) age = `${Math.floor(ms / 3600000)}h ago`;
+    else if (ms >= 60000) age = `${Math.floor(ms / 60000)}m ago`;
+    else age = `${Math.floor(ms / 1000)}s ago`;
+  }
+  return {
+    progress: written ? (t.progress || "") : null,
+    age,
+    title: t.liveTerminal ? (t.title || "") : null,
+  };
 }
 
 // runnerRowModel is what one runner row in the Runners list shows, before any
