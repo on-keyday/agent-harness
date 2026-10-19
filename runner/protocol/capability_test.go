@@ -7,8 +7,8 @@ func TestCapabilityBits(t *testing.T) {
 	// String method, and fmt applies %x to the STRING for a Stringer — so
 	// %#x of Capability_All printed 0x616c6c ("all" in ASCII) and hid the
 	// actual value behind a plausible-looking hex number.
-	if Capability_All != 0xfffff {
-		t.Fatalf("All = %#x, want 0xfffff", uint32(Capability_All))
+	if Capability_All != 0x3fffff {
+		t.Fatalf("All = %#x, want 0x3fffff", uint32(Capability_All))
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", uint32(Capability_None))
@@ -20,7 +20,8 @@ func TestCapabilityBits(t *testing.T) {
 		Capability_RunnerAdmin | Capability_BoardObserve | Capability_Purge |
 		Capability_ExecRun | Capability_ForwardTap |
 		Capability_ExecView | Capability_ExecCowrite | Capability_ExecResize |
-		Capability_BoardSend | Capability_ExecTap | Capability_BoardPeer
+		Capability_BoardSend | Capability_ExecTap | Capability_BoardPeer |
+		Capability_Resume | Capability_ResumeExact
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint32(or), uint32(Capability_All))
 	}

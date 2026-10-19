@@ -1015,8 +1015,9 @@ format SubmitRequest:
     extra_args :AgentArgs
     # requested_caps is a Capability bitmask the spawning principal requests for
     # this task. The server computes caps_child = caps_creator ∩ requested_caps.
-    # Use Capability.all (0xfff) to inherit the creator's full set (the default
-    # when no explicit confinement is desired). A zero value grants nothing.
+    # Use Capability.all (0x3fffff) to inherit the creator's full set (the
+    # default when no explicit confinement is desired). A zero value grants
+    # nothing.
     requested_caps :Capability
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
     resume_caps_override :u1
@@ -1030,7 +1031,11 @@ format SubmitRequest:
     # caps_present/scope_present. Ignored on create (scope always applies to
     # a fresh task; its zero value IS the subtree default).
     scope_present :u1
-    reserved :u5
+    # resume only: 1 = take every setting from the task's record. The request
+    # must carry none (empty prompt / extra_args / agent_profile, both override
+    # bits 0), else resume_exact_mismatch. Satisfied by resume_exact or resume.
+    resume_exact :u1
+    reserved :u4
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -1074,6 +1079,10 @@ enum SubmitStatus:
     # rather than silently clamped: a task whose scope differs from the one the
     # caller wrote, with nothing saying so, is the failure mode this rejects.
     scope_not_permitted = "scope_not_permitted"
+    # resume_exact was set and the request also carried a setting, or the
+    # recorded kind is not the one this path opens, or there was no
+    # resume_task_id. error_msg names which.
+    resume_exact_mismatch = "resume_exact_mismatch"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -1852,7 +1861,14 @@ format OpenInteractiveRequest:
     # because everything else about opening a session — caps, scope, the
     # server-allocated stream, the session mux that owns it — is identical.
     event_stream :u1
-    reserved :u3
+    # Same as SubmitRequest.resume_exact; event_stream must match the recorded
+    # kind (0 = interactive, 1 = stream).
+    resume_exact :u1
+    # 1 = open without attaching the requester: no client stream is created and
+    # the response carries no stream_id. 0 = the requester takes the control
+    # seat, which requires exec_control over the target.
+    detached :u1
+    reserved :u1
     resume_task_id :TaskID
     # agent_profile: same semantics as SubmitRequest.agent_profile.
     agent_profile_len :u8
@@ -1865,6 +1881,12 @@ format OpenInteractiveRequest:
     # when disabled).
     if x11_enabled == 1:
         x11 :X11Forward
+    # Present ONLY when detached == 1 (no invisible bytes otherwise): with no
+    # client stream there is nowhere else for the initial PTY size to travel.
+    # 0 in either = no initial size.
+    if detached == 1:
+        initial_rows :u16
+        initial_cols :u16
 
 enum OpenInteractiveStatus:
     :u8
@@ -1884,6 +1906,12 @@ enum OpenInteractiveStatus:
     # field, so the status is the whole answer and the client supplies the
     # offending ids from the scope it sent.
     scope_not_permitted = "scope_not_permitted"
+    # See SubmitStatus.resume_exact_mismatch. No error_msg on this response;
+    # the client names the conflict from the flags it sent.
+    resume_exact_mismatch = "resume_exact_mismatch"
+    # The caller may open this task but may not hold its control seat: the
+    # target is outside its exec_control scope. Open with detached = 1.
+    detach_required       = "detach_required"
 
 # One RUNNER offered when a spawn is ambiguous: more than one (runner, agent
 # profile) choice matched. profiles lists the agents the caller may pick on
@@ -1914,8 +1942,15 @@ format RunnerCandidatesBody:
 format OpenInteractiveResponse:
     status :OpenInteractiveStatus
     task_id :TaskID    # populated when status == 0
-    stream_id :u64     # populated when status == 0. Bidirectional stream the
-                       # server opens toward the client; client looks it up via
+    # 1 = the server attached the requester and stream_id names its stream.
+    # 0 on every non-ok status and on a detached open. A bit rather than a zero
+    # stream_id: the server's trsf issues bidirectional ids from 0, so the
+    # first stream it opens toward a client IS stream 0.
+    attached :u1
+    reserved :u7
+    if attached == 1:
+        stream_id :u64 # Bidirectional stream the server opens toward the
+                       # client; client looks it up via
                        # Transport.GetBidirectionalStream(id) and wraps it in
                        # exec.NewCommandExecutionStream. Server splices this
                        # bytewise to a separate bidi stream it has also opened
@@ -3332,6 +3367,10 @@ enum ClientEndpointKind:
 enum Capability:
     :u32
     none           = 0x000, "none"
+    # spawn authorizes CREATING a task (submit / open_interactive with a zero
+    # resume_task_id). It does not authorize a resume: that is resume /
+    # resume_exact, which spawn does not imply. Creation names no existing
+    # task, so no scope bounds this bit and an override naming it is refused.
     spawn          = 0x001, "spawn"
     cancel         = 0x002, "cancel"
     # The three attach modes are three different powers, so they are three bits,
@@ -3458,6 +3497,18 @@ enum Capability:
     # scope is global. See
     # docs/superpowers/specs/2026-10-16-agentboard-reach-design.md.
     board_peer     = 0x80000, "board_peer"
+    # resume authorizes re-queuing an existing terminal task under its own id,
+    # with the request free to change its prompt, args, agent, kind, caps and
+    # scope. It is NOT weaker than spawn at running commands (a new prompt or
+    # the bash profile is arbitrary execution); what it withholds is a new
+    # task. A task resumed without resume_caps_override keeps its recorded
+    # caps, which may exceed the resumer's. Default-off, appended.
+    resume         = 0x100000, "resume"
+    # resume_exact authorizes the same re-queue with every setting taken from
+    # the task's record (SubmitRequest / OpenInteractiveRequest.resume_exact):
+    # the caller picks only the runner, resume_conversation, x11, detached and
+    # the initial size. Implied by resume. Default-off, appended.
+    resume_exact   = 0x200000, "resume_exact"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
@@ -3467,7 +3518,7 @@ enum Capability:
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0xfffff, "all"
+    all            = 0x3fffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

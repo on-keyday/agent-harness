@@ -79,9 +79,13 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, opts Sess
 
 	taskIDHex := hex.EncodeToString(oir.TaskId.Id[:])
 
-	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(oir.StreamId))
+	sid := oir.StreamId()
+	if !oir.Attached() || sid == nil {
+		return nil, taskIDHex, fmt.Errorf("OpenInteractive: server opened the session detached; no stream")
+	}
+	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(*sid))
 	if st == nil {
-		return nil, taskIDHex, fmt.Errorf("exec stream %d not visible after OpenInteractive", oir.StreamId)
+		return nil, taskIDHex, fmt.Errorf("exec stream %d not visible after OpenInteractive", *sid)
 	}
 	stream := agentexec.NewCommandExecutionStream(st)
 	// Size the PTY here, in the one place every native interactive open funnels

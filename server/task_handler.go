@@ -1625,11 +1625,10 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		h.afterMuxStopped(taskIDHex, runner.ID)
 	}()
 
-	return protocol.OpenInteractiveResponse{
-		Status:   protocol.OpenInteractiveStatus_Ok,
-		TaskId:   tid,
-		StreamId: uint64(tuiStream.ID()),
-	}, nil
+	resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_Ok, TaskId: tid}
+	resp.SetAttached(true)
+	resp.SetStreamId(uint64(tuiStream.ID()))
+	return resp, nil
 }
 
 // afterMuxStopped cleans up task and registry state once an interactive

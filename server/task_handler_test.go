@@ -1045,8 +1045,8 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 	}
 
 	// TUI stream ID should match the tuiConn's stream.
-	if resp.StreamId != 11 {
-		t.Fatalf("StreamId=%d want 11 (tui-side stream)", resp.StreamId)
+	if id := resp.StreamId(); !resp.Attached() || id == nil || *id != 11 {
+		t.Fatalf("attached=%v StreamId=%v want attached stream 11 (tui-side stream)", resp.Attached(), id)
 	}
 
 	// Task ID must be non-zero.

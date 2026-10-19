@@ -179,7 +179,11 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	}
 
 	taskIDHex := hex.EncodeToString(oiResp.TaskId.Id[:])
-	streamID := trsf.StreamID(oiResp.StreamId)
+	sid := oiResp.StreamId()
+	if !oiResp.Attached() || sid == nil {
+		return taskIDHex, fmt.Errorf("OpenInteractive: server opened the session detached; no stream")
+	}
+	streamID := trsf.StreamID(*sid)
 
 	stream := peer.WaitForBidirectionalStream(ctx, c.Transport(), streamID)
 	if stream == nil {
