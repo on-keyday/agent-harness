@@ -59,4 +59,3 @@ func tail(s string) string {
 	}
 	return s[len(s)-12:]
 }
-

@@ -427,8 +427,11 @@ func New(cfg Config) *Server {
 	// next List snapshot.
 	publishTaskEvent := func(taskID string, kind protocol.StatusEventKind, status protocol.TaskStatus, exitCode int32) {
 		var taskKind protocol.TaskKind
+		var progress string
+		var progressAt int64
 		if t, ok := s.tasks.Get(taskID); ok {
 			taskKind = t.Kind
+			progress, progressAt = t.Progress, t.ProgressAt
 		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
@@ -437,6 +440,11 @@ func New(cfg Config) *Server {
 			TaskKind:   taskKind,
 			ExitCode:   exitCode,
 		}
+		// Stored, so stamped on every event like the kind: any event refreshes
+		// a subscriber's progress column without waiting for a List.
+		ev.SetProgress([]byte(progress))
+		ev.ProgressAt = uint64(progressAt)
+		ev.ProgressAgeMs = progressAgeMs(progressAt)
 		// Live-session act enrichment on EVERY task event (same point-in-time
 		// mux read as List enrichment in handleList): any event keeps a
 		// subscriber's busy/idle badge current, and task_activity events get
@@ -495,6 +503,16 @@ func New(cfg Config) *Server {
 			return // task already forgotten; a badge refresh for it is meaningless
 		}
 		publishTaskEvent(taskID, protocol.StatusEventKind_TaskActivity, t.Status, 0)
+	}
+
+	// A task wrote its progress line: publish task_progress so event-driven
+	// clients update the column without a List.
+	s.taskHandler.OnTaskProgress = func(taskHex string) {
+		t, ok := s.tasks.Get(taskHex)
+		if !ok {
+			return
+		}
+		publishTaskEvent(taskHex, protocol.StatusEventKind_TaskProgress, t.Status, 0)
 	}
 
 	// An observer attaching to or leaving a live session changes nothing the

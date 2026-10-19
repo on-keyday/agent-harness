@@ -36,6 +36,11 @@ type TaskHandler struct {
 	// for tests that construct TaskHandler directly.
 	OnSessionActivity func(taskID string, busy bool, lastOutputUnixNano int64)
 
+	// OnTaskProgress fires after a successful progress_set, before the
+	// response is sent. Server.New wires it to a task_progress event publish;
+	// nil-safe for tests that construct TaskHandler directly.
+	OnTaskProgress func(taskHex string)
+
 	// OnSessionObservers fires when a session's observer set changes (a viewer
 	// or cowriter attached or left). Those attaches move no task status by
 	// design, so this is the only signal an event-driven client gets that the
@@ -885,6 +890,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		resp.SetWhoami(w)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_ProgressSet:
+		h.handleProgressSet(conn, &req)
 
 	case protocol.TaskControlKind_TrsfState:
 		ts := req.TrsfState()
@@ -2391,6 +2399,9 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	// runner-side lookup is unavailable to exactly the callers that need it.
 	info.SetSkillsInjected(t.SkillsInjected)
 	info.RingBufferBytes = t.RingBufferBytes
+	info.SetProgress([]byte(t.Progress))
+	info.ProgressAt = uint64(t.ProgressAt)
+	info.ProgressAgeMs = progressAgeMs(t.ProgressAt)
 	return info
 }
 
@@ -2428,6 +2439,12 @@ func redactParentTaskInfo(info *protocol.TaskInfo) {
 	info.SetAgentProfile(nil)
 	info.SetSkillsInjected(false)
 	info.AssignedTo = protocol.RunnerID{}
+	// Content, not liveness: what the parent says it is doing and what its
+	// program titled itself are as much "what it was told to do" as the prompt.
+	info.SetProgress(nil)
+	info.ProgressAt = 0
+	info.ProgressAgeMs = 0
+	info.SetTitle(nil)
 }
 
 // notifyWorkerInfo is the sender identity of a notify, derived from what the

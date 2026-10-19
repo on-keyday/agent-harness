@@ -50,14 +50,14 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// await_progress reveals progress, which `ls` already hands to any caller
 	// that can see the task; sink=notify is gated on notify in the handler,
 	// as for await_idle.
-	protocol.TaskControlKind_AwaitProgress: capNone,
-	protocol.TaskControlKind_BoardSubscribers:   capInMap,
-	protocol.TaskControlKind_BoardSend:          capInMap,
-	protocol.TaskControlKind_BoardWake:          capInMap,
-	protocol.TaskControlKind_GitQuery:           capInMap,
-	protocol.TaskControlKind_OpenExecRun:        capInMap,
-	protocol.TaskControlKind_OpenForwardTap:     capInMap,
-	protocol.TaskControlKind_OpenExecTap:        capInMap,
+	protocol.TaskControlKind_AwaitProgress:    capNone,
+	protocol.TaskControlKind_BoardSubscribers: capInMap,
+	protocol.TaskControlKind_BoardSend:        capInMap,
+	protocol.TaskControlKind_BoardWake:        capInMap,
+	protocol.TaskControlKind_GitQuery:         capInMap,
+	protocol.TaskControlKind_OpenExecRun:      capInMap,
+	protocol.TaskControlKind_OpenForwardTap:   capInMap,
+	protocol.TaskControlKind_OpenExecTap:      capInMap,
 
 	// Direction-dependent: file_read or file_write is only known once the
 	// request's direction is decoded.

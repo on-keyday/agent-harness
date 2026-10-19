@@ -111,6 +111,13 @@ type TaskEntry struct {
 	// buffer as reported by the SessionMux owner. Used for informational
 	// display in task listings. Updated via SetRingBufferBytes.
 	RingBufferBytes uint64
+	// Progress is the task's self-reported line (progress_set), written by
+	// the agent about its own task; ProgressAt is the server's unix-nano
+	// stamp of the last write, set or clear (0 = never written). Stored in
+	// the WAL (task_progress), so both survive a restart, a resume and the
+	// task's end.
+	Progress   string
+	ProgressAt int64
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -265,6 +272,35 @@ func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, 
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
 	}
+}
+
+// SetProgress records a task's self-reported line and the stamp of the write,
+// and appends one task_progress WAL record carrying both — a snapshot, as
+// writeCapsChangedLocked's is, so replay never pairs one write's text with
+// another's stamp. Any status is accepted: a line written just before the task
+// ended is the one worth keeping.
+func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
+	s.mu.Lock()
+	t, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return TaskEntry{}, false
+	}
+	t.Progress = text
+	t.ProgressAt = at
+	snap := *t
+	wal := s.wal
+	s.mu.Unlock()
+	if wal != nil {
+		if err := wal.Write(WALEvent{
+			Type: "task_progress", TaskID: id,
+			Progress: text, ProgressAt: at,
+			Ts: time.Now().UnixNano(),
+		}); err != nil {
+			slog.Error("WAL write failed", "op", "task_progress", "task_id", id, "err", err)
+		}
+	}
+	return snap, true
 }
 
 // SetCaps rewrites a live task's authority: the capability bitmask, the scope,
@@ -1104,6 +1140,11 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.ErrorMsg = ev.DiffInfo
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
+			}
+		case "task_progress":
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Progress = ev.Progress
+				t.ProgressAt = ev.ProgressAt
 			}
 		case "task_held":
 			// A held task is alive on a runner that has no server to report

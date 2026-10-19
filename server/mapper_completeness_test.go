@@ -82,6 +82,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		SkillsInjected:  true,
 		RingBufferBytes: 4096,
 		HoldDeadline:    now.UnixNano(),
+		Progress:        "stage 2",
+		// A second old, so the server-computed age is non-zero too.
+		ProgressAt: now.Add(-time.Second).UnixNano(),
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{
@@ -103,12 +106,6 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// time and never stored, like the counters above.
 		"TitleLen": "filled by the list handler from the live SessionMux, not from TaskEntry",
 		"Title":    "filled by the list handler from the live SessionMux, not from TaskEntry",
-		// TEMPORARY: TaskEntry gains Progress/ProgressAt with progress_set
-		// (plan 2026-10-19-task-progress, Task 3), which removes these four.
-		"ProgressLen":   "TaskEntry has no progress field until Task 3",
-		"Progress":      "TaskEntry has no progress field until Task 3",
-		"ProgressAt":    "TaskEntry has no progress field until Task 3",
-		"ProgressAgeMs": "TaskEntry has no progress field until Task 3",
 	})
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the
