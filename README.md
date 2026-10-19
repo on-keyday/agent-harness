@@ -1179,16 +1179,35 @@ bin/harness-cli caps audit --cap spawn     # its holders, each with the caps set
 bin/harness-cli caps audit --all --empty --json   # ended tasks too, unheld bits too, JSON Lines
 ```
 
-Each capability is tiered 強 / 中 / 弱 and each holder shows the scope
-that bit resolves to, `*` when it comes from a `--scope-for` override;
-`spawn`, `notify`, `runner_admin`, `board_observe` and `board_send` are
-bounded by no task scope and say `scope 対象外`. A row lists the tasks
-holding that literal bit — what a revoke removes — and notes the
-stronger bits that imply it (`exec_view` is also granted by
-`exec_cowrite` and `exec_control`). The TUI opens it on `i` (enter
-expands a bit; enter on a holder opens the `a` picker on that task) and
-the WebUI as the 「権限」 tab, holders coloured by scope breadth, a click
-opening the re-grant dialog.
+Each capability is tiered 強 / 中 / 弱. Each holder is labelled with its
+id, agent, repo, status and prompt head, and shows the scope that bit
+resolves to, `*` when it comes from a `--scope-for` override. `spawn`,
+`notify`, `runner_admin`, `board_observe` and `board_send` reach the
+server's shared resources whatever the task's scope says, so they show
+`global（固定）`: global, and not narrowable by `--scope` or
+`--scope-for`. A row lists the tasks holding that literal bit — what a
+revoke removes — and notes the stronger bits that imply it (`exec_view`
+is also granted by `exec_cowrite` and `exec_control`).
+
+**The audit leads into the creator tree.** Choosing a holder shows where
+that task sits rather than jumping to re-grant, and you re-grant from the
+task itself.
+- **TUI:** `i` opens the audit.
+  - `enter` on a holder switches the task list to tree order with the
+    cursor on that task, so `a` re-grants it.
+  - `t` on a bit marks its holders `◆`; `T` clears the mark.
+  - In tree order each task's ID cell ends with its strongest tier and
+    how many bits it holds at it, e.g. `強3`.
+- **WebUI:** the audit is 「権限の棚卸し」, folded under the タスク tab's
+  tree.
+  - Each tree node carries the same tier mark.
+  - 「権限で強調」 rings one bit's holders and dims the rest.
+  - A holder chip turns the tree on, selects its bit and brings the node
+    into view. The node opens the task sheet with its 🔑 re-grant.
+
+Ended tasks are marked too, because a resume brings their recorded caps
+back. A task older than the TUI table's 100 newest rows is kept in the
+table, with its creators, while the audit points at it.
 
 The **subtree** walk follows each task's parent link (who spawned whom,
 `by=` in `ls`). The link itself is operator-mutable on a live task:
@@ -1503,8 +1522,9 @@ into the browser tab the same way the TUI does into its terminal.
 
 The page is organised into tabs (端末 / タスク / ファイル / 通知):
 
-- **Tasks** — runners + task list, the submit / compose form (with a
-  `--caps` selector and effective-set readout), and a command line.
+- **Tasks** — runners + task list, the creator tree (🌳) with the
+  capability audit folded under it (権限の棚卸し), the submit / compose form
+  (with a `--caps` selector and effective-set readout), and a command line.
 - **Files** — a per-task worktree browser: navigate directories, push
   (upload a local file), pull (download), delete, and **Preview** a
   selected file in a modal. `.html` files render in a **sandboxed
@@ -1521,8 +1541,6 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
   collapsed one costs the server nothing. See **Reading a connection's
   transport state**.
 - **Terminal** — the interactive PTY view with on-screen key helpers.
-- **権限** — `caps audit`: per capability, the tasks holding it (see
-  **Capabilities and scope**).
 
 UDP-only servers (when `--listen` is empty and only `--udp-listen` is
 configured) **do not serve the WebUI** — there is no HTTP listener.

@@ -9118,7 +9118,9 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     // The strongest tier the task holds and how many bits at it (cli.TierMark,
     // rendered in Go). Ended tasks too: a resume brings the caps back.
     if (t && t.tierMark) {
-      const tier = svgEl("text", { class: `tt-tier tt-tier-${t.tierClass}`, x: R + 5, y: -R + 1 });
+      // Right of the dot, clear of the highlight ring and of the id label
+      // above it.
+      const tier = svgEl("text", { class: `tt-tier tt-tier-${t.tierClass}`, x: R + 11, y: 4 });
       tier.textContent = t.tierMark;
       g.appendChild(tier);
     }
@@ -9140,7 +9142,8 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     // Grants whose target is not in the listing (pruned): no edge can be
     // drawn, so the count stands in for them. Shown only when there are any.
     if (n.offscreen > 0) {
-      const off = svgEl("text", { class: "tt-offscreen", x: R + 6, y: 4 });
+      // Below the tier mark when there is one, which takes this spot.
+      const off = svgEl("text", { class: "tt-offscreen", x: R + 6, y: t && t.tierMark ? 16 : 4 });
       off.textContent = `+${n.offscreen} 一覧外`;
       g.appendChild(off);
     }

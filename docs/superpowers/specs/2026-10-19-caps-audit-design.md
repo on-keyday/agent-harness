@@ -313,3 +313,33 @@ The audit ran on the live fleet the day it landed, and it raised two problems.
   - A node click opens the sheet.
   - Tier marks are drawn.
   - At 390px there is no overflow.
+
+### What shipped (Amendment 2)
+
+- **Holder scope text.** The holder JSON gained `scope_text`, the scope cell
+  exactly as every surface prints it. The WebUI chip shows it, so the page
+  never builds `global（固定）` or the `*` itself. `caps audit --json` carries
+  the field too.
+- **WebUI tier mark.** It sits right of the node, outside the highlight ring,
+  vertically centred. Placed above-right, it overlapped the id label; the live
+  check measured zero overlaps after the move.
+- **TUI tree columns.** The ID column is 28 wide and Repo 18, so the gutter,
+  `◆` and the tier mark fit.
+- **Verified live** on a dummy harness with these tasks:
+  - an ended `spawn` holder;
+  - an old-`all`-like task;
+  - a supervisor and the child it spawned;
+  - a `caps=none` task.
+
+  Results:
+  - **CLI:** labels carry repo, status and prompt head, with
+    `[global（固定）]`.
+  - **TUI:** `enter` landed the cursor on the holder in tree order with the
+    tasks pane focused. `t` marked exactly the three `spawn` holders, ended one
+    included, and `T` cleared the mark. Tier marks read `強10` / `強1` / `弱1`,
+    and none on the `caps=none` task.
+  - **WebUI:**
+    - with the tree off and the list on Active, a chip turned the tree on,
+      selected `spawn` and ringed the three holders, the rest dimmed;
+    - the node opened its sheet with 🔑;
+    - at 390px no overflow.

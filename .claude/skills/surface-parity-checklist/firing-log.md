@@ -3149,3 +3149,38 @@ removed the `spawn` row. At 390px `scrollWidth == clientWidth`.
 
 The live run also found a cosmetic defect no item asks about: the `--cap`
 header carried two trailing spaces when no implied note followed.
+
+### 2026-10-19 (pre-landing) — the caps audit leads into the creator tree (Amendment 2)
+
+Continuation of the entry above, walked as a new walk. The operator used the
+audit on the live fleet and asked for two changes: a holder's label could not
+be recognised, and choosing it should show the task in the tree, not open
+re-grant. S1–S6 `n/a`.
+
+done:    5 (the modal's `enter` now jumps into the tree, and `t` marks a
+         bit), 6 (the 「権限で強調」 select and the `<details>` under the tree
+         replace the tab), 16 (the TUI tree's ID cell carries `◆` and the tier
+         mark), 23 (`tierMark` / `tierClass` on the snapshot task row), 24 (D22:
+         the tree marks cover ended tasks while the audit row counts live ones
+         by default; both written down as different questions), 31 (a task with
+         no granular bit gets no mark at all, not `弱0`), 32 (see below), 34
+         (the tree's ID and Repo widths changed, and the mark title is set
+         through `swapColumnsAndRebuild`), 34a, 35, 37, 39
+omitted: 11 / 12 — no tier mark on `ls --tree`. Every row already prints its
+         full `caps=`, and `caps audit --cap` is the one-bit view (spec D18,
+         CLI row).
+         36 — grepped: no agent-facing sentence names the tab or the old
+         label.
+missed:  —
+
+**32 caught a mirror in the spec before any code existed.** The first draft
+of Amendment 2 had the page fetch a `{bit: tier}` table and work out each
+node's strongest tier and count in JS. That is a second copy of
+`cli.TierMark`. Now the mark arrives rendered on the snapshot row, and the
+holder's scope text arrives as `scope_text`, so the page composes neither.
+
+**The live run found a layout defect no item asks about.** The tier mark sat
+over the end of the node's id label. Moving it right of the ring fixed it, and
+a bounding-box check counted zero overlaps afterwards. This is the third note
+in this log of a property of the render that no item interrogates: the
+centred chat, the counting-down rate, and now this overlap.
