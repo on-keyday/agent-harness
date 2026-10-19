@@ -207,3 +207,109 @@ calls made during implementation; none was put to the operator.
   three UIs, including a revoke from the TUI picker and from the WebUI dialog
   that removed the holder from the next audit, and the WebUI at 390px with no
   horizontal overflow.
+
+## Amendment 2 — the audit leads into the tree (2026-10-19)
+
+### Why
+
+The audit ran on the live fleet the day it landed, and it raised two problems.
+
+- **A holder could not be recognised.** Most live tasks are interactive
+  sessions with an empty prompt. Their label was `70fbad4a claude` and nothing
+  more, so the operator could not tell which task that was or whether it was
+  one in use. The operator recognises tasks by where they sit in the creator
+  tree and by their repo and status, and the tree views already show those.
+- **Choosing a holder jumped straight to re-grant.** The operator wants to see
+  first where the task sits, then act on it from there. A separate 「権限」 tab
+  also split the audit from the task tree it is about.
+
+### Decisions
+
+| # | Decision | Decided by |
+| --- | --- | --- |
+| D16 | Choosing a holder no longer opens re-grant. It shows that task in the creator tree: the tree is turned on, the task is brought into view and marked. Re-grant is then reached from the task the usual way: WebUI node → task sheet → 「🔑 caps/scope 再付与」; TUI row → `a`. Supersedes D8 | operator |
+| D17 | WebUI: the 「権限」 tab is removed. The audit becomes a collapsible section of the タスク tab, beside the tree. Supersedes D5's WebUI half | operator |
+| D18 | The tree marks capabilities two ways: (1) **a chosen bit** — the holders of one selected bit are highlighted; (2) **always** — every task shows its strongest tier and how many bits it holds at that tier, e.g. `強3` | operator |
+| D19 | A holder's label also carries its repo basename and status (`70fbad4a claude remote-agent-harness Detached`). The prompt head stays when there is one, shortened to 16 runes | operator (repo + status); this spec (16 runes) |
+| D20 | TUI: `enter` on a holder closes the audit, switches the task list to tree order and puts the cursor on that task's row | operator |
+| D21 | A bit no task scope bounds (D12's five) renders as **`global（固定）`**, coloured as global (red), and sorts with the global holders, not last. Its reach is the whole server's shared resources — runners, the board, the operator's notifications, any repo a task can be spawned on — which is what global means. 「scope 対象外」 read as "nothing to worry about", the opposite of the truth. 「（固定）」 says no `--scope` / `--scope-for` narrows it, so the label is not mistaken for the scope grammar's `global` value or for a misconfigured `--scope none` task. Supersedes D12's grey 「scope 対象外」 on every surface; `ScopeKind` / `scope_kind: "none"` in the data are unchanged | operator |
+| D22 | The tree's marks (D18 1 and 2) cover ended tasks too, from each task's own recorded mask. A resume brings the recorded caps back, so a bit left on an ended task is a live risk. The count on an audit row (live only by default, D6) can therefore be smaller than the number of nodes marked for that bit; the two answer different questions | operator |
+
+### How each surface does it (this spec's calls unless marked)
+
+**WebUI**
+
+- `<details id="caps-audit">` 「権限の棚卸し」 sits in the タスク tab directly
+  under the tree graph. Opening it loads the rows. While it is open, the rows
+  reload on each snapshot. The rows, chips and toggles are the ones the tab
+  had.
+- A bit selector, 「権限で強調」, sits beside 🌳 ツリー. Its first entry is
+  「なし」, then every bit in `AuditOrder`. While a bit is chosen, holder nodes
+  get a ring and the other nodes are dimmed (D18-1). It acts only while the
+  tree is shown.
+- Every node draws its tier mark, `強3` / `中2` / `弱1`, in the tier's colour,
+  beside the id label. A task holding no bit draws nothing (D18-2). The mark
+  arrives rendered on each snapshot task row (`tierMark`, `tierClass`, from
+  one Go function the TUI also calls), and the selector's bit list comes from
+  `harness.capsAuditOrder()`, so the page holds no copy of the tier table.
+- Clicking a holder chip does four things (D16):
+  1. turns the tree on if it is off;
+  2. sets 「権限で強調」 to that chip's bit;
+  3. scrolls the node into view;
+  4. pulses it for about two seconds.
+
+  Clicking the node then opens its task sheet, as it already does.
+
+**TUI**
+
+- `enter` on a holder does the D20 jump.
+- `t` on a bit line closes the audit, switches to tree order, and marks that
+  bit's holders with `◆` in the ID cell; the header reads `ID (◆ spawn)`.
+  Pressing `t` on another bit replaces the mark, and `T` (the tree toggle)
+  clears it (D18-1).
+- **Tasks past the table's 100 newest rows.** The table normally keeps only
+  the 100 newest tasks, but the oldest live task is the P1 case. So whatever
+  `enter` or `t` points at is shown even when it is older:
+  - the jump target, or every holder of the marked bit;
+  - together with each one's creator chain, up to a root.
+
+  Without the chain such a task would sit as an orphan `†` row, which shows no
+  position, and position is what the jump is for. These pinned rows are
+  dropped on the next jump, the next `t`, or `T`.
+- In tree order the ID cell ends with the tier mark: `└─ 70fbad4a 強3`. It is
+  plain text, because the table's cells cannot carry colour (D18-2).
+- The audit modal's footer names `t`.
+
+**CLI**
+
+- Labels gain repo and status (D19). That is the whole CLI change.
+- D18 is `omitted` here. Every `ls` row already prints its full `caps=`, and
+  `caps audit --cap NAME` is the "holders of one bit" view. A tier mark on
+  `ls --tree` would be a third rendering of the same mask on one line.
+
+### Not changed
+
+- The row builder (`cli.CapsAudit`), the tier table, and the `caps audit` verb
+  and its flags.
+- The TUI audit stays a modal on `i`.
+
+### Testing
+
+- **Unit, `cli`:** the label carries the repo basename (Windows and POSIX
+  paths) and status; the prompt head is cut to 16 runes; an empty part is
+  dropped.
+- **Unit, TUI:**
+  - `enter` on a holder → tree order, cursor on that id.
+  - A holder older than 100 rows is still reachable, and is drawn under its
+    real creator rather than as an orphan.
+  - `t` marks a holder older than 100 rows too.
+  - `t` marks exactly the holders.
+  - `T` clears the mark.
+  - The ID cell carries the tier mark in tree order only.
+- **JS:** the `caps audit` command input is unchanged.
+- **Live, WebUI:**
+  - A chip click turns the tree on, selects the bit and brings the node into
+    view.
+  - A node click opens the sheet.
+  - Tier marks are drawn.
+  - At 390px there is no overflow.
