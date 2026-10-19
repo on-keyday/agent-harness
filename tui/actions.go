@@ -170,16 +170,6 @@ func (a *App) onTree(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// `i` opens a new interactive PTY session in the default repo. The
-// dance is two-stage: the Cmd dispatches the RPC, the response arrives
-// as InteractiveReadyMsg, and Update then hands the terminal to the
-// PTY (suspend.go) after gating on termReleased. The session is
-// detachable (like `S`); `i` differs only in skipping the ambiguous-
-// runner picker. Reattach lives on `r` (onResume).
-func (a *App) onInteractive(msg tea.KeyMsg) (tea.Cmd, bool) {
-	return DoOpenInteractive(a.client, a.defaultRepo, a.authority()), true
-}
-
 // `S` (capital) opens a new detachable interactive PTY session in the
 // default repo (equivalent to `harness-cli session new`).
 func (a *App) onSession(msg tea.KeyMsg) (tea.Cmd, bool) {

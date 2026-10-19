@@ -467,11 +467,6 @@ func (h tuiVerbs) Submit(v verb.SpawnAction) tea.Cmd {
 	return DoSubmitWithOpts(h.a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 }
 
-func (h tuiVerbs) Interactive(v verb.SpawnAction) tea.Cmd {
-	repo, auth, capsOverride := h.spawnPrologue(v)
-	return DoOpenInteractiveWithOpts(h.a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
-}
-
 func (h tuiVerbs) SessionNew(v verb.SpawnAction) tea.Cmd {
 	a := h.a
 	repo, auth, capsOverride := h.spawnPrologue(v)

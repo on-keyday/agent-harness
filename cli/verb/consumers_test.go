@@ -59,8 +59,6 @@ type verbConsumer struct {
 var verbConsumers = []verbConsumer{
 	{"submit", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/spawn.go"}},
 	{"submit", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
-	{"interactive", verb.CLI, []string{"../../cmd/harness-cli/dispatch.go", "../../cmd/harness-cli/spawn.go"}},
-	{"interactive", verb.TUI, []string{"../../tui/dispatch.go", "../../tui/app.go"}},
 	// session.go holds the PTY knobs; spawnOpts in spawn.go turns the shared
 	// half into the client's option bag. Both are the CLI's execution of this
 	// verb, so both count as consumers.
@@ -137,7 +135,6 @@ var verbConsumers = []verbConsumer{
 // fields to look for. Only the paths in verbConsumers need an entry.
 var actionFor = map[string]any{
 	"submit":                  verb.SpawnAction{},
-	"interactive":             verb.SpawnAction{},
 	"session new":             verb.SpawnAction{},
 	"prune":                   verb.PruneAction{},
 	"file push":               verb.FilePushAction{},
@@ -170,47 +167,31 @@ var surfaceLocal = map[string]string{
 	// The CLI resolves --repo through its own env/workspace ladder before
 	// building the options, so spawnOpts never reads the parsed field back.
 	"submit.Repo/CLI":      "resolved through cliopts' env + workspace ladder and passed positionally",
-	"interactive.Repo/CLI": "same ladder as submit",
 	"submit.Kind/CLI":      "the CLI dispatches on its own switch before parsing, so it knows the verb already",
-	"interactive.Kind/CLI": "same switch as submit",
 	"session new.Kind/CLI": "same switch as submit",
 	"submit.Task/CLI":      "read at the submit call site rather than in spawnOpts",
 
-	// Only session new has a terminal to detach, stream, size or X11-forward.
-	// submit is queued and interactive attaches immediately.
-	"submit.Detach/CLI":          "a queued submit has no terminal to detach from",
-	"submit.Stream/CLI":          "submit has no event-stream form",
-	"submit.X11/CLI":             "submit has no client to host an X tunnel",
-	"submit.X11Display/CLI":      "with X11",
-	"submit.Rows/CLI":            "a queued submit opens no PTY",
-	"submit.Cols/CLI":            "with Rows",
-	"interactive.Detach/CLI":     "interactive attaches by definition; `session new -d` is the detaching verb",
-	"interactive.Stream/CLI":     "interactive is a PTY verb",
-	"interactive.X11/CLI":        "reached through session new --x11",
-	"interactive.X11Display/CLI": "with X11",
-	"interactive.Rows/CLI":       "the attached terminal supplies its own size",
-	"interactive.Cols/CLI":       "with Rows",
-	"submit.Detach/TUI":          "as CLI",
-	"submit.Stream/TUI":          "as CLI",
-	"submit.X11/TUI":             "as CLI",
-	"submit.X11Display/TUI":      "as CLI",
-	"submit.Rows/TUI":            "as CLI",
-	"submit.Cols/TUI":            "as CLI",
-	"interactive.Detach/TUI":     "as CLI",
-	"interactive.Stream/TUI":     "as CLI",
-	"interactive.X11/TUI":        "as CLI",
-	"interactive.X11Display/TUI": "as CLI",
-	"interactive.Rows/TUI":       "as CLI",
-	"interactive.Cols/TUI":       "as CLI",
-	"session new.Rows/TUI":       "the TUI sizes a new session from its own window, not from flags",
-	"session new.Cols/TUI":       "with Rows",
+	// Only session new has a terminal to detach, stream, size or X11-forward;
+	// submit is queued.
+	"submit.Detach/CLI":     "a queued submit has no terminal to detach from",
+	"submit.Stream/CLI":     "submit has no event-stream form",
+	"submit.X11/CLI":        "submit has no client to host an X tunnel",
+	"submit.X11Display/CLI": "with X11",
+	"submit.Rows/CLI":       "a queued submit opens no PTY",
+	"submit.Cols/CLI":       "with Rows",
+	"submit.Detach/TUI":     "as CLI",
+	"submit.Stream/TUI":     "as CLI",
+	"submit.X11/TUI":        "as CLI",
+	"submit.X11Display/TUI": "as CLI",
+	"submit.Rows/TUI":       "as CLI",
+	"submit.Cols/TUI":       "as CLI",
+	"session new.Rows/TUI":  "the TUI sizes a new session from its own window, not from flags",
+	"session new.Cols/TUI":  "with Rows",
 
 	// The TUI derives the two presence bits from the pointers themselves,
 	// because it must also fold in the session defaults the CLI has none of.
 	"submit.CapsPresent/TUI":       "derived in resolveSpawnCaps, together with the session default",
 	"submit.ScopePresent/TUI":      "derived in spawnAuthority, together with the session default",
-	"interactive.CapsPresent/TUI":  "as submit",
-	"interactive.ScopePresent/TUI": "as submit",
 	"session new.CapsPresent/TUI":  "as submit",
 	"session new.ScopePresent/TUI": "as submit",
 

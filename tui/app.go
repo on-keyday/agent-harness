@@ -211,7 +211,7 @@ type App struct {
 	x11Cancel context.CancelFunc
 
 	// sessionCaps is the default capability mask applied to every spawn
-	// (submit / interactive / session new) issued from this TUI session.
+	// (submit / session new) issued from this TUI session.
 	// Controlled by the `caps` command; defaults to Capability_None.
 	sessionCaps protocol.Capability
 	// sessionScope is the default target scope applied to every spawn, the
@@ -2187,9 +2187,9 @@ func (a *App) gitReload(taskID string, limits func(cli.GitQuery) cli.GitQuery) t
 	)
 }
 
-// runSpawnAction executes a parsed spawn. The three verbs share their grammar
+// runSpawnAction executes a parsed spawn. The two verbs share their grammar
 // (cli/verb) and differ only here, in what the TUI does with the result:
-// submit queues, interactive attaches now, session new opens a detachable one.
+// submit queues, session new opens a detachable one.
 func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	repo := v.Repo
 	if repo == "" {
@@ -2200,8 +2200,6 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 	switch v.Kind {
 	case verb.KindSubmit:
 		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
-	case verb.KindInteractive:
-		return a, DoOpenInteractiveWithOpts(a.client, repo, "", v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)
 	}
 	sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 	if v.X11 {
@@ -2219,7 +2217,7 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 // name one the cmdline cannot parse, which is what
 // TestPlaceholderNamesNothingUnreachable checks -- the placeholder is the
 // first thing an operator reads, and a verb listed there is a promise.
-const cmdlinePlaceholder = "submit / interactive / session / file / forward / conns / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
+const cmdlinePlaceholder = "submit / session / file / forward / conns / ssh-gateway / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 
 // tuiKeyHelp is the part no table holds: what a KEY does, and how a verb
 // pairs with one. It stays hand-written because a keybinding is not a verb --
@@ -2235,7 +2233,7 @@ var tuiKeyHelp = []string{
 // synopsis generated and its description declared, then the key bindings.
 func cmdlineHelpLines() []string {
 	out := []string{
-		"commands: submit / interactive / session / file / git / forward / exec / conns / grid / workspace / " +
+		"commands: submit / session / file / git / forward / exec / conns / grid / workspace / " +
 			"cancel / notify / prune / restore / repo / caps / caps set-defaults / refresh / clear / help / quit",
 	}
 	for _, path := range verb.PathsForSurface(verb.TUI) {

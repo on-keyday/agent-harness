@@ -57,27 +57,9 @@ type InteractiveDoneMsg struct {
 	Err    error
 }
 
-// DoOpenInteractive issues the OpenInteractive RPC against the server and
-// posts InteractiveReadyMsg back to the program. The actual terminal handover
-// happens in the App's Update when InteractiveReadyMsg arrives — Update is the
-// only place that can gate it against a handover already in flight.
-// auth carries RequestedCaps and the target scope; pass
-// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
-func DoOpenInteractive(c *cli.Client, repo string, auth Authority) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", auth, false, false, false, "")
-}
-
-// DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
-// optional hostname pin.
-// auth carries RequestedCaps and the target scope; pass
-// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
-func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, auth Authority) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", auth, false, false, false, "")
-}
-
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
 // to `harness-cli session new`). The session persists after the TUI detaches and
-// can be re-attached via DoAttachSession / `i` on a Detached task.
+// can be re-attached via DoAttachSession / `r` on a Detached task.
 // extraArgs are forwarded verbatim to claude (appended after runner-global args).
 // resumeTaskID may be "" for a fresh session, or a 32-hex task id to resume
 // an existing terminal interactive task's worktree and branch.
@@ -242,42 +224,10 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 	}
 }
 
-// DoOpenInteractiveWithOpts is the full-featured form: optional hostname
-// pin, per-task extraArgs (forwarded verbatim), and optional resumeTaskID
-// (32-hex; "" = new task) for reusing an existing terminal interactive
-// task's id and worktree branch. The session is detachable — like every
-// interactive PTY path — so it survives a client disconnect and can be
-// taken over from any operator surface. This path is NOT armed for the runner
-// picker (App.pickerArmed is only set by the `S` key and the `actionResume`
-// case of `r`/`R`, via DoOpenDetachableSession / DoResumeSession); on
-// AmbiguousRunner here the error is surfaced as a flat line in
-// InteractiveReadyMsg.Err with a hint to supply a host, rather than opening
-// the picker.
-// auth carries RequestedCaps and the target scope; pass
-// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
-// resumeCapsOverride, when true, signals the server to re-grant caps from
-// the resumer's caps rather than keeping the persisted caps of the resumed task.
-// Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, exact bool, agentProfile string) tea.Cmd {
-	return func() tea.Msg {
-		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
-		if err != nil {
-			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
-		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), repo, auth.opts(sessionRequest{
-			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			ResumeCapsOverride: resumeCapsOverride,
-			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-			ResumeExact: exact,
-		}))
-		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
-	}
-}
-
 // DoAttachSession re-attaches to an existing detachable interactive task. It
 // calls client.AttachSession with the given mode, then posts InteractiveReadyMsg
 // so the existing handover path in App.Update can run the PTY splice
-// (identical flow to DoOpenInteractiveWithOpts).
+// (the same flow as DoOpenDetachableSession).
 // Use protocol.AttachMode_Control for normal reattach (read/write) and
 // protocol.AttachMode_View for a read-only observer attach.
 func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) tea.Cmd {

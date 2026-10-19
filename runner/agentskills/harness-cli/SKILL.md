@@ -142,7 +142,7 @@ push-less regardless.
   (delivers any pending messages at the start of a turn).
 
 That covers every task kind, but how a new turn actually *starts* differs.
-An **interactive session** (`session new` / `interactive`) gets a live wake:
+An **interactive session** (`session new`) gets a live wake:
 when the runner detects new agentboard messages while such a session is idle,
 it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
 PTY as real keystrokes, which the agent's terminal UI submits as a new turn —

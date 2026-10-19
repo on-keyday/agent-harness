@@ -183,18 +183,6 @@ func (h cliVerbs) Submit(a verb.SpawnAction) error {
 	})
 }
 
-func (h cliVerbs) Interactive(a verb.SpawnAction) error {
-	if err := requireRepo("interactive", a); err != nil {
-		return err
-	}
-	return h.withClient(func(c *cli.Client) error {
-		// The session survives a client disconnect (tmux-like) and any
-		// operator client can take it over via reattach.
-		_, err := c.Interactive(h.ctx, a.Repo, spawnOpts(a))
-		return err
-	})
-}
-
 func (h cliVerbs) Ls(a verb.ListAction) error {
 	switch {
 	case a.Tree:

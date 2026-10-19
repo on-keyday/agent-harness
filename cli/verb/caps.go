@@ -263,7 +263,7 @@ func CapsLabel(c protocol.Capability) string {
 	return strings.Join(names, ",")
 }
 
-// CapsFlagUsage is the --caps help text for submit / interactive / session
+// CapsFlagUsage is the --caps help text for submit / session
 // new. It lived as three identical literals, which is exactly the shape that
 // ends up describing two different defaults after one edit.
 //

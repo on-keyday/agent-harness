@@ -31,7 +31,7 @@ func TestResumeSelectorOpts(t *testing.T) {
 }
 
 // An ambiguous result opens the picker only when it carries a retry; one
-// without (the `i`, InteractiveAction, X11 paths) stays a flat error. The
+// without (the X11 path) stays a flat error. The
 // retry rides the failing request's own message, so there is no armed flag
 // that a slow, unrelated open could find set.
 func TestAmbiguousResultOpensPickerOnlyWithRetry(t *testing.T) {

@@ -69,7 +69,7 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"session new", []string{"--repo", "/r", "--stream", "--detach", "--x11"}, "mutually exclusive"},
 		{"session new", []string{"--repo", "/r", "--x11", "--x11-display", "100"}, "0..99"},
 		{"session new", []string{"--repo", "/r", "--runner", "a", "--host", "b"}, "mutually exclusive"},
-		{"interactive", []string{"--repo", "/r", "--runner", "a", "--ip", "1.2.3.4"}, "mutually exclusive"},
+		{"session new", []string{"--repo", "/r", "--runner", "a", "--ip", "1.2.3.4"}, "mutually exclusive"},
 		// --exact takes the task's recorded settings, so it needs a task and
 		// refuses every setting flag; a prompt is a setting too.
 		{"session new", []string{"--repo", "/r", "--exact"}, "needs --resume"},
@@ -78,8 +78,8 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"session new", []string{"--resume", id, "--exact", "--agent", "bash"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--agent-arg", "--x"}, "mutually exclusive"},
 		{"session new", []string{"--resume", id, "--exact", "--caps", "none"}, "mutually exclusive"},
-		{"interactive", []string{"--resume", id, "--exact", "--scope", "none"}, "mutually exclusive"},
-		{"interactive", []string{"--resume", id, "--exact", "--scope-for", "cancel=none"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--scope", "none"}, "mutually exclusive"},
+		{"session new", []string{"--resume", id, "--exact", "--scope-for", "cancel=none"}, "mutually exclusive"},
 		// spawn names no task, so an override for it would bound nothing; the
 		// refusal points at the bits that do bound a resume.
 		{"session new", []string{"--repo", "/r", "--scope-for", "spawn=none"}, "resume"},
@@ -151,7 +151,7 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"submit", []string{"--repo", "/r", "do", "it"}}, // the prompt as trailing words
 		{"session new", []string{"--repo", "/r", "--stream", "--detach"}},
 		{"session new", []string{"--resume", id, "--exact", "-d"}},
-		{"interactive", []string{"--resume", id, "--exact"}},
+		{"submit", []string{"--resume", id, "--exact", "--runner", "a"}},
 		{"submit", []string{"--resume", id, "--exact"}}, // no prompt: the record's is used
 		{"grid", nil},
 		{"grid", []string{"--under", id, "--descendants"}},
@@ -188,4 +188,12 @@ func parseAndBuild(v VerbSpec, args []string) error {
 	}
 	_, err = v.BuildFunc()(b)
 	return err
+}
+
+// `interactive` was `session new` without -d under another name, kept only for
+// old spellings; it is gone, so it must not parse on any surface.
+func TestInteractiveVerbIsGone(t *testing.T) {
+	if _, ok := Lookup("interactive"); ok {
+		t.Fatal("`interactive` is still declared; use `session new`")
+	}
 }

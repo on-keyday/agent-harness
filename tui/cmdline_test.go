@@ -107,8 +107,8 @@ func TestParseSubmitDefaultAgentEmpty(t *testing.T) {
 	}
 }
 
-func TestParseInteractiveWithAgentArgs(t *testing.T) {
-	got, err := ParseCommand(`interactive --repo /r --agent-arg --add-dir --agent-arg /other`, "/cwd")
+func TestParseSessionNewWithAgentArgs(t *testing.T) {
+	got, err := ParseCommand(`session new --repo /r --agent-arg --add-dir --agent-arg /other`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,31 +124,6 @@ func TestParseInteractiveWithAgentArgs(t *testing.T) {
 		if a.ExtraArgs[i] != want[i] {
 			t.Errorf("ExtraArgs[%d]=%q want %q", i, a.ExtraArgs[i], want[i])
 		}
-	}
-}
-
-func TestParseInteractiveResumeConversation(t *testing.T) {
-	got, err := ParseCommand(`interactive --resume abc123 --resume-conversation`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.ResumeTaskID != "abc123" {
-		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
-	}
-	if !a.ResumeConversation {
-		t.Fatal("ResumeConversation=false want true")
-	}
-}
-
-func TestParseInteractiveWithAgent(t *testing.T) {
-	got, err := ParseCommand(`interactive --agent codex`, "/cwd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := got.(verb.SpawnAction)
-	if a.Agent != "codex" {
-		t.Errorf("AgentProfile=%q want codex", a.Agent)
 	}
 }
 
@@ -729,15 +704,6 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 		t.Errorf("session new --caps none = %#x, want %#x", *sc, protocol.Capability_None)
 	}
 
-	act, err = ParseCommand("interactive --caps exec_control", "r")
-	if err != nil {
-		t.Fatalf("interactive --caps: %v", err)
-	}
-	ic := act.(verb.SpawnAction).Caps
-	if ic == nil || *ic != protocol.Capability_ExecControl {
-		t.Errorf("interactive --caps exec_control = %v", ic)
-	}
-
 	// A bad mask must fail the whole command, not spawn with a default.
 	if _, err := ParseCommand("submit --caps bogus hello", "r"); err == nil {
 		t.Error("expected an error for an unknown capability name")
@@ -762,15 +728,6 @@ func TestParseSpawnScopeFlag(t *testing.T) {
 	s := act.(verb.SpawnAction).Scope
 	if s == nil || s.Base != protocol.ScopeBase_None {
 		t.Fatalf("submit --scope none = %v, want base none", s)
-	}
-
-	act, err = ParseCommand("interactive --scope global", "r")
-	if err != nil {
-		t.Fatalf("interactive --scope: %v", err)
-	}
-	is := act.(verb.SpawnAction).Scope
-	if is == nil || is.Base != protocol.ScopeBase_Global {
-		t.Errorf("interactive --scope global = %v", is)
 	}
 
 	act, err = ParseCommand("session new --scope subtree", "r")

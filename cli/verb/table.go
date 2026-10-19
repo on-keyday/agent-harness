@@ -1363,7 +1363,7 @@ var Verbs = []VerbSpec{
 		Args:            []Arg{{Name: "topic", Type: ArgTopic, Field: "Topic"}},
 		Examples:        []string{"board wake chat.abcd1234"},
 	},
-	// --- spawning: submit / interactive / session new ---
+	// --- spawning: submit / session new ---
 	//
 	// One shape, three verbs. The inventory found the TUI's submit had no
 	// --runner/--host/--ip at all and its session new no --repo/--rows/--cols,
@@ -1416,30 +1416,6 @@ var Verbs = []VerbSpec{
 			return nil
 		},
 		Examples: []string{`submit --repo /r --task "do the thing"`, `submit --repo /r do the thing`},
-	},
-	{
-		Path:         []string{"interactive"},
-		SurfaceNotes: map[Surface][]string{TUI: {"open/resume interactive session (detachable)"}},
-		ModalSurfaces: []ModalSurface{
-			{Surface: TUI, At: "tui/actions.go:onInteractive"},
-			{Surface: WebUI, At: "webui/index.html#interactive"},
-		},
-		Notes: []string{
-			"attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)",
-		},
-		CmdlineSurfaces: CLI | TUI,
-		Action:          "SpawnAction",
-		Const:           map[string]string{"Kind": "interactive"},
-		Flags:           spawnFlags(spawnInteractive),
-		Exclusive:       spawnExclusive(spawnInteractive),
-		Requires:        spawnRequires(spawnInteractive),
-		Validate: func(b Bound) error {
-			if err := spawnValidate(b); err != nil {
-				return fmt.Errorf("interactive: %w", err)
-			}
-			return nil
-		},
-		Examples: []string{"interactive --repo /r"},
 	},
 	{
 		Path:         []string{"session", "new"},
@@ -2124,7 +2100,7 @@ var Verbs = []VerbSpec{
 		Examples: []string{"caps set aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps spawn,file_read"},
 	},
 	{
-		// The session's SPAWN DEFAULTS: what a submit / interactive / session
+		// The session's SPAWN DEFAULTS: what a submit / session
 		// new on this surface carries when its own line names no --caps or
 		// --scope. Not a request to the server -- nothing is sent -- which is
 		// why there is no task id and why the CLI does not have it: a CLI

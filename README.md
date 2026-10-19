@@ -37,7 +37,7 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
 └──────────────────────┘         │  Registry            │         │  worktree mgr      │
                                  │  TaskStore (WAL)     │         │  claude exec (× M) │
                                  │  Scheduler           │         │  per-task PTY for  │
-                                 │  pubsub  (task log/  │         │   `interactive`    │
+                                 │  pubsub  (task log/  │         │   `session new`    │
                                  │           status)    │         └────────────────────┘
                                  │  agentboard (agent ↔ │
                                  │              agent)  │
@@ -58,8 +58,8 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
 - **Runner** (`cmd/agent-runner`): worker. Started with a list of repo
   roots (`--roots`) it is allowed to serve and a per-process concurrency
   cap (`--max-tasks`). For each assigned task, creates a `git worktree`
-  under `<repo>/.harness-worktrees/<task-id>/`, runs `claude` (or PTY
-  for `interactive` / `session new`) in it, streams stdout/stderr
+  under `<repo>/.harness-worktrees/<task-id>/`, runs `claude` (or a PTY
+  for `session new`) in it, streams stdout/stderr
   through the server, reports the exit code. Injects `HARNESS_*` env
   vars into the agent subprocess so the agent can reach back via
   `harness-cli agent ...`.
@@ -67,8 +67,8 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-cli` — request/control surface:
     - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
       `prune-local`, `watch`.
-    - Interactive: `session {new,attach,ls,kill}`, `interactive`
-      (semantics in Quick start 5).
+    - Interactive: `session {new,attach,ls,kill}` (semantics in Quick
+      start 5).
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
@@ -118,7 +118,7 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `.harness/config`, and the global `--config` / `--workspace` add a
       third resolution tier below flag and env for `server-cid` /
       `ws-path` / `repo`. See **Workspace config** below.
-    - Capabilities: `submit` / `session new` / `interactive` take
+    - Capabilities: `submit` / `session new` take
       `--caps NAMES` to grant a spawned task a restricted capability set
       (`caps_child = caps_parent ∩ requested`, server-enforced) and
       `--scope SPEC` to bound WHICH tasks those capabilities may target
@@ -247,7 +247,6 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # `session attach <id>`. `-d` opens it without attaching anyone: the server
 # creates no stream toward you, so it needs no exec_control — opening WITHOUT
 # -d hands you the control seat and needs exec_control, new session or resumed.
-# `interactive` is shorthand: session new + attach in one step.
 bin/harness-cli session new --repo /abs/path/to/repo
 # --rows/--cols size the session's PTY at open. Only worth it with -d, where
 # they travel in the open request: a detached session has NO size until someone
@@ -261,7 +260,6 @@ bin/harness-cli session resize --size 40x150 <task-id>   # size a live session
 bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
-bin/harness-cli interactive --repo /abs/path/to/repo
 # Hear when a session goes quiet. The default long-polls; --topic / --notify
 # arm a server-side watcher and return its watcher_id at once. An armed watcher
 # can be listed and taken back: an agent sees the ones it armed, the operator
@@ -875,7 +873,7 @@ Creating a task and bringing one back are separate grants:
 
 | cap | what it allows |
 | --- | --- |
-| `spawn` | create a task — `submit`, `session new`, `interactive` without `--resume` |
+| `spawn` | create a task — `submit`, `session new` without `--resume` |
 | `resume_exact` | re-queue a finished task under its own id exactly as recorded — `--resume <id> --exact`, which refuses every setting flag and takes the task's agent, args, kind, caps and scope from the record |
 | `resume` | the same, free to change the prompt, agent, args, kind, caps and scope; implies `resume_exact` |
 
@@ -899,8 +897,8 @@ nothing — the task can still message its own lineage on the agentboard
 every control-plane verb (spawn, cancel,
 attach, file read/write, forwards, notify, prune, purge, runner-admin,
 global info) answers `permission denied` until something grants it.
-`--caps NAMES` and `--scope SPEC` (on `submit` / `session new` /
-`interactive`, also in the TUI and WebUI spawn surfaces) widen or
+`--caps NAMES` and `--scope SPEC` (on `submit` / `session new`, also
+in the TUI and WebUI spawn surfaces) widen or
 redirect that within what the spawner itself holds: the server grants
 `caps_child = caps_parent ∩ requested` and clamps the scope to the
 spawner's own reach, so a task can never exceed its parent. A supervisor
@@ -1244,7 +1242,7 @@ status are in [`scripts/sandbox/README.md`](scripts/sandbox/README.md).
 ## TUI
 
 `cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
-`submit / ls / logs / cancel / prune / watch / interactive / session`
+`submit / ls / logs / cancel / prune / watch / session`
 into one screen.
 
 ```bash
@@ -1270,7 +1268,7 @@ Layout:
 tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
 ```
 
-Keys for orientation — `Tab` cycles focus, `s` submit popup, `S`/`i` open
+Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
 follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `G`
 git, `F` files, `q` quit. **The authoritative list is the TUI itself**:
@@ -1279,7 +1277,7 @@ everything — both render from the same table the dispatcher uses
 (`tui/keys.go`, test-enforced), so unlike a README table they cannot go
 stale.
 
-The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
+The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
@@ -1583,7 +1581,7 @@ the companion module
 appwire/              bgn-generated app-layer wire types (AppKind payload ids,
                       PSK auth status) carried over the objtrsf transport
 peer/                 Conn + Dial + bidi stream lookup on top of objproto
-exec/                 PTY plumbing for `interactive` (frame mux, stream splice)
+exec/                 PTY plumbing for interactive sessions (frame mux, stream splice)
 pubsub/               topic broker for task-log / status fanout
 agentboard/           topic broker for agent-to-agent messaging
 runner/protocol/      bgn-generated wire schema for control / status messages

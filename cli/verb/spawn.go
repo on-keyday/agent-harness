@@ -5,14 +5,13 @@ import (
 	"fmt"
 )
 
-// The spawn family -- submit, interactive, session new -- shares almost all of
-// its grammar, so it is built from one list rather than three that drift. The
-// differences are real and few, and each is named below.
+// The spawn family -- submit, session new -- shares almost all of its grammar,
+// so it is built from one list rather than two that drift. The differences are
+// real and few, and each is named below.
 type spawnKind int
 
 const (
 	spawnSubmit spawnKind = iota
-	spawnInteractive
 	spawnSessionNew
 )
 
@@ -77,9 +76,9 @@ func spawnFlags(k spawnKind) []Flag {
 		out = append(out, Flag{Name: "task", Type: FlagString, Default: "", Field: "Task", Help: "prompt text"})
 		return out
 	}
-	// The PTY verbs: a session can be detached, streamed, X11-forwarded and
+	// `session new`: a session can be detached, streamed, X11-forwarded and
 	// sized. A queued submit has no terminal for any of that to mean.
-	out = append(out,
+	return append(out,
 		Flag{Name: "x11", Type: FlagBool, Default: false, Field: "X11",
 			Help: "forward X11: inject DISPLAY/XAUTHORITY so GUI apps render on your local X server"},
 		// 10, not 0: the runner binds 127.0.0.1:6000+N, and ssh picks 10 by
@@ -87,18 +86,13 @@ func spawnFlags(k spawnKind) []Flag {
 		// :0 X port.
 		Flag{Name: "x11-display", Type: FlagUint, Default: uint(10), Field: "X11Display",
 			Help: "with --x11: the local display number (0..99)"},
+		Flag{Name: "detach", Aliases: []string{"d"}, Type: FlagBool, Default: false, Field: "Detach",
+			Help: "start the session and exit immediately (don't attach the terminal)"},
+		Flag{Name: "stream", Type: FlagBool, Default: false, Field: "Stream",
+			Help: "open an event-stream session (structured events, no PTY)"},
+		Flag{Name: "rows", Type: FlagUint, Default: uint(0), Field: "Rows", Help: "initial PTY rows (0 = unset; needs --cols too)"},
+		Flag{Name: "cols", Type: FlagUint, Default: uint(0), Field: "Cols", Help: "initial PTY columns (0 = unset; needs --rows too)"},
 	)
-	if k == spawnSessionNew {
-		out = append(out,
-			Flag{Name: "detach", Aliases: []string{"d"}, Type: FlagBool, Default: false, Field: "Detach",
-				Help: "start the session and exit immediately (don't attach the terminal)"},
-			Flag{Name: "stream", Type: FlagBool, Default: false, Field: "Stream",
-				Help: "open an event-stream session (structured events, no PTY)"},
-			Flag{Name: "rows", Type: FlagUint, Default: uint(0), Field: "Rows", Help: "initial PTY rows (0 = unset; needs --cols too)"},
-			Flag{Name: "cols", Type: FlagUint, Default: uint(0), Field: "Cols", Help: "initial PTY columns (0 = unset; needs --rows too)"},
-		)
-	}
-	return out
 }
 
 // spawnRules are the cross-flag constraints of one spawn verb. They were
@@ -123,14 +117,6 @@ func spawnRules(k spawnKind) ([]Rule, []Requirement) {
 	exactNeeds := Requirement{Flags: []string{"exact"}, Needs: "resume", Reason: "an exact resume names the task it restores"}
 	if k == spawnSubmit {
 		return excl, []Requirement{exactNeeds} // a queued submit has no terminal, so none of the rest apply
-	}
-	if k != spawnSessionNew {
-		// --detach and --stream exist only on `session new`, so the rules
-		// naming them belong there and nowhere else. Declaring them on
-		// `interactive` looked harmless -- b.Set is false for a flag the verb
-		// does not have -- but it reads as a constraint an operator could
-		// trip, and there is no line that trips it.
-		return excl, []Requirement{exactNeeds}
 	}
 	excl = append(excl,
 		Rule{Flags: []string{"x11", "detach"},

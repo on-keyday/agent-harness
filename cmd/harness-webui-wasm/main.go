@@ -950,7 +950,7 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 //
 // runner / host / ip are the declared selector trio and all three are read
 // here. Only host was, and the fix for that landed in harnessStartInteractive
-// -- a function the command input cannot reach, since `interactive` is not
+// -- a function the command input cannot reach, since `session new` is not
 // declared for this surface. So `submit --runner X` and `--ip Y` kept being
 // dropped after the commit that said they were not.
 func harnessSubmit(this js.Value, args []js.Value) any {

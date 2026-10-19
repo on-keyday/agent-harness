@@ -12,7 +12,6 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -182,17 +181,4 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return taskIDHex, err
 	}
 	return taskIDHex, nil
-}
-
-// Interactive (package-level) is a thin wrapper that opens a fresh Client per
-// call: dial, open the interactive session, splice, then close. Suitable for
-// the harness-cli `interactive` subcommand. Long-lived consumers should hold
-// a *Client and call (*Client).Interactive instead.
-func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
-	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
-	if err != nil {
-		return "", err
-	}
-	defer c.Close()
-	return c.Interactive(ctx, repo, SessionOpts{})
 }

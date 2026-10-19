@@ -100,21 +100,6 @@ func TestCLI_SubmitAgentFlagParses(t *testing.T) {
 	}
 }
 
-// TestCLI_InteractiveAgentFlagParses: same as above for `interactive`.
-func TestCLI_InteractiveAgentFlagParses(t *testing.T) {
-	cmd := exec.Command("go", "run", ".",
-		"--server-cid=ws:127.0.0.1:19997-1",
-		"interactive", "--repo=/tmp/from-flag", "--agent=codex")
-	out, _ := cmd.CombinedOutput()
-	s := string(out)
-	if strings.Contains(s, "flag provided but not defined") {
-		t.Errorf("--agent not recognized on interactive: %s", s)
-	}
-	if !strings.Contains(s, "127.0.0.1:19997") {
-		t.Errorf("did not reach dial step: %s", s)
-	}
-}
-
 // TestCLI_ForwardLsRoutes: `forward ls` must be handled by the new ls branch,
 // not fall through to the pre-existing `forward <task-id> -L/-R ...` path
 // (which would reject it for having no -L/-R and never reach the dial step).

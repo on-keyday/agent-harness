@@ -601,7 +601,7 @@ type SetParentAction struct {
 	TaskID string
 }
 
-// SpawnAction is built by: interactive, session new, submit.
+// SpawnAction is built by: session new, submit.
 type SpawnAction struct {
 	ActionMarker
 	// repo identifier; must match a runner-registered RepoPath verbatim
@@ -1921,84 +1921,6 @@ func init() {
 			}
 			return a, nil
 		},
-		"interactive\x00cli": func(b Bound) (Action, error) {
-			a := SpawnAction{}
-			a.Kind = "interactive"
-			a.Repo = b.Str("repo")
-			a.ResumeTaskID = b.Str("resume")
-			a.ResumeConversation = b.Bool("resume-conversation")
-			a.Exact = b.Bool("exact")
-			a.CapsPresent = b.Set["caps"]
-			if b.Set["caps"] {
-				v, err := parseCapsFlag(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --caps: %w", err)
-				}
-				a.Caps = v
-			}
-			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
-			if b.Set["scope"] {
-				v, err := parseScopeFlag(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --scope: %w", err)
-				}
-				a.Scope = v
-			}
-			a.Agent = b.Str("agent")
-			if b.Set["scope-for"] {
-				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --scope-for: %w", err)
-				}
-				a.Overrides = v
-			}
-			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
-			a.Runner = b.Str("runner")
-			a.Host = b.Str("host")
-			a.IP = b.Str("ip")
-			a.X11 = b.Bool("x11")
-			a.X11Display = uintOf(b.Flags["x11-display"])
-			return a, nil
-		},
-		"interactive\x00tui": func(b Bound) (Action, error) {
-			a := SpawnAction{}
-			a.Kind = "interactive"
-			a.Repo = b.Str("repo")
-			a.ResumeTaskID = b.Str("resume")
-			a.ResumeConversation = b.Bool("resume-conversation")
-			a.Exact = b.Bool("exact")
-			a.CapsPresent = b.Set["caps"]
-			if b.Set["caps"] {
-				v, err := parseCapsFlag(b.Str("caps"))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --caps: %w", err)
-				}
-				a.Caps = v
-			}
-			a.ScopePresent = b.Set["scope"] || b.Set["scope-for"]
-			if b.Set["scope"] {
-				v, err := parseScopeFlag(b.Str("scope"))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --scope: %w", err)
-				}
-				a.Scope = v
-			}
-			a.Agent = b.Str("agent")
-			if b.Set["scope-for"] {
-				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
-				if err != nil {
-					return nil, fmt.Errorf("interactive: --scope-for: %w", err)
-				}
-				a.Overrides = v
-			}
-			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
-			a.Runner = b.Str("runner")
-			a.Host = b.Str("host")
-			a.IP = b.Str("ip")
-			a.X11 = b.Bool("x11")
-			a.X11Display = uintOf(b.Flags["x11-display"])
-			return a, nil
-		},
 		"session new\x00cli": func(b Bound) (Action, error) {
 			a := SpawnAction{}
 			a.Kind = "session-new"
@@ -3134,7 +3056,6 @@ const (
 	CmdBoardSend              = "board send"
 	CmdBoardWake              = "board wake"
 	CmdSubmit                 = "submit"
-	CmdInteractive            = "interactive"
 	CmdSessionNew             = "session new"
 	CmdSessionSend            = "session send"
 	CmdSessionExec            = "session exec"
@@ -3203,7 +3124,6 @@ const (
 // build error at every surface instead of a case nothing reaches.
 const (
 	KindDispatch       = "dispatch"
-	KindInteractive    = "interactive"
 	KindSend           = "send"
 	KindSessionNew     = "session-new"
 	KindSubmit         = "submit"
@@ -4205,30 +4125,6 @@ func ParseCmdSubmit(sf Surface, args []string, ctx map[string]string) (SpawnActi
 	sp, ok := Lookup("submit")
 	if !ok {
 		return zero, fmt.Errorf("submit: not in the verb table")
-	}
-	sp = sp.For(sf)
-	fs := sp.NewFlagSet(flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	b, err := sp.Parse(fs, args)
-	if err != nil {
-		return zero, err
-	}
-	act, err := sp.BuildFunc()(b)
-	if err != nil {
-		return zero, err
-	}
-	a := act.(SpawnAction)
-	if r := sp.Resolve(b, "repo", EnvLookup, WorkspaceLookup, ctx); r != "" {
-		a.Repo = r
-	}
-	return a, nil
-}
-
-func ParseCmdInteractive(sf Surface, args []string, ctx map[string]string) (SpawnAction, error) {
-	var zero SpawnAction
-	sp, ok := Lookup("interactive")
-	if !ok {
-		return zero, fmt.Errorf("interactive: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -5660,8 +5556,6 @@ type CLIDispatch[R any] interface {
 	BoardWake(BoardAction) R
 	// submit
 	Submit(SpawnAction) R
-	// interactive
-	Interactive(SpawnAction) R
 	// session new
 	SessionNew(SpawnAction) R
 	// session send
@@ -6007,12 +5901,6 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Submit(a), true, nil
-	case CmdInteractive:
-		a, perr := ParseCmdInteractive(CLI, args, ctx)
-		if perr != nil {
-			return r, true, perr
-		}
-		return h.Interactive(a), true, nil
 	case CmdSessionNew:
 		a, perr := ParseCmdSessionNew(CLI, args, ctx)
 		if perr != nil {
@@ -6417,8 +6305,6 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		switch a.Kind {
 		case "submit":
 			return h.Submit(a), true
-		case "interactive":
-			return h.Interactive(a), true
 		case "session-new":
 			return h.SessionNew(a), true
 		}
@@ -6788,12 +6674,6 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
-		case CmdInteractive:
-			a, perr := ParseCmdInteractive(CLI, tokens[n:], ctx)
-			if perr != nil {
-				return nil, true, perr
-			}
-			return a, true, nil
 		case CmdSessionNew:
 			a, perr := ParseCmdSessionNew(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -7154,8 +7034,6 @@ type TUIDispatch[R any] interface {
 	WorkspaceDetach(WorkspaceAction) R
 	// submit
 	Submit(SpawnAction) R
-	// interactive
-	Interactive(SpawnAction) R
 	// session new
 	SessionNew(SpawnAction) R
 	// session stream turn
@@ -7419,12 +7297,6 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Submit(a), true, nil
-	case CmdInteractive:
-		a, perr := ParseCmdInteractive(TUI, args, ctx)
-		if perr != nil {
-			return r, true, perr
-		}
-		return h.Interactive(a), true, nil
 	case CmdSessionNew:
 		a, perr := ParseCmdSessionNew(TUI, args, ctx)
 		if perr != nil {
@@ -7729,8 +7601,6 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		switch a.Kind {
 		case "submit":
 			return h.Submit(a), true
-		case "interactive":
-			return h.Interactive(a), true
 		case "session-new":
 			return h.SessionNew(a), true
 		}
@@ -8011,12 +7881,6 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSubmit:
 			a, perr := ParseCmdSubmit(TUI, tokens[n:], ctx)
-			if perr != nil {
-				return nil, true, perr
-			}
-			return a, true, nil
-		case CmdInteractive:
-			a, perr := ParseCmdInteractive(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

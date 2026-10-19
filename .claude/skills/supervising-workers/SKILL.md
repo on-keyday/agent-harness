@@ -305,8 +305,8 @@ puppeteer its keyboard. (The human may also attach in parallel; that's expected.
 `session ls` lists only detachable interactive sessions; the top-level `ls`
 shows every task (including one-shots).
 
-**A spawn can answer `ambiguous_runner`.** `session new`, `interactive` and
-`submit` all do, with exit status 3, whenever more than one (runner, agent)
+**A spawn can answer `ambiguous_runner`.** `session new` and `submit` both
+do, with exit status 3, whenever more than one (runner, agent)
 choice matches: several runners serve the repo, or one runner offers several
 agents and you passed no `--agent`. stderr then lists one line per runner, with
 the flags that pin it:
@@ -354,7 +354,7 @@ harness-cli ls | sed -n '/^TASKS/,$p' | grep "$REPO" \
 
 ## Capabilities and scope (`--caps` / `--scope`)
 
-`submit`, `interactive`, and `session new` accept both. **`--caps` names the
+`submit` and `session new` accept both. **`--caps` names the
 verbs; `--scope` names which tasks those verbs may be pointed at.** A cap
 without a scope is not "may cancel" — it is "may cancel anything on the
 server", which is why both exist. `harness-cli caps` lists the capability names
@@ -503,7 +503,7 @@ harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget
 **`logs` and `watch` only cover one-shot (`submit`) tasks.** A submitted task's
 stdout is captured to a server-side log (`logs` reads it) and its queue →
 assigned → ended transitions are published as status events (`watch` reports
-them). An **interactive session (`session new` / `interactive`) has neither**:
+them). An **interactive session (`session new`) has neither**:
 its output streams over the PTY and is replayed from a ring buffer on attach —
 it is never written to the task log — and it is opened directly rather than
 through the queue/dispatch lifecycle, so it emits no `watch` events. Observe an

@@ -27,7 +27,6 @@ type mainKeyMap struct {
 	Help            string
 	Submit          string
 	Session         string
-	Interactive     string
 	Detail          string
 	Grid            string
 	GridSubtree     string
@@ -64,7 +63,6 @@ var mainKeys = mainKeyMap{
 	Help:            "?",
 	Submit:          "s",
 	Session:         "S",
-	Interactive:     "i",
 	Detail:          "d",
 	Grid:            "g",
 	GridSubtree:     "z",
@@ -284,7 +282,6 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Short: "tab focus", Long: "cycle focus between panes (shift-tab reverses)"},
 	{Keys: []string{mainKeys.Submit}, Scope: scopeGlobal, Do: (*App).onSubmit, Short: "s submit", Long: "open the submit popup (one-shot task)"},
 	{Keys: []string{mainKeys.Session}, Scope: scopeGlobal, Do: (*App).onSession, Short: "S session", Long: "open a new detachable session"},
-	{Keys: []string{mainKeys.Interactive}, Scope: scopeGlobal, Do: (*App).onInteractive, Short: "i interactive", Long: "open an interactive session in the default repo"},
 	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Do: (*App).onGrid, Short: "g grid", Long: "live session viewer grid"},
 	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Do: (*App).onConns, Short: "C conns", Long: "connections view"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Do: (*App).onBoard, Short: "O board", Long: "agentboard topics view"},

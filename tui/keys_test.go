@@ -146,3 +146,15 @@ func TestViewFooterFitsTerminal(t *testing.T) {
 		})
 	}
 }
+
+// `i` belonged to the removed `interactive` verb. It is left unbound in the
+// main view so it can be given a new job; `S` opens a session.
+func TestIIsFreeInTheMainView(t *testing.T) {
+	for _, b := range mainKeyBindings {
+		for _, k := range b.Keys {
+			if k == "i" {
+				t.Fatalf("i is bound in the main view (%s)", b.Short)
+			}
+		}
+	}
+}
