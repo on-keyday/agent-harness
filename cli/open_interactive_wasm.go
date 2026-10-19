@@ -206,7 +206,6 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return taskIDHex, fmt.Errorf("stream %d not visible after OpenInteractive", streamID)
 	}
 
-
 	sessCtx, cancel := context.WithCancel(ctx)
 	session := &InteractiveSession{
 		stream:    stream,
