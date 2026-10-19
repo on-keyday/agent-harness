@@ -123,7 +123,7 @@ func TestScopeForAloneMarksTheScopeHalfPresent(t *testing.T) {
 	}
 
 	const resume = "--resume"
-	if a := spawn(t, "--repo", "/r", "--scope-for", "spawn=none", resume, idA, "x"); !a.ScopePresent {
+	if a := spawn(t, "--repo", "/r", "--scope-for", "cancel=none", resume, idA, "x"); !a.ScopePresent {
 		t.Error("--scope-for alone did not mark the scope half present; on a resume the override is dropped")
 	}
 	if a := spawn(t, "--repo", "/r", "--scope", "none", resume, idA, "x"); !a.ScopePresent {

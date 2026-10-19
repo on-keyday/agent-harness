@@ -176,7 +176,7 @@ func TestAuthorityOptsCarriesTheRequestHalf(t *testing.T) {
 func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 	const resumeID = "d7df8fe8dc239a515c4f2de02e05ee78"
 	act, err := ParseCommand(
-		`session new --resume `+resumeID+` --caps spawn --scope-for spawn=global`, "/cwd")
+		`session new --resume `+resumeID+` --caps cancel --scope-for cancel=global`, "/cwd")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -193,16 +193,16 @@ func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
 	opts := auth.opts(sessionRequest{ResumeTaskID: v.ResumeTaskID})
 
-	if opts.Caps != protocol.Capability_Spawn {
-		t.Errorf("caps = %v, want spawn", opts.Caps)
+	if opts.Caps != protocol.Capability_Cancel {
+		t.Errorf("caps = %v, want cancel", opts.Caps)
 	}
 	if len(opts.Overrides) != 1 {
 		t.Fatalf("request carries %d overrides, want 1 — --scope-for was dropped "+
 			"between the command line and the request", len(opts.Overrides))
 	}
 	ov := opts.Overrides[0]
-	if ov.Caps != protocol.Capability_Spawn || ov.Base != protocol.ScopeBase_Global {
-		t.Errorf("override = %v/%v, want spawn/global", ov.Caps, ov.Base)
+	if ov.Caps != protocol.Capability_Cancel || ov.Base != protocol.ScopeBase_Global {
+		t.Errorf("override = %v/%v, want cancel/global", ov.Caps, ov.Base)
 	}
 	// Naming --scope-for makes the scope half explicit, so a resume re-grants
 	// it instead of keeping the resumed task's persisted scope; without this
@@ -214,8 +214,8 @@ func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 	// What ls prints must survive a round trip back through the flag parser,
 	// which is the only reason the two spellings both exist.
 	lbl := cli.OverridesLabel(opts.Overrides)
-	if lbl != "spawn:global" {
-		t.Fatalf("label = %q, want %q", lbl, "spawn:global")
+	if lbl != "cancel:global" {
+		t.Fatalf("label = %q, want %q", lbl, "cancel:global")
 	}
 	if _, back, err := cli.ParseScopeFor(lbl); err != nil {
 		t.Errorf("ls label %q does not parse back as --scope-for: %v", lbl, err)

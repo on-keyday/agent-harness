@@ -107,7 +107,8 @@ func setCapsStatusError(s protocol.SetCapsStatus) error {
 			"operator connection, not from inside a task")
 	case protocol.SetCapsStatus_InvalidScope:
 		return fmt.Errorf("the scope is inconsistent: override capability lists must " +
-			"not overlap and must name at least one capability. This is not about how " +
+			"not overlap, must name at least one capability, and must not name spawn " +
+			"(it names no task; narrow resume / resume_exact instead). This is not about how " +
 			"WIDE the grant is — an operator may grant anything, including a scope " +
 			"wider than its own")
 	default:

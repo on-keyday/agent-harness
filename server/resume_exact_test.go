@@ -211,3 +211,31 @@ func TestExactProfileGone(t *testing.T) {
 		t.Fatalf("status %v, want profile_unavailable", resp.Status)
 	}
 }
+
+// Both paths filter by the recorded profile before preferring the last runner:
+// a last runner that no longer offers the profile is not a reason to fail when
+// another one does.
+func TestExactPrefersProfileOverLastRunner(t *testing.T) {
+	h := newTestHandler(t)
+	exactRunner(t, h, "A", nil, "claude") // last runner, lost the profile
+	bConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9122-1"), nextBidi: newFakeStream(t)}
+	exactRunner(t, h, "B", bConn, "bash")
+	inter := recordedTask(t, h, protocol.TaskKind_Interactive, "", nil, "bash", "A")
+	oi := &protocol.OpenInteractiveRequest{ResumeTaskId: hexToTaskID(t, inter)}
+	oi.SetResumeExact(true)
+	oi.SetDetached(true)
+	oi.SetInitialRows(0)
+	oi.SetInitialCols(0)
+	resp, _ := h.handleOpenInteractive("", nil, oi, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("open: status %v, want ok on B", resp.Status)
+	}
+	if e, _ := h.Tasks.Get(inter); e.BoundRunnerID != tcid("B").String() {
+		t.Fatalf("open bound to %q, want B", e.BoundRunnerID)
+	}
+
+	one := recordedTask(t, h, protocol.TaskKind_Oneshot, "p", nil, "bash", "A")
+	if resp, _ := h.handleSubmit("", exactSubmit(t, one), protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All); resp.Status != protocol.SubmitStatus_Ok {
+		t.Fatalf("submit: status %v, want ok on B", resp.Status)
+	}
+}

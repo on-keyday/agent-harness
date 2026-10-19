@@ -83,7 +83,18 @@ func TestStatusErrorsNameTheFix(t *testing.T) {
 	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeExactMismatch); err == nil || !strings.Contains(err.Error(), "--exact") {
 		t.Errorf("open mismatch: %v, want it to name --exact", err)
 	}
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ScopeNotPermitted); err == nil || !strings.Contains(err.Error(), "scope_not_permitted") || !strings.Contains(err.Error(), "resume") {
+		t.Errorf("scope_not_permitted: %v, want it named, with the spawn-override hint naming resume", err)
+	}
 	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_DetachRequired); err == nil || !strings.Contains(err.Error(), "-d") {
 		t.Errorf("detach_required: %v, want it to name -d", err)
+	}
+}
+
+// caps set's invalid-scope answer covers the spawn override too, which is not
+// an overlap or an empty mask.
+func TestSetCapsInvalidScopeNamesSpawn(t *testing.T) {
+	if err := setCapsStatusError(protocol.SetCapsStatus_InvalidScope); err == nil || !strings.Contains(err.Error(), "spawn") {
+		t.Fatalf("invalid_scope: %v, want it to name the spawn override", err)
 	}
 }

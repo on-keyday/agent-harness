@@ -338,6 +338,12 @@ func ParseScopeFor(str string) (protocol.Capability, protocol.ScopeOverride, err
 		return 0, protocol.ScopeOverride{}, fmt.Errorf(
 			"--scope-for %q: names no capability; an override matching nothing is dead weight", str)
 	}
+	// The server refuses it too (validateScope); refusing here costs a parse
+	// error rather than a round trip, and says what to write instead.
+	if caps&protocol.Capability_Spawn != 0 {
+		return 0, protocol.ScopeOverride{}, fmt.Errorf(
+			"--scope-for %q: spawn names no task, so a scope cannot bound it; narrow resume / resume_exact instead", str)
+	}
 	sc, err := ParseScope(strings.TrimSpace(scopeText))
 	if err != nil {
 		return 0, protocol.ScopeOverride{}, fmt.Errorf("--scope-for %q: %w", str, err)

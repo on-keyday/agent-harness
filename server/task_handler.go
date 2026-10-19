@@ -1541,7 +1541,15 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
 	}
 	if exactRec != nil && req.Selector.Kind == protocol.RunnerSelectorKind_Any {
-		cands = preferLastRunner(cands, exactRec.AssignedTo)
+		// Profile first, as the submit path does: a last runner that no longer
+		// offers the recorded profile is not preferred over one that does.
+		pool := cands
+		if exactRec.AgentProfile != "" {
+			pool = filterByProfile(cands, exactRec.AgentProfile)
+		}
+		if last := preferLastRunner(pool, exactRec.AssignedTo); len(last) == 1 && len(pool) > 1 {
+			cands = last
+		}
 	}
 
 	// Resolve the requested agent profile. On a PINNED resume (selector Kind

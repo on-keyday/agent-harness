@@ -52,7 +52,7 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 
 		// caps set: something to change, and a base to narrow.
 		{"caps set", []string{id}, "at least one of --caps, --scope"},
-		{"caps set", []string{id, "--caps", "none", "--scope-for", "spawn=none"}, "needs --scope"},
+		{"caps set", []string{id, "--caps", "none", "--scope-for", "cancel=none"}, "needs --scope"},
 
 		// caps set-parent: one destination, not none and not two.
 		{"caps set-parent", []string{id}, "exactly one"},
@@ -80,6 +80,10 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		{"session new", []string{"--resume", id, "--exact", "--caps", "none"}, "mutually exclusive"},
 		{"interactive", []string{"--resume", id, "--exact", "--scope", "none"}, "mutually exclusive"},
 		{"interactive", []string{"--resume", id, "--exact", "--scope-for", "cancel=none"}, "mutually exclusive"},
+		// spawn names no task, so an override for it would bound nothing; the
+		// refusal points at the bits that do bound a resume.
+		{"session new", []string{"--repo", "/r", "--scope-for", "spawn=none"}, "resume"},
+		{"caps set", []string{id, "--scope", "subtree", "--scope-for", "spawn,cancel=none"}, "resume"},
 
 		// grid: --descendants needs something to take the descendants OF, and
 		// --under names ONE subtree.
@@ -152,7 +156,7 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"grid", nil},
 		{"grid", []string{"--under", id, "--descendants"}},
 		{"grid", []string{id}},
-		{"caps set", []string{id, "--scope", "subtree", "--scope-for", "spawn=none"}},
+		{"caps set", []string{id, "--scope", "subtree", "--scope-for", "cancel=none"}},
 		{"caps set-parent", []string{id, "--none"}},
 		{"session snapshot", []string{id, "--raw"}},
 		{"session snapshot", []string{id, "--detect", "--detect-agent", "codex"}},

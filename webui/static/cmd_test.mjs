@@ -91,7 +91,7 @@ test("tokenize keeps a quoted argument whole", () => {
 test("submit carries every declared flag, not the dropdowns", async () => {
   const { calls } = await run(
     `submit --repo /typed/repo --host typedhost --caps spawn,file_read ` +
-    `--scope global --scope-for spawn=none --agent-arg -x --resume ${ID} ` +
+    `--scope global --scope-for cancel=none --agent-arg -x --resume ${ID} ` +
     `--resume-conversation --task "do the thing"`,
     { repo: "/dropdown/repo", host: "dropdownhost" });
   const [, req] = named(calls, "sessionReq")[0];
@@ -99,7 +99,7 @@ test("submit carries every declared flag, not the dropdowns", async () => {
   assert.equal(req.host, "typedhost", "a typed --host must beat the dropdown");
   assert.equal(req.caps, "spawn,file_read");
   assert.equal(req.scope, "global");
-  eq(req.scopeFor, ["spawn=none"]);
+  eq(req.scopeFor, ["cancel=none"]);
   eq(req.agentArgs, ["-x"]);
   assert.equal(req.resumeTaskId, ID);
   assert.equal(req.resumeConversation, true);
@@ -372,7 +372,7 @@ test("a bad mask is refused by the declaration, not accepted and dropped", async
 });
 
 test("--scope-for without --scope is refused: a narrowing needs a base", async () => {
-  const { err } = await run("caps set-defaults --scope-for spawn=none");
+  const { err } = await run("caps set-defaults --scope-for cancel=none");
   assert.ok(err, "a lone --scope-for parsed");
 });
 

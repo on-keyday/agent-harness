@@ -320,7 +320,7 @@ func probeValue(f Flag) string {
 var probeValues = map[string]string{
 	"caps":      "none",
 	"scope":     "subtree",
-	"scope-for": "spawn=none",
+	"scope-for": "cancel=none",
 	"resize":    "40x150",
 	"size":      "40x150",
 }

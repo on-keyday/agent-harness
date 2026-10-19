@@ -183,6 +183,8 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return "", fmt.Errorf("resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
 	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
 		return "", fmt.Errorf("resume_exact_mismatch: an exact resume takes the task's recorded settings and kind")
+	case protocol.OpenInteractiveStatus_ScopeNotPermitted:
+		return "", fmt.Errorf("scope_not_permitted: a scope id is outside your own scope, or the scope is inconsistent (overlapping or empty overrides, or one naming spawn — narrow resume / resume_exact instead)")
 	case protocol.OpenInteractiveStatus_DetachRequired:
 		return "", fmt.Errorf("detach_required: you may open this task but not hold its seat (outside your exec_control scope)")
 	default:

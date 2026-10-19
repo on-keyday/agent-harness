@@ -146,6 +146,8 @@ func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenI
 		return fmt.Errorf("interactive resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
 	case protocol.OpenInteractiveStatus_ResumeExactMismatch:
 		return fmt.Errorf("interactive resume_exact_mismatch: an exact resume takes the task's recorded settings and kind; drop the setting flags (or --stream to match the task) or drop --exact")
+	case protocol.OpenInteractiveStatus_ScopeNotPermitted:
+		return fmt.Errorf("interactive scope_not_permitted: a scope id is outside your own scope, or the scope is inconsistent (overlapping or empty overrides, or one naming spawn — narrow resume / resume_exact instead)")
 	case protocol.OpenInteractiveStatus_DetachRequired:
 		return fmt.Errorf("interactive detach_required: you may open this task but not hold its seat (it is outside your exec_control scope); add -d")
 	case protocol.OpenInteractiveStatus_InternalError:
