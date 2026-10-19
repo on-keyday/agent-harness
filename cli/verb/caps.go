@@ -329,3 +329,108 @@ func ParseCaps(s string) (protocol.Capability, error) {
 	}
 	return out &^ negated, nil
 }
+
+// CapTier is how strong a capability is, for the audit view (`caps audit`, the
+// TUI `i` modal, the WebUI 権限 tab). The criteria are in the caps-audit spec:
+// strong creates a principal, takes a session over, destroys what cannot come
+// back, speaks as the operator, opens a network path or reads secrets in
+// transit; mid writes into or runs inside another task, or observes other
+// tasks' board traffic; weak looks or notifies.
+type CapTier int
+
+const (
+	TierStrong CapTier = iota
+	TierMid
+	TierWeak
+)
+
+// Label is the tier's short display form, shared by every surface.
+func (t CapTier) Label() string {
+	switch t {
+	case TierStrong:
+		return "強"
+	case TierMid:
+		return "中"
+	default:
+		return "弱"
+	}
+}
+
+// CapScopeKind says whether a task scope bounds a bit's reach. A ScopeNone
+// bit acts on something no task scope contains — a board topic, a runner, the
+// operator's egress, or a task not yet created — so its scope is not shown as
+// a reach. server's capTargetClasses makes the same classification for the
+// gates; a server test holds the two together.
+type CapScopeKind int
+
+const (
+	ScopeOwn CapScopeKind = iota
+	ScopeNone
+)
+
+type capAuditEntry struct {
+	tier      CapTier
+	scope     CapScopeKind
+	impliedBy []protocol.Capability
+}
+
+// capAuditTable is the one place tiers, scope kinds and implications are
+// written down. Every granular bit has an explicit entry
+// (TestEveryGrantableCapHasATier).
+var capAuditTable = map[protocol.Capability]capAuditEntry{
+	protocol.Capability_Spawn:         {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_Resume:        {tier: TierStrong},
+	protocol.Capability_ExecControl:   {tier: TierStrong},
+	protocol.Capability_Purge:         {tier: TierStrong},
+	protocol.Capability_Prune:         {tier: TierStrong},
+	protocol.Capability_BoardSend:     {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_RunnerAdmin:   {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_ExecTap:       {tier: TierStrong},
+	protocol.Capability_ForwardTap:    {tier: TierStrong},
+	protocol.Capability_ForwardLocal:  {tier: TierStrong},
+	protocol.Capability_ForwardRemote: {tier: TierStrong},
+	protocol.Capability_ExecCowrite:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_ExecControl}},
+	protocol.Capability_ExecRun:       {tier: TierMid},
+	protocol.Capability_FileWrite:     {tier: TierMid},
+	protocol.Capability_Cancel:        {tier: TierMid},
+	protocol.Capability_BoardPeer:     {tier: TierMid},
+	protocol.Capability_BoardObserve:  {tier: TierMid, scope: ScopeNone},
+	protocol.Capability_ResumeExact:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_Resume}},
+	protocol.Capability_ExecView:      {tier: TierWeak, impliedBy: []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_ExecControl}},
+	protocol.Capability_ExecResize:    {tier: TierWeak},
+	protocol.Capability_FileRead:      {tier: TierWeak},
+	protocol.Capability_Notify:        {tier: TierWeak, scope: ScopeNone},
+}
+
+// CapTierOf is c's audit tier. A bit missing from the table reads as strong,
+// so an unclassified bit is shown where it will be looked at.
+func CapTierOf(c protocol.Capability) CapTier {
+	if e, ok := capAuditTable[c]; ok {
+		return e.tier
+	}
+	return TierStrong
+}
+
+// CapScopeKindOf says whether a task scope bounds c.
+func CapScopeKindOf(c protocol.Capability) CapScopeKind { return capAuditTable[c].scope }
+
+// CapImpliedBy lists the stronger bits whose holders can also do what c
+// allows; the audit lists literal holders only and notes these.
+func CapImpliedBy(c protocol.Capability) []protocol.Capability { return capAuditTable[c].impliedBy }
+
+// AuditOrder is every granular bit, strongest tier first and GrantableCaps
+// order within a tier.
+func AuditOrder() []protocol.Capability {
+	var out []protocol.Capability
+	for _, tier := range []CapTier{TierStrong, TierMid, TierWeak} {
+		for _, c := range GrantableCaps() {
+			if c == protocol.Capability_None || c == protocol.Capability_All {
+				continue
+			}
+			if CapTierOf(c) == tier {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
