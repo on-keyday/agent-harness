@@ -33,7 +33,7 @@ the author chose it while writing.
 | D9 | No wire change: built from the task listing (`TaskInfo.capabilities`, `scope`, `overrides`, `creator_task_id`) the surfaces already fetch | this spec (checked: `cli/list.go:525`, `cmd/harness-webui-wasm/main.go:1261,1281`) |
 | D10 | One Go builder produces the audit rows; the CLI and TUI call it, the WebUI reaches it through the wasm bridge, so no surface re-derives tiers, ordering or scope colour | this spec (`surface-parity-checklist` item 32) |
 | D11 | Visibility is the listing's: an operator sees every task, an agent running `caps audit` sees the tasks its own `ls` shows | this spec |
-| D12 | A bit whose reach no task scope bounds — `spawn`, `notify`, `runner_admin`, `board_observe`, `board_send` — shows a fixed 「scope 対象外」 mark instead of a coloured scope. `exec_resize` rides an attach, so it shows the scope of the attach it rides (`exec_view`'s, the weakest mode that carries it) marked 「attach の scope」 | operator (after the builder check) |
+| D12 | A bit whose reach no task scope bounds — `spawn`, `notify`, `runner_admin`, `board_observe`, `board_send` — shows a fixed 「scope 対象外」 mark instead of a coloured scope. Every other bit shows its own resolved scope. (`exec_resize` was a third case, bounded by the scope of the attach it rode; it is scoped by its own bit since `resizeAllowed`, landed before this feature, so it needs no special treatment.) | operator (after the builder check) |
 | D13 | A row lists the tasks whose mask holds **that literal bit** — what a revoke would remove. Bits that a stronger one implies carry a note: `exec_view` (also `exec_cowrite`, `exec_control`), `exec_cowrite` (also `exec_control`), `resume_exact` (also `resume`) | operator (after the builder check) |
 | D14 | A holder is labelled `<id8> <agent> <prompt head>`, as the TUI picker's rows are; tasks have no name field | this spec (builder check) |
 | D15 | The wasm bridge fetches the task listing itself for each call; it keeps no Go-side snapshot | this spec (builder check) |
@@ -71,9 +71,8 @@ func AuditOrder() []protocol.Capability // every granular bit, strongest tier fi
 // How a bit's reach is bounded (D12).
 type CapScopeKind int
 const (
-	ScopeOwn       CapScopeKind = iota // its own resolved scope
-	ScopeViaAttach                     // exec_resize: the exec_view scope of the attach it rides
-	ScopeNone                          // no task scope bounds it
+	ScopeOwn  CapScopeKind = iota // its own resolved scope
+	ScopeNone                     // no task scope bounds it
 )
 func CapScopeKindOf(c protocol.Capability) CapScopeKind
 func CapImpliedBy(c protocol.Capability) []protocol.Capability // D13's notes
@@ -85,8 +84,8 @@ bit cannot silently default into a tier or a scope kind.
 
 `CapScopeKindOf` restates a classification the server already makes
 (`capTargetClasses`, `server/scope_percap_completeness_test.go`): a bit there
-marked `capNoTargetResolution` is `ScopeNone` here, except `exec_resize`, which
-is `ScopeViaAttach`. A server test asserts that agreement (a test-only import of
+marked `capNoTargetResolution` is `ScopeNone` here. A server test asserts that
+agreement (a test-only import of
 `cli/verb`), so the two cannot drift silently. A second copy guarded by a test
 is weaker than one source, and this is the accepted cost: the server's table
 lives in a test file and is keyed by how the gate resolves, not by what a reader
@@ -106,7 +105,7 @@ type AuditHolder struct {
 	TaskID, Label, Parent string // Label = "<id8> <agent> <prompt head>" (D14)
 	Live      bool
 	ScopeKind verb.CapScopeKind // copied from the row's bit
-	Scope     string            // ScopeOwn: the bit's resolved scope; ScopeViaAttach: exec_view's; ScopeNone: ""
+	Scope     string            // ScopeOwn: the bit's resolved scope; ScopeNone: ""
 	Breadth   ScopeBreadth      // from the ACTION half of Scope; unset for ScopeNone
 	Override  bool              // Scope came from a --scope-for override
 	TaskScope string            // the task's base scope, for the expanded view
@@ -125,16 +124,8 @@ func CapsAudit(tasks []protocol.TaskInfo, includeEnded, includeEmpty bool) []Aud
 - `Breadth` reads the action half of a `<visibility>/<action>` scope.
   `global` → global; `subtree`, `descendants`, `subtree-self`, `subtree+ids:…`
   → subtree; `none`, `none-self`, `ids:…` → narrow.
-- `Override` is true when an entry in `overrides` names the bit (for
-  `ScopeViaAttach`, when one names `exec_view`).
-- The `exec_view` scope a `ScopeViaAttach` holder shows is resolved even when
-  the task does not hold `exec_view`. `ResolvedScopeByCap` skips unheld bits,
-  so the builder reads `ResolvedScopeByCap(caps | Capability_ExecView, scope,
-  overrides)["exec_view"]`, the same merge applied to one more bit. This is the
-  scope an observer resize is actually bounded by.
-- Rendering of the two non-own kinds on every surface: 「scope 対象外」 in a
-  neutral grey for `ScopeNone`; the coloured scope plus 「attach の scope」 for
-  `ScopeViaAttach`.
+- `Override` is true when an entry in `overrides` names the bit.
+- `ScopeNone` renders as 「scope 対象外」 in a neutral grey on every surface.
 
 ## Surfaces (D5–D8)
 
@@ -156,8 +147,7 @@ Unit, `cli/verb`: tier table complete; `AuditOrder` strongest-first and covers
 every granular bit.
 
 Unit, `server` (agreement): every `capNoTargetResolution` bit is `ScopeNone`
-or (`exec_resize`) `ScopeViaAttach` in `CapScopeKindOf`, and every other bit is
-`ScopeOwn`. For each `CapImpliedBy` pair, the server's satisfying mask
+in `CapScopeKindOf`, and every other bit is `ScopeOwn`. For each `CapImpliedBy` pair, the server's satisfying mask
 (`attachModeCap` / `resumeRequestCap`) accepts the implier.
 
 Unit, `cli`: `CapsAudit` over a fixture — holder per bit, ended tasks excluded
@@ -166,7 +156,6 @@ overridden scope, breadth from the action half (`global/subtree` → subtree),
 ordering of holders. A `--scope none` holder of `board_send` shows
 `ScopeNone`, never a green breadth. An `exec_control`-only task is absent from
 the `exec_view` row, and that row's `ImpliedBy` names `exec_control`.
-`exec_resize` shows the holder's `exec_view` scope.
 
 Unit, TUI: `i` opens the modal; `enter` on a holder opens the picker in
 re-grant mode for that task; the key table test still passes with `i` bound.
