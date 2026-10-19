@@ -123,6 +123,10 @@ and you intend to start another one playing the **same role**, pass
 harness-cli session new -d --repo /path/to/repo --resume "$TASK_ID"
 ```
 
+Resuming needs the **`resume`** capability, not `spawn`: `spawn` creates tasks
+and nothing else, and `resume` re-queues an existing one without creating any.
+A supervisor that restarts its own workers needs both.
+
 Same task id means the same `chat.<short-id>` inbound topic, so:
 
 - Other agents that handshook with the previous session can keep talking
@@ -168,6 +172,28 @@ task" above, which is the same fact seen from inside the resumed session.
 
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
+
+### Bringing back a session exactly as it was — `--exact`
+
+You drive a session you did not create — a bash session the operator opened
+and gave you `exec_cowrite` on — and a stray `exit` ends it. Bring it back
+with the settings it was recorded with:
+
+```bash
+harness-cli session new --resume "$TASK_ID" --exact -d
+harness-cli session send -enter "$TASK_ID" 'echo back'
+```
+
+`--exact` takes the task's recorded agent, args, kind, caps and scope, so it
+needs only **`resume_exact`** (which `resume` implies), and it refuses every
+setting flag beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`,
+`--scope-for`, and a prompt. Leave `--repo` and `--runner` off: the server
+reopens it on the runner it last ran on. `--resume-conversation` still works.
+
+Keep the `-d`. Opening a session WITHOUT `-d` hands you its control seat,
+which needs `exec_control` over it; a refusal reads `detach_required` or names
+`exec_control`. After a `-d` open you drive it with whatever your `exec_*` caps
+allow, exactly as before it ended.
 
 **Reuse > re-spawn, and never hand-type the id.** When you mean the *same
 role*, resume the existing task instead of spawning a fresh one — it keeps
@@ -341,9 +367,10 @@ and the scope forms (`--json` for the machine-readable form).
   data-plane-only worker (agentboard within its base set + its own logs/ls) and every
   control-plane verb answers `permission denied`. Name what it needs —
   `--caps spawn,file_read`, or `--caps all` for an unattenuated child (still
-  intersected with your own set). A worker you expect to spawn or supervise
-  its own children, attach to a PTY, move files, or notify the operator will
-  NOT be able to until you say so. Forgot at spawn time? `caps set <id>
+  intersected with your own set). A worker you expect to spawn, resume or
+  supervise its own children, attach to a PTY, move files, or notify the
+  operator will NOT be able to until you say so — and spawning and resuming are
+  two grants, `spawn` and `resume`. Forgot at spawn time? `caps set <id>
   --caps …` fixes it on the live task without a restart.
 - **Operator = full set.** A task launched directly by the human operator (no
   principal task) is the trusted root and holds `all`.
@@ -420,11 +447,17 @@ and the scope forms (`--json` for the machine-readable form).
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.
 
-Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
+Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
+`spawn` creates a task and nothing else. `resume` re-queues a finished one under
+its own id, free to change its prompt, agent, args, caps and scope; it implies
+`resume_exact`, which allows only `--exact` (above). Neither implies `spawn`,
+nor `spawn` either of them. A resumed task keeps its recorded caps unless
+`--caps` re-grants them. Opening a session without `-d` takes its control
+seat, so it also needs `exec_control` — whether the session is new or resumed.
 `forward_tap` reads the PAYLOAD crossing a port forward (`forward tap`) —
 cleartext, so routinely Authorization headers and credentials. Holding a
 forward is a different power from reading what goes through it, so

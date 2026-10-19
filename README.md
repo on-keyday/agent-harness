@@ -244,13 +244,14 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 
 # 5. Open a detachable session: a PTY claude spliced to your terminal that
 # SURVIVES client disconnect (Detached) — reattach from any client via
-# `session attach <id>`. `-d` spawns without splicing the local terminal.
+# `session attach <id>`. `-d` opens it without attaching anyone: the server
+# creates no stream toward you, so it needs no exec_control — opening WITHOUT
+# -d hands you the control seat and needs exec_control, new session or resumed.
 # `interactive` is shorthand: session new + attach in one step.
 bin/harness-cli session new --repo /abs/path/to/repo
-# --rows/--cols size the session's PTY at open. Only worth it with -d: a
-# detached session has NO size until someone attaches, and only a CONTROL
-# attach carries size authority, which needs exec_control — the strongest of
-# the three attach caps and one the spawner may not hold. Without them a
+# --rows/--cols size the session's PTY at open. Only worth it with -d, where
+# they travel in the open request: a detached session has NO size until someone
+# attaches, and only a CONTROL attach carries size authority. Without them a
 # full-screen TUI in that session draws nothing.
 bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
 bin/harness-cli session resize --size 40x150 <task-id>   # size a live session
@@ -837,7 +838,7 @@ scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
 ## Capabilities and scope
 
 Each task carries a **capability set** — a server-enforced bitmask of
-what control-plane operations it may request (spawn, cancel, the three
+what control-plane operations it may request (spawn, resume, cancel, the three
 session-attach powers, file read / write, local / remote port-forward,
 reading a forward's or an exec's payload, notify, prune, purge, runner-admin, global
 info, publishing to the board beyond the task's own lineage, publishing to the
@@ -869,6 +870,24 @@ attach needs no such bit; owning the size is what control means.
 the three it is; it keeps the same bit, so every task already holding it
 kept exactly the power it had. Watching a worker no longer implies being
 able to type into it or kick the operator off it.
+
+Creating a task and bringing one back are separate grants:
+
+| cap | what it allows |
+| --- | --- |
+| `spawn` | create a task — `submit`, `session new`, `interactive` without `--resume` |
+| `resume_exact` | re-queue a finished task under its own id exactly as recorded — `--resume <id> --exact`, which refuses every setting flag and takes the task's agent, args, kind, caps and scope from the record |
+| `resume` | the same, free to change the prompt, agent, args, kind, caps and scope; implies `resume_exact` |
+
+Neither side implies the other, so `--caps exec_cowrite,resume_exact --scope
+ids:<task>` is an agent that drives one session and can bring it back if it
+ends, but can create nothing. A resumed task keeps its recorded caps unless
+`--caps` re-grants them, even when those exceed the resumer's. An exact resume
+with no `--runner` goes back to the runner the task last ran on. Opening a
+session without `-d`, new or resumed, takes its control seat and so needs
+`exec_control` over it as well; out of that scope it answers `detach_required`.
+A task recorded with the old `all` holds `spawn` but not the two resume bits,
+and `ls` shows it as a list of names rather than `all`; `caps set` re-grants.
 `harness-cli caps` lists the grantable names and the scope forms with a
 one-line description of each; `caps --json` emits the machine-readable
 catalog.
@@ -885,8 +904,8 @@ global info) answers `permission denied` until something grants it.
 redirect that within what the spawner itself holds: the server grants
 `caps_child = caps_parent ∩ requested` and clamps the scope to the
 spawner's own reach, so a task can never exceed its parent. A supervisor
-that spawns and drives workers therefore has to say so —
-`--caps spawn,exec_cowrite,notify` — and anything missed afterwards is
+that spawns, restarts and drives workers therefore has to say so —
+`--caps spawn,resume,exec_cowrite,notify` — and anything missed afterwards is
 `caps set <id> --caps …` on the live task, no restart. `NAMES`
 is comma-separated (e.g. `spawn,file_read`, subtractive `all,-spawn`);
 `SPEC` is `[<visibility>/]<action>` where each rank is
@@ -1169,7 +1188,8 @@ and recreating both tasks. The TUI binds this to `A` (root / swap /
 task picker) and the WebUI task sheet to 「⇄ 親タスク変更」; both also
 accept the typed `caps set-parent` / `set-parent` command forms.
 
-On **resume**, the task's persisted authority is kept by default; the
+On **resume** — which needs `resume`, or `resume_exact` for `--exact` — the
+task's persisted authority is kept by default; the
 two halves re-grant independently — `--caps` re-grants the mask,
 `--scope` re-grants the scope (each only when literally given; WebUI
 gates both behind the apply-on-resume checkbox). This composes with the
