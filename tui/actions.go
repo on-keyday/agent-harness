@@ -109,7 +109,7 @@ func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return DoIdleWatcherList(a.client, "", false), true
 }
 
-// `i` opens the caps audit over the task table's rows.
+// `i` opens the caps audit over every listed task.
 func (a *App) onCapsAudit(msg tea.KeyMsg) (tea.Cmd, bool) {
 	a.openCapsAudit(false, false, 0)
 	return nil, true
@@ -117,7 +117,18 @@ func (a *App) onCapsAudit(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 func (a *App) openCapsAudit(includeEnded, includeEmpty bool, focus protocol.Capability) {
 	a.capsAuditModal.SetSize(a.width, a.height)
-	a.capsAuditModal.Open(a.tasks.Rows(), includeEnded, includeEmpty, focus)
+	a.capsAuditModal.Open(a.auditTasks(), includeEnded, includeEmpty, focus)
+}
+
+// auditTasks is the whole listing, not the task table's 100 newest rows: a
+// long-lived task still holding spawn is the oldest one, which is the case the
+// audit exists for.
+func (a *App) auditTasks() []protocol.TaskInfo {
+	all := make([]protocol.TaskInfo, 0, len(a.tasksByID))
+	for _, t := range a.tasksByID {
+		all = append(all, t)
+	}
+	return all
 }
 
 // `g` opens the live session viewer grid: a full-screen overlay

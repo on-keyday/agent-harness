@@ -1971,7 +1971,7 @@ func (a *App) refreshTasksTable() {
 	}
 	a.tasks.SetRows(all, a.runnersSnapshot)
 	if a.capsAuditModal.IsOpen() {
-		a.capsAuditModal.SetTasks(a.tasks.Rows())
+		a.capsAuditModal.SetTasks(a.auditTasks())
 	}
 }
 

@@ -184,18 +184,22 @@ calls made during implementation; none was put to the operator.
   modal, which has no JSON form, so the TUI cmdline refuses `--json` rather
   than ignoring it (surface-parity item 33). The § Surfaces CLI row is
   otherwise as written.
-- **`--cap NAME` includes unheld bits**, so a bit nobody holds still answers
-  ("no task holds …"), and it narrows the JSON form to that bit too. One
-  writer, `cli.WriteCapsAuditReport`, does this for the CLI verb and the
-  bridge.
+- **`--cap NAME` includes unheld bits**, so a bit nobody holds still gets its
+  row, with `0 holder(s)`, on all three surfaces. It also narrows the JSON form
+  to that bit. One writer, `cli.WriteCapsAuditReport`, does this for the CLI
+  verb and the bridge; the TUI opens its modal with unheld bits on.
 - **The bridge takes an object and returns the `--json` shape.**
   `harness.capsAudit({includeEnded, includeEmpty})` resolves to rows keyed as
   `caps audit --json` writes them (`implied_by`, `task_id`, `scope_kind`, …),
   built by `cli.AuditRowsJSON`. The command input calls
   `harness.capsAuditText({all, empty, cap, json})`.
-- **The TUI audits the task table's rows**, which are the 100 most recent
-  tasks. An older live task beyond that is not shown in the TUI. The CLI and
-  the WebUI fetch the whole listing.
+- **The TUI audits the whole listing**, not the task table's rows (the 100
+  newest). A long-lived task still holding `spawn` is usually the oldest one,
+  which is the P1 case.
+- **The TUI cursor stays on its line across a refresh.** When a holder above it
+  ends, the cursor stays on the same holder. When its own holder or its whole
+  bit goes, the cursor moves to a capability line. So enter never opens the
+  re-grant picker on a task the cursor was not on.
 - **WebUI layout.** Holder chips sit on their own wrapping line under each
   bit's header at every width, not inline beside it as in the prototype. The
   two toggles are checkboxes, like the page's other option rows.

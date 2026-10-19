@@ -2433,7 +2433,9 @@ body[data-active-tab="audit"]    [data-tabgroup]:not([data-tabgroup="audit"]) {
 .audit-holder:hover { background: #2f3540; }
 .audit-holder.ended { opacity: .45; font-style: italic; }
 .audit-detail { padding: 4px 12px 10px; font-size: 12px; opacity: .85; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
-.sc { border-radius: 8px; padding: 0 6px; margin-left: 4px; font-size: 11px; white-space: nowrap; }
+/* A scope can carry several 32-hex ids, so the chip wraps rather than
+   widening the page. */
+.sc { border-radius: 8px; padding: 0 6px; margin-left: 4px; font-size: 11px; overflow-wrap: anywhere; }
 .sc.global { background: #5a2a2a; color: #f2a3a3; }
 .sc.subtree { background: #4a3f1e; color: #e5c07b; }
 .sc.narrow { background: #2e3a2e; color: #9fcf8f; }

@@ -807,7 +807,8 @@ func (h tuiVerbs) CapsAudit(v verb.CapsAuditAction) tea.Cmd {
 	if v.Cap != "" {
 		focus, _ = verb.ParseCaps(v.Cap) // Validate already proved it one bit
 	}
-	h.a.openCapsAudit(v.All, v.Empty, focus)
+	// A named bit is shown even with no holder, as the CLI shows it.
+	h.a.openCapsAudit(v.All, v.Empty || focus != 0, focus)
 	return nil
 }
 

@@ -66,6 +66,18 @@ func (m *CapsAuditModal) SetTasks(tasks []protocol.TaskInfo) {
 }
 
 func (m *CapsAuditModal) rebuild() {
+	// Remember WHICH line the cursor is on, not its index: a holder ending
+	// above it shifts every line below, and enter must not then land on a
+	// different task.
+	var keep auditLine
+	var keepHolder string
+	had := m.cursor < len(m.lines)
+	if had {
+		keep = m.lines[m.cursor]
+		if keep.holder != nil {
+			keepHolder = keep.holder.TaskID
+		}
+	}
 	m.rows = cli.CapsAudit(m.tasks, m.includeEnded, m.includeEmpty)
 	m.lines = m.lines[:0]
 	for i := range m.rows {
@@ -77,11 +89,40 @@ func (m *CapsAuditModal) rebuild() {
 			}
 		}
 	}
+	if had {
+		// The same line if it is still there; else its capability's line, so
+		// a holder that went never hands the cursor to its neighbour.
+		capLine := -1
+		found := false
+		for i, l := range m.lines {
+			if l.cap != keep.cap {
+				continue
+			}
+			if l.holder == nil {
+				capLine = i
+			}
+			if keepHolder == "" && l.holder == nil || l.holder != nil && l.holder.TaskID == keepHolder {
+				m.cursor, found = i, true
+				break
+			}
+		}
+		if !found && capLine >= 0 {
+			m.cursor = capLine
+		}
+	}
 	if m.cursor >= len(m.lines) {
 		m.cursor = len(m.lines) - 1
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+	if had && m.cursor < len(m.lines) && m.lines[m.cursor].holder != nil &&
+		m.lines[m.cursor].holder.TaskID != keepHolder {
+		// Its whole capability folded away: back up to a capability line,
+		// so enter never re-grants a task the cursor was not on.
+		for m.cursor > 0 && m.lines[m.cursor].holder != nil {
+			m.cursor--
+		}
 	}
 }
 

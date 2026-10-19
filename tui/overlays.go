@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/hex"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -927,15 +926,15 @@ func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		for _, t := range a.tasks.Rows() {
-			if hex.EncodeToString(t.Id.Id[:]) == id {
-				a.capsAuditModal.Close()
-				a.authorityPicker.SetSize(a.width, a.height)
-				a.authorityPicker.OpenRegrant(t, a.tasks.Rows())
-				return nil
-			}
+		t, ok := a.tasksByID[id]
+		if !ok {
+			// The modal's own listing is this map, so a holder can only be
+			// missing here between a snapshot and the rebuild it triggers.
+			return nil
 		}
-		a.cmdresult.Append(WarnStyle.Render("caps audit: task " + id[:8] + " is no longer listed"))
+		a.capsAuditModal.Close()
+		a.authorityPicker.SetSize(a.width, a.height)
+		a.authorityPicker.OpenRegrant(t, a.tasks.Rows())
 	}
 	return nil
 }
