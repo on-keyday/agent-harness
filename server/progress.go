@@ -72,6 +72,7 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 	if h.OnTaskProgress != nil {
 		h.OnTaskProgress(taskHex)
 	}
+	h.fireProgressWatchers(taskHex, protocol.AwaitProgressStatus_Fired, text, at)
 	respond(protocol.ProgressSetStatus_Ok, at)
 }
 

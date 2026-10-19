@@ -21,10 +21,16 @@ import (
 type idleWatcher struct {
 	id        uint64
 	taskIDHex string
-	sink      protocol.AwaitSink
-	topic     string
-	threshold time.Duration
-	armedAt   time.Time
+	// condition is the edge this watcher waits for. The registry, list, kill
+	// and teardown are shared; only arming and firing differ.
+	condition protocol.AwaitCondition
+	// fireProgress delivers a progress-condition watcher's outcome. Set only
+	// for condition=progress, called only by the path that won the remove.
+	fireProgress func(status protocol.AwaitProgressStatus, text string, at int64)
+	sink         protocol.AwaitSink
+	topic        string
+	threshold    time.Duration
+	armedAt      time.Time
 	// requester is the arming principal, resolved at arm time because the
 	// board/notify sinks outlive the arming connection. Zero = operator.
 	requester  protocol.TaskID
@@ -146,6 +152,7 @@ func idleWatcherInfo(w *idleWatcher) protocol.AwaitIdleWatcherInfo {
 		ArmedUnixMs: uint64(w.armedAt.UnixMilli()),
 		Requester:   w.requester,
 		OriginKind:  w.clientKind,
+		Condition:   w.condition,
 	}
 	if raw, err := hex.DecodeString(w.taskIDHex); err == nil && len(raw) == 16 {
 		copy(info.TaskId.Id[:], raw)

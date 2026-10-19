@@ -1027,6 +1027,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_AwaitIdle:
 		h.handleAwaitIdle(conn, &req)
 
+	case protocol.TaskControlKind_AwaitProgress:
+		h.handleAwaitProgress(conn, &req)
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {

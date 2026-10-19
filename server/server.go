@@ -471,6 +471,11 @@ func New(cfg Config) *Server {
 			copy(ev.TaskId.Id[:], raw)
 		}
 		payload := ev.MustAppend(nil)
+		// A task that ended or was forgotten will write no more progress:
+		// end its progress watchers rather than leave them armed forever.
+		if kind == protocol.StatusEventKind_TaskEnded || kind == protocol.StatusEventKind_TaskPruned {
+			s.taskHandler.fireProgressWatchers(taskID, protocol.AwaitProgressStatus_TaskEnded, "", 0)
+		}
 		// task_pruned goes to everyone: it carries only the id and kind, and
 		// the visibility filter cannot be evaluated once the entry is gone
 		// (OnPrune runs after removal), so filtering it would leave stale rows
