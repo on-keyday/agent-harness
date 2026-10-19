@@ -312,6 +312,16 @@ test("bare `caps` prints the catalog, descriptions and all", async () => {
   assert.match(String(out), /subtree\+ids:/);
 });
 
+test("`caps audit` reaches the audit text with its flags", async () => {
+  const bare = await run("caps audit", { capsAuditText: "spawn  強  1  …" });
+  assert.equal(bare.err, undefined);
+  eq(bare.calls, [["capsAuditText", { all: false, empty: false, cap: "", json: false }]]);
+  assert.equal(bare.out, "spawn  強  1  …");
+  const focused = await run("caps audit --cap spawn --all");
+  assert.equal(focused.err, undefined);
+  eq(focused.calls, [["capsAuditText", { all: true, empty: false, cap: "spawn", json: false }]]);
+});
+
 test("`caps --json` reaches the JSON renderer", async () => {
   const { out, err } = await run("caps --json");
   assert.equal(err, undefined);

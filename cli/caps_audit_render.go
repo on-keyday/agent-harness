@@ -143,3 +143,23 @@ func WriteCapsAuditJSON(w io.Writer, rows []AuditRow) error {
 	}
 	return nil
 }
+
+// WriteCapsAuditReport is `caps audit` over a task listing, as every surface
+// that prints it does: focus (when non-zero) brings in unheld bits so a bit
+// nobody holds still answers, and narrows the JSON form to that bit too.
+func WriteCapsAuditReport(w io.Writer, tasks []protocol.TaskInfo, includeEnded, includeEmpty bool, focus protocol.Capability, asJSON bool) error {
+	rows := CapsAudit(tasks, includeEnded, includeEmpty || focus != 0)
+	if !asJSON {
+		return WriteCapsAudit(w, rows, focus, tasks)
+	}
+	if focus != 0 {
+		var only []AuditRow
+		for _, r := range rows {
+			if r.Cap == focus {
+				only = append(only, r)
+			}
+		}
+		rows = only
+	}
+	return WriteCapsAuditJSON(w, rows)
+}

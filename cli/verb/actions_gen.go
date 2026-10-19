@@ -2459,6 +2459,14 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"caps audit\x00webui": func(b Bound) (Action, error) {
+			a := CapsAuditAction{}
+			a.All = b.Bool("all")
+			a.Empty = b.Bool("empty")
+			a.Cap = b.Str("cap")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
 		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
 			a := SetDefaultsAction{}
 			if b.Set["caps"] {

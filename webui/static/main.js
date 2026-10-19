@@ -682,6 +682,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks, taskStatusColor, revealTaskInList);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
+    if (window.__refreshCapsAudit && document.body.dataset.activeTab === "audit") {
+      window.__refreshCapsAudit();
+    }
     renderRawTaskSelect(snap.tasks);
     // Connection topology — rides the same ~5s poll (spec decision #3:
     // no separate event subscription in wasm). snap.conns may be absent if
@@ -6945,6 +6948,115 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // Keep the git task dropdown in step with the snapshot poll.
   window.__renderGitTaskSelect = renderGitTaskSelect;
 
+  // 権限 tab: who holds which capability. Rows come from harness.capsAudit
+  // (cli.CapsAudit) on each call; this side keeps only the toggles and which
+  // bits are expanded. Labels carry prompt text, so everything is built with
+  // textContent, never innerHTML.
+  const capsAuditRows = document.getElementById("caps-audit-rows");
+  const capsAuditError = document.getElementById("caps-audit-error");
+  const capsAuditEnded = document.getElementById("caps-audit-ended");
+  const capsAuditEmpty = document.getElementById("caps-audit-empty");
+  const capsAuditOpen = new Set();
+  const tierClass = { "強": "strong", "中": "mid", "弱": "weak" };
+  let capsAuditSeq = 0;
+  const auditEl = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const auditScopeChip = (h) => h.scope_kind === "none"
+    ? auditEl("span", "sc none", "scope 対象外")
+    : auditEl("span", "sc " + h.breadth, h.scope + (h.override ? " *" : ""));
+  const renderCapsAudit = (rows) => {
+    capsAuditRows.replaceChildren();
+    if (!rows.length) {
+      capsAuditRows.append(auditEl("p", "hint",
+        "この条件で capability を持つ task はない（終了した task も、で広げられる）"));
+      return;
+    }
+    for (const r of rows) {
+      const box = auditEl("div", "audit-cap" + (r.holders.length ? "" : " empty"));
+      const head = auditEl("div", "head");
+      head.dataset.cap = r.cap;
+      head.append(auditEl("span", "name", r.cap),
+        auditEl("span", "audit-tier " + (tierClass[r.tier] || ""), r.tier),
+        auditEl("span", "n", String(r.holders.length)));
+      if (r.implied_by.length) {
+        head.append(auditEl("span", "note", "(also: " + r.implied_by.join(", ") + ")"));
+      }
+      const chips = auditEl("span", "audit-holders");
+      for (const h of r.holders) {
+        const chip = auditEl("button", "audit-holder" + (h.live ? "" : " ended"), h.label);
+        chip.type = "button";
+        chip.dataset.taskId = h.task_id;
+        chip.append(auditScopeChip(h));
+        chips.append(chip);
+      }
+      if (!r.holders.length) chips.append(auditEl("span", "hint", "—"));
+      head.append(chips);
+      box.append(head);
+      if (capsAuditOpen.has(r.cap) && r.holders.length) {
+        const detail = auditEl("div", "audit-detail");
+        for (const h of r.holders) {
+          const line = auditEl("div", "", h.label + " — 親 " + (h.parent || "operator") + " / scope ");
+          line.append(auditScopeChip(h));
+          if (h.override) line.append(" (task 全体は " + h.task_scope + ")");
+          line.append(" / " + (h.live ? "live" : "ended"));
+          detail.append(line);
+        }
+        box.append(detail);
+      }
+      capsAuditRows.append(box);
+    }
+  };
+  let capsAuditLast = [];
+  const refreshCapsAudit = async () => {
+    if (typeof window.harness.capsAudit !== "function") return;
+    const seq = ++capsAuditSeq;
+    try {
+      const rows = await window.harness.capsAudit({
+        includeEnded: capsAuditEnded.checked, includeEmpty: capsAuditEmpty.checked,
+      });
+      if (seq !== capsAuditSeq) return; // a later refresh owns the pane
+      capsAuditError.hidden = true;
+      capsAuditLast = rows;
+      renderCapsAudit(rows);
+    } catch (err) {
+      if (seq !== capsAuditSeq) return;
+      capsAuditError.textContent = "caps audit: " + err.message;
+      capsAuditError.hidden = false;
+    }
+  };
+  window.__refreshCapsAudit = refreshCapsAudit;
+  capsAuditEnded.addEventListener("change", refreshCapsAudit);
+  capsAuditEmpty.addEventListener("change", refreshCapsAudit);
+  document.getElementById("caps-audit-refresh").addEventListener("click", refreshCapsAudit);
+  capsAuditRows.addEventListener("click", (e) => {
+    const chip = e.target.closest(".audit-holder");
+    if (chip) {
+      const t = lastTasks.find((x) => x.id === chip.dataset.taskId);
+      if (t) openRegrantDialog(t);
+      else {
+        capsAuditError.textContent = "caps audit: task " + chip.dataset.taskId.slice(0, 8) +
+          " is not in the task list";
+        capsAuditError.hidden = false;
+      }
+      return;
+    }
+    const head = e.target.closest(".head");
+    if (head) {
+      const c = head.dataset.cap;
+      if (capsAuditOpen.has(c)) capsAuditOpen.delete(c);
+      else capsAuditOpen.add(c);
+      renderCapsAudit(capsAuditLast);
+    }
+  });
+  tabbar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (btn && btn.dataset.tab === "audit") refreshCapsAudit();
+  });
+
   // Activate whichever board view is showing when the board tab is selected.
   tabbar.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab-btn");
@@ -7514,6 +7626,16 @@ async function runVerbCommandDispatch(tokens, ctx) {
         if (parsed.capsLabel !== undefined) lines.push("caps set: " + parsed.capsLabel);
         if (parsed.scopeLabel !== undefined) lines.push("scope set: " + parsed.scopeLabel);
         out = lines.join("\n");
+        break;
+      }
+      if (sub === "audit") {
+        // Who holds which capability: the CLI's text, from the same writer.
+        // The 権限 tab draws the same rows.
+        const b = parseOrHelp(ctx, tokens, {});
+        out = await ctx.harness.capsAuditText({
+          all: !!b.flags.all, empty: !!b.flags.empty,
+          cap: b.flags.cap || "", json: !!b.flags.json,
+        });
         break;
       }
       if (sub !== "set-parent") {

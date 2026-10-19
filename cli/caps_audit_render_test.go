@@ -83,3 +83,17 @@ func TestWriteCapsAuditJSONLines(t *testing.T) {
 		t.Fatalf("json lines = %v", lines)
 	}
 }
+
+// The CLI verb and the WebUI bridge both print through WriteCapsAuditReport,
+// so --cap narrows the JSON form too, and on a bit nobody holds.
+func TestWriteCapsAuditReportFocusJSON(t *testing.T) {
+	a := auditTask(0xa1, protocol.TaskStatus_Running, protocol.Capability_Spawn|protocol.Capability_FileRead, protocol.ScopeBase_Subtree)
+	var buf bytes.Buffer
+	if err := WriteCapsAuditReport(&buf, []protocol.TaskInfo{a}, false, false, protocol.Capability_Notify, true); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], `"cap":"notify"`) || !strings.Contains(lines[0], `"holders":[]`) {
+		t.Fatalf("focused json = %v, want the one notify row with no holders", lines)
+	}
+}

@@ -390,7 +390,8 @@ body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
 body[data-active-tab="git"]      [data-tabgroup]:not([data-tabgroup="git"]),
 body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]),
 body[data-active-tab="conns"]    [data-tabgroup]:not([data-tabgroup="conns"]),
-body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
+body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]),
+body[data-active-tab="audit"]    [data-tabgroup]:not([data-tabgroup="audit"]) {
   display: none;
 }
 
@@ -2405,3 +2406,35 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-chain-conv-btn:hover:not(:disabled) { background: #3a3a3a; }
 .board-chain-conv-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 権限 tab (caps audit): one block per capability, strongest first. Scope
+   chips are coloured by the breadth of the action rank; a bit no task scope
+   bounds is grey. */
+.audit-legend { font-size: 12px; opacity: .85; margin-bottom: 8px; line-height: 1.8; }
+.audit-cap { border: 1px solid #3a3a3a; border-radius: 6px; margin: 6px 0; }
+.audit-cap > .head {
+  display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline;
+  padding: 7px 12px; cursor: pointer; background: #252526; border-radius: 6px;
+}
+.audit-cap.empty > .head { opacity: .4; }
+.audit-cap .name { font-family: ui-monospace, monospace; font-weight: 700; min-width: 8.5em; }
+.audit-cap .n { font-family: ui-monospace, monospace; color: #ffd88a; min-width: 2em; }
+.audit-cap .note { font-size: 11px; opacity: .6; }
+.audit-tier { font-size: 11px; border-radius: 8px; padding: 0 7px; }
+.audit-tier.strong { background: #5a2a2a; color: #f2a3a3; }
+.audit-tier.mid { background: #4a3f1e; color: #e5c07b; }
+.audit-tier.weak { background: #2e3a2e; color: #9fcf8f; }
+.audit-holders { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; min-width: 0; }
+.audit-holder {
+  font-family: ui-monospace, monospace; font-size: 12px; border: 1px solid #555;
+  border-radius: 10px; padding: 1px 8px; cursor: pointer; background: none; color: inherit;
+  max-width: 100%; overflow-wrap: anywhere; text-align: left;
+}
+.audit-holder:hover { background: #2f3540; }
+.audit-holder.ended { opacity: .45; font-style: italic; }
+.audit-detail { padding: 4px 12px 10px; font-size: 12px; opacity: .85; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.sc { border-radius: 8px; padding: 0 6px; margin-left: 4px; font-size: 11px; white-space: nowrap; }
+.sc.global { background: #5a2a2a; color: #f2a3a3; }
+.sc.subtree { background: #4a3f1e; color: #e5c07b; }
+.sc.narrow { background: #2e3a2e; color: #9fcf8f; }
+.sc.none { background: #333; color: #aaa; }

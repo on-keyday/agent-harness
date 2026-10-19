@@ -625,20 +625,7 @@ func (h cliVerbs) CapsAudit(a verb.CapsAuditAction) error {
 		if err != nil {
 			return err
 		}
-		rows := cli.CapsAudit(body.Tasks, a.All, a.Empty || focus != 0)
-		if a.JSON {
-			if focus != 0 {
-				var only []cli.AuditRow
-				for _, r := range rows {
-					if r.Cap == focus {
-						only = append(only, r)
-					}
-				}
-				rows = only
-			}
-			return cli.WriteCapsAuditJSON(os.Stdout, rows)
-		}
-		return cli.WriteCapsAudit(os.Stdout, rows, focus, body.Tasks)
+		return cli.WriteCapsAuditReport(os.Stdout, body.Tasks, a.All, a.Empty, focus, a.JSON)
 	})
 }
 

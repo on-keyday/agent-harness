@@ -143,6 +143,8 @@ func main() {
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
 		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
+		"capsAudit":          js.FuncOf(harnessCapsAudit),
+		"capsAuditText":      js.FuncOf(harnessCapsAuditText),
 		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
 		"scopeSpec":          js.FuncOf(harnessScopeSpec),
@@ -868,6 +870,89 @@ func harnessCapsCatalog(this js.Value, args []js.Value) any {
 		return js.ValueOf(map[string]any{"error": err.Error()})
 	}
 	return js.ValueOf(buf.String())
+}
+
+// harnessCapsAudit returns the 権限 tab's rows: per capability, the tasks
+// holding it, from cli.CapsAudit over a listing fetched for this call (no
+// snapshot is kept on this side). The shape is `caps audit --json`'s.
+//
+//	harness.capsAudit({includeEnded, includeEmpty}) ->
+//	  Promise<[{cap, tier, implied_by, holders: [{task_id, label, parent, live,
+//	            scope_kind, scope, breadth, override, task_scope}]}]>
+func harnessCapsAudit(this js.Value, args []js.Value) any {
+	var ended, empty bool
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		ended = args[0].Get("includeEnded").Truthy()
+		empty = args[0].Get("includeEmpty").Truthy()
+	}
+	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+		blob, err := json.Marshal(cli.AuditRowsJSON(cli.CapsAudit(tasks, ended, empty)))
+		if err != nil {
+			return js.Undefined(), err
+		}
+		return js.Global().Get("JSON").Call("parse", string(blob)), nil
+	})
+}
+
+// harnessCapsAuditText is `caps audit` in the command input: the CLI's text
+// (or JSON Lines) from the same writer.
+//
+//	harness.capsAuditText({all, empty, cap, json}) -> Promise<string>
+func harnessCapsAuditText(this js.Value, args []js.Value) any {
+	var all, empty, asJSON bool
+	var name string
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		all = args[0].Get("all").Truthy()
+		empty = args[0].Get("empty").Truthy()
+		asJSON = args[0].Get("json").Truthy()
+		if v := args[0].Get("cap"); v.Type() == js.TypeString {
+			name = v.String()
+		}
+	}
+	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+		var focus protocol.Capability
+		if name != "" {
+			c, err := cli.ParseCaps(name)
+			if err != nil {
+				return js.Undefined(), err
+			}
+			focus = c
+		}
+		var buf strings.Builder
+		if err := cli.WriteCapsAuditReport(&buf, tasks, all, empty, focus, asJSON); err != nil {
+			return js.Undefined(), err
+		}
+		return js.ValueOf(buf.String()), nil
+	})
+}
+
+// capsAuditPromise fetches the task listing and resolves with render's value.
+func capsAuditPromise(render func([]protocol.TaskInfo) (js.Value, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			lr, err := c.Snapshot(rootCtx)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("caps audit: %w", err))
+				return
+			}
+			v, err := render(lr.Tasks)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("caps audit: %w", err))
+				return
+			}
+			resolve.Invoke(v)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
 }
 
 // harnessParseAuthority validates the --caps / --scope / --scope-for strings a
