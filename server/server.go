@@ -1122,6 +1122,24 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
 	ch := ep.GetNewActiveConnectionChannel()
+	// The progress snapshot, on every DELIBERATE stop (held or full: a finished
+	// task's last line is worth keeping either way); a crash never reaches it.
+	// Deferred, because a deliberate stop leaves this loop by more than one
+	// branch: a held stop marks shuttingDown and closes the listeners, so the
+	// loop returns through serverDone and main exits BEFORE the root context
+	// is cancelled (measured: a SIGTERM'd harness-server wrote nothing while
+	// this was gated on ctx alone); a full stop cancels ctx, which also closes
+	// ch, so either of those branches may be the one taken.
+	defer func() {
+		if (ctx.Err() == nil && !s.shuttingDown.Load()) || s.cfg.DataDir == "" {
+			return
+		}
+		if err := writeProgressSnapshot(s.cfg.DataDir, s.tasks); err != nil {
+			s.cfg.Logger.Warn("shutdown: progress snapshot not written", "err", err)
+			return
+		}
+		s.cfg.Logger.Info("shutdown: progress snapshot written", "path", progressSnapshotPath(s.cfg.DataDir))
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1138,13 +1156,6 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			if s.tasks.CountByStatus(protocol.TaskStatus_Held) == 0 {
 				if held := s.RunHoldSequence(); held > 0 {
 					s.cfg.Logger.Info("shutdown: tasks held for the next server", "count", held)
-				}
-			}
-			// Every deliberate stop, held or full: a finished task's last line
-			// is worth keeping either way. A crash never reaches here.
-			if s.cfg.DataDir != "" {
-				if err := writeProgressSnapshot(s.cfg.DataDir, s.tasks); err != nil {
-					s.cfg.Logger.Warn("shutdown: progress snapshot not written", "err", err)
 				}
 			}
 			sessionsCancel()
