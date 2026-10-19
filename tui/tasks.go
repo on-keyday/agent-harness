@@ -38,6 +38,9 @@ type TasksModel struct {
 	// runners is the last snapshot's runner list, needed by rebuild() for the
 	// legacy agent fallback on tasks that predate TaskInfo.AgentProfile.
 	runners []protocol.RunnerInfo
+	// mark is the capability the caps audit's `t` asked the tree to mark: its
+	// holders' ID cells carry ◆ and the column title names it. 0 = none.
+	mark protocol.Capability
 }
 
 // obsColumnMinWidth is the panel width at which the tasks table can afford the
@@ -104,17 +107,17 @@ func NewTasks() TasksModel {
 }
 
 // treeCols is the column set for tree mode. ID is wider because the gutter
-// shares the cell with the id: three columns per level, so ~24 fits four
-// levels of an 8-hex id, which is deeper than the creator chains this harness
-// produces in practice.
+// shares the cell with the id: three columns per level, plus the ◆ mark and
+// the tier mark (" 強3"), so ~28 fits three levels with both, which is deeper
+// than the creator chains this harness produces in practice.
 func treeCols() []table.Column {
 	return []table.Column{
 		{Title: "Status", Width: 9},
-		{Title: "ID (by creator)", Width: 24},
+		{Title: "ID (by creator)", Width: 28},
 		{Title: "From", Width: 6},
 		{Title: "Agent", Width: 14},
 		{Title: "Act", Width: 8},
-		{Title: "Repo", Width: 22},
+		{Title: "Repo", Width: 18},
 		{Title: "Prompt", Width: 0},
 	}
 }
@@ -123,7 +126,7 @@ func treeCols() []table.Column {
 // new state so the caller can report it.
 func (m *TasksModel) SetTree(on bool) bool {
 	m.tree = on
-	m.baseCols = colsFor(m.tree, m.width)
+	m.baseCols = m.columns()
 	// Always rebuilds, unlike a resize: tree mode changes the row CONTENT (the
 	// ID cell carries the gutter), and flat and tree happen to have the SAME
 	// column count — so a count-based check would swap the headers and leave
@@ -134,6 +137,37 @@ func (m *TasksModel) SetTree(on bool) bool {
 
 // TreeMode reports whether the tree ordering is active.
 func (m *TasksModel) TreeMode() bool { return m.tree }
+
+// columns is colsFor plus the one title that depends on state: the ID column
+// names the capability being marked, so a ◆ never has to be guessed at.
+func (m *TasksModel) columns() []table.Column {
+	cols := colsFor(m.tree, m.width)
+	if m.tree && m.mark != 0 {
+		cols[1].Title = "ID (◆ " + m.mark.String() + ")"
+	}
+	return cols
+}
+
+// SetMark marks the holders of c in tree order (0 clears it).
+func (m *TasksModel) SetMark(c protocol.Capability) {
+	m.mark = c
+	m.baseCols = m.columns()
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
+}
+
+// SelectID puts the cursor on the task's row, reporting whether it is listed.
+func (m *TasksModel) SelectID(id string) bool {
+	for i, rid := range m.rowIDs {
+		if rid == id {
+			// MoveDown, not SetCursor: it is the path that keeps the row on
+			// screen (see swapColumnsAndRebuild).
+			m.table.SetCursor(0)
+			m.table.MoveDown(i)
+			return true
+		}
+	}
+	return false
+}
 
 func (m *TasksModel) Focus() {
 	m.focused = true
@@ -155,7 +189,7 @@ func (m *TasksModel) SetSize(w, h int) {
 	m.table.SetHeight(h)
 	// Width decides the column SET, not only the widths.
 	m.width = w
-	m.baseCols = colsFor(m.tree, w)
+	m.baseCols = m.columns()
 	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt"))
 	// A width-only change keeps the same column set, and must NOT disturb the
 	// rows: bubbles keeps the scroll position in the unexported
@@ -275,6 +309,12 @@ func (m *TasksModel) rebuild() {
 			// 8 hex is what `by=` has always shown, so a reader comparing the
 			// tree against a log line sees the same prefix.
 			idCell = gutter[i] + idHex[:8]
+			if m.mark != 0 && t.Capabilities&m.mark == m.mark {
+				idCell += " ◆"
+			}
+			if mark, _, ok := cli.TierMark(t.Capabilities); ok {
+				idCell += " " + mark
+			}
 		}
 		row := table.Row{
 			taskStatusStr(t.Status),
@@ -340,7 +380,7 @@ func observerCell(t protocol.TaskInfo) string {
 // tree's wider ID column takes its space from Repo.
 func repoCellWidth(tree bool) int {
 	if tree {
-		return 22
+		return 18
 	}
 	return 28
 }

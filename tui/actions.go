@@ -120,6 +120,70 @@ func (a *App) openCapsAudit(includeEnded, includeEmpty bool, focus protocol.Capa
 	a.capsAuditModal.Open(a.auditTasks(), includeEnded, includeEmpty, focus)
 }
 
+// setTreeMode switches the task table's order. Same geometry the layout pass
+// uses; the column set changed, so the widths are refitted before the rows are
+// rebuilt.
+func (a *App) setTreeMode(on bool) {
+	a.tasks.SetTree(on)
+	half := a.width / 2
+	a.tasks.SetSize(a.width-half-2, 10)
+}
+
+// jumpToTask is the caps audit's enter on a holder: show that task in the
+// creator tree, where it can be recognised by its place, and focus it there so
+// `a` re-grants it.
+func (a *App) jumpToTask(id string) {
+	a.capsAuditModal.Close()
+	a.auditPins = a.withCreatorChains([]string{id})
+	if !a.tasks.TreeMode() {
+		a.setTreeMode(true)
+	}
+	a.refreshTasksTable()
+	a.tasks.SelectID(id)
+	a.setFocus(focusTasks)
+}
+
+// markBit is the caps audit's t: mark every holder of c in the creator tree,
+// ended ones included — a resume brings their recorded caps back.
+func (a *App) markBit(c protocol.Capability) {
+	a.capsAuditModal.Close()
+	var ids []string
+	for id, t := range a.tasksByID {
+		if t.Capabilities&c == c {
+			ids = append(ids, id)
+		}
+	}
+	a.auditPins = a.withCreatorChains(ids)
+	if !a.tasks.TreeMode() {
+		a.setTreeMode(true)
+	}
+	a.tasks.SetMark(c)
+	a.refreshTasksTable()
+	a.setFocus(focusTasks)
+}
+
+// withCreatorChains is ids plus every creator above each, up to a root, a
+// creator no longer listed, or one already seen. These are the rows the table
+// keeps past its 100-row cut, so a pinned task sits under its real creator
+// rather than as an orphan.
+func (a *App) withCreatorChains(ids []string) map[string]bool {
+	pins := map[string]bool{}
+	for _, id := range ids {
+		for !pins[id] {
+			t, ok := a.tasksByID[id]
+			if !ok {
+				break
+			}
+			pins[id] = true
+			if t.CreatorTaskId == (protocol.TaskID{}) {
+				break
+			}
+			id = FormatTaskID(t.CreatorTaskId)
+		}
+	}
+	return pins
+}
+
 // auditTasks is the whole listing, not the task table's 100 newest rows: a
 // long-lived task still holding spawn is the oldest one, which is the case the
 // audit exists for.
@@ -178,12 +242,12 @@ func (a *App) onBoard(msg tea.KeyMsg) (tea.Cmd, bool) {
 // last snapshot instead of waiting for the next poll — a toggle that
 // visibly does nothing for five seconds reads as broken.
 func (a *App) onTree(msg tea.KeyMsg) (tea.Cmd, bool) {
-	on := a.tasks.SetTree(!a.tasks.TreeMode())
-	// Same geometry the layout pass uses; the column set changed, so
-	// the widths have to be refitted before the rows are rebuilt.
-	half := a.width / 2
-	a.tasks.SetSize(a.width-half-2, 10)
-	a.tasks.SetRows(a.tasks.Rows(), a.runnersSnapshot)
+	// The toggle also ends what the caps audit set up in the tree.
+	a.auditPins = nil
+	a.tasks.SetMark(0)
+	on := !a.tasks.TreeMode()
+	a.setTreeMode(on)
+	a.refreshTasksTable()
 	mode := "flat"
 	if on {
 		mode = "creator tree"

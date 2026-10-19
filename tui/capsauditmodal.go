@@ -152,6 +152,15 @@ func (m *CapsAuditModal) Enter() (taskID string, ok bool) {
 	return "", false
 }
 
+// SelectedCap is the capability of the line under the cursor, a bit line or
+// one of its holders alike.
+func (m *CapsAuditModal) SelectedCap() (protocol.Capability, bool) {
+	if m.cursor >= len(m.lines) {
+		return 0, false
+	}
+	return m.lines[m.cursor].cap, true
+}
+
 func (m *CapsAuditModal) ToggleEnded() { m.includeEnded = !m.includeEnded; m.rebuild() }
 func (m *CapsAuditModal) ToggleEmpty() { m.includeEmpty = !m.includeEmpty; m.rebuild() }
 
@@ -165,7 +174,7 @@ func (m CapsAuditModal) View() string {
 	inner := m.width - 4 // border + padding
 	clip := lipgloss.NewStyle().MaxWidth(inner)
 	header := clip.Render(HeaderStyle.Render("capabilities — who holds them (" + which + ")"))
-	footer := clip.Render(FooterStyle.Render("enter: expand / re-grant holder · a: ended tasks · e: unheld bits · Esc: close"))
+	footer := clip.Render(FooterStyle.Render("enter: expand / show in tree · t: mark bit in tree · a: ended tasks · e: unheld bits · Esc: close"))
 	box := PanelStyleFocused.Padding(0, 1).Width(m.width - 2)
 	if len(m.lines) == 0 {
 		return box.Render(header + "\n" + "no task holds a capability (a: include ended tasks)" + "\n" + footer)

@@ -67,17 +67,6 @@ func TestCapsAuditModalExpandsBit(t *testing.T) {
 	}
 }
 
-func TestCapsAuditModalHolderOpensRegrant(t *testing.T) {
-	a, want := auditApp(t)
-	a = press(t, a, runes("i"), enter, down, enter)
-	if a.capsAuditModal.IsOpen() {
-		t.Fatal("the modal stayed open after choosing a holder")
-	}
-	if !a.authorityPicker.IsOpen() || a.authorityPicker.Mode() != PickerModeRegrant || a.authorityPicker.TargetID() != want {
-		t.Fatalf("picker open=%v target=%q, want re-grant on %s", a.authorityPicker.IsOpen(), a.authorityPicker.TargetID(), want)
-	}
-}
-
 func TestCapsAuditModalToggles(t *testing.T) {
 	a, _ := auditApp(t)
 	a = press(t, a, runes("i"), runes("a"))
@@ -159,8 +148,8 @@ func TestCapsAuditModalCursorFollowsItsHolder(t *testing.T) {
 	setAuditTasks(a, sp)
 	a = press(t, a, enter)
 	want := hex.EncodeToString(second.Id[:])
-	if !a.authorityPicker.IsOpen() || a.authorityPicker.TargetID() != want {
-		t.Fatalf("enter re-granted %q, want %s (the holder the cursor was on)", a.authorityPicker.TargetID(), want)
+	if a.capsAuditModal.IsOpen() || a.tasks.SelectedID() != want {
+		t.Fatalf("enter showed %q, want %s (the holder the cursor was on)", a.tasks.SelectedID(), want)
 	}
 }
 
@@ -185,8 +174,8 @@ func TestCapsAuditModalCursorOnAGoneHolder(t *testing.T) {
 	sp.Status = protocol.TaskStatus_Succeeded
 	setAuditTasks(a, sp)
 	a = press(t, a, enter)
-	if a.authorityPicker.IsOpen() {
-		t.Fatalf("enter opened re-grant on %s after the cursor's holder ended", a.authorityPicker.TargetID())
+	if !a.capsAuditModal.IsOpen() {
+		t.Fatalf("enter jumped to %s after the cursor's holder ended", a.tasks.SelectedID())
 	}
 }
 
@@ -201,7 +190,135 @@ func TestCapsAuditModalCursorOnAFoldedBit(t *testing.T) {
 	cd.Status = protocol.TaskStatus_Succeeded
 	setAuditTasks(a, cd)
 	a = press(t, a, enter)
-	if a.authorityPicker.IsOpen() {
-		t.Fatalf("enter opened re-grant on %s after the cursor's bit folded away", a.authorityPicker.TargetID())
+	if !a.capsAuditModal.IsOpen() {
+		t.Fatalf("enter jumped to %s after the cursor's bit folded away", a.tasks.SelectedID())
+	}
+}
+
+// D16/D20: enter on a holder shows it in the tree instead of opening re-grant.
+func TestCapsAuditEnterJumpsToTree(t *testing.T) {
+	a, want := auditApp(t)
+	a.setFocus(focusLogs)
+	a = press(t, a, runes("i"), enter, down, enter)
+	if a.capsAuditModal.IsOpen() || a.authorityPicker.IsOpen() {
+		t.Fatalf("modal open=%v picker open=%v; want both closed", a.capsAuditModal.IsOpen(), a.authorityPicker.IsOpen())
+	}
+	if !a.tasks.TreeMode() || a.tasks.SelectedID() != want || a.focus != focusTasks {
+		t.Fatalf("tree=%v selected=%q focus=%v; want tree order on %s with the tasks pane focused",
+			a.tasks.TreeMode(), a.tasks.SelectedID(), a.focus, want)
+	}
+}
+
+// oldTasks adds an old Notify holder created by an old parent, then 120 newer
+// ended tasks, so both old ones fall outside the table's 100 rows.
+func oldTasks(a *App, parentPresent bool) (holder, parent protocol.TaskID) {
+	holder.Id[0], parent.Id[0] = 0x01, 0x02
+	h := protocol.TaskInfo{Id: holder, CreatorTaskId: parent, Status: protocol.TaskStatus_Running, CreatedAt: 2, Capabilities: protocol.Capability_Notify}
+	setAuditTasks(a, h)
+	if parentPresent {
+		setAuditTasks(a, protocol.TaskInfo{Id: parent, Status: protocol.TaskStatus_Running, CreatedAt: 1})
+	}
+	for i := 0; i < 120; i++ {
+		var id protocol.TaskID
+		id.Id[0], id.Id[1] = 0x99, byte(i)
+		setAuditTasks(a, protocol.TaskInfo{Id: id, Status: protocol.TaskStatus_Succeeded, CreatedAt: uint64(1000 + i)})
+	}
+	return holder, parent
+}
+
+func idCell(a *App, id string) (string, bool) {
+	for i, r := range a.tasks.table.Rows() {
+		if a.tasks.rowIDs[i] == id {
+			return r[1], true
+		}
+	}
+	return "", false
+}
+
+func TestCapsAuditJumpReachesAnOldTask(t *testing.T) {
+	a, _ := auditApp(t)
+	holder, _ := oldTasks(a, true)
+	a.jumpToTask(FormatTaskID(holder))
+	if got := a.tasks.SelectedID(); got != FormatTaskID(holder) {
+		t.Fatalf("selected %q, want the old holder", got)
+	}
+	cell, _ := idCell(a, FormatTaskID(holder))
+	if strings.Contains(cell, "\u2020") || !strings.Contains(cell, "─") {
+		t.Fatalf("old holder's ID cell %q: want it under its creator, not an orphan", cell)
+	}
+}
+
+// Review Focus 2.
+func TestCapsAuditJumpChainStopsAtAMissingCreator(t *testing.T) {
+	a, _ := auditApp(t)
+	holder, _ := oldTasks(a, false)
+	a.jumpToTask(FormatTaskID(holder))
+	if got := a.tasks.SelectedID(); got != FormatTaskID(holder) {
+		t.Fatalf("selected %q, want the old holder", got)
+	}
+	if cell, _ := idCell(a, FormatTaskID(holder)); !strings.Contains(cell, "\u2020") {
+		t.Fatalf("ID cell %q: a holder whose creator is gone should show as an orphan", cell)
+	}
+}
+
+func markedCells(a *App) int {
+	n := 0
+	for _, r := range a.tasks.table.Rows() {
+		if strings.Contains(r[1], "◆") {
+			n++
+		}
+	}
+	return n
+}
+
+// D18-1: t on a bit marks exactly its holders, ended ones included (D22).
+func TestCapsAuditTMarksHolders(t *testing.T) {
+	a, _ := auditApp(t)
+	var ended protocol.TaskID
+	ended.Id[0] = 0xe0
+	setAuditTasks(a, protocol.TaskInfo{Id: ended, Status: protocol.TaskStatus_Failed, Capabilities: protocol.Capability_Spawn})
+	a = press(t, a, runes("i"), runes("t")) // cursor on spawn
+	if a.capsAuditModal.IsOpen() || !a.tasks.TreeMode() {
+		t.Fatalf("modal open=%v tree=%v after t", a.capsAuditModal.IsOpen(), a.tasks.TreeMode())
+	}
+	if title := a.tasks.table.Columns()[1].Title; !strings.Contains(title, "◆ spawn") {
+		t.Fatalf("ID column title %q does not name the mark", title)
+	}
+	if n := markedCells(a); n != 2 {
+		t.Fatalf("%d cells marked, want 2 (ab, and the ended e0)", n)
+	}
+	a = press(t, a, runes("T"))
+	if n := markedCells(a); n != 0 {
+		t.Fatalf("T left %d cells marked", n)
+	}
+}
+
+// Review Focus 3.
+func TestCapsAuditTOnAnUnheldBit(t *testing.T) {
+	a, _ := auditApp(t)
+	a = press(t, a, runes("i"), runes("e"))
+	for i := 0; i < 40 && !strings.HasPrefix(stripCursorLine(a), "notify"); i++ {
+		a = press(t, a, down)
+	}
+	a = press(t, a, runes("t"))
+	if title := a.tasks.table.Columns()[1].Title; !strings.Contains(title, "◆ notify") {
+		t.Fatalf("ID column title %q", title)
+	}
+	if n := markedCells(a); n != 0 {
+		t.Fatalf("%d cells marked for a bit nobody holds", n)
+	}
+}
+
+func stripCursorLine(a *App) string {
+	c, _ := a.capsAuditModal.SelectedCap()
+	return c.String()
+}
+
+func TestCapsAuditTMarksAnOldHolder(t *testing.T) {
+	a, _ := auditApp(t)
+	holder, _ := oldTasks(a, true)
+	a.markBit(protocol.Capability_Notify)
+	if cell, ok := idCell(a, FormatTaskID(holder)); !ok || !strings.Contains(cell, "◆") {
+		t.Fatalf("old notify holder: listed=%v cell=%q; want it pinned and marked", ok, cell)
 	}
 }

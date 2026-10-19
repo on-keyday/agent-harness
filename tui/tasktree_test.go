@@ -102,3 +102,32 @@ func TestTasksTree_IDCellCarriesTheGutter(t *testing.T) {
 		t.Errorf("tree view does not label its ID column:\n%s", view)
 	}
 }
+
+// D18-2: in tree order the ID cell ends with the task's tier mark; flat order
+// is unchanged.
+func TestTreeIDCellCarriesTierMark(t *testing.T) {
+	m := NewTasks()
+	task := tuiTask('a', 0, 10)
+	task.Capabilities = protocol.Capability_Spawn | protocol.Capability_Purge
+	m.SetSize(160, 20)
+	m.SetRows([]protocol.TaskInfo{task}, nil)
+	if cell := m.table.Rows()[0][1]; strings.Contains(cell, "強") {
+		t.Errorf("flat ID cell %q carries a tier mark", cell)
+	}
+	m.SetTree(true)
+	m.SetRows([]protocol.TaskInfo{task}, nil)
+	if cell := m.table.Rows()[0][1]; !strings.HasSuffix(cell, " 強2") {
+		t.Errorf("tree ID cell %q does not end with the tier mark 強2", cell)
+	}
+}
+
+// Review Focus 1: no granular bit, no mark and no trailing space.
+func TestTreeIDCellNoMarkForNoCaps(t *testing.T) {
+	m := NewTasks()
+	m.SetTree(true)
+	m.SetSize(160, 20)
+	m.SetRows([]protocol.TaskInfo{tuiTask('a', 0, 10)}, nil)
+	if cell := m.table.Rows()[0][1]; cell != "61000000" {
+		t.Errorf("tree ID cell = %q, want the bare id8", cell)
+	}
+}

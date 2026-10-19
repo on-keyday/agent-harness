@@ -103,6 +103,10 @@ type App struct {
 	idleWatchersModal IdleWatchersModal
 	// capsAuditModal lists, per capability, the tasks holding it; opened with `i`.
 	capsAuditModal CapsAuditModal
+	// auditPins are tasks the caps audit pointed the tree at (a jump target, or
+	// a marked bit's holders) and their creator chains, kept in the task table
+	// past its 100-row cut until the next jump, t, or T.
+	auditPins map[string]bool
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -1967,7 +1971,15 @@ func (a *App) refreshTasksTable() {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
 	if len(all) > 100 {
-		all = all[:100]
+		// The caps audit's pins survive the cut: an old task it pointed at is
+		// the case it exists for.
+		kept := all[:100:100]
+		for _, t := range all[100:] {
+			if a.auditPins[FormatTaskID(t.Id)] {
+				kept = append(kept, t)
+			}
+		}
+		all = kept
 	}
 	a.tasks.SetRows(all, a.runnersSnapshot)
 	if a.capsAuditModal.IsOpen() {

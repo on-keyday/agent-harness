@@ -896,8 +896,9 @@ func (a *App) inRawModal(msg tea.KeyMsg) tea.Cmd {
 	return rmcmd
 }
 
-// Caps audit: move, expand a capability, or hand a holder to the re-grant
-// picker (the `a` key's), closing the audit so the picker is what is seen.
+// Caps audit: move, expand a capability, or leave for the creator tree —
+// enter on a holder shows that task there, t marks a capability's holders.
+// Re-grant is then the task row's own `a`.
 func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
 	// A fast `jj` arrives as one KeyRunes message; take it a key at a time.
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
@@ -922,19 +923,13 @@ func (a *App) inCapsAuditModal(msg tea.KeyMsg) tea.Cmd {
 	case "e":
 		a.capsAuditModal.ToggleEmpty()
 	case "enter":
-		id, ok := a.capsAuditModal.Enter()
-		if !ok {
-			return nil
+		if id, ok := a.capsAuditModal.Enter(); ok {
+			a.jumpToTask(id)
 		}
-		t, ok := a.tasksByID[id]
-		if !ok {
-			// The modal's own listing is this map, so a holder can only be
-			// missing here between a snapshot and the rebuild it triggers.
-			return nil
+	case "t":
+		if c, ok := a.capsAuditModal.SelectedCap(); ok {
+			a.markBit(c)
 		}
-		a.capsAuditModal.Close()
-		a.authorityPicker.SetSize(a.width, a.height)
-		a.authorityPicker.OpenRegrant(t, a.tasks.Rows())
 	}
 	return nil
 }
