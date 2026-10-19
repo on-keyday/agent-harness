@@ -32,11 +32,11 @@ func TestTaskLine_ProgressAndTitle(t *testing.T) {
 	if strings.Contains(bare, "progress=") || strings.Contains(bare, "title=") {
 		t.Errorf("never-written progress / no terminal must print neither column: %s", bare)
 	}
-	// A cleared line says nothing to a reader: the row shows no column, as
-	// for a line never written. progress_at stays in --json for scripts.
+	// A cleared line still shows, with its age: the quotes are what tell it
+	// apart from a task that literally wrote "(cleared)".
 	cleared := taskLine(progressRow("", 5, 3000, false, ""), nil)
-	if strings.Contains(cleared, "progress=") {
-		t.Errorf("a cleared line must print no progress column: %s", cleared)
+	if !strings.Contains(cleared, `progress="" (3s ago)`) {
+		t.Errorf("a cleared line prints as progress=\"\" with its age: %s", cleared)
 	}
 }
 

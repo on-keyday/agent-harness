@@ -151,11 +151,11 @@ func TestProgressClearKey(t *testing.T) {
 	}
 }
 
-// A cleared line is not shown in the detail popup either; the stamp is still
-// on the wire for --since.
-func TestTaskDetail_ClearedLineNotShown(t *testing.T) {
+// A cleared line shows in the detail popup as an empty quoted line with its
+// age — the quotes keep it apart from a task that wrote "(cleared)".
+func TestTaskDetail_ClearedLineShownQuoted(t *testing.T) {
 	d := formatTaskDetail(progressTask(protocol.TaskKind_Interactive, "", 9, false, ""), nil)
-	if strings.Contains(d, "progress:") {
-		t.Errorf("detail shows a cleared line:\n%s", d)
+	if !strings.Contains(d, `progress:      "" (12m ago)`) {
+		t.Errorf("detail lacks the cleared line:\n%s", d)
 	}
 }

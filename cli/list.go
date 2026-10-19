@@ -50,12 +50,12 @@ func AgeStr(ageMs uint64) string {
 }
 
 // ProgressStr is the task's self-reported line with its age, as
-// `progress="…" (12m ago)`, or "" when there is no line to read: never
-// written, or cleared — "(cleared) 1m ago" told a reader nothing. Scripts
-// still get progress_at from --json, which is what --since needs. Shared by
-// the CLI `ls` row and the TUI.
+// `progress="…" (12m ago)`, or "" when the task has never written one. A
+// cleared line prints as `progress="" (…)`: the quotes are what tell it apart
+// from a task that literally wrote "(cleared)". Shared by the CLI `ls` row and
+// the TUI.
 func ProgressStr(t *protocol.TaskInfo) string {
-	if t.ProgressAt == 0 || len(t.Progress) == 0 {
+	if t.ProgressAt == 0 {
 		return ""
 	}
 	return fmt.Sprintf("progress=%q (%s)", string(t.Progress), AgeStr(t.ProgressAgeMs))

@@ -5406,8 +5406,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         nowEl.className = "task-now";
         if (now.progress !== null) {
           const p = document.createElement("span");
-          p.className = "task-progress";
-          p.textContent = now.progress;
+          // The cleared marker is a class, not the task's text: gray, and
+          // distinct from any line a task could write.
+          p.className = now.cleared ? "task-progress-cleared" : "task-progress";
+          p.textContent = now.cleared ? "(cleared)" : now.progress;
           const a = document.createElement("span");
           a.className = "task-progress-age";
           a.textContent = ` ${now.age}`;
@@ -7386,11 +7388,13 @@ function renderAgentSelect(sel, profiles) {
 
 // taskNowModel is the "now" line under a task row: the task's self-reported
 // progress with its server-computed age, and its window title. null means
-// "not shown". Progress shows only when there is a line to read — never
-// written ("0" stamp) and cleared (empty text) both show nothing, as in the
-// CLI and the TUI; the title shows on a live terminal. Ages mirror cli.AgeStr.
+// "not shown". A line never written ("0" stamp) shows nothing; a cleared one
+// (empty text with a stamp) is cleared: true, which the row draws as a gray
+// "(cleared)" MARKER — a styled element, never text — so it cannot be
+// mistaken for a task that wrote "(cleared)" itself. The title shows on a
+// live terminal. Ages mirror cli.AgeStr.
 function taskNowModel(t) {
-  const written = t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "" && !!t.progress;
+  const written = t.progressAt !== undefined && t.progressAt !== "0" && t.progressAt !== "";
   let age = null;
   if (written) {
     const ms = t.progressAgeMs || 0;
@@ -7400,6 +7404,7 @@ function taskNowModel(t) {
   }
   return {
     progress: written ? (t.progress || "") : null,
+    cleared: written && !t.progress,
     age,
     title: t.liveTerminal ? (t.title || "") : null,
   };

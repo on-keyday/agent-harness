@@ -321,6 +321,7 @@ button:hover { background: #555; }
 .task-row-meta { font-size:0.75rem; color:#888; margin-top:0.15rem; }
 .task-now { font-size:0.8rem; margin-top:0.15rem; display:flex; flex-wrap:wrap; gap:0 0.8rem; overflow-wrap:anywhere; }
 .task-progress { color:#ddd; }
+.task-progress-cleared { color:#777; font-style:italic; }
 .task-progress-age { color:#888; }
 .task-title { color:#888; font-style:italic; }
 .task-err { color:#f14c4c; }
