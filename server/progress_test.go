@@ -232,3 +232,27 @@ func TestProgressSet_PublishesTaskProgress(t *testing.T) {
 		t.Fatalf("OnTaskProgress calls = %v, want exactly [%s]", got, f.tHex)
 	}
 }
+
+// A stamp is what await-progress's baseline compares against (D17), so it may
+// never move backwards, even when two writes from one task race and the later
+// clock reading reaches the store first.
+func TestSetProgress_StampNeverGoesBackwards(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	if snap, _ := s.SetProgress(id, "b", 100); snap.ProgressAt != 100 {
+		t.Fatalf("first stamp = %d, want 100", snap.ProgressAt)
+	}
+	snap, _ := s.SetProgress(id, "a", 50) // an earlier reading, applied later
+	if snap.ProgressAt != 101 || snap.Progress != "a" {
+		t.Fatalf("late write = %q@%d, want a@101", snap.Progress, snap.ProgressAt)
+	}
+}
+
+// A stored stamp from a server clock that has since stepped backwards (a
+// board without an RTC booting before NTP) must not read as an enormous age.
+func TestProgressAgeMs_FutureStampIsZero(t *testing.T) {
+	if got := progressAgeMs(time.Now().Add(time.Hour).UnixNano()); got != 0 {
+		t.Fatalf("age of a future stamp = %d, want 0", got)
+	}
+}

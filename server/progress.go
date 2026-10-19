@@ -64,24 +64,30 @@ func (h *TaskHandler) handleProgressSet(conn ConnHandle, req *protocol.TaskContr
 		return
 	}
 	taskHex := hex.EncodeToString(pid.Id[:])
-	at := time.Now().UnixNano()
-	if _, ok := h.Tasks.SetProgress(taskHex, text, at); !ok {
+	snap, ok := h.Tasks.SetProgress(taskHex, text, time.Now().UnixNano())
+	if !ok {
 		respond(protocol.ProgressSetStatus_NotFound, 0)
 		return
 	}
 	if h.OnTaskProgress != nil {
 		h.OnTaskProgress(taskHex)
 	}
-	h.fireProgressWatchers(taskHex, protocol.AwaitProgressStatus_Fired, text, at)
-	respond(protocol.ProgressSetStatus_Ok, at)
+	h.fireProgressWatchers(taskHex, protocol.AwaitProgressStatus_Fired, text, snap.ProgressAt)
+	respond(protocol.ProgressSetStatus_Ok, snap.ProgressAt)
 }
 
 // progressAgeMs is now - progressAt on the server clock, as output_idle_ms is,
 // so a client on another host never subtracts across clocks. 0 when never
 // written, which the wire documents as meaningless beside progress_at == 0.
+// Also 0 for a stamp in the server's future: the stamp is stored and replayed,
+// so a clock that has stepped back since (a board with no RTC booting before
+// NTP) would otherwise wrap the unsigned age to ~1.8e19.
 func progressAgeMs(progressAt int64) uint64 {
 	if progressAt <= 0 {
 		return 0
 	}
-	return uint64(time.Since(time.Unix(0, progressAt)) / time.Millisecond)
+	if d := time.Since(time.Unix(0, progressAt)); d > 0 {
+		return uint64(d / time.Millisecond)
+	}
+	return 0
 }

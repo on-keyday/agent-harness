@@ -279,20 +279,26 @@ func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, 
 // writeCapsChangedLocked's is, so replay never pairs one write's text with
 // another's stamp. Any status is accepted: a line written just before the task
 // ended is the one worth keeping.
+//
+// The stamp only ever increases: two writes from one task can race, and the
+// later clock reading may reach the lock first, while await-progress's
+// baseline (since_progress_at) relies on "newer" meaning "written later". The
+// WAL record is written under the same lock so the file's order is the
+// memory's order. The returned entry carries the stamp actually stored.
 func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, ok := s.tasks[id]
 	if !ok {
-		s.mu.Unlock()
 		return TaskEntry{}, false
+	}
+	if at <= t.ProgressAt {
+		at = t.ProgressAt + 1
 	}
 	t.Progress = text
 	t.ProgressAt = at
-	snap := *t
-	wal := s.wal
-	s.mu.Unlock()
-	if wal != nil {
-		if err := wal.Write(WALEvent{
+	if s.wal != nil {
+		if err := s.wal.Write(WALEvent{
 			Type: "task_progress", TaskID: id,
 			Progress: text, ProgressAt: at,
 			Ts: time.Now().UnixNano(),
@@ -300,7 +306,7 @@ func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
 			slog.Error("WAL write failed", "op", "task_progress", "task_id", id, "err", err)
 		}
 	}
-	return snap, true
+	return *t, true
 }
 
 // SetCaps rewrites a live task's authority: the capability bitmask, the scope,
