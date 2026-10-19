@@ -166,3 +166,54 @@ func TestPubSub_SlowSubscriberDoesNotStallOtherTopics(t *testing.T) {
 		t.Error("fast subscriber received nothing")
 	}
 }
+
+// PublishSelect hands each subscriber the payload pick chooses for its
+// connection (nil = skip) and the taps the full message exactly once, so a
+// publisher with two audiences (a full row and a redacted one) does not show
+// up twice in a tap.
+func TestPublishSelect_PerSubscriberPayloadTapsGetFullOnce(t *testing.T) {
+	ps := NewPubSub(slog.Default())
+	join := func(id objproto.ConnectionID) *recordingStream {
+		rs := &recordingStream{got: make(chan []byte, 4)}
+		sub := NewSubscriber(id, nil)
+		sub.topics["t"] = &topicJoinInfo{name: "nick", conn: rs}
+		ps.m.Lock()
+		if _, ok := ps.topics["t"]; !ok {
+			ps.topics["t"] = &SubscriberList{}
+		}
+		ps.topics["t"].AddSubscriber(sub)
+		ps.m.Unlock()
+		return rs
+	}
+	full := objproto.MustParseConnectionID("ws:127.0.0.1:9801-1")
+	red := objproto.MustParseConnectionID("ws:127.0.0.1:9802-1")
+	none := objproto.MustParseConnectionID("ws:127.0.0.1:9803-1")
+	gotFull, gotRed, gotNone := join(full), join(red), join(none)
+	var taps [][]byte
+	ps.TapSubscribe("t", func(_ string, msg []byte) { taps = append(taps, msg) })
+
+	ps.PublishSelect("server", "t", []byte("FULL"), func(id objproto.ConnectionID) []byte {
+		switch id {
+		case full:
+			return []byte("FULL")
+		case red:
+			return []byte("RED")
+		}
+		return nil
+	})
+
+	if m := <-gotFull.got; string(m) != "FULL" {
+		t.Errorf("full subscriber got %q", m)
+	}
+	if m := <-gotRed.got; string(m) != "RED" {
+		t.Errorf("redacted subscriber got %q", m)
+	}
+	select {
+	case m := <-gotNone.got:
+		t.Errorf("skipped subscriber got %q", m)
+	default:
+	}
+	if len(taps) != 1 || string(taps[0]) != "FULL" {
+		t.Errorf("taps = %q, want exactly one FULL", taps)
+	}
+}

@@ -458,8 +458,32 @@ func New(cfg Config) *Server {
 			copy(ev.TaskId.Id[:], raw)
 		}
 		payload := ev.MustAppend(nil)
-		s.pubsub.Publish("server", topics.TasksStatus(), payload)
-		s.pubsub.Publish("server", topics.TaskStatus(taskID), payload)
+		// task_pruned goes to everyone: it carries only the id and kind, and
+		// the visibility filter cannot be evaluated once the entry is gone
+		// (OnPrune runs after removal), so filtering it would leave stale rows
+		// in confined clients.
+		if kind == protocol.StatusEventKind_TaskPruned {
+			s.pubsub.Publish("server", topics.TasksStatus(), payload)
+			s.pubsub.Publish("server", topics.TaskStatus(taskID), payload)
+			return
+		}
+		// Every other event reaches whom `ls` would show the task to, and the
+		// parent hop gets the redacted row `ls` gives it — one predicate for
+		// the snapshot and the stream, as conns/forwards/execs already have.
+		red := ev
+		redactTaskStatusEvent(&red)
+		redPayload := red.MustAppend(nil)
+		pick := func(subCID objproto.ConnectionID) []byte {
+			switch s.taskHandler.taskEventAudience(subCID.String(), taskID) {
+			case audienceFull:
+				return payload
+			case audienceParentHop:
+				return redPayload
+			}
+			return nil
+		}
+		s.pubsub.PublishSelect("server", topics.TasksStatus(), payload, pick)
+		s.pubsub.PublishSelect("server", topics.TaskStatus(taskID), payload, pick)
 	}
 
 	// Busy/idle edges from live detachable sessions (SessionMux activity

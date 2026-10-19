@@ -267,6 +267,25 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 // load-bearing, TaskLog, has a single publisher goroutine (the per-stream
 // reader in Subscribe), so it is ordered by construction.
 func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, allow func(objproto.ConnectionID) bool) {
+	if allow == nil {
+		ps.PublishSelect(nickName, topic, msg, nil)
+		return
+	}
+	ps.PublishSelect(nickName, topic, msg, func(id objproto.ConnectionID) []byte {
+		if allow(id) {
+			return msg
+		}
+		return nil
+	})
+}
+
+// PublishSelect is PublishFiltered for a publisher whose subscribers do not all
+// get the same bytes: pick returns the payload for one subscriber's connection,
+// nil to skip it, and a nil pick sends msg to everyone. Taps receive msg — the
+// full message — exactly once, however many payload variants went out, so a
+// publisher with two audiences does not appear twice to a tap. The lock
+// discipline is PublishFiltered's: pick runs after the snapshot, unlocked.
+func (ps *PubSub) PublishSelect(nickName string, topic string, msg []byte, pick func(objproto.ConnectionID) []byte) {
 	ps.m.Lock()
 	type pending struct {
 		conn trsf.BidirectionalStream
@@ -288,8 +307,12 @@ func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, all
 	}
 	ps.m.Unlock()
 	for _, p := range toSend {
-		if allow == nil || allow(p.id) {
-			WriteFrame(p.conn, msg) //nolint:errcheck
+		out := msg
+		if pick != nil {
+			out = pick(p.id)
+		}
+		if out != nil {
+			WriteFrame(p.conn, out) //nolint:errcheck
 		}
 	}
 	for _, t := range tapsCopy {
