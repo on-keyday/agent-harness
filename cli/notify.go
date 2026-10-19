@@ -32,33 +32,13 @@ func parseNotifyLevel(s string) (protocol.NotifyLevel, error) {
 	}
 }
 
-// newNotifyRequestFromEnv builds a NotifyRequest, deriving origin from the
-// HARNESS_* env set by the runner inside a worker. HARNESS_TASK_ID present →
-// origin=worker with the WorkerInfo block; absent → origin=external.
-func newNotifyRequestFromEnv(level protocol.NotifyLevel, title, text string) *protocol.NotifyRequest {
+// newNotifyRequest builds a NotifyRequest. It carries no sender identity: the
+// server derives origin and the worker block from the connection's principal,
+// so nothing here reads HARNESS_TASK_ID.
+func newNotifyRequest(level protocol.NotifyLevel, title, text string) *protocol.NotifyRequest {
 	nr := &protocol.NotifyRequest{Level: level}
-	if taskID := os.Getenv("HARNESS_TASK_ID"); taskID != "" {
-		nr.Origin = protocol.NotifyOrigin_Worker
-		runnerID := os.Getenv("HARNESS_RUNNER_ID")
-		repo := os.Getenv("HARNESS_REPO_PATH")
-		host := os.Getenv("HARNESS_HOSTNAME")
-		nr.SetWorker(protocol.WorkerInfo{
-			TaskIdLen:   uint16(len(taskID)),
-			TaskId:      []byte(taskID),
-			RunnerIdLen: uint16(len(runnerID)),
-			RunnerId:    []byte(runnerID),
-			RepoLen:     uint16(len(repo)),
-			Repo:        []byte(repo),
-			HostnameLen: uint16(len(host)),
-			Hostname:    []byte(host),
-		})
-	} else {
-		nr.Origin = protocol.NotifyOrigin_External
-	}
-	nr.TitleLen = uint16(len(title))
-	nr.Title = []byte(title)
-	nr.TextLen = uint16(len(text))
-	nr.Text = []byte(text)
+	nr.SetTitle([]byte(title))
+	nr.SetText([]byte(text))
 	return nr
 }
 
@@ -115,7 +95,7 @@ func (c *Client) Notify(ctx context.Context, level, title, text string) error {
 	if err != nil {
 		return err
 	}
-	nr := newNotifyRequestFromEnv(lvl, title, text)
+	nr := newNotifyRequest(lvl, title, text)
 	mtuGuardNotify(nr)
 
 	tcr := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify}

@@ -68,7 +68,7 @@ func TestHandleAwaitIdle_BoardArmCarriesIdAndFireDeregisters(t *testing.T) {
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("output")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
-	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Board}
+	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 	req.SetTopic([]byte("chat.deadbeef"))
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if resp.Status != protocol.AwaitIdleStatus_Armed || resp.WatcherId == 0 {
@@ -89,7 +89,7 @@ func agentboardForTest(t *testing.T) *agentboard.Board {
 // firing.
 func armBoardWatcher(h *TaskHandler, taskHex string, requester protocol.TaskID, cid string) uint64 {
 	return h.idleWatchers().add(&idleWatcher{
-		taskIDHex: taskHex, sink: protocol.AwaitIdleSink_Board, topic: "chat.x",
+		taskIDHex: taskHex, sink: protocol.AwaitSink_Board, topic: "chat.x",
 		requester: requester, clientCID: cid, stop: make(chan struct{}),
 	})
 }
@@ -158,9 +158,9 @@ func TestIdleWatchers_AgentLosesSightWhenScopeNarrows(t *testing.T) {
 func TestDropIdleWatchersForConn_ReplyOnly(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Sessions: NewSessionRegistry()}
 	cid := "ws:127.0.0.1:9601-1"
-	reply := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitIdleSink_Reply, clientCID: cid, stop: make(chan struct{})})
+	reply := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitSink_Reply, clientCID: cid, stop: make(chan struct{})})
 	board := armBoardWatcher(h, "aa", protocol.TaskID{}, cid)
-	other := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitIdleSink_Reply, clientCID: "ws:127.0.0.1:9601-2", stop: make(chan struct{})})
+	other := h.idleWatchers().add(&idleWatcher{taskIDHex: "aa", sink: protocol.AwaitSink_Reply, clientCID: "ws:127.0.0.1:9601-2", stop: make(chan struct{})})
 
 	h.DropIdleWatchersForConn(cid)
 
@@ -190,7 +190,7 @@ func TestHandleAwaitIdle_ReplyKilledAnswersCancelled(t *testing.T) {
 
 	// No output: the watcher waits indefinitely until killed.
 	tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
-	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Reply})
+	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(conn, tcr.MustAppend(nil))
 	waitFor(t, func() bool { return len(h.idleWatchers().list("")) == 1 })
 	id := h.idleWatchers().list("")[0].id
@@ -226,7 +226,7 @@ func TestHandleAwaitIdle_BoardKilledPublishesNothing(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Sessions: reg, Board: board}
 	conn := &fakeConn{}
 
-	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Board}
+	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 	req.SetTopic([]byte("chat.deadbeef"))
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if r := h.handleAwaitIdleKill("", &protocol.AwaitIdleKillRequest{WatcherId: resp.WatcherId}); r.Status != protocol.AwaitIdleKillStatus_Ok {
@@ -256,7 +256,7 @@ func TestIdleWatcher_FireKillRaceHasOneWinner(t *testing.T) {
 		waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
 		tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
-		tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 1, Sink: protocol.AwaitIdleSink_Reply})
+		tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 1, Sink: protocol.AwaitSink_Reply})
 		h.Handle(conn, tcr.MustAppend(nil))
 		// id is 1: a fresh handler per iteration.
 		kr := h.handleAwaitIdleKill("", &protocol.AwaitIdleKillRequest{WatcherId: 1})

@@ -71,8 +71,8 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 
 	topic := string(ai.Topic)
 	switch ai.Sink {
-	case protocol.AwaitIdleSink_Reply:
-	case protocol.AwaitIdleSink_Notify:
+	case protocol.AwaitSink_Reply:
+	case protocol.AwaitSink_Notify:
 		// The notify sink reaches the operator-notification egress
 		// (notify-hook → e.g. the operator's phone), which the Notify RPC
 		// gates behind Capability_Notify. Require the SAME cap here — this is
@@ -87,7 +87,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_Notify)
 			return
 		}
-	case protocol.AwaitIdleSink_Board:
+	case protocol.AwaitSink_Board:
 		if topic == "" || h.Board == nil {
 			respond(protocol.AwaitIdleStatus_BadRequest, 0, 0)
 			return
@@ -137,7 +137,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// Set before add publishes w: a kill from another connection may read it
 	// the moment the entry is in the registry. w.id is read at call time,
 	// which is after add assigned it.
-	if ai.Sink == protocol.AwaitIdleSink_Reply {
+	if ai.Sink == protocol.AwaitSink_Reply {
 		w.onCancel = func() { respond(protocol.AwaitIdleStatus_Cancelled, mux.LastOutputUnixNano(), w.id) }
 	}
 	// Registered BEFORE arming: an already-idle session fires on the first
@@ -146,7 +146,7 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 
 	var deliver func(stopped bool, lo int64)
 	switch ai.Sink {
-	case protocol.AwaitIdleSink_Reply:
+	case protocol.AwaitSink_Reply:
 		deliver = func(stopped bool, lo int64) {
 			st := protocol.AwaitIdleStatus_Fired
 			if stopped {
@@ -154,12 +154,12 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 			}
 			respond(st, lo, id)
 		}
-	case protocol.AwaitIdleSink_Notify:
+	case protocol.AwaitSink_Notify:
 		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
 		deliver = func(stopped bool, lo int64) {
 			h.fireIdleNotify(taskIDHex, requesterConnID, stopped, lo)
 		}
-	case protocol.AwaitIdleSink_Board:
+	case protocol.AwaitSink_Board:
 		respond(protocol.AwaitIdleStatus_Armed, mux.LastOutputUnixNano(), id)
 		deliver = func(stopped bool, lo int64) {
 			h.fireIdleBoard(topic, taskIDHex, requester, stopped, lo)

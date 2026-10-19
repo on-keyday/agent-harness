@@ -620,25 +620,25 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
-	case protocol.TaskControlKind_AwaitIdleList:
+	case protocol.TaskControlKind_AwaitList:
 		// No capability: bounded inside the handler by idleWatcherVisibleTo.
-		al := req.AwaitIdleList()
+		al := req.AwaitList()
 		if al == nil {
 			slog.Error("TaskHandler: AwaitIdleList variant is nil")
 			return
 		}
 		h.handleAwaitIdleList(conn, req.RequestId, cid, al.TaskId)
 
-	case protocol.TaskControlKind_AwaitIdleKill:
+	case protocol.TaskControlKind_AwaitKill:
 		// No capability, and gated inline for exec_run_kill's reason: the
 		// target is only known after the registry lookup.
-		ak := req.AwaitIdleKill()
+		ak := req.AwaitKill()
 		if ak == nil {
 			slog.Error("TaskHandler: AwaitIdleKill variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdleKill, RequestId: req.RequestId}
-		resp.SetAwaitIdleKill(h.handleAwaitIdleKill(cid, ak))
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitKill, RequestId: req.RequestId}
+		resp.SetAwaitKill(h.handleAwaitIdleKill(cid, ak))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
@@ -2430,6 +2430,37 @@ func redactParentTaskInfo(info *protocol.TaskInfo) {
 	info.AssignedTo = protocol.RunnerID{}
 }
 
+// notifyWorkerInfo is the sender identity of a notify, derived from what the
+// server already knows about the connection rather than from the request:
+// the principal names the task, the board identity (validated against the
+// auth ticket) names the runner, the registry entry of the task's assigned
+// runner supplies the hostname from that runner's own hello, and the store
+// supplies the repo. The agent hello's hostname is NOT used — the client fills
+// it from HARNESS_HOSTNAME and nothing checks it. false for a connection with
+// no principal (an operator), whose notify is external.
+func (h *TaskHandler) notifyWorkerInfo(conn ConnHandle) (protocol.WorkerInfo, bool) {
+	pid := h.lookupPrincipal(conn.ConnectionID().String())
+	if pid.Id == ([16]byte{}) {
+		return protocol.WorkerInfo{}, false
+	}
+	taskHex := hex.EncodeToString(pid.Id[:])
+	var w protocol.WorkerInfo
+	w.SetTaskId([]byte(taskHex))
+	if st := h.boardState(conn); st != nil {
+		rid, _, _, _ := st.Identity()
+		w.SetRunnerId([]byte(rid.Hex()))
+	}
+	if t, ok := h.Tasks.Get(taskHex); ok {
+		w.SetRepo([]byte(t.RepoPath))
+		if h.Registry != nil {
+			if e, ok := h.Registry.GetByIdentity(t.AssignedTo); ok {
+				w.SetHostname([]byte(e.Hostname))
+			}
+		}
+	}
+	return w, true
+}
+
 // handleNotify runs both legs of a notify request: the live leg (OnNotify →
 // ring + topic) and the egress leg (NotifyHook exec), then replies with the
 // resulting NotifyStatus. accepted = hook launched; no_hook = egress disabled
@@ -2448,14 +2479,16 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 		Ts:         uint64(ts),
 		ClientKind: ck,
 		Level:      nr.Level,
-		Origin:     nr.Origin,
+		Origin:     protocol.NotifyOrigin_External,
 		TitleLen:   nr.TitleLen,
 		Title:      nr.Title,
 		TextLen:    nr.TextLen,
 		Text:       nr.Text,
 	}
-	if w := nr.Worker(); w != nil {
-		ev.SetWorker(*w)
+	w, isWorker := h.notifyWorkerInfo(conn)
+	if isWorker {
+		ev.Origin = protocol.NotifyOrigin_Worker
+		ev.SetWorker(w)
 	}
 
 	if h.OnNotify != nil {
@@ -2464,13 +2497,13 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 
 	payload := notifyHookPayload{
 		Level:  nr.Level.String(),
-		Origin: nr.Origin.String(),
+		Origin: ev.Origin.String(),
 		Title:  string(nr.Title),
 		Text:   string(nr.Text),
 		ConnID: cid,
 		Ts:     ts,
 	}
-	if w := nr.Worker(); w != nil {
+	if isWorker {
 		payload.TaskID = string(w.TaskId)
 		payload.RunnerID = string(w.RunnerId)
 		payload.Repo = string(w.Repo)

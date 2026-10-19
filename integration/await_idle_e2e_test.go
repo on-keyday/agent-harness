@@ -144,7 +144,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 
 	// --- Layer 2: await-idle long-poll fires -------------------------------
 	start := time.Now()
-	resp, err := c.AwaitIdle(ctx, taskIDHex, 1000, protocol.AwaitIdleSink_Reply, "")
+	resp, err := c.AwaitIdle(ctx, taskIDHex, 1000, protocol.AwaitSink_Reply, "")
 	if err != nil {
 		t.Fatalf("AwaitIdle: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 	t.Logf("Layer2: await-idle fired after %v", time.Since(start))
 
 	// Unknown task id → not_found (no live mux).
-	respNF, err := c.AwaitIdle(ctx, "ffffffffffffffffffffffffffffffff", 0, protocol.AwaitIdleSink_Reply, "")
+	respNF, err := c.AwaitIdle(ctx, "ffffffffffffffffffffffffffffffff", 0, protocol.AwaitSink_Reply, "")
 	if err != nil {
 		t.Fatalf("AwaitIdle(unknown): %v", err)
 	}

@@ -225,7 +225,7 @@ func TestAwaitIdleBoardSinkObeysTheRequestersReach(t *testing.T) {
 
 	arm := func(topic string) protocol.TaskControlResponse {
 		t.Helper()
-		req := protocol.AwaitIdleRequest{TaskId: me, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Board}
+		req := protocol.AwaitIdleRequest{TaskId: me, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 		req.SetTopic([]byte(topic))
 		tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
 		tcr.SetAwaitIdle(req)

@@ -21,7 +21,7 @@ import (
 type idleWatcher struct {
 	id        uint64
 	taskIDHex string
-	sink      protocol.AwaitIdleSink
+	sink      protocol.AwaitSink
 	topic     string
 	threshold time.Duration
 	armedAt   time.Time
@@ -160,8 +160,8 @@ func idleWatcherInfo(w *idleWatcher) protocol.AwaitIdleWatcherInfo {
 // it until EOF.
 func (h *TaskHandler) handleAwaitIdleList(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID) {
 	respond := func(streamID uint64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitIdleList, RequestId: requestID}
-		resp.SetAwaitIdleList(protocol.AwaitIdleListResponse{StreamId: streamID})
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AwaitList, RequestId: requestID}
+		resp.SetAwaitList(protocol.AwaitIdleListResponse{StreamId: streamID})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
@@ -219,7 +219,7 @@ func (h *TaskHandler) handleAwaitIdleKill(connID string, req *protocol.AwaitIdle
 // DropExecRunsForConn in handleConnection's teardown.
 func (h *TaskHandler) DropIdleWatchersForConn(connID string) {
 	for _, w := range h.idleWatchers().list("") {
-		if w.clientCID != connID || w.sink != protocol.AwaitIdleSink_Reply {
+		if w.clientCID != connID || w.sink != protocol.AwaitSink_Reply {
 			continue
 		}
 		if _, still := h.idleWatchers().remove(w.id); !still {

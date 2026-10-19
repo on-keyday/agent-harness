@@ -20,7 +20,7 @@ import (
 // return immediately with Status_Armed and the server delivers the fire
 // out-of-band. Method form: long-lived consumers (TUI/WebUI) call this on
 // their held client.
-func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs uint32, sink protocol.AwaitIdleSink, topic string) (*protocol.AwaitIdleResponse, error) {
+func (c *Client) AwaitIdle(ctx context.Context, taskIDHex string, thresholdMs uint32, sink protocol.AwaitSink, topic string) (*protocol.AwaitIdleResponse, error) {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid task id %q: %w", taskIDHex, err)
@@ -56,13 +56,13 @@ func (c *Client) AwaitIdleListWith(ctx context.Context, taskFilter string) ([]pr
 		}
 		q.TaskId = tid
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdleList}
-	req.SetAwaitIdleList(q)
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitList}
+	req.SetAwaitList(q)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	lr := resp.AwaitIdleList()
+	lr := resp.AwaitList()
 	if lr == nil {
 		return nil, fmt.Errorf("await-idle ls: expected AwaitIdleList response, got kind=%v", resp.Kind)
 	}
@@ -106,13 +106,13 @@ func AwaitIdleList(ctx context.Context, peerCID objproto.ConnectionID, taskFilte
 
 // AwaitIdleKillWith disarms one watcher by id.
 func (c *Client) AwaitIdleKillWith(ctx context.Context, id uint64) error {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdleKill}
-	req.SetAwaitIdleKill(protocol.AwaitIdleKillRequest{WatcherId: id})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitKill}
+	req.SetAwaitKill(protocol.AwaitIdleKillRequest{WatcherId: id})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return err
 	}
-	kr := resp.AwaitIdleKill()
+	kr := resp.AwaitKill()
 	if kr == nil {
 		return fmt.Errorf("await-idle kill: expected AwaitIdleKill response, got kind=%v", resp.Kind)
 	}
@@ -160,13 +160,13 @@ func AwaitIdleStatusString(s protocol.AwaitIdleStatus) string {
 	}
 }
 
-func AwaitIdleSinkString(s protocol.AwaitIdleSink) string {
+func AwaitIdleSinkString(s protocol.AwaitSink) string {
 	switch s {
-	case protocol.AwaitIdleSink_Reply:
+	case protocol.AwaitSink_Reply:
 		return "reply"
-	case protocol.AwaitIdleSink_Notify:
+	case protocol.AwaitSink_Notify:
 		return "notify"
-	case protocol.AwaitIdleSink_Board:
+	case protocol.AwaitSink_Board:
 		return "board"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(s))
@@ -197,7 +197,7 @@ func AwaitIdleWatcherLines(ws []protocol.AwaitIdleWatcherInfo) []string {
 			age = time.Since(time.UnixMilli(int64(w.ArmedUnixMs))).Truncate(time.Second).String()
 		}
 		sink := "sink=" + AwaitIdleSinkString(w.Sink)
-		if w.Sink == protocol.AwaitIdleSink_Board {
+		if w.Sink == protocol.AwaitSink_Board {
 			sink += " topic=" + string(w.Topic)
 		}
 		out = append(out, fmt.Sprintf("%-6d %-8s  %s  threshold=%dms  armed=%s  by=%s",

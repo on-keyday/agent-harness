@@ -337,9 +337,9 @@ func (a *App) onAwaitIdle(msg tea.KeyMsg) (tea.Cmd, bool) {
 		a.cmdresult.Append(WarnStyle.Render("await-idle: not connected"))
 		return nil, true
 	}
-	sink := protocol.AwaitIdleSink_Reply
+	sink := protocol.AwaitSink_Reply
 	if msg.String() == mainKeys.AwaitIdleNotify {
-		sink = protocol.AwaitIdleSink_Notify
+		sink = protocol.AwaitSink_Notify
 	} else {
 		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
 	}

@@ -20,7 +20,7 @@ func idleWatcherRow(w *protocol.AwaitIdleWatcherInfo, now time.Time) table.Row {
 		age = now.Sub(time.UnixMilli(int64(w.ArmedUnixMs))).Truncate(time.Second).String()
 	}
 	sink := cli.AwaitIdleSinkString(w.Sink)
-	if w.Sink == protocol.AwaitIdleSink_Board {
+	if w.Sink == protocol.AwaitSink_Board {
 		sink += " " + string(w.Topic)
 	}
 	return table.Row{

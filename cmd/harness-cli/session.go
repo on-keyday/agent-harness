@@ -675,12 +675,12 @@ func runSessionAwaitIdleWith(cid objproto.ConnectionID, a verb.SessionAction) er
 	thresholdMs, topic := &a.ThresholdMs, &a.Topic
 	// The sink is where the fire lands: an operator notification, an
 	// agentboard publish, or this call's own long poll.
-	sink := protocol.AwaitIdleSink_Reply
+	sink := protocol.AwaitSink_Reply
 	switch {
 	case a.Notify:
-		sink = protocol.AwaitIdleSink_Notify
+		sink = protocol.AwaitSink_Notify
 	case a.Topic != "":
-		sink = protocol.AwaitIdleSink_Board
+		sink = protocol.AwaitSink_Board
 	}
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)

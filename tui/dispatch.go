@@ -550,14 +550,14 @@ func (h tuiVerbs) SessionAwaitIdle(v verb.SessionAction) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	sink := protocol.AwaitIdleSink_Reply
+	sink := protocol.AwaitSink_Reply
 	switch {
 	case v.Notify:
-		sink = protocol.AwaitIdleSink_Notify
+		sink = protocol.AwaitSink_Notify
 	case v.Topic != "":
-		sink = protocol.AwaitIdleSink_Board
+		sink = protocol.AwaitSink_Board
 	}
-	if sink == protocol.AwaitIdleSink_Reply {
+	if sink == protocol.AwaitSink_Reply {
 		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(full)))
 	}
 	// appCtx, not a round-trip timeout: the reply sink long-polls until the

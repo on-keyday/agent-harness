@@ -44,6 +44,13 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_BoardPurge:         capInMap,
 	protocol.TaskControlKind_BoardRetract:       capInMap,
 	protocol.TaskControlKind_BoardContactsClear: capInMap,
+	// progress_set touches only the caller's own row (its principal), the
+	// reasoning whoami's self-introspection rests on.
+	protocol.TaskControlKind_ProgressSet: capNone,
+	// await_progress reveals progress, which `ls` already hands to any caller
+	// that can see the task; sink=notify is gated on notify in the handler,
+	// as for await_idle.
+	protocol.TaskControlKind_AwaitProgress: capNone,
 	protocol.TaskControlKind_BoardSubscribers:   capInMap,
 	protocol.TaskControlKind_BoardSend:          capInMap,
 	protocol.TaskControlKind_BoardWake:          capInMap,
@@ -88,8 +95,8 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// await_idle_list / await_idle_kill read no capability bit: they reveal
 	// and end only what the caller armed (the operator: everything), and
 	// arming needed none either.
-	protocol.TaskControlKind_AwaitIdleList: capNone,
-	protocol.TaskControlKind_AwaitIdleKill: capNone,
+	protocol.TaskControlKind_AwaitList: capNone,
+	protocol.TaskControlKind_AwaitKill: capNone,
 	// await_idle reports last_output_at, which `ls` already hands to any caller
 	// that can see the task; its one side effect, sink=notify, is gated on
 	// notify inside the handler.
@@ -132,7 +139,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardContactsClear); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AwaitProgress); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

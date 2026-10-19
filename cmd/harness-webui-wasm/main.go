@@ -3175,13 +3175,13 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 			if v := opts.Get("thresholdMs"); v.Type() == js.TypeNumber {
 				thresholdMs = uint32(v.Int())
 			}
-			sink := protocol.AwaitIdleSink_Reply
+			sink := protocol.AwaitSink_Reply
 			topic := ""
 			switch s := opts.Get("sink"); {
 			case s.Type() == js.TypeString && s.String() == "notify":
-				sink = protocol.AwaitIdleSink_Notify
+				sink = protocol.AwaitSink_Notify
 			case s.Type() == js.TypeString && s.String() == "board":
-				sink = protocol.AwaitIdleSink_Board
+				sink = protocol.AwaitSink_Board
 				if t := opts.Get("topic"); t.Type() == js.TypeString {
 					topic = t.String()
 				}

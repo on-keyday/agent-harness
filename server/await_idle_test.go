@@ -198,7 +198,7 @@ func TestHandleAwaitIdle_BadRequest_BoardWithoutTopic(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Sessions: NewSessionRegistry()}
 	conn := &fakeConn{}
 	var tid protocol.TaskID
-	req := protocol.AwaitIdleRequest{TaskId: tid, Sink: protocol.AwaitIdleSink_Board}
+	req := protocol.AwaitIdleRequest{TaskId: tid, Sink: protocol.AwaitSink_Board}
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if resp.Status != protocol.AwaitIdleStatus_BadRequest {
 		t.Fatalf("status = %v, want BadRequest", resp.Status)
@@ -243,7 +243,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, pidHex)
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
-	nreq := protocol.AwaitIdleRequest{TaskId: target, Sink: protocol.AwaitIdleSink_Notify}
+	nreq := protocol.AwaitIdleRequest{TaskId: target, Sink: protocol.AwaitSink_Notify}
 	req.SetAwaitIdle(nreq)
 	h.Handle(callerConn, encodeTaskControlRequest(t, req))
 	waitFor(t, func() bool { return len(callerConn.Sent()) == 1 })
@@ -259,7 +259,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 	req2 := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 8}
-	req2.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: target, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Reply})
+	req2.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: target, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(callerConn, encodeTaskControlRequest(t, req2))
 	waitForWithin(t, 3*time.Second, func() bool { return len(callerConn.Sent()) == 2 })
 	resp2 := lastTaskControlResponse(t, callerConn)
@@ -296,7 +296,7 @@ func TestHandleAwaitIdle_NotifySinkArmsThenFires(t *testing.T) {
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("output")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
-	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Notify}
+	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Notify}
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if resp.Status != protocol.AwaitIdleStatus_Armed {
 		t.Fatalf("status = %v, want Armed (immediate reply)", resp.Status)
@@ -328,7 +328,7 @@ func TestHandleAwaitIdle_BoardSinkPublishesOnFire(t *testing.T) {
 	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("output")))
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
-	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Board}
+	req := protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Board}
 	req.SetTopic([]byte("chat.deadbeef"))
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if resp.Status != protocol.AwaitIdleStatus_Armed {
@@ -375,7 +375,7 @@ func TestHandleAwaitIdle_ReplyLongPollFires(t *testing.T) {
 	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
 
 	tcr := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
-	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Reply})
+	tcr.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: tid, ThresholdMs: 50, Sink: protocol.AwaitSink_Reply})
 	h.Handle(conn, tcr.MustAppend(nil))
 
 	// Long-poll: the response arrives only after the quiescence edge.

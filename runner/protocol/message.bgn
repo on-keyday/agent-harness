@@ -438,7 +438,7 @@ enum TaskControlKind:
                     # capability: it reports last_output_at, which `ls` already
                     # returns to any caller that can see the task at all. Only
                     # sink=notify adds a gate, and it is `notify` — see
-                    # AwaitIdleSink.
+                    # AwaitSink.
     register_port_forward   # register a -L/-R forward; returns forward_id + control stream
     list_port_forwards      # enumerate the caller's visible registrations
     kill_port_forward       # close one registration by id
@@ -548,11 +548,12 @@ enum TaskControlKind:
                             # AUTHORSHIP, not a capability -- distinct from
                             # board_retract, which skips that check on the
                             # purge bit and is recorded as by=purge_cap.
-    await_idle_list         # appended: enumerate armed await-idle watchers.
+    await_list              # appended: enumerate armed watchers (idle and
+                            # progress conditions; renamed from await_idle_list).
                             # No capability. An agent sees the ones it armed on
                             # tasks still visible to it; the operator sees all.
-    await_idle_kill         # appended: disarm one watcher by id. Same predicate
-                            # as await_idle_list; anything else is not_found.
+    await_kill              # appended: disarm one watcher by id. Same predicate
+                            # as await_list; anything else is not_found.
 
     # --- agentboard, operator face: publishing ---
     #
@@ -575,6 +576,13 @@ enum TaskControlKind:
                             # them. Gated on purge -- it removes another task's
                             # state, as board_retract does -- and target-gated
                             # on that bit's scope, because it names a task.
+    progress_set            # appended: write the CALLER'S OWN self-reported
+                            # progress line. No capability: the target is the
+                            # connection's principal, never a client-supplied
+                            # id, so it can only touch the caller's own row.
+                            # See docs/superpowers/specs/2026-10-19-task-progress-design.md
+    await_progress          # appended: one-shot watcher on a task's next
+                            # progress write. Gated like await_idle.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -900,7 +908,12 @@ format TaskInfo:
     # is non-fatal in runner/session.go. 0 on a Queued task — nothing has been
     # assigned yet — which is why it must not be read as "this agent is bare".
     skills_injected :u1
-    reserved :u6
+    # live_terminal: the task has a live session mux WITH a terminal (not the
+    # event-stream kind). The title field below is meaningful only when set,
+    # so "live, untitled" and "no live terminal" are told apart by this bit
+    # rather than re-derived by every client from status and kind.
+    live_terminal :u1
+    reserved :u5
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -951,6 +964,22 @@ format TaskInfo:
     # Not derivable client-side either — the window belongs to the server that
     # went away.
     hold_deadline_ns :u64
+    # progress is the task's self-reported line (progress_set), written by the
+    # agent about its own task. STORED (WAL task_progress), so it survives a
+    # restart, a resume and the task's end. Empty = never written or cleared;
+    # progress_at separates the two.
+    progress_len :u16
+    progress :[progress_len]u8
+    progress_at :u64          # unix nanos, SERVER clock, of the last write
+                              # (set or clear). 0 = never written.
+    progress_age_ms :u64      # server-computed now - progress_at, so cross-host
+                              # clock skew cannot distort it, as output_idle_ms.
+                              # Meaningless when progress_at == 0.
+    # title is the window title (OSC 0/2) from the live SessionMux's screen,
+    # control characters removed and cut to 256 bytes. Live-only like
+    # last_output_at: never stored. Read it only when live_terminal = 1.
+    title_len :u16
+    title :[title_len]u8
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -2077,7 +2106,7 @@ format WhoAmIResponse:
 # or when the session stops first. A watcher fires exactly once, then is
 # removed. Armed while already idle => fires immediately. Armed before any
 # output (last_output==0) => waits for first output, then the edge.
-enum AwaitIdleSink:
+enum AwaitSink:
     :u8
     reply = 0                 # long-poll: the TaskControlResponse is delayed
                               # until the watcher fires
@@ -2094,12 +2123,12 @@ enum AwaitIdleStatus:
     session_stopped = 2       # session ended before the idle edge
     not_found = 3             # unknown task id or no live session mux
     bad_request = 4           # e.g. sink=board with empty topic, unknown sink
-    cancelled = 5             # killed via await_idle_kill before it fired
+    cancelled = 5             # killed via await_kill before it fired
 
 format AwaitIdleRequest:
     task_id :TaskID
     threshold_ms :u32         # 0 => server default (2500)
-    sink :AwaitIdleSink
+    sink :AwaitSink
     topic_len :u16            # sink=board: agentboard topic to publish to
     topic :[topic_len]u8      # ignored for other sinks
 
@@ -2124,7 +2153,7 @@ format AwaitIdleListBody:
 format AwaitIdleWatcherInfo:
     watcher_id     :u64
     task_id        :TaskID
-    sink           :AwaitIdleSink
+    sink           :AwaitSink
     topic_len      :u16
     topic          :[topic_len]u8     # sink=board only; empty otherwise
     threshold_ms   :u32               # after the server default is applied
@@ -2133,6 +2162,8 @@ format AwaitIdleWatcherInfo:
     origin_kind    :ClientKind
     origin_cid_len :u8
     origin_cid     :[origin_cid_len]u8  # ConnectionID canonical String()
+    condition      :AwaitCondition    # which edge this watcher waits for;
+                                      # threshold_ms is 0 for progress
 
 format AwaitIdleKillRequest:
     watcher_id :u64
@@ -2144,6 +2175,63 @@ enum AwaitIdleKillStatus:
 
 format AwaitIdleKillResponse:
     status :AwaitIdleKillStatus
+
+# Which edge a watcher in the shared registry waits for. await_list rows carry
+# it so one listing (and one kill) covers both arm verbs.
+enum AwaitCondition:
+    :u8
+    idle = 0
+    progress = 1
+
+# progress_set: a task writes its OWN self-reported progress line (which task,
+# which stage). The target is the connection's principal; nothing in the
+# request names a task. See docs/superpowers/specs/2026-10-19-task-progress-design.md
+format ProgressSetRequest:
+    clear :u1                 # 1 = clear the line; text must then be empty
+    reserved :u7
+    text_len :u16
+    text :[text_len]u8        # <= 256 bytes, valid UTF-8, no C0/DEL/C1
+
+enum ProgressSetStatus:
+    :u8
+    ok = 0
+    no_principal = 1          # caller is not an agent connection (operator)
+    bad_text = 2              # > 256 bytes, invalid UTF-8, a control char, or
+                              # clear=1 with text. Refused, never sanitized.
+    not_found = 3             # principal's task is no longer in the store
+
+format ProgressSetResponse:
+    status :ProgressSetStatus
+    progress_at :u64          # the stamp written (unix nanos, server clock); 0 unless ok
+
+# await_progress: one-shot watch on a task's progress line. Unlike await_idle
+# it needs no live session, so a oneshot task can be watched. It shares the
+# watcher registry (and await_list / await_kill) with await_idle.
+format AwaitProgressRequest:
+    task_id :TaskID
+    since_progress_at :u64    # baseline: fire at once when the stored
+                              # progress_at is newer. 0 = wait for the next
+                              # write after arming. Read it off `ls --json`.
+    sink :AwaitSink
+    topic_len :u16            # sink=board: agentboard topic to publish to
+    topic :[topic_len]u8      # ignored for other sinks
+
+enum AwaitProgressStatus:
+    :u8
+    fired = 0                 # the target's progress_at is newer than the baseline
+    armed = 1                 # watcher registered (sink=notify/board)
+    task_ended = 2            # target terminal at arm time (after the baseline
+                              # check), or ended / pruned while armed
+    not_found = 3             # unknown task id, or not visible to the caller
+    bad_request = 4           # e.g. sink=board with empty topic, unknown sink
+    cancelled = 5             # killed via await_kill before it fired
+
+format AwaitProgressResponse:
+    status :AwaitProgressStatus
+    progress_at :u64          # the firing write's stamp; 0 otherwise
+    progress_len :u16
+    progress :[progress_len]u8  # the firing text; empty otherwise
+    watcher_id :u64           # the registry id; 0 for not_found / bad_request
 
 format TaskControlRequest:
     kind :TaskControlKind
@@ -2192,13 +2280,15 @@ format TaskControlRequest:
         TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedRequest
         TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqRequest
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractRequest
-        TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListRequest
-        TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillRequest
+        TaskControlKind.await_list               => await_list               :AwaitIdleListRequest
+        TaskControlKind.await_kill               => await_kill               :AwaitIdleKillRequest
         TaskControlKind.board_send               => board_send               :BoardSendRequest
         TaskControlKind.board_wake               => board_wake               :BoardWakeRequest
         TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapRequest
         TaskControlKind.agent_list_contacts      => agent_list_contacts      :AgentListContactsRequest
         TaskControlKind.board_contacts_clear     => board_contacts_clear     :BoardContactsClearRequest
+        TaskControlKind.progress_set             => progress_set             :ProgressSetRequest
+        TaskControlKind.await_progress           => await_progress           :AwaitProgressRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2268,13 +2358,15 @@ format TaskControlResponse:
         TaskControlKind.agent_list_retained      => agent_list_retained      :AgentListRetainedResponse
         TaskControlKind.agent_read_seq           => agent_read_seq           :AgentReadSeqResponse
         TaskControlKind.agent_retract            => agent_retract            :AgentRetractResponse
-        TaskControlKind.await_idle_list          => await_idle_list          :AwaitIdleListResponse
-        TaskControlKind.await_idle_kill          => await_idle_kill          :AwaitIdleKillResponse
+        TaskControlKind.await_list               => await_list               :AwaitIdleListResponse
+        TaskControlKind.await_kill               => await_kill               :AwaitIdleKillResponse
         TaskControlKind.board_send               => board_send               :AgentSendResponse
         TaskControlKind.board_wake               => board_wake               :BoardWakeResponse
         TaskControlKind.open_exec_tap            => open_exec_tap            :OpenExecTapResponse
         TaskControlKind.agent_list_contacts      => agent_list_contacts      :AgentListContactsResponse
         TaskControlKind.board_contacts_clear     => board_contacts_clear     :BoardContactsClearResponse
+        TaskControlKind.progress_set             => progress_set             :ProgressSetResponse
+        TaskControlKind.await_progress           => await_progress           :AwaitProgressResponse
 
 enum SetCapsStatus:
     :u8
@@ -2402,11 +2494,11 @@ format WorkerInfo:
     hostname_len  :u16
     hostname      :[hostname_len]u8
 
+# NotifyRequest carries no sender identity: the server derives origin and the
+# WorkerInfo of the NotifyEvent from the connection's principal, so a client
+# cannot notify in another task's name.
 format NotifyRequest:
     level  :NotifyLevel
-    origin :NotifyOrigin
-    if origin == NotifyOrigin.worker:
-        worker :WorkerInfo
     title_len :u16
     title     :[title_len]u8
     text_len  :u16
@@ -2504,6 +2596,9 @@ enum StatusEventKind:
     exec_stats          # appended: an exec's COUNTERS moved (per-channel bytes,
                         # last activity, taps). The reason forward_stats exists,
                         # one object over; coalesced by the same server sweep.
+    task_progress       # appended: the task wrote its progress line
+                        # (progress_set). Payload of interest is progress /
+                        # progress_at.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -2530,6 +2625,19 @@ format TaskStatusEvent:
     # session nobody is observing; the task's status separates those.
     viewers :u16
     cowriters :u16
+    # Progress and title, with the same meaning as on TaskInfo and stamped on
+    # EVERY task event for the same reason last_output_at is. A title change
+    # emits nothing by itself (Claude Code rewrites the title on every spinner
+    # tick); it rides the next event. A parent-hop subscriber receives these
+    # emptied, as redactParentTaskInfo empties its List row.
+    live_terminal :u1
+    reserved :u7
+    progress_len :u16
+    progress :[progress_len]u8
+    progress_at :u64
+    progress_age_ms :u64
+    title_len :u16
+    title :[title_len]u8
 
 format RunnerStatusEvent:
     kind :StatusEventKind

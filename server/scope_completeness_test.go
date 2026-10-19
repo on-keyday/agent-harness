@@ -60,10 +60,16 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_OpenExecRun: targetGated,
 	protocol.TaskControlKind_ExecRunKill: targetGated,
 	// The watcher resolves to a task; idleWatcherVisibleTo gates it.
-	protocol.TaskControlKind_AwaitIdleKill: targetGated,
+	protocol.TaskControlKind_AwaitKill: targetGated,
 	// board_contacts_clear names a task whose board state it removes:
 	// inScope on purge, not_found outside it.
 	protocol.TaskControlKind_BoardContactsClear: targetGated,
+	// progress_set writes the caller's OWN row, resolved from its principal;
+	// the request names no task.
+	protocol.TaskControlKind_ProgressSet: noTarget,
+	// await_progress names a task and resolves it through inScope, as
+	// await_idle does.
+	protocol.TaskControlKind_AwaitProgress: targetGated,
 	// prune names a set of tasks, or sweeps by age; filtered to the caller's
 	// scope in the PruneFn closure.
 	protocol.TaskControlKind_PruneTasks: targetGated,
@@ -77,7 +83,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	// would make the direct path cost more authority than polling for it.
 	protocol.TaskControlKind_ExecRunList: infoScoped,
 	// Filtered by idleWatcherVisibleTo, which includes visibleToCaller.
-	protocol.TaskControlKind_AwaitIdleList: infoScoped,
+	protocol.TaskControlKind_AwaitList: infoScoped,
 
 	protocol.TaskControlKind_ClientHello: noTarget,
 	protocol.TaskControlKind_Notify:      noTarget,
@@ -132,7 +138,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_BoardContactsClear); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_AwaitProgress); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -147,17 +153,17 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// board_contacts_clear is the last kind; if the enum grows past it the loops
-// above stop short and silently cover nothing new. It has caught eight appends
-// now: restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
+// await_progress is the last kind; if the enum grows past it the loops above
+// stop short and silently cover nothing new. It has caught nine appends now:
+// restore_tasks, when the bound was open_forward_tap; trsf_state; the ten
 // agent_* kinds, which arrived together and would otherwise have dispatched
 // with whatever gate their neighbours happened to have; the two
 // await_idle_* kinds; board_send / board_wake; open_exec_tap;
-// agent_list_contacts; and board_contacts_clear.
-func TestBoardContactsClearIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_BoardContactsClear) + 1)
+// agent_list_contacts; board_contacts_clear; and progress_set / await_progress.
+func TestAwaitProgressIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_AwaitProgress) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after board_contacts_clear (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after await_progress (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified and in TestEveryTaskControlKindHasACapVerdict, "+
 			"which otherwise stop before it", next)
 	}

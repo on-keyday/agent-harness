@@ -33,7 +33,7 @@ func TestAwaitIdleWatcherLines_EmptyIsSaid(t *testing.T) {
 
 func TestAwaitIdleWatcherLines_Row(t *testing.T) {
 	w := protocol.AwaitIdleWatcherInfo{
-		WatcherId: 7, Sink: protocol.AwaitIdleSink_Board, ThresholdMs: 2500,
+		WatcherId: 7, Sink: protocol.AwaitSink_Board, ThresholdMs: 2500,
 		ArmedUnixMs: uint64(time.Now().Add(-3 * time.Second).UnixMilli()),
 	}
 	w.TaskId.Id[0] = 0xab
@@ -53,7 +53,7 @@ func TestAwaitIdleWatcherLines_Row(t *testing.T) {
 }
 
 func TestAwaitIdleWatcherJSONLine_CarriesFullIDs(t *testing.T) {
-	w := protocol.AwaitIdleWatcherInfo{WatcherId: 3, Sink: protocol.AwaitIdleSink_Reply}
+	w := protocol.AwaitIdleWatcherInfo{WatcherId: 3, Sink: protocol.AwaitSink_Reply}
 	w.TaskId.Id[0] = 0xab
 	var got map[string]any
 	if err := json.Unmarshal([]byte(AwaitIdleWatcherJSONLine(&w)), &got); err != nil {
