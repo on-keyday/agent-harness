@@ -28,7 +28,7 @@ func TestWriteCapsAuditLine(t *testing.T) {
 			ctl = l
 		}
 	}
-	if !strings.Contains(spawn, "強") || !strings.Contains(spawn, " 1 ") || !strings.Contains(spawn, "[scope 対象外]") {
+	if !strings.Contains(spawn, "強") || !strings.Contains(spawn, " 1 ") || !strings.Contains(spawn, "[global（固定）]") || strings.Contains(spawn, "対象外") {
 		t.Errorf("spawn line = %q, want tier, count 1 and the scope-none mark", spawn)
 	}
 	if !strings.Contains(ctl, "a1000000") || !strings.Contains(ctl, "[subtree]") || !strings.Contains(ctl, "[global*]") {
@@ -79,7 +79,8 @@ func TestWriteCapsAuditJSONLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], `"cap":"spawn"`) || !strings.Contains(lines[0], `"scope_kind":"none"`) {
+	if len(lines) != 2 || !strings.Contains(lines[0], `"cap":"spawn"`) || !strings.Contains(lines[0], `"scope_kind":"none"`) ||
+		!strings.Contains(lines[0], `"scope_text":"global（固定）"`) {
 		t.Fatalf("json lines = %v", lines)
 	}
 }

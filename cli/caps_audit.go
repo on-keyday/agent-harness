@@ -115,21 +115,37 @@ func ScopeBreadthOf(scope string) ScopeBreadth {
 	}
 }
 
-// AuditLabel names a task the way the TUI picker's rows do: id8, agent, and
-// the head of the prompt, with empty parts dropped — a redacted parent row has
-// neither agent nor prompt.
+// AuditLabel names a holder so the operator can tell which task it is: id8,
+// agent, repo basename, status and the head of the prompt, with empty parts
+// dropped. Most live tasks are interactive sessions with no prompt, so the repo
+// and status are what identify them; a redacted parent row has neither agent,
+// repo nor prompt.
 func AuditLabel(t protocol.TaskInfo) string {
 	parts := []string{hex.EncodeToString(t.Id.Id[:])[:8]}
 	if a := string(t.AgentProfile); a != "" {
 		parts = append(parts, a)
 	}
+	if r := repoBasename(string(t.RepoPath)); r != "" {
+		parts = append(parts, r)
+	}
+	parts = append(parts, t.Status.String())
 	if p := strings.Join(strings.Fields(string(t.Prompt)), " "); p != "" {
-		if r := []rune(p); len(r) > 24 {
-			p = string(r[:24])
+		if r := []rune(p); len(r) > 16 {
+			p = string(r[:16])
 		}
 		parts = append(parts, p)
 	}
 	return strings.Join(parts, " ")
+}
+
+// repoBasename is the last element of a repo path in either separator, since
+// runners report Windows paths too.
+func repoBasename(p string) string {
+	p = strings.TrimRight(p, `/\`)
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		p = p[i+1:]
+	}
+	return p
 }
 
 func isTerminalStatus(s protocol.TaskStatus) bool {

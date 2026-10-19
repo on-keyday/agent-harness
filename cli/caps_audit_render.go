@@ -73,7 +73,7 @@ func auditHolderText(h AuditHolder) string {
 
 func auditScopeText(h AuditHolder) string {
 	if h.ScopeKind == verb.ScopeNone {
-		return "scope 対象外"
+		return UnboundedScopeLabel
 	}
 	if h.Override {
 		return h.Scope + "*"
@@ -107,6 +107,7 @@ type AuditHolderJSON struct {
 	Parent    string `json:"parent"`
 	Live      bool   `json:"live"`
 	ScopeKind string `json:"scope_kind"` // "own" | "none"
+	ScopeText string `json:"scope_text"` // the scope cell as every surface prints it
 	Scope     string `json:"scope"`
 	Breadth   string `json:"breadth"` // "global" | "subtree" | "narrow" | "" for scope_kind none
 	Override  bool   `json:"override"`
@@ -123,7 +124,7 @@ func AuditRowsJSON(rows []AuditRow) []AuditRowJSON {
 		}
 		for _, h := range r.Holders {
 			hj := AuditHolderJSON{TaskID: h.TaskID, Label: h.Label, Parent: h.Parent, Live: h.Live,
-				ScopeKind: "own", Scope: h.Scope, Override: h.Override, TaskScope: h.TaskScope}
+				ScopeKind: "own", ScopeText: auditScopeText(h), Scope: h.Scope, Override: h.Override, TaskScope: h.TaskScope}
 			if h.ScopeKind == verb.ScopeNone {
 				hj.ScopeKind = "none"
 			} else {

@@ -97,8 +97,8 @@ func TestCapsAuditModalScopeNone(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		a = press(t, a, enter, down)
 	}
-	if !strings.Contains(a.capsAuditModal.View(), "scope 対象外") {
-		t.Fatalf("board_observe holder lacks the scope-none mark:\n%s", a.capsAuditModal.View())
+	if !strings.Contains(a.capsAuditModal.View(), "global（固定）") {
+		t.Fatalf("board_observe holder lacks the unbounded-scope mark:\n%s", a.capsAuditModal.View())
 	}
 }
 

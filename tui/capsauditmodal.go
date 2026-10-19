@@ -217,10 +217,11 @@ func (m CapsAuditModal) capLine(c protocol.Capability) string {
 }
 
 // auditScopeCell colours a holder's scope by breadth: red global, yellow
-// subtree, green narrow, muted for a bit no task scope bounds.
+// subtree, green narrow. A bit no task scope bounds reaches the server's shared
+// resources, so it is red too.
 func auditScopeCell(h cli.AuditHolder) string {
 	if h.ScopeKind == verb.ScopeNone {
-		return MutedStyle.Render("[scope 対象外]")
+		return ErrorStyle.Render("[" + cli.UnboundedScopeLabel + "]")
 	}
 	s := "[" + h.Scope
 	if h.Override {

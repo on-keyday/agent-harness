@@ -148,14 +148,39 @@ func TestCapsAuditImpliedNote(t *testing.T) {
 
 // Review Focus 2: the redacted parent row has no agent and no prompt.
 func TestAuditLabelRedactedParent(t *testing.T) {
-	p := protocol.TaskInfo{}
+	p := protocol.TaskInfo{Status: protocol.TaskStatus_Running}
 	p.Id.Id[0] = 0xab
-	if got := AuditLabel(p); got != "ab000000" {
-		t.Fatalf("label = %q, want just the id8", got)
+	if got := AuditLabel(p); got != "ab000000 Running" {
+		t.Fatalf("label = %q, want the id8 and the status only", got)
 	}
-	full := auditTask(0xa1, protocol.TaskStatus_Running, 0, protocol.ScopeBase_Subtree)
-	if got := AuditLabel(full); got != "a1000000 claude do the thing carefully a" {
+}
+
+// D19: a holder is recognisable by its repo and status, the prompt head is
+// 16 runes, and an interactive session's empty prompt adds nothing.
+func TestAuditLabelCarriesRepoAndStatus(t *testing.T) {
+	d := auditTask(0xab, protocol.TaskStatus_Detached, 0, protocol.ScopeBase_Subtree)
+	d.SetPrompt(nil)
+	d.SetRepoPath([]byte("/home/u/remote-agent-harness"))
+	if got := AuditLabel(d); got != "ab000000 claude remote-agent-harness Detached" {
 		t.Fatalf("label = %q", got)
+	}
+}
+
+func TestAuditLabelPromptHead16(t *testing.T) {
+	full := auditTask(0xa1, protocol.TaskStatus_Running, 0, protocol.ScopeBase_Subtree)
+	if got := AuditLabel(full); got != "a1000000 claude Running do the thing car" {
+		t.Fatalf("label = %q", got)
+	}
+}
+
+// Review Focus 4.
+func TestAuditLabelRepoBasename(t *testing.T) {
+	for _, path := range []string{`C:\workspace\x`, "C:/workspace/x/", "/a/x"} {
+		task := protocol.TaskInfo{Status: protocol.TaskStatus_Running}
+		task.SetRepoPath([]byte(path))
+		if got := AuditLabel(task); got != "00000000 x Running" {
+			t.Errorf("repo %q: label = %q, want basename x", path, got)
+		}
 	}
 }
 
