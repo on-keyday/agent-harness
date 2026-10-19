@@ -173,6 +173,31 @@ func AwaitIdleSinkString(s protocol.AwaitSink) string {
 	}
 }
 
+// FilterWatchers keeps the rows of one condition: the registry, and so
+// await_list, is shared by await-idle and await-progress, and each verb's
+// `ls` shows its own.
+func FilterWatchers(ws []protocol.AwaitIdleWatcherInfo, c protocol.AwaitCondition) []protocol.AwaitIdleWatcherInfo {
+	out := make([]protocol.AwaitIdleWatcherInfo, 0, len(ws))
+	for _, w := range ws {
+		if w.Condition == c {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// AwaitConditionString is the condition in the schema's snake_case.
+func AwaitConditionString(c protocol.AwaitCondition) string {
+	switch c {
+	case protocol.AwaitCondition_Idle:
+		return "idle"
+	case protocol.AwaitCondition_Progress:
+		return "progress"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(c))
+	}
+}
+
 // AwaitIdleWatcherBy names who armed a watcher: "operator" for the zero
 // principal, otherwise the task's 8-hex prefix.
 func AwaitIdleWatcherBy(w *protocol.AwaitIdleWatcherInfo) string {
@@ -200,8 +225,12 @@ func AwaitIdleWatcherLines(ws []protocol.AwaitIdleWatcherInfo) []string {
 		if w.Sink == protocol.AwaitSink_Board {
 			sink += " topic=" + string(w.Topic)
 		}
-		out = append(out, fmt.Sprintf("%-6d %-8s  %s  threshold=%dms  armed=%s  by=%s",
-			w.WatcherId, hex.EncodeToString(w.TaskId.Id[:])[:8], sink, w.ThresholdMs, age, AwaitIdleWatcherBy(w)))
+		wait := fmt.Sprintf("threshold=%dms", w.ThresholdMs)
+		if w.Condition == protocol.AwaitCondition_Progress {
+			wait = "on=progress"
+		}
+		out = append(out, fmt.Sprintf("%-6d %-8s  %s  %s  armed=%s  by=%s",
+			w.WatcherId, hex.EncodeToString(w.TaskId.Id[:])[:8], sink, wait, age, AwaitIdleWatcherBy(w)))
 	}
 	return out
 }
@@ -223,6 +252,7 @@ func AwaitIdleWatcherJSONLine(w *protocol.AwaitIdleWatcherInfo) string {
 		Requester   string `json:"requester"`
 		OriginKind  string `json:"origin_kind"`
 		OriginCID   string `json:"origin_cid"`
+		Condition   string `json:"condition"`
 	}{
 		WatcherID:   w.WatcherId,
 		TaskID:      hex.EncodeToString(w.TaskId.Id[:]),
@@ -233,6 +263,7 @@ func AwaitIdleWatcherJSONLine(w *protocol.AwaitIdleWatcherInfo) string {
 		Requester:   requester,
 		OriginKind:  w.OriginKind.String(),
 		OriginCID:   string(w.OriginCid),
+		Condition:   AwaitConditionString(w.Condition),
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

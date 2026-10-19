@@ -106,7 +106,7 @@ func (a *App) onIdleWatchers(msg tea.KeyMsg) (tea.Cmd, bool) {
 	}
 	a.idleWatchersModal.SetSize(a.width, a.height)
 	a.idleWatchersModal.Open()
-	return DoIdleWatcherList(a.client, "", false), true
+	return DoIdleWatcherList(a.client, "", false, nil), true
 }
 
 // `i` opens the caps audit over every listed task.
@@ -344,6 +344,30 @@ func (a *App) onAwaitIdle(msg tea.KeyMsg) (tea.Cmd, bool) {
 		a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
 	}
 	return DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, ""), true
+}
+
+// `m` arms an await-progress watcher on the selected task: the fire lands as a
+// result line when the task writes its next progress line. The baseline is the
+// row's progress_at, so a line written since the row was drawn fires at once.
+// `M` routes the fire through the operator-notification egress instead.
+func (a *App) onAwaitProgress(msg tea.KeyMsg) (tea.Cmd, bool) {
+	t := a.tasks.SelectedTask()
+	if t == nil {
+		a.cmdresult.Append(WarnStyle.Render("await-progress: no task selected"))
+		return nil, true
+	}
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("await-progress: not connected"))
+		return nil, true
+	}
+	taskID := a.tasks.SelectedID()
+	sink := protocol.AwaitSink_Reply
+	if msg.String() == mainKeys.AwaitProgressNotify {
+		sink = protocol.AwaitSink_Notify
+	} else {
+		a.cmdresult.Append(fmt.Sprintf("await-progress %s: watching (result lands here on the next progress line)…", shortTaskID(taskID)))
+	}
+	return DoAwaitProgress(a.appCtx, a.client, taskID, t.ProgressAt, sink, ""), true
 }
 
 // `d` opens the detail popup for the focused row (runners or tasks).

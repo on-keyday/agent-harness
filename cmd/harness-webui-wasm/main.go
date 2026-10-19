@@ -140,6 +140,7 @@ func main() {
 		"dispatch":           js.FuncOf(harnessDispatch),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
+		"awaitProgress":      js.FuncOf(harnessAwaitProgress),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
 		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
@@ -1426,6 +1427,17 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// derives the busy/idle badge from this (never from local
 					// clock math — cross-host skew).
 					"outputIdleMs": outputIdleMs(t),
+					// The task's self-reported line and its server stamp / age.
+					// progressAt is a decimal STRING: a nanosecond stamp does not
+					// fit a JS number, and it goes back to the server as an
+					// await-progress baseline, where a rounded value would fire
+					// spuriously or late. "0" = never written.
+					"progress":      string(t.Progress),
+					"progressAt":    strconv.FormatUint(t.ProgressAt, 10),
+					"progressAgeMs": float64(t.ProgressAgeMs),
+					// The live window title; meaningful only when liveTerminal.
+					"liveTerminal": t.LiveTerminal(),
+					"title":        string(t.Title),
 				})
 			}
 			// taskTree is the creator hierarchy WITH its grid positions, both
@@ -3205,6 +3217,67 @@ func harnessAwaitIdle(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
+// harnessAwaitProgress arms a one-shot watcher on a task's next progress
+// write. since is a progress_at baseline (0 = the next write). The reply
+// sink's Promise resolves when it fires; notify/board resolve with "armed".
+//
+//	harness.awaitProgress({taskId, since?, sink?: "reply"|"notify"|"board", topic?})
+//	  -> Promise<{status, progress, progressAt, watcherId}>
+func harnessAwaitProgress(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("awaitProgress: missing options arg"))
+				return
+			}
+			opts := args[0]
+			// A decimal string is the exact form (a nanosecond stamp does not
+			// fit a JS number); a number is accepted for a hand-typed baseline.
+			since := uint64(0)
+			switch v := opts.Get("since"); v.Type() {
+			case js.TypeString:
+				if n, perr := strconv.ParseUint(v.String(), 10, 64); perr == nil {
+					since = n
+				}
+			case js.TypeNumber:
+				since = uint64(v.Float())
+			}
+			sink := protocol.AwaitSink_Reply
+			topic := ""
+			switch s := opts.Get("sink"); {
+			case s.Type() == js.TypeString && s.String() == "notify":
+				sink = protocol.AwaitSink_Notify
+			case s.Type() == js.TypeString && s.String() == "board":
+				sink = protocol.AwaitSink_Board
+				if t := opts.Get("topic"); t.Type() == js.TypeString {
+					topic = t.String()
+				}
+			}
+			resp, err := c.AwaitProgress(rootCtx, opts.Get("taskId").String(), since, sink, topic)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("awaitProgress: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":     cli.AwaitProgressStatusString(resp.Status),
+				"progress":   string(resp.Progress),
+				"progressAt": float64(resp.ProgressAt),
+				"watcherId":  float64(resp.WatcherId),
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 // harnessWatchNotifications starts a notification-watch goroutine. Events are
 // pushed via window.harness_onNotifyEvent(jsonString) — one raw JSON object per
 // event. The Promise resolves once the goroutine is running; the goroutine runs
@@ -4242,6 +4315,7 @@ func harnessAwaitIdleList(this js.Value, args []js.Value) any {
 					"by":          cli.AwaitIdleWatcherBy(w),
 					"originKind":  w.OriginKind.String(),
 					"originCid":   string(w.OriginCid),
+					"condition":   cli.AwaitConditionString(w.Condition),
 				})
 			}
 			resolve.Invoke(js.ValueOf(rows))

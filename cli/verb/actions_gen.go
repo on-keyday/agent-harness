@@ -74,6 +74,24 @@ type AgentSendAction struct {
 	Timeout time.Duration
 }
 
+// AwaitProgressAction is built by: await-progress, await-progress kill, await-progress ls.
+type AwaitProgressAction struct {
+	ActionMarker
+	// progress_at from ls --json; fire at once if the task has written since (0 = next write)
+	Since uint
+	// fire via the operator-notification egress
+	Notify bool
+	// fire via an agentboard publish to this topic
+	Topic  string
+	TaskID string
+	Sub    string
+	// only watchers on this task id
+	TaskFilter string
+	// one JSON object per watcher
+	JSON       bool
+	WatcherIDs []uint64
+}
+
 // BoardAction is built by: board clear-contacts, board purge, board purge-thread, board read, board retract, board retract-thread, board subscribers, board thread, board topics, board wake.
 type BoardAction struct {
 	ActionMarker
@@ -395,6 +413,15 @@ type NotifyAction struct {
 type PreviewAction struct {
 	ActionMarker
 	TaskID string
+}
+
+// ProgressAction is built by: progress.
+type ProgressAction struct {
+	ActionMarker
+	// empty the line instead of setting it
+	Clear bool
+	// the progress line is free-form
+	Text string
 }
 
 // PruneAction is built by: prune.
@@ -2100,6 +2127,12 @@ func init() {
 			a.Text = b.Trail
 			return a, nil
 		},
+		"progress\x00cli": func(b Bound) (Action, error) {
+			a := ProgressAction{}
+			a.Clear = b.Bool("clear")
+			a.Text = b.Trail
+			return a, nil
+		},
 		"agent send\x00cli": func(b Bound) (Action, error) {
 			a := AgentSendAction{}
 			a.Kind = "send"
@@ -2731,6 +2764,95 @@ func init() {
 			}
 			return a, nil
 		},
+		"await-progress\x00cli": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "arm"
+			a.Since = uintOf(b.Flags["since"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"await-progress\x00tui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "arm"
+			a.Since = uintOf(b.Flags["since"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"await-progress\x00webui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "arm"
+			a.Since = uintOf(b.Flags["since"])
+			a.Notify = b.Bool("notify")
+			a.Topic = b.Str("topic")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"await-progress ls\x00cli": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"await-progress ls\x00tui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			return a, nil
+		},
+		"await-progress ls\x00webui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "ls"
+			a.TaskFilter = b.Str("task")
+			a.JSON = b.Bool("json")
+			return a, nil
+		},
+		"await-progress kill\x00cli": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("await-progress kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
+		"await-progress kill\x00tui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("await-progress kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
+		"await-progress kill\x00webui": func(b Bound) (Action, error) {
+			a := AwaitProgressAction{}
+			a.Sub = "kill"
+			for _, raw := range b.Args[0:] {
+				n, err := strconv.ParseUint(raw, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("await-progress kill: bad watcher id %q", raw)
+				}
+				a.WatcherIDs = append(a.WatcherIDs, n)
+			}
+			return a, nil
+		},
 		"session resize\x00cli": func(b Bound) (Action, error) {
 			a := SessionAction{}
 			a.Sub = "resize"
@@ -3097,6 +3219,7 @@ const (
 	CmdSessionExec            = "session exec"
 	CmdSessionStreamTurn      = "session stream turn"
 	CmdNotify                 = "notify"
+	CmdProgress               = "progress"
 	CmdAgentSend              = "agent send"
 	CmdAgentDispatch          = "agent dispatch"
 	CmdPreview                = "preview"
@@ -3135,6 +3258,9 @@ const (
 	CmdSessionAwaitIdle       = "session await-idle"
 	CmdSessionAwaitIdleLs     = "session await-idle ls"
 	CmdSessionAwaitIdleKill   = "session await-idle kill"
+	CmdAwaitProgress          = "await-progress"
+	CmdAwaitProgressLs        = "await-progress ls"
+	CmdAwaitProgressKill      = "await-progress kill"
 	CmdSessionResize          = "session resize"
 	CmdSessionSnapshot        = "session snapshot"
 	CmdSessionStreamAttach    = "session stream attach"
@@ -3165,6 +3291,7 @@ const (
 	KindSessionNew     = "session-new"
 	KindSubmit         = "submit"
 	SubApply           = "apply"
+	SubArm             = "arm"
 	SubAttach          = "attach"
 	SubAwaitIdle       = "await-idle"
 	SubAwaitIdleKill   = "await-idle-kill"
@@ -4289,6 +4416,27 @@ func ParseCmdNotify(sf Surface, args []string, ctx map[string]string) (NotifyAct
 	return a, nil
 }
 
+func ParseCmdProgress(sf Surface, args []string, ctx map[string]string) (ProgressAction, error) {
+	var zero ProgressAction
+	sp, ok := Lookup("progress")
+	if !ok {
+		return zero, fmt.Errorf("progress: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(ProgressAction)
+	return a, nil
+}
+
 func ParseCmdAgentSend(sf Surface, args []string, ctx map[string]string) (AgentSendAction, error) {
 	var zero AgentSendAction
 	sp, ok := Lookup("agent", "send")
@@ -5090,6 +5238,69 @@ func ParseCmdSessionAwaitIdleKill(sf Surface, args []string, ctx map[string]stri
 	return a, nil
 }
 
+func ParseCmdAwaitProgress(sf Surface, args []string, ctx map[string]string) (AwaitProgressAction, error) {
+	var zero AwaitProgressAction
+	sp, ok := Lookup("await-progress")
+	if !ok {
+		return zero, fmt.Errorf("await-progress: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AwaitProgressAction)
+	return a, nil
+}
+
+func ParseCmdAwaitProgressLs(sf Surface, args []string, ctx map[string]string) (AwaitProgressAction, error) {
+	var zero AwaitProgressAction
+	sp, ok := Lookup("await-progress", "ls")
+	if !ok {
+		return zero, fmt.Errorf("await-progress ls: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AwaitProgressAction)
+	return a, nil
+}
+
+func ParseCmdAwaitProgressKill(sf Surface, args []string, ctx map[string]string) (AwaitProgressAction, error) {
+	var zero AwaitProgressAction
+	sp, ok := Lookup("await-progress", "kill")
+	if !ok {
+		return zero, fmt.Errorf("await-progress kill: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(AwaitProgressAction)
+	return a, nil
+}
+
 func ParseCmdSessionResize(sf Surface, args []string, ctx map[string]string) (SessionAction, error) {
 	var zero SessionAction
 	sp, ok := Lookup("session", "resize")
@@ -5624,6 +5835,8 @@ type CLIDispatch[R any] interface {
 	SessionStreamTurn(SessionAction) R
 	// notify
 	Notify(NotifyAction) R
+	// progress
+	Progress(ProgressAction) R
 	// agent send
 	AgentSend(AgentSendAction) R
 	// agent dispatch
@@ -5672,6 +5885,12 @@ type CLIDispatch[R any] interface {
 	SessionAwaitIdleLs(SessionAction) R
 	// session await-idle kill
 	SessionAwaitIdleKill(SessionAction) R
+	// await-progress
+	AwaitProgress(AwaitProgressAction) R
+	// await-progress ls
+	AwaitProgressLs(AwaitProgressAction) R
+	// await-progress kill
+	AwaitProgressKill(AwaitProgressAction) R
 	// session resize
 	SessionResize(SessionAction) R
 	// session snapshot
@@ -5991,6 +6210,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Notify(a), true, nil
+	case CmdProgress:
+		a, perr := ParseCmdProgress(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Progress(a), true, nil
 	case CmdAgentSend:
 		a, perr := ParseCmdAgentSend(CLI, args, ctx)
 		if perr != nil {
@@ -6135,6 +6360,24 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionAwaitIdleKill(a), true, nil
+	case CmdAwaitProgress:
+		a, perr := ParseCmdAwaitProgress(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgress(a), true, nil
+	case CmdAwaitProgressLs:
+		a, perr := ParseCmdAwaitProgressLs(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgressLs(a), true, nil
+	case CmdAwaitProgressKill:
+		a, perr := ParseCmdAwaitProgressKill(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgressKill(a), true, nil
 	case CmdSessionResize:
 		a, perr := ParseCmdSessionResize(CLI, args, ctx)
 		if perr != nil {
@@ -6411,6 +6654,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		}
 	case NotifyAction:
 		return h.Notify(a), true
+	case ProgressAction:
+		return h.Progress(a), true
 	case AgentSendAction:
 		switch a.Kind {
 		case "send":
@@ -6453,6 +6698,15 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsAudit(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
+	case AwaitProgressAction:
+		switch a.Sub {
+		case "arm":
+			return h.AwaitProgress(a), true
+		case "ls":
+			return h.AwaitProgressLs(a), true
+		case "kill":
+			return h.AwaitProgressKill(a), true
+		}
 	case AgentAction:
 		switch a.Sub {
 		case "inbox":
@@ -6772,6 +7026,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdProgress:
+			a, perr := ParseCmdProgress(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdAgentSend:
 			a, perr := ParseCmdAgentSend(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -6912,6 +7172,24 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionAwaitIdleKill:
 			a, perr := ParseCmdSessionAwaitIdleKill(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgress:
+			a, perr := ParseCmdAwaitProgress(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgressLs:
+			a, perr := ParseCmdAwaitProgressLs(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgressKill:
+			a, perr := ParseCmdAwaitProgressKill(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -7160,6 +7438,12 @@ type TUIDispatch[R any] interface {
 	SessionAwaitIdleLs(SessionAction) R
 	// session await-idle kill
 	SessionAwaitIdleKill(SessionAction) R
+	// await-progress
+	AwaitProgress(AwaitProgressAction) R
+	// await-progress ls
+	AwaitProgressLs(AwaitProgressAction) R
+	// await-progress kill
+	AwaitProgressKill(AwaitProgressAction) R
 	// session stream attach
 	SessionStreamAttach(SessionAction) R
 	// session stream interrupt
@@ -7547,6 +7831,24 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.SessionAwaitIdleKill(a), true, nil
+	case CmdAwaitProgress:
+		a, perr := ParseCmdAwaitProgress(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgress(a), true, nil
+	case CmdAwaitProgressLs:
+		a, perr := ParseCmdAwaitProgressLs(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgressLs(a), true, nil
+	case CmdAwaitProgressKill:
+		a, perr := ParseCmdAwaitProgressKill(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.AwaitProgressKill(a), true, nil
 	case CmdSessionStreamAttach:
 		a, perr := ParseCmdSessionStreamAttach(TUI, args, ctx)
 		if perr != nil {
@@ -7755,6 +8057,15 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsSetDefaults(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
+	case AwaitProgressAction:
+		switch a.Sub {
+		case "arm":
+			return h.AwaitProgress(a), true
+		case "ls":
+			return h.AwaitProgressLs(a), true
+		case "kill":
+			return h.AwaitProgressKill(a), true
+		}
 	}
 	// A surface-local action (the TUI's clear / quit / grid), which the
 	// declaration does not describe.
@@ -8139,6 +8450,24 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdSessionAwaitIdleKill:
 			a, perr := ParseCmdSessionAwaitIdleKill(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgress:
+			a, perr := ParseCmdAwaitProgress(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgressLs:
+			a, perr := ParseCmdAwaitProgressLs(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdAwaitProgressKill:
+			a, perr := ParseCmdAwaitProgressKill(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

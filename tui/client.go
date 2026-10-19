@@ -451,7 +451,9 @@ type IdleWatcherKillMsg struct {
 }
 
 // DoIdleWatcherList fetches the armed watchers over the persistent client.
-func DoIdleWatcherList(c *cli.Client, taskFilter string, toCmdresult bool) tea.Cmd {
+// only narrows them to one condition (each cmdline `ls` shows its own); nil
+// keeps both, which is what the watcher modal shows.
+func DoIdleWatcherList(c *cli.Client, taskFilter string, toCmdresult bool, only *protocol.AwaitCondition) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
 			return IdleWatcherListMsg{Err: fmt.Errorf("not connected to server"), ToCmdresult: toCmdresult}
@@ -459,7 +461,38 @@ func DoIdleWatcherList(c *cli.Client, taskFilter string, toCmdresult bool) tea.C
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		ws, err := c.AwaitIdleListWith(ctx, taskFilter)
+		if err == nil && only != nil {
+			ws = cli.FilterWatchers(ws, *only)
+		}
 		return IdleWatcherListMsg{Watchers: ws, Err: err, ToCmdresult: toCmdresult}
+	}
+}
+
+// AwaitProgressResultMsg carries the outcome of an await-progress arm: for
+// the reply sink it arrives when the watcher fires, for notify/board at once
+// with Status=Armed.
+type AwaitProgressResultMsg struct {
+	TaskID     string
+	Status     protocol.AwaitProgressStatus
+	Progress   string
+	ProgressAt uint64
+	WatcherID  uint64
+	Err        error
+}
+
+// DoAwaitProgress arms a progress watcher via the persistent client. ctx must
+// be the long-lived app context: the reply sink waits for the next write.
+func DoAwaitProgress(ctx context.Context, c *cli.Client, taskID string, since uint64, sink protocol.AwaitSink, topic string) tea.Cmd {
+	return func() tea.Msg {
+		if c == nil {
+			return AwaitProgressResultMsg{TaskID: taskID, Err: fmt.Errorf("not connected to server")}
+		}
+		resp, err := c.AwaitProgress(ctx, taskID, since, sink, topic)
+		if err != nil {
+			return AwaitProgressResultMsg{TaskID: taskID, Err: err}
+		}
+		return AwaitProgressResultMsg{TaskID: taskID, Status: resp.Status, Progress: string(resp.Progress),
+			ProgressAt: resp.ProgressAt, WatcherID: resp.WatcherId}
 	}
 }
 

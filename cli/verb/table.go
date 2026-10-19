@@ -1595,6 +1595,24 @@ var Verbs = []VerbSpec{
 		Examples: []string{"notify --level warn --title build the tree is red"},
 	},
 	{
+		Path: []string{"progress"},
+		NoModalSurface: "an operator connection has no principal, so the server refuses every write from the TUI or WebUI (no_principal); " +
+			"only an agent inside a task can set its own line",
+		Notes: []string{
+			"set THIS task's self-reported progress line (which task, which stage): one line, at most 256 bytes, no control characters",
+			"shown in every task list beside the window title, with its age; --clear empties it",
+			"only from inside a task: the server writes the caller's own row and refuses an operator connection",
+		},
+		Action:          "ProgressAction",
+		CmdlineSurfaces: CLI,
+		Trailing: &Trailing{Name: "text", Field: "Text",
+			Reason: "the progress line is free-form"},
+		Flags: []Flag{
+			{Name: "clear", Type: FlagBool, Default: false, Field: "Clear", Help: "empty the line instead of setting it"},
+		},
+		Examples: []string{"progress fixing the parser / writing tests", "progress --clear"},
+	},
+	{
 		Path:           []string{"agent", "send"},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{
@@ -2391,6 +2409,77 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI | TUI | WebUI,
 		Args:            []Arg{{Name: "watcher-id", Type: ArgUint, Variadic: true, Field: "WatcherIDs"}},
 		Examples:        []string{"session await-idle kill 3"},
+	},
+	{
+		Path: []string{"await-progress"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "awaitProgress"},
+		SurfaceNotes: map[Surface][]string{
+			WebUI: {"fire when the task writes its next progress line (default: prints here on fire; --notify: notification feed + hook)"},
+			TUI:   {"fire when the task writes its next progress line (default: result line here; --notify: operator notification)"},
+		},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/actions.go:onAwaitProgress"},
+			{Surface: WebUI, At: "webui/index.html#await-progress-btn"},
+		},
+		Notes: []string{
+			"one-shot: fire when the task writes its progress line (set or clear); works on any task, oneshot included",
+			"--since takes a progress_at from `ls --json`: if the task has written since, it fires at once",
+			"default long-polls; --notify/--topic arm a server-side sink and return. Every arm prints its watcher_id; see `await-progress ls` / `kill`",
+		},
+		Action:    "AwaitProgressAction",
+		Const:     map[string]string{"Sub": "arm"},
+		Exclusive: []Rule{{Flags: []string{"notify", "topic"}}},
+		Args:      []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Flags: []Flag{
+			{Name: "since", Type: FlagUint, Default: uint(0), Field: "Since", Help: "progress_at from ls --json; fire at once if the task has written since (0 = next write)"},
+			{Name: "notify", Type: FlagBool, Default: false, Field: "Notify", Help: "fire via the operator-notification egress"},
+			{Name: "topic", Type: FlagString, Default: "", Field: "Topic", Help: "fire via an agentboard publish to this topic"},
+		},
+		Examples: []string{"await-progress aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "await-progress --since 1760000000000000000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	},
+	{
+		Path:          []string{"await-progress", "ls"},
+		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleList"},
+		SurfaceNotes: map[Surface][]string{
+			TUI:   {"list the armed await-progress watchers (I opens the watcher list; x kills a row)"},
+			WebUI: {"list the armed await-progress watchers / kill one"},
+		},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/idlewatchersmodal.go:IdleWatchersModal"},
+			{Surface: WebUI, At: "webui/index.html#await-idle-list"},
+		},
+		Notes: []string{
+			"list armed progress watchers: an agent sees the ones it armed, the operator every one; --task filters, --json emits JSON lines",
+		},
+		Action:          "AwaitProgressAction",
+		Const:           map[string]string{"Sub": "ls"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Flags: []Flag{
+			{Name: "task", Type: FlagString, Default: "", Field: "TaskFilter", Help: "only watchers on this task id"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason:   "the TUI renders into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per watcher"},
+		},
+		Examples: []string{"await-progress ls", "await-progress ls --json"},
+	},
+	{
+		Path:          []string{"await-progress", "kill"},
+		WebUIDispatch: WebUIDispatch{Fn: "awaitIdleKill"},
+		SurfaceNotes:  map[Surface][]string{TUI: {"disarm one watcher"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/idlewatchersmodal.go:IdleWatchersModal"},
+			{Surface: WebUI, At: "webui/index.html#await-idle-list"},
+		},
+		Notes: []string{
+			"disarm one or more watchers by id (from `await-progress ls`, or the `watcher_id` an arm printed); the registry is shared with await-idle, so either kill takes either id",
+		},
+		MinArgs:         1,
+		Action:          "AwaitProgressAction",
+		Const:           map[string]string{"Sub": "kill"},
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "watcher-id", Type: ArgUint, Variadic: true, Field: "WatcherIDs"}},
+		Examples:        []string{"await-progress kill 3"},
 	},
 	{
 		Path: []string{"session", "resize"}, CmdlineSurfaces: CLI,

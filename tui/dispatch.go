@@ -578,7 +578,49 @@ func (h tuiVerbs) SessionAwaitIdleLs(v verb.SessionAction) tea.Cmd {
 		}
 		filter = full
 	}
-	return DoIdleWatcherList(a.client, filter, true)
+	idle := protocol.AwaitCondition_Idle
+	return DoIdleWatcherList(a.client, filter, true, &idle)
+}
+
+// AwaitProgress arms a progress watcher. The baseline is the row's current
+// progress_at, so a line the operator has not seen yet fires at once.
+func (h tuiVerbs) AwaitProgress(v verb.AwaitProgressAction) tea.Cmd {
+	a := h.a
+	full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	sink := protocol.AwaitSink_Reply
+	switch {
+	case v.Notify:
+		sink = protocol.AwaitSink_Notify
+	case v.Topic != "":
+		sink = protocol.AwaitSink_Board
+	}
+	if sink == protocol.AwaitSink_Reply {
+		a.cmdresult.Append(fmt.Sprintf("await-progress %s: watching (result lands here on the next progress line)…", shortTaskID(full)))
+	}
+	return DoAwaitProgress(a.appCtx, a.client, full, uint64(v.Since), sink, v.Topic)
+}
+
+func (h tuiVerbs) AwaitProgressLs(v verb.AwaitProgressAction) tea.Cmd {
+	a := h.a
+	filter := ""
+	if v.TaskFilter != "" {
+		full, errStr := a.resolveTaskIDPrefix(v.TaskFilter)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render("await-progress ls: " + errStr))
+			return nil
+		}
+		filter = full
+	}
+	progress := protocol.AwaitCondition_Progress
+	return DoIdleWatcherList(a.client, filter, true, &progress)
+}
+
+func (h tuiVerbs) AwaitProgressKill(v verb.AwaitProgressAction) tea.Cmd {
+	return h.SessionAwaitIdleKill(verb.SessionAction{WatcherIDs: v.WatcherIDs})
 }
 
 func (h tuiVerbs) SessionAwaitIdleKill(v verb.SessionAction) tea.Cmd {

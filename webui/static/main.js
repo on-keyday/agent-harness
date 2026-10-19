@@ -4640,6 +4640,34 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
   }
 
+  // "📝 進捗で通知": arm a one-shot await-progress watcher (sink=notify) on the
+  // attached session's task. The baseline is the row's progressAt — carried as
+  // a decimal string because a nanosecond stamp does not fit a JS number — so
+  // a line written since the list was drawn fires at once.
+  {
+    const btn = document.getElementById("await-progress-btn");
+    const origLabel = btn.textContent;
+    let revertTimer = 0;
+    const flash = (text) => {
+      btn.textContent = text;
+      clearTimeout(revertTimer);
+      revertTimer = setTimeout(() => { btn.textContent = origLabel; }, 2500);
+    };
+    btn.addEventListener("click", async () => {
+      if (!currentSessionTaskId) { flash("📝 セッション未接続"); return; }
+      const row = (lastTasks || []).find((t) => t.id === currentSessionTaskId);
+      try {
+        const r = await window.harness.awaitProgress({
+          taskId: currentSessionTaskId, since: row ? row.progressAt : "0", sink: "notify",
+        });
+        flash(r.status === "armed" ? `📝 armed #${r.watcherId} ✓` : `📝 ${r.status}`);
+      } catch (e) {
+        console.error("awaitProgress:", e);
+        flash("📝 error");
+      }
+    });
+  }
+
   if (reattachQuick) {
     reattachQuick.addEventListener("click", () => reattachTo(reattachQuick.dataset.taskId));
   }
@@ -7502,6 +7530,16 @@ async function runGitAction(taskID, g) {
 // called; it just stopped describing anything. The startup assertion and
 // cmd_test.mjs both check the name resolves now.
 //
+// watcherListText is one verb's view of the shared watcher registry:
+// `session await-idle ls` and `await-progress ls` each show their condition.
+async function watcherListText(ctx, b, condition) {
+  const all = await ctx.harness.awaitIdleList(b.flags.task || undefined);
+  const ws = (Array.isArray(all) ? all : []).filter((w) => w.condition === condition);
+  if (!ws.length) return "(no armed watchers)";
+  if (b.flags.json) return ws.map((w) => JSON.stringify(w)).join("\n");
+  return ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}  by ${w.by}`).join("\n");
+}
+
 // RUNCMD_DISPATCH comes from the verb declarations, via the wasm bridge — it
 // was a literal map here, and what kept it in step with the table was three
 // assertions plus a page-local exception list duplicated between this file and
@@ -7818,6 +7856,37 @@ async function runVerbCommandDispatch(tokens, ctx) {
     // knows the other. The sub-verb is decided by the FIRST token only:
     // `exec <id> ls -la` is a command named ls, because a task id
     // introduced it.
+    // The progress twin of `session await-idle`: top-level because a oneshot
+    // task, which has no session, writes progress too. ls/kill share the
+    // watcher registry with await-idle, so they call the same bridge.
+    case "await-progress": {
+      const b = parseOrHelp(ctx, tokens, {});
+      const sub = b.path.length > 1 ? b.path[1] : "arm";
+      if (sub === "ls") {
+        out = await watcherListText(ctx, b, "progress");
+        break;
+      }
+      if (sub === "kill") {
+        const failed = [];
+        for (const id of b.args) {
+          try { await ctx.harness.awaitIdleKill(Number(id)); }
+          catch (e) { failed.push(`${id}: ${e.message}`); }
+        }
+        if (failed.length) throw new Error(`await-progress kill: ${failed.join("; ")}`);
+        out = `killed watcher ${b.args.join(", ")}`;
+        break;
+      }
+      const sink = b.flags.notify ? "notify" : (b.flags.topic ? "board" : "reply");
+      if (sink === "reply") ctx.echo("await-progress: waiting for the task's next progress line…");
+      const r = await ctx.harness.awaitProgress({
+        taskId: b.args[0], since: b.flags.since || 0, sink, topic: b.flags.topic || "",
+      });
+      const st = r && r.status ? r.status : "";
+      out = `await-progress ${String(b.args[0]).slice(0, 12)}: ${st}` +
+        (r && r.status === "fired" ? ` ${JSON.stringify(r.progress)}` : "") +
+        (r && r.watcherId ? ` (watcher ${r.watcherId})` : "");
+      break;
+    }
     case "exec": {
       // Parsed by the shared declaration: --shell/--sshd-parent, the
       // optional `--` before the argv, and the refusal of `exec --shell
@@ -7924,12 +7993,7 @@ async function runVerbCommandDispatch(tokens, ctx) {
         const b = parseOrHelp(ctx, ["session", "await-idle", ...tokens.slice(2)], {});
         const sub = b.path.length > 2 ? b.path[2] : "arm";
         if (sub === "ls") {
-          const ws = await ctx.harness.awaitIdleList(b.flags.task || undefined);
-          out = ws.length
-            ? (b.flags.json
-                ? ws.map((w) => JSON.stringify(w)).join("\n")
-                : ws.map((w) => `#${w.watcherId}  ${String(w.taskId).slice(0, 8)}…  ${w.sink}${w.sink === "board" ? ` ${w.topic}` : ""}  by ${w.by}`).join("\n"))
-            : "(no armed watchers)";
+          out = await watcherListText(ctx, b, "idle");
           break;
         }
         if (sub === "kill") {

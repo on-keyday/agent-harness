@@ -581,6 +581,25 @@ test("session await-idle kill acts on every id; ls asks the bridge", async () =>
   assert.match(String(l.out), /no armed watchers/);
 });
 
+test("await-progress arms with the baseline; ls shows only progress rows; kill takes any id", async () => {
+  const a = await run(`await-progress ${ID} --since 5`);
+  const arm = named(a.calls, "awaitProgress");
+  eq(arm.length, 1);
+  eq(arm[0][1], { taskId: ID, since: 5, sink: "reply", topic: "" });
+  const rows = [
+    { watcherId: 1, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "idle" },
+    { watcherId: 2, taskId: ID, sink: "reply", topic: "", by: "operator", condition: "progress" },
+  ];
+  const l = await run("await-progress ls", { awaitIdleList: rows });
+  assert.match(String(l.out), /#2 /);
+  assert.doesNotMatch(String(l.out), /#1 /);
+  const il = await run("session await-idle ls", { awaitIdleList: rows });
+  assert.match(String(il.out), /#1 /);
+  assert.doesNotMatch(String(il.out), /#2 /);
+  const k = await run("await-progress kill 2");
+  eq(named(k.calls, "awaitIdleKill").map((c) => c[1]), [2]);
+});
+
 // The runner list is rows like the task list, built from one model per
 // runner. The model is what the row shows; the DOM is a projection of it.
 test("a runner row: agents as a list, roots one per line, load and status", () => {

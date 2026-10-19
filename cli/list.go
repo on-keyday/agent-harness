@@ -36,6 +36,40 @@ func ActivityStr(outputIdleMs uint64) string {
 	return fmt.Sprintf("idle:%ds", int(idle/time.Second))
 }
 
+// AgeStr renders a server-computed age in ms as "12m ago" / "30s ago" /
+// "3h ago". Takes the wire value for the reason ActivityStr does.
+func AgeStr(ageMs uint64) string {
+	d := time.Duration(ageMs) * time.Millisecond
+	switch {
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%ds ago", int(d/time.Second))
+}
+
+// ProgressStr is the task's self-reported line with its age, as
+// `progress="…" (12m ago)`, or "" when the task has never written one. Gated
+// on the stamp, not the text: a cleared line is a write, and prints. Shared by
+// the CLI `ls` row and the TUI.
+func ProgressStr(t *protocol.TaskInfo) string {
+	if t.ProgressAt == 0 {
+		return ""
+	}
+	return fmt.Sprintf("progress=%q (%s)", string(t.Progress), AgeStr(t.ProgressAgeMs))
+}
+
+// TitleStr is the live window title as `title="…"`, printed whenever the task
+// has a live terminal — empty included, since "untitled" is a measurement —
+// and "" when it has none.
+func TitleStr(t *protocol.TaskInfo) string {
+	if !t.LiveTerminal() {
+		return ""
+	}
+	return fmt.Sprintf("title=%q", string(t.Title))
+}
+
 // Snapshot queries the server for all runners + recent tasks and returns the
 // decoded ListResultBody. The wire response carries only a stream id; the
 // body is read from the trsf send-stream the server opens (so the payload
@@ -214,6 +248,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	act := ""
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)
+	}
+	if p := ProgressStr(&t); p != "" {
+		act += "  " + p
+	}
+	if ti := TitleStr(&t); ti != "" {
+		act += "  " + ti
 	}
 	// Observers on the live session, split by what they can do. Printed
 	// whenever the task HAS a session, zeros included — never elided on the
@@ -436,6 +476,14 @@ type taskJSON struct {
 	EndedAt      uint64            `json:"ended_at"`
 	LastOutputAt uint64            `json:"last_output_at"`
 	OutputIdleMs uint64            `json:"output_idle_ms"`
+	// The self-reported progress line and its server stamp / age, and the
+	// live window title. All present at zero: progress_at == 0 is "never
+	// written", live_terminal false is "no title to report".
+	Progress      string `json:"progress"`
+	ProgressAt    uint64 `json:"progress_at"`
+	ProgressAgeMs uint64 `json:"progress_age_ms"`
+	LiveTerminal  bool   `json:"live_terminal"`
+	Title         string `json:"title"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -532,6 +580,11 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		EndedAt:        t.EndedAt,
 		LastOutputAt:   t.LastOutputAt,
 		OutputIdleMs:   t.OutputIdleMs,
+		Progress:       string(t.Progress),
+		ProgressAt:     t.ProgressAt,
+		ProgressAgeMs:  t.ProgressAgeMs,
+		LiveTerminal:   t.LiveTerminal(),
+		Title:          string(t.Title),
 	}
 }
 

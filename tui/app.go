@@ -722,7 +722,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A killed row must leave the list, and only a fresh fetch can say so
 		// — watchers have no push subscription.
 		if a.idleWatchersModal.IsOpen() {
-			return a, DoIdleWatcherList(a.client, "", false)
+			return a, DoIdleWatcherList(a.client, "", false, nil)
 		}
 		return a, nil
 
@@ -1056,6 +1056,28 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(WarnStyle.Render("await-idle " + short + ": no live session for this task"))
 		default:
 			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("await-idle %s: %v", short, msg.Status)))
+		}
+		return a, nil
+
+	case AwaitProgressResultMsg:
+		short := shortTaskID(msg.TaskID)
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("await-progress " + short + ": " + msg.Err.Error()))
+			return a, nil
+		}
+		switch msg.Status {
+		case protocol.AwaitProgressStatus_Fired:
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("await-progress %s: %q", short, msg.Progress)))
+		case protocol.AwaitProgressStatus_Armed:
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("await-progress %s: armed (watcher %d)", short, msg.WatcherID)))
+		case protocol.AwaitProgressStatus_Cancelled:
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("await-progress %s: cancelled (watcher %d killed)", short, msg.WatcherID)))
+		case protocol.AwaitProgressStatus_TaskEnded:
+			a.cmdresult.Append(WarnStyle.Render("await-progress " + short + ": task ended without a new line"))
+		case protocol.AwaitProgressStatus_NotFound:
+			a.cmdresult.Append(WarnStyle.Render("await-progress " + short + ": no such task"))
+		default:
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("await-progress %s: %s", short, cli.AwaitProgressStatusString(msg.Status))))
 		}
 		return a, nil
 

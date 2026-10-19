@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -672,11 +673,18 @@ func (h cliVerbs) SessionAwaitIdle(a verb.SessionAction) error {
 	return runSessionAwaitIdleWith(h.cid(), a)
 }
 func (h cliVerbs) SessionAwaitIdleLs(a verb.SessionAction) error {
-	ws, err := cli.AwaitIdleList(h.ctx, h.cid(), a.TaskFilter)
+	return printWatchers(h, a.TaskFilter, a.JSON, protocol.AwaitCondition_Idle)
+}
+
+// printWatchers is one verb's view of the shared watcher registry: await-idle
+// ls and await-progress ls each show their own condition.
+func printWatchers(h cliVerbs, taskFilter string, asJSON bool, cond protocol.AwaitCondition) error {
+	ws, err := cli.AwaitIdleList(h.ctx, h.cid(), taskFilter)
 	if err != nil {
 		return err
 	}
-	if a.JSON {
+	ws = cli.FilterWatchers(ws, cond)
+	if asJSON {
 		for i := range ws {
 			fmt.Println(cli.AwaitIdleWatcherJSONLine(&ws[i]))
 		}
@@ -702,6 +710,74 @@ func (h cliVerbs) SessionAwaitIdleKill(a verb.SessionAction) error {
 	}
 	return failed
 }
+
+// Progress writes this task's own progress line. The server resolves the
+// task from the connection, so an operator shell gets no_principal.
+func (h cliVerbs) Progress(a verb.ProgressAction) error {
+	if a.Clear == (a.Text != "") {
+		return fmt.Errorf("progress: give a line, or --clear (not both, not neither)")
+	}
+	resp, err := cli.ProgressSet(h.ctx, h.cid(), a.Text, a.Clear)
+	if err != nil {
+		return err
+	}
+	switch resp.Status {
+	case protocol.ProgressSetStatus_Ok:
+		return nil
+	case protocol.ProgressSetStatus_NoPrincipal:
+		return fmt.Errorf("progress: only a task can set its own progress (this connection has no task identity)")
+	case protocol.ProgressSetStatus_BadText:
+		return fmt.Errorf("progress: refused — one line, at most 256 bytes, no control characters")
+	}
+	return fmt.Errorf("progress: %s", cli.ProgressSetStatusString(resp.Status))
+}
+
+// AwaitProgress prints one JSON object, as `session await-idle` does, and
+// exits non-zero on everything but fired/armed so scripts can branch.
+func (h cliVerbs) AwaitProgress(a verb.AwaitProgressAction) error {
+	sink := protocol.AwaitSink_Reply
+	switch {
+	case a.Notify:
+		sink = protocol.AwaitSink_Notify
+	case a.Topic != "":
+		sink = protocol.AwaitSink_Board
+	}
+	var resp *protocol.AwaitProgressResponse
+	if err := h.withClient(func(c *cli.Client) error {
+		var err error
+		resp, err = c.AwaitProgress(h.ctx, a.TaskID, uint64(a.Since), sink, a.Topic)
+		return err
+	}); err != nil {
+		return err
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"status":      cli.AwaitProgressStatusString(resp.Status),
+		"progress":    string(resp.Progress),
+		"progress_at": resp.ProgressAt,
+		"watcher_id":  resp.WatcherId,
+	})
+	switch resp.Status {
+	case protocol.AwaitProgressStatus_Fired, protocol.AwaitProgressStatus_Armed:
+		return nil
+	case protocol.AwaitProgressStatus_TaskEnded:
+		os.Exit(3)
+	case protocol.AwaitProgressStatus_Cancelled:
+		os.Exit(4)
+	}
+	os.Exit(1)
+	return nil
+}
+
+func (h cliVerbs) AwaitProgressLs(a verb.AwaitProgressAction) error {
+	return printWatchers(h, a.TaskFilter, a.JSON, protocol.AwaitCondition_Progress)
+}
+
+// AwaitProgressKill is SessionAwaitIdleKill: the registry is shared, so it
+// takes any watcher id.
+func (h cliVerbs) AwaitProgressKill(a verb.AwaitProgressAction) error {
+	return h.SessionAwaitIdleKill(verb.SessionAction{WatcherIDs: a.WatcherIDs})
+}
+
 func (h cliVerbs) SessionResize(a verb.SessionAction) error {
 	return runSessionResizeWith(h.cid(), a)
 }
