@@ -511,6 +511,33 @@ served the same root with the same profiles:
    `session new -d --agent bash --runner <R1>` on its command line → "started
    detached", the task `Detached` with `from=tui`, `stty size` `45 200`.
 
-**Not verified live:** the WebUI's detached event-stream open. The dummy's
-default profile names no stream adapter, so a stream session cannot run there.
-That path compiles under `make wasm-check`, and the page's command tests pass.
+After the review fixes (`2394f6e5`), on a fresh dummy, the UI surfaces:
+
+- CLI: `session new -d --scope-for spawn=none` → "spawn names no task, so a
+  scope cannot bound it; narrow resume / resume_exact instead".
+- TUI, inside a 45x200 session:
+  - cmdline `session new --resume X --exact -d` → "started detached", X
+    `Detached`, `resumed_by=tui`;
+  - the same spawn-override line → the same refusal;
+  - `a` → the picker lists `spawn`, `resume_exact`, `resume`;
+  - `S` → picker → bash opened ATTACHED for the operator and took typed input;
+  - `r` on a finished task → resumed attached and took typed input;
+  - `--workspace w` with `resume = continue` → the finished task came back
+    `Detached`.
+- WebUI (Playwright, `/#psk=…`):
+  - the Compose chips list `spawn`, `resume_exact`, `resume`;
+  - command input `submit --resume <oneshot> --exact` → re-ran with its recorded
+    prompt, `resumed_by=webui`;
+  - `submit --resume <interactive> --exact` → `resume_exact_mismatch` naming the
+    recorded kind;
+  - `… --exact do it` → "--exact runs the task's recorded prompt";
+  - "Open interactive session" → picker → bash attached with a prompt in the
+    xterm;
+  - with the event-stream box ticked → no client error, and a `stream` task
+    created and then `Failed` with "no stream adapter configured", which is the
+    runner's answer for this profile, not the detached open's.
+  - Screenshot: `.playwright-mcp/webui-resume-caps-2026-10-19.png`
+    (gitignored).
+
+Still not exercised: a stream session that actually RUNS after a detached open,
+since no dummy profile has an adapter.
