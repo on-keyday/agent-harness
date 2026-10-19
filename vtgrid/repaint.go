@@ -8,6 +8,7 @@ package vtgrid
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Repaint synthesises the bytes that make a terminal show THIS screen, whatever
@@ -137,24 +138,37 @@ func (t *Terminal) Repaint() []byte {
 // because it is the terminator every emulator honours (this parser's own reason
 // for refusing the eight-bit ST is in Terminal.str).
 //
-// C0 controls and DEL are DROPPED rather than escaped or passed through. The
+// The title goes through SanitizeTitle, with no length cap of its own: the
 // parser cannot have stored a BEL or an ESC — both end the string — but nothing
-// else in that range is filtered on the way IN, so a title can hold a CR or a
-// CAN. Terminals disagree about those inside an OSC: xterm treats CAN as an
-// abort, which ends the sequence and prints its tail onto the screen this
+// else in the control ranges is filtered on the way IN, so a title can hold a
+// CR or a CAN. Terminals disagree about those inside an OSC: xterm treats CAN
+// as an abort, which ends the sequence and prints its tail onto the screen this
 // function has just painted. Dropping them costs a byte of a hostile title and
-// removes the disagreement. Filtering by byte is safe for UTF-8 — every byte of
-// a multi-byte rune is >= 0x80, so no filtered byte can be part of one.
+// removes the disagreement.
 func titleOSC(title string) string {
+	return "\x1b]0;" + SanitizeTitle(title, len(title)) + "\x07"
+}
+
+// SanitizeTitle is the one rule for a window title leaving this model — as a
+// repaint OSC, or as a field another process renders into a terminal or a
+// page. C0 controls, DEL and C1 controls (U+0080–U+009F, which a terminal in
+// eight-bit mode reads as CSI, ST and the rest) are dropped, invalid UTF-8 is
+// dropped, and the result is cut to at most maxBytes on a rune boundary.
+func SanitizeTitle(title string, maxBytes int) string {
 	var s strings.Builder
-	s.Grow(len(title) + 5)
-	s.WriteString("\x1b]0;")
-	for i := 0; i < len(title); i++ {
-		if b := title[i]; b < 0x20 || b == 0x7f {
+	for i := 0; i < len(title); {
+		r, n := utf8.DecodeRuneInString(title[i:])
+		i += n
+		if r == utf8.RuneError && n == 1 {
 			continue
 		}
-		s.WriteByte(title[i])
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			continue
+		}
+		if s.Len()+n > maxBytes {
+			break
+		}
+		s.WriteRune(r)
 	}
-	s.WriteString("\x07")
 	return s.String()
 }

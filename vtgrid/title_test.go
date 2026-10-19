@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/vt"
 )
@@ -133,5 +134,25 @@ func TestRepaintTitleDropsC0Controls(t *testing.T) {
 	// to the full width, so a blank row is spaces rather than "".
 	if got := strings.TrimRight(dst.Lines()[0], " "); got != "" {
 		t.Errorf("row 0 after repaint = %q, want empty", got)
+	}
+}
+
+// SanitizeTitle is the one rule for a title leaving this model, whether as a
+// repaint OSC or as a wire field another process renders: no C0, DEL or C1
+// (U+0080–U+009F, which an eight-bit terminal reads as controls), only valid
+// UTF-8, and at most maxBytes, cut on a rune boundary.
+func TestSanitizeTitle(t *testing.T) {
+	if got := SanitizeTitle("✳ fix\x07 bug\x1b", 256); got != "✳ fix bug" {
+		t.Errorf("C0 removal = %q", got)
+	}
+	if got := SanitizeTitle("\u0085x\u009c", 256); got != "x" {
+		t.Errorf("C1 removal = %q", got)
+	}
+	if got := SanitizeTitle("a\xffb\x7f", 256); got != "ab" {
+		t.Errorf("invalid UTF-8 / DEL removal = %q", got)
+	}
+	long := SanitizeTitle(strings.Repeat("✳", 100), 256) // 300 bytes in
+	if len(long) > 256 || !utf8.ValidString(long) || len(long) != 255 {
+		t.Errorf("truncation = %d bytes (valid=%v), want 255: the last whole rune under 256", len(long), utf8.ValidString(long))
 	}
 }

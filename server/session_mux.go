@@ -1086,6 +1086,26 @@ func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }
 // Stdout/Stderr frame from the runner, or 0 if none has arrived yet.
 func (m *SessionMux) LastOutputUnixNano() int64 { return m.lastOutput.Load() }
 
+// maxWireTitleBytes bounds the title a task row and a task event carry.
+const maxWireTitleBytes = 256
+
+// HasTerminal reports whether this mux models a terminal at all; the
+// event-stream kind does not, and so has no title to report.
+func (m *SessionMux) HasTerminal() bool { return m.terminal }
+
+// Title is the session's current window title, sanitized and cut for the wire
+// (vtgrid.SanitizeTitle). "" for a mux without a terminal, and for one whose
+// program has not titled itself.
+func (m *SessionMux) Title() string {
+	if !m.terminal {
+		return ""
+	}
+	m.screenMu.Lock()
+	t := m.screen.Title()
+	m.screenMu.Unlock()
+	return vtgrid.SanitizeTitle(t, maxWireTitleBytes)
+}
+
 // lastWinSizeBytes is the most recent TerminalWindowSize frame as wire bytes,
 // or nil. Re-adoption writes it into a freshly created runner stream, which
 // both hands the runner the PTY size it needs and makes the stream exist for

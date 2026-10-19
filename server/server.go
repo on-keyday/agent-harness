@@ -454,6 +454,11 @@ func New(cfg Config) *Server {
 				ev.LastOutputAt = uint64(lo)
 				ev.OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
 			}
+			// The title rides every event: a title change emits nothing by
+			// itself (Claude Code rewrites it on every spinner tick). The
+			// parent-hop copy below drops it.
+			ev.SetLiveTerminal(mux.HasTerminal())
+			ev.SetTitle([]byte(mux.Title()))
 			// Same reason as the act fields above: stamped on EVERY event so
 			// any of them refreshes a subscriber's row. task_observers events
 			// carry this as their payload of interest.

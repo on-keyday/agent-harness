@@ -2093,6 +2093,13 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 				taskInfos[i].OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
 			}
 			taskInfos[i].RingBufferBytes = uint64(mux.RingBufferLen())
+			// The window title is live too, but it is content, not liveness:
+			// this enrichment runs AFTER redactParentTaskInfo, so the parent
+			// row must be skipped here or the redaction would be undone.
+			taskInfos[i].SetLiveTerminal(mux.HasTerminal())
+			if t.ID != redactedHex {
+				taskInfos[i].SetTitle([]byte(mux.Title()))
+			}
 			// Observers, split by kind. Read here rather than stored because
 			// they describe who is watching RIGHT NOW; a terminal task's
 			// observer set is not a fact that outlives its session.
