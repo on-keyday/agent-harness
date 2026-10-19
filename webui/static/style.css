@@ -2181,6 +2181,14 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 10px;
   text-anchor: middle;
 }
+/* The task's progress line, the same light as in the list; cleared is the
+   list's gray italic marker, never text a task wrote. */
+.tt-progress {
+  fill: #ddd;
+  font-size: 10px;
+  text-anchor: middle;
+}
+.tt-progress-cleared { fill: #777; font-style: italic; }
 /* Authority the creator edges do not show (cli.BuildTaskGrants). One hue per
    kind, shared by edge, arrowhead, global ring and legend; the line style
    repeats the distinction for a reader who cannot tell the hues apart. */

@@ -7410,6 +7410,32 @@ function taskNowModel(t) {
   };
 }
 
+// treeNodeProgress is what a task-tree node shows of the task's progress: a
+// fourth line cut to the node's slot (a node is 132px wide), and tooltip lines
+// with the full text, its age and the window title. Built on taskNowModel, so
+// the tree and the list agree: never written shows no line, cleared is the
+// same gray "(cleared)" marker. null when there is nothing to show at all.
+const TREE_PROGRESS_MAX = 20;
+function treeNodeProgress(t) {
+  const now = taskNowModel(t);
+  if (now.progress === null && now.title === null) return null;
+  const tooltip = [];
+  let line = null;
+  if (now.progress !== null) {
+    if (now.cleared) {
+      line = "(cleared)";
+      tooltip.push(`progress: (cleared) (${now.age})`);
+    } else {
+      const chars = Array.from(now.progress);
+      line = chars.length > TREE_PROGRESS_MAX ? chars.slice(0, TREE_PROGRESS_MAX - 1).join("") + "…" : now.progress;
+      tooltip.push(`progress: ${now.progress} (${now.age})`);
+    }
+  }
+  if (now.title) tooltip.push(`title: ${now.title}`);
+  if (line === null && tooltip.length === 0) return null;
+  return { line, cleared: now.cleared, tooltip };
+}
+
 // watcherWaitsFor is the condition cell of a watcher row: await-idle and
 // await-progress share one registry, and only idle watchers have a threshold.
 function watcherWaitsFor(w) {
@@ -9132,11 +9158,11 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
   }
 
   const COL_W = 132;   // horizontal slot; wide enough for an 8-hex label
-  const ROW_H = 88;   // three label lines per node (id / status+agent / repo)
+  const ROW_H = 100;  // four label lines per node (id / status+agent / repo / progress)
   // Asymmetric vertical padding: a node's labels sit ABOVE it (id) and BELOW
-  // it (status, repo), and the lowest one reaches R+26. Equal padding clipped
-  // the bottom row's repo against the panel edge.
-  const PAD_X = 70, PAD_TOP = 34, PAD_BOTTOM = 46;
+  // it (status, repo, progress), and the lowest one reaches R+38. Equal
+  // padding clipped the bottom row's repo against the panel edge.
+  const PAD_X = 70, PAD_TOP = 34, PAD_BOTTOM = 58;
   const R = 9;
 
   const byID = new Map((tasks || []).map((t) => [t.id, t]));
@@ -9311,6 +9337,15 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
         g.appendChild(repo);
     }
 
+    // What the task says it is doing, cut to the slot; the tooltip has it
+    // whole. textContent, as everywhere: the text is the task's.
+    const prog = t ? treeNodeProgress(t) : null;
+    if (prog && prog.line !== null) {
+      const pl = svgEl("text", { class: prog.cleared ? "tt-progress tt-progress-cleared" : "tt-progress", y: R + 38 });
+      pl.textContent = prog.line;
+      g.appendChild(pl);
+    }
+
     // Grants whose target is not in the listing (pruned): no edge can be
     // drawn, so the count stands in for them. Shown only when there are any.
     if (n.offscreen > 0) {
@@ -9329,6 +9364,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
         : `global: ${n.globalCaps} が全タスクに届く`);
     }
     if (n.offscreen > 0) lines.push(`id 指定の対象のうち ${n.offscreen} 件が一覧に居ない（prune 済み）`);
+    if (prog) lines.push(...prog.tooltip);
     title.textContent = lines.join("\n");
     g.appendChild(title);
 

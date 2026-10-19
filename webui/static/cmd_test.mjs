@@ -646,6 +646,22 @@ test("task sheet: clear-progress offered only for a written, non-empty line", ()
   eq(page.canClearProgress({ progress: "", progressAt: "0" }), false);
 });
 
+// A tree node's fourth line: the progress cut to the node's slot, with the
+// full text, its age and the window title in the tooltip. Cleared reads as the
+// same gray marker as the list; never written shows no line.
+test("tree node progress: cut line, full tooltip, cleared marker", () => {
+  const long = "auth refactor: tests green, writing the migration";
+  const m = page.treeNodeProgress({ progress: long, progressAt: "5", progressAgeMs: 720000, liveTerminal: true, title: "✳ topic" });
+  eq(m.cleared, false);
+  assert.ok(m.line.length <= 20 && m.line.endsWith("…") && long.startsWith(m.line.slice(0, -1)), `line = ${m.line}`);
+  eq(m.tooltip, [`progress: ${long} (12m ago)`, "title: ✳ topic"]);
+  const c = page.treeNodeProgress({ progress: "", progressAt: "9", progressAgeMs: 3000, liveTerminal: false, title: "" });
+  eq({ line: c.line, cleared: c.cleared, tooltip: c.tooltip }, { line: "(cleared)", cleared: true, tooltip: ["progress: (cleared) (3s ago)"] });
+  eq(page.treeNodeProgress({ progress: "", progressAt: "0", progressAgeMs: 0, liveTerminal: false, title: "" }), null);
+  // Title only: no fourth line, but the tooltip still names it.
+  eq(page.treeNodeProgress({ progress: "", progressAt: "0", liveTerminal: true, title: "✳ topic" }), { line: null, cleared: false, tooltip: ["title: ✳ topic"] });
+});
+
 // The runner list is rows like the task list, built from one model per
 // runner. The model is what the row shows; the DOM is a projection of it.
 test("a runner row: agents as a list, roots one per line, load and status", () => {
