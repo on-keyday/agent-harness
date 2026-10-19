@@ -48,7 +48,11 @@ func writeCapsAuditFocus(w io.Writer, rows []AuditRow, focus protocol.Capability
 		if r.Cap != focus {
 			continue
 		}
-		fmt.Fprintf(w, "%s %s  %d holder(s)  %s\n", r.Cap.String(), r.Tier.Label(), len(r.Holders), impliedNote(r.ImpliedBy))
+		head := fmt.Sprintf("%s %s  %d holder(s)", r.Cap.String(), r.Tier.Label(), len(r.Holders))
+		if note := impliedNote(r.ImpliedBy); note != "" {
+			head += "  " + note
+		}
+		fmt.Fprintln(w, head)
 		for _, h := range r.Holders {
 			fmt.Fprintf(w, "  %s  parent=%s\n", auditHolderText(h), h.Parent)
 			fmt.Fprintf(w, "    revoke: harness-cli caps set %s --caps %s\n", h.TaskID, CapsLabel(caps[h.TaskID]&^focus))

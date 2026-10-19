@@ -97,3 +97,14 @@ func TestWriteCapsAuditReportFocusJSON(t *testing.T) {
 		t.Fatalf("focused json = %v, want the one notify row with no holders", lines)
 	}
 }
+
+// A bit with no implied note ends its --cap header at the count.
+func TestWriteCapsAuditFocusHeaderHasNoTrailingSpace(t *testing.T) {
+	a := auditTask(0xa1, protocol.TaskStatus_Running, protocol.Capability_Spawn, protocol.ScopeBase_Subtree)
+	var buf bytes.Buffer
+	_ = WriteCapsAudit(&buf, CapsAudit([]protocol.TaskInfo{a}, false, false), protocol.Capability_Spawn, []protocol.TaskInfo{a})
+	first := strings.SplitN(buf.String(), "\n", 2)[0]
+	if first != strings.TrimRight(first, " ") {
+		t.Fatalf("header %q ends in spaces", first)
+	}
+}
