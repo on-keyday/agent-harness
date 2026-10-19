@@ -27,8 +27,8 @@ func progressTask(kind protocol.TaskKind, progress string, at uint64, live bool,
 // The last column says what the task is doing now: its own line first, then
 // its program's title (marked, so the two are told apart), then the prompt.
 func TestDoingCell(t *testing.T) {
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "stage 2", 1, true, "✳ topic")); got != "stage 2" {
-		t.Errorf("with progress = %q, want the line", got)
+	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "stage 2", 1, true, "✳ topic")); got != "stage 2 (12m ago)" {
+		t.Errorf("with progress = %q, want the line with its age (D4: the reader judges staleness)", got)
 	}
 	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "✳ topic")); got != "(title) ✳ topic" {
 		t.Errorf("title only = %q, want it marked", got)
@@ -49,7 +49,7 @@ func TestApplyEventProgress(t *testing.T) {
 	ev.SetProgress([]byte("s3"))
 	ev.SetLiveTerminal(true)
 	ev.SetTitle([]byte("t"))
-	applyEventProgress(&ti, ev)
+	New(Config{}).applyEventProgress(&ti, "x", ev)
 	if string(ti.Progress) != "s3" || ti.ProgressAt != 7 || ti.ProgressAgeMs != 3 || !ti.LiveTerminal() || string(ti.Title) != "t" {
 		t.Fatalf("row after event = progress %q@%d age %d live %v title %q", ti.Progress, ti.ProgressAt, ti.ProgressAgeMs, ti.LiveTerminal(), ti.Title)
 	}
@@ -88,5 +88,41 @@ func TestTasksFlexColumnIsNamed(t *testing.T) {
 		if !found {
 			t.Errorf("%s columns have no \"Doing\" column for flexColumn to find", name)
 		}
+	}
+}
+
+// A forged task event can carry any bytes (pubsub lets a subscriber publish),
+// and bubbles passes a cell's bytes to the terminal as they are: the cell
+// strips control characters itself rather than trusting the server's rules.
+func TestDoingCell_StripsControls(t *testing.T) {
+	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "\x1b[2Jx\u009b", 1, true, "")); got != "[2Jx (12m ago)" {
+		t.Errorf("progress cell = %q, want the ESC and C1 gone", got)
+	}
+	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "\x1b]0;t\x07")); got != "(title) ]0;t" {
+		t.Errorf("title cell = %q, want the controls gone", got)
+	}
+}
+
+// The age arrives frozen in a snapshot or event; the TUI fetches nothing on
+// its own, so the row must be aged locally as the idle badge is.
+func TestProgressAgeAdvancesLocally(t *testing.T) {
+	a := New(Config{})
+	var ti protocol.TaskInfo
+	ti.Id.Id[0] = 0x33
+	ti.Status = protocol.TaskStatus_Running
+	ti.SetProgress([]byte("stage"))
+	ti.ProgressAt = 5
+	ti.ProgressAgeMs = 1000
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{ti}})
+	id := FormatTaskID(ti.Id)
+	rt, ok := a.progressRecvAt[id]
+	if !ok {
+		t.Fatal("snapshot did not stamp the progress receipt time")
+	}
+	a.progressRecvAt[id] = rt.Add(-10 * time.Minute)
+	a.refreshTasksTable()
+	sel := a.tasks.SelectedTask()
+	if sel == nil || sel.ProgressAgeMs < 600000 {
+		t.Fatalf("rendered age = %v, want >= 10m after 10m locally", sel)
 	}
 }

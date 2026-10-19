@@ -63,3 +63,15 @@ func TestRenderNotifyEvent_NoTitleNoDanglingSeparator(t *testing.T) {
 		t.Fatalf("untitled event has a dangling separator: %q", got)
 	}
 }
+
+// Notification text is task-written (and the topic can be fed by any
+// subscriber); the pane writes it straight to the terminal, so it strips
+// control characters itself.
+func TestRenderNotifyEvent_StripsControls(t *testing.T) {
+	ev := protocol.NotifyEvent{Ts: 1, Level: protocol.NotifyLevel_Info, Origin: protocol.NotifyOrigin_External}
+	ev.SetTitle([]byte("t\x1b[2J"))
+	ev.SetText([]byte("x\u009by"))
+	if got := renderNotifyEvent(ev); strings.ContainsAny(got, "\x1b\u009b") {
+		t.Fatalf("rendered %q, want no ESC/C1", got)
+	}
+}

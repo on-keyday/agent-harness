@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // NotifyModel is a bounded-scroll pane displaying the last ~200 notification
@@ -58,8 +59,10 @@ func renderNotifyEvent(ev protocol.NotifyEvent) string {
 			origin += " " + id // full id — copy-pasteable for task addressing
 		}
 	}
-	title := string(ev.Title)
-	text := string(ev.Text)
+	// Task-written text going straight to the terminal: control characters
+	// are stripped here, not trusted to whoever published the event.
+	title := vtgrid.SanitizeTitle(string(ev.Title), len(ev.Title))
+	text := vtgrid.SanitizeTitle(string(ev.Text), len(ev.Text))
 	// body: "title — text" with both; just "text" or "title" alone — no dangling
 	// separator when one side is empty (untitled notifications are common).
 	body := title

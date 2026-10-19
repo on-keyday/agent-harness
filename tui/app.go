@@ -85,6 +85,12 @@ type App struct {
 	// badge is never aged — it flips only when the server's idle-edge
 	// task_activity event arrives.
 	actRecvAt map[string]time.Time
+	// progressRecvAt is the same for progress_age_ms: the local receipt time
+	// of each task's progress fields, so a stale line keeps aging on screen
+	// (D4 — the reader judges staleness by the age) although the TUI fetches
+	// nothing by itself. Kept apart from actRecvAt because progress outlives
+	// the session: a finished task's line still ages.
+	progressRecvAt map[string]time.Time
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -352,6 +358,7 @@ func New(cfg Config) *App {
 		status:            "connecting…",
 		tasksByID:         map[string]protocol.TaskInfo{},
 		actRecvAt:         map[string]time.Time{},
+		progressRecvAt:    map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
@@ -479,11 +486,15 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
+		a.progressRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		for _, t := range msg.Tasks {
 			id := FormatTaskID(t.Id)
 			a.tasksByID[id] = t
 			if t.LastOutputAt > 0 {
 				a.actRecvAt[id] = now
+			}
+			if t.ProgressAt != 0 {
+				a.progressRecvAt[id] = now
 			}
 		}
 		a.refreshTasksTable()
@@ -500,6 +511,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// waiting for the next incidental snapshot refresh.
 			delete(a.tasksByID, id)
 			delete(a.actRecvAt, id)
+			delete(a.progressRecvAt, id)
 			a.refreshTasksTable()
 			return a, nil
 		}
@@ -518,7 +530,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.CreatedAt = msg.Event.Ts
 			a.applyEventAct(&ti, id, msg.Event)
 			a.applyEventObservers(&ti, msg.Event)
-			applyEventProgress(&ti, msg.Event)
+			a.applyEventProgress(&ti, id, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			return a, RefreshSnapshot(a.client)
@@ -530,7 +542,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.applyEventAct(&cur, id, msg.Event)
 		a.applyEventObservers(&cur, msg.Event)
-		applyEventProgress(&cur, msg.Event)
+		a.applyEventProgress(&cur, id, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
@@ -1980,13 +1992,19 @@ func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusE
 // applyEventProgress copies the progress line and the live title from a task
 // event into ti. Every task event carries both (a parent-hop subscriber's
 // arrive emptied, as its List row does), so the Doing column follows a
-// progress write or a title change without a snapshot.
-func applyEventProgress(ti *protocol.TaskInfo, ev protocol.TaskStatusEvent) {
+// progress write or a title change without a snapshot. It stamps the local
+// receipt time the row's age is advanced from.
+func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.TaskStatusEvent) {
 	ti.SetProgress(ev.Progress)
 	ti.ProgressAt = ev.ProgressAt
 	ti.ProgressAgeMs = ev.ProgressAgeMs
 	ti.SetLiveTerminal(ev.LiveTerminal())
 	ti.SetTitle(ev.Title)
+	if ev.ProgressAt != 0 {
+		a.progressRecvAt[id] = time.Now()
+	} else {
+		delete(a.progressRecvAt, id)
+	}
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
@@ -2001,6 +2019,11 @@ func (a *App) refreshTasksTable() {
 		if t.LastOutputAt > 0 && time.Duration(t.OutputIdleMs)*time.Millisecond >= protocol.ActivityBusyThreshold {
 			if rt, ok := a.actRecvAt[id]; ok {
 				t.OutputIdleMs += uint64(now.Sub(rt) / time.Millisecond)
+			}
+		}
+		if t.ProgressAt != 0 {
+			if rt, ok := a.progressRecvAt[id]; ok {
+				t.ProgressAgeMs += uint64(now.Sub(rt) / time.Millisecond)
 			}
 		}
 		all = append(all, t)

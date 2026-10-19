@@ -10,6 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 type TasksModel struct {
@@ -502,12 +503,19 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // "(title)" — a plain-text mark, because bubbles truncates cells by width and
 // an ANSI style inside one can be cut mid-sequence — else the prompt cell as
 // before. Interactive sessions used to show only "<interactive>" here.
+//
+// The line carries its age, which is how the reader judges a stale one (D4).
+// Both strings have their control characters stripped HERE: bubbles hands a
+// cell's bytes to the terminal as they are, and a task event can be forged by
+// any subscriber, so the server's own rules are not a substitute.
 func doingCell(t protocol.TaskInfo) string {
 	if t.ProgressAt != 0 && len(t.Progress) > 0 {
-		return string(t.Progress)
+		p := string(t.Progress)
+		return vtgrid.SanitizeTitle(p, len(p)) + " (" + cli.AgeStr(t.ProgressAgeMs) + ")"
 	}
 	if t.LiveTerminal() && len(t.Title) > 0 {
-		return "(title) " + string(t.Title)
+		ti := string(t.Title)
+		return "(title) " + vtgrid.SanitizeTitle(ti, len(ti))
 	}
 	return renderPromptCell(t)
 }
