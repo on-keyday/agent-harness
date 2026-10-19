@@ -3071,3 +3071,34 @@ omitted: 4–7 — `agent send` is CLI-only (`NoModalSurface` already says no TU
 n/a:     everything else (no task/runner field, no persistence: the board is in
          memory; 25: negative bit, zero = old behaviour, no set-style RPC).
 missed:  —
+
+### 2026-10-19 (pre-landing) — `resume` / `resume_exact` split from `spawn`, `--exact`, detached open
+
+Spec `2026-10-19-resume-caps-design.md`. Two new capability bits, one spawn-family
+option, two request bits and a response bit.
+
+done:    1 (`--exact` in `spawnFlags`, all three spawn verbs), 2 (`--exact`
+         needs `--resume`, excludes every setting flag; submit's Validate takes
+         no prompt under it), 7 + 8 (WebUI command-input submit sends
+         `resumeExact`; both wasm bridges read it), 9 + 26 (an exact resume
+         carries no Compose agent/args/re-grant: `sessionReq` drops them; the
+         TUI re-grants only typed caps, which the rules refuse beside --exact),
+         11–23 (caps labels and raw bits come from `GrantableCaps` — TUI picker
+         `CapsCatalog`, cmdline, WebUI `harnessCapList` — so the two bits appear
+         with no per-surface code; `whoami` showed `caps=resume_exact,exec_cowrite`
+         live), 15 (catalog rows + spawn/exec_control descriptions), 24 (fresh
+         path refuses --exact; submit and open paths each check their own kind),
+         25 (`resume_exact` / `detached` are bits; zero = old behaviour), 27 +
+         28a (SessionOpts carries both; every TUI Do* build sets ResumeExact,
+         the workspace detached resume sets Detached), 33 (server answers
+         `resume_exact_mismatch`, never ignores), 35, 36 (supervising-workers,
+         both mirrors), 39 (spec § Surfaces checked row by row; the WebUI
+         command-input row was wrong — see the spec's Amendment)
+omitted: 4–6 for `--exact` (TUI r/R/u/U, popups, WebUI Compose/resume buttons):
+         operator surfaces, and the operator holds `all`; exact resume is for
+         confined agents. WebUI `-d`: its command input has no `session new`
+         (`CmdlineSurfaces: CLI | TUI`); the only browser detached open is the
+         event-stream button, moved onto `detached`.
+n/a:     everything else (28: no new task field — caps numbers persist as
+         before and are not migrated, spec D22).
+missed:  —
