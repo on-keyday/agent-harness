@@ -60,6 +60,10 @@ the author chose it while writing; those rows are the ones to check.
 | D19 | `task_pruned` stays unfiltered. It carries only the id and kind, and the filter cannot be evaluated after the entry is gone (`OnPrune` runs after removal), so a filtered prune would leave stale rows in confined clients | this spec (builder check) |
 | D20 | notify's hostname comes from the runner registry entry of the task's `AssignedTo` (`server/registry.go:47`, from the authenticated `RunnerHello`), not from the agent hello, whose hostname the client supplies. Empty when that runner is not connected | this spec (builder check) |
 | D21 | A presence bit `live_terminal` on `TaskInfo` and `TaskStatusEvent` separates "live terminal session, untitled" from "no live terminal session"; clients gate the title on it rather than re-deriving it from status and kind | this spec (builder check) |
+| D22 | The TUI's last column (was Prompt, `<interactive>` for every session) becomes **Doing**: the progress line with its age, else the title prefixed `(title) `, else the prompt. Replaces the matrix's earlier "one more column, title rendered dim": a new column squeezes Repo/Agent at 120 columns, and bubbles truncates a cell by width, which can cut an ANSI style mid-sequence | this spec (implementation) |
+| D23 | `progress_at` only ever increases: `SetProgress` stamps under the store lock (a later write never stores an earlier clock reading) and writes the WAL record under the same lock. A stored stamp ahead of the server clock reports age 0 | this spec (mid-plan review) |
+| D24 | Clients age `progress_age_ms` locally from the receipt time, as the idle badge is, and every surface strips control characters from progress and title itself — the event path can carry bytes a subscriber published (see Non-goals) | this spec (final review) |
+| D25 | The WebUI arms `await-progress` from each non-terminal task's sheet (oneshot included) as well as from the attached-session button; the WebUI passes `progress_at` as a decimal string, since a nanosecond stamp does not fit a JS number | this spec (final review) |
 
 ## Non-goals
 
@@ -217,15 +221,18 @@ AwaitIdleWatcherInfo += condition :AwaitCondition   # threshold_ms is 0 for prog
 
 ### Events (D8)
 
-`publishTaskEvent` switches to `PublishFiltered` with the `handleList` rule.
-Because a parent-hop subscriber must see a redacted row (D14) and
-`PublishFiltered` sends one payload to all who pass, the event is published
-twice:
+`publishTaskEvent` filters with the `handleList` rule. Because a parent-hop
+subscriber must see a redacted row (D14), each subscriber gets one of two
+payloads, chosen per subscriber by `pubsub.PublishSelect` (taps receive the
+full payload once):
 
 1. the full payload, to subscribers where `visibleToCaller` returns `all` or
    the task is in `allowed`;
 2. a payload with progress and title emptied, to subscribers whose
    `listVisibleToCaller` `parentHex` equals the task.
+
+(Planned as two `PublishFiltered` calls; implemented as one `PublishSelect` so
+a tap does not see every event twice.)
 
 The operator passes (1) for every task, so operator clients see no change in
 what they receive. `task_pruned` is the exception and stays a plain `Publish`
@@ -273,10 +280,10 @@ is the minimum, not a substitute.
 | CLI `ls` text (`cli/list.go` `taskLine`) | `progress="…" (12m ago)` when `progress_at != 0`; `title="…"` when `live_terminal` is set, even if empty | — | — |
 | CLI `ls --json` / `session ls` (`taskJSON`) | `progress`, `progress_at`, `progress_age_ms`, `live_terminal`, `title`, always present | — | — |
 | CLI verbs | — | `progress`, `progress --clear` | `await-progress`, `ls`, `kill` |
-| TUI task table (`tui/tasks.go`) | one column: progress when set, else the title, rendered dim so the two are told apart | — | key beside `w` (await-idle) arms it; the `I` modal lists both conditions with a condition column |
+| TUI task table (`tui/tasks.go`) | the Doing column (D22): progress with its locally aged age (D24), else `(title) …`, else the prompt | — | `m` arms it (`M` via notify); the `I` modal lists both conditions with a "waits for" column |
 | TUI detail popup (`tui/detail.go`) | both, with progress age next to last-output age | — | — |
 | TUI cmdline (`tui/cmdline.go`) | — | — | `await-progress` wherever `await-idle` is accepted |
-| WebUI task list (`webui/static/main.js` `renderTaskList`) + task sheet | progress line under the row, title next to it; age shown | — | wherever await-idle is armed / listed |
+| WebUI task list (`webui/static/main.js` `renderTaskList`) + task sheet | progress line under the row, title next to it; age shown | — | the attached-session button and every non-terminal task's sheet (D25); the watcher panel shows the condition |
 | WebUI cmd input (`runCmd`) + wasm bridge | — | — | `await-progress` wherever `await-idle` is accepted |
 
 Writing progress has no TUI / WebUI surface: the operator's connection has no
