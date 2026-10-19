@@ -174,3 +174,32 @@ the re-grant dialog and a bit revoked from there, then gone from the audit.
 - **No history.** The audit shows current grants, not who granted what when.
 - **No new authority.** The view reads the listing; revoking goes through the
   existing re-grant paths and their gates.
+
+## Amendment — what shipped (2026-10-19)
+
+Where the build differs from the text above. All of these are **this spec**
+calls made during implementation; none was put to the operator.
+
+- **`--json` is CLI and WebUI only.** The TUI answers `caps audit` with its
+  modal, which has no JSON form, so the TUI cmdline refuses `--json` rather
+  than ignoring it (surface-parity item 33). The § Surfaces CLI row is
+  otherwise as written.
+- **`--cap NAME` includes unheld bits**, so a bit nobody holds still answers
+  ("no task holds …"), and it narrows the JSON form to that bit too. One
+  writer, `cli.WriteCapsAuditReport`, does this for the CLI verb and the
+  bridge.
+- **The bridge takes an object and returns the `--json` shape.**
+  `harness.capsAudit({includeEnded, includeEmpty})` resolves to rows keyed as
+  `caps audit --json` writes them (`implied_by`, `task_id`, `scope_kind`, …),
+  built by `cli.AuditRowsJSON`. The command input calls
+  `harness.capsAuditText({all, empty, cap, json})`.
+- **The TUI audits the task table's rows**, which are the 100 most recent
+  tasks. An older live task beyond that is not shown in the TUI. The CLI and
+  the WebUI fetch the whole listing.
+- **WebUI layout.** Holder chips sit on their own wrapping line under each
+  bit's header at every width, not inline beside it as in the prototype. The
+  two toggles are checkboxes, like the page's other option rows.
+- **Verified live** on a dummy harness against the § Testing setup, on all
+  three UIs, including a revoke from the TUI picker and from the WebUI dialog
+  that removed the holder from the next audit, and the WebUI at 390px with no
+  horizontal overflow.

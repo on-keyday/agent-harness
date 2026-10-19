@@ -446,6 +446,10 @@ and the scope forms (`--json` for the machine-readable form).
   (`--json` for the machine-readable form). No cap is required — it is
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.
+- **See what you handed out with `harness-cli caps audit`.** One line per
+  capability, strongest first, listing the tasks your `ls` shows that hold it
+  and the scope it reaches; `--cap spawn` lists just that bit's holders. Report
+  a grant that outlived its reason to the operator — `caps set` is theirs.
 
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,

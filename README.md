@@ -1169,6 +1169,27 @@ narrowing drops the affected tasks' open connections unless
 picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to
 「🔑 caps/scope 再付与」.
 
+`caps audit` answers the opposite question — not "what does this task
+hold" but "who holds `spawn` right now" — for a grant that outlived its
+reason:
+
+```bash
+bin/harness-cli caps audit                 # one line per capability, strongest first
+bin/harness-cli caps audit --cap spawn     # its holders, each with the caps set line that revokes it
+bin/harness-cli caps audit --all --empty --json   # ended tasks too, unheld bits too, JSON Lines
+```
+
+Each capability is tiered 強 / 中 / 弱 and each holder shows the scope
+that bit resolves to, `*` when it comes from a `--scope-for` override;
+`spawn`, `notify`, `runner_admin`, `board_observe` and `board_send` are
+bounded by no task scope and say `scope 対象外`. A row lists the tasks
+holding that literal bit — what a revoke removes — and notes the
+stronger bits that imply it (`exec_view` is also granted by
+`exec_cowrite` and `exec_control`). The TUI opens it on `i` (enter
+expands a bit; enter on a holder opens the `a` picker on that task) and
+the WebUI as the 「権限」 tab, holders coloured by scope breadth, a click
+opening the re-grant dialog.
+
 The **subtree** walk follows each task's parent link (who spawned whom,
 `by=` in `ls`). The link itself is operator-mutable on a live task:
 
@@ -1273,8 +1294,8 @@ tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
 
 Keys for orientation — `Tab` cycles focus, `s` submit popup, `S` opens
 a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
-follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `G`
-git, `F` files, `q` quit. **The authoritative list is the TUI itself**:
+follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `i`
+who holds which capability (`caps audit`), `G` git, `F` files, `q` quit. **The authoritative list is the TUI itself**:
 the footer shows the keys that work in the focused pane and `?` shows
 everything — both render from the same table the dispatcher uses
 (`tui/keys.go`, test-enforced), so unlike a README table they cannot go
@@ -1284,7 +1305,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
-/ caps set / caps set-parent / workspace {save,apply,ls,show}
+/ caps set / caps set-parent / caps audit / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
@@ -1500,6 +1521,8 @@ The page is organised into tabs (端末 / タスク / ファイル / 通知):
   collapsed one costs the server nothing. See **Reading a connection's
   transport state**.
 - **Terminal** — the interactive PTY view with on-screen key helpers.
+- **権限** — `caps audit`: per capability, the tasks holding it (see
+  **Capabilities and scope**).
 
 UDP-only servers (when `--listen` is empty and only `--udp-listen` is
 configured) **do not serve the WebUI** — there is no HTTP listener.

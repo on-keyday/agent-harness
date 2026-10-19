@@ -3102,3 +3102,50 @@ omitted: 4–6 for `--exact` (TUI r/R/u/U, popups, WebUI Compose/resume buttons)
 n/a:     everything else (28: no new task field — caps numbers persist as
          before and are not migrated, spec D22).
 missed:  —
+
+### 2026-10-19 (pre-landing) — `caps audit`: who holds which capability
+
+Spec `2026-10-19-caps-audit-design.md`. A read-only verb on all three command
+lines, a TUI modal on `i`, a WebUI tab, and one shared row builder
+(`cli.CapsAudit`). No wire field, no task field. S1–S6 `n/a`.
+
+done:    1 (one row, CLI → CLI|TUI → CLI|TUI|WebUI one task at a time), 2
+         (`--cap` must name one bit, in the row's `Validate`), 4 (`CapsAudit:
+         "i"` + its binding row), 5, 6 (the 「権限」 tab), 7
+         (`WebUIDispatch{Fn: "capsAuditText"}`), 19 (holders are labelled like
+         the picker's rows, `cli.AuditLabel`), 22 (a holder chip opens
+         `openRegrantDialog` on the `lastTasks` row, which carries the raw
+         values), 24 (`--cap` brings in unheld bits and narrows `--json` too, on
+         the CLI and the bridge alike, through `cli.WriteCapsAuditReport`), 29,
+         30, 31 (`scope 対象外` for a bit no scope bounds, never a blank or a
+         green chip; a root holder's parent prints `operator`), 32, 33, 34a (the
+         two toggles are checkboxes like the page's other option rows), 35, 36,
+         37, 39
+omitted: 15 — no capability gates the verb; it reads the caller's own listing.
+         34 — the TUI modal is a plain line list, not a `table.Model`.
+n/a:     8, 9, 11–14, 16–18a, 20, 21, 23, 25–28a, 38 (no task or runner field,
+         no request field, no screen).
+missed:  —
+
+Three items found defects in this change during the walk, before landing:
+
+- **5** — a fast `jj` arrives as ONE KeyRunes message, and the modal's
+  `msg.String()` switch matched none of it. The item's own text says so.
+- **32** — the modal's frame took its width from its content, so expanding a
+  bit moved the border. Now `Width(m.width-2)` with every line clipped to the
+  inner width.
+- **33** — `caps audit --json` parsed on the TUI and did nothing, because the
+  modal has no JSON form. Declared `CLI | WebUI` with a `SurfaceReason`; the TUI
+  now refuses it.
+
+Each has a test that failed first. **39** was driven live on a dummy harness
+with four tasks: a `spawn` holder, an old-`all`-like mask, an `exec_control`
+override to `ids:`, and `board_observe` under `none`. The CLI text, `--cap` and
+`--json` were read. In the TUI (running inside a second dummy's session), `i`
+showed the CLI's rows, global red and the narrow `ids:` override green. A holder
+was revoked through the picker and was gone on the next `i`. The WebUI tab
+showed the same rows, a chip opened the re-grant dialog, and a revoke there
+removed the `spawn` row. At 390px `scrollWidth == clientWidth`.
+
+The live run also found a cosmetic defect no item asks about: the `--cap`
+header carried two trailing spaces when no implied note followed.
