@@ -518,6 +518,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.CreatedAt = msg.Event.Ts
 			a.applyEventAct(&ti, id, msg.Event)
 			a.applyEventObservers(&ti, msg.Event)
+			applyEventProgress(&ti, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			return a, RefreshSnapshot(a.client)
@@ -529,6 +530,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.applyEventAct(&cur, id, msg.Event)
 		a.applyEventObservers(&cur, msg.Event)
+		applyEventProgress(&cur, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
@@ -1973,6 +1975,18 @@ func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusE
 	}
 	ti.Viewers = ev.Viewers
 	ti.Cowriters = ev.Cowriters
+}
+
+// applyEventProgress copies the progress line and the live title from a task
+// event into ti. Every task event carries both (a parent-hop subscriber's
+// arrive emptied, as its List row does), so the Doing column follows a
+// progress write or a title change without a snapshot.
+func applyEventProgress(ti *protocol.TaskInfo, ev protocol.TaskStatusEvent) {
+	ti.SetProgress(ev.Progress)
+	ti.ProgressAt = ev.ProgressAt
+	ti.ProgressAgeMs = ev.ProgressAgeMs
+	ti.SetLiveTerminal(ev.LiveTerminal())
+	ti.SetTitle(ev.Title)
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by

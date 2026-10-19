@@ -211,6 +211,16 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 		fmt.Fprintf(&sb, "act:           %s\n", cli.ActivityStr(t.OutputIdleMs))
 		fmt.Fprintf(&sb, "last output:   %s\n", formatNanoTs(t.LastOutputAt))
 	}
+	// The task's own line, beside last output so the reader can judge how
+	// stale it is; gated on the stamp, since a cleared line is a write.
+	if t.ProgressAt != 0 {
+		fmt.Fprintf(&sb, "progress:      %q (%s)\n", string(t.Progress), cli.AgeStr(t.ProgressAgeMs))
+	}
+	// Printed for every live terminal, empty included: "untitled" is a
+	// measurement.
+	if t.LiveTerminal() {
+		fmt.Fprintf(&sb, "title:         %q\n", string(t.Title))
+	}
 	// Who is on this session, spelled out. Only a live session has observers at
 	// all, so the line is gated on that rather than printed as a hollow "0" for
 	// every finished task. Worth its own line because the status field cannot

@@ -27,10 +27,19 @@ func idleWatcherRow(w *protocol.AwaitIdleWatcherInfo, now time.Time) table.Row {
 		fmt.Sprintf("%d", w.WatcherId),
 		pfShortID(FormatTaskID(w.TaskId)),
 		sink,
-		fmt.Sprintf("%dms", w.ThresholdMs),
+		watcherWaitsFor(w),
 		age,
 		cli.AwaitIdleWatcherBy(w),
 	}
+}
+
+// watcherWaitsFor is the condition cell: the registry holds both await-idle
+// and await-progress watchers, and only the idle ones have a threshold.
+func watcherWaitsFor(w *protocol.AwaitIdleWatcherInfo) string {
+	if w.Condition == protocol.AwaitCondition_Progress {
+		return "progress"
+	}
+	return fmt.Sprintf("idle %dms", w.ThresholdMs)
 }
 
 // IdleWatchersModal lists the armed await-idle watchers this operator can
@@ -56,7 +65,7 @@ func NewIdleWatchersModal() IdleWatchersModal {
 		{Title: "id", Width: 6},
 		{Title: "task", Width: 12},
 		{Title: "sink", Width: 30},
-		{Title: "threshold", Width: 10},
+		{Title: "waits for", Width: 12},
 		{Title: "armed", Width: 9},
 		{Title: "by", Width: 10},
 	}

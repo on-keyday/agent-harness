@@ -97,7 +97,7 @@ func flatCols() []table.Column {
 		{Title: "Agent", Width: 14},
 		{Title: "Act", Width: 8},
 		{Title: "Repo", Width: 28},
-		{Title: "Prompt", Width: 0}, // resized later via SetSize
+		{Title: "Doing", Width: 0}, // resized later via SetSize; see doingCell
 	}
 }
 
@@ -119,7 +119,7 @@ func treeCols() []table.Column {
 		{Title: "Agent", Width: 14},
 		{Title: "Act", Width: 8},
 		{Title: "Repo", Width: 18},
-		{Title: "Prompt", Width: 0},
+		{Title: "Doing", Width: 0},
 	}
 }
 
@@ -132,7 +132,7 @@ func (m *TasksModel) SetTree(on bool) bool {
 	// ID cell carries the gutter), and flat and tree happen to have the SAME
 	// column count — so a count-based check would swap the headers and leave
 	// every row showing its flat id.
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Doing")))
 	return m.tree
 }
 
@@ -153,7 +153,7 @@ func (m *TasksModel) columns() []table.Column {
 func (m *TasksModel) SetMark(c protocol.Capability) {
 	m.mark = c
 	m.baseCols = m.columns()
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Doing")))
 }
 
 // SelectID puts the cursor on the task's row, reporting whether it is listed.
@@ -191,7 +191,7 @@ func (m *TasksModel) SetSize(w, h int) {
 	// Width decides the column SET, not only the widths.
 	m.width = w
 	m.baseCols = m.columns()
-	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt"))
+	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Doing"))
 	// A width-only change keeps the same column set, and must NOT disturb the
 	// rows: bubbles keeps the scroll position in the unexported
 	// viewport.YOffset, and SetCursor does not restore it (only MoveUp/MoveDown
@@ -323,7 +323,7 @@ func (m *TasksModel) rebuild() {
 		}
 		row = append(row,
 			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
-			renderPromptCell(t),
+			doingCell(t),
 		)
 		rows = append(rows, row)
 		ids = append(ids, idHex)
@@ -497,6 +497,21 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // The Kind field is the authoritative source — TaskStatusEvent carries it
 // from the very first event, so a freshly-stubbed row knows its kind
 // without needing the next List snapshot to disambiguate.
+// doingCell is the task table's last column: what the task is doing now. Its
+// own progress line when it has one, else its program's window title marked
+// "(title)" — a plain-text mark, because bubbles truncates cells by width and
+// an ANSI style inside one can be cut mid-sequence — else the prompt cell as
+// before. Interactive sessions used to show only "<interactive>" here.
+func doingCell(t protocol.TaskInfo) string {
+	if t.ProgressAt != 0 && len(t.Progress) > 0 {
+		return string(t.Progress)
+	}
+	if t.LiveTerminal() && len(t.Title) > 0 {
+		return "(title) " + string(t.Title)
+	}
+	return renderPromptCell(t)
+}
+
 func renderPromptCell(t protocol.TaskInfo) string {
 	switch t.Kind {
 	case protocol.TaskKind_Interactive:
