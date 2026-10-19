@@ -233,7 +233,9 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
   `activity` / `output_idle_ms` / `last_output_at` fields. Every row, of any
   task kind, also carries the worker's self-reported `progress` line,
   `progress_at` (unix nanos, server clock; 0 = never written) and
-  `progress_age_ms`, plus the live window `title` — read it only when
+  `progress_age_ms` — an empty `progress` with a non-zero `progress_at`
+  means the line was CLEARED (by the worker or a `--clear --task`), not that
+  it was never set — plus the live window `title`; read the title only when
   `live_terminal` is true; false means no live terminal session.
 - **Push (one-shot)**: `session await-idle <id>` fires ONCE as soon as the
   session is quiescent for the threshold (default 2500ms; `--threshold-ms N`
