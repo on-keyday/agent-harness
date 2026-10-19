@@ -365,6 +365,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Submit variant is nil")
 			return
 		}
+		// Request-dependent gate: create needs spawn, resume needs the resume
+		// rank. requiredCap is keyed on the kind alone and cannot tell them apart.
+		if want := resumeRequestCap(sub.ResumeTaskId, sub.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			return
+		}
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		creatorCaps := h.callerCaps(cid)
@@ -460,6 +466,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		oi := req.OpenInteractive()
 		if oi == nil {
 			slog.Error("TaskHandler: OpenInteractive variant is nil")
+			return
+		}
+		// Same request-dependent gate as Submit.
+		if want := resumeRequestCap(oi.ResumeTaskId, oi.ResumeExact()); !hasAnyCap(h.callerCaps(cid), want) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
 			return
 		}
 		origin := h.lookupClientKind(cid)
@@ -1145,7 +1156,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// that id under a prompt of the caller's choosing, and with
 	// resume_caps_override it rewrites the target's authority. Gate the target
 	// like any other, and report an out-of-scope task as absent.
-	if !h.inScope(cid, protocol.Capability_Spawn, idHex) {
+	if !h.resumeTargetAllowed(cid, req.ResumeExact(), idHex) {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
 	}
 	// The two halves of authority re-grant independently: caps behind
@@ -1389,7 +1400,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 		// Same target gate as the oneshot resume path — see handleSubmitResume.
-		if !h.inScope(cid, protocol.Capability_Spawn, idHex) {
+		if !h.resumeTargetAllowed(cid, req.ResumeExact(), idHex) {
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
 		// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume

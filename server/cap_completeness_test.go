@@ -35,8 +35,6 @@ const (
 )
 
 var kindCapClass = map[protocol.TaskControlKind]capClass{
-	protocol.TaskControlKind_Submit:             capInMap,
-	protocol.TaskControlKind_OpenInteractive:    capInMap,
 	protocol.TaskControlKind_Cancel:             capInMap,
 	protocol.TaskControlKind_PruneTasks:         capInMap,
 	protocol.TaskControlKind_Notify:             capInMap,
@@ -63,6 +61,10 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	protocol.TaskControlKind_OpenPortForward:     capInHandler,
 	protocol.TaskControlKind_RegisterPortForward: capInHandler,
 	protocol.TaskControlKind_KillPortForward:     capInHandler,
+	// Create needs spawn and resume needs the resume rank: the bit depends on
+	// resume_task_id and resume_exact. resumeRequestCap.
+	protocol.TaskControlKind_Submit:          capInHandler,
+	protocol.TaskControlKind_OpenInteractive: capInHandler,
 	// The bit depends on the requested AttachMode: attachModeCap.
 	protocol.TaskControlKind_AttachSession: capInHandler,
 	// exec_run_kill names an EXEC that resolves to a task; authorize(ExecRun).

@@ -27,6 +27,11 @@ import (
 // discriminate. It is also the one task-scoped kind that does NOT require
 // Running/Detached; see handleGitQuery for why.
 //
+// Submit and OpenInteractive are absent because their bit depends on the
+// request: a zero resume_task_id creates a task (spawn), a non-zero one resumes
+// (resume, or resume_exact when the exact flag is set). The gate is inline in
+// both dispatch cases, via resumeRequestCap.
+//
 // AttachSession is absent because its cap depends on the requested AttachMode,
 // which this map cannot see — the gate is inline in the dispatch case, via
 // attachModeCap. AwaitIdle is absent because it needs NO capability: it reports
@@ -35,8 +40,6 @@ import (
 // polling for the same fact. Its one side effect, sink=notify, is gated on
 // `notify` inside the handler.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
-	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
 	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
 	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
@@ -89,6 +92,48 @@ func attachModeCap(mode protocol.AttachMode) protocol.Capability {
 	default:
 		return protocol.Capability_ExecControl
 	}
+}
+
+// resumeRequestCap returns the capability set that satisfies a submit or an
+// interactive open. Creating a task (zero resumeID) is spawn alone. Resuming is
+// the resume rank, which spawn does NOT imply: resume ⊇ resume_exact, checked
+// with hasAnyCap like attachModeCap, so a holder of resume may also resume
+// exactly.
+func resumeRequestCap(resumeID protocol.TaskID, exact bool) protocol.Capability {
+	switch {
+	case resumeID.Id == ([16]byte{}):
+		return protocol.Capability_Spawn
+	case exact:
+		return protocol.Capability_Resume | protocol.Capability_ResumeExact
+	default:
+		return protocol.Capability_Resume
+	}
+}
+
+// resumeRequestBits is resumeRequestCap's resume set as separate bits, for
+// resolving the target against each bit's own scope.
+func resumeRequestBits(exact bool) []protocol.Capability {
+	if exact {
+		return []protocol.Capability{protocol.Capability_Resume, protocol.Capability_ResumeExact}
+	}
+	return []protocol.Capability{protocol.Capability_Resume}
+}
+
+// resumeTargetAllowed is the target gate of a resume: allowed when SOME bit the
+// caller holds that permits this resume has the target in that bit's own scope.
+//
+// Unlike attach, which binds by the mode's own bit (attachModeScopeCap), each
+// resume bit is a grant the operator writes separately, and each grant's scope
+// is what the operator wrote for it. The cost: narrowing a task that holds both
+// bits takes narrowing both scopes, since either admits a target.
+func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex string) bool {
+	held := h.callerCaps(cid)
+	for _, resumeBit := range resumeRequestBits(exact) {
+		if hasCap(held, resumeBit) && h.inScope(cid, resumeBit, targetHex) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct

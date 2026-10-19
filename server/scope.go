@@ -170,6 +170,11 @@ func validateScope(s Scope) error {
 		if o.Caps == protocol.Capability_None {
 			return fmt.Errorf("scope override with an empty capability mask")
 		}
+		// spawn creates tasks and names none, so an override for it would be
+		// accepted and bound nothing.
+		if o.Caps&protocol.Capability_Spawn != 0 {
+			return fmt.Errorf("scope override names spawn: spawn names no task; narrow resume / resume_exact instead")
+		}
 		if overlap := seen & o.Caps; overlap != 0 {
 			return fmt.Errorf("scope override masks intersect at %s", capsLabelForMask(overlap))
 		}

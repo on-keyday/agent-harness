@@ -17,6 +17,11 @@ func GrantableCaps() []protocol.Capability {
 	return []protocol.Capability{
 		protocol.Capability_None,
 		protocol.Capability_Spawn,
+		// The resume rank, weakest-first. Beside spawn but independent of it:
+		// spawn creates, these re-queue an existing task, and neither side
+		// implies the other.
+		protocol.Capability_ResumeExact,
+		protocol.Capability_Resume,
 		protocol.Capability_Cancel,
 		// Listed weakest-first so a reader scanning the catalog meets the
 		// read-only power before the one that evicts whoever is driving.
@@ -66,7 +71,14 @@ func CapDescription(c protocol.Capability) string {
 		return "no capabilities; data-plane only (agentboard messaging within the task's base set — " +
 			"self, creator, direct children, chat.operator, whoever messaged it directly — and own task logs/ls)"
 	case protocol.Capability_Spawn:
-		return "submit tasks and open interactive sessions"
+		return "create tasks (submit, open sessions); does NOT resume — see resume. " +
+			"Opening a session without -d also needs exec_control"
+	case protocol.Capability_Resume:
+		return "resume a finished task under its own id, free to change prompt, args, agent, kind, caps and scope; " +
+			"creates no new task; keeps the task's recorded caps unless --caps re-grants them; implies resume_exact"
+	case protocol.Capability_ResumeExact:
+		return "resume a finished task exactly as recorded (--resume <id> --exact): " +
+			"only the runner, --resume-conversation, x11, -d and the initial size may be chosen"
 	case protocol.Capability_Cancel:
 		return "cancel / kill tasks"
 	case protocol.Capability_ExecView:
@@ -75,7 +87,7 @@ func CapDescription(c protocol.Capability) string {
 	case protocol.Capability_ExecCowrite:
 		return "type into a session someone else is driving, without evicting them (session send / exec); implies exec_view"
 	case protocol.Capability_ExecControl:
-		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite"
+		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite; opening a session without -d needs it"
 	case protocol.Capability_ExecResize:
 		return "resize a session's PTY as a viewer or cowriter, while no control client is attached (orthogonal to the three above; control owns the size whenever it holds the seat)"
 	case protocol.Capability_ExecRun:

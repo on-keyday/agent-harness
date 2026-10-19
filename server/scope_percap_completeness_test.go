@@ -45,7 +45,17 @@ type capTargetClass struct {
 
 var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_Cancel: {kind: capResolvedLiteral},
-	protocol.Capability_Spawn:  {kind: capResolvedLiteral}, // resume_task_id names an existing task
+	protocol.Capability_Spawn: {
+		kind:   capNoTargetResolution,
+		reason: "creating a task names no existing one; resuming is the resume bits'",
+	},
+	// A resume target is allowed through ANY held resume bit whose own scope
+	// covers it, so the bits are passed from a loop over resumeRequestBits, as
+	// resumeBit, rather than by name. By
+	// name would be unsound anyway: the scan matches substrings, and
+	// Capability_Resume is a prefix of Capability_ResumeExact.
+	protocol.Capability_Resume:      {kind: capResolvedVia, via: "resumeBit"},
+	protocol.Capability_ResumeExact: {kind: capResolvedVia, via: "resumeBit"},
 	protocol.Capability_Prune:  {kind: capResolvedLiteral},
 
 	// Chosen at runtime, so passed as a variable rather than by name.
