@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -200,8 +201,9 @@ func (a *App) withCreatorChains(ids []string) map[string]bool {
 // audit exists for.
 func (a *App) auditTasks() []protocol.TaskInfo {
 	all := make([]protocol.TaskInfo, 0, len(a.tasksByID))
-	for _, t := range a.tasksByID {
-		all = append(all, t)
+	now := time.Now()
+	for id, t := range a.tasksByID {
+		all = append(all, a.agedTask(id, t, now))
 	}
 	return all
 }

@@ -91,6 +91,9 @@ type App struct {
 	// nothing by itself. Kept apart from actRecvAt because progress outlives
 	// the session: a finished task's line still ages.
 	progressRecvAt map[string]time.Time
+	// authorityRecvAt is the same for authority_age_ms. Only a snapshot brings
+	// provenance (no task event carries it), so only a snapshot stamps it.
+	authorityRecvAt map[string]time.Time
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -359,6 +362,7 @@ func New(cfg Config) *App {
 		tasksByID:         map[string]protocol.TaskInfo{},
 		actRecvAt:         map[string]time.Time{},
 		progressRecvAt:    map[string]time.Time{},
+		authorityRecvAt:   map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
@@ -487,6 +491,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		a.progressRecvAt = make(map[string]time.Time, len(msg.Tasks))
+		a.authorityRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		for _, t := range msg.Tasks {
 			id := FormatTaskID(t.Id)
 			a.tasksByID[id] = t
@@ -495,6 +500,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if t.ProgressAt != 0 {
 				a.progressRecvAt[id] = now
+			}
+			if t.AuthorityAt != 0 {
+				a.authorityRecvAt[id] = now
 			}
 		}
 		a.refreshTasksTable()
@@ -512,6 +520,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(a.tasksByID, id)
 			delete(a.actRecvAt, id)
 			delete(a.progressRecvAt, id)
+			delete(a.authorityRecvAt, id)
 			a.refreshTasksTable()
 			return a, nil
 		}
@@ -2019,6 +2028,31 @@ func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.T
 	}
 }
 
+// agedTask is t with every wire age advanced by the local time elapsed since
+// its receipt (wire age is server-clock, elapsed is local — no cross-host
+// skew), because the TUI fetches nothing by itself between snapshots. Busy
+// badges are NOT aged; they flip only via the server's idle-edge event. Every
+// view of a task — the table, the d popup through it, the caps audit — reads
+// through here, so none of them shows an age frozen at receipt.
+func (a *App) agedTask(id string, t protocol.TaskInfo, now time.Time) protocol.TaskInfo {
+	if t.LastOutputAt > 0 && time.Duration(t.OutputIdleMs)*time.Millisecond >= protocol.ActivityBusyThreshold {
+		if rt, ok := a.actRecvAt[id]; ok {
+			t.OutputIdleMs += uint64(now.Sub(rt) / time.Millisecond)
+		}
+	}
+	if t.ProgressAt != 0 {
+		if rt, ok := a.progressRecvAt[id]; ok {
+			t.ProgressAgeMs += uint64(now.Sub(rt) / time.Millisecond)
+		}
+	}
+	if t.AuthorityAt != 0 {
+		if rt, ok := a.authorityRecvAt[id]; ok {
+			t.AuthorityAgeMs += uint64(now.Sub(rt) / time.Millisecond)
+		}
+	}
+	return t
+}
+
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
 // descending CreatedAt, capped at 100 rows. Idle badges are aged here: the
 // rendered idle duration is the wire value plus the local time elapsed since
@@ -2028,17 +2062,7 @@ func (a *App) refreshTasksTable() {
 	all := make([]protocol.TaskInfo, 0, len(a.tasksByID))
 	now := time.Now()
 	for id, t := range a.tasksByID {
-		if t.LastOutputAt > 0 && time.Duration(t.OutputIdleMs)*time.Millisecond >= protocol.ActivityBusyThreshold {
-			if rt, ok := a.actRecvAt[id]; ok {
-				t.OutputIdleMs += uint64(now.Sub(rt) / time.Millisecond)
-			}
-		}
-		if t.ProgressAt != 0 {
-			if rt, ok := a.progressRecvAt[id]; ok {
-				t.ProgressAgeMs += uint64(now.Sub(rt) / time.Millisecond)
-			}
-		}
-		all = append(all, t)
+		all = append(all, a.agedTask(id, t, now))
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
 	if len(all) > 100 {

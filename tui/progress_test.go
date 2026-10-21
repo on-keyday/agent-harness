@@ -159,3 +159,31 @@ func TestTaskDetail_ClearedLineShownQuoted(t *testing.T) {
 		t.Errorf("detail lacks the cleared line:\n%s", d)
 	}
 }
+
+// The authority age keeps aging on screen between snapshots, as the progress
+// age does — in the table (and so the d popup) and in the caps audit, which
+// reads the whole listing rather than the table.
+func TestAuthorityAgeAdvancesLocally(t *testing.T) {
+	a := New(Config{})
+	var ti protocol.TaskInfo
+	ti.Id.Id[0] = 0x44
+	ti.Status = protocol.TaskStatus_Running
+	ti.Capabilities = protocol.Capability_Spawn
+	ti.AuthoritySource = protocol.AuthoritySource_OperatorCapsSet
+	ti.AuthorityAt = 5
+	ti.AuthorityAgeMs = 1000
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{ti}})
+	id := FormatTaskID(ti.Id)
+	rt, ok := a.authorityRecvAt[id]
+	if !ok {
+		t.Fatal("snapshot did not stamp the authority receipt time")
+	}
+	a.authorityRecvAt[id] = rt.Add(-10 * time.Minute)
+	a.refreshTasksTable()
+	if sel := a.tasks.SelectedTask(); sel == nil || sel.AuthorityAgeMs < 600000 {
+		t.Fatalf("table age = %v, want >= 10m after 10m locally", sel)
+	}
+	if got := a.auditTasks(); len(got) != 1 || got[0].AuthorityAgeMs < 600000 {
+		t.Fatalf("caps audit age = %+v, want >= 10m", got)
+	}
+}
