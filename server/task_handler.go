@@ -1092,7 +1092,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	// for this scope does not depend on which runners happen to be up, and
 	// resolving first would answer no_runner to a request that is malformed
 	// either way.
-	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
+	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides), intersectCaps(creatorCaps, req.RequestedCaps))
 	if !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
@@ -1186,7 +1186,8 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// resume_caps_override, scope behind scope_present — same shape as
 	// SetCapsRequest. Validated up front for the same reason as the fresh
 	// path, but only when the scope will actually be written.
-	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
+	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides),
+		h.resumedCaps(idHex, req.ResumeCapsOverride(), callerCaps, req.RequestedCaps))
 	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
@@ -1489,7 +1490,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
 	// Validated before runner resolution — see handleSubmit.
-	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
+	childCaps := intersectCaps(creatorCaps, req.RequestedCaps)
+	if !isZeroTaskID(req.ResumeTaskId) {
+		childCaps = h.resumedCaps(hex.EncodeToString(req.ResumeTaskId.Id[:]), req.ResumeCapsOverride(), creatorCaps, req.RequestedCaps)
+	}
+	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides), childCaps)
 	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()) {
 		// OpenInteractiveResponse has no error_msg field, so the status is the
 		// whole answer; the client names the ids it sent.

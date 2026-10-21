@@ -1509,7 +1509,7 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
 
 	// Rank: a child asking for global under a subtree parent is lowered.
-	out, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global})
+	out, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All)
 	if !ok || out.Base != protocol.ScopeBase_Subtree {
 		t.Errorf("base = %v ok = %v, want clamped to subtree", out.Base, ok)
 	}
@@ -1517,7 +1517,7 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	// Rank, on the visibility axis too.
 	out, _, ok = h.attenuateScope(cid, Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
-	})
+	}, protocol.Capability_All)
 	if !ok || out.VisBase != protocol.ScopeBase_Subtree {
 		t.Errorf("vis_base = %v ok = %v, want clamped to subtree", out.VisBase, ok)
 	}
@@ -1525,14 +1525,14 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	// Ids inside the parent's reach are kept.
 	if _, off, ok := h.attenuateScope(cid, Scope{
 		Base: protocol.ScopeBase_Subtree, IDs: []string{g},
-	}); !ok {
+	}, protocol.Capability_All); !ok {
 		t.Errorf("a descendant id was refused: %s", off)
 	}
 
 	// Ids outside it are refused, naming the offender rather than dropping it.
 	if _, off, ok := h.attenuateScope(cid, Scope{
 		Base: protocol.ScopeBase_Subtree, IDs: []string{u},
-	}); ok || off != u {
+	}, protocol.Capability_All); ok || off != u {
 		t.Errorf("stranger id: ok = %v offender = %q, want refused naming %s", ok, off, u)
 	}
 
@@ -1541,7 +1541,7 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	if _, _, ok := h.attenuateScope(cid, Scope{
 		Base:      protocol.ScopeBase_Subtree,
 		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u}}},
-	}); ok {
+	}, protocol.Capability_All); ok {
 		t.Error("an override reached a stranger the parent cannot cancel")
 	}
 }
@@ -1556,15 +1556,15 @@ func TestAttenuateScopeRejectsIncoherentValues(t *testing.T) {
 
 	if _, _, ok := h.attenuateScope(cid, Scope{Overrides: []ScopeOverride{
 		{Caps: protocol.Capability_Cancel}, {Caps: protocol.Capability_Cancel},
-	}}); ok {
+	}}, protocol.Capability_All); ok {
 		t.Error("accepted intersecting override masks")
 	}
 	if _, _, ok := h.attenuateScope(cid, Scope{
 		Overrides: []ScopeOverride{{Caps: protocol.Capability_None}},
-	}); ok {
+	}, protocol.Capability_All); ok {
 		t.Error("accepted an empty override mask")
 	}
-	if _, _, ok := h.attenuateScope(cid, Scope{VisBase: protocol.ScopeBase_Global}); ok {
+	if _, _, ok := h.attenuateScope(cid, Scope{VisBase: protocol.ScopeBase_Global}, protocol.Capability_All); ok {
 		t.Error("accepted a vis_base with its presence bit clear")
 	}
 
@@ -1573,7 +1573,7 @@ func TestAttenuateScopeRejectsIncoherentValues(t *testing.T) {
 	out, _, ok := h.attenuateScope(cid, Scope{
 		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
 		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
-	})
+	}, protocol.Capability_All)
 	if !ok {
 		t.Fatal("refused an action rank above the visibility rank")
 	}

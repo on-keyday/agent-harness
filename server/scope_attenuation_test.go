@@ -16,23 +16,23 @@ func TestAttenuateScopeClampsBase(t *testing.T) {
 
 	// subtree parent asking for a global child → subtree. The child's own
 	// subtree is a subset of the parent's, so nothing is gained by the ask.
-	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global})
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All)
 	if !ok || got.Base != protocol.ScopeBase_Subtree {
 		t.Errorf("global under a subtree parent = %v ok=%v, want subtree", got.Base, ok)
 	}
 	// Narrowing is always allowed.
-	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None})
+	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None}, protocol.Capability_All)
 	if !ok || got.Base != protocol.ScopeBase_None {
 		t.Errorf("none under a subtree parent = %v ok=%v, want none", got.Base, ok)
 	}
 	// A none-based parent cannot hand out subtree.
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
-	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree})
+	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree}, protocol.Capability_All)
 	if !ok || got.Base != protocol.ScopeBase_None {
 		t.Errorf("subtree under a none parent = %v ok=%v, want none", got.Base, ok)
 	}
 	// An operator may ask for anything.
-	if got, _, ok = h.attenuateScope("ws:127.0.0.1:1-0", Scope{Base: protocol.ScopeBase_Global}); !ok || got.Base != protocol.ScopeBase_Global {
+	if got, _, ok = h.attenuateScope("ws:127.0.0.1:1-0", Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All); !ok || got.Base != protocol.ScopeBase_Global {
 		t.Errorf("operator global = %v ok=%v", got.Base, ok)
 	}
 }
@@ -42,11 +42,11 @@ func TestAttenuateScopeRejectsForeignID(t *testing.T) {
 	cid := bindPrincipal(t, h, c)
 
 	// A descendant is inside the subtree base, so naming it is fine.
-	if _, _, ok := h.attenuateScope(cid, Scope{IDs: []string{g}}); !ok {
+	if _, _, ok := h.attenuateScope(cid, Scope{IDs: []string{g}}, protocol.Capability_All); !ok {
 		t.Error("rejected an id that is inside the spawner's own subtree")
 	}
 	// A stranger is not, and the offender is named rather than dropped.
-	_, offender, ok := h.attenuateScope(cid, Scope{IDs: []string{u}})
+	_, offender, ok := h.attenuateScope(cid, Scope{IDs: []string{u}}, protocol.Capability_All)
 	if ok {
 		t.Fatal("accepted an id outside the spawner's scope")
 	}
@@ -62,8 +62,95 @@ func TestAttenuateScopeRejectsForeignID(t *testing.T) {
 func TestAttenuateScopeAllowsSelfID(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None, IDs: []string{c}}); !ok {
+	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None, IDs: []string{c}}, protocol.Capability_All); !ok {
 		t.Errorf("a parent could not grant a child access to the parent itself (offender %q)", off)
+	}
+}
+
+// A global VISIBILITY rank is not a global action rank. Attenuation used to
+// return before any clamp when the creator could see everything, so a creator
+// acting on its subtree handed out a global action scope.
+func TestAttenuateScopeClampsUnderGlobalVisibility(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global})
+
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_Cancel)
+	if !ok || got.Base != protocol.ScopeBase_Subtree {
+		t.Errorf("action base = %v ok=%v, want subtree: the creator acts on its subtree only", got.Base, ok)
+	}
+	// Seeing is the creator's to hand on: the child keeps the global rank.
+	if got.VisRank() != protocol.ScopeBase_Global {
+		t.Errorf("visibility rank = %v, want global", got.VisRank())
+	}
+	// u is visible to the creator but outside what it may cancel.
+	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None, IDs: []string{u}}, protocol.Capability_Cancel); ok || off != u {
+		t.Errorf("ids:u for a cancel holder: ok=%v offender=%q, want refused naming %s", ok, off, u)
+	}
+}
+
+// A view-only id is something the creator may SEE. Handing it on as an action
+// id would let the child act where the creator may not.
+func TestAttenuateScopeViewOnlyIDIsNotActionable(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})
+
+	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}}, protocol.Capability_Cancel); ok || off != u {
+		t.Errorf("action id from a view-only grant: ok=%v offender=%q, want refused naming %s", ok, off, u)
+	}
+	// As a view-only id it passes on unchanged.
+	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}, protocol.Capability_Cancel); !ok {
+		t.Errorf("view-only id refused (offender %q)", off)
+	}
+	// A child that holds no bit can only SEE through an action id, so the
+	// visibility check is the one that binds it.
+	if _, off, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}}, protocol.Capability_None); !ok {
+		t.Errorf("action id for a child holding nothing refused (offender %q)", off)
+	}
+}
+
+// The creator's override for a bit bounds the child's scope for that bit, even
+// when the child writes no override for it: the child's base scope serves every
+// bit it holds that its own overrides do not name.
+func TestAttenuateScopeHonoursTheCreatorsOverride(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Global,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}}})
+
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_Cancel|protocol.Capability_FileRead)
+	if !ok || got.Base != protocol.ScopeBase_None {
+		t.Errorf("base = %v ok=%v, want none: the creator may cancel nothing but itself", got.Base, ok)
+	}
+	// A child that does not hold cancel is not bound by the cancel override.
+	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_FileRead)
+	if !ok || got.Base != protocol.ScopeBase_Global {
+		t.Errorf("base = %v ok=%v, want global for a file_read-only child", got.Base, ok)
+	}
+	// The same bound on the child's own override for the bit.
+	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Global}}},
+		protocol.Capability_Cancel)
+	if !ok || len(got.Overrides) != 1 || got.Overrides[0].Base != protocol.ScopeBase_None {
+		t.Errorf("cancel override = %+v ok=%v, want base none", got.Overrides, ok)
+	}
+}
+
+// The visibility rank clamps against the creator's VISIBILITY rank, not its
+// action base: a creator that acts on its subtree but sees only itself must not
+// hand out sight of that subtree.
+func TestAttenuateScopeVisibilityClampsToTheCreatorsVisibility(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None})
+
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree}, protocol.Capability_None)
+	if !ok || got.VisRank() != protocol.ScopeBase_None {
+		t.Errorf("visibility rank = %v ok=%v, want none", got.VisRank(), ok)
+	}
+	if got.Base != protocol.ScopeBase_Subtree {
+		t.Errorf("action base = %v, want subtree (the creator's own)", got.Base)
 	}
 }
 

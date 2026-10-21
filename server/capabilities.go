@@ -445,23 +445,34 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // attenuateScope clamps a requested scope to the creator's effective one, so a
 // spawned task can never reach further than its spawner.
 //
-// Both axes are clamped independently:
-//   - base by permissiveness (see minScopeBase), which is why a subtree parent
-//     asking for a global child yields subtree. The child's own subtree is a
-//     subset of the parent's, so nothing is gained.
-//   - ids by membership in the creator's set AT SPAWN TIME. This is a static,
-//     one-shot check: the ids are literal, so a later narrowing of the parent
-//     does not retroactively invalidate the child (that is what set_caps
-//     --cascade is for).
+// childCaps is the mask the task will hold, because "further" is per bit: for
+// every bit the child holds, its target set for that bit stays inside the
+// creator's set for that bit, and its visible set stays inside the creator's
+// visible set.
+//
+//   - Ranks are clamped by permissiveness (see minScopeBase), which is why a
+//     subtree parent asking for a global child yields subtree. The child's
+//     base scope serves every held bit its own overrides do not name, so it is
+//     clamped to the narrowest rank the creator holds for any of them; each
+//     override, to the narrowest for its own held bits. The visibility rank
+//     clamps to the creator's VISIBILITY rank, never to its action base.
+//   - Ids are checked by membership AT SPAWN TIME: action ids against the
+//     creator's set for each held bit they serve, view-only ids against what it
+//     sees. This is a static, one-shot check: the ids are literal, so a later
+//     narrowing of the parent does not retroactively invalidate the child (that
+//     is what set_caps --cascade is for).
 //
 // A rejected id is returned as `offender` with ok=false rather than being
 // dropped. Silent clamping would produce a task whose scope differs from the
 // one the caller wrote with nothing saying so — the same invisible-divergence
 // failure the presence bits on set_caps exist to avoid.
 //
-// An operator creator (all=true) may request anything, including ids for tasks
-// it has never touched.
-func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, offender string, ok bool) {
+// An operator creator may request anything, including ids for tasks it has
+// never touched. A creator that can SEE everything may not: it used to share
+// the operator's early return, from when the visibility rank was the action
+// base, and handed out a global action scope from a subtree one — the exact
+// widening scopeSet's comment rules out.
+func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps protocol.Capability) (out Scope, offender string, ok bool) {
 	out = Scope{
 		Base:           req.Base,
 		VisBase:        req.VisBase,
@@ -493,45 +504,94 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, o
 		return Scope{}, "invalid scope: " + err.Error(), false
 	}
 
-	visAll, visAllowed := h.scopeSet(creatorCID, protocol.Capability_None)
-	if visAll {
-		// Operator, or a creator with global visibility: anything it wrote is
-		// inside its own reach by definition.
+	pid := h.lookupPrincipal(creatorCID)
+	if pid.Id == ([16]byte{}) {
 		return out, "", true
 	}
+	creatorHex := hex.EncodeToString(pid.Id[:])
+	creator := Scope{Base: protocol.ScopeBase_None} // a vanished creator reaches nothing
+	if t, ok := h.Tasks.Get(creatorHex); ok {
+		creator = t.Scope
+	}
+
+	var overridden protocol.Capability
+	for _, o := range out.Overrides {
+		overridden |= o.Caps
+	}
+	baseBits := childCaps &^ overridden
 
 	// Rank clamping, per axis and per capability. A child asking for more than
 	// its parent holds is lowered rather than refused -- the historical
 	// behaviour for the base, extended to the axes that did not exist then.
-	parentBase := h.callerScopeBase(creatorCID)
-	out.Base = minScopeBase(out.Base, parentBase)
-	if out.VisBasePresent {
-		out.VisBase = minScopeBase(out.VisBase, parentBase)
+	// Every clamp starts from the creator's base, the historical bound, so a
+	// scope serving no held bit is bounded as it always was.
+	ceiling := func(bits protocol.Capability) protocol.ScopeBase {
+		r := creator.Base
+		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+			if bits&bit != 0 {
+				b, _, _ := creator.ForCap(bit)
+				r = minScopeBase(r, b)
+			}
+		}
+		return r
+	}
+	wantVis := minScopeBase(out.VisRank(), creator.VisRank())
+	out.Base = minScopeBase(out.Base, ceiling(baseBits))
+	// Written explicitly once the rank no longer follows the clamped base, as
+	// clampScopeUnder does: a child whose visibility followed a base the
+	// creator may act through but not see would otherwise see it.
+	if out.VisBasePresent || wantVis != out.Base {
+		out.VisBasePresent = true
+		out.VisBase = wantVis
 	}
 	for i := range out.Overrides {
-		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, parentBase)
+		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, ceiling(out.Overrides[i].Caps&childCaps))
 	}
 
 	// Ids are CHECKED, never clamped: a silently dropped target produces a task
 	// whose scope differs from the one the caller wrote with nothing saying so.
-	// Each override's ids are measured against the parent's set FOR THAT
-	// CAPABILITY, so an id the parent may read but not cancel is refused on the
-	// cancel override alone.
+	// Every id joins the child's visible set, so each must be visible to the
+	// creator; an action id must also be in the creator's set for every held
+	// bit it serves, so an id the parent may read but not cancel is refused
+	// wherever it would carry cancel — a view-only grant included.
+	children := h.childIndex()
+	visAll, visAllowed := h.scopeSetWith(creatorCID, protocol.Capability_None, children)
+	sets := map[protocol.Capability]map[string]bool{} // nil entry = all
+	reaches := func(id string, bits protocol.Capability) bool {
+		if !visAll && !visAllowed[id] {
+			return false
+		}
+		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+			if bits&bit == 0 {
+				continue
+			}
+			set, cached := sets[bit]
+			if !cached {
+				if all, allowed := actionSet(creatorHex, creator, bit, children); !all {
+					set = allowed
+				}
+				sets[bit] = set
+			}
+			if set != nil && !set[id] {
+				return false
+			}
+		}
+		return true
+	}
 	for _, o := range out.Overrides {
-		_, parentAllowed := h.scopeSet(creatorCID, o.Caps)
 		for _, id := range o.IDs {
-			if !parentAllowed[id] {
+			if !reaches(id, o.Caps&childCaps) {
 				return Scope{}, id, false
 			}
 		}
 	}
 	for _, id := range out.IDs {
-		if !visAllowed[id] {
+		if !reaches(id, baseBits) {
 			return Scope{}, id, false
 		}
 	}
 	for _, id := range out.VisIDs {
-		if !visAllowed[id] {
+		if !reaches(id, protocol.Capability_None) {
 			return Scope{}, id, false
 		}
 	}
@@ -539,18 +599,15 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, o
 	return out, "", true
 }
 
-// callerScopeBase is the stored base of the connection's principal task, or
-// global for an operator.
-func (h *TaskHandler) callerScopeBase(connID string) protocol.ScopeBase {
-	pid := h.lookupPrincipal(connID)
-	if pid.Id == ([16]byte{}) {
-		return protocol.ScopeBase_Global
+// resumedCaps is the capability mask a resumed task will hold: re-granted from
+// the resumer when the request overrides it, the record's otherwise — which may
+// exceed the resumer's own (the resume bit's documented behaviour).
+func (h *TaskHandler) resumedCaps(idHex string, override bool, resumerCaps, requested protocol.Capability) protocol.Capability {
+	if override {
+		return intersectCaps(resumerCaps, requested)
 	}
-	t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
-	if !ok {
-		return protocol.ScopeBase_None
-	}
-	return t.Scope.Base
+	rec, _ := h.Tasks.Get(idHex)
+	return rec.Capabilities
 }
 
 // visibleToCaller is the INFO scope: the action set widened by
