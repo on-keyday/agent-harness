@@ -376,6 +376,12 @@ func actionSet(callerHex string, scope Scope, want protocol.Capability, children
 //     nothing — and it is what makes "no capability acts outside what ls shows"
 //     hold while an override may still name targets outside the base.
 func (h *TaskHandler) visibilitySet(callerHex string, scope Scope) (all bool, allowed map[string]bool) {
+	return visibleSetOf(callerHex, scope, h.childIndex())
+}
+
+// visibleSetOf is visibilitySet over a caller-supplied creator index, for the
+// callers that measure a task other than the connection's own principal.
+func visibleSetOf(callerHex string, scope Scope, children map[string][]string) (all bool, allowed map[string]bool) {
 	visRank := scope.VisRank()
 	if visRank == protocol.ScopeBase_Global {
 		return true, nil
@@ -393,7 +399,7 @@ func (h *TaskHandler) visibilitySet(callerHex string, scope Scope) (all bool, al
 		}
 	}
 	if visRank == protocol.ScopeBase_Subtree {
-		descendantsOf(h.childIndex(), callerHex, allowed)
+		descendantsOf(children, callerHex, allowed)
 	}
 	return false, allowed
 }
@@ -514,6 +520,8 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 		creator = t.Scope
 	}
 
+	r := newGrantReach(creatorHex, creator, h.childIndex())
+
 	var overridden protocol.Capability
 	for _, o := range out.Overrides {
 		overridden |= o.Caps
@@ -523,20 +531,8 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	// Rank clamping, per axis and per capability. A child asking for more than
 	// its parent holds is lowered rather than refused -- the historical
 	// behaviour for the base, extended to the axes that did not exist then.
-	// Every clamp starts from the creator's base, the historical bound, so a
-	// scope serving no held bit is bounded as it always was.
-	ceiling := func(bits protocol.Capability) protocol.ScopeBase {
-		r := creator.Base
-		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-			if bits&bit != 0 {
-				b, _, _ := creator.ForCap(bit)
-				r = minScopeBase(r, b)
-			}
-		}
-		return r
-	}
 	wantVis := minScopeBase(out.VisRank(), creator.VisRank())
-	out.Base = minScopeBase(out.Base, ceiling(baseBits))
+	out.Base = minScopeBase(out.Base, r.ceiling(baseBits))
 	// Written explicitly once the rank no longer follows the clamped base, as
 	// clampScopeUnder does: a child whose visibility followed a base the
 	// creator may act through but not see would otherwise see it.
@@ -545,58 +541,90 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 		out.VisBase = wantVis
 	}
 	for i := range out.Overrides {
-		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, ceiling(out.Overrides[i].Caps&childCaps))
+		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, r.ceiling(out.Overrides[i].Caps&childCaps))
 	}
 
 	// Ids are CHECKED, never clamped: a silently dropped target produces a task
 	// whose scope differs from the one the caller wrote with nothing saying so.
-	// Every id joins the child's visible set, so each must be visible to the
-	// creator; an action id must also be in the creator's set for every held
-	// bit it serves, so an id the parent may read but not cancel is refused
-	// wherever it would carry cancel — a view-only grant included.
-	children := h.childIndex()
-	visAll, visAllowed := h.scopeSetWith(creatorCID, protocol.Capability_None, children)
-	sets := map[protocol.Capability]map[string]bool{} // nil entry = all
-	reaches := func(id string, bits protocol.Capability) bool {
-		if !visAll && !visAllowed[id] {
-			return false
-		}
-		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-			if bits&bit == 0 {
-				continue
-			}
-			set, cached := sets[bit]
-			if !cached {
-				if all, allowed := actionSet(creatorHex, creator, bit, children); !all {
-					set = allowed
-				}
-				sets[bit] = set
-			}
-			if set != nil && !set[id] {
-				return false
-			}
-		}
-		return true
-	}
 	for _, o := range out.Overrides {
 		for _, id := range o.IDs {
-			if !reaches(id, o.Caps&childCaps) {
+			if !r.reaches(id, o.Caps&childCaps) {
 				return Scope{}, id, false
 			}
 		}
 	}
 	for _, id := range out.IDs {
-		if !reaches(id, baseBits) {
+		if !r.reaches(id, baseBits) {
 			return Scope{}, id, false
 		}
 	}
 	for _, id := range out.VisIDs {
-		if !reaches(id, protocol.Capability_None) {
+		if !r.reaches(id, protocol.Capability_None) {
 			return Scope{}, id, false
 		}
 	}
 
 	return out, "", true
+}
+
+// grantReach is what attenuation measures against: ONE granting task's scope,
+// asked the two questions a grant raises. attenuateScope (spawn) and
+// clampScopeUnder (cascade) both use it, so the two cannot disagree about what
+// a granter covers.
+type grantReach struct {
+	hex      string
+	scope    Scope
+	children map[string][]string
+	visAll   bool
+	vis      map[string]bool
+	sets     map[protocol.Capability]map[string]bool // per bit; a nil value is "all"
+}
+
+func newGrantReach(hex string, scope Scope, children map[string][]string) *grantReach {
+	r := &grantReach{hex: hex, scope: scope, children: children, sets: map[protocol.Capability]map[string]bool{}}
+	r.visAll, r.vis = visibleSetOf(hex, scope, children)
+	return r
+}
+
+// ceiling is the narrowest rank the granter holds for any bit in bits. It
+// starts from the granter's base, the historical bound, so a scope serving no
+// held bit is bounded as it always was.
+func (r *grantReach) ceiling(bits protocol.Capability) protocol.ScopeBase {
+	c := r.scope.Base
+	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+		if bits&bit != 0 {
+			b, _, _ := r.scope.ForCap(bit)
+			c = minScopeBase(c, b)
+		}
+	}
+	return c
+}
+
+// reaches reports whether id may be named in a grant serving bits. Every id
+// joins the grantee's visible set, so it must be visible to the granter; an
+// action id must also be in the granter's set for every bit it serves, so an
+// id the granter may read but not cancel is refused wherever it would carry
+// cancel — a view-only grant included.
+func (r *grantReach) reaches(id string, bits protocol.Capability) bool {
+	if !r.visAll && !r.vis[id] {
+		return false
+	}
+	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+		if bits&bit == 0 {
+			continue
+		}
+		set, cached := r.sets[bit]
+		if !cached {
+			if all, allowed := actionSet(r.hex, r.scope, bit, r.children); !all {
+				set = allowed
+			}
+			r.sets[bit] = set
+		}
+		if set != nil && !set[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // resumedCaps is the capability mask a resumed task will hold: re-granted from

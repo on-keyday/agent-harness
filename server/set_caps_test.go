@@ -158,6 +158,81 @@ func TestScopeOnlyNarrowingCountsAsNarrowing(t *testing.T) {
 	}
 }
 
+// A descendant's base scope serves every bit it holds that its own overrides do
+// not name, so a parent narrowed for ONE bit narrows the descendant's base for
+// that bit. The cascade used to compare bases only and left the descendant's
+// cancel as wide as before.
+func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
+	h, _, c, g, _ := scopeFixture(t)
+	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9905-1")}
+
+	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c)}
+	sc := Scope{Base: protocol.ScopeBase_Global,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}}}
+	req.Scope = sc.toWire()
+	req.Overrides = sc.overridesToWire()
+	req.OverridesLen = uint8(len(req.Overrides))
+	req.SetScopePresent(true)
+	req.SetCascade(true)
+	if got := sendSetCaps(t, h, opConn, req); got.Status != protocol.SetCapsStatus_Ok {
+		t.Fatalf("status = %v, want ok", got.Status)
+	}
+	ge, _ := h.Tasks.Get(g)
+	if base, _, _ := ge.Scope.ForCap(protocol.Capability_Cancel); base != protocol.ScopeBase_None {
+		t.Errorf("descendant's cancel scope = %v, want none like its parent's", base)
+	}
+}
+
+// A cascade keeps what is still inside the parent's reach. It used to keep only
+// the parent's own id and its explicit ids, so it dropped a descendant's id for
+// a task inside the parent's subtree.
+func TestSetCapsCascadeKeepsIDsInsideTheParentsReach(t *testing.T) {
+	h, p, c, g, u := scopeFixture(t)
+	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9906-1")}
+	h.Tasks.SetCaps(p, false, 0, true, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})                      //nolint:errcheck
+	h.Tasks.SetCaps(c, false, 0, true, Scope{Base: protocol.ScopeBase_None, IDs: []string{g, u}, VisIDs: []string{g, u}}) //nolint:errcheck
+
+	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, p),
+		Scope: Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}.toWire()}
+	req.SetScopePresent(true)
+	req.SetCascade(true)
+	if got := sendSetCaps(t, h, opConn, req); got.Status != protocol.SetCapsStatus_Ok {
+		t.Fatalf("status = %v, want ok", got.Status)
+	}
+	ce, _ := h.Tasks.Get(c)
+	if len(ce.Scope.IDs) != 1 || ce.Scope.IDs[0] != g {
+		t.Errorf("action ids = %v, want [%s]: g is in the parent's subtree, u is only visible to it", ce.Scope.IDs, g)
+	}
+	if len(ce.Scope.VisIDs) != 2 {
+		t.Errorf("view-only ids = %v, want both kept: the parent sees g and u", ce.Scope.VisIDs)
+	}
+}
+
+// A narrowing of ONE bit's scope, or of what a task can see, is still a
+// narrowing: an attach opened under the wider grant must not outlive it.
+func TestPerBitAndVisibilityNarrowingCountsAsNarrowing(t *testing.T) {
+	ov := func(b protocol.ScopeBase) Scope {
+		return Scope{Base: protocol.ScopeBase_Subtree,
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: b}}}
+	}
+	caps := protocol.Capability_Cancel
+	if !isNarrowing(TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Subtree)},
+		TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_None)}) {
+		t.Error("an override ranked down is not reported as a narrowing")
+	}
+	if isNarrowing(TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_None)},
+		TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Global)}) {
+		t.Error("an override ranked up was reported as a narrowing")
+	}
+	wide := Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global}
+	if !isNarrowing(TaskEntry{Scope: wide}, TaskEntry{Scope: Scope{Base: protocol.ScopeBase_Subtree}}) {
+		t.Error("a visibility rank ranked down is not reported as a narrowing")
+	}
+	if !isNarrowing(TaskEntry{Scope: Scope{VisIDs: []string{"aa"}}}, TaskEntry{Scope: Scope{}}) {
+		t.Error("a dropped view-only id is not reported as a narrowing")
+	}
+}
+
 func TestSetCapsMissingTask(t *testing.T) {
 	h, _, _, _, _ := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9904-1")}

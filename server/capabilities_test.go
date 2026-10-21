@@ -1603,7 +1603,7 @@ func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
 	}
 
 	// The descendant keeps cancel but loses purge.
-	out := clampScopeUnder(child, protocol.Capability_Cancel, parent)
+	out := clampScopeUnder(child, protocol.Capability_Cancel, parent, nil)
 
 	if out.Base != protocol.ScopeBase_None {
 		t.Errorf("Base = %v, want clamped to none", out.Base)
@@ -1636,7 +1636,7 @@ func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
 		Base:      protocol.ScopeBase_Subtree,
 		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
 	}
-	out := clampScopeUnder(child, protocol.Capability_Cancel, parent)
+	out := clampScopeUnder(child, protocol.Capability_Cancel, parent, nil)
 	if len(out.Overrides) != 1 {
 		t.Fatalf("overrides = %+v, want one surviving entry", out.Overrides)
 	}
