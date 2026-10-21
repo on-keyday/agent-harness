@@ -293,6 +293,9 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if ov := OverridesLabel(t.Overrides); ov != "" {
 		caps += " +" + ov
 	}
+	// Who wrote that authority. Always printed, `unknown` included, for the
+	// reason scope is.
+	caps += "  auth=" + AuthorityLabel(t)
 	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
@@ -485,6 +488,13 @@ type taskJSON struct {
 	ProgressAgeMs uint64 `json:"progress_age_ms"`
 	LiveTerminal  bool   `json:"live_terminal"`
 	Title         string `json:"title"`
+	// Who last wrote the task's authority (TaskInfo's authority_* fields).
+	// All present at zero: authority_at == 0 is "recorded before provenance".
+	AuthoritySource      string `json:"authority_source"`
+	AuthorityActor       string `json:"authority_actor"`
+	AuthorityActorHidden bool   `json:"authority_actor_hidden"`
+	AuthorityAt          uint64 `json:"authority_at"`
+	AuthorityAgeMs       uint64 `json:"authority_age_ms"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -586,6 +596,12 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		ProgressAgeMs:  t.ProgressAgeMs,
 		LiveTerminal:   t.LiveTerminal(),
 		Title:          string(t.Title),
+
+		AuthoritySource:      t.AuthoritySource.String(),
+		AuthorityActor:       taskIDHexOrEmpty(t.AuthorityActor.Id[:]),
+		AuthorityActorHidden: t.AuthorityActorHidden(),
+		AuthorityAt:          t.AuthorityAt,
+		AuthorityAgeMs:       t.AuthorityAgeMs,
 	}
 }
 
