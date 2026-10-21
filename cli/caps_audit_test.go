@@ -190,3 +190,27 @@ func TestCapsAuditEmpty(t *testing.T) {
 		t.Fatalf("no tasks gave %d rows", len(rows))
 	}
 }
+
+// Each holder carries who last wrote its authority: on the row, in JSON, and
+// in the text renderer.
+func TestCapsAuditHolderCarriesAuthority(t *testing.T) {
+	a := auditTask(0xa1, protocol.TaskStatus_Running, protocol.Capability_Spawn, protocol.ScopeBase_Subtree)
+	a.AuthoritySource = protocol.AuthoritySource_OperatorCapsSet
+	a.AuthorityAt = 1
+	a.AuthorityAgeMs = 60 * 1000
+	rows := CapsAudit([]protocol.TaskInfo{a}, false, false)
+	sp := rowFor(rows, protocol.Capability_Spawn)
+	if sp == nil || len(sp.Holders) != 1 || sp.Holders[0].Authority != "operator_caps_set@operator (1m ago)" {
+		t.Fatalf("holder authority = %+v", sp)
+	}
+	if j := AuditRowsJSON(rows); j[0].Holders[0].Authority != "operator_caps_set@operator (1m ago)" {
+		t.Errorf("JSON holder authority = %q", j[0].Holders[0].Authority)
+	}
+	var b strings.Builder
+	if err := WriteCapsAudit(&b, rows, 0, []protocol.TaskInfo{a}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "auth=operator_caps_set@operator (1m ago)") {
+		t.Errorf("text audit lacks the holder's auth:\n%s", b.String())
+	}
+}

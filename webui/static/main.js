@@ -5515,6 +5515,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
+    // Who last wrote this task's authority (cli.AuthorityLabel, rendered in Go).
+    if (t.authority) {
+      const auth = document.createElement("div");
+      auth.className = "task-authority";
+      auth.textContent = "権限の記録: " + t.authority;
+      sheet.appendChild(auth);
+    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.
@@ -7135,6 +7142,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           line.append(auditScopeChip(h));
           if (h.override) line.append(" (task 全体は " + h.task_scope + ")");
           line.append(" / " + (h.live ? "live" : "ended"));
+          if (h.authority) line.append(" / 記録 " + h.authority);
           detail.append(line);
         }
         box.append(detail);

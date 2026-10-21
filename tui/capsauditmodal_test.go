@@ -334,3 +334,11 @@ func TestCapsAuditJumpKeepsTheMarkedHolders(t *testing.T) {
 		t.Fatalf("after a jump the old notify holder is listed=%v cell=%q; want it still pinned and marked", ok, cell)
 	}
 }
+
+func TestCapsAuditModalShowsAuthority(t *testing.T) {
+	a, _ := auditApp(t)
+	a = press(t, a, runes("i"), enter)
+	if !strings.Contains(a.capsAuditModal.View(), "auth=unknown") {
+		t.Fatalf("holder line lacks auth=:\n%s", a.capsAuditModal.View())
+	}
+}

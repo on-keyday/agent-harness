@@ -1370,6 +1370,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"holdDeadline": float64(t.HoldDeadlineNs),
 					"caps":         cli.CapsLabel(t.Capabilities),
 					"scope":        cli.ScopeLabel(t.Scope),
+					// Rendered in Go, as every surface's: the page formats
+					// nothing about provenance itself.
+					"authority": cli.AuthorityLabel(t),
 					// Raw prefill fields beside the labels: the re-grant
 					// dialog seeds its chips/radios/checklist from these —
 					// back-parsing label forms like "all,-spawn" would mean
