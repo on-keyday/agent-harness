@@ -19,7 +19,7 @@ func TestResumeFromTerminal(t *testing.T) {
 	tasks.Assign(id, testRunnerID("runnerA"), "/wt", false)
 	tasks.Finish(id, 0, nil) // Succeeded
 
-	got, err := tasks.Resume(id, "new prompt", []string{"--B"}, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, "runnerB", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "")
+	got, err := tasks.Resume(id, "new prompt", []string{"--B"}, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, "runnerB", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestResumeRejectsNonTerminal(t *testing.T) {
 
 	t.Run("queued", func(t *testing.T) {
 		id := tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
-		_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "")
+		_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{})
 		if err != ResumeErrNotTerminal {
 			t.Errorf("got %v, want ResumeErrNotTerminal", err)
 		}
@@ -64,7 +64,7 @@ func TestResumeRejectsNonTerminal(t *testing.T) {
 	t.Run("running", func(t *testing.T) {
 		id := tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
 		tasks.Assign(id, testRunnerID("r1"), "/wt", false)
-		_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "")
+		_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{})
 		if err != ResumeErrNotTerminal {
 			t.Errorf("got %v, want ResumeErrNotTerminal", err)
 		}
@@ -73,7 +73,7 @@ func TestResumeRejectsNonTerminal(t *testing.T) {
 
 func TestResumeRejectsUnknown(t *testing.T) {
 	tasks := NewTaskStore()
-	_, err := tasks.Resume("00000000000000000000000000000000", "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "")
+	_, err := tasks.Resume("00000000000000000000000000000000", "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{})
 	if err != ResumeErrNotFound {
 		t.Errorf("got %v, want ResumeErrNotFound", err)
 	}
@@ -102,7 +102,7 @@ func TestResumeConcurrentSingleWinner(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "")
+			_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{})
 			switch err {
 			case nil:
 				atomic.AddInt32(&successes, 1)

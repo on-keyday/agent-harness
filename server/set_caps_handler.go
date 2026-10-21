@@ -73,7 +73,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		}
 	}
 
-	after, ok := h.Tasks.SetCaps(targetHex, req.CapsPresent(), newCaps, req.ScopePresent(), newScope)
+	after, ok := h.Tasks.SetCaps(targetHex, req.CapsPresent(), newCaps, req.ScopePresent(), newScope, AuthorityWrite{})
 	if !ok {
 		respond(protocol.SetCapsStatus_NotFound, nil, 0)
 		return
@@ -99,7 +99,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 			}
 			clampedCaps := cBefore.Capabilities & after.Capabilities
 			clampedScope := authority.ClampUnder(cBefore.Scope, clampedCaps, authority.NewReach(after.ID, after.Scope, children))
-			cAfter, ok := h.Tasks.SetCaps(childHex, true, clampedCaps, true, clampedScope)
+			cAfter, ok := h.Tasks.SetCaps(childHex, true, clampedCaps, true, clampedScope, AuthorityWrite{})
 			if !ok {
 				continue
 			}

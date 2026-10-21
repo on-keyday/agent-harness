@@ -85,7 +85,10 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		HoldDeadline:    now.UnixNano(),
 		Progress:        "stage 2",
 		// A second old, so the server-computed age is non-zero too.
-		ProgressAt: now.Add(-time.Second).UnixNano(),
+		ProgressAt:      now.Add(-time.Second).UnixNano(),
+		AuthoritySource: protocol.AuthoritySource_Cascade,
+		AuthorityActor:  protocol.TaskID{Id: [16]byte{0x3f}},
+		AuthorityAt:     now.Add(-time.Second),
 	}
 	info := toTaskInfo(e)
 	assertNoZeroFields(t, info, map[string]string{

@@ -24,7 +24,7 @@ func TestResumeScopePresence(t *testing.T) {
 		markTerminalForTest(t, h, id)
 
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, protocol.Capability_FileRead, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, protocol.Capability_FileRead, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)
@@ -43,7 +43,7 @@ func TestResumeScopePresence(t *testing.T) {
 		markTerminalForTest(t, h, id)
 
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Global}, protocol.TaskKind_Oneshot, ""); err != nil {
+			false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Global}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)

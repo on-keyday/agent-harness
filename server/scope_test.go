@@ -31,7 +31,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 
 	peer := strings.Repeat("ab", 16)
 	e, ok := s.SetCaps(id, true, protocol.Capability_Cancel, true,
-		authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{peer}})
+		authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{peer}}, AuthorityWrite{})
 	if !ok {
 		t.Fatal("SetCaps reported the task missing")
 	}
@@ -43,7 +43,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 	}
 
 	// Half-writes must leave the other half alone.
-	if e2, _ := s.SetCaps(id, false, protocol.Capability_All, true, authority.Scope{Base: protocol.ScopeBase_Global}); true {
+	if e2, _ := s.SetCaps(id, false, protocol.Capability_All, true, authority.Scope{Base: protocol.ScopeBase_Global}, AuthorityWrite{}); true {
 		if e2.Capabilities != protocol.Capability_Cancel {
 			t.Errorf("caps changed on a scope-only write: %v", e2.Capabilities)
 		}
@@ -51,7 +51,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 			t.Errorf("scope = %v, want global", e2.Scope.Base)
 		}
 	}
-	if _, ok := s.SetCaps("no-such-task", true, protocol.Capability_None, false, authority.Scope{}); ok {
+	if _, ok := s.SetCaps("no-such-task", true, protocol.Capability_None, false, authority.Scope{}, AuthorityWrite{}); ok {
 		t.Error("SetCaps on a missing task reported ok")
 	}
 

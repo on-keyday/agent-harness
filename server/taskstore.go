@@ -44,6 +44,12 @@ type TaskEntry struct {
 	// rule the server applied to visibility before scopes existed. See
 	// server/scope.go.
 	Scope authority.Scope
+	// AuthoritySource, AuthorityActor and AuthorityAt are who last wrote this
+	// task's authority — its caps, its scope or its parent link — and when.
+	// The zero values are a task recorded before provenance existed.
+	AuthoritySource protocol.AuthoritySource
+	AuthorityActor  protocol.TaskID
+	AuthorityAt     time.Time
 	// AgentProfile is the resolved agent profile name for this task, chosen
 	// by the submit-path filter/resolution (server/task_handler.go) from the
 	// bound runner's advertised RunnerHello.AgentProfiles. Set at Create time;
@@ -223,6 +229,11 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		Selector:      selector,
 		ExtraArgs:     extraArgs,
 	}
+	if creatorTaskID.Id == ([16]byte{}) {
+		s.tasks[id].stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_OperatorSpawn})
+	} else {
+		s.tasks[id].stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Spawn, Actor: creatorTaskID})
+	}
 	s.order = append(s.order, id)
 	if s.wal != nil {
 		creatorHex := ""
@@ -244,6 +255,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			AgentProfile:  agentProfile,
 		}
 		applyScopeToWAL(scope, &ev)
+		s.tasks[id].applyAuthorityToWAL(&ev)
 		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -256,21 +268,61 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 	return id
 }
 
+// AuthorityWrite is who is writing a task's authority: the kind of write and
+// the acting task (zero for an operator). The store stamps it with the time.
+type AuthorityWrite struct {
+	Source protocol.AuthoritySource
+	Actor  protocol.TaskID
+}
+
+// stampAuthority records a write of e's authority, now.
+func (e *TaskEntry) stampAuthority(by AuthorityWrite) {
+	e.AuthoritySource = by.Source
+	e.AuthorityActor = by.Actor
+	e.AuthorityAt = time.Now()
+}
+
+// applyAuthorityToWAL / authorityFromWAL are the WAL projection of the three
+// provenance fields. Every event that carries them is a snapshot, so replay
+// assigns rather than merges, and a legacy record replays as unknown.
+func (e *TaskEntry) applyAuthorityToWAL(ev *WALEvent) {
+	ev.AuthoritySource = uint8(e.AuthoritySource)
+	ev.AuthorityActor = ""
+	if e.AuthorityActor.Id != ([16]byte{}) {
+		ev.AuthorityActor = hex.EncodeToString(e.AuthorityActor.Id[:])
+	}
+	ev.AuthorityAt = 0
+	if !e.AuthorityAt.IsZero() {
+		ev.AuthorityAt = e.AuthorityAt.UnixNano()
+	}
+}
+
+func (e *TaskEntry) authorityFromWAL(ev WALEvent) {
+	e.AuthoritySource = protocol.AuthoritySource(ev.AuthoritySource)
+	e.AuthorityActor = taskIDFromHex(ev.AuthorityActor)
+	e.AuthorityAt = time.Time{}
+	if ev.AuthorityAt != 0 {
+		e.AuthorityAt = time.Unix(0, ev.AuthorityAt)
+	}
+}
+
 // writeCapsChangedLocked emits one task_caps_changed record carrying the
 // task's post-change authority. Caller holds s.mu.
 //
 // The record is a snapshot, not a delta: replay assigns both halves from it,
 // so a record that named only the field that changed would silently reset the
 // other to its zero on the next restart.
-func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, scope authority.Scope) {
+func (s *TaskStore) writeCapsChangedLocked(e *TaskEntry) {
 	if s.wal == nil {
 		return
 	}
+	id := e.ID
 	ev := WALEvent{
 		Type: "task_caps_changed", TaskID: id,
-		Capabilities: uint32(caps),
+		Capabilities: uint32(e.Capabilities),
 	}
-	applyScopeToWAL(scope, &ev)
+	applyScopeToWAL(e.Scope, &ev)
+	e.applyAuthorityToWAL(&ev)
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
 	}
@@ -346,7 +398,7 @@ func (s *TaskStore) restoreProgress(l progressLine) bool {
 // force from the target's next RPC with nothing restarted.
 //
 // Returns the post-change entry and whether the task existed.
-func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope authority.Scope) (TaskEntry, bool) {
+func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope authority.Scope, by AuthorityWrite) (TaskEntry, bool) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -359,7 +411,8 @@ func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, s
 	if setScope {
 		e.Scope = scope
 	}
-	s.writeCapsChangedLocked(id, e.Capabilities, e.Scope)
+	e.stampAuthority(by)
+	s.writeCapsChangedLocked(e)
 	snapshot := *e
 	s.mu.Unlock()
 	return snapshot, true
@@ -370,15 +423,18 @@ func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, s
 // with the creator_task_id key absent (omitempty); for THIS event type absence
 // means "set to zero" — the type itself carries the intent, unlike
 // task_created where an absent key means the link was never set.
-func (s *TaskStore) writeParentChangedLocked(id string, parent protocol.TaskID) {
+func (s *TaskStore) writeParentChangedLocked(e *TaskEntry) {
 	if s.wal == nil {
 		return
 	}
+	id, parent := e.ID, e.CreatorTaskID
 	creatorHex := ""
 	if parent.Id != ([16]byte{}) {
 		creatorHex = hex.EncodeToString(parent.Id[:])
 	}
-	if err := s.wal.Write(WALEvent{Type: "task_parent_changed", TaskID: id, CreatorTaskID: creatorHex}); err != nil {
+	ev := WALEvent{Type: "task_parent_changed", TaskID: id, CreatorTaskID: creatorHex}
+	e.applyAuthorityToWAL(&ev)
+	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_parent_changed", "task_id", id, "err", err)
 	}
 }
@@ -394,7 +450,8 @@ func (s *TaskStore) SetParent(id string, parent protocol.TaskID) (TaskEntry, boo
 		return TaskEntry{}, false
 	}
 	e.CreatorTaskID = parent
-	s.writeParentChangedLocked(id, parent)
+	e.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
+	s.writeParentChangedLocked(e)
 	snapshot := *e
 	s.mu.Unlock()
 	return snapshot, true
@@ -435,8 +492,10 @@ func (s *TaskStore) SwapWithParent(id string) (target, former TaskEntry, err err
 		return TaskEntry{}, TaskEntry{}, ErrSwapNotFound // store keys are valid hex by construction
 	}
 	t.CreatorTaskID, p.CreatorTaskID = p.CreatorTaskID, tid
-	s.writeParentChangedLocked(id, t.CreatorTaskID)
-	s.writeParentChangedLocked(pHex, tid)
+	t.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
+	p.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
+	s.writeParentChangedLocked(t)
+	s.writeParentChangedLocked(p)
 	return *t, *p, nil
 }
 
@@ -484,7 +543,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope authority.Scope, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope authority.Scope, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -549,7 +608,8 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 		// One event carries the post-change state of BOTH halves, whichever was
 		// asked for: replay applies what the record says, so writing only the
 		// changed half would leave the other reading as its zero on restart.
-		s.writeCapsChangedLocked(id, e.Capabilities, e.Scope)
+		e.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Resume, Actor: resumer})
+		s.writeCapsChangedLocked(e)
 	}
 
 	snapshot := *e
@@ -1146,6 +1206,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				Selector:      ev.Selector,
 				ExtraArgs:     ev.ExtraArgs,
 			}
+			s.tasks[ev.TaskID].authorityFromWAL(ev)
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1242,6 +1303,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
 				t.Scope = scopeFromWAL(ev)
+				t.authorityFromWAL(ev)
 			}
 		case "task_parent_changed":
 			// An absent creator_task_id key on THIS event type means "set to
@@ -1255,6 +1317,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 					}
 				}
 				t.CreatorTaskID = p
+				t.authorityFromWAL(ev)
 			}
 		case "task_restored":
 			// Nothing to apply: the entry is rebuilt by the events this

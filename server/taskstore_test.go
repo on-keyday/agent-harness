@@ -881,7 +881,7 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -931,7 +931,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -982,7 +982,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	}
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -1061,7 +1061,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 	// Resume with caps override to FileRead (override-to-None is also tested below).
 	newCaps := protocol.Capability_FileRead
 	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+		true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1139,7 +1139,7 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_All, false, authority.Scope{}, protocol.TaskKind_Oneshot, "codex"); err != nil {
+		false, protocol.Capability_All, false, authority.Scope{}, protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 

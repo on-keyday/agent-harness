@@ -106,7 +106,15 @@ type WALEvent struct {
 	// so the two are never compared: this one exists so a restart that took
 	// too long fails the task instead of offering it.
 	HoldDeadlineNs int64 `json:"hold_deadline_ns,omitempty"`
-	Ts             int64 `json:"ts"` // unix nano
+	// AuthoritySource / AuthorityActor / AuthorityAt are who last wrote the
+	// task's authority and when (TaskEntry's fields of the same names). Written
+	// on task_created, task_caps_changed and task_parent_changed, each a
+	// snapshot that replay assigns; a legacy record has none of the keys and
+	// replays as unknown.
+	AuthoritySource uint8  `json:"authority_source,omitempty"`
+	AuthorityActor  string `json:"authority_actor,omitempty"`
+	AuthorityAt     int64  `json:"authority_at,omitempty"`
+	Ts              int64  `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -156,6 +164,9 @@ type walEventJSON struct {
 	ExtraArgs           []string           `json:"extra_args,omitempty"`
 	HoldID              string             `json:"hold_id,omitempty"`
 	HoldDeadlineNs      int64              `json:"hold_deadline_ns,omitempty"`
+	AuthoritySource     uint8              `json:"authority_source,omitempty"`
+	AuthorityActor      string             `json:"authority_actor,omitempty"`
+	AuthorityAt         int64              `json:"authority_at,omitempty"`
 	Ts                  int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -194,6 +205,9 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ExtraArgs:           e.ExtraArgs,
 		HoldID:              e.HoldID,
 		HoldDeadlineNs:      e.HoldDeadlineNs,
+		AuthoritySource:     e.AuthoritySource,
+		AuthorityActor:      e.AuthorityActor,
+		AuthorityAt:         e.AuthorityAt,
 		Ts:                  e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -238,6 +252,9 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ExtraArgs = j.ExtraArgs
 	e.HoldID = j.HoldID
 	e.HoldDeadlineNs = j.HoldDeadlineNs
+	e.AuthoritySource = j.AuthoritySource
+	e.AuthorityActor = j.AuthorityActor
+	e.AuthorityAt = j.AuthorityAt
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

@@ -1280,7 +1280,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved, protocol.TaskID{}); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1642,7 +1642,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved, protocol.TaskID{}); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -2421,6 +2421,13 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetProgress([]byte(t.Progress))
 	info.ProgressAt = uint64(t.ProgressAt)
 	info.ProgressAgeMs = progressAgeMs(t.ProgressAt)
+	info.AuthoritySource = t.AuthoritySource
+	info.AuthorityActor = t.AuthorityActor
+	if !t.AuthorityAt.IsZero() {
+		info.AuthorityAt = uint64(t.AuthorityAt.UnixNano())
+		// Server clock, as progress_age_ms: a client never subtracts.
+		info.AuthorityAgeMs = progressAgeMs(t.AuthorityAt.UnixNano())
+	}
 	return info
 }
 

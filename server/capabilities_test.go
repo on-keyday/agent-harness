@@ -1119,7 +1119,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1144,7 +1144,7 @@ func TestResumeCapsOverride(t *testing.T) {
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1186,7 +1186,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -1202,7 +1202,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps2, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps2, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)
@@ -1258,7 +1258,7 @@ func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) string {
 
 func setScope(t *testing.T, h *TaskHandler, taskHex string, sc authority.Scope) {
 	t.Helper()
-	if _, ok := h.Tasks.SetCaps(taskHex, false, 0, true, sc); !ok {
+	if _, ok := h.Tasks.SetCaps(taskHex, false, 0, true, sc, AuthorityWrite{}); !ok {
 		t.Fatalf("SetCaps on %s: task not found", taskHex)
 	}
 }
@@ -1310,12 +1310,12 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 		t.Error("authorized a stranger while scope is subtree")
 	}
 	// Target in scope, cap missing.
-	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}, AuthorityWrite{}) //nolint:errcheck
 	if h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("authorized cancel without the cancel bit")
 	}
 	// Both.
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{}, AuthorityWrite{}) //nolint:errcheck
 	if !h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("denied a self-target with the cap held")
 	}
@@ -1334,7 +1334,7 @@ func TestVisBaseWidensVisibilityNotAction(t *testing.T) {
 	cid := bindPrincipal(t, h, c)
 	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, true, authority.Scope{ //nolint:errcheck
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
-	})
+	}, AuthorityWrite{})
 
 	if all, _ := h.visibleToCaller(cid); !all {
 		t.Error("vis_base=global did not widen visibility")
@@ -1601,7 +1601,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 
 	// scopeOverride = false: the stored scope, overrides and all, is kept.
 	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+		false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ := st.Get(id)
@@ -1614,7 +1614,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	st.Finish(id, 0, nil)
 	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
 		false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Subtree},
-		protocol.TaskKind_Oneshot, ""); err != nil {
+		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ = st.Get(id)
@@ -1637,7 +1637,7 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 		Base:      protocol.ScopeBase_Subtree,
 		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	}
-	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView, true, withOverride); !ok {
+	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView, true, withOverride, AuthorityWrite{}); !ok {
 		t.Fatal("SetCaps: task not found")
 	}
 
@@ -1656,7 +1656,7 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 
 	// Granting the bit makes the standing override apply immediately, without
 	// the operator having to restate it.
-	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, authority.Scope{}); !ok {
+	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, authority.Scope{}, AuthorityWrite{}); !ok {
 		t.Fatal("SetCaps: task not found")
 	}
 	if h.authorize(cid, protocol.Capability_Cancel, g) {
