@@ -169,7 +169,7 @@ func TestAttenuateScopeHonoursTheCreatorsOverride(t *testing.T) {
 
 // The attach powers are ranked: a holder of exec_control may also view and
 // cowrite, and those attaches are bound by exec_view's and exec_cowrite's OWN
-// scopes (attachModeScopeCap). A child holding only exec_control therefore
+// scopes (authority.AttachModeScopeCap). A child holding only exec_control therefore
 // exercises exec_view's scope, and it must be bounded like a held bit.
 func TestAttenuateScopeBoundsTheScopesAStrongerBitExercises(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)

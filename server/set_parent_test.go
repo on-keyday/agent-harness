@@ -42,7 +42,7 @@ func TestSetParentRejectsNonOperator(t *testing.T) {
 	}
 }
 
-// descendantsOf seeds the walk with its own root, so parent==target is inside
+// authority.DescendantsOf seeds the walk with its own root, so parent==target is inside
 // the same predicate as parent∈descendants — both must answer would_cycle.
 func TestSetParentRejectsCycles(t *testing.T) {
 	h, p, c, g, _ := scopeFixture(t)

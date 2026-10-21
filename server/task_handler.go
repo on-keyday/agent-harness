@@ -481,7 +481,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// An attached open hands the opener the control seat, so it needs what
 		// an attach --control needs. Detached opens attach nobody.
-		if want := attachModeCap(protocol.AttachMode_Control); !oi.Detached() && !hasAnyCap(h.callerCaps(cid), want) {
+		if want := authority.AttachModeCap(protocol.AttachMode_Control); !oi.Detached() && !hasAnyCap(h.callerCaps(cid), want) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
 			return
 		}
@@ -765,12 +765,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// powers. Denied BEFORE the scope check so a caller that may not attach
 		// this way at all gets permission_denied rather than a scope answer
 		// about a task it cannot reach anyway.
-		if want := attachModeCap(a.Mode); !hasAnyCap(h.callerCaps(cid), want) {
+		if want := authority.AttachModeCap(a.Mode); !hasAnyCap(h.callerCaps(cid), want) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
 			return
 		}
 		aresp := protocol.AttachSessionResponse{Status: protocol.AttachSessionStatus_NotFound}
-		if h.inScope(cid, attachModeScopeCap(a.Mode), hex.EncodeToString(a.TaskId.Id[:])) {
+		if h.inScope(cid, authority.AttachModeScopeCap(a.Mode), hex.EncodeToString(a.TaskId.Id[:])) {
 			aresp = h.handleAttachSession(conn, a)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}

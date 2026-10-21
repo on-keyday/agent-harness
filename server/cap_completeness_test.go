@@ -73,7 +73,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// resume_task_id and resume_exact. resumeRequestCap.
 	protocol.TaskControlKind_Submit:          capInHandler,
 	protocol.TaskControlKind_OpenInteractive: capInHandler,
-	// The bit depends on the requested AttachMode: attachModeCap.
+	// The bit depends on the requested AttachMode: authority.AttachModeCap.
 	protocol.TaskControlKind_AttachSession: capInHandler,
 	// exec_run_kill names an EXEC that resolves to a task; authorize(ExecRun).
 	protocol.TaskControlKind_ExecRunKill: capInHandler,

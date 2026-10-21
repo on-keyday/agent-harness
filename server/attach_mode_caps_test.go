@@ -43,7 +43,7 @@ func TestAttachModeCapImplication(t *testing.T) {
 		{"spawn is not an attach power", protocol.Capability_Spawn, protocol.AttachMode_View, false},
 	}
 	for _, c := range cases {
-		got := hasAnyCap(c.held, attachModeCap(c.mode))
+		got := hasAnyCap(c.held, authority.AttachModeCap(c.mode))
 		if got != c.allow {
 			t.Errorf("%s: allowed=%v, want %v", c.name, got, c.allow)
 		}
@@ -54,16 +54,16 @@ func TestAttachModeCapImplication(t *testing.T) {
 // strictest bit, not by the most permissive one.
 func TestUnknownAttachModeRequiresControl(t *testing.T) {
 	unknown := protocol.AttachMode(200)
-	if got := attachModeCap(unknown); got != protocol.Capability_ExecControl {
+	if got := authority.AttachModeCap(unknown); got != protocol.Capability_ExecControl {
 		t.Errorf("unknown mode requires %#x, want exec_control (%#x)", uint32(got), uint32(protocol.Capability_ExecControl))
 	}
-	if hasAnyCap(protocol.Capability_ExecView|protocol.Capability_ExecCowrite, attachModeCap(unknown)) {
+	if hasAnyCap(protocol.Capability_ExecView|protocol.Capability_ExecCowrite, authority.AttachModeCap(unknown)) {
 		t.Error("an unknown attach mode was satisfied by the weaker bits — it must fail closed")
 	}
 }
 
 // hasAnyCap is a set of ALTERNATIVES, unlike hasCap which requires every bit.
-// Confusing the two would make attachModeCap's return value demand all three.
+// Confusing the two would make authority.AttachModeCap's return value demand all three.
 func TestHasAnyCapIsAlternativesNotRequirements(t *testing.T) {
 	both := protocol.Capability_ExecView | protocol.Capability_ExecControl
 	if !hasAnyCap(protocol.Capability_ExecControl, both) {
@@ -79,18 +79,18 @@ func TestHasAnyCapIsAlternativesNotRequirements(t *testing.T) {
 // one. Before the split there was a single bit and this was impossible.
 func TestWatchingDoesNotGrantEviction(t *testing.T) {
 	supervisor := protocol.Capability_Spawn | protocol.Capability_ExecView
-	if !hasAnyCap(supervisor, attachModeCap(protocol.AttachMode_View)) {
+	if !hasAnyCap(supervisor, authority.AttachModeCap(protocol.AttachMode_View)) {
 		t.Fatal("a supervisor granted exec_view cannot watch — the grant is useless")
 	}
-	if hasAnyCap(supervisor, attachModeCap(protocol.AttachMode_Control)) {
+	if hasAnyCap(supervisor, authority.AttachModeCap(protocol.AttachMode_Control)) {
 		t.Error("exec_view let the supervisor take a session over; that is the over-grant this split removes")
 	}
-	if hasAnyCap(supervisor, attachModeCap(protocol.AttachMode_Cowrite)) {
+	if hasAnyCap(supervisor, authority.AttachModeCap(protocol.AttachMode_Cowrite)) {
 		t.Error("exec_view let the supervisor type into a session it should only watch")
 	}
 }
 
-// The unit tests above prove attachModeCap's table. This one proves it is
+// The unit tests above prove authority.AttachModeCap's table. This one proves it is
 // actually WIRED: the gate lives inline in the AttachSession dispatch case
 // (the requiredCap map cannot see AttachMode), so the table being right says
 // nothing about the dispatch reading it. A caller holding only exec_view must

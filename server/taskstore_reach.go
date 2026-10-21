@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -48,7 +49,7 @@ func (r storeReach) HasChild(parent protocol.TaskID, short string) bool {
 	return false
 }
 
-// PeerCovers asks actionSet — the control plane's own scope evaluation — for
+// PeerCovers asks authority.ActionSet — the control plane's own scope evaluation — for
 // tid's board_peer target set, and matches short against it. The child index
 // is built only for a subtree base, the one form that walks it.
 func (r storeReach) PeerCovers(tid protocol.TaskID, short string) bool {
@@ -60,7 +61,7 @@ func (r storeReach) PeerCovers(tid protocol.TaskID, short string) bool {
 	if base, _, _ := e.Scope.ForCap(protocol.Capability_BoardPeer); base == protocol.ScopeBase_Subtree {
 		children = childIndexOf(r.s)
 	}
-	all, allowed := actionSet(e.ID, e.Scope, protocol.Capability_BoardPeer, children)
+	all, allowed := authority.ActionSet(e.ID, e.Scope, protocol.Capability_BoardPeer, children)
 	if all {
 		return true
 	}

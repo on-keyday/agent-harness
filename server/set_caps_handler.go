@@ -79,7 +79,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		return
 	}
 	affected := []string{targetHex}
-	narrowed := isNarrowing(before, after)
+	narrowed := authority.IsNarrowing(before.Capabilities, before.Scope, after.Capabilities, after.Scope)
 
 	if req.Cascade() {
 		// Attenuation happens at spawn, so a task already spawned keeps what it
@@ -88,7 +88,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		// the monotonic invariant over the whole subtree.
 		children := h.childIndex()
 		descendants := make(map[string]bool)
-		descendantsOf(children, targetHex, descendants)
+		authority.DescendantsOf(children, targetHex, descendants)
 		for childHex := range descendants {
 			if childHex == targetHex {
 				continue
@@ -98,13 +98,13 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 				continue
 			}
 			clampedCaps := cBefore.Capabilities & after.Capabilities
-			clampedScope := clampScopeUnder(cBefore.Scope, clampedCaps, after, children)
+			clampedScope := authority.ClampUnder(cBefore.Scope, clampedCaps, authority.NewReach(after.ID, after.Scope, children))
 			cAfter, ok := h.Tasks.SetCaps(childHex, true, clampedCaps, true, clampedScope)
 			if !ok {
 				continue
 			}
 			affected = append(affected, childHex)
-			narrowed = narrowed || isNarrowing(cBefore, cAfter)
+			narrowed = narrowed || authority.IsNarrowing(cBefore.Capabilities, cBefore.Scope, cAfter.Capabilities, cAfter.Scope)
 		}
 	}
 
@@ -139,135 +139,4 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 	if h.OnChange != nil {
 		h.OnChange()
 	}
-}
-
-// isNarrowing reports whether the change removed authority in any direction:
-// a cap bit cleared, the scope of a still-held bit narrowed, or the visible set
-// narrowed. Only a narrowing justifies tearing down live connections.
-//
-// Judged per bit, because a cascade narrows per bit: comparing the base scope
-// alone missed an override ranked down, so an attach opened under the wider
-// grant outlived it.
-func isNarrowing(before, after TaskEntry) bool {
-	if before.Capabilities&^after.Capabilities != 0 {
-		return true
-	}
-	if reachNarrowed(before.Scope.VisRank(), false, visibleIDs(before.Scope),
-		after.Scope.VisRank(), false, visibleIDs(after.Scope)) {
-		return true
-	}
-	exercised := exercisedBits(before.Capabilities)
-	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-		if exercised&bit == 0 {
-			continue
-		}
-		bBase, bExcl, bIDs := before.Scope.ForCap(bit)
-		aBase, aExcl, aIDs := after.Scope.ForCap(bit)
-		if reachNarrowed(bBase, bExcl, bIDs, aBase, aExcl, aIDs) {
-			return true
-		}
-	}
-	return false
-}
-
-// reachNarrowed compares two descriptions of one target set: a rank ranked
-// down, self newly excluded, or an explicit id no longer named. A global rank
-// afterwards covers everything, so nothing it replaced was narrowed.
-func reachNarrowed(bBase protocol.ScopeBase, bExcl bool, bIDs []string, aBase protocol.ScopeBase, aExcl bool, aIDs []string) bool {
-	if aBase == protocol.ScopeBase_Global {
-		return false
-	}
-	if authority.BaseRank(aBase) < authority.BaseRank(bBase) || (aExcl && !bExcl) {
-		return true
-	}
-	kept := make(map[string]bool, len(aIDs))
-	for _, id := range aIDs {
-		kept[id] = true
-	}
-	for _, id := range bIDs {
-		if !kept[id] {
-			return true
-		}
-	}
-	return false
-}
-
-// visibleIDs is every id a scope makes visible on top of its rank — the id
-// half of visibilitySet's formula.
-func visibleIDs(s authority.Scope) []string {
-	out := append(append([]string(nil), s.VisIDs...), s.IDs...)
-	for _, o := range s.Overrides {
-		out = append(out, o.IDs...)
-	}
-	return out
-}
-
-// clampScopeUnder re-imposes the monotonic invariant on ONE descendant after
-// its parent's authority changed. Every axis is clamped here, in one function,
-// because the inline struct literal this replaced carried Base and IDs only —
-// a cascade silently erased a child's visibility rank and its overrides, which
-// is a rewrite of authority nothing reported.
-//
-// It measures against the parent through grantReach, the same helper spawn-time
-// attenuation uses, so a cascade and a spawn agree on what the parent covers:
-// each held bit's rank and ids are bounded by the parent's scope FOR THAT BIT
-// (boundRanks, which narrows only the bits the parent narrows), and an id
-// survives when it is still inside the parent's reach — not only when the
-// parent names it, which dropped ids inside the parent's subtree. Ids outside
-// it are dropped; a cascade has no caller to refuse.
-//
-// childCaps is the descendant's ALREADY-clamped capability mask, so an
-// override for a bit it no longer holds or exercises (exercisedBits) is
-// dropped rather than left to reapply if the bit is granted again later.
-func clampScopeUnder(child authority.Scope, childCaps protocol.Capability, parent TaskEntry, children map[string][]string) authority.Scope {
-	r := newGrantReach(parent.ID, parent.Scope, children)
-	exercised := exercisedBits(childCaps)
-	in := authority.Scope{Base: child.Base, ExcludeSelf: child.ExcludeSelf, IDs: child.IDs}
-	for _, o := range child.Overrides {
-		o.Caps &= exercised
-		if o.Caps != protocol.Capability_None {
-			in.Overrides = append(in.Overrides, o)
-		}
-	}
-	bounded := r.boundRanks(in, exercised)
-	keep := func(ids []string, bits protocol.Capability) []string {
-		out := ids[:0:0]
-		for _, id := range ids {
-			if r.reaches(id, bits) {
-				out = append(out, id)
-			}
-		}
-		return out
-	}
-
-	var overridden protocol.Capability
-	for _, o := range bounded.Overrides {
-		overridden |= o.Caps
-	}
-	out := authority.Scope{
-		Base:        bounded.Base,
-		IDs:         keep(bounded.IDs, exercised&^overridden),
-		ExcludeSelf: child.ExcludeSelf, // only ever narrows; nothing to clamp
-		VisIDs:      keep(child.VisIDs, protocol.Capability_None),
-	}
-
-	// The visibility rank clamps against the parent's rank. Written explicitly
-	// rather than copied, so a child that inherited its rank from its base does
-	// not silently acquire a present bit it never had.
-	if clamped := authority.MinBase(child.VisRank(), parent.Scope.VisRank()); clamped != out.Base {
-		out.VisBasePresent = true
-		out.VisBase = clamped
-	}
-
-	// Ids are filtered per piece: an id the parent may still reach for some of
-	// an entry's bits survives in those pieces and leaves the others.
-	for _, o := range bounded.Overrides {
-		o.IDs = keep(o.IDs, o.Caps)
-		out.Overrides = append(out.Overrides, o)
-	}
-
-	// No final clamp against the visibility rank. One used to live here to keep
-	// every action set inside what ls shows; that rule is gone, and the two
-	// ranks clamp independently against the parent above.
-	return out
 }

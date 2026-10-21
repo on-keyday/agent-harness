@@ -35,7 +35,7 @@ import (
 //
 // AttachSession is absent because its cap depends on the requested AttachMode,
 // which this map cannot see — the gate is inline in the dispatch case, via
-// attachModeCap. AwaitIdle is absent because it needs NO capability: it reports
+// authority.AttachModeCap. AwaitIdle is absent because it needs NO capability: it reports
 // last_output_at, which `ls` hands to any caller that can see the task, so a
 // gate here would only make the edge-triggered path cost more authority than
 // polling for the same fact. Its one side effect, sink=notify, is gated on
@@ -73,36 +73,10 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_OpenExecTap: protocol.Capability_ExecTap,
 }
 
-// attachModeCap returns the capability set that satisfies an attach in the
-// given mode. The three attach powers are RANKED, not orthogonal, so each mode
-// accepts its own bit or any stronger one:
-//
-//	view    <- exec_view | exec_cowrite | exec_control
-//	cowrite <- exec_cowrite | exec_control
-//	control <- exec_control
-//
-// A holder of the stronger power can always choose to exercise the weaker one;
-// requiring it to also hold the weaker bit would be bookkeeping, not
-// confinement. The returned value is therefore checked with hasAnyCap, not
-// hasCap — it is a set of alternatives, not a set of requirements.
-//
-// An unrecognised mode from a newer peer falls through to exec_control, the
-// strictest answer, so an unknown mode fails closed.
-func attachModeCap(mode protocol.AttachMode) protocol.Capability {
-	switch mode {
-	case protocol.AttachMode_View:
-		return protocol.Capability_ExecView | protocol.Capability_ExecCowrite | protocol.Capability_ExecControl
-	case protocol.AttachMode_Cowrite:
-		return protocol.Capability_ExecCowrite | protocol.Capability_ExecControl
-	default:
-		return protocol.Capability_ExecControl
-	}
-}
-
 // resumeRequestCap returns the capability set that satisfies a submit or an
 // interactive open. Creating a task (zero resumeID) is spawn alone. Resuming is
 // the resume rank, which spawn does NOT imply: resume ⊇ resume_exact, checked
-// with hasAnyCap like attachModeCap, so a holder of resume may also resume
+// with hasAnyCap like authority.AttachModeCap, so a holder of resume may also resume
 // exactly.
 func resumeRequestCap(resumeID protocol.TaskID, exact bool) protocol.Capability {
 	switch {
@@ -127,7 +101,7 @@ func resumeRequestBits(exact bool) []protocol.Capability {
 // resumeTargetAllowed is the target gate of a resume: allowed when SOME bit the
 // caller holds that permits this resume has the target in that bit's own scope.
 //
-// Unlike attach, which binds by the mode's own bit (attachModeScopeCap), each
+// Unlike attach, which binds by the mode's own bit (authority.AttachModeScopeCap), each
 // resume bit is a grant the operator writes separately, and each grant's scope
 // is what the operator wrote for it. The cost: narrowing a task that holds both
 // bits takes narrowing both scopes, since either admits a target.
@@ -141,17 +115,6 @@ func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex stri
 	return false
 }
 
-// scopeCoversNewChild reports whether a task the caller is about to create — its
-// direct child — would fall inside the caller's target set for c. Decided from
-// the scope alone because the child does not exist yet: a subtree base (with or
-// without self) and a global one reach every child, while a none base reaches
-// only listed ids, and an id list cannot name a task that has no id yet.
-// TestScopeCoversNewChildAgreesWithActionSet holds it to actionSet.
-func scopeCoversNewChild(s authority.Scope, c protocol.Capability) bool {
-	base, _, _ := s.ForCap(c)
-	return base == protocol.ScopeBase_Subtree || base == protocol.ScopeBase_Global
-}
-
 // controlSeatAllowed is the scope half of an attached open: the opener takes
 // the session's control seat, so the task must be inside its exec_control
 // scope, as for an attach --control. resumeHex is "" for a fresh open, whose
@@ -162,10 +125,10 @@ func (h *TaskHandler) controlSeatAllowed(cid, resumeHex string) bool {
 		return true // operator: global
 	}
 	if resumeHex != "" {
-		return h.inScope(cid, attachModeScopeCap(protocol.AttachMode_Control), resumeHex)
+		return h.inScope(cid, authority.AttachModeScopeCap(protocol.AttachMode_Control), resumeHex)
 	}
 	self, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
-	return ok && scopeCoversNewChild(self.Scope, protocol.Capability_ExecControl)
+	return ok && authority.CoversNewChild(self.Scope, protocol.Capability_ExecControl)
 }
 
 // resizeAllowed reports whether an observer attach by cid to targetHex may
@@ -179,7 +142,7 @@ func (h *TaskHandler) resizeAllowed(cid, targetHex string) bool {
 }
 
 // hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct
-// from hasCap (which requires every bit) because attachModeCap returns
+// from hasCap (which requires every bit) because authority.AttachModeCap returns
 // alternatives that satisfy the same request.
 func hasAnyCap(have, want protocol.Capability) bool {
 	return have&want != 0
@@ -188,23 +151,6 @@ func hasAnyCap(have, want protocol.Capability) bool {
 // hasCap reports whether have includes every bit in want.
 func hasCap(have, want protocol.Capability) bool {
 	return have&want == want
-}
-
-// exercisedBits is the set of bits whose SCOPE a holder of caps acts through.
-// The attach powers are ranked (attachModeCap): a holder of exec_control may
-// view and cowrite, and a holder of exec_cowrite may view, while each attach
-// is bound by its MODE's own bit's scope (attachModeScopeCap). Bounding a
-// child by its literal bits would leave the scopes it attaches through
-// unbounded. The resume rank does not widen this way: resumeTargetAllowed
-// reads only the scope of a resume bit the caller holds.
-func exercisedBits(caps protocol.Capability) protocol.Capability {
-	if caps&protocol.Capability_ExecControl != 0 {
-		caps |= protocol.Capability_ExecCowrite
-	}
-	if caps&protocol.Capability_ExecCowrite != 0 {
-		caps |= protocol.Capability_ExecView
-	}
-	return caps
 }
 
 // intersectCaps is spawn-time attenuation: a child receives the bits its
@@ -278,28 +224,6 @@ func walChildIndex(base map[string][]string, events []WALEvent) map[string][]str
 	return out
 }
 
-// descendantsOf marks self and every task reachable through the creator index
-// into allowed.
-//
-// visited is deliberately separate from allowed. allowed arrives pre-seeded
-// with self and the scope's explicit ids, so reusing it as the visited set
-// would make the walk skip its own root on the first pop and return without
-// ever expanding a single child.
-func descendantsOf(children map[string][]string, selfHex string, allowed map[string]bool) {
-	visited := make(map[string]bool, len(children)+1)
-	queue := []string{selfHex}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if visited[cur] {
-			continue
-		}
-		visited[cur] = true
-		allowed[cur] = true
-		queue = append(queue, children[cur]...)
-	}
-}
-
 // scopeSet resolves the caller's effective TARGET set from its task's stored
 // TaskScope:
 //   - all=true when the caller is an operator (zero principal) or its base is
@@ -347,36 +271,7 @@ func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, chil
 	if want == protocol.Capability_None {
 		return h.visibilitySet(callerHex, scope)
 	}
-	return actionSet(callerHex, scope, want, children)
-}
-
-// actionSet is the ACTION branch of scopeSetWith, keyed by the task rather than
-// a connection: the target set scope gives the bit want. The board's reach
-// source calls it for board_peer (reach spec D16), so the board and the control
-// plane cannot disagree about what a scope covers.
-func actionSet(callerHex string, scope authority.Scope, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
-	base, excludeSelf, ids := scope.ForCap(want)
-	if base == protocol.ScopeBase_Global {
-		return true, nil
-	}
-	allowed = map[string]bool{}
-	if !excludeSelf {
-		allowed[callerHex] = true
-	}
-	for _, id := range ids {
-		allowed[id] = true
-	}
-	if base == protocol.ScopeBase_Subtree {
-		// descendantsOf seeds from callerHex and marks it, so exclude_self has
-		// to be applied AFTER the walk. Deleting first would make the walk skip
-		// its own root and return without expanding a single child — the same
-		// trap the visited/allowed split in descendantsOf documents.
-		descendantsOf(children, callerHex, allowed)
-		if excludeSelf {
-			delete(allowed, callerHex)
-		}
-	}
-	return false, allowed
+	return authority.ActionSet(callerHex, scope, want, children)
 }
 
 // visibilitySet is the want == Capability_None branch of scopeSet: what the
@@ -394,50 +289,7 @@ func actionSet(callerHex string, scope authority.Scope, want protocol.Capability
 //     nothing — and it is what makes "no capability acts outside what ls shows"
 //     hold while an override may still name targets outside the base.
 func (h *TaskHandler) visibilitySet(callerHex string, scope authority.Scope) (all bool, allowed map[string]bool) {
-	return visibleSetOf(callerHex, scope, h.childIndex())
-}
-
-// visibleSetOf is visibilitySet over a caller-supplied creator index, for the
-// callers that measure a task other than the connection's own principal.
-func visibleSetOf(callerHex string, scope authority.Scope, children map[string][]string) (all bool, allowed map[string]bool) {
-	visRank := scope.VisRank()
-	if visRank == protocol.ScopeBase_Global {
-		return true, nil
-	}
-	allowed = map[string]bool{callerHex: true}
-	for _, id := range scope.VisIDs {
-		allowed[id] = true
-	}
-	for _, id := range scope.IDs {
-		allowed[id] = true
-	}
-	for _, o := range scope.Overrides {
-		for _, id := range o.IDs {
-			allowed[id] = true
-		}
-	}
-	if visRank == protocol.ScopeBase_Subtree {
-		descendantsOf(children, callerHex, allowed)
-	}
-	return false, allowed
-}
-
-// attachModeScopeCap is the SINGLE bit whose scope governs an attach in the
-// given mode. Distinct from attachModeCap, which returns the set of bits that
-// SATISFY the request: a holder of exec_control attaching in view mode is
-// exercising the view power, so the view scope is the one that binds it.
-//
-// An unrecognised mode falls through to exec_control, matching attachModeCap's
-// fail-closed default.
-func attachModeScopeCap(mode protocol.AttachMode) protocol.Capability {
-	switch mode {
-	case protocol.AttachMode_View:
-		return protocol.Capability_ExecView
-	case protocol.AttachMode_Cowrite:
-		return protocol.Capability_ExecCowrite
-	default:
-		return protocol.Capability_ExecControl
-	}
+	return authority.VisibleSet(callerHex, scope, h.childIndex())
 }
 
 // inScope reports whether targetHex is inside the caller's effective target
@@ -466,239 +318,20 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 	return h.inScope(connID, want, targetHex)
 }
 
-// attenuateScope clamps a requested scope to the creator's effective one, so a
-// spawned task can never reach further than its spawner.
-//
-// childCaps is the mask the task will hold, because "further" is per bit: for
-// every bit the child holds, its target set for that bit stays inside the
-// creator's set for that bit, and its visible set stays inside the creator's
-// visible set.
-//
-//   - Ranks are clamped by permissiveness (see authority.MinBase), which is why a
-//     subtree parent asking for a global child yields subtree. Each held bit is
-//     bounded by the creator's rank for that bit (grantReach.boundRanks), so a
-//     creator narrowed for one bit narrows that bit alone. The visibility rank
-//     clamps to the creator's VISIBILITY rank, never to its action base.
-//   - Ids are checked by membership AT SPAWN TIME: action ids against the
-//     creator's set for each held bit they serve, view-only ids against what it
-//     sees. This is a static, one-shot check: the ids are literal, so a later
-//     narrowing of the parent does not retroactively invalidate the child (that
-//     is what set_caps --cascade is for).
-//
-// A rejected id is returned as `offender` with ok=false rather than being
-// dropped. Silent clamping would produce a task whose scope differs from the
-// one the caller wrote with nothing saying so — the same invisible-divergence
-// failure the presence bits on set_caps exist to avoid.
-//
-// An operator creator may request anything, including ids for tasks it has
-// never touched. A creator that can SEE everything may not: it used to share
-// the operator's early return, from when the visibility rank was the action
-// base, and handed out a global action scope from a subtree one — the exact
-// widening scopeSet's comment rules out.
-func (h *TaskHandler) attenuateScope(creatorCID string, req authority.Scope, childCaps protocol.Capability) (out authority.Scope, offender string, ok bool) {
-	out = authority.Scope{
-		Base:           req.Base,
-		VisBase:        req.VisBase,
-		VisBasePresent: req.VisBasePresent,
-		ExcludeSelf:    req.ExcludeSelf,
-		IDs:            authority.NormalizeIDs(req.IDs),
-		VisIDs:         authority.NormalizeIDs(req.VisIDs),
-	}
-	for _, o := range req.Overrides {
-		out.Overrides = append(out.Overrides, authority.ScopeOverride{
-			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: authority.NormalizeIDs(o.IDs),
-		})
-	}
-
-	// Consistency first, before anything is measured against the parent: an
-	// override mask that is empty or overlaps another describes nothing
-	// coherent, so it is rejected as written rather than clamped into
-	// something the caller never asked for.
-	//
-	// There is no second pass after clamping any more. One existed to catch an
-	// override left stranded above a lowered visibility rank; ranks are
-	// independent now, so nothing clamping does can make a consistent value
-	// inconsistent.
-	if err := authority.Validate(out); err != nil {
-		// Prefixed so the caller can tell a consistency failure from an
-		// out-of-reach id without parsing: both arrive through `offender`, and
-		// the submit path used to wrap every one of them in "scope id … is
-		// outside your own scope", which turned a sentence into nonsense.
-		return authority.Scope{}, "invalid scope: " + err.Error(), false
-	}
-
+// attenuateScope is authority.Attenuate with the creator resolved from the
+// connection: an operator is unbounded (nil), and a creator no longer in the
+// store reaches nothing.
+func (h *TaskHandler) attenuateScope(creatorCID string, req authority.Scope, childCaps protocol.Capability) (authority.Scope, string, bool) {
 	pid := h.lookupPrincipal(creatorCID)
 	if pid.Id == ([16]byte{}) {
-		return out, "", true
+		return authority.Attenuate(req, childCaps, nil)
 	}
 	creatorHex := hex.EncodeToString(pid.Id[:])
-	creator := authority.Scope{Base: protocol.ScopeBase_None} // a vanished creator reaches nothing
+	creator := authority.Scope{Base: protocol.ScopeBase_None}
 	if t, ok := h.Tasks.Get(creatorHex); ok {
 		creator = t.Scope
 	}
-
-	r := newGrantReach(creatorHex, creator, h.childIndex())
-
-	// Rank clamping, per axis and per capability. A child asking for more than
-	// its parent holds is lowered rather than refused -- the historical
-	// behaviour for the base, extended to the axes that did not exist then.
-	wantVis := authority.MinBase(out.VisRank(), creator.VisRank())
-	exercised := exercisedBits(childCaps)
-	out = r.boundRanks(out, exercised)
-	// Written explicitly once the rank no longer follows the clamped base, as
-	// clampScopeUnder does: a child whose visibility followed a base the
-	// creator may act through but not see would otherwise see it.
-	if out.VisBasePresent || wantVis != out.Base {
-		out.VisBasePresent = true
-		out.VisBase = wantVis
-	}
-	var overridden protocol.Capability
-	for _, o := range out.Overrides {
-		overridden |= o.Caps
-	}
-	baseBits := exercised &^ overridden
-
-	// Ids are CHECKED, never clamped: a silently dropped target produces a task
-	// whose scope differs from the one the caller wrote with nothing saying so.
-	// Checking the pieces boundRanks produced is checking the request: every
-	// bit of an entry lands in exactly one piece, carrying the entry's ids.
-	for _, o := range out.Overrides {
-		for _, id := range o.IDs {
-			if !r.reaches(id, o.Caps&exercised) {
-				return authority.Scope{}, id, false
-			}
-		}
-	}
-	for _, id := range out.IDs {
-		if !r.reaches(id, baseBits) {
-			return authority.Scope{}, id, false
-		}
-	}
-	for _, id := range out.VisIDs {
-		if !r.reaches(id, protocol.Capability_None) {
-			return authority.Scope{}, id, false
-		}
-	}
-
-	return out, "", true
-}
-
-// grantReach is what attenuation measures against: ONE granting task's scope,
-// asked the two questions a grant raises. attenuateScope (spawn) and
-// clampScopeUnder (cascade) both use it, so the two cannot disagree about what
-// a granter covers.
-type grantReach struct {
-	hex      string
-	scope    authority.Scope
-	children map[string][]string
-	visAll   bool
-	vis      map[string]bool
-	sets     map[protocol.Capability]map[string]bool // per bit; a nil value is "all"
-}
-
-func newGrantReach(hex string, scope authority.Scope, children map[string][]string) *grantReach {
-	r := &grantReach{hex: hex, scope: scope, children: children, sets: map[protocol.Capability]map[string]bool{}}
-	r.visAll, r.vis = visibleSetOf(hex, scope, children)
-	return r
-}
-
-// boundRanks re-expresses s so that every bit in held resolves to at most the
-// granter's rank FOR THAT BIT, narrowing only the bits the granter narrows.
-//
-// Each entry — the base scope, each override — keeps one rank. A held bit
-// whose bound differs from it moves into an override of its own rank,
-// carrying the entry's exclude_self and ids; bits of one entry bound to the
-// same rank share one override. Lowering the whole entry instead would narrow
-// every other bit it serves: a parent narrowed for cancel alone would take its
-// child's file_read down with it. Masks stay pairwise disjoint because a piece
-// only ever holds bits of the entry it came from.
-//
-//   - The base keeps min(its rank, the granter's base): the historical bound,
-//     which also decides visibility where the rank follows the base.
-//   - An override keeps min(its rank, the granter's base) for the bits the
-//     task does not hold, so a grant template survives reuse as it always did.
-//   - spawn never moves. It names no task, and authority.Validate refuses it in a
-//     mask.
-//
-// Where the granter's override for a bit is WIDER than its base, the bit may
-// rise to it: the bound is the granter's scope for the bit, not its base.
-func (r *grantReach) boundRanks(s authority.Scope, held protocol.Capability) authority.Scope {
-	bound := func(rank protocol.ScopeBase, bit protocol.Capability) protocol.ScopeBase {
-		b, _, _ := r.scope.ForCap(bit)
-		return authority.MinBase(rank, b)
-	}
-	// split groups the held bits of one entry by the rank they are bound to,
-	// leaving out those bound to keep; ranks come back in ascending order.
-	split := func(rank, keep protocol.ScopeBase, bits protocol.Capability) (stay protocol.Capability, moved []authority.ScopeOverride) {
-		byRank := map[protocol.ScopeBase]protocol.Capability{}
-		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-			if bits&bit == 0 {
-				continue
-			}
-			if b := bound(rank, bit); b != keep {
-				byRank[b] |= bit
-			} else {
-				stay |= bit
-			}
-		}
-		for _, b := range []protocol.ScopeBase{protocol.ScopeBase_None, protocol.ScopeBase_Subtree, protocol.ScopeBase_Global} {
-			if m := byRank[b]; m != 0 {
-				moved = append(moved, authority.ScopeOverride{Caps: m, Base: b})
-			}
-		}
-		return stay, moved
-	}
-	withEntry := func(pieces []authority.ScopeOverride, excl bool, ids []string) []authority.ScopeOverride {
-		for i := range pieces {
-			pieces[i].ExcludeSelf = excl
-			pieces[i].IDs = append([]string(nil), ids...)
-		}
-		return pieces
-	}
-
-	out := s
-	out.Base = authority.MinBase(s.Base, r.scope.Base)
-	out.Overrides = nil
-	var overridden protocol.Capability
-	for _, o := range s.Overrides {
-		overridden |= o.Caps
-		keep := authority.MinBase(o.Base, r.scope.Base)
-		stay, moved := split(o.Base, keep, o.Caps&held)
-		if main := stay | o.Caps&^held; main != 0 {
-			out.Overrides = append(out.Overrides, authority.ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
-		}
-		out.Overrides = append(out.Overrides, withEntry(moved, o.ExcludeSelf, o.IDs)...)
-	}
-	_, moved := split(s.Base, out.Base, held&^overridden&^protocol.Capability_Spawn)
-	out.Overrides = append(out.Overrides, withEntry(moved, s.ExcludeSelf, s.IDs)...)
-	return out
-}
-
-// reaches reports whether id may be named in a grant serving bits. Every id
-// joins the grantee's visible set, so it must be visible to the granter; an
-// action id must also be in the granter's set for every bit it serves, so an
-// id the granter may read but not cancel is refused wherever it would carry
-// cancel — a view-only grant included.
-func (r *grantReach) reaches(id string, bits protocol.Capability) bool {
-	if !r.visAll && !r.vis[id] {
-		return false
-	}
-	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-		if bits&bit == 0 {
-			continue
-		}
-		set, cached := r.sets[bit]
-		if !cached {
-			if all, allowed := actionSet(r.hex, r.scope, bit, r.children); !all {
-				set = allowed
-			}
-			r.sets[bit] = set
-		}
-		if set != nil && !set[id] {
-			return false
-		}
-	}
-	return true
+	return authority.Attenuate(req, childCaps, authority.NewReach(creatorHex, creator, h.childIndex()))
 }
 
 // resumedCaps is the capability mask a resumed task will hold: re-granted from

@@ -1585,67 +1585,6 @@ func TestAttenuateScopeRejectsIncoherentValues(t *testing.T) {
 
 // ---- cascade (2026-08-20 design §10) --------------------------------------
 
-// A cascade must clamp EVERY axis. The inline literal this replaced carried
-// Base and IDs only, so a cascade silently erased a descendant's visibility
-// rank and its overrides — a rewrite of authority that nothing reported.
-func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
-	parent := TaskEntry{
-		ID:           "00112233445566778899aabbccddeeff",
-		Capabilities: protocol.Capability_All,
-		Scope:        authority.Scope{Base: protocol.ScopeBase_None},
-	}
-	child := authority.Scope{
-		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
-		ExcludeSelf: true,
-		Overrides: []authority.ScopeOverride{
-			{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Subtree},
-			{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_Subtree},
-		},
-	}
-
-	// The descendant keeps cancel but loses purge.
-	out := clampScopeUnder(child, protocol.Capability_Cancel, parent, nil)
-
-	if out.Base != protocol.ScopeBase_None {
-		t.Errorf("Base = %v, want clamped to none", out.Base)
-	}
-	if out.VisRank() != protocol.ScopeBase_None {
-		t.Errorf("VisRank = %v, want clamped to none — the rank must not survive a narrowing", out.VisRank())
-	}
-	if !out.ExcludeSelf {
-		t.Error("ExcludeSelf was dropped; it only ever narrows and must be kept")
-	}
-	if len(out.Overrides) != 1 || out.Overrides[0].Caps != protocol.Capability_Cancel {
-		t.Fatalf("overrides = %+v, want the cancel entry only", out.Overrides)
-	}
-	if out.Overrides[0].Base != protocol.ScopeBase_None {
-		t.Errorf("override base = %v, want clamped to none", out.Overrides[0].Base)
-	}
-	if err := authority.Validate(out); err != nil {
-		t.Errorf("a clamped scope must stay legal: %v", err)
-	}
-}
-
-// An override for a bit the descendant no longer holds is dropped, not left to
-// reapply if the bit is granted again later.
-func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
-	parent := TaskEntry{
-		ID: "00112233445566778899aabbccddeeff", Capabilities: protocol.Capability_All,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree},
-	}
-	child := authority.Scope{
-		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
-	}
-	out := clampScopeUnder(child, protocol.Capability_Cancel, parent, nil)
-	if len(out.Overrides) != 1 {
-		t.Fatalf("overrides = %+v, want one surviving entry", out.Overrides)
-	}
-	if out.Overrides[0].Caps != protocol.Capability_Cancel {
-		t.Errorf("mask = %v, want purge masked out of it", out.Overrides[0].Caps)
-	}
-}
-
 // The scope half is ONE value gated by ONE bit, overrides included. This is
 // pinned because the 2026-08-13 amendment exists precisely because both halves
 // were once gated behind the caps bit, which silently reset a task's scope.

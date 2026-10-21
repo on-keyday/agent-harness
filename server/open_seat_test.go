@@ -75,9 +75,9 @@ func TestScopeCoversNewChildAgreesWithActionSet(t *testing.T) {
 				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_ExecControl, c.scope, "")
 			child := h.Tasks.Create("/r", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
 				hexToTaskID(t, self), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
-			all, allowed := actionSet(self, c.scope, protocol.Capability_ExecControl, childIndexOf(h.Tasks))
+			all, allowed := authority.ActionSet(self, c.scope, protocol.Capability_ExecControl, childIndexOf(h.Tasks))
 			want := all || allowed[child]
-			if got := scopeCoversNewChild(c.scope, protocol.Capability_ExecControl); got != want {
+			if got := authority.CoversNewChild(c.scope, protocol.Capability_ExecControl); got != want {
 				t.Fatalf("scopeCoversNewChild = %v, actionSet says %v", got, want)
 			}
 		})

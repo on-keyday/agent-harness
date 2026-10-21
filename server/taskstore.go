@@ -385,7 +385,7 @@ func (s *TaskStore) writeParentChangedLocked(id string, parent protocol.TaskID) 
 
 // SetParent re-points a live task's parent link. Operator-only at the handler;
 // the store itself only refuses a missing task. Cycle prevention is the
-// HANDLER's job (descendantsOf) — by the time this runs the request is valid.
+// HANDLER's job (authority.DescendantsOf) — by the time this runs the request is valid.
 func (s *TaskStore) SetParent(id string, parent protocol.TaskID) (TaskEntry, bool) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]

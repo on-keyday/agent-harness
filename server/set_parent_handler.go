@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -84,11 +85,11 @@ func (h *TaskHandler) handleSetParent(conn ConnHandle, requestID uint32, cid str
 		}
 		// Cycle check — this is what keeps listVisibleToCaller's "only
 		// reachable through a creator cycle, which task creation cannot
-		// produce" true. descendantsOf seeds the walk with the root it is
+		// produce" true. authority.DescendantsOf seeds the walk with the root it is
 		// asked about (allowed[targetHex] = true), so parent == target is
 		// inside this predicate too; no separate self-parent branch.
 		descendants := make(map[string]bool)
-		descendantsOf(h.childIndex(), targetHex, descendants)
+		authority.DescendantsOf(h.childIndex(), targetHex, descendants)
 		if descendants[parentHex] {
 			respond(protocol.SetParentStatus_WouldCycle, zero, zero, zero)
 			return

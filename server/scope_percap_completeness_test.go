@@ -76,9 +76,9 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 
 	// The attach modes are three powers; the scope that binds one is the
 	// MODE's own bit, not whichever stronger bit satisfied the check.
-	protocol.Capability_ExecView:    {kind: capResolvedVia, via: "attachModeScopeCap"},
-	protocol.Capability_ExecCowrite: {kind: capResolvedVia, via: "attachModeScopeCap"},
-	protocol.Capability_ExecControl: {kind: capResolvedVia, via: "attachModeScopeCap"},
+	protocol.Capability_ExecView:    {kind: capResolvedVia, via: "authority.AttachModeScopeCap"},
+	protocol.Capability_ExecCowrite: {kind: capResolvedVia, via: "authority.AttachModeScopeCap"},
+	protocol.Capability_ExecControl: {kind: capResolvedVia, via: "authority.AttachModeScopeCap"},
 
 	// exec_run names a task in both of its requests: open_exec_run carries a
 	// task id, and exec_run_kill carries an exec id that resolves to one. Both
@@ -111,7 +111,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		reason: "board_send names a board TOPIC, for the same reason as board_observe",
 	},
 	// board_peer opens the chat.<id> of tasks in its target set (reach spec
-	// D16); the board's reach source resolves it through actionSet by name.
+	// D16); the board's reach source resolves it through authority.ActionSet by name.
 	protocol.Capability_BoardPeer: {kind: capResolvedLiteral},
 }
 
@@ -139,13 +139,13 @@ func serverSources(t *testing.T) string {
 }
 
 // resolutionCallLines returns every source line that resolves a target set:
-// the handler's inScope / scopeSet, and actionSet, which the board's reach
+// the handler's inScope / scopeSet, and authority.ActionSet, which the board's reach
 // source calls from a task rather than a connection (reach spec D16).
 func resolutionCallLines(src string) []string {
 	var out []string
 	for _, line := range strings.Split(src, "\n") {
 		if strings.Contains(line, ".inScope(") || strings.Contains(line, ".scopeSet(") ||
-			strings.Contains(line, "actionSet(") {
+			strings.Contains(line, "authority.ActionSet(") {
 			out = append(out, line)
 		}
 	}

@@ -141,24 +141,6 @@ func TestSetCapsDropsConnsOnlyWhenNarrowing(t *testing.T) {
 	}
 }
 
-// Narrowing the scope alone — no cap bit touched — still counts.
-func TestScopeOnlyNarrowingCountsAsNarrowing(t *testing.T) {
-	before := TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa", "bb"}}}
-	if !isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{"aa", "bb"}}}) {
-		t.Error("a base ranked down is not reported as a narrowing")
-	}
-	if !isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa"}}}) {
-		t.Error("a dropped scope id is not reported as a narrowing")
-	}
-	if isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{"aa", "bb", "cc"}}}) {
-		t.Error("a pure widening was reported as a narrowing")
-	}
-}
-
 // A descendant's base scope serves every bit it holds that its own overrides do
 // not name, so a parent narrowed for ONE bit narrows the descendant's base for
 // that bit. The cascade used to compare bases only and left the descendant's
@@ -234,31 +216,6 @@ func TestSetCapsCascadeKeepsIDsInsideTheParentsReach(t *testing.T) {
 	}
 	if len(ce.Scope.VisIDs) != 2 {
 		t.Errorf("view-only ids = %v, want both kept: the parent sees g and u", ce.Scope.VisIDs)
-	}
-}
-
-// A narrowing of ONE bit's scope, or of what a task can see, is still a
-// narrowing: an attach opened under the wider grant must not outlive it.
-func TestPerBitAndVisibilityNarrowingCountsAsNarrowing(t *testing.T) {
-	ov := func(b protocol.ScopeBase) authority.Scope {
-		return authority.Scope{Base: protocol.ScopeBase_Subtree,
-			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: b}}}
-	}
-	caps := protocol.Capability_Cancel
-	if !isNarrowing(TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Subtree)},
-		TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_None)}) {
-		t.Error("an override ranked down is not reported as a narrowing")
-	}
-	if isNarrowing(TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_None)},
-		TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Global)}) {
-		t.Error("an override ranked up was reported as a narrowing")
-	}
-	wide := authority.Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global}
-	if !isNarrowing(TaskEntry{Scope: wide}, TaskEntry{Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}}) {
-		t.Error("a visibility rank ranked down is not reported as a narrowing")
-	}
-	if !isNarrowing(TaskEntry{Scope: authority.Scope{VisIDs: []string{"aa"}}}, TaskEntry{Scope: authority.Scope{}}) {
-		t.Error("a dropped view-only id is not reported as a narrowing")
 	}
 }
 

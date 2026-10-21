@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -23,8 +24,8 @@ func TestAuditImpliedByAgreesWithGates(t *testing.T) {
 	var someID protocol.TaskID
 	someID.Id[0] = 1
 	mask := map[protocol.Capability]protocol.Capability{
-		protocol.Capability_ExecView:    attachModeCap(protocol.AttachMode_View),
-		protocol.Capability_ExecCowrite: attachModeCap(protocol.AttachMode_Cowrite),
+		protocol.Capability_ExecView:    authority.AttachModeCap(protocol.AttachMode_View),
+		protocol.Capability_ExecCowrite: authority.AttachModeCap(protocol.AttachMode_Cowrite),
 		protocol.Capability_ResumeExact: resumeRequestCap(someID, true),
 	}
 	for bit, m := range mask {
