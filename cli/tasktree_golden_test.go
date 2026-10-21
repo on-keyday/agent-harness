@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -87,5 +89,65 @@ func TestBuildTaskGrantsGolden(t *testing.T) {
 	}
 	if string(append(got, '\n')) != string(want) {
 		t.Errorf("BuildTaskGrants changed:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestBuildTaskGrantsAgreesWithEnforcement holds the tree's lines to the sets
+// the server gates with. The golden record above pins "same as before"; this
+// pins "same as authority.ActionSet", so a change to how a scope is read
+// cannot leave the picture disagreeing with the gate.
+func TestBuildTaskGrantsAgreesWithEnforcement(t *testing.T) {
+	tree := goldenTree()
+	idx := map[string][]string{}
+	byID := map[string]protocol.TaskInfo{}
+	for _, task := range tree {
+		h := hex.EncodeToString(task.Id.Id[:])
+		byID[h] = task
+		if task.CreatorTaskId != (protocol.TaskID{}) {
+			p := hex.EncodeToString(task.CreatorTaskId.Id[:])
+			idx[p] = append(idx[p], h)
+		}
+	}
+	// The gate is the bit AND the scope (server authorize: hasCap, then inScope).
+	acts := func(from string, bit protocol.Capability, to string) bool {
+		task := byID[from]
+		if task.Capabilities&bit == 0 {
+			return false
+		}
+		all, set := authority.ActionSet(from, authority.ScopeFromWire(task.Scope, task.Overrides), bit, idx)
+		return all || set[to]
+	}
+	eachBit := func(m protocol.Capability, fn func(protocol.Capability)) {
+		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+			if m&bit != 0 {
+				fn(bit)
+			}
+		}
+	}
+
+	g := BuildTaskGrants(tree)
+	for _, e := range g.Edges {
+		eachBit(e.Caps, func(bit protocol.Capability) {
+			if !acts(e.From, bit, e.To) {
+				t.Errorf("edge %s>%s carries %v, which ActionSet does not grant", e.From[:2], e.To[:2], bit)
+			}
+		})
+	}
+	for from, gl := range g.Global {
+		task := byID[from]
+		eachBit(gl.Caps, func(bit protocol.Capability) {
+			if all, _ := authority.ActionSet(from, authority.ScopeFromWire(task.Scope, task.Overrides), bit, idx); !all || task.Capabilities&bit == 0 {
+				t.Errorf("global mark on %s carries %v, which ActionSet does not make global", from[:2], bit)
+			}
+		})
+	}
+	for child, r := range g.ParentReach {
+		c := byID[child]
+		parent := hex.EncodeToString(c.CreatorTaskId.Id[:])
+		eachBit(byID[parent].Capabilities, func(bit protocol.Capability) {
+			if got, want := r.Caps&bit != 0, acts(parent, bit, child); got != want {
+				t.Errorf("creator edge %s>%s: %v shown=%v, ActionSet=%v", parent[:2], child[:2], bit, got, want)
+			}
+		})
 	}
 }
