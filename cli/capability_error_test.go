@@ -112,7 +112,7 @@ func TestCapabilityDeniedErrorMessage(t *testing.T) {
 // The test above covers a SINGLE-bit requirement, which is the only shape the
 // generated enum String() can render — so it passed while the mask shape was
 // broken in production. An attach is gated by a mask of ALTERNATIVES
-// (server/capabilities.go attachModeCap, checked with hasAnyCap), and a view
+// (authority.AttachModeCap, checked with hasAnyCap), and a view
 // attach denial printed `requires capability Capability(12292)`: the raw mask,
 // because String() names single values only. Operator-reported. 12292 is that
 // exact mask, kept here as the literal that reproduced it.

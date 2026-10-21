@@ -17,7 +17,7 @@ type CapabilityDeniedError struct {
 	// RequiredCap is the capability the server required for the operation.
 	//
 	// It may be a MASK of alternatives rather than one bit: an attach is gated
-	// by `attachModeCap`, whose result the server checks with `hasAnyCap`, so a
+	// by `authority.AttachModeCap`, whose result the server checks with `hasAnyCap`, so a
 	// view attach arrives here as exec_view|exec_cowrite|exec_control — "any of
 	// these", not "all of these".
 	RequiredCap protocol.Capability
