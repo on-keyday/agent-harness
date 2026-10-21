@@ -3184,3 +3184,23 @@ over the end of the node's id label. Moving it right of the ring fixed it, and
 a bounding-box check counted zero overlaps afterwards. This is the third note
 in this log of a property of the render that no item interrogates: the
 centred chat, the counting-down rate, and now this overlap.
+
+### 2026-10-22 (pre-landing) — authority provenance on every task (`auth=`)
+done:    11 (`auth=` on every row, `unknown` included), 12 / 14 (five
+         `authority_*` fields through the shared `taskJSON`), 17 (TUI `d`
+         popup line), 21 (WebUI task sheet line), 23 (`authority` on the
+         snapshot task, rendered in Go), 24 (every authority write path has a
+         stated source — create / caps set / cascade / resume-with-regrant /
+         reparent — and a resume that keeps writes nothing), 28 (WAL keys on
+         task_created / task_caps_changed / task_parent_changed, legacy replays
+         as `unknown`), 31, 32 (one `cli.AuthorityLabel` for every surface), 35,
+         36, 39
+omitted: 13 — `whoami` is not a Phase 2 surface in the spec.
+         16 — the TUI task table is width-bound; the popup carries it.
+         20 — the WebUI row meta is crowded; the sheet carries it.
+         22 — nothing edits provenance, so there is no dialog to prefill.
+missed:  —
+
+**36 fired where the plan did not look.** The plan's walk expectation listed 35
+and not 36. `supervising-workers` spells out the `ls --json` vocabulary field by
+field, so five new fields made that sentence stale. Walking the item caught it.

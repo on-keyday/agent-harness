@@ -207,7 +207,7 @@ against `ls` before acting on it.
 ### Listing and killing your sessions
 
 ```bash
-harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
+harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title, authority_source, authority_actor, authority_actor_hidden, authority_at, authority_age_ms) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
@@ -489,6 +489,12 @@ and the scope forms (`--json` for the machine-readable form).
   capability, strongest first, listing the tasks your `ls` shows that hold it
   and the scope it reaches; `--cap spawn` lists just that bit's holders. Report
   a grant that outlived its reason to the operator — `caps set` is theirs.
+- **`auth=` says who last wrote a task's authority.** Every `ls` row ends its
+  authority with `auth=<source>@<actor> (<age>)` — `spawn@<creator>` for one a
+  task created, `operator_caps_set@operator` for an operator grant, `cascade`,
+  `resume`, `reparent`, or `unknown` for a task older than the field. A worker
+  holding more than you gave it is usually `operator_caps_set`: the operator
+  widened it, which is legitimate. `@hidden` is an actor you cannot see.
 
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
