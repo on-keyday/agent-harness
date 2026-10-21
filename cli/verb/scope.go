@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -397,6 +398,7 @@ func OverridesLabel(in []protocol.ScopeOverride) string {
 // listed, being the absence and the union rather than grantable targets.
 func ResolvedScopeByCap(caps protocol.Capability, base protocol.TaskScope, overrides []protocol.ScopeOverride) map[string]string {
 	out := make(map[string]string)
+	s := authority.ScopeFromWire(base, overrides)
 	for _, bit := range GrantableCaps() {
 		if bit == protocol.Capability_None || bit == protocol.Capability_All {
 			continue
@@ -404,24 +406,10 @@ func ResolvedScopeByCap(caps protocol.Capability, base protocol.TaskScope, overr
 		if caps&bit != bit {
 			continue
 		}
-		out[bit.String()] = ScopeLabel(scopeForCap(base, overrides, bit))
+		// The visibility half belongs to the task, not to a verb, so the entry
+		// carries the bit's TARGET set and nothing else.
+		b, excludeSelf, ids := s.ForCap(bit)
+		out[bit.String()] = ScopeLabel(authority.Scope{Base: b, ExcludeSelf: excludeSelf, IDs: ids}.ToWire())
 	}
 	return out
-}
-
-// scopeForCap mirrors the server's Scope.ForCap: the override covering the bit,
-// else the base scope. Masks are disjoint, so the first hit is the only hit.
-func scopeForCap(base protocol.TaskScope, overrides []protocol.ScopeOverride, bit protocol.Capability) protocol.TaskScope {
-	for _, o := range overrides {
-		if o.Caps&bit != 0 {
-			sc := protocol.TaskScope{Base: o.Base, Ids: o.Ids, IdsLen: o.IdsLen}
-			sc.SetExcludeSelf(o.ExcludeSelf())
-			return sc
-		}
-	}
-	// The visibility half belongs to the task, not to a verb: strip it so the
-	// per-capability entry reports a TARGET set and nothing else.
-	sc := protocol.TaskScope{Base: base.Base, Ids: base.Ids, IdsLen: base.IdsLen}
-	sc.SetExcludeSelf(base.ExcludeSelf())
-	return sc
 }
