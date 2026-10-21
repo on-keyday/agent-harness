@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -23,7 +24,7 @@ func newProgressFixture(t *testing.T) *progressFixture {
 	t.Helper()
 	h := newTestHandler(t)
 	tHex := h.Tasks.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9711-1"), nextSendStreamID: 10}
 	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, tHex)}
 	return &progressFixture{h: h, tHex: tHex, conn: conn}
@@ -162,7 +163,7 @@ func TestSetProgress_WritesNoWALRecord(t *testing.T) {
 	s := NewTaskStore()
 	s.SetWAL(w)
 	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	before, _, _ := ReadWAL(path)
 	s.SetProgress(id, "stage 3", 12345)
 	w.Close()
@@ -182,9 +183,9 @@ func TestProgressSnapshot_CarriesAcrossRestart(t *testing.T) {
 	old := NewTaskStore()
 	old.SetWAL(w)
 	id := old.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	never := old.Create("/repo", "q", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	old.SetProgress(id, "stage 3", 12345)
 	if err := writeProgressSnapshot(dir, old); err != nil {
 		t.Fatal(err)
@@ -214,9 +215,9 @@ func TestProgressSnapshot_CarriesAcrossRestart(t *testing.T) {
 func TestProgressSet_RedactedOnParentHop(t *testing.T) {
 	h := newTestHandler(t)
 	pHex := h.Tasks.Create("/repo", "parent", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	cHex := h.Tasks.Create("/repo", "child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		hexToTaskID(t, pHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		hexToTaskID(t, pHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	h.Tasks.SetProgress(pHex, "parent's private stage", 1)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9713-1"), nextSendStreamID: 10}
 	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, cHex)}
@@ -234,8 +235,8 @@ func TestProgressSet_RedactedOnParentHop(t *testing.T) {
 // store has a progress line to empty).
 func TestProgressSet_EventRedactedForParentHop(t *testing.T) {
 	s := makeEventServer(t)
-	aHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
-	kHex := s.tasks.Create("/r", "k", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+	aHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+	kHex := s.tasks.Create("/r", "k", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	const opCID, kCID = "ws:127.0.0.1:9921-1", "ws:127.0.0.1:9922-1"
 	recordAgent(s, kCID, hexToTaskID(t, kHex))
 	op := subscribeTasksStatus(t, s, opCID)
@@ -274,7 +275,7 @@ func TestProgressSet_PublishesTaskProgress(t *testing.T) {
 func TestSetProgress_StampNeverGoesBackwards(t *testing.T) {
 	s := NewTaskStore()
 	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	if snap, _ := s.SetProgress(id, "b", 100); snap.ProgressAt != 100 {
 		t.Fatalf("first stamp = %d, want 100", snap.ProgressAt)
 	}
@@ -298,11 +299,11 @@ func TestProgressAgeMs_FutureStampIsZero(t *testing.T) {
 func TestProgressClear_Gates(t *testing.T) {
 	h := newTestHandler(t)
 	parent := h.Tasks.Create("/repo", "parent", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Cancel, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Cancel, authority.Scope{}, "")
 	child := h.Tasks.Create("/repo", "child", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		hexToTaskID(t, parent), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		hexToTaskID(t, parent), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	stranger := h.Tasks.Create("/repo", "stranger", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	for _, id := range []string{child, stranger, parent} {
 		h.Tasks.SetProgress(id, "line of "+id[:4], 10)
 	}

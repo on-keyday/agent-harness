@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -25,13 +26,13 @@ func (f *resumeFixture) openAttached(t *testing.T, resume string) protocol.TaskC
 }
 
 func TestAttachedOpenNeedsExecControl(t *testing.T) {
-	f := newResumeFixture(t, protocol.Capability_Spawn, Scope{Base: protocol.ScopeBase_Subtree})
+	f := newResumeFixture(t, protocol.Capability_Spawn, authority.Scope{Base: protocol.ScopeBase_Subtree})
 	resp := f.openAttached(t, "")
 	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
 		t.Fatalf("spawn-only attached open: kind %v, want PermissionDenied", resp.Kind)
 	}
 	if got := resp.PermissionDenied().RequiredCap; got != protocol.Capability_ExecControl {
-		t.Fatalf("RequiredCap = %s, want exec_control", capsLabelForMask(got))
+		t.Fatalf("RequiredCap = %s, want exec_control", authority.CapsLabel(got))
 	}
 	if resp := f.open(t, "", false); resp.Kind == protocol.TaskControlKind_PermissionDenied {
 		t.Fatal("spawn-only detached open was denied")
@@ -39,17 +40,17 @@ func TestAttachedOpenNeedsExecControl(t *testing.T) {
 }
 
 func TestAttachedOpenOutOfControlScope(t *testing.T) {
-	noControl := []ScopeOverride{{Caps: protocol.Capability_ExecControl, Base: protocol.ScopeBase_None, ExcludeSelf: true}}
+	noControl := []authority.ScopeOverride{{Caps: protocol.Capability_ExecControl, Base: protocol.ScopeBase_None, ExcludeSelf: true}}
 
 	f := newResumeFixture(t, protocol.Capability_Spawn|protocol.Capability_ExecControl,
-		Scope{Base: protocol.ScopeBase_Subtree, Overrides: noControl})
+		authority.Scope{Base: protocol.ScopeBase_Subtree, Overrides: noControl})
 	r1 := f.openAttached(t, "")
 	if o := r1.OpenInteractive(); o == nil || o.Status != protocol.OpenInteractiveStatus_DetachRequired {
 		t.Fatalf("fresh attached open with exec_control scoped to nothing: %+v, want detach_required", o)
 	}
 
 	f = newResumeFixture(t, protocol.Capability_Resume|protocol.Capability_ExecControl,
-		Scope{Base: protocol.ScopeBase_Global, Overrides: noControl})
+		authority.Scope{Base: protocol.ScopeBase_Global, Overrides: noControl})
 	target := f.terminalTask(t, false)
 	r2 := f.openAttached(t, target)
 	if o := r2.OpenInteractive(); o == nil || o.Status != protocol.OpenInteractiveStatus_DetachRequired {
@@ -60,20 +61,20 @@ func TestAttachedOpenOutOfControlScope(t *testing.T) {
 func TestScopeCoversNewChildAgreesWithActionSet(t *testing.T) {
 	for _, c := range []struct {
 		name  string
-		scope Scope
+		scope authority.Scope
 	}{
-		{"subtree", Scope{Base: protocol.ScopeBase_Subtree}},
-		{"descendants", Scope{Base: protocol.ScopeBase_Subtree, ExcludeSelf: true}},
-		{"global", Scope{Base: protocol.ScopeBase_Global}},
-		{"none", Scope{Base: protocol.ScopeBase_None}},
-		{"ids", Scope{Base: protocol.ScopeBase_None, IDs: []string{"ee000000000000000000000000000000"}}},
+		{"subtree", authority.Scope{Base: protocol.ScopeBase_Subtree}},
+		{"descendants", authority.Scope{Base: protocol.ScopeBase_Subtree, ExcludeSelf: true}},
+		{"global", authority.Scope{Base: protocol.ScopeBase_Global}},
+		{"none", authority.Scope{Base: protocol.ScopeBase_None}},
+		{"ids", authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{"ee000000000000000000000000000000"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newTestHandler(t)
 			self := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_ExecControl, c.scope, "")
 			child := h.Tasks.Create("/r", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-				hexToTaskID(t, self), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+				hexToTaskID(t, self), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 			all, allowed := actionSet(self, c.scope, protocol.Capability_ExecControl, childIndexOf(h.Tasks))
 			want := all || allowed[child]
 			if got := scopeCoversNewChild(c.scope, protocol.Capability_ExecControl); got != want {

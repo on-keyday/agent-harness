@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -17,7 +18,7 @@ type resumeFixture struct {
 	reqID  uint32
 }
 
-func newResumeFixture(t *testing.T, caps protocol.Capability, scope Scope) *resumeFixture {
+func newResumeFixture(t *testing.T, caps protocol.Capability, scope authority.Scope) *resumeFixture {
 	t.Helper()
 	h := newTestHandler(t)
 	self := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
@@ -38,7 +39,7 @@ func (f *resumeFixture) terminalTask(t *testing.T, child bool) string {
 		creator = hexToTaskID(t, f.selfID)
 	}
 	id := f.h.Tasks.Create("/r", "old", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	markTerminalForTest(t, f.h, id)
 	return id
 }
@@ -115,7 +116,7 @@ func TestResumeGateMatrix(t *testing.T) {
 			for _, path := range []string{"submit", "open"} {
 				name := fmt.Sprintf("%s/%s/%s", held, op, path)
 				t.Run(name, func(t *testing.T) {
-					f := newResumeFixture(t, held, Scope{Base: protocol.ScopeBase_Global})
+					f := newResumeFixture(t, held, authority.Scope{Base: protocol.ScopeBase_Global})
 					target := ""
 					if op != fresh {
 						target = f.terminalTask(t, true)
@@ -131,7 +132,7 @@ func TestResumeGateMatrix(t *testing.T) {
 					}
 					if denied && resp.PermissionDenied().RequiredCap != want[op] {
 						t.Fatalf("RequiredCap = %s, want %s",
-							capsLabelForMask(resp.PermissionDenied().RequiredCap), capsLabelForMask(want[op]))
+							authority.CapsLabel(resp.PermissionDenied().RequiredCap), authority.CapsLabel(want[op]))
 					}
 				})
 			}
@@ -143,11 +144,11 @@ func TestResumeGateMatrix(t *testing.T) {
 // permits this resume has it in that bit's own scope.
 func TestResumeTargetRuleD19(t *testing.T) {
 	t.Run("resume_override_narrows_plain_resume", func(t *testing.T) {
-		f := newResumeFixture(t, protocol.Capability_Resume, Scope{Base: protocol.ScopeBase_Subtree})
+		f := newResumeFixture(t, protocol.Capability_Resume, authority.Scope{Base: protocol.ScopeBase_Subtree})
 		a := f.terminalTask(t, false)
 		c := f.terminalTask(t, true)
 		f.h.Tasks.mu.Lock()
-		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []ScopeOverride{
+		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []authority.ScopeOverride{
 			{Caps: protocol.Capability_Resume, Base: protocol.ScopeBase_None, IDs: []string{a}},
 		}
 		f.h.Tasks.mu.Unlock()
@@ -159,11 +160,11 @@ func TestResumeTargetRuleD19(t *testing.T) {
 		}
 	})
 	t.Run("resume_exact_override", func(t *testing.T) {
-		f := newResumeFixture(t, protocol.Capability_ResumeExact, Scope{Base: protocol.ScopeBase_None})
+		f := newResumeFixture(t, protocol.Capability_ResumeExact, authority.Scope{Base: protocol.ScopeBase_None})
 		x := f.terminalTask(t, false)
 		other := f.terminalTask(t, false)
 		f.h.Tasks.mu.Lock()
-		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []ScopeOverride{
+		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []authority.ScopeOverride{
 			{Caps: protocol.Capability_ResumeExact, Base: protocol.ScopeBase_None, IDs: []string{x}},
 		}
 		f.h.Tasks.mu.Unlock()
@@ -176,11 +177,11 @@ func TestResumeTargetRuleD19(t *testing.T) {
 	})
 	t.Run("two_bits_two_scopes", func(t *testing.T) {
 		f := newResumeFixture(t, protocol.Capability_Resume|protocol.Capability_ResumeExact,
-			Scope{Base: protocol.ScopeBase_None})
+			authority.Scope{Base: protocol.ScopeBase_None})
 		a := f.terminalTask(t, false)
 		b := f.terminalTask(t, false)
 		f.h.Tasks.mu.Lock()
-		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []ScopeOverride{
+		f.h.Tasks.tasks[f.selfID].Scope.Overrides = []authority.ScopeOverride{
 			{Caps: protocol.Capability_Resume, Base: protocol.ScopeBase_None, IDs: []string{a}},
 			{Caps: protocol.Capability_ResumeExact, Base: protocol.ScopeBase_None, IDs: []string{b}},
 		}
@@ -200,7 +201,7 @@ func TestResumeTargetRuleD19(t *testing.T) {
 // TestResumeOutOfBothScopesIsNotFound: an out-of-scope target answers as
 // absent, never as a capability denial — a denial would be an existence oracle.
 func TestResumeOutOfBothScopesIsNotFound(t *testing.T) {
-	f := newResumeFixture(t, protocol.Capability_ResumeExact, Scope{Base: protocol.ScopeBase_None})
+	f := newResumeFixture(t, protocol.Capability_ResumeExact, authority.Scope{Base: protocol.ScopeBase_None})
 	target := f.terminalTask(t, false)
 	for _, send := range []func(*testing.T, string, bool) protocol.TaskControlResponse{f.submit, f.open} {
 		resp := send(t, target, true)
@@ -216,7 +217,7 @@ func TestResumeOutOfBothScopesIsNotFound(t *testing.T) {
 // TestScopeOverrideNamingSpawnRefused: spawn names no task, so an override for
 // it would bound nothing (spec D21).
 func TestScopeOverrideNamingSpawnRefused(t *testing.T) {
-	err := validateScope(Scope{Overrides: []ScopeOverride{
+	err := authority.Validate(authority.Scope{Overrides: []authority.ScopeOverride{
 		{Caps: protocol.Capability_Spawn | protocol.Capability_FileRead, Base: protocol.ScopeBase_None},
 	}})
 	if err == nil || !strings.Contains(err.Error(), "spawn names no task") {

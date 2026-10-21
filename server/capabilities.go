@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -146,7 +147,7 @@ func (h *TaskHandler) resumeTargetAllowed(cid string, exact bool, targetHex stri
 // without self) and a global one reach every child, while a none base reaches
 // only listed ids, and an id list cannot name a task that has no id yet.
 // TestScopeCoversNewChildAgreesWithActionSet holds it to actionSet.
-func scopeCoversNewChild(s Scope, c protocol.Capability) bool {
+func scopeCoversNewChild(s authority.Scope, c protocol.Capability) bool {
 	base, _, _ := s.ForCap(c)
 	return base == protocol.ScopeBase_Subtree || base == protocol.ScopeBase_Global
 }
@@ -338,7 +339,7 @@ func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, chil
 	}
 	callerHex := hex.EncodeToString(pid.Id[:])
 
-	scope := defaultScope()
+	scope := authority.DefaultScope()
 	if t, ok := h.Tasks.Get(callerHex); ok {
 		scope = t.Scope
 	}
@@ -353,7 +354,7 @@ func (h *TaskHandler) scopeSetWith(connID string, want protocol.Capability, chil
 // a connection: the target set scope gives the bit want. The board's reach
 // source calls it for board_peer (reach spec D16), so the board and the control
 // plane cannot disagree about what a scope covers.
-func actionSet(callerHex string, scope Scope, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
+func actionSet(callerHex string, scope authority.Scope, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
 	base, excludeSelf, ids := scope.ForCap(want)
 	if base == protocol.ScopeBase_Global {
 		return true, nil
@@ -392,13 +393,13 @@ func actionSet(callerHex string, scope Scope, want protocol.Capability, children
 //     written into a grant was disclosed by the granter, so hiding it protects
 //     nothing — and it is what makes "no capability acts outside what ls shows"
 //     hold while an override may still name targets outside the base.
-func (h *TaskHandler) visibilitySet(callerHex string, scope Scope) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) visibilitySet(callerHex string, scope authority.Scope) (all bool, allowed map[string]bool) {
 	return visibleSetOf(callerHex, scope, h.childIndex())
 }
 
 // visibleSetOf is visibilitySet over a caller-supplied creator index, for the
 // callers that measure a task other than the connection's own principal.
-func visibleSetOf(callerHex string, scope Scope, children map[string][]string) (all bool, allowed map[string]bool) {
+func visibleSetOf(callerHex string, scope authority.Scope, children map[string][]string) (all bool, allowed map[string]bool) {
 	visRank := scope.VisRank()
 	if visRank == protocol.ScopeBase_Global {
 		return true, nil
@@ -473,7 +474,7 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // creator's set for that bit, and its visible set stays inside the creator's
 // visible set.
 //
-//   - Ranks are clamped by permissiveness (see minScopeBase), which is why a
+//   - Ranks are clamped by permissiveness (see authority.MinBase), which is why a
 //     subtree parent asking for a global child yields subtree. Each held bit is
 //     bounded by the creator's rank for that bit (grantReach.boundRanks), so a
 //     creator narrowed for one bit narrows that bit alone. The visibility rank
@@ -494,18 +495,18 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // the operator's early return, from when the visibility rank was the action
 // base, and handed out a global action scope from a subtree one — the exact
 // widening scopeSet's comment rules out.
-func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps protocol.Capability) (out Scope, offender string, ok bool) {
-	out = Scope{
+func (h *TaskHandler) attenuateScope(creatorCID string, req authority.Scope, childCaps protocol.Capability) (out authority.Scope, offender string, ok bool) {
+	out = authority.Scope{
 		Base:           req.Base,
 		VisBase:        req.VisBase,
 		VisBasePresent: req.VisBasePresent,
 		ExcludeSelf:    req.ExcludeSelf,
-		IDs:            normalizeScopeIDs(req.IDs),
-		VisIDs:         normalizeScopeIDs(req.VisIDs),
+		IDs:            authority.NormalizeIDs(req.IDs),
+		VisIDs:         authority.NormalizeIDs(req.VisIDs),
 	}
 	for _, o := range req.Overrides {
-		out.Overrides = append(out.Overrides, ScopeOverride{
-			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: normalizeScopeIDs(o.IDs),
+		out.Overrides = append(out.Overrides, authority.ScopeOverride{
+			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: authority.NormalizeIDs(o.IDs),
 		})
 	}
 
@@ -518,12 +519,12 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	// override left stranded above a lowered visibility rank; ranks are
 	// independent now, so nothing clamping does can make a consistent value
 	// inconsistent.
-	if err := validateScope(out); err != nil {
+	if err := authority.Validate(out); err != nil {
 		// Prefixed so the caller can tell a consistency failure from an
 		// out-of-reach id without parsing: both arrive through `offender`, and
 		// the submit path used to wrap every one of them in "scope id … is
 		// outside your own scope", which turned a sentence into nonsense.
-		return Scope{}, "invalid scope: " + err.Error(), false
+		return authority.Scope{}, "invalid scope: " + err.Error(), false
 	}
 
 	pid := h.lookupPrincipal(creatorCID)
@@ -531,7 +532,7 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 		return out, "", true
 	}
 	creatorHex := hex.EncodeToString(pid.Id[:])
-	creator := Scope{Base: protocol.ScopeBase_None} // a vanished creator reaches nothing
+	creator := authority.Scope{Base: protocol.ScopeBase_None} // a vanished creator reaches nothing
 	if t, ok := h.Tasks.Get(creatorHex); ok {
 		creator = t.Scope
 	}
@@ -541,7 +542,7 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	// Rank clamping, per axis and per capability. A child asking for more than
 	// its parent holds is lowered rather than refused -- the historical
 	// behaviour for the base, extended to the axes that did not exist then.
-	wantVis := minScopeBase(out.VisRank(), creator.VisRank())
+	wantVis := authority.MinBase(out.VisRank(), creator.VisRank())
 	exercised := exercisedBits(childCaps)
 	out = r.boundRanks(out, exercised)
 	// Written explicitly once the rank no longer follows the clamped base, as
@@ -564,18 +565,18 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	for _, o := range out.Overrides {
 		for _, id := range o.IDs {
 			if !r.reaches(id, o.Caps&exercised) {
-				return Scope{}, id, false
+				return authority.Scope{}, id, false
 			}
 		}
 	}
 	for _, id := range out.IDs {
 		if !r.reaches(id, baseBits) {
-			return Scope{}, id, false
+			return authority.Scope{}, id, false
 		}
 	}
 	for _, id := range out.VisIDs {
 		if !r.reaches(id, protocol.Capability_None) {
-			return Scope{}, id, false
+			return authority.Scope{}, id, false
 		}
 	}
 
@@ -588,14 +589,14 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 // a granter covers.
 type grantReach struct {
 	hex      string
-	scope    Scope
+	scope    authority.Scope
 	children map[string][]string
 	visAll   bool
 	vis      map[string]bool
 	sets     map[protocol.Capability]map[string]bool // per bit; a nil value is "all"
 }
 
-func newGrantReach(hex string, scope Scope, children map[string][]string) *grantReach {
+func newGrantReach(hex string, scope authority.Scope, children map[string][]string) *grantReach {
 	r := &grantReach{hex: hex, scope: scope, children: children, sets: map[protocol.Capability]map[string]bool{}}
 	r.visAll, r.vis = visibleSetOf(hex, scope, children)
 	return r
@@ -616,19 +617,19 @@ func newGrantReach(hex string, scope Scope, children map[string][]string) *grant
 //     which also decides visibility where the rank follows the base.
 //   - An override keeps min(its rank, the granter's base) for the bits the
 //     task does not hold, so a grant template survives reuse as it always did.
-//   - spawn never moves. It names no task, and validateScope refuses it in a
+//   - spawn never moves. It names no task, and authority.Validate refuses it in a
 //     mask.
 //
 // Where the granter's override for a bit is WIDER than its base, the bit may
 // rise to it: the bound is the granter's scope for the bit, not its base.
-func (r *grantReach) boundRanks(s Scope, held protocol.Capability) Scope {
+func (r *grantReach) boundRanks(s authority.Scope, held protocol.Capability) authority.Scope {
 	bound := func(rank protocol.ScopeBase, bit protocol.Capability) protocol.ScopeBase {
 		b, _, _ := r.scope.ForCap(bit)
-		return minScopeBase(rank, b)
+		return authority.MinBase(rank, b)
 	}
 	// split groups the held bits of one entry by the rank they are bound to,
 	// leaving out those bound to keep; ranks come back in ascending order.
-	split := func(rank, keep protocol.ScopeBase, bits protocol.Capability) (stay protocol.Capability, moved []ScopeOverride) {
+	split := func(rank, keep protocol.ScopeBase, bits protocol.Capability) (stay protocol.Capability, moved []authority.ScopeOverride) {
 		byRank := map[protocol.ScopeBase]protocol.Capability{}
 		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
 			if bits&bit == 0 {
@@ -642,12 +643,12 @@ func (r *grantReach) boundRanks(s Scope, held protocol.Capability) Scope {
 		}
 		for _, b := range []protocol.ScopeBase{protocol.ScopeBase_None, protocol.ScopeBase_Subtree, protocol.ScopeBase_Global} {
 			if m := byRank[b]; m != 0 {
-				moved = append(moved, ScopeOverride{Caps: m, Base: b})
+				moved = append(moved, authority.ScopeOverride{Caps: m, Base: b})
 			}
 		}
 		return stay, moved
 	}
-	withEntry := func(pieces []ScopeOverride, excl bool, ids []string) []ScopeOverride {
+	withEntry := func(pieces []authority.ScopeOverride, excl bool, ids []string) []authority.ScopeOverride {
 		for i := range pieces {
 			pieces[i].ExcludeSelf = excl
 			pieces[i].IDs = append([]string(nil), ids...)
@@ -656,15 +657,15 @@ func (r *grantReach) boundRanks(s Scope, held protocol.Capability) Scope {
 	}
 
 	out := s
-	out.Base = minScopeBase(s.Base, r.scope.Base)
+	out.Base = authority.MinBase(s.Base, r.scope.Base)
 	out.Overrides = nil
 	var overridden protocol.Capability
 	for _, o := range s.Overrides {
 		overridden |= o.Caps
-		keep := minScopeBase(o.Base, r.scope.Base)
+		keep := authority.MinBase(o.Base, r.scope.Base)
 		stay, moved := split(o.Base, keep, o.Caps&held)
 		if main := stay | o.Caps&^held; main != 0 {
-			out.Overrides = append(out.Overrides, ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+			out.Overrides = append(out.Overrides, authority.ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
 		}
 		out.Overrides = append(out.Overrides, withEntry(moved, o.ExcludeSelf, o.IDs)...)
 	}

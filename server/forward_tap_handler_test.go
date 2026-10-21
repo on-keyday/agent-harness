@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -68,7 +69,7 @@ func TestOpenForwardTapRefusesOutOfActionScope(t *testing.T) {
 	pf := registerTapTestForward(t, h, u)
 	cid := bindPrincipal(t, h, c)
 	// See everything, but act on nothing outside self.
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base:    protocol.ScopeBase_None,
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true,
 	})

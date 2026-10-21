@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -26,7 +27,7 @@ func titledMux(t *testing.T, title string) *SessionMux {
 func TestList_TitleFromLiveMux(t *testing.T) {
 	h := newTestHandler(t)
 	tHex := h.Tasks.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	h.Sessions.Add(tHex, titledMux(t, "✳ topic\u0085"))
 	op := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9731-1"), nextSendStreamID: 10}
 	row, ok := listRowAs(t, h, op, tHex)
@@ -41,7 +42,7 @@ func TestList_TitleFromLiveMux(t *testing.T) {
 func TestList_NoMuxNoTerminal(t *testing.T) {
 	h := newTestHandler(t)
 	tHex := h.Tasks.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	op := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9732-1"), nextSendStreamID: 10}
 	row, _ := listRowAs(t, h, op, tHex)
 	if row.LiveTerminal() || len(row.Title) != 0 {
@@ -51,7 +52,7 @@ func TestList_NoMuxNoTerminal(t *testing.T) {
 
 func TestTaskEvent_CarriesTitle(t *testing.T) {
 	s := makeEventServer(t)
-	tHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	tHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	s.taskHandler.Sessions.Add(tHex, titledMux(t, "✳ topic"))
 	op := subscribeTasksStatus(t, s, "ws:127.0.0.1:9733-1")
 	s.tasks.OnHold(tHex)
@@ -82,9 +83,9 @@ func TestHeldCapture_TitleSurvives(t *testing.T) {
 func TestList_ParentHopRowHasNoTitle(t *testing.T) {
 	h := newTestHandler(t)
 	pHex := h.Tasks.Create("/repo", "parent", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	cHex := h.Tasks.Create("/repo", "child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		hexToTaskID(t, pHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		hexToTaskID(t, pHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	h.Sessions.Add(pHex, titledMux(t, "parent's private title"))
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9734-1"), nextSendStreamID: 10}
 	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): hexToTaskID(t, cHex)}

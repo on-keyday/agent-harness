@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -19,12 +20,12 @@ import (
 // nothing, act on what you are told) and offered global visibility as the
 // workaround, which grants the enumeration being withheld.
 func TestScopeMatrixRankPairs(t *testing.T) {
-	vis := func(base, visBase protocol.ScopeBase) Scope {
-		return Scope{Base: base, VisBasePresent: true, VisBase: visBase}
+	vis := func(base, visBase protocol.ScopeBase) authority.Scope {
+		return authority.Scope{Base: base, VisBasePresent: true, VisBase: visBase}
 	}
 	for _, tc := range []struct {
 		name    string
-		scope   Scope
+		scope   authority.Scope
 		wantErr bool
 	}{
 		{"none / none", vis(protocol.ScopeBase_None, protocol.ScopeBase_None), false},
@@ -37,7 +38,7 @@ func TestScopeMatrixRankPairs(t *testing.T) {
 		{"global act, none vis", vis(protocol.ScopeBase_Global, protocol.ScopeBase_None), false},
 		{"global act, subtree vis", vis(protocol.ScopeBase_Global, protocol.ScopeBase_Subtree), false},
 	} {
-		if err := validateScope(tc.scope); (err != nil) != tc.wantErr {
+		if err := authority.Validate(tc.scope); (err != nil) != tc.wantErr {
 			t.Errorf("%s: err = %v, wantErr = %v", tc.name, err, tc.wantErr)
 		}
 	}
@@ -50,7 +51,7 @@ func TestScopeMatrixAbsentVisibilityIsAlwaysLegal(t *testing.T) {
 	for _, base := range []protocol.ScopeBase{
 		protocol.ScopeBase_None, protocol.ScopeBase_Subtree, protocol.ScopeBase_Global,
 	} {
-		if err := validateScope(Scope{Base: base}); err != nil {
+		if err := authority.Validate(authority.Scope{Base: base}); err != nil {
 			t.Errorf("base %v with no visibility rank: %v", base, err)
 		}
 	}
@@ -62,23 +63,23 @@ func TestScopeMatrixAbsentVisibilityIsAlwaysLegal(t *testing.T) {
 func TestScopeMatrixOverrideRankIsUnbounded(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		scope   Scope
+		scope   authority.Scope
 		wantErr bool
 	}{
-		{"override narrower than base", Scope{
+		{"override narrower than base", authority.Scope{
 			Base:      protocol.ScopeBase_Subtree,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 		}, false},
-		{"override wider than base, within visibility", Scope{
+		{"override wider than base, within visibility", authority.Scope{
 			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
 		}, false},
-		{"override outranks visibility — the board-driven observer", Scope{
+		{"override outranks visibility — the board-driven observer", authority.Scope{
 			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
 		}, false},
 	} {
-		if err := validateScope(tc.scope); (err != nil) != tc.wantErr {
+		if err := authority.Validate(tc.scope); (err != nil) != tc.wantErr {
 			t.Errorf("%s: err = %v, wantErr = %v", tc.name, err, tc.wantErr)
 		}
 	}
@@ -90,22 +91,22 @@ func TestScopeMatrixRedundantFormsAreAccepted(t *testing.T) {
 	id := "00112233445566778899aabbccddeeff"
 	for _, tc := range []struct {
 		name  string
-		scope Scope
+		scope authority.Scope
 	}{
-		{"ids under a global base", Scope{
+		{"ids under a global base", authority.Scope{
 			Base: protocol.ScopeBase_Global, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 			IDs: []string{id}}},
-		{"vis_ids under a global visibility rank", Scope{
+		{"vis_ids under a global visibility rank", authority.Scope{
 			Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 			VisIDs: []string{id}}},
-		{"a vis_id that is also an action id", Scope{
+		{"a vis_id that is also an action id", authority.Scope{
 			Base: protocol.ScopeBase_Subtree, IDs: []string{id}, VisIDs: []string{id}}},
-		{"an override for a bit nothing holds", Scope{
+		{"an override for a bit nothing holds", authority.Scope{
 			Base:      protocol.ScopeBase_Subtree,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_None}}}},
-		{"the empty action set", Scope{Base: protocol.ScopeBase_None, ExcludeSelf: true}},
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_None}}}},
+		{"the empty action set", authority.Scope{Base: protocol.ScopeBase_None, ExcludeSelf: true}},
 	} {
-		if err := validateScope(tc.scope); err != nil {
+		if err := authority.Validate(tc.scope); err != nil {
 			t.Errorf("%s: rejected (%v); a redundant grant must not become a failed spawn", tc.name, err)
 		}
 	}
@@ -116,17 +117,17 @@ func TestScopeMatrixRedundantFormsAreAccepted(t *testing.T) {
 func TestScopeMatrixEveryRejection(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		scope Scope
+		scope authority.Scope
 	}{
-		{"1: empty override mask", Scope{
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_None}}}},
-		{"2: override masks intersect", Scope{Overrides: []ScopeOverride{
+		{"1: empty override mask", authority.Scope{
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_None}}}},
+		{"2: override masks intersect", authority.Scope{Overrides: []authority.ScopeOverride{
 			{Caps: protocol.Capability_Cancel | protocol.Capability_Purge},
 			{Caps: protocol.Capability_Purge},
 		}}},
-		{"3: vis_base set without its presence bit", Scope{VisBase: protocol.ScopeBase_Global}},
+		{"3: vis_base set without its presence bit", authority.Scope{VisBase: protocol.ScopeBase_Global}},
 	} {
-		if err := validateScope(tc.scope); err == nil {
+		if err := authority.Validate(tc.scope); err == nil {
 			t.Errorf("%s: accepted, want a rejection", tc.name)
 		}
 	}
@@ -168,7 +169,7 @@ func TestGrantedIDsAreAlwaysVisible(t *testing.T) {
 
 	checked, sawOverrideIDs := 0, false
 	for i := 0; i < 400; i++ {
-		s := Scope{
+		s := authority.Scope{
 			Base:           bases[rng.Intn(len(bases))],
 			VisBasePresent: rng.Intn(2) == 1,
 			ExcludeSelf:    rng.Intn(2) == 1,
@@ -184,12 +185,12 @@ func TestGrantedIDsAreAlwaysVisible(t *testing.T) {
 			if len(ovIDs) > 0 {
 				sawOverrideIDs = true
 			}
-			s.Overrides = append(s.Overrides, ScopeOverride{
+			s.Overrides = append(s.Overrides, authority.ScopeOverride{
 				Caps: bits[perm[n]], Base: bases[rng.Intn(len(bases))],
 				ExcludeSelf: rng.Intn(2) == 1, IDs: ovIDs,
 			})
 		}
-		if err := validateScope(s); err != nil {
+		if err := authority.Validate(s); err != nil {
 			continue
 		}
 

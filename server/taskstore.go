@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -42,7 +43,7 @@ type TaskEntry struct {
 	// bitmask does not carry. Zero value is subtree (self + descendants), the
 	// rule the server applied to visibility before scopes existed. See
 	// server/scope.go.
-	Scope Scope
+	Scope authority.Scope
 	// AgentProfile is the resolved agent profile name for this task, chosen
 	// by the submit-path filter/resolution (server/task_handler.go) from the
 	// bound runner's advertised RunnerHello.AgentProfiles. Set at Create time;
@@ -203,7 +204,7 @@ func newTaskID() string {
 // --agent-args at exec time; pass nil for none.
 // agentProfile is the resolved agent profile name (see TaskEntry.AgentProfile);
 // pass "" when the bound runner advertised no profiles (legacy runner).
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, scope Scope, agentProfile string) string {
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, scope authority.Scope, agentProfile string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -242,7 +243,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			Capabilities:  uint32(caps),
 			AgentProfile:  agentProfile,
 		}
-		scope.applyToWAL(&ev)
+		applyScopeToWAL(scope, &ev)
 		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -261,7 +262,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 // The record is a snapshot, not a delta: replay assigns both halves from it,
 // so a record that named only the field that changed would silently reset the
 // other to its zero on the next restart.
-func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, scope Scope) {
+func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, scope authority.Scope) {
 	if s.wal == nil {
 		return
 	}
@@ -269,7 +270,7 @@ func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, 
 		Type: "task_caps_changed", TaskID: id,
 		Capabilities: uint32(caps),
 	}
-	scope.applyToWAL(&ev)
+	applyScopeToWAL(scope, &ev)
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
 	}
@@ -345,7 +346,7 @@ func (s *TaskStore) restoreProgress(l progressLine) bool {
 // force from the target's next RPC with nothing restarted.
 //
 // Returns the post-change entry and whether the task existed.
-func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope Scope) (TaskEntry, bool) {
+func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope authority.Scope) (TaskEntry, bool) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -483,7 +484,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope Scope, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope authority.Scope, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {

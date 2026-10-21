@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -63,7 +64,7 @@ func TestCallerCaps(t *testing.T) {
 	parentCaps := protocol.Capability_FileRead | protocol.Capability_Spawn
 	agentTaskIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, parentCaps, Scope{}, "")
+		protocol.RunnerSelector{}, nil, parentCaps, authority.Scope{}, "")
 	tid := hexToTaskID(t, agentTaskIDHex)
 
 	// Set the principal directly on the map (white-box; same package).
@@ -108,7 +109,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	parentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "A",
-		protocol.RunnerSelector{}, nil, parentCaps, Scope{}, "")
+		protocol.RunnerSelector{}, nil, parentCaps, authority.Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire the parent as the principal on "agent-conn".
@@ -204,7 +205,7 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Create the agent principal task holding NO caps.
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire a caller conn with a distinct CID.
@@ -218,7 +219,7 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Victim task to attempt cancelling (with full caps — irrelevant; caller's caps are what matter).
 	victimIDHex := h.Tasks.Create("repo", "v", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	vtid := hexToTaskID(t, victimIDHex)
 
 	// Build and encode a Cancel request targeting the victim.
@@ -306,7 +307,7 @@ func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeC
 	h := newTestHandler(t)
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, caps, Scope{}, "")
+		protocol.RunnerSelector{}, nil, caps, authority.Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
 	if h.principals == nil {
@@ -551,16 +552,16 @@ func TestVisibleSubtree(t *testing.T) {
 
 	// B: has Spawn but no InfoGlobal; no parent.
 	bHex := h.Tasks.Create("r", "B", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	bTID := hexToTaskID(t, bHex)
 
 	// C: child of B.
 	cHex := h.Tasks.Create("r", "C", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 
 	// D: sibling (no parent), unrelated to B.
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -586,7 +587,7 @@ func TestVisibleSubtree(t *testing.T) {
 	// bit (info_global); it is an axis of the scope now, so the grant that
 	// produces the same reach is vis_base = global.
 	h.Tasks.mu.Lock()
-	h.Tasks.tasks[bHex].Scope = Scope{
+	h.Tasks.tasks[bHex].Scope = authority.Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 	}
 	h.Tasks.mu.Unlock()
@@ -604,14 +605,14 @@ func TestListFilteredToSubtree(t *testing.T) {
 
 	// Create two root tasks (operator-created).
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	_ = h.Tasks.Create("r", "B-root", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 
 	// Create a child of A.
 	aTID := hexToTaskID(t, aHex)
 	aChildHex := h.Tasks.Create("r", "A-child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -672,18 +673,18 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	h.LogsDir = t.TempDir() // so the log gate runs before the file open
 
 	aHex := h.Tasks.Create("/repo/a", "grandparent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "claude")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "claude")
 	bHex := h.Tasks.Create("/repo/b", "parent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "claude")
+		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "claude")
 	bTID := hexToTaskID(t, bHex)
 	// exec_view so the log assertion below tests SCOPE rather than the cap: a
 	// task log has been gated on that bit since 2026-08-21, and a caller
 	// without it is refused before scope is consulted.
 	cHex := h.Tasks.Create("/repo/c", "child prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		bTID, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn|protocol.Capability_ExecView, Scope{}, "claude")
+		protocol.Capability_Spawn|protocol.Capability_ExecView, authority.Scope{}, "claude")
 	sHex := h.Tasks.Create("/repo/s", "stranger prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	// Give B a worktree + assigned runner so redaction has something to strip.
 	h.Tasks.mu.Lock()
@@ -827,7 +828,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 
 	// Confined caller: task A with Spawn but no InfoGlobal.
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -865,7 +866,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 	// -- Case 3: confined caller with GLOBAL VISIBILITY sees both runners ---
 	// The runner list rides visibleToCaller's all=true, which is task-space
 	// visibility -- so the grant is the axis, not a capability bit.
-	h.Tasks.tasks[aHex].Scope = Scope{
+	h.Tasks.tasks[aHex].Scope = authority.Scope{
 		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 	}
 	igConn := &fakeConn{
@@ -913,12 +914,12 @@ func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn|protocol.Capability_ExecView, Scope{}, "")
+		protocol.Capability_Spawn|protocol.Capability_ExecView, authority.Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 
 	// D is an unrelated task (operator-created).
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	dTID := hexToTaskID(t, dHex)
 
 	if h.principals == nil {
@@ -1111,14 +1112,14 @@ func TestResumeCapsOverride(t *testing.T) {
 	t.Run("operator_override_replaces_caps", func(t *testing.T) {
 		h := newTestHandler(t)
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 
 		markTerminalForTest(t, h, id)
 
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1137,13 +1138,13 @@ func TestResumeCapsOverride(t *testing.T) {
 		h := newTestHandler(t)
 		wantCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps, Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps, authority.Scope{}, "")
 
 		markTerminalForTest(t, h, id)
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1165,12 +1166,12 @@ func TestResumeCapsOverride(t *testing.T) {
 		agentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		agentTaskIDHex := h.Tasks.Create("/r", "agent", protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, protocol.TaskID{}, "",
-			protocol.RunnerSelector{}, nil, agentCaps, Scope{}, "")
+			protocol.RunnerSelector{}, nil, agentCaps, authority.Scope{}, "")
 		agentTID := hexToTaskID(t, agentTaskIDHex)
 
 		// Create the target task (original caps = All).
 		targetID := h.Tasks.Create("/r", "target", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 		markTerminalForTest(t, h, targetID)
 
 		// Wire the agent as a principal on a distinct conn.
@@ -1185,7 +1186,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -1201,7 +1202,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps2, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps2, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)
@@ -1235,7 +1236,7 @@ func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
 	mk := func(prompt string, creator protocol.TaskID) string {
 		return h.Tasks.Create("/r", prompt, protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, creator, "", protocol.RunnerSelector{},
-			nil, caps, Scope{}, "")
+			nil, caps, authority.Scope{}, "")
 	}
 	p = mk("p", protocol.TaskID{})
 	c = mk("c", hexToTaskID(t, p))
@@ -1255,7 +1256,7 @@ func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) string {
 	return cid
 }
 
-func setScope(t *testing.T, h *TaskHandler, taskHex string, sc Scope) {
+func setScope(t *testing.T, h *TaskHandler, taskHex string, sc authority.Scope) {
 	t.Helper()
 	if _, ok := h.Tasks.SetCaps(taskHex, false, 0, true, sc); !ok {
 		t.Fatalf("SetCaps on %s: task not found", taskHex)
@@ -1273,28 +1274,28 @@ func TestScopeSetHonoursBaseAndIDs(t *testing.T) {
 	}
 
 	// none: self only. Descendants are NOT reachable.
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_None})
 	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || allowed[g] || allowed[p] || allowed[u] {
 		t.Errorf("none: all=%v allowed=%v, want {c} only", all, allowed)
 	}
 
 	// none + ids: self plus exactly the named strangers.
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None, IDs: []string{u}})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{u}})
 	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || !allowed[u] || allowed[g] {
 		t.Errorf("none+ids: all=%v allowed=%v, want {c,u}", all, allowed)
 	}
 
 	// subtree + ids: both.
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}})
 	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || !allowed[g] || !allowed[u] {
 		t.Errorf("subtree+ids: all=%v allowed=%v, want {c,g,u}", all, allowed)
 	}
 
 	// global: everything, allowed nil.
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Global})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_Global})
 	if all, allowed = h.scopeSet(cid, protocol.Capability_Cancel); !all || allowed != nil {
 		t.Errorf("global: all=%v allowed=%v, want true/nil", all, allowed)
 	}
@@ -1309,12 +1310,12 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 		t.Error("authorized a stranger while scope is subtree")
 	}
 	// Target in scope, cap missing.
-	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}) //nolint:errcheck
 	if h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("authorized cancel without the cancel bit")
 	}
 	// Both.
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{}) //nolint:errcheck
 	if !h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("denied a self-target with the cap held")
 	}
@@ -1331,7 +1332,7 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 func TestVisBaseWidensVisibilityNotAction(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, true, Scope{ //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, true, authority.Scope{ //nolint:errcheck
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 	})
 
@@ -1351,7 +1352,7 @@ func TestVisBaseWidensVisibilityNotAction(t *testing.T) {
 func TestParentHopSurvivesNoneBaseAndIsNotActionable(t *testing.T) {
 	h, p, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_None})
 
 	all, allowed, parentHex := h.listVisibleToCaller(cid)
 	if all {
@@ -1373,7 +1374,7 @@ func TestParentHopSurvivesNoneBaseAndIsNotActionable(t *testing.T) {
 func TestParentInIDsIsActionableAndUnredacted(t *testing.T) {
 	h, p, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None, IDs: []string{p}})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{p}})
 
 	if !h.authorize(cid, protocol.Capability_Cancel, p) {
 		t.Error("an explicit ids:<parent> grant did not authorize the parent")
@@ -1396,9 +1397,9 @@ func TestParentInIDsIsActionableAndUnredacted(t *testing.T) {
 func TestScopeSetPerCapability(t *testing.T) {
 	h, _, c, g, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	})
 
 	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecView); !allowed[g] {
@@ -1417,9 +1418,9 @@ func TestScopeSetPerCapability(t *testing.T) {
 func TestExcludeSelfIsPerCapabilityAndNeverHidesSelf(t *testing.T) {
 	h, _, c, g, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base: protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{
+		Overrides: []authority.ScopeOverride{{
 			Caps: protocol.Capability_ExecCowrite, Base: protocol.ScopeBase_Subtree, ExcludeSelf: true,
 		}},
 	})
@@ -1444,9 +1445,9 @@ func TestExcludeSelfIsPerCapabilityAndNeverHidesSelf(t *testing.T) {
 func TestOverrideIDsAreVisible(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-		Overrides: []ScopeOverride{{
+		Overrides: []authority.ScopeOverride{{
 			Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u},
 		}},
 	})
@@ -1468,7 +1469,7 @@ func TestOverrideIDsAreVisible(t *testing.T) {
 func TestVisIDsAreVisibleButNotActionable(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})
 
 	if _, allowed := h.visibleToCaller(cid); !allowed[u] {
 		t.Error("vis_ids target is not visible")
@@ -1488,7 +1489,7 @@ func TestVisIDsAreVisibleButNotActionable(t *testing.T) {
 func TestVisBaseWidensSightNotAction(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 	})
 
@@ -1506,16 +1507,16 @@ func TestVisBaseWidensSightNotAction(t *testing.T) {
 func TestAttenuateScopePerCapability(t *testing.T) {
 	h, _, c, g, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_Subtree})
 
 	// Rank: a child asking for global under a subtree parent is lowered.
-	out, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All)
+	out, _, ok := h.attenuateScope(cid, authority.Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All)
 	if !ok || out.Base != protocol.ScopeBase_Subtree {
 		t.Errorf("base = %v ok = %v, want clamped to subtree", out.Base, ok)
 	}
 
 	// Rank, on the visibility axis too.
-	out, _, ok = h.attenuateScope(cid, Scope{
+	out, _, ok = h.attenuateScope(cid, authority.Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 	}, protocol.Capability_All)
 	if !ok || out.VisBase != protocol.ScopeBase_Subtree {
@@ -1523,14 +1524,14 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	}
 
 	// Ids inside the parent's reach are kept.
-	if _, off, ok := h.attenuateScope(cid, Scope{
+	if _, off, ok := h.attenuateScope(cid, authority.Scope{
 		Base: protocol.ScopeBase_Subtree, IDs: []string{g},
 	}, protocol.Capability_All); !ok {
 		t.Errorf("a descendant id was refused: %s", off)
 	}
 
 	// Ids outside it are refused, naming the offender rather than dropping it.
-	if _, off, ok := h.attenuateScope(cid, Scope{
+	if _, off, ok := h.attenuateScope(cid, authority.Scope{
 		Base: protocol.ScopeBase_Subtree, IDs: []string{u},
 	}, protocol.Capability_All); ok || off != u {
 		t.Errorf("stranger id: ok = %v offender = %q, want refused naming %s", ok, off, u)
@@ -1538,9 +1539,9 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 
 	// An override naming a target the parent cannot reach FOR THAT BIT is
 	// refused on that override alone.
-	if _, _, ok := h.attenuateScope(cid, Scope{
+	if _, _, ok := h.attenuateScope(cid, authority.Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u}}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u}}},
 	}, protocol.Capability_All); ok {
 		t.Error("an override reached a stranger the parent cannot cancel")
 	}
@@ -1552,27 +1553,27 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 func TestAttenuateScopeRejectsIncoherentValues(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
+	setScope(t, h, c, authority.Scope{Base: protocol.ScopeBase_Subtree})
 
-	if _, _, ok := h.attenuateScope(cid, Scope{Overrides: []ScopeOverride{
+	if _, _, ok := h.attenuateScope(cid, authority.Scope{Overrides: []authority.ScopeOverride{
 		{Caps: protocol.Capability_Cancel}, {Caps: protocol.Capability_Cancel},
 	}}, protocol.Capability_All); ok {
 		t.Error("accepted intersecting override masks")
 	}
-	if _, _, ok := h.attenuateScope(cid, Scope{
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_None}},
+	if _, _, ok := h.attenuateScope(cid, authority.Scope{
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_None}},
 	}, protocol.Capability_All); ok {
 		t.Error("accepted an empty override mask")
 	}
-	if _, _, ok := h.attenuateScope(cid, Scope{VisBase: protocol.ScopeBase_Global}, protocol.Capability_All); ok {
+	if _, _, ok := h.attenuateScope(cid, authority.Scope{VisBase: protocol.ScopeBase_Global}, protocol.Capability_All); ok {
 		t.Error("accepted a vis_base with its presence bit clear")
 	}
 
 	// The shape the dropped rule refused: enumerate nothing, act on what you
 	// are handed. Clamped against the parent, not rejected.
-	out, _, ok := h.attenuateScope(cid, Scope{
+	out, _, ok := h.attenuateScope(cid, authority.Scope{
 		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
 	}, protocol.Capability_All)
 	if !ok {
 		t.Fatal("refused an action rank above the visibility rank")
@@ -1591,12 +1592,12 @@ func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
 	parent := TaskEntry{
 		ID:           "00112233445566778899aabbccddeeff",
 		Capabilities: protocol.Capability_All,
-		Scope:        Scope{Base: protocol.ScopeBase_None},
+		Scope:        authority.Scope{Base: protocol.ScopeBase_None},
 	}
-	child := Scope{
+	child := authority.Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 		ExcludeSelf: true,
-		Overrides: []ScopeOverride{
+		Overrides: []authority.ScopeOverride{
 			{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Subtree},
 			{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_Subtree},
 		},
@@ -1620,7 +1621,7 @@ func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
 	if out.Overrides[0].Base != protocol.ScopeBase_None {
 		t.Errorf("override base = %v, want clamped to none", out.Overrides[0].Base)
 	}
-	if err := validateScope(out); err != nil {
+	if err := authority.Validate(out); err != nil {
 		t.Errorf("a clamped scope must stay legal: %v", err)
 	}
 }
@@ -1630,11 +1631,11 @@ func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
 func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
 	parent := TaskEntry{
 		ID: "00112233445566778899aabbccddeeff", Capabilities: protocol.Capability_All,
-		Scope: Scope{Base: protocol.ScopeBase_Subtree},
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree},
 	}
-	child := Scope{
+	child := authority.Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
 	}
 	out := clampScopeUnder(child, protocol.Capability_Cancel, parent, nil)
 	if len(out.Overrides) != 1 {
@@ -1650,9 +1651,9 @@ func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
 // were once gated behind the caps bit, which silently reset a task's scope.
 func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	st := NewTaskStore()
-	withOverride := Scope{
+	withOverride := authority.Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	}
 	id := st.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
@@ -1661,7 +1662,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 
 	// scopeOverride = false: the stored scope, overrides and all, is kept.
 	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+		false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ := st.Get(id)
@@ -1673,7 +1674,7 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	// same shape as writing an empty ids list.
 	st.Finish(id, 0, nil)
 	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_None, true, Scope{Base: protocol.ScopeBase_Subtree},
+		false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Subtree},
 		protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -1693,9 +1694,9 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 	cid := bindPrincipal(t, h, c)
 
 	// Hold exec_view only, but carry an override for cancel as well.
-	withOverride := Scope{
+	withOverride := authority.Scope{
 		Base:      protocol.ScopeBase_Subtree,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	}
 	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView, true, withOverride); !ok {
 		t.Fatal("SetCaps: task not found")
@@ -1716,7 +1717,7 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 
 	// Granting the bit makes the standing override apply immediately, without
 	// the operator having to restate it.
-	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, Scope{}); !ok {
+	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, authority.Scope{}); !ok {
 		t.Fatal("SetCaps: task not found")
 	}
 	if h.authorize(cid, protocol.Capability_Cancel, g) {
@@ -1735,27 +1736,27 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 func TestSetCapsValidatesConsistencyNotWidth(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		scope Scope
+		scope authority.Scope
 	}{
-		{"intersecting masks", Scope{Overrides: []ScopeOverride{
+		{"intersecting masks", authority.Scope{Overrides: []authority.ScopeOverride{
 			{Caps: protocol.Capability_Cancel | protocol.Capability_Purge},
 			{Caps: protocol.Capability_Purge},
 		}}},
-		{"empty mask", Scope{Overrides: []ScopeOverride{{Caps: protocol.Capability_None}}}},
-		{"non-canonical vis_base", Scope{VisBase: protocol.ScopeBase_Global}},
+		{"empty mask", authority.Scope{Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_None}}}},
+		{"non-canonical vis_base", authority.Scope{VisBase: protocol.ScopeBase_Global}},
 	} {
-		if err := validateScope(tc.scope); err == nil {
+		if err := authority.Validate(tc.scope); err == nil {
 			t.Errorf("%s: accepted, so set_caps would store an undefined value", tc.name)
 		}
 	}
 
 	// Width is not incoherence. An operator may hand a task more than the
 	// operator's own reach, and may hand it action past what it can enumerate.
-	wide := Scope{
+	wide := authority.Scope{
 		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
 	}
-	if err := validateScope(wide); err != nil {
+	if err := authority.Validate(wide); err != nil {
 		t.Errorf("refused the board-driven observer shape: %v", err)
 	}
 }
@@ -1771,7 +1772,7 @@ func TestGetTaskLogWithoutExecViewIsDenied(t *testing.T) {
 
 	// The caller asks for its OWN log, so scope cannot be what refuses it.
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 
 	if h.principals == nil {

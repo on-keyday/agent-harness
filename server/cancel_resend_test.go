@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -41,7 +42,7 @@ func newCancelFixture(t *testing.T, delays []time.Duration) *cancelFixture {
 		LastTaskActivity: time.Unix(1, 0),
 		Conn:             fc,
 	})
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	tasks.Assign(taskID, identity, "", false)
 	reg.BindTask(fc.id, taskID)
 	boardRegisterTask(board, identity, taskID, [16]byte{1, 2, 3}, "claude")
@@ -140,7 +141,7 @@ func TestRepeatedCancelResends(t *testing.T) {
 // the task — which would turn the operator's Cancelled into Failed.
 func TestCancelOfQueuedTaskSendsNothing(t *testing.T) {
 	f := newCancelFixture(t, []time.Duration{})
-	queued := f.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, f.fc.id.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	queued := f.tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, f.fc.id.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	before := f.cancelsSent(t)
 	f.tasks.Cancel(queued)
 	if got := f.cancelsSent(t); got != before {

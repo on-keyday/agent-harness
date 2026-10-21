@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -11,11 +12,11 @@ import (
 // is a grantable shape and --scope-for exec_resize means something.
 func TestResizeAllowedFollowsItsOwnScope(t *testing.T) {
 	f := newResumeFixture(t, protocol.Capability_ExecCowrite|protocol.Capability_ExecResize,
-		Scope{Base: protocol.ScopeBase_Global})
+		authority.Scope{Base: protocol.ScopeBase_Global})
 	a := f.terminalTask(t, false)
 	b := f.terminalTask(t, false)
 	f.h.Tasks.mu.Lock()
-	f.h.Tasks.tasks[f.selfID].Scope.Overrides = []ScopeOverride{
+	f.h.Tasks.tasks[f.selfID].Scope.Overrides = []authority.ScopeOverride{
 		{Caps: protocol.Capability_ExecResize, Base: protocol.ScopeBase_None, IDs: []string{a}},
 	}
 	f.h.Tasks.mu.Unlock()
@@ -29,7 +30,7 @@ func TestResizeAllowedFollowsItsOwnScope(t *testing.T) {
 }
 
 func TestResizeNeedsTheBit(t *testing.T) {
-	f := newResumeFixture(t, protocol.Capability_ExecCowrite, Scope{Base: protocol.ScopeBase_Global})
+	f := newResumeFixture(t, protocol.Capability_ExecCowrite, authority.Scope{Base: protocol.ScopeBase_Global})
 	a := f.terminalTask(t, false)
 	if f.h.resizeAllowed(f.conn.ConnectionID().String(), a) {
 		t.Fatal("resize allowed without exec_resize")

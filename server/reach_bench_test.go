@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -33,7 +34,7 @@ func reachStore(b *testing.B, n, d int) reachFixture {
 	s := NewTaskStore()
 	create := func(creator protocol.TaskID) protocol.TaskID {
 		idHex := s.Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-			creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "bash")
+			creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "bash")
 		raw, err := hex.DecodeString(idHex)
 		if err != nil {
 			b.Fatal(err)

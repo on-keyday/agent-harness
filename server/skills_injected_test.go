@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -11,7 +12,7 @@ func newTaskForSkills(t *testing.T, s *TaskStore) string {
 	t.Helper()
 	return s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Tui,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_All, defaultScope(), "claude")
+		protocol.Capability_All, authority.DefaultScope(), "claude")
 }
 
 // A queued task has no runner yet, so it has nothing to declare. False here

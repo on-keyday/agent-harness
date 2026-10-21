@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
@@ -283,7 +284,7 @@ func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
 
 	taskHexA := srv.Tasks().Create("/repo", "p", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Cli, protocol.TaskID{}, ridA.Hex(), protocol.RunnerSelector{},
-		nil, protocol.Capability_All, server.Scope{}, "codex")
+		nil, protocol.Capability_All, authority.Scope{}, "codex")
 	var tidA protocol.TaskID
 	raw, err := hex.DecodeString(taskHexA)
 	if err != nil || len(raw) != 16 {

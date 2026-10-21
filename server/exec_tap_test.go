@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -70,7 +71,7 @@ func TestOpenExecTapRefusalsAreOneAnswer(t *testing.T) {
 			t.Fatalf("%s: status %v stream %d", name, got.Status, got.StreamId)
 		}
 	}
-	setScope(t, h, c, Scope{
+	setScope(t, h, c, authority.Scope{
 		Base:    protocol.ScopeBase_None,
 		VisBase: protocol.ScopeBase_Global, VisBasePresent: true,
 	})

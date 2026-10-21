@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -35,7 +36,7 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	var captured []assignPair
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -91,7 +92,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
 		t.Fatal("assignFn must not be called when there is no repo match")
@@ -141,7 +142,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	var assigned []string
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -182,7 +183,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
 		return errors.New("boom")
@@ -240,9 +241,9 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	var assigned []assignPair
 	assignFn := func(runnerID objproto.ConnectionID, tID string) error {
@@ -330,7 +331,7 @@ func TestSchedulerHonorsSelector(t *testing.T) {
 
 	store := NewTaskStore()
 	taskID := store.Create("/x", "pinned", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "r2", hostnameSelector(t, "h2"), nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "r2", hostnameSelector(t, "h2"), nil, protocol.Capability_All, authority.Scope{}, "")
 
 	var captured []assignPair
 	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
@@ -358,7 +359,7 @@ func TestSchedulerHonorsAgentProfile(t *testing.T) {
 
 	store := NewTaskStore()
 	taskID := store.Create("/x", "codex task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "r2", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "codex")
+		protocol.TaskID{}, "r2", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "codex")
 
 	var captured []assignPair
 	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
@@ -385,7 +386,7 @@ func TestSchedulerIdentityPinSurvivesReconnect(t *testing.T) {
 	sel.SetRunnerId(id)
 	store := NewTaskStore()
 	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, tcid("A").String(), sel, nil, protocol.Capability_All, Scope{}, "claude")
+		protocol.TaskID{}, tcid("A").String(), sel, nil, protocol.Capability_All, authority.Scope{}, "claude")
 
 	// The runner restarts its connection before anything is dispatched.
 	reg.Remove(tcid("A"))
@@ -431,7 +432,7 @@ func TestRunnerIDPinMatchesOnlyTheIdentityHolder(t *testing.T) {
 
 	store := NewTaskStore()
 	taskID := store.Create("/x", "queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, tcid("A2").String(), sel, nil, protocol.Capability_All, Scope{}, "claude")
+		protocol.TaskID{}, tcid("A2").String(), sel, nil, protocol.Capability_All, authority.Scope{}, "claude")
 	var captured []assignPair
 	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
 		captured = append(captured, assignPair{runnerID, tID})
@@ -452,9 +453,9 @@ func TestSchedulerPinnedTaskDoesNotBlockQueue(t *testing.T) {
 
 	store := NewTaskStore()
 	blocked := store.Create("/x", "pinned elsewhere", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", hostnameSelector(t, "h-absent"), nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", hostnameSelector(t, "h-absent"), nil, protocol.Capability_All, authority.Scope{}, "")
 	runnable := store.Create("/x", "any runner", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 
 	var captured []assignPair
 	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {

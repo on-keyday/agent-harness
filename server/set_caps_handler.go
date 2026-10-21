@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -25,7 +26,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		body := protocol.SetCapsResponse{Status: status, ConnsClosed: connsClosed}
 		for _, hexID := range affected {
 			raw, err := hex.DecodeString(hexID)
-			if err != nil || len(raw) != taskIDHexLen/2 {
+			if err != nil || len(raw) != authority.TaskIDHexLen/2 {
 				continue
 			}
 			var tid protocol.TaskID
@@ -56,7 +57,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		newCaps = req.Caps
 	}
 	if req.ScopePresent() {
-		newScope = scopeFromWire(req.Scope, req.Overrides)
+		newScope = authority.ScopeFromWire(req.Scope, req.Overrides)
 		// Operator identity is a licence to grant any AUTHORITY, not to store
 		// an incoherent value: an empty or overlapping override mask would
 		// make ForCap's "at most one entry matches" false, and a non-canonical
@@ -65,7 +66,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		//
 		// This path had no validation at all, which is how live tasks ended up
 		// carrying scopes the spawn path would have refused.
-		if err := validateScope(newScope); err != nil {
+		if err := authority.Validate(newScope); err != nil {
 			slog.Warn("set_caps denied: inconsistent scope", "cid", cid, "err", err)
 			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
 			return
@@ -176,7 +177,7 @@ func reachNarrowed(bBase protocol.ScopeBase, bExcl bool, bIDs []string, aBase pr
 	if aBase == protocol.ScopeBase_Global {
 		return false
 	}
-	if scopeBaseRank(aBase) < scopeBaseRank(bBase) || (aExcl && !bExcl) {
+	if authority.BaseRank(aBase) < authority.BaseRank(bBase) || (aExcl && !bExcl) {
 		return true
 	}
 	kept := make(map[string]bool, len(aIDs))
@@ -193,7 +194,7 @@ func reachNarrowed(bBase protocol.ScopeBase, bExcl bool, bIDs []string, aBase pr
 
 // visibleIDs is every id a scope makes visible on top of its rank — the id
 // half of visibilitySet's formula.
-func visibleIDs(s Scope) []string {
+func visibleIDs(s authority.Scope) []string {
 	out := append(append([]string(nil), s.VisIDs...), s.IDs...)
 	for _, o := range s.Overrides {
 		out = append(out, o.IDs...)
@@ -218,10 +219,10 @@ func visibleIDs(s Scope) []string {
 // childCaps is the descendant's ALREADY-clamped capability mask, so an
 // override for a bit it no longer holds or exercises (exercisedBits) is
 // dropped rather than left to reapply if the bit is granted again later.
-func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntry, children map[string][]string) Scope {
+func clampScopeUnder(child authority.Scope, childCaps protocol.Capability, parent TaskEntry, children map[string][]string) authority.Scope {
 	r := newGrantReach(parent.ID, parent.Scope, children)
 	exercised := exercisedBits(childCaps)
-	in := Scope{Base: child.Base, ExcludeSelf: child.ExcludeSelf, IDs: child.IDs}
+	in := authority.Scope{Base: child.Base, ExcludeSelf: child.ExcludeSelf, IDs: child.IDs}
 	for _, o := range child.Overrides {
 		o.Caps &= exercised
 		if o.Caps != protocol.Capability_None {
@@ -243,7 +244,7 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 	for _, o := range bounded.Overrides {
 		overridden |= o.Caps
 	}
-	out := Scope{
+	out := authority.Scope{
 		Base:        bounded.Base,
 		IDs:         keep(bounded.IDs, exercised&^overridden),
 		ExcludeSelf: child.ExcludeSelf, // only ever narrows; nothing to clamp
@@ -253,7 +254,7 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 	// The visibility rank clamps against the parent's rank. Written explicitly
 	// rather than copied, so a child that inherited its rank from its base does
 	// not silently acquire a present bit it never had.
-	if clamped := minScopeBase(child.VisRank(), parent.Scope.VisRank()); clamped != out.Base {
+	if clamped := authority.MinBase(child.VisRank(), parent.Scope.VisRank()); clamped != out.Base {
 		out.VisBasePresent = true
 		out.VisBase = clamped
 	}

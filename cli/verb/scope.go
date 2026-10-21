@@ -338,7 +338,7 @@ func ParseScopeFor(str string) (protocol.Capability, protocol.ScopeOverride, err
 		return 0, protocol.ScopeOverride{}, fmt.Errorf(
 			"--scope-for %q: names no capability; an override matching nothing is dead weight", str)
 	}
-	// The server refuses it too (validateScope); refusing here costs a parse
+	// The server refuses it too (authority.Validate); refusing here costs a parse
 	// error rather than a round trip, and says what to write instead.
 	if caps&protocol.Capability_Spawn != 0 {
 		return 0, protocol.ScopeOverride{}, fmt.Errorf(

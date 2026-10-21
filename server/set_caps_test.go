@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -82,7 +83,7 @@ func TestSetCapsCascadeClampsDescendants(t *testing.T) {
 	req = protocol.SetCapsRequest{
 		TaskId: hexToTaskID(t, c),
 		Caps:   protocol.Capability_FileRead,
-		Scope:  Scope{Base: protocol.ScopeBase_None}.toWire(),
+		Scope:  authority.Scope{Base: protocol.ScopeBase_None}.ToWire(),
 	}
 	req.SetCapsPresent(true)
 	req.SetScopePresent(true)
@@ -111,7 +112,7 @@ func TestSetCapsDropsConnsOnlyWhenNarrowing(t *testing.T) {
 	h.DropConnsForPrincipal = func(id string) int { dropped = append(dropped, id); return 2 }
 
 	// Start narrow so the next call is unambiguously a widening.
-	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}) //nolint:errcheck
 
 	widen := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Caps: protocol.Capability_All}
 	widen.SetCapsPresent(true)
@@ -132,7 +133,7 @@ func TestSetCapsDropsConnsOnlyWhenNarrowing(t *testing.T) {
 	// --keep-conns opts out.
 	dropped = nil
 	keep := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Caps: protocol.Capability_None,
-		Scope: Scope{Base: protocol.ScopeBase_None}.toWire()}
+		Scope: authority.Scope{Base: protocol.ScopeBase_None}.ToWire()}
 	keep.SetScopePresent(true)
 	keep.SetKeepConns(true)
 	if got := sendSetCaps(t, h, opConn, keep); got.ConnsClosed != 0 || len(dropped) != 0 {
@@ -143,17 +144,17 @@ func TestSetCapsDropsConnsOnlyWhenNarrowing(t *testing.T) {
 // Narrowing the scope alone — no cap bit touched — still counts.
 func TestScopeOnlyNarrowingCountsAsNarrowing(t *testing.T) {
 	before := TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa", "bb"}}}
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa", "bb"}}}
 	if !isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: Scope{Base: protocol.ScopeBase_None, IDs: []string{"aa", "bb"}}}) {
+		Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{"aa", "bb"}}}) {
 		t.Error("a base ranked down is not reported as a narrowing")
 	}
 	if !isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa"}}}) {
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"aa"}}}) {
 		t.Error("a dropped scope id is not reported as a narrowing")
 	}
 	if isNarrowing(before, TaskEntry{Capabilities: protocol.Capability_All,
-		Scope: Scope{Base: protocol.ScopeBase_Global, IDs: []string{"aa", "bb", "cc"}}}) {
+		Scope: authority.Scope{Base: protocol.ScopeBase_Global, IDs: []string{"aa", "bb", "cc"}}}) {
 		t.Error("a pure widening was reported as a narrowing")
 	}
 }
@@ -167,10 +168,10 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9905-1")}
 
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c)}
-	sc := Scope{Base: protocol.ScopeBase_Global,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}}}
-	req.Scope = sc.toWire()
-	req.Overrides = sc.overridesToWire()
+	sc := authority.Scope{Base: protocol.ScopeBase_Global,
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}}}
+	req.Scope = sc.ToWire()
+	req.Overrides = sc.OverridesToWire()
 	req.OverridesLen = uint8(len(req.Overrides))
 	req.SetScopePresent(true)
 	req.SetCascade(true)
@@ -185,7 +186,7 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 	if base, _, _ := ge.Scope.ForCap(protocol.Capability_FileRead); base != protocol.ScopeBase_Subtree {
 		t.Errorf("descendant's file_read scope = %v, want subtree, untouched by a cancel-only narrowing", base)
 	}
-	if err := validateScope(ge.Scope); err != nil {
+	if err := authority.Validate(ge.Scope); err != nil {
 		t.Errorf("descendant's scope is not legal: %v", err)
 	}
 }
@@ -196,10 +197,10 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 func TestSetCapsCascadeKeepsOverridesOfExercisedBits(t *testing.T) {
 	h, _, c, g, _ := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9907-1")}
-	h.Tasks.SetCaps(g, true, protocol.Capability_ExecControl, true, Scope{Base: protocol.ScopeBase_Subtree, //nolint:errcheck
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}})
+	h.Tasks.SetCaps(g, true, protocol.Capability_ExecControl, true, authority.Scope{Base: protocol.ScopeBase_Subtree, //nolint:errcheck
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}})
 
-	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Scope: Scope{Base: protocol.ScopeBase_Subtree}.toWire()}
+	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}.ToWire()}
 	req.SetScopePresent(true)
 	req.SetCascade(true)
 	if got := sendSetCaps(t, h, opConn, req); got.Status != protocol.SetCapsStatus_Ok {
@@ -217,11 +218,11 @@ func TestSetCapsCascadeKeepsOverridesOfExercisedBits(t *testing.T) {
 func TestSetCapsCascadeKeepsIDsInsideTheParentsReach(t *testing.T) {
 	h, p, c, g, u := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9906-1")}
-	h.Tasks.SetCaps(p, false, 0, true, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})                      //nolint:errcheck
-	h.Tasks.SetCaps(c, false, 0, true, Scope{Base: protocol.ScopeBase_None, IDs: []string{g, u}, VisIDs: []string{g, u}}) //nolint:errcheck
+	h.Tasks.SetCaps(p, false, 0, true, authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})                      //nolint:errcheck
+	h.Tasks.SetCaps(c, false, 0, true, authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{g, u}, VisIDs: []string{g, u}}) //nolint:errcheck
 
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, p),
-		Scope: Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}.toWire()}
+		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}.ToWire()}
 	req.SetScopePresent(true)
 	req.SetCascade(true)
 	if got := sendSetCaps(t, h, opConn, req); got.Status != protocol.SetCapsStatus_Ok {
@@ -239,9 +240,9 @@ func TestSetCapsCascadeKeepsIDsInsideTheParentsReach(t *testing.T) {
 // A narrowing of ONE bit's scope, or of what a task can see, is still a
 // narrowing: an attach opened under the wider grant must not outlive it.
 func TestPerBitAndVisibilityNarrowingCountsAsNarrowing(t *testing.T) {
-	ov := func(b protocol.ScopeBase) Scope {
-		return Scope{Base: protocol.ScopeBase_Subtree,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: b}}}
+	ov := func(b protocol.ScopeBase) authority.Scope {
+		return authority.Scope{Base: protocol.ScopeBase_Subtree,
+			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: b}}}
 	}
 	caps := protocol.Capability_Cancel
 	if !isNarrowing(TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Subtree)},
@@ -252,11 +253,11 @@ func TestPerBitAndVisibilityNarrowingCountsAsNarrowing(t *testing.T) {
 		TaskEntry{Capabilities: caps, Scope: ov(protocol.ScopeBase_Global)}) {
 		t.Error("an override ranked up was reported as a narrowing")
 	}
-	wide := Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global}
-	if !isNarrowing(TaskEntry{Scope: wide}, TaskEntry{Scope: Scope{Base: protocol.ScopeBase_Subtree}}) {
+	wide := authority.Scope{Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global}
+	if !isNarrowing(TaskEntry{Scope: wide}, TaskEntry{Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}}) {
 		t.Error("a visibility rank ranked down is not reported as a narrowing")
 	}
-	if !isNarrowing(TaskEntry{Scope: Scope{VisIDs: []string{"aa"}}}, TaskEntry{Scope: Scope{}}) {
+	if !isNarrowing(TaskEntry{Scope: authority.Scope{VisIDs: []string{"aa"}}}, TaskEntry{Scope: authority.Scope{}}) {
 		t.Error("a dropped view-only id is not reported as a narrowing")
 	}
 }

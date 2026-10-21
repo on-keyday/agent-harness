@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -13,7 +14,7 @@ func restoreCaller(t *testing.T, h *TaskHandler, caps protocol.Capability, port 
 	t.Helper()
 	idHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, caps, defaultScope(), "")
+		protocol.RunnerSelector{}, nil, caps, authority.DefaultScope(), "")
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -107,7 +108,7 @@ func TestRestoreProceedsWithPruneCap(t *testing.T) {
 	// before RestoreFn sees it, which would hide whether the CAP gate passed.
 	targetHex := h.Tasks.Create("repo", "child", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, caller, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None, defaultScope(), "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.DefaultScope(), "")
 
 	h.Handle(conn, restoreRequest(t, 0, hexToTaskID(t, targetHex)))
 

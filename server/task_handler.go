@@ -17,6 +17,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -865,7 +866,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		var creator protocol.TaskID
 		// An operator has no principal task and therefore no stored scope; its
 		// effective one is global, which is what scopeSet already answers.
-		scope := Scope{Base: protocol.ScopeBase_Global}
+		scope := authority.Scope{Base: protocol.ScopeBase_Global}
 		if pid.Id != ([16]byte{}) {
 			if t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:])); ok {
 				creator = t.CreatorTaskID
@@ -877,8 +878,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			PrincipalTaskId: pid,
 			CreatorTaskId:   creator,
 			Capabilities:    caps,
-			Scope:           scope.toWire(),
-			Overrides:       scope.overridesToWire(),
+			Scope:           scope.ToWire(),
+			Overrides:       scope.OverridesToWire(),
 			OverridesLen:    uint8(len(scope.Overrides)),
 		}
 		// Which commit THIS server is running. Ungated with the rest of the
@@ -1092,7 +1093,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	// for this scope does not depend on which runners happen to be up, and
 	// resolving first would answer no_runner to a request that is malformed
 	// either way.
-	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides), intersectCaps(creatorCaps, req.RequestedCaps))
+	scope, offender, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides), intersectCaps(creatorCaps, req.RequestedCaps))
 	if !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
@@ -1186,7 +1187,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// resume_caps_override, scope behind scope_present — same shape as
 	// SetCapsRequest. Validated up front for the same reason as the fresh
 	// path, but only when the scope will actually be written.
-	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides),
+	newScope, offender, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides),
 		h.resumedCaps(idHex, req.ResumeCapsOverride(), callerCaps, req.RequestedCaps))
 	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
@@ -1494,7 +1495,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if !isZeroTaskID(req.ResumeTaskId) {
 		childCaps = h.resumedCaps(hex.EncodeToString(req.ResumeTaskId.Id[:]), req.ResumeCapsOverride(), creatorCaps, req.RequestedCaps)
 	}
-	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides), childCaps)
+	reqScope, _, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides), childCaps)
 	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()) {
 		// OpenInteractiveResponse has no error_msg field, so the status is the
 		// whole answer; the client names the ids it sent.
@@ -2386,8 +2387,8 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		ResumedByKind:  t.ResumedByKind,
 		CreatorTaskId:  t.CreatorTaskID,
 		Capabilities:   t.Capabilities,
-		Scope:          t.Scope.toWire(),
-		Overrides:      t.Scope.overridesToWire(),
+		Scope:          t.Scope.ToWire(),
+		Overrides:      t.Scope.OverridesToWire(),
 		OverridesLen:   uint8(len(t.Scope.Overrides)),
 		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
 	}

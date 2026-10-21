@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
@@ -228,9 +229,9 @@ func TestConnEvents_SubtreeGating(t *testing.T) {
 	// Create parent task P and child task C.
 	// P must NOT have InfoGlobal so it is treated as a confined viewer.
 	var pidTask, cidTask protocol.TaskID
-	pHex := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+	pHex := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	copyHexToID(t, pHex, &pidTask)
-	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, pidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, pidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	copyHexToID(t, cHex, &cidTask)
 
 	// Create a subscriber conn that identifies as agent with principal=P.
@@ -345,7 +346,7 @@ func TestConnEvents_SameCIDAllThree(t *testing.T) {
 	var principalID protocol.TaskID
 	principalBytes, _ := hex.DecodeString("0102030405060708090a0b0c0d0e0f10")
 	copy(principalID.Id[:], principalBytes)
-	s.tasks.Create("/r", "t", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	s.tasks.Create("/r", "t", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	recordAgent(s, cidStr, principalID)
 	// Manually trigger OnConnIdentified (RecordClientIdentity already records via clientKinds,
 	// but in this test we bypassed the hello path so call the hook directly).
@@ -395,12 +396,12 @@ func TestConnEvents_PublishFilteredDelivery(t *testing.T) {
 	// Build a confined-caller subtree: leaf task L (no global visibility). The confined
 	// subscriber's principal is L, so it may see only agent conns in L's subtree.
 	var leafTask protocol.TaskID
-	lHex := s.tasks.Create("/r", "leaf", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+	lHex := s.tasks.Create("/r", "leaf", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	copyHexToID(t, lHex, &leafTask)
 
 	// A separate unrelated task U whose agent conn is OUTSIDE L's subtree.
 	var otherTask protocol.TaskID
-	uHex := s.tasks.Create("/r", "other", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+	uHex := s.tasks.Create("/r", "other", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
 	copyHexToID(t, uHex, &otherTask)
 
 	// --- Register the CONFINED subscriber on conns.status ---

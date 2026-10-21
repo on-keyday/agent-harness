@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -42,7 +43,7 @@ func replayInto(t *testing.T, path string) *TaskStore {
 func runningTask(t *testing.T, s *TaskStore, runner protocol.RunnerID) string {
 	t.Helper()
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	s.Assign(id, runner, "/wt", false)
 	return id
 }
@@ -496,7 +497,7 @@ func TestHoldAndReadoptPublishTheSettledStatus(t *testing.T) {
 			var rid protocol.RunnerID
 			rid.Id[0] = 0xab
 			id := s.Create("/repo", "p", tc.kind, protocol.ClientKind_Unspecified,
-				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+				protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 			s.Assign(id, rid, "/wt", false)
 
 			var holds []string
@@ -544,7 +545,7 @@ func TestReadoptLeavesASessionDetached(t *testing.T) {
 	var rid protocol.RunnerID
 	rid.Id[0] = 0xaa
 	id := store.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	store.Assign(id, rid, "/wt", false)
 	var hold protocol.HoldID
 	hold.Id[0] = 0xc0

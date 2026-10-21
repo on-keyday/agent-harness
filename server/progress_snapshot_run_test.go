@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -23,7 +24,7 @@ func TestRun_DeliberateStopWritesProgressSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	s := New(Config{Addr: addr, DataDir: dir})
 	id := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	s.tasks.SetProgress(id, "stage 9", 99)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,7 +56,7 @@ func TestRun_HoldPathStopWritesProgressSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	s := New(Config{Addr: addr, DataDir: dir})
 	id := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
 	s.tasks.SetProgress(id, "stage 9", 99)
 
 	ctx, cancel := context.WithCancel(context.Background())

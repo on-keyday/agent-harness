@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -14,7 +15,7 @@ import (
 func TestResumeScopePresence(t *testing.T) {
 	sib := protocol.TaskID{}
 	sib.Id[0] = 0xbb
-	kept := Scope{Base: protocol.ScopeBase_None, IDs: []string{"bb"}}
+	kept := authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{"bb"}}
 
 	t.Run("caps_override_alone_keeps_scope", func(t *testing.T) {
 		h := newTestHandler(t)
@@ -23,7 +24,7 @@ func TestResumeScopePresence(t *testing.T) {
 		markTerminalForTest(t, h, id)
 
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, protocol.Capability_FileRead, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, protocol.Capability_FileRead, false, authority.Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)
@@ -42,7 +43,7 @@ func TestResumeScopePresence(t *testing.T) {
 		markTerminalForTest(t, h, id)
 
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, true, Scope{Base: protocol.ScopeBase_Global}, protocol.TaskKind_Oneshot, ""); err != nil {
+			false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Global}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)

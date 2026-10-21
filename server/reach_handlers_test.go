@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -16,7 +17,7 @@ func reachHandler(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeCo
 	h, conn := newBoardTestHandler(t)
 	h.Board.SetReach(storeReach{h.Tasks})
 	idHex := h.Tasks.Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, caps, Scope{}, "bash")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, caps, authority.Scope{}, "bash")
 	tid := hexToTaskID(t, idHex)
 	st := h.Board.Attach(protocol.RunnerID{}, tid, "h", "bash")
 	h.BoardConnState = func(ConnHandle) *agentboard.ConnState { return st }
@@ -26,10 +27,10 @@ func reachHandler(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeCo
 func TestStoreReach(t *testing.T) {
 	s := NewTaskStore()
 	parentHex := s.Create("r", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_BoardPeer, Scope{}, "bash")
+		protocol.RunnerSelector{}, nil, protocol.Capability_BoardPeer, authority.Scope{}, "bash")
 	parent := hexToTaskID(t, parentHex)
 	childHex := s.Create("r", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, parent, "",
-		protocol.RunnerSelector{}, nil, 0, Scope{}, "bash")
+		protocol.RunnerSelector{}, nil, 0, authority.Scope{}, "bash")
 	child := hexToTaskID(t, childHex)
 	r := storeReach{s}
 	if c, ok := r.CreatorOf(child); !ok || c != parent {
@@ -252,7 +253,7 @@ func TestBoardPeerFollowsScope(t *testing.T) {
 	meHex := hex.EncodeToString(me.Id[:])
 	mk := func(creator protocol.TaskID) (string, protocol.TaskID) {
 		idHex := h.Tasks.Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-			creator, "", protocol.RunnerSelector{}, nil, 0, Scope{}, "bash")
+			creator, "", protocol.RunnerSelector{}, nil, 0, authority.Scope{}, "bash")
 		return idHex, hexToTaskID(t, idHex)
 	}
 	peerHex, peer := mk(protocol.TaskID{})
@@ -269,7 +270,7 @@ func TestBoardPeerFollowsScope(t *testing.T) {
 	}
 
 	// --scope-for board_peer=none+ids:<peer>: that peer, nothing free-form.
-	setScope(t, h, meHex, Scope{Base: protocol.ScopeBase_Subtree, Overrides: []ScopeOverride{{
+	setScope(t, h, meHex, authority.Scope{Base: protocol.ScopeBase_Subtree, Overrides: []authority.ScopeOverride{{
 		Caps: protocol.Capability_BoardPeer, Base: protocol.ScopeBase_None, IDs: []string{peerHex},
 	}}})
 	if !can(agentboard.SelfTopic(peer)) || !can(agentboard.SelfTopic(peer)+".side") {
@@ -280,7 +281,7 @@ func TestBoardPeerFollowsScope(t *testing.T) {
 	}
 
 	// --scope-for board_peer=global: today's reach.
-	setScope(t, h, meHex, Scope{Base: protocol.ScopeBase_Subtree, Overrides: []ScopeOverride{{
+	setScope(t, h, meHex, authority.Scope{Base: protocol.ScopeBase_Subtree, Overrides: []authority.ScopeOverride{{
 		Caps: protocol.Capability_BoardPeer, Base: protocol.ScopeBase_Global,
 	}}})
 	if !can(agentboard.SelfTopic(peer)) || !can("build.events") {

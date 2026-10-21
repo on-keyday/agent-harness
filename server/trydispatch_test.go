@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -56,7 +57,7 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
-	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, authority.Scope{}, "")
 	task, _ := tasks.Get(taskID)
 
 	ok := d.TryDispatch(task)
@@ -136,7 +137,7 @@ func TestTryDispatch_NoCapacity(t *testing.T) {
 		Conn:             fc,
 	})
 
-	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := tasks.Create("/repo", "do work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, authority.Scope{}, "")
 	task, _ := tasks.Get(taskID)
 
 	ok := d.TryDispatch(task)
@@ -167,7 +168,7 @@ func TestTryDispatch_SendError(t *testing.T) {
 	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, authority.Scope{}, "")
 	task, _ := tasks.Get(taskID)
 
 	ok := d.TryDispatch(task)
@@ -233,7 +234,7 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 	runnerID := fc.id
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
-	taskIDHex := tasks.Create("/repo", "ticket-test", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, Scope{}, "")
+	taskIDHex := tasks.Create("/repo", "ticket-test", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, authority.Scope{}, "")
 	task, _ := tasks.Get(taskIDHex)
 
 	ok := d.TryDispatch(task)

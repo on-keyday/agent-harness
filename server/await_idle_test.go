@@ -10,6 +10,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -235,7 +236,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 		// id for it. Without this the target gate answers not_found first and
 		// the sink gate under test is never reached — which is correct
 		// behaviour, but not what this test is about.
-		Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"ee000000000000000000000000000000"}}, "")
+		authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"ee000000000000000000000000000000"}}, "")
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

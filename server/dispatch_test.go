@@ -1,8 +1,9 @@
 package server
 
 import (
-	"github.com/on-keyday/objtrsf/objproto"
 	"testing"
+
+	"github.com/on-keyday/objtrsf/objproto"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"

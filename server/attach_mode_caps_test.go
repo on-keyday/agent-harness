@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -105,7 +106,7 @@ func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
 		protocol.RunnerSelector{}, nil, protocol.Capability_ExecView,
-		Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{targetHex}}, "")
+		authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{targetHex}}, "")
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9702-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

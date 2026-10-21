@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 )
@@ -97,7 +98,7 @@ func armBoardWatcher(h *TaskHandler, taskHex string, requester protocol.TaskID, 
 func TestIdleWatchers_OperatorSeesAllAgentSeesOwn(t *testing.T) {
 	h := newTestHandler(t)
 	target := "ee000000000000000000000000000000"
-	scope := Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{target}}
+	scope := authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{target}}
 	aHex := h.Tasks.Create("repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, scope, "")
 	bHex := h.Tasks.Create("repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
@@ -146,7 +147,7 @@ func TestIdleWatchers_AgentLosesSightWhenScopeNarrows(t *testing.T) {
 	h := newTestHandler(t)
 	aHex := h.Tasks.Create("repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None,
-		Scope{Base: protocol.ScopeBase_Subtree}, "")
+		authority.Scope{Base: protocol.ScopeBase_Subtree}, "")
 	a := hexToTaskID(t, aHex)
 	h.principals = map[string]protocol.TaskID{"ws:127.0.0.1:9601-1": a}
 	armBoardWatcher(h, "ee000000000000000000000000000000", a, "ws:127.0.0.1:9601-1")

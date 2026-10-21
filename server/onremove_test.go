@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -20,8 +21,8 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 	runnerID := fc.id
 
 	// Create two tasks and manually set them to Running (simulating dispatch).
-	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	tasks.Assign(taskA, testRunnerID(runnerID.String()), "", false)
 	tasks.Assign(taskB, testRunnerID(runnerID.String()), "", false)
 
@@ -80,7 +81,7 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 	runnerID := fc.id
 
 	// Create a task and manually mark it Succeeded (terminal).
-	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	tasks.Finish(taskID, 0, nil) // exit 0 → Succeeded
 
@@ -168,7 +169,7 @@ func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-31")}
 	runnerID := fc.id
 
-	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	tasks.Assign(id, testRunnerID(runnerID.String()), "", false)
 	if err := tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
@@ -224,7 +225,7 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-32")}
 	runnerID := fc.id
 
-	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID.String(), protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	tasks.Assign(id, testRunnerID(runnerID.String()), "", false)
 
 	reg.Add(&RunnerEntry{

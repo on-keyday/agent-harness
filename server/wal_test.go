@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -276,21 +277,21 @@ func TestMigrationDoesNotOverwriteAnExplicitRank(t *testing.T) {
 	}
 }
 
-// applyToWAL and scopeFromWAL are one projection in two directions; a field
+// applyScopeToWAL and scopeFromWAL are one projection in two directions; a field
 // carried by one and dropped by the other replays as a different authority.
 func TestScopeWALRoundTripCarriesEveryAxis(t *testing.T) {
 	id := "00112233445566778899aabbccddeeff"
-	in := Scope{
+	in := authority.Scope{
 		Base: protocol.ScopeBase_None, IDs: []string{id},
 		VisBase: protocol.ScopeBase_Subtree, VisBasePresent: true,
 		ExcludeSelf: true, VisIDs: []string{"aabbccddeeff00112233445566778899"},
-		Overrides: []ScopeOverride{{
+		Overrides: []authority.ScopeOverride{{
 			Caps: protocol.Capability_Cancel | protocol.Capability_FileWrite,
 			Base: protocol.ScopeBase_None, ExcludeSelf: true, IDs: []string{id},
 		}},
 	}
 	var ev WALEvent
-	in.applyToWAL(&ev)
+	applyScopeToWAL(in, &ev)
 
 	raw, err := json.Marshal(ev)
 	if err != nil {

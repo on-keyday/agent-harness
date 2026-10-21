@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -108,7 +109,7 @@ func TestSetParentSwap(t *testing.T) {
 	// A sibling of g under c must not move.
 	sib := h.Tasks.Create("/r", "sib", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, hexToTaskID(t, c), "", protocol.RunnerSelector{},
-		nil, protocol.Capability_Cancel, Scope{}, "")
+		nil, protocol.Capability_Cancel, authority.Scope{}, "")
 	capsBefore := map[string]protocol.Capability{}
 	for _, id := range []string{p, c, g, sib} {
 		e, _ := h.Tasks.Get(id)

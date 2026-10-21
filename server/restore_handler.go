@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -59,7 +60,7 @@ func (h *TaskHandler) handleRestoreTasks(conn ConnHandle, requestID uint32, cid 
 				continue // out of the caller's scope: not listed, not an oracle
 			}
 			raw, err := hex.DecodeString(c.TaskID)
-			if err != nil || len(raw) != taskIDHexLen/2 {
+			if err != nil || len(raw) != authority.TaskIDHexLen/2 {
 				continue
 			}
 			var row protocol.RestorableTask

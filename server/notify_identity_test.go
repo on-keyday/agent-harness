@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -22,7 +23,7 @@ func TestHandleNotify_IdentityFromPrincipalNotClient(t *testing.T) {
 	})
 	tidHex := h.Tasks.Create("/repo/a", "p", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_Notify, Scope{}, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_Notify, authority.Scope{}, "")
 	h.Tasks.Assign(tidHex, rid, "/wt", true)
 	tid := hexToTaskID(t, tidHex)
 

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 )
@@ -45,7 +46,7 @@ func detachedTask(t *testing.T, s *Server) string {
 	t.Helper()
 	id := s.tasks.Create("/repo", "work", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Unspecified, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
 	s.tasks.Assign(id, testRunnerID("ws:127.0.0.1:8539-40"), "", false)
 	if err := s.tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)

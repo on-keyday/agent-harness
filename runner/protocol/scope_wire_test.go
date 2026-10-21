@@ -231,7 +231,7 @@ func TestTaskScopeIDsRoundTrip(t *testing.T) {
 }
 
 // Disjointness and the empty mask are validated where the value is WRITTEN
-// (server: validateScope; client: MergeScopeOverride), not at decode. This
+// (server: authority.Validate; client: MergeScopeOverride), not at decode. This
 // pins that split rather than leaving a reader to assume the wire rejects
 // them: an override list that violates either still decodes cleanly, and the
 // gate is the handler.
