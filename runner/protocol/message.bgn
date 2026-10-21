@@ -871,6 +871,21 @@ format RunnerInfo:
     agent_profiles_len :u8
     agent_profiles :[agent_profiles_len]AgentProfileName
 
+# AuthoritySource is who last wrote a task's authority — its caps, its scope,
+# or the parent link its subtree scopes are measured from. Carried on TaskInfo
+# so a task wider than its parent can say why: a grant the operator wrote, a
+# parent narrowed after it, a moved parent link. 0 is a record from before
+# this field existed.
+enum AuthoritySource:
+    :u8
+    unknown           = 0, "unknown"
+    spawn             = 1, "spawn"              # created by another task (the actor)
+    operator_spawn    = 2, "operator_spawn"     # created by an operator connection
+    operator_caps_set = 3, "operator_caps_set"  # caps set wrote caps or scope
+    cascade           = 4, "cascade"            # clamped by caps set --cascade on the actor
+    resume            = 5, "resume"             # a resume re-granted caps or scope (actor: the resumer; zero for an operator)
+    reparent          = 6, "reparent"           # caps set-parent / --swap moved the parent link
+
 format TaskInfo:
     id :TaskID
     status :TaskStatus
@@ -917,7 +932,10 @@ format TaskInfo:
     # so "live, untitled" and "no live terminal" are told apart by this bit
     # rather than re-derived by every client from status and kind.
     live_terminal :u1
-    reserved :u5
+    # authority_actor_hidden: authority_actor was withheld because the caller
+    # cannot see that task. A zero actor alone reads as "the operator".
+    authority_actor_hidden :u1
+    reserved :u4
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
@@ -986,6 +1004,15 @@ format TaskInfo:
     # last_output_at: never stored. Read it only when live_terminal = 1.
     title_len :u16
     title :[title_len]u8
+    # Who last wrote this task's authority, and when (unix nanos, SERVER clock;
+    # 0 = unknown). authority_age_ms is now - authority_at computed on the
+    # server, as progress_age_ms is, so clock skew cannot distort it;
+    # meaningless when authority_at == 0. The actor is zero for an operator,
+    # and for a caller that cannot see it (authority_actor_hidden says which).
+    authority_source :AuthoritySource
+    authority_actor  :TaskID
+    authority_at     :u64
+    authority_age_ms :u64
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
