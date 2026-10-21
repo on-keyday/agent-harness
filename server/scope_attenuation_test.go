@@ -166,6 +166,27 @@ func TestAttenuateScopeHonoursTheCreatorsOverride(t *testing.T) {
 	}
 }
 
+// The attach powers are ranked: a holder of exec_control may also view and
+// cowrite, and those attaches are bound by exec_view's and exec_cowrite's OWN
+// scopes (attachModeScopeCap). A child holding only exec_control therefore
+// exercises exec_view's scope, and it must be bounded like a held bit.
+func TestAttenuateScopeBoundsTheScopesAStrongerBitExercises(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView | protocol.Capability_ExecCowrite | protocol.Capability_ExecControl, Base: protocol.ScopeBase_None}}})
+
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Subtree}, protocol.Capability_ExecControl)
+	if !ok {
+		t.Fatal("refused")
+	}
+	for _, bit := range []protocol.Capability{protocol.Capability_ExecView, protocol.Capability_ExecCowrite, protocol.Capability_ExecControl} {
+		if base, _, _ := got.ForCap(bit); base != protocol.ScopeBase_None {
+			t.Errorf("%v = %v, want none: an exec_control holder attaches through it", bit, base)
+		}
+	}
+}
+
 // Where the creator's override is WIDER than its base, the child may have
 // exactly that much for the bit: the bound is the creator's scope for the bit,
 // not its base.

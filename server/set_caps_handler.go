@@ -155,8 +155,9 @@ func isNarrowing(before, after TaskEntry) bool {
 		after.Scope.VisRank(), false, visibleIDs(after.Scope)) {
 		return true
 	}
+	exercised := exercisedBits(before.Capabilities)
 	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-		if before.Capabilities&bit == 0 {
+		if exercised&bit == 0 {
 			continue
 		}
 		bBase, bExcl, bIDs := before.Scope.ForCap(bit)
@@ -215,18 +216,19 @@ func visibleIDs(s Scope) []string {
 // it are dropped; a cascade has no caller to refuse.
 //
 // childCaps is the descendant's ALREADY-clamped capability mask, so an
-// override for a bit it no longer holds is dropped rather than left to
-// reapply if the bit is granted again later.
+// override for a bit it no longer holds or exercises (exercisedBits) is
+// dropped rather than left to reapply if the bit is granted again later.
 func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntry, children map[string][]string) Scope {
 	r := newGrantReach(parent.ID, parent.Scope, children)
+	exercised := exercisedBits(childCaps)
 	in := Scope{Base: child.Base, ExcludeSelf: child.ExcludeSelf, IDs: child.IDs}
 	for _, o := range child.Overrides {
-		o.Caps &= childCaps
+		o.Caps &= exercised
 		if o.Caps != protocol.Capability_None {
 			in.Overrides = append(in.Overrides, o)
 		}
 	}
-	bounded := r.boundRanks(in, childCaps)
+	bounded := r.boundRanks(in, exercised)
 	keep := func(ids []string, bits protocol.Capability) []string {
 		out := ids[:0:0]
 		for _, id := range ids {
@@ -243,7 +245,7 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 	}
 	out := Scope{
 		Base:        bounded.Base,
-		IDs:         keep(bounded.IDs, childCaps&^overridden),
+		IDs:         keep(bounded.IDs, exercised&^overridden),
 		ExcludeSelf: child.ExcludeSelf, // only ever narrows; nothing to clamp
 		VisIDs:      keep(child.VisIDs, protocol.Capability_None),
 	}

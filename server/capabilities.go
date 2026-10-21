@@ -189,6 +189,23 @@ func hasCap(have, want protocol.Capability) bool {
 	return have&want == want
 }
 
+// exercisedBits is the set of bits whose SCOPE a holder of caps acts through.
+// The attach powers are ranked (attachModeCap): a holder of exec_control may
+// view and cowrite, and a holder of exec_cowrite may view, while each attach
+// is bound by its MODE's own bit's scope (attachModeScopeCap). Bounding a
+// child by its literal bits would leave the scopes it attaches through
+// unbounded. The resume rank does not widen this way: resumeTargetAllowed
+// reads only the scope of a resume bit the caller holds.
+func exercisedBits(caps protocol.Capability) protocol.Capability {
+	if caps&protocol.Capability_ExecControl != 0 {
+		caps |= protocol.Capability_ExecCowrite
+	}
+	if caps&protocol.Capability_ExecCowrite != 0 {
+		caps |= protocol.Capability_ExecView
+	}
+	return caps
+}
+
 // intersectCaps is spawn-time attenuation: a child receives the bits its
 // creator holds AND requested. Monotonically non-increasing.
 func intersectCaps(creator, requested protocol.Capability) protocol.Capability {
@@ -525,7 +542,8 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	// its parent holds is lowered rather than refused -- the historical
 	// behaviour for the base, extended to the axes that did not exist then.
 	wantVis := minScopeBase(out.VisRank(), creator.VisRank())
-	out = r.boundRanks(out, childCaps)
+	exercised := exercisedBits(childCaps)
+	out = r.boundRanks(out, exercised)
 	// Written explicitly once the rank no longer follows the clamped base, as
 	// clampScopeUnder does: a child whose visibility followed a base the
 	// creator may act through but not see would otherwise see it.
@@ -537,7 +555,7 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	for _, o := range out.Overrides {
 		overridden |= o.Caps
 	}
-	baseBits := childCaps &^ overridden
+	baseBits := exercised &^ overridden
 
 	// Ids are CHECKED, never clamped: a silently dropped target produces a task
 	// whose scope differs from the one the caller wrote with nothing saying so.
@@ -545,7 +563,7 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 	// bit of an entry lands in exactly one piece, carrying the entry's ids.
 	for _, o := range out.Overrides {
 		for _, id := range o.IDs {
-			if !r.reaches(id, o.Caps&childCaps) {
+			if !r.reaches(id, o.Caps&exercised) {
 				return Scope{}, id, false
 			}
 		}

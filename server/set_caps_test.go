@@ -190,6 +190,27 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 	}
 }
 
+// A cascade keeps the override of a bit the descendant exercises without
+// holding it: dropping exec_view's override from an exec_control holder would
+// hand its view attaches the wider base scope.
+func TestSetCapsCascadeKeepsOverridesOfExercisedBits(t *testing.T) {
+	h, _, c, g, _ := scopeFixture(t)
+	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9907-1")}
+	h.Tasks.SetCaps(g, true, protocol.Capability_ExecControl, true, Scope{Base: protocol.ScopeBase_Subtree, //nolint:errcheck
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}})
+
+	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Scope: Scope{Base: protocol.ScopeBase_Subtree}.toWire()}
+	req.SetScopePresent(true)
+	req.SetCascade(true)
+	if got := sendSetCaps(t, h, opConn, req); got.Status != protocol.SetCapsStatus_Ok {
+		t.Fatalf("status = %v, want ok", got.Status)
+	}
+	ge, _ := h.Tasks.Get(g)
+	if base, _, _ := ge.Scope.ForCap(protocol.Capability_ExecView); base != protocol.ScopeBase_None {
+		t.Errorf("exec_view = %v, want none kept: the descendant view-attaches through it", base)
+	}
+}
+
 // A cascade keeps what is still inside the parent's reach. It used to keep only
 // the parent's own id and its explicit ids, so it dropped a descendant's id for
 // a task inside the parent's subtree.
