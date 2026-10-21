@@ -78,7 +78,7 @@ func TestScopeCoversNewChildAgreesWithActionSet(t *testing.T) {
 			all, allowed := authority.ActionSet(self, c.scope, protocol.Capability_ExecControl, childIndexOf(h.Tasks))
 			want := all || allowed[child]
 			if got := authority.CoversNewChild(c.scope, protocol.Capability_ExecControl); got != want {
-				t.Fatalf("scopeCoversNewChild = %v, actionSet says %v", got, want)
+				t.Fatalf("authority.CoversNewChild = %v, authority.ActionSet says %v", got, want)
 			}
 		})
 	}

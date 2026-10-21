@@ -168,7 +168,7 @@ func reachNarrowed(bBase protocol.ScopeBase, bExcl bool, bIDs []string, aBase pr
 }
 
 // visibleIDs is every id a scope makes visible on top of its rank — the id
-// half of visibilitySet's formula.
+// half of VisibleSet's formula.
 func visibleIDs(s Scope) []string {
 	out := append(append([]string(nil), s.VisIDs...), s.IDs...)
 	for _, o := range s.Overrides {
@@ -194,6 +194,9 @@ func visibleIDs(s Scope) []string {
 // childCaps is the descendant's ALREADY-clamped capability mask, so an
 // override for a bit it no longer holds or exercises (ExercisedBits) is
 // dropped rather than left to reapply if the bit is granted again later.
+//
+// parent must not be nil. Unlike Attenuate, where nil is an operator creator,
+// a cascade always clamps under a task.
 func ClampUnder(child Scope, childCaps protocol.Capability, parent *Reach) Scope {
 	r := parent
 	exercised := ExercisedBits(childCaps)

@@ -16,13 +16,16 @@ import (
 var formerCopies = []string{
 	"scopeForCap", "reachOfDescendant", "actionSet", "visibleSetOf", "descendantsOf",
 	"clampScopeUnder", "isNarrowing", "minScopeBase", "scopeBaseRank", "validateScope",
-	"exercisedBits", "attachModeScopeCap",
+	"exercisedBits", "attachModeScopeCap", "attachModeCap", "scopeCoversNewChild",
+	"normalizeScopeIDs", "scopeFromWire", "newGrantReach", "reachNarrowed", "visibleIDs",
+	"grantReach",
 }
 
 // TestNoSecondScopeImplementation fails when a function under one of those
 // names is declared again anywhere that enforces or displays authority.
 func TestNoSecondScopeImplementation(t *testing.T) {
-	decl := regexp.MustCompile(`(?m)^func (?:\([^)]*\) )?(` + strings.Join(formerCopies, "|") + `)\(`)
+	names := strings.Join(formerCopies, "|")
+	decl := regexp.MustCompile(`(?m)^(?:func (?:\([^)]*\) )?(` + names + `)\(|type (` + names + `) )`)
 	for _, dir := range []string{"../server", "../cli", "../tui", "../cmd"} {
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -36,7 +39,7 @@ func TestNoSecondScopeImplementation(t *testing.T) {
 				return err
 			}
 			for _, m := range decl.FindAllStringSubmatch(string(src), -1) {
-				t.Errorf("%s declares %s: scope semantics live in package authority; call it instead of restating it", path, m[1])
+				t.Errorf("%s declares %s: scope semantics live in package authority; call it instead of restating it", path, m[1]+m[2])
 			}
 			return nil
 		})

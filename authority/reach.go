@@ -17,6 +17,8 @@ type Reach struct {
 	sets     map[protocol.Capability]map[string]bool // per bit; a nil value is "all"
 }
 
+// NewReach measures the task hex with scope over the creator index children.
+// The visible set is computed now; per-bit action sets on first use.
 func NewReach(hex string, scope Scope, children map[string][]string) *Reach {
 	r := &Reach{hex: hex, scope: scope, children: children, sets: map[protocol.Capability]map[string]bool{}}
 	r.visAll, r.vis = VisibleSet(hex, scope, children)

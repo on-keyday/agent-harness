@@ -378,7 +378,7 @@ func creatorReach(t protocol.TaskInfo, target protocol.TaskID) TaskReach {
 // BuildTaskGrants reads the id clauses and global bases out of each task's
 // scope and overrides.
 //
-// The capability a clause carries follows scopeForCap: an override's ids get
+// The capability a clause carries follows authority.Scope.ForCap: an override's ids get
 // that override's mask, the base scope's ids get every held bit no override
 // claims. An id reached by a clause whose bits are all zero is still DISCLOSED
 // to the task (message.bgn, ScopeOverride), so it becomes a view edge rather

@@ -342,7 +342,7 @@ also worth doing without that work, since it is the same caps bypass the
 talks among itself, and runs on its own runners and forwards, without
 touching the others. The operator still sees everything.
 
-Today the task tree (caps plus `Scope`, `server/scope.go`) is the only
+Today the task tree (caps plus `Scope`, `authority/scope.go`) is the only
 isolation unit:
 
 | Already bounded by the tree | Outside the tree, one flat namespace |

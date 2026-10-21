@@ -65,7 +65,7 @@ type Scope struct {
 // it is handed an id for, which is the shape a board-driven observer wants.
 // See Validate for why the bound that used to exist was dropped.
 //
-// Ids named here join the VISIBLE set (see visibilitySet) even though the rank
+// Ids named here join the VISIBLE set (see VisibleSet) even though the rank
 // does not: an id written into a grant was disclosed by the granter, so hiding
 // it from ls would protect nothing.
 type ScopeOverride struct {
@@ -129,7 +129,7 @@ func CapsLabel(m protocol.Capability) string {
 
 // Validate checks a scope for internal CONSISTENCY. Nothing here is about
 // how much authority the value grants — that is the operator's call, bounded
-// at spawn by attenuateScope and not at all for an operator's own set_caps.
+// at spawn by Attenuate and not at all for an operator's own set_caps.
 //
 //   - Override masks are non-empty and pairwise disjoint, which is what keeps
 //     ForCap a lookup rather than a precedence walk.
@@ -158,7 +158,7 @@ func CapsLabel(m protocol.Capability) string {
 // that precisely with scope_by_cap.
 //
 // Ids are not checked here either. Their bound is the parent's effective set at
-// grant time (attenuateScope), not the task's own base.
+// grant time (Attenuate), not the task's own base.
 func Validate(s Scope) error {
 	if !s.VisBasePresent && s.VisBase != protocol.ScopeBase(0) {
 		return fmt.Errorf("vis_base %s set while vis_base_present is 0 (non-canonical encoding)", s.VisBase)

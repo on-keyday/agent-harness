@@ -969,7 +969,7 @@ anything, can look at what it is told about. Under the old rule the only
 way to get it was a global visibility rank, which grants exactly the
 enumeration the operator was withholding. Task ids are 128 random bits,
 so a wide action rank buys no discovery on its own —
-`server/scope.go`'s `validateScope` carries the full reasoning, and it
+`authority/scope.go`'s `Validate` carries the full reasoning, and it
 compares the two ranks nowhere.
 
 Both halves are editable from every surface: `--scope` on the CLI and the
@@ -1672,6 +1672,9 @@ pubsub/               topic broker for task-log / status fanout
 agentboard/           topic broker for agent-to-agent messaging
 runner/protocol/      bgn-generated wire schema for control / status messages
 topics/               topic name constants
+authority/            what a scope covers: scope types, target sets, attenuation and
+                      the cascade clamp — the one implementation the server enforces
+                      with and the CLI / TUI / WebUI read with
 server/               harness server: registry / taskstore / scheduler / WAL / logstore /
                       pubsub + agentboard wiring
 runner/               harness runner: worktree manager / claude exec / connect loop /

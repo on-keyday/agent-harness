@@ -37,10 +37,10 @@ func DescendantsOf(children map[string][]string, selfHex string, allowed map[str
 	}
 }
 
-// ActionSet is the ACTION branch of scopeSetWith, keyed by the task rather than
-// a connection: the target set scope gives the bit want. The board's reach
-// source calls it for board_peer (reach spec D16), so the board and the control
-// plane cannot disagree about what a scope covers.
+// ActionSet is the target set scope gives the bit want, keyed by the task
+// (server's scopeSetWith resolves a connection to its principal and calls it).
+// The board's reach source calls it for board_peer (reach spec D16), so the
+// board and the control plane cannot disagree about what a scope covers.
 func ActionSet(callerHex string, scope Scope, want protocol.Capability, children map[string][]string) (all bool, allowed map[string]bool) {
 	base, excludeSelf, ids := scope.ForCap(want)
 	if base == protocol.ScopeBase_Global {
@@ -66,8 +66,14 @@ func ActionSet(callerHex string, scope Scope, want protocol.Capability, children
 	return false, allowed
 }
 
-// VisibleSet is visibilitySet over a caller-supplied creator index, for the
-// callers that measure a task other than the connection's own principal.
+// VisibleSet is what a task with this scope may SEE:
+//
+//	{self} ∪ baseSet(VisRank) ∪ VisIDs ∪ IDs ∪ every override's IDs
+//
+// Self is unconditional: ExcludeSelf removes self from an ACTION set only.
+// Action ids join without being repeated in VisIDs, because an id written into
+// a grant was disclosed by the granter. server's visibilitySet calls it for a
+// connection's principal.
 func VisibleSet(callerHex string, scope Scope, children map[string][]string) (all bool, allowed map[string]bool) {
 	visRank := scope.VisRank()
 	if visRank == protocol.ScopeBase_Global {

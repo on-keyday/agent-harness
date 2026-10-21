@@ -79,7 +79,7 @@ func TestScopeString(t *testing.T) {
 func TestDefaultScopeIsTheZeroValue(t *testing.T) {
 	d := DefaultScope()
 	if d.Base != (Scope{}).Base || len(d.IDs) != 0 {
-		t.Fatal("defaultScope must be the zero value so an absent scope reads as subtree")
+		t.Fatal("DefaultScope must be the zero value so an absent scope reads as subtree")
 	}
 }
 
@@ -118,7 +118,7 @@ func TestForCapPrefersTheOverride(t *testing.T) {
 	}
 }
 
-// validateScope is the CONSISTENCY list. Ranks are deliberately absent from
+// Validate is the CONSISTENCY list. Ranks are deliberately absent from
 // it — an action rank above the visibility rank is legal, because "cannot
 // enumerate" and "cannot act" are different powers and an operator may want
 // the first without the second. Ids are absent too: their bound is the
@@ -138,7 +138,7 @@ func TestValidateScopeRejections(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if err := Validate(tc.s); err == nil {
-			t.Errorf("%s: validateScope = nil, want an error", tc.name)
+			t.Errorf("%s: Validate = nil, want an error", tc.name)
 		}
 	}
 }
@@ -173,7 +173,7 @@ func TestValidateScopeAccepts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if err := Validate(tc.s); err != nil {
-			t.Errorf("%s: validateScope = %v, want nil", tc.name, err)
+			t.Errorf("%s: Validate = %v, want nil", tc.name, err)
 		}
 	}
 }
