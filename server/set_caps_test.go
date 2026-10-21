@@ -181,6 +181,13 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 	if base, _, _ := ge.Scope.ForCap(protocol.Capability_Cancel); base != protocol.ScopeBase_None {
 		t.Errorf("descendant's cancel scope = %v, want none like its parent's", base)
 	}
+	// Only cancel: the descendant's other bits keep the subtree they had.
+	if base, _, _ := ge.Scope.ForCap(protocol.Capability_FileRead); base != protocol.ScopeBase_Subtree {
+		t.Errorf("descendant's file_read scope = %v, want subtree, untouched by a cancel-only narrowing", base)
+	}
+	if err := validateScope(ge.Scope); err != nil {
+		t.Errorf("descendant's scope is not legal: %v", err)
+	}
 }
 
 // A cascade keeps what is still inside the parent's reach. It used to keep only

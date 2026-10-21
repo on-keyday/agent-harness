@@ -457,10 +457,9 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // visible set.
 //
 //   - Ranks are clamped by permissiveness (see minScopeBase), which is why a
-//     subtree parent asking for a global child yields subtree. The child's
-//     base scope serves every held bit its own overrides do not name, so it is
-//     clamped to the narrowest rank the creator holds for any of them; each
-//     override, to the narrowest for its own held bits. The visibility rank
+//     subtree parent asking for a global child yields subtree. Each held bit is
+//     bounded by the creator's rank for that bit (grantReach.boundRanks), so a
+//     creator narrowed for one bit narrows that bit alone. The visibility rank
 //     clamps to the creator's VISIBILITY rank, never to its action base.
 //   - Ids are checked by membership AT SPAWN TIME: action ids against the
 //     creator's set for each held bit they serve, view-only ids against what it
@@ -522,17 +521,11 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 
 	r := newGrantReach(creatorHex, creator, h.childIndex())
 
-	var overridden protocol.Capability
-	for _, o := range out.Overrides {
-		overridden |= o.Caps
-	}
-	baseBits := childCaps &^ overridden
-
 	// Rank clamping, per axis and per capability. A child asking for more than
 	// its parent holds is lowered rather than refused -- the historical
 	// behaviour for the base, extended to the axes that did not exist then.
 	wantVis := minScopeBase(out.VisRank(), creator.VisRank())
-	out.Base = minScopeBase(out.Base, r.ceiling(baseBits))
+	out = r.boundRanks(out, childCaps)
 	// Written explicitly once the rank no longer follows the clamped base, as
 	// clampScopeUnder does: a child whose visibility followed a base the
 	// creator may act through but not see would otherwise see it.
@@ -540,12 +533,16 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope, childCaps pro
 		out.VisBasePresent = true
 		out.VisBase = wantVis
 	}
-	for i := range out.Overrides {
-		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, r.ceiling(out.Overrides[i].Caps&childCaps))
+	var overridden protocol.Capability
+	for _, o := range out.Overrides {
+		overridden |= o.Caps
 	}
+	baseBits := childCaps &^ overridden
 
 	// Ids are CHECKED, never clamped: a silently dropped target produces a task
 	// whose scope differs from the one the caller wrote with nothing saying so.
+	// Checking the pieces boundRanks produced is checking the request: every
+	// bit of an entry lands in exactly one piece, carrying the entry's ids.
 	for _, o := range out.Overrides {
 		for _, id := range o.IDs {
 			if !r.reaches(id, o.Caps&childCaps) {
@@ -586,18 +583,76 @@ func newGrantReach(hex string, scope Scope, children map[string][]string) *grant
 	return r
 }
 
-// ceiling is the narrowest rank the granter holds for any bit in bits. It
-// starts from the granter's base, the historical bound, so a scope serving no
-// held bit is bounded as it always was.
-func (r *grantReach) ceiling(bits protocol.Capability) protocol.ScopeBase {
-	c := r.scope.Base
-	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-		if bits&bit != 0 {
-			b, _, _ := r.scope.ForCap(bit)
-			c = minScopeBase(c, b)
-		}
+// boundRanks re-expresses s so that every bit in held resolves to at most the
+// granter's rank FOR THAT BIT, narrowing only the bits the granter narrows.
+//
+// Each entry — the base scope, each override — keeps one rank. A held bit
+// whose bound differs from it moves into an override of its own rank,
+// carrying the entry's exclude_self and ids; bits of one entry bound to the
+// same rank share one override. Lowering the whole entry instead would narrow
+// every other bit it serves: a parent narrowed for cancel alone would take its
+// child's file_read down with it. Masks stay pairwise disjoint because a piece
+// only ever holds bits of the entry it came from.
+//
+//   - The base keeps min(its rank, the granter's base): the historical bound,
+//     which also decides visibility where the rank follows the base.
+//   - An override keeps min(its rank, the granter's base) for the bits the
+//     task does not hold, so a grant template survives reuse as it always did.
+//   - spawn never moves. It names no task, and validateScope refuses it in a
+//     mask.
+//
+// Where the granter's override for a bit is WIDER than its base, the bit may
+// rise to it: the bound is the granter's scope for the bit, not its base.
+func (r *grantReach) boundRanks(s Scope, held protocol.Capability) Scope {
+	bound := func(rank protocol.ScopeBase, bit protocol.Capability) protocol.ScopeBase {
+		b, _, _ := r.scope.ForCap(bit)
+		return minScopeBase(rank, b)
 	}
-	return c
+	// split groups the held bits of one entry by the rank they are bound to,
+	// leaving out those bound to keep; ranks come back in ascending order.
+	split := func(rank, keep protocol.ScopeBase, bits protocol.Capability) (stay protocol.Capability, moved []ScopeOverride) {
+		byRank := map[protocol.ScopeBase]protocol.Capability{}
+		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+			if bits&bit == 0 {
+				continue
+			}
+			if b := bound(rank, bit); b != keep {
+				byRank[b] |= bit
+			} else {
+				stay |= bit
+			}
+		}
+		for _, b := range []protocol.ScopeBase{protocol.ScopeBase_None, protocol.ScopeBase_Subtree, protocol.ScopeBase_Global} {
+			if m := byRank[b]; m != 0 {
+				moved = append(moved, ScopeOverride{Caps: m, Base: b})
+			}
+		}
+		return stay, moved
+	}
+	withEntry := func(pieces []ScopeOverride, excl bool, ids []string) []ScopeOverride {
+		for i := range pieces {
+			pieces[i].ExcludeSelf = excl
+			pieces[i].IDs = append([]string(nil), ids...)
+		}
+		return pieces
+	}
+
+	out := s
+	out.Base = minScopeBase(s.Base, r.scope.Base)
+	out.Overrides = nil
+	var overridden protocol.Capability
+	for _, o := range s.Overrides {
+		overridden |= o.Caps
+		keep := minScopeBase(o.Base, r.scope.Base)
+		stay, moved := split(o.Base, keep, o.Caps&held)
+		if main := stay | o.Caps&^held; main != 0 {
+			out.Overrides = append(out.Overrides, ScopeOverride{Caps: main, Base: keep, ExcludeSelf: o.ExcludeSelf, IDs: o.IDs})
+		}
+		out.Overrides = append(out.Overrides, withEntry(moved, o.ExcludeSelf, o.IDs)...)
+	}
+	_, moved := split(s.Base, out.Base, held&^overridden&^protocol.Capability_Spawn)
+	out.Overrides = append(out.Overrides, withEntry(moved, s.ExcludeSelf, s.IDs)...)
+	return out
 }
 
 // reaches reports whether id may be named in a grant serving bits. Every id

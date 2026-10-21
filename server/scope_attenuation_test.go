@@ -111,8 +111,9 @@ func TestAttenuateScopeViewOnlyIDIsNotActionable(t *testing.T) {
 }
 
 // The creator's override for a bit bounds the child's scope for that bit, even
-// when the child writes no override for it: the child's base scope serves every
-// bit it holds that its own overrides do not name.
+// when the child writes no override for it — and ONLY that bit: the child's
+// other bits keep the rank they asked for, so the narrowing arrives as an
+// override on the child rather than as a lowered base.
 func TestAttenuateScopeHonoursTheCreatorsOverride(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
@@ -120,20 +121,69 @@ func TestAttenuateScopeHonoursTheCreatorsOverride(t *testing.T) {
 		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}}})
 
 	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_Cancel|protocol.Capability_FileRead)
-	if !ok || got.Base != protocol.ScopeBase_None {
-		t.Errorf("base = %v ok=%v, want none: the creator may cancel nothing but itself", got.Base, ok)
+	if !ok {
+		t.Fatal("refused")
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_Cancel); base != protocol.ScopeBase_None {
+		t.Errorf("cancel = %v, want none: the creator may cancel nothing but itself", base)
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_FileRead); base != protocol.ScopeBase_Global {
+		t.Errorf("file_read = %v, want global: the creator's cancel override does not narrow it", base)
+	}
+	if err := validateScope(got); err != nil {
+		t.Errorf("result is not a legal scope: %v", err)
 	}
 	// A child that does not hold cancel is not bound by the cancel override.
 	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_FileRead)
-	if !ok || got.Base != protocol.ScopeBase_Global {
-		t.Errorf("base = %v ok=%v, want global for a file_read-only child", got.Base, ok)
+	if !ok || got.Base != protocol.ScopeBase_Global || len(got.Overrides) != 0 {
+		t.Errorf("scope = %+v ok=%v, want plain global for a file_read-only child", got, ok)
 	}
-	// The same bound on the child's own override for the bit.
+	// The same bound on the child's own override, split where the creator's
+	// ranks for its bits differ.
 	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_None,
-		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Global}}},
-		protocol.Capability_Cancel)
-	if !ok || len(got.Overrides) != 1 || got.Overrides[0].Base != protocol.ScopeBase_None {
-		t.Errorf("cancel override = %+v ok=%v, want base none", got.Overrides, ok)
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_FileRead, Base: protocol.ScopeBase_Global}}},
+		protocol.Capability_Cancel|protocol.Capability_FileRead)
+	if !ok {
+		t.Fatal("refused")
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_Cancel); base != protocol.ScopeBase_None {
+		t.Errorf("override cancel = %v, want none", base)
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_FileRead); base != protocol.ScopeBase_Global {
+		t.Errorf("override file_read = %v, want global", base)
+	}
+	if err := validateScope(got); err != nil {
+		t.Errorf("result is not a legal scope: %v", err)
+	}
+	// spawn names no task and may not appear in an override, so a child
+	// holding it gets no override for it.
+	got, _, ok = h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_All)
+	if !ok {
+		t.Fatal("refused")
+	}
+	if err := validateScope(got); err != nil {
+		t.Errorf("an all-holding child got an illegal scope: %v", err)
+	}
+}
+
+// Where the creator's override is WIDER than its base, the child may have
+// exactly that much for the bit: the bound is the creator's scope for the bit,
+// not its base.
+func TestAttenuateScopeAllowsWhatTheCreatorsOverrideAllows(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}})
+
+	got, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global}, protocol.Capability_ExecView|protocol.Capability_Cancel)
+	if !ok {
+		t.Fatal("refused")
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_ExecView); base != protocol.ScopeBase_Global {
+		t.Errorf("exec_view = %v, want global like the creator's", base)
+	}
+	if base, _, _ := got.ForCap(protocol.Capability_Cancel); base != protocol.ScopeBase_None {
+		t.Errorf("cancel = %v, want none like the creator's base", base)
 	}
 }
 

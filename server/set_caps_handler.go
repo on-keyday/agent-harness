@@ -208,21 +208,25 @@ func visibleIDs(s Scope) []string {
 //
 // It measures against the parent through grantReach, the same helper spawn-time
 // attenuation uses, so a cascade and a spawn agree on what the parent covers:
-// each held bit's rank and ids are bounded by the parent's scope FOR THAT BIT,
-// and an id survives when it is still inside the parent's reach — not only
-// when the parent names it, which dropped ids inside the parent's subtree.
-// Ids outside it are dropped; a cascade has no caller to refuse.
+// each held bit's rank and ids are bounded by the parent's scope FOR THAT BIT
+// (boundRanks, which narrows only the bits the parent narrows), and an id
+// survives when it is still inside the parent's reach — not only when the
+// parent names it, which dropped ids inside the parent's subtree. Ids outside
+// it are dropped; a cascade has no caller to refuse.
 //
 // childCaps is the descendant's ALREADY-clamped capability mask, so an
 // override for a bit it no longer holds is dropped rather than left to
 // reapply if the bit is granted again later.
 func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntry, children map[string][]string) Scope {
 	r := newGrantReach(parent.ID, parent.Scope, children)
-	var overridden protocol.Capability
+	in := Scope{Base: child.Base, ExcludeSelf: child.ExcludeSelf, IDs: child.IDs}
 	for _, o := range child.Overrides {
-		overridden |= o.Caps
+		o.Caps &= childCaps
+		if o.Caps != protocol.Capability_None {
+			in.Overrides = append(in.Overrides, o)
+		}
 	}
-	baseBits := childCaps &^ overridden
+	bounded := r.boundRanks(in, childCaps)
 	keep := func(ids []string, bits protocol.Capability) []string {
 		out := ids[:0:0]
 		for _, id := range ids {
@@ -233,9 +237,13 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 		return out
 	}
 
+	var overridden protocol.Capability
+	for _, o := range bounded.Overrides {
+		overridden |= o.Caps
+	}
 	out := Scope{
-		Base:        minScopeBase(child.Base, r.ceiling(baseBits)),
-		IDs:         keep(child.IDs, baseBits),
+		Base:        bounded.Base,
+		IDs:         keep(bounded.IDs, childCaps&^overridden),
 		ExcludeSelf: child.ExcludeSelf, // only ever narrows; nothing to clamp
 		VisIDs:      keep(child.VisIDs, protocol.Capability_None),
 	}
@@ -248,12 +256,9 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 		out.VisBase = clamped
 	}
 
-	for _, o := range child.Overrides {
-		o.Caps &= childCaps
-		if o.Caps == protocol.Capability_None {
-			continue
-		}
-		o.Base = minScopeBase(o.Base, r.ceiling(o.Caps))
+	// Ids are filtered per piece: an id the parent may still reach for some of
+	// an entry's bits survives in those pieces and leaves the others.
+	for _, o := range bounded.Overrides {
 		o.IDs = keep(o.IDs, o.Caps)
 		out.Overrides = append(out.Overrides, o)
 	}
