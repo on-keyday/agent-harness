@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -352,43 +353,25 @@ type TaskReach struct {
 	Visible bool
 }
 
-// reachOfDescendant resolves what t reaches of target, a task in t's subtree.
-// It follows scopeForCap per bit and the server's visibilitySet: a subtree or
-// global base covers a descendant, a none base only an id naming it.
-func reachOfDescendant(t protocol.TaskInfo, target protocol.TaskID) TaskReach {
-	covers := func(base protocol.ScopeBase, ids []protocol.TaskID) bool {
-		if base == protocol.ScopeBase_Subtree || base == protocol.ScopeBase_Global {
-			return true
-		}
-		for _, id := range ids {
-			if id == target {
-				return true
-			}
-		}
-		return false
-	}
-	held := t.Capabilities
+// creatorReach resolves what t reaches of target, a task in t's subtree,
+// through package authority: per literally held bit, whether ActionSet covers
+// the target, and whether VisibleSet does. The index needs only the one edge
+// from t to target to put target in t's subtree.
+func creatorReach(t protocol.TaskInfo, target protocol.TaskID) TaskReach {
+	s := authority.ScopeFromWire(t.Scope, t.Overrides)
+	from, to := hex.EncodeToString(t.Id.Id[:]), hex.EncodeToString(target.Id[:])
+	children := map[string][]string{from: {to}}
 	var r TaskReach
-	var overMask protocol.Capability
-	for _, o := range t.Overrides {
-		overMask |= o.Caps
-		if covers(o.Base, o.Ids) {
-			r.Caps |= o.Caps & held
+	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+		if t.Capabilities&bit == 0 {
+			continue
 		}
-		if covers(protocol.ScopeBase_None, o.Ids) {
-			r.Visible = true
+		if all, set := authority.ActionSet(from, s, bit, children); all || set[to] {
+			r.Caps |= bit
 		}
 	}
-	if covers(t.Scope.Base, t.Scope.Ids) {
-		r.Caps |= held &^ overMask
-	}
-	visBase := t.Scope.Base
-	if t.Scope.VisBasePresent() {
-		visBase = t.Scope.VisBase
-	}
-	if covers(visBase, t.Scope.VisIds) || covers(protocol.ScopeBase_None, t.Scope.Ids) {
-		r.Visible = true
-	}
+	all, vis := authority.VisibleSet(from, s, children)
+	r.Visible = all || vis[to]
 	return r
 }
 
@@ -422,31 +405,51 @@ func BuildTaskGrants(tasks []protocol.TaskInfo) TaskGrants {
 	for _, t := range tasks {
 		from := hexID(t.Id)
 		if p, ok := byID[hexID(t.CreatorTaskId)]; ok && t.CreatorTaskId != (protocol.TaskID{}) && p.Id != t.Id {
-			out.ParentReach[from] = reachOfDescendant(p, t.Id)
+			out.ParentReach[from] = creatorReach(p, t.Id)
 		}
 		held := t.Capabilities
-
+		s := authority.ScopeFromWire(t.Scope, t.Overrides)
 		var overMask protocol.Capability
-		for _, o := range t.Overrides {
+		for _, o := range s.Overrides {
 			overMask |= o.Caps
 		}
-		actionCaps := held &^ overMask
 
-		// What already reaches every task.
-		var globalAction, globalOverride protocol.Capability
-		if t.Scope.Base == protocol.ScopeBase_Global {
-			globalAction = actionCaps
+		// Per held bit, the clause authority resolves it through: the base
+		// scope's (an action clause) or an override's. What that clause names
+		// is what the bit carries; a global clause reaches every task.
+		type reach struct {
+			action, override protocol.Capability
 		}
-		for _, o := range t.Overrides {
-			if o.Base == protocol.ScopeBase_Global {
-				globalOverride |= o.Caps & held
+		targets := map[string]*reach{}
+		at := func(k string) *reach {
+			if targets[k] == nil {
+				targets[k] = &reach{}
+			}
+			return targets[k]
+		}
+		var globalAction, globalOverride protocol.Capability
+		for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+			if held&bit == 0 {
+				continue
+			}
+			base, _, ids := s.ForCap(bit)
+			override := overMask&bit != 0
+			if base == protocol.ScopeBase_Global {
+				if override {
+					globalOverride |= bit
+				} else {
+					globalAction |= bit
+				}
+			}
+			for _, id := range ids {
+				if override {
+					at(id).override |= bit
+				} else {
+					at(id).action |= bit
+				}
 			}
 		}
-		visBase := t.Scope.Base
-		if t.Scope.VisBasePresent() {
-			visBase = t.Scope.VisBase
-		}
-		visGlobal := visBase == protocol.ScopeBase_Global
+		visGlobal := s.VisRank() == protocol.ScopeBase_Global
 		globalCaps := globalAction | globalOverride
 		switch {
 		case globalAction != 0:
@@ -457,27 +460,18 @@ func BuildTaskGrants(tasks []protocol.TaskInfo) TaskGrants {
 			out.Global[from] = TaskGlobalGrant{Kind: GrantView}
 		}
 
-		// Per target: the bits each kind of clause carries to it.
-		type reach struct {
-			action, override protocol.Capability
+		// Every id a clause names is disclosed to the task even when no held
+		// bit reaches it through that clause (message.bgn, ScopeOverride), so
+		// each becomes at least a view target.
+		for _, id := range s.IDs {
+			at(id)
 		}
-		targets := map[string]*reach{}
-		at := func(id protocol.TaskID) *reach {
-			k := hexID(id)
-			if targets[k] == nil {
-				targets[k] = &reach{}
-			}
-			return targets[k]
-		}
-		for _, id := range t.Scope.Ids {
-			at(id).action |= actionCaps
-		}
-		for _, o := range t.Overrides {
-			for _, id := range o.Ids {
-				at(id).override |= o.Caps & held
+		for _, o := range s.Overrides {
+			for _, id := range o.IDs {
+				at(id)
 			}
 		}
-		for _, id := range t.Scope.VisIds {
+		for _, id := range s.VisIDs {
 			at(id)
 		}
 		delete(targets, from) // self is always in reach; not a grant
