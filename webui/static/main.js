@@ -488,6 +488,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     syncReachControls(reach);
     const wi = whatIfState && whatIfState.result;
     if (whatIfPanel) whatIfPanel.hidden = !wi;
+    // 権限で強調 draws nothing under a what-if (markBit is 0 below), so it is
+    // put away as reach mode puts it away, rather than left to do nothing.
+    if (taskTreeBit && wi) taskTreeBit.hidden = true;
     renderTaskTreeGraph(taskTreeMode ? ((wi && wi.tree) || lastTaskTree) : null,
       (wi && wi.grantEdges) || lastGrantEdges, lastTasks,
       taskStatusColor, revealTaskInList,
@@ -498,7 +501,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
   // showWhatIf puts a harness.whatIf answer on the tree: the panel is built
   // once per answer, so a poll's redraw does not reset its copy button.
-  function showWhatIf(result) {
+  // reopen, when given, returns to the dialog the answer came from with its
+  // edits intact, so looking before applying costs no re-entry.
+  function showWhatIf(result, reopen) {
     reachMode = null;
     whatIfState = { result };
     if (whatIfPanel) {
@@ -512,7 +517,17 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       close.textContent = "✕";
       close.title = "Esc";
       close.addEventListener("click", exitWhatIf);
-      head.append(title, close);
+      head.append(title);
+      if (reopen) {
+        const back = document.createElement("button");
+        back.type = "button";
+        back.className = "task-chip";
+        back.textContent = "↩ ダイアログに戻る";
+        back.title = "入力したままのダイアログを開き直す";
+        back.addEventListener("click", reopen);
+        head.append(back);
+      }
+      head.append(close);
       const parts = [head];
       if (result.error) {
         const err = document.createElement("div");
@@ -4611,7 +4626,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         if (delegKey(regrantDeleg) !== regrantDelegOpened) delegate();
       }
       regrantModal.close();
-      showWhatIf(window.harness.whatIf(req));
+      // Closing keeps the dialog's controls and state as they are, so showing
+      // it again IS the dialog as left — unless another task's dialog was
+      // opened since, which reset it; that task then gets a fresh one.
+      const forId = regrantTaskId;
+      const forWhatIfOnly = document.getElementById("regrant-apply").hidden;
+      showWhatIf(window.harness.whatIf(req), () => {
+        if (regrantTaskId === forId) {
+          regrantModal.showModal();
+          return;
+        }
+        const t = (lastTasks || []).find((x) => x.id === forId);
+        if (t) openRegrantDialog(t, { whatIf: forWhatIfOnly });
+      });
     });
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {

@@ -161,3 +161,12 @@ func TestWhatIfRegrantRefusesBoundOverrides(t *testing.T) {
 		t.Error("a bound with overrides was accepted")
 	}
 }
+
+// A creator without spawn is refused before any grant is computed, as the
+// server's submit gate refuses it, in the words the client prints for it.
+func TestWhatIfSpawnNeedsSpawn(t *testing.T) {
+	_, err := WhatIf(whatIfTree(), Spawn{Creator: viewG, Caps: cancel})
+	if err == nil || err.Error() != "permission denied: Submit requires capability spawn" {
+		t.Errorf("err = %v, want the submit gate's denial", err)
+	}
+}

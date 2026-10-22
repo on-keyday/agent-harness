@@ -157,6 +157,13 @@ func apply(before []Task, c Change) ([]Task, error) {
 			if !ok {
 				return nil, fmt.Errorf("no such task %s", short(c.Creator))
 			}
+			// The server's submit gate, ahead of any grant: a creator without
+			// spawn creates nothing. The text is the one the client prints for
+			// that denial (cli.CapabilityDeniedError).
+			if creator.Caps&protocol.Capability_Spawn == 0 {
+				return nil, fmt.Errorf("permission denied: %s requires capability %s",
+					protocol.TaskControlKind_Submit, CapsLabel(protocol.Capability_Spawn))
+			}
 			g = NewGranter(creator.ID, creator.grant(), v.children)
 		}
 		caps := g.ChildCaps(c.Caps)
