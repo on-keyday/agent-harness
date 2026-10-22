@@ -1333,7 +1333,7 @@ caps reach 589d8017  granter=operator_caps_set@operator (1m ago)
   cancel         act 2: 589d8017 bbca566e   see +1: 2bb4b0b7
   view           see 3: 2bb4b0b7 589d8017 bbca566e
   delegate       caps=spawn,cancel  act 2: 589d8017 bbca566e   see +1: 2bb4b0b7
-  wider than parent: cancel +vis (granter=operator_caps_set@operator (1m ago))
+  also holds (no per-task reach): spawn
 ```
 
 `act` is the tasks the bit may be pointed at, `see +N` the ones only seen.
@@ -1343,9 +1343,10 @@ may write into a child's scope as action ids and, after `see +N`, as view-only
 ids — inside its own reach AND its bound, exactly as the server checks a
 spawn. An `exec_control` holder is shown its
 `exec_view` / `exec_cowrite` reach under those bits' own scopes, as the attach
-gates resolve them. Bits that name no task — `spawn`, `notify`,
-`runner_admin`, `board_observe`, `board_send` — have no per-task reach and are
-not listed. It reads the caller's own listing, so a global set prints as
+gates resolve them, and `exec_resize` inside `exec_view`'s scope (a resize
+rides an observer attach). Bits that name no task — `spawn`, `notify`,
+`runner_admin`, `board_observe`, `board_send` — have no per-task reach: the
+report names the ones held on an `also holds (no per-task reach):` line. It reads the caller's own listing, so a global set prints as
 `global (+ tasks you cannot list)` rather than as the tasks that happen to be
 listed. `wider than parent:` appears when the task reaches or sees beyond its
 creator; that is never a defect by itself — `granter=` says who made it so.
@@ -1358,7 +1359,8 @@ In the WebUI the task sheet's 「🎯 到達範囲を見る」 puts the creator 
 **reach mode** for that task: a selector of the same entries replaces
 「権限で強調」, the tasks it acts on are filled, the ones it only sees are
 outlined, the rest dim, and a global answer shows a banner instead of filling
-every node. Escape or the banner's ✕ leaves it. A node wider than its
+every node. Escape (outside a text field or terminal), the banner's ✕ or
+closing the tree leaves it. A node wider than its
 parent carries a dotted ring, in or out of reach mode, whose tooltip is the
 `wider than parent:` line.
 
