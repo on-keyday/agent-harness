@@ -70,7 +70,7 @@
   - `TestCascadeClampMatchesTheOldLoop`: both branches against hand-computed grants (caps-only: `d.Caps & target.Caps`, ClampUnder scope, bound kept; bound-written: `ClampDescendant`).
   - `TestWhatIfRegrantCascade` (Review Focus 1): `Regrant{P, Caps: file_read, Cascade}` → C and G lose `cancel` (diff `Before.Caps`/`After.Caps`, `Removed[cancel]`), their bounds unchanged; with `DelegateCaps: none` too → bounds clamped; without `Cascade` → only P.
   - `TestWhatIfSpawnRefused` (Review Focus 2): `Spawn{P, Scope: ids:X}` → error text `scope id <X> is outside your own scope`; a bound refusal → `… outside what you may delegate …`.
-  - `TestWhatIfSpawnAncestorsGainThePhantom` (Review Focus 3): `Spawn{C, Caps: cancel}` with C's bound `cancel` → diffs for P and O? (O global: no change) — P's and C's `Added[cancel]` contain `PhantomID`; the phantom diff has `New`, `After.Caps == cancel`.
+  - `TestWhatIfSpawnAncestorsGainThePhantom` (Review Focus 3): `Spawn{C, Caps: cancel}` with C's bound `cancel` → P's and C's `Added[cancel]` contain `PhantomID` (their subtrees now hold it); O, already global, has no diff; the phantom's diff has `New` and `After.Caps == cancel`.
   - `TestWhatIfReparentCycle` (Review Focus 4): `Reparent{P, G}` → error; `Reparent{G, ""}` → P and C lose G in `Removed[cancel]`.
   - `TestWhatIfNoChange`: `Regrant{P}` with nothing set → no diffs.
 - [ ] **Step 2: Run** `go test ./authority/ -run 'TestCascadeClamp|TestWhatIf'` — Expected: FAIL to compile.
