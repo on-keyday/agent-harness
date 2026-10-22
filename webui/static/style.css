@@ -2465,3 +2465,10 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .tt-node.tt-focus .tt-holds-ring, .tt-node.tt-focus .tt-dot { animation: tt-pulse .5s ease-in-out 4 alternate; }
 @keyframes tt-pulse { from { stroke-width: 2; } to { stroke-width: 6; } }
 #task-tree-bit { max-width: 100%; }
+
+/* Reach mode (caps reach on the tree): filled halo = acted on, dashed ring =
+   only seen. The wider-than-parent mark is one colour (V15). */
+.tt-reach-act { fill: rgba(79, 193, 255, .35); stroke: #4fc1ff; stroke-width: 1.5; }
+.tt-reach-see { fill: none; stroke: #4fc1ff; stroke-width: 1.5; stroke-dasharray: 3 2; }
+.tt-wider { fill: none; stroke: #d7ba7d; stroke-width: 2; stroke-dasharray: 2 3; }
+.task-tree-reach { display: flex; gap: .5em; align-items: center; margin: .25em 0; font-family: monospace; font-size: .9em; color: #4fc1ff; flex-wrap: wrap; }

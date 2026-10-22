@@ -28,6 +28,7 @@ import (
 	"flag"
 	"io"
 
+	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -147,6 +148,8 @@ func main() {
 		"capsCatalog":        js.FuncOf(harnessCapsCatalog),
 		"capsAudit":          js.FuncOf(harnessCapsAudit),
 		"capsAuditText":      js.FuncOf(harnessCapsAuditText),
+		"capsReachText":      js.FuncOf(harnessCapsReachText),
+		"reachOf":            js.FuncOf(harnessReachOf),
 		"capsAuditOrder":     js.FuncOf(harnessCapsAuditOrder),
 		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
@@ -996,6 +999,100 @@ func harnessCapsAuditText(this js.Value, args []js.Value) any {
 	})
 }
 
+// harnessCapsReachText is `caps reach` in the command input: the CLI's report
+// from the same writer, over a fresh listing.
+//
+//	harness.capsReachText({taskId, cap, json}) -> Promise<string>
+func harnessCapsReachText(this js.Value, args []js.Value) any {
+	var id, name string
+	var asJSON bool
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		if v := args[0].Get("taskId"); v.Type() == js.TypeString {
+			id = v.String()
+		}
+		if v := args[0].Get("cap"); v.Type() == js.TypeString {
+			name = v.String()
+		}
+		asJSON = args[0].Get("json").Truthy()
+	}
+	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+		var focus protocol.Capability
+		if name != "" {
+			c, err := cli.ParseCaps(name)
+			if err != nil {
+				return js.Undefined(), err
+			}
+			focus = c
+		}
+		r, err := cli.BuildReachReport(tasks, id, focus)
+		if err != nil {
+			return js.Undefined(), err
+		}
+		var buf strings.Builder
+		if err := cli.WriteReachReport(&buf, r, asJSON); err != nil {
+			return js.Undefined(), err
+		}
+		return js.ValueOf(buf.String()), nil
+	})
+}
+
+// lastListing is the listing the last snapshot drew the tree from.
+var lastListing []protocol.TaskInfo
+
+// harnessReachOf answers the tree's reach mode over lastListing, with the
+// same authority functions `caps reach` prints: what taskId reaches through
+// sel (a capability name, "view" or "delegate"), and the entries the selector
+// offers for that task — its exercised bits strongest first, then view and
+// delegate.
+//
+//	harness.reachOf({taskId, sel}) -> {actAll, seeAll, act, see, bits: [{name}]}
+func harnessReachOf(this js.Value, args []js.Value) any {
+	var id, sel string
+	if len(args) > 0 && args[0].Type() == js.TypeObject {
+		if v := args[0].Get("taskId"); v.Type() == js.TypeString {
+			id = v.String()
+		}
+		if v := args[0].Get("sel"); v.Type() == js.TypeString {
+			sel = v.String()
+		}
+	}
+	view := cli.AuthorityTasks(lastListing)
+	var caps protocol.Capability
+	for _, t := range lastListing {
+		if hex.EncodeToString(t.Id.Id[:]) == id {
+			caps = t.Capabilities
+		}
+	}
+	bits := []any{}
+	for _, c := range cli.ReachBits(caps) {
+		bits = append(bits, map[string]any{"name": c.String()})
+	}
+	bits = append(bits, map[string]any{"name": "view"}, map[string]any{"name": "delegate"})
+
+	var r authority.ReachResult
+	switch sel {
+	case "view":
+		r = authority.ReachOf(view, id, protocol.Capability_None)
+	case "delegate":
+		r = authority.DelegableOf(view, id)
+	default:
+		if c, err := cli.ParseCaps(sel); err == nil && c != 0 && c&(c-1) == 0 {
+			r = authority.ReachOf(view, id, c)
+		}
+	}
+	strs := func(ids []string) []any {
+		out := make([]any, 0, len(ids))
+		for _, x := range ids {
+			out = append(out, x)
+		}
+		return out
+	}
+	return js.ValueOf(map[string]any{
+		"actAll": r.ActAll, "seeAll": r.SeeAll,
+		"act": strs(r.Act), "see": strs(r.See), "bits": bits,
+	})
+}
+
 // capsAuditPromise fetches the task listing and resolves with render's value.
 func capsAuditPromise(render func([]protocol.TaskInfo) (js.Value, error)) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
@@ -1532,6 +1629,14 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// painter: multiply col/depth by a spacing, draw a circle and an
 			// edge to parent.
 			treeRows := cli.BuildTaskTree(lr.Tasks)
+			// Kept for the tree's reach mode, which asks about it on every
+			// redraw and must not wait on a request to do so.
+			lastListing = lr.Tasks
+			reachView := cli.AuthorityTasks(lr.Tasks)
+			labelOf := make(map[string]string, len(lr.Tasks))
+			for _, t := range lr.Tasks {
+				labelOf[hex.EncodeToString(t.Id.Id[:])] = cli.AuthorityLabel(t)
+			}
 			// The authority the creator edges do not show, from the same
 			// listing: id-named grants as edges, global reach and pruned
 			// targets as node properties.
@@ -1555,6 +1660,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				if g, ok := grants.Global[n.ID]; ok {
 					node["global"] = g.Kind.String()
 					node["globalCaps"] = cli.CapsLabel(g.Caps)
+				}
+				// One mark, explained by who granted the authority (V15, V21);
+				// the same line `caps reach` prints.
+				if w := cli.WiderOf(reachView, n.ID); !w.Empty() {
+					node["wider"] = cli.WiderLine(w, labelOf[n.ID])
 				}
 				taskTree = append(taskTree, node)
 			}

@@ -149,3 +149,26 @@ func TestWiderLine(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// spawn, notify, runner_admin, board_observe and board_send name no task, so
+// they have no per-task reach: the report leaves them out, and a child is not
+// "wider" through one of them.
+func TestReachReportSkipsUntargetedBits(t *testing.T) {
+	tasks := reachListing(protocol.TaskScope{Base: protocol.ScopeBase_Global})
+	tasks[0].Capabilities |= protocol.Capability_Spawn | protocol.Capability_Notify
+	tasks[1].Capabilities = protocol.Capability_Spawn
+	got := strings.Join(reachText(t, tasks, reachHex(0x3f), 0), "\n")
+	if strings.Contains(got, "spawn ") || strings.Contains(got, "notify ") {
+		t.Errorf("an untargeted bit is listed as reaching tasks:\n%s", got)
+	}
+	r, err := BuildReachReport(tasks, reachHex(0x8f), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Wider.Bits != 0 {
+		t.Errorf("wider through %s, which names no task", CapsLabel(r.Wider.Bits))
+	}
+	if bits := ReachBits(protocol.Capability_Spawn | protocol.Capability_Cancel); len(bits) != 1 || bits[0] != protocol.Capability_Cancel {
+		t.Errorf("ReachBits = %v, want cancel only", bits)
+	}
+}

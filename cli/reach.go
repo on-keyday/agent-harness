@@ -70,16 +70,44 @@ func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capab
 		View:         ReachLine{Cap: "view", ReachResult: authority.ReachOf(view, id, protocol.Capability_None)},
 		Delegate:     ReachLine{Cap: "delegate", ReachResult: authority.DelegableOf(view, id)},
 		DelegateCaps: info.DelegateCaps,
-		Wider:        authority.WiderThanParent(view, id),
+		Wider:        WiderOf(view, id),
 	}
-	exercised := authority.ExercisedBits(info.Capabilities)
-	for _, c := range verb.AuditOrder() {
-		if exercised&c == 0 || (focus != 0 && c != focus) {
+	for _, c := range ReachBits(info.Capabilities) {
+		if focus != 0 && c != focus {
 			continue
 		}
 		r.Bits = append(r.Bits, ReachLine{Cap: c.String(), ReachResult: authority.ReachOf(view, id, c)})
 	}
 	return r, nil
+}
+
+// ReachBits are the bits a holder of caps reaches TASKS through: every bit it
+// exercises, strongest first, less those that name no task (spawn, notify,
+// runner_admin, board_observe, board_send — `global（固定）` in caps audit),
+// which have no per-task reach to draw.
+func ReachBits(caps protocol.Capability) []protocol.Capability {
+	exercised := authority.ExercisedBits(caps)
+	var out []protocol.Capability
+	for _, c := range verb.AuditOrder() {
+		if exercised&c != 0 && verb.CapScopeKindOf(c) != verb.ScopeNone {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// WiderOf is authority.WiderThanParent restricted to the bits that name tasks
+// (ReachBits): a child is not wider through spawn, which targets nobody.
+func WiderOf(view []authority.Task, id string) authority.Wider {
+	w := authority.WiderThanParent(view, id)
+	var targeted protocol.Capability
+	for _, c := range verb.AuditOrder() {
+		if verb.CapScopeKindOf(c) != verb.ScopeNone {
+			targeted |= c
+		}
+	}
+	w.Bits &= targeted
+	return w
 }
 
 // WiderLine is the one rendering of "wider than parent", for the report and

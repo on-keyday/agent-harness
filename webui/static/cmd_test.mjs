@@ -698,3 +698,12 @@ test("a runner's live tasks are joined on its identity", () => {
      [["1", "Detached", "claude"], ["f", "Running", "codex"]]);
   eq(page.runnerTasks(tasks, ""), []);
 });
+
+// caps reach: the CLI's report, from the same writer, over a fresh listing.
+test("caps reach dispatches its report", async () => {
+  const ID = "a".repeat(32);
+  const r = await run(`caps reach ${ID} --cap cancel --json`, { capsReachText: "{}" });
+  assert.equal(r.err, undefined);
+  eq(r.calls, [["capsReachText", { taskId: ID, cap: "cancel", json: true }]]);
+  assert.equal(r.out, "{}");
+});

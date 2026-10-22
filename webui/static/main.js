@@ -456,14 +456,82 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const capsAuditDetails = document.getElementById("caps-audit");
   let treeFocusId = "";
   let treeFocusTimer = 0;
+  // Reach mode: the tree shows what ONE task reaches through one selector
+  // entry — a capability it exercises, `view` or `delegate` — answered by
+  // harness.reachOf, the same authority functions `caps reach` prints. It
+  // replaces 権限で強調 while on and survives the snapshot poll's redraw,
+  // because the poll calls drawTaskTree and drawTaskTree asks again.
+  let reachMode = null; // {taskId, sel} | null
+  const reachSel = document.getElementById("task-tree-reach-sel");
+  const reachBanner = document.getElementById("task-tree-reach");
   // drawTaskTree is the ONE call into renderTaskTreeGraph, so the chip, the
   // snapshot poll, the selector and the audit cannot draw it differently.
   function drawTaskTree() {
     fillTaskTreeBit();
+    let reach = null;
+    if (reachMode && window.harness && typeof window.harness.reachOf === "function") {
+      reach = window.harness.reachOf(reachMode);
+    }
+    syncReachControls(reach);
     renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks,
       taskStatusColor, revealTaskInList,
-      { markBit: Number(taskTreeBit && taskTreeBit.value) || 0, focusId: treeFocusId });
+      { markBit: reach ? 0 : Number(taskTreeBit && taskTreeBit.value) || 0,
+        focusId: reach ? reachMode.taskId : treeFocusId,
+        reach, reachSel: reachMode && reachMode.sel });
   }
+  function syncReachControls(reach) {
+    if (taskTreeBit) taskTreeBit.hidden = !!reach;
+    if (reachSel) reachSel.hidden = !reach;
+    if (!reachBanner) return;
+    reachBanner.hidden = !reach;
+    if (!reach) return;
+    const names = reach.bits.map((b) => b.name);
+    if (reachSel && (reachSel.dataset.for !== reachMode.taskId || reachSel.options.length !== names.length)) {
+      reachSel.replaceChildren(...names.map((n) => {
+        const o = document.createElement("option");
+        o.value = n;
+        o.textContent = n;
+        return o;
+      }));
+      reachSel.dataset.for = reachMode.taskId;
+    }
+    if (reachSel) reachSel.value = reachMode.sel;
+    const all = reachMode.sel === "view" ? reach.seeAll : reach.actAll;
+    const text = document.createElement("span");
+    text.textContent = `caps reach ${reachMode.taskId.slice(0, 8)} ${reachMode.sel}: ` + (all
+      ? "global (+ tasks you cannot list)"
+      : (reachMode.sel === "view" ? "" : `act ${reach.act.length}  `) +
+        (reach.seeAll ? "see global" : `see ${reachMode.sel === "view" ? "" : "+"}${reach.see.length}`));
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "task-chip";
+    close.textContent = "✕";
+    close.title = "Esc";
+    close.addEventListener("click", exitReachMode);
+    reachBanner.replaceChildren(text, close);
+  }
+  function enterReachMode(id) {
+    if (!window.harness || typeof window.harness.reachOf !== "function") return;
+    const first = window.harness.reachOf({ taskId: id, sel: "view" }).bits[0];
+    reachMode = { taskId: id, sel: first ? first.name : "view" };
+    if (!taskTreeMode) {
+      taskTreeMode = true;
+      taskTreeChip.classList.add("is-active");
+    }
+    drawTaskTree();
+    const node = document.querySelector(`#task-tree-graph .tt-node[data-task-id="${id}"]`);
+    if (node) node.scrollIntoView({ block: "center", inline: "center" });
+  }
+  function exitReachMode() {
+    reachMode = null;
+    drawTaskTree();
+  }
+  if (reachSel) reachSel.addEventListener("change", () => {
+    if (reachMode) { reachMode.sel = reachSel.value; drawTaskTree(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && reachMode && !document.querySelector("dialog[open]")) exitReachMode();
+  });
   // The selector's bits come from the bridge (verb.AuditOrder), filled once
   // the wasm is up.
   function fillTaskTreeBit() {
@@ -5818,6 +5886,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Live re-grant. Shown for every task: a WebUI connection is an operator
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
+    addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
     addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
 
@@ -8000,6 +8069,15 @@ async function runVerbCommandDispatch(tokens, ctx) {
         out = lines.join("\n");
         break;
       }
+      if (sub === "reach") {
+        // What one task reaches: the CLI's report, from the same writer. The
+        // tree's reach mode draws the same answer.
+        const b = parseOrHelp(ctx, tokens, {});
+        out = await ctx.harness.capsReachText({
+          taskId: b.args[0], cap: b.flags.cap || "", json: !!b.flags.json,
+        });
+        break;
+      }
       if (sub === "audit") {
         // Who holds which capability: the CLI's text, from the same writer.
         // The 権限 tab draws the same rows.
@@ -9445,9 +9523,20 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     const t = byID.get(n.id);
     const markBit = opts.markBit || 0;
     const holds = markBit !== 0 && t && (t.capsBits & markBit) === markBit;
+    // Reach mode (opts.reach, harness.reachOf): filled = acted on, outlined =
+    // only seen, the rest dimmed. A global answer fills nothing — the banner
+    // says global instead, since a listing is never every task.
+    const reach = opts.reach;
+    const reachAll = reach && (opts.reachSel === "view" ? reach.seeAll : reach.actAll);
+    let reachKind = "";
+    if (reach && !reachAll) {
+      if (reach.act.includes(n.id)) reachKind = "act";
+      else if (reach.seeAll || reach.see.includes(n.id)) reachKind = "see";
+      else reachKind = "dim";
+    }
     const g = svgEl("g", {
       class: "tt-node" + (n.orphan ? " tt-orphan" : "") +
-        (markBit !== 0 && !holds ? " tt-dim" : "") +
+        ((markBit !== 0 && !holds) || reachKind === "dim" ? " tt-dim" : "") +
         (n.id === opts.focusId ? " tt-focus" : ""),
       transform: `translate(${p.x},${p.y})`,
       "data-task-id": n.id,
@@ -9456,6 +9545,11 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     // Global reach has no target to draw an edge to, so it is a ring on the
     // node itself — under the dot, so the status colour stays readable.
     if (n.global) g.appendChild(svgEl("circle", { r: R + 4, class: `tt-global tt-global-${n.global}` }));
+    if (reachKind === "act") g.appendChild(svgEl("circle", { r: R + 6, class: "tt-reach-act" }));
+    if (reachKind === "see") g.appendChild(svgEl("circle", { r: R + 6, class: "tt-reach-see" }));
+    // Wider than its parent: one mark, never drawn as a defect (V15); the
+    // tooltip carries the line `caps reach` prints, granter included.
+    if (n.wider) g.appendChild(svgEl("circle", { r: R + 2, class: "tt-wider" }));
     const circle = svgEl("circle", { r: R, class: "tt-dot" });
     // The palette comes in from the caller rather than being restated here:
     // the list's status dots use the same function, and two copies of a colour
@@ -9518,6 +9612,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
         : `global: ${n.globalCaps} が全タスクに届く`);
     }
     if (n.offscreen > 0) lines.push(`id 指定の対象のうち ${n.offscreen} 件が一覧に居ない（prune 済み）`);
+    if (n.wider) lines.push(n.wider);
     if (prog) lines.push(...prog.tooltip);
     title.textContent = lines.join("\n");
     g.appendChild(title);
