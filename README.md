@@ -1394,11 +1394,13 @@ since it is the creator's to run. Over an agent's listing the report starts
 `(over your listing only)`. The same command runs from the TUI and WebUI
 command lines.
 
-In the WebUI the task sheet's 「🔮 もし…」 opens the re-grant dialog in
-what-if mode, and 🔑's dialog has 「もし（送らない）」 beside 適用. Either one
-draws the answer on the creator tree instead of sending it: changed tasks are
-ringed, a spawn's child (「仮の子を置く」) is drawn dashed under its creator,
-and a panel lists the diff and the command with a 📋 copy button. The overlay
+In the WebUI the task sheet's 「🔮 変更の影響を見る（送信しない）」 opens the
+re-grant dialog in what-if mode, and 🔑's dialog has 「影響を見る（送信しない）」
+beside 適用. Either one draws the answer on the creator tree instead of sending
+it: changed tasks are ringed, a spawn's child (「このタスクが作る子として見る」)
+is drawn dashed under its creator, and a panel lists the diff and the command
+with a 📋 copy button and 「↩ ダイアログに戻る」, which reopens the dialog as
+it was left. The overlay
 stays through the poll; Escape, its ✕, closing the tree or reach mode clears it.
 
 The **subtree** walk follows each task's parent link (who spawned whom,

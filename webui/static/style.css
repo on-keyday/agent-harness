@@ -2485,3 +2485,5 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .tt-whatif-diff { margin: .25em 0; font-size: .85em; overflow-x: auto; white-space: pre; }
 .tt-whatif-cmd { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; font-size: .85em; }
 .tt-whatif-cmd code { overflow-wrap: anywhere; min-width: 0; }
+/* hidden under an author display rule: see the [hidden] note above. */
+.task-tree-reach[hidden], .regrant-flag[hidden] { display: none; }

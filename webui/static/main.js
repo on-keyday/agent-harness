@@ -510,7 +510,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const head = document.createElement("div");
       head.className = "tt-whatif-head";
       const title = document.createElement("span");
-      title.textContent = "もし（送っていない）";
+      title.textContent = "変更の影響（未送信）";
       const close = document.createElement("button");
       close.type = "button";
       close.className = "task-chip";
@@ -4514,12 +4514,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
 
   // opts.whatIf opens it from the sheet's 🔮: 適用 and --keep-conns are gone
-  // (nothing is sent), and 「仮の子を置く」 can turn the controls into a child's
-  // request. From 🔑, もし sits beside 適用 over the same controls.
+  // (nothing is sent), and 「このタスクが作る子として見る」 can turn the controls
+  // into a child's request. From 🔑, 「影響を見る」 sits beside 適用 over the same
+  // controls.
   function openRegrantDialog(t, opts = {}) {
     if (!regrantModal || typeof window.harness.setCaps !== "function") return;
     const whatIfOnly = !!opts.whatIf;
-    document.getElementById("regrant-heading").textContent = whatIfOnly ? "もし… caps/scope" : "caps/scope 再付与";
+    document.getElementById("regrant-heading").textContent = whatIfOnly ? "変更の影響を見る（送信しない）" : "caps/scope 再付与";
     document.getElementById("regrant-apply").hidden = whatIfOnly;
     document.getElementById("regrant-keep-conns-label").hidden = whatIfOnly;
     document.getElementById("regrant-phantom-label").hidden = !whatIfOnly;
@@ -4601,7 +4602,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       cascade.disabled = e.target.checked;
       if (e.target.checked) cascade.checked = false;
     });
-    // もし: the dialog's request as `caps what-if` flags, answered over the
+    // 影響を見る: the dialog's request as `caps what-if` flags, answered over the
     // listing the tree was drawn from. Nothing is sent.
     document.getElementById("regrant-whatif").addEventListener("click", () => {
       if (typeof window.harness.whatIf !== "function") return;
@@ -6068,7 +6069,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
     addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
-    addItem("🔮 もし…", "", () => openRegrantDialog(t, { whatIf: true }));
+    addItem("🔮 変更の影響を見る（送信しない）", "", () => openRegrantDialog(t, { whatIf: true }));
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
     addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
 
@@ -9778,7 +9779,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
 
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
     sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}`
-      : (phantom ? "仮の子（もし）" : "(gone)");
+      : (phantom ? "作る子（未送信）" : "(gone)");
     g.appendChild(sub);
 
     // Which repo the task belongs to. The fleet serves several, and without
