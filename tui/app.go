@@ -238,6 +238,11 @@ type App struct {
 	// `scope` command sets and clears both together, so a spawn never carries
 	// a scope from one command and overrides from another.
 	sessionOverrides []protocol.ScopeOverride
+	// sessionDelegateCaps / sessionDelegateScope are the default delegation
+	// bound for spawns from this session (`caps set-defaults --delegate-*`).
+	// Zero is the server's default bound: the children delegate nothing.
+	sessionDelegateCaps  protocol.Capability
+	sessionDelegateScope protocol.TaskScope
 }
 
 // resolveSpawnCaps picks the capability mask for one spawn and says whether the
@@ -260,8 +265,19 @@ func (a App) resolveSpawnCaps(explicit *protocol.Capability, resuming bool) (pro
 // Authority the Do* helpers carry: an explicit --scope wins over the session
 // default, and on a resume ONLY an explicit --scope re-grants (ScopePresent)
 // — the session default must never silently rewrite a resumed task's scope.
-func (a App) spawnAuthority(explicit *protocol.TaskScope, overrides []protocol.ScopeOverride, resumeTaskID string, caps protocol.Capability) Authority {
-	auth := Authority{Caps: caps, Scope: a.sessionScope, Overrides: a.sessionOverrides}
+// The delegation bound follows the same rule, one half per flag.
+func (a App) spawnAuthority(v verb.SpawnAction, caps protocol.Capability) Authority {
+	explicit, overrides, resumeTaskID := v.Scope, v.Overrides, v.ResumeTaskID
+	auth := a.authority()
+	auth.Caps = caps
+	if v.DelegateCaps != nil {
+		auth.DelegateCaps = *v.DelegateCaps
+		auth.DelegateCapsPresent = resumeTaskID != ""
+	}
+	if v.DelegateScope != nil {
+		auth.DelegateScope = *v.DelegateScope
+		auth.DelegateScopePresent = resumeTaskID != ""
+	}
 	// The scope half is one unit: naming EITHER --scope or --scope-for makes
 	// the whole half explicit, so a resume re-grants both together. Letting
 	// --scope-for alone ride the session default's scope would write an
@@ -281,8 +297,10 @@ func (a App) spawnAuthority(explicit *protocol.TaskScope, overrides []protocol.S
 // repo); resumeTaskID is "" for a fresh session.
 // authority is the session default a spawn carries when the command line did
 // not name its own: the caps mask paired with the target scope.
+// Its presence bits are all false: on a resume it re-grants nothing.
 func (a *App) authority() Authority {
-	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides}
+	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides,
+		DelegateCaps: a.sessionDelegateCaps, DelegateScope: a.sessionDelegateScope}
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -2313,7 +2331,7 @@ func (a *App) runSpawnAction(v verb.SpawnAction) (tea.Model, tea.Cmd) {
 		repo = a.defaultRepo
 	}
 	caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
+	auth := a.spawnAuthority(v, caps)
 	switch v.Kind {
 	case verb.KindSubmit:
 		return a, DoSubmitWithOpts(a.client, repo, v.Task, cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.Exact, v.Agent)

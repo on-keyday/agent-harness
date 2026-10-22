@@ -74,6 +74,7 @@ func (h tuiVerbs) CapsSet(v verb.SetCapsAction) tea.Cmd {
 	}
 	return DoSetCaps(a.client, cli.SetCapsOpts{
 		TaskID: full, Caps: v.Caps, Scope: v.Scope, Overrides: v.Overrides,
+		DelegateCaps: v.DelegateCaps, DelegateScope: v.DelegateScope,
 		Cascade: v.Cascade, KeepConns: v.KeepConns,
 	})
 }
@@ -459,7 +460,7 @@ func (h tuiVerbs) spawnPrologue(v verb.SpawnAction) (repo string, auth Authority
 		repo = a.defaultRepo
 	}
 	caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-	return repo, a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps), capsOverride
+	return repo, a.spawnAuthority(v, caps), capsOverride
 }
 
 func (h tuiVerbs) Submit(v verb.SpawnAction) tea.Cmd {
@@ -862,10 +863,18 @@ func (h tuiVerbs) CapsAudit(v verb.CapsAuditAction) tea.Cmd {
 // flags exist for the half of the time the operator already knows the mask.
 func (h tuiVerbs) CapsSetDefaults(v verb.SetDefaultsAction) tea.Cmd {
 	a := h.a
-	if v.Caps == nil && v.Scope == nil && v.Overrides == nil {
+	if v.Caps == nil && v.Scope == nil && v.Overrides == nil && v.DelegateCaps == nil && v.DelegateScope == nil {
 		a.authorityPicker.SetSize(a.width, a.height)
-		a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
+		a.authorityPicker.OpenSession(a.authority(), a.tasks.Rows())
 		return nil
+	}
+	if v.DelegateCaps != nil {
+		a.sessionDelegateCaps = *v.DelegateCaps
+		a.cmdresult.Append(OKStyle.Render("delegate set: ") + capsLabel(a.sessionDelegateCaps))
+	}
+	if v.DelegateScope != nil {
+		a.sessionDelegateScope = *v.DelegateScope
+		a.cmdresult.Append(OKStyle.Render("delegate-scope set: ") + cli.ScopeLabel(a.sessionDelegateScope))
 	}
 	if v.Caps != nil {
 		a.sessionCaps = *v.Caps

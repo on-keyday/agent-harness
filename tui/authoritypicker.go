@@ -13,10 +13,11 @@ import (
 // AuthorityPickerModel is the selection UI behind re-granting a task's
 // authority (tasks-pane `a`) and editing the session-default authority
 // (`caps` / `scope` with no argument). It is one flat scrollable list —
-// capability rows, one base row, task rows, and (re-grant only)
-// cascade/keep-conns rows — so there is no intra-popup focus management.
-// On apply the scope selection is serialized to the same `--scope` grammar
-// string the typed forms use; nothing downstream changes.
+// capability rows, one base row, task rows, then the same controls again for
+// the delegation bound, and (re-grant only) cascade/keep-conns rows — so
+// there is no intra-popup focus management. On apply each scope selection is
+// serialized to the same `--scope` grammar string the typed forms use;
+// nothing downstream changes.
 type AuthorityPickerModel struct {
 	open      bool
 	mode      AuthorityPickerMode
@@ -25,6 +26,30 @@ type AuthorityPickerModel struct {
 	rows   []pickerRow
 	cursor int
 
+	// The task's own authority. Embedded, so the section's fields read as the
+	// picker's own, as they did before the delegation section existed.
+	pickerScope
+	// deleg is the delegation bound, edited with the same controls: what the
+	// task may hand to the tasks it creates. delegOpened is its value when
+	// the picker opened, so a re-grant sends the bound only if it changed.
+	deleg       pickerScope
+	delegOpened string
+
+	// overrides is CARRIED, not edited. The picker edits the base scope and
+	// the id set; per-capability narrowings are typed on the cmdline. It has
+	// to be kept because overrides travel with the scope under one presence
+	// bit — a re-grant that returned an empty list would silently erase the
+	// target's per-capability rules, which is the same defect the cascade had.
+	overrides []protocol.ScopeOverride
+	cascade   bool
+	keepConns bool
+
+	w, h int
+}
+
+// pickerScope is one caps + scope selection: the controls a section of the
+// picker edits.
+type pickerScope struct {
 	caps protocol.Capability
 	base protocol.ScopeBase
 	// excludeSelf is the base's other half. The six scopes are three ranks
@@ -47,17 +72,23 @@ type AuthorityPickerModel struct {
 	// able to act on them. Separate from `selected` because they are separate
 	// clauses of the grammar; a task can be in either, both, or neither.
 	visSelected map[string]bool
-	// overrides is CARRIED, not edited. The picker edits the base scope and
-	// the id set; per-capability narrowings are typed on the cmdline. It has
-	// to be kept because overrides travel with the scope under one presence
-	// bit — a re-grant that returned an empty list would silently erase the
-	// target's per-capability rules, which is the same defect the cascade had.
-	overrides []protocol.ScopeOverride
-	selected  map[string]bool
-	cascade   bool
-	keepConns bool
+	selected    map[string]bool
+}
 
-	w, h int
+// newPickerScope reads a wire selection into the controls' state.
+func newPickerScope(caps protocol.Capability, scope protocol.TaskScope) pickerScope {
+	s := pickerScope{
+		caps: caps, base: scope.Base, excludeSelf: scope.ExcludeSelf(),
+		visBase: scope.VisBase, visBasePresent: scope.VisBasePresent(),
+		selected: map[string]bool{}, visSelected: map[string]bool{},
+	}
+	for _, id := range scope.Ids {
+		s.selected[FormatTaskID(id)] = true
+	}
+	for _, id := range scope.VisIds {
+		s.visSelected[FormatTaskID(id)] = true
+	}
+	return s
 }
 
 type AuthorityPickerMode int
@@ -86,6 +117,7 @@ const (
 	rowKeepConns
 	rowParentRoot // parent mode: detach to the operator root
 	rowParentSwap // parent mode: swap with the current parent
+	rowSection    // a heading; never selectable
 )
 
 type pickerRow struct {
@@ -93,6 +125,17 @@ type pickerRow struct {
 	label string
 	bit   protocol.Capability // rowCap
 	idHex string              // rowTask
+	// deleg marks a row of the delegation section: it edits the bound, not
+	// the task's own authority.
+	deleg bool
+}
+
+// section is the selection a row edits.
+func (m *AuthorityPickerModel) section(r pickerRow) *pickerScope {
+	if r.deleg {
+		return &m.deleg
+	}
+	return &m.pickerScope
 }
 
 // OpenRegrant opens the picker on a target task, prefilled from its stored
@@ -100,16 +143,23 @@ type pickerRow struct {
 // omitted — {self} is unconditionally in scope, so listing it is noise.
 func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeRegrant, target.Capabilities, target.Scope)
+	m.setDeleg(target.DelegateCaps, target.DelegateScope)
 	m.overrides = target.Overrides
 	m.targetHex = FormatTaskID(target.Id)
 	m.buildRows(tasks)
 }
 
 // OpenSession opens the picker prefilled with the session defaults.
-func (m *AuthorityPickerModel) OpenSession(caps protocol.Capability, scope protocol.TaskScope, overrides []protocol.ScopeOverride, tasks []protocol.TaskInfo) {
-	m.reset(PickerModeSession, caps, scope)
-	m.overrides = overrides
+func (m *AuthorityPickerModel) OpenSession(defaults Authority, tasks []protocol.TaskInfo) {
+	m.reset(PickerModeSession, defaults.Caps, defaults.Scope)
+	m.setDeleg(defaults.DelegateCaps, defaults.DelegateScope)
+	m.overrides = defaults.Overrides
 	m.buildRows(tasks)
+}
+
+func (m *AuthorityPickerModel) setDeleg(caps protocol.Capability, scope protocol.TaskScope) {
+	m.deleg = newPickerScope(caps, scope)
+	m.delegOpened = m.delegLabel()
 }
 
 // OpenParent opens the picker as a parent chooser for target: a detach row, a
@@ -168,42 +218,47 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.mode = mode
 	m.targetHex = ""
 	m.cursor = 0
-	m.caps = caps
-	m.base = scope.Base
-	m.excludeSelf = scope.ExcludeSelf()
-	m.visBase = scope.VisBase
-	m.visBasePresent = scope.VisBasePresent()
+	m.pickerScope = newPickerScope(caps, scope)
+	m.deleg = newPickerScope(0, protocol.TaskScope{})
+	m.delegOpened = ""
 	m.overrides = nil
-	m.selected = map[string]bool{}
-	for _, id := range scope.Ids {
-		m.selected[FormatTaskID(id)] = true
-	}
-	m.visSelected = map[string]bool{}
-	for _, id := range scope.VisIds {
-		m.visSelected[FormatTaskID(id)] = true
-	}
 	m.cascade = false
 	m.keepConns = false
 }
 
 func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 	m.rows = m.rows[:0]
+	m.appendSection(tasks, false)
+	// The bound is edited with the same controls, so it reads the same way:
+	// a cap set, a base, exclude-self, a visibility rank, and the two id sets.
+	m.rows = append(m.rows, pickerRow{kind: rowSection,
+		label: "— delegation: what this task may hand to the tasks it creates —"})
+	m.appendSection(tasks, true)
+	if m.mode == PickerModeRegrant {
+		m.rows = append(m.rows, pickerRow{kind: rowCascade, label: "--cascade (clamp descendants too)"})
+		m.rows = append(m.rows, pickerRow{kind: rowKeepConns, label: "--keep-conns (do not drop their connections)"})
+	}
+}
+
+// appendSection appends one section's rows: every capability, the base and
+// its exclude-self twin, the visibility rank, and one row per task.
+func (m *AuthorityPickerModel) appendSection(tasks []protocol.TaskInfo, deleg bool) {
 	for _, c := range cli.CapsCatalog() {
 		// The catalog includes the none/all pseudo entries; the picker
 		// toggles real bits only.
 		if c.Bit == 0 || protocol.Capability(c.Bit) == protocol.Capability_All {
 			continue
 		}
-		m.rows = append(m.rows, pickerRow{kind: rowCap, label: c.Name, bit: protocol.Capability(c.Bit)})
+		m.rows = append(m.rows, pickerRow{kind: rowCap, label: c.Name, bit: protocol.Capability(c.Bit), deleg: deleg})
 	}
-	m.rows = append(m.rows, pickerRow{kind: rowBase, label: "base:"})
+	m.rows = append(m.rows, pickerRow{kind: rowBase, label: "base:", deleg: deleg})
 	m.rows = append(m.rows, pickerRow{kind: rowExcludeSelf,
-		label: "exclude self (subtree→descendants; none→the empty set)"})
+		label: "exclude self (subtree→descendants; none→the empty set)", deleg: deleg})
 	// Directly under its sibling: the visibility rank is the same three words
 	// with one fewer state (self is always visible, so no exclude-self twin).
 	// Putting it anywhere else is how the WebUI ended up with the control on
 	// the override rows and not on the row above them.
-	m.rows = append(m.rows, pickerRow{kind: rowVisBase, label: "see:"})
+	m.rows = append(m.rows, pickerRow{kind: rowVisBase, label: "see:", deleg: deleg})
 	for _, t := range tasks {
 		idHex := FormatTaskID(t.Id)
 		if idHex == m.targetHex {
@@ -214,11 +269,7 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 		if p := string(t.Prompt); p != "" {
 			label += " " + runewidth.Truncate(p, 24, "…")
 		}
-		m.rows = append(m.rows, pickerRow{kind: rowTask, label: label, idHex: idHex})
-	}
-	if m.mode == PickerModeRegrant {
-		m.rows = append(m.rows, pickerRow{kind: rowCascade, label: "--cascade (clamp descendants too)"})
-		m.rows = append(m.rows, pickerRow{kind: rowKeepConns, label: "--keep-conns (do not drop their connections)"})
+		m.rows = append(m.rows, pickerRow{kind: rowTask, label: label, idHex: idHex, deleg: deleg})
 	}
 }
 
@@ -255,7 +306,7 @@ func (m *AuthorityPickerModel) Move(delta int) {
 // effectiveVisBase is the rank visibility actually runs at: the stated one, or
 // the action base when it is unstated (the grammar's "omitting it means
 // visibility follows the action base").
-func (m *AuthorityPickerModel) effectiveVisBase() protocol.ScopeBase {
+func (m *pickerScope) effectiveVisBase() protocol.ScopeBase {
 	if m.visBasePresent {
 		return m.visBase
 	}
@@ -265,9 +316,13 @@ func (m *AuthorityPickerModel) effectiveVisBase() protocol.ScopeBase {
 // A task row carries two checkboxes now, so it is only dead when NEITHER can
 // use it: global already covers every task on both axes.
 func (m *AuthorityPickerModel) rowDisabled(r pickerRow) bool {
+	if r.kind == rowSection {
+		return true
+	}
+	s := m.section(r)
 	return r.kind == rowTask &&
-		m.base == protocol.ScopeBase_Global &&
-		m.effectiveVisBase() == protocol.ScopeBase_Global
+		s.base == protocol.ScopeBase_Global &&
+		s.effectiveVisBase() == protocol.ScopeBase_Global
 }
 
 // ToggleVisID flips the cursor task row's +vis-ids: membership — the second
@@ -282,22 +337,24 @@ func (m *AuthorityPickerModel) ToggleVisID() {
 		return
 	}
 	if r := m.rows[m.cursor]; r.kind == rowTask {
-		m.visSelected[r.idHex] = !m.visSelected[r.idHex]
+		s := m.section(r)
+		s.visSelected[r.idHex] = !s.visSelected[r.idHex]
 	}
 }
 
 // SetAllCaps sets every granular capability bit on (all=true) or off
-// (all=false) — the TUI counterpart of the WebUI chip row's [all] / [none]
-// quick-set buttons.
+// (all=false) in the section the cursor is in — the TUI counterpart of the
+// WebUI chip row's [all] / [none] quick-set buttons.
 func (m *AuthorityPickerModel) SetAllCaps(all bool) {
+	deleg := len(m.rows) > 0 && m.rows[m.cursor].deleg
+	s := m.section(pickerRow{deleg: deleg})
+	s.caps = protocol.Capability_None
 	if !all {
-		m.caps = protocol.Capability_None
 		return
 	}
-	m.caps = protocol.Capability_None
 	for _, r := range m.rows {
-		if r.kind == rowCap {
-			m.caps |= r.bit
+		if r.kind == rowCap && r.deleg == deleg {
+			s.caps |= r.bit
 		}
 	}
 }
@@ -310,36 +367,38 @@ func (m *AuthorityPickerModel) Toggle() {
 		// applies it; there is nothing to toggle.
 		return
 	}
-	switch r := m.rows[m.cursor]; r.kind {
+	r := m.rows[m.cursor]
+	s := m.section(r)
+	switch r.kind {
 	case rowCap:
-		m.caps ^= r.bit
+		s.caps ^= r.bit
 	case rowBase:
-		switch m.base {
+		switch s.base {
 		case protocol.ScopeBase_Subtree:
-			m.base = protocol.ScopeBase_None
+			s.base = protocol.ScopeBase_None
 		case protocol.ScopeBase_None:
-			m.base = protocol.ScopeBase_Global
+			s.base = protocol.ScopeBase_Global
 		default:
-			m.base = protocol.ScopeBase_Subtree
+			s.base = protocol.ScopeBase_Subtree
 		}
 	case rowExcludeSelf:
-		m.excludeSelf = !m.excludeSelf
+		s.excludeSelf = !s.excludeSelf
 	case rowVisBase:
 		// Four states, because "not stated" is one of them and is the default.
 		// Cycling back to it is the only way to UNSET a rank once set, so it
 		// stays in the ring rather than being an initial value you fall out of.
 		switch {
-		case !m.visBasePresent:
-			m.visBase, m.visBasePresent = protocol.ScopeBase_Subtree, true
-		case m.visBase == protocol.ScopeBase_Subtree:
-			m.visBase = protocol.ScopeBase_None
-		case m.visBase == protocol.ScopeBase_None:
-			m.visBase = protocol.ScopeBase_Global
+		case !s.visBasePresent:
+			s.visBase, s.visBasePresent = protocol.ScopeBase_Subtree, true
+		case s.visBase == protocol.ScopeBase_Subtree:
+			s.visBase = protocol.ScopeBase_None
+		case s.visBase == protocol.ScopeBase_None:
+			s.visBase = protocol.ScopeBase_Global
 		default:
-			m.visBasePresent = false
+			s.visBasePresent = false
 		}
 	case rowTask:
-		m.selected[r.idHex] = !m.selected[r.idHex]
+		s.selected[r.idHex] = !s.selected[r.idHex]
 	case rowCascade:
 		m.cascade = !m.cascade
 	case rowKeepConns:
@@ -355,6 +414,18 @@ func (m *AuthorityPickerModel) Toggle() {
 // unchanged, so the caller can send them back with the scope rather than
 // clearing them.
 func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride { return m.overrides }
+
+// Delegation returns the delegation bound's selection: its caps, its scope in
+// the grammar (always explicit — the bound has no "not named" form here), and
+// whether either half differs from what the picker opened with, so a
+// re-grant writes the bound only when the operator changed it.
+func (m *AuthorityPickerModel) Delegation() (caps protocol.Capability, scopeSpec string, changed bool) {
+	return m.deleg.caps, cli.ScopeLabel(m.deleg.scope()), m.delegLabel() != m.delegOpened
+}
+
+func (m *AuthorityPickerModel) delegLabel() string {
+	return cli.CapsLabel(m.deleg.caps) + " " + cli.ScopeLabel(m.deleg.scope())
+}
 
 func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec string, cascade, keepConns bool) {
 	spec := m.scopeSpec()
@@ -373,7 +444,7 @@ func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec str
 // is never dropped. Dropping it would make opening a `global/subtree+vis-ids:X`
 // task and pressing apply erase the clause, which is the silent narrowing this
 // dialog exists to have stopped doing.
-func (m *AuthorityPickerModel) selectedIDs(set map[string]bool, dropAtGlobal protocol.ScopeBase) []string {
+func selectedIDs(set map[string]bool, dropAtGlobal protocol.ScopeBase) []string {
 	if dropAtGlobal == protocol.ScopeBase_Global {
 		return nil
 	}
@@ -387,9 +458,9 @@ func (m *AuthorityPickerModel) selectedIDs(set map[string]bool, dropAtGlobal pro
 	return ids
 }
 
-// scope assembles the picker's selection into a wire TaskScope: both halves,
+// scope assembles a section's selection into a wire TaskScope: both halves,
 // each from its own controls.
-func (m *AuthorityPickerModel) scope() protocol.TaskScope {
+func (m *pickerScope) scope() protocol.TaskScope {
 	var sc protocol.TaskScope
 	sc.Base = m.base
 	sc.SetExcludeSelf(m.excludeSelf)
@@ -405,11 +476,11 @@ func (m *AuthorityPickerModel) scope() protocol.TaskScope {
 			*dst = append(*dst, tid)
 		}
 	}
-	appendIDs(&sc.Ids, m.selectedIDs(m.selected, m.base))
+	appendIDs(&sc.Ids, selectedIDs(m.selected, m.base))
 	sc.IdsLen = uint16(len(sc.Ids))
 	// Never dropped: see selectedIDs. The zero rank passed here is "no rank
 	// suppresses this set", not a claim about the visibility base.
-	appendIDs(&sc.VisIds, m.selectedIDs(m.visSelected, protocol.ScopeBase_Subtree))
+	appendIDs(&sc.VisIds, selectedIDs(m.visSelected, protocol.ScopeBase_Subtree))
 	sc.VisIdsLen = uint16(len(sc.VisIds))
 	return sc
 }
@@ -496,12 +567,13 @@ func (m *AuthorityPickerModel) View() string {
 			// suggest a multi-select that does not exist.
 			line = "  "
 		}
+		s := m.section(r)
 		switch r.kind {
 		case rowCap:
-			if m.caps&r.bit == r.bit {
+			if s.caps&r.bit == r.bit {
 				line = "[x] "
 			}
-		case rowBase, rowVisBase:
+		case rowBase, rowVisBase, rowSection:
 			line = "    "
 		case rowTask:
 			if m.mode == PickerModeParent {
@@ -512,15 +584,15 @@ func (m *AuthorityPickerModel) View() string {
 			// key discoverable — a row that looked identical either way would
 			// leave `v` as folklore in the footer.
 			act, see := "[ ]", "[ ]"
-			if m.selected[r.idHex] {
+			if s.selected[r.idHex] {
 				act = "[x]"
 			}
-			if m.visSelected[r.idHex] {
+			if s.visSelected[r.idHex] {
 				see = "[v]"
 			}
 			line = act + see + " "
 		case rowExcludeSelf:
-			if m.excludeSelf {
+			if s.excludeSelf {
 				line = "[x] "
 			}
 		case rowCascade:
@@ -539,8 +611,8 @@ func (m *AuthorityPickerModel) View() string {
 			// spells `descendants` exactly the way ls does rather than growing
 			// a picker-local word list. The vis prefix and the ids belong to
 			// their own rows and the footer echo.
-			bare := protocol.TaskScope{Base: m.base}
-			bare.SetExcludeSelf(m.excludeSelf)
+			bare := protocol.TaskScope{Base: s.base}
+			bare.SetExcludeSelf(s.excludeSelf)
 			label = "base: " + cli.ScopeLabel(bare)
 		case rowVisBase:
 			// "(follows base)" rather than the resolved word: showing the
@@ -548,8 +620,8 @@ func (m *AuthorityPickerModel) View() string {
 			// explicit choice, which is the one distinction this row exists
 			// to expose.
 			see := "(follows base)"
-			if m.visBasePresent {
-				see = m.visBase.String()
+			if s.visBasePresent {
+				see = s.visBase.String()
 			}
 			label = "see:  " + see
 		}
@@ -571,6 +643,8 @@ func (m *AuthorityPickerModel) View() string {
 	if spec == "" {
 		spec = "(default subtree)"
 	}
-	b.WriteString(fit("space toggle · v see-only · A/N all/none caps · enter apply · esc cancel · scope=" + spec))
+	_, dspec, _ := m.Delegation()
+	b.WriteString(fit("space toggle · v see-only · A/N all/none caps · enter apply · esc cancel · scope=" + spec +
+		" delegate=" + cli.CapsLabel(m.deleg.caps) + " delegate-scope=" + dspec))
 	return pickerBorderStyle.Render(b.String())
 }

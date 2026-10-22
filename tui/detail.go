@@ -245,6 +245,8 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if ov := cli.OverridesLabel(t.Overrides); ov != "" {
 		fmt.Fprintf(&sb, "scope-for:     %s\n", ov)
 	}
+	fmt.Fprintf(&sb, "delegate:      %s\n", cli.CapsLabel(t.DelegateCaps))
+	fmt.Fprintf(&sb, "delegate-scope: %s\n", cli.ScopeLabel(t.DelegateScope))
 	fmt.Fprintf(&sb, "authority:     %s\n", cli.AuthorityLabel(t))
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {

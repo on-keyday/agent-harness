@@ -104,7 +104,11 @@ func TestAuthorityOptsCarriesEveryAuthorityField(t *testing.T) {
 		Overrides: []protocol.ScopeOverride{
 			{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_Global},
 		},
-		ScopePresent: true,
+		ScopePresent:         true,
+		DelegateCaps:         protocol.Capability_FileRead,
+		DelegateScope:        protocol.TaskScope{Base: protocol.ScopeBase_None},
+		DelegateCapsPresent:  true,
+		DelegateScopePresent: true,
 	}
 
 	// Every field must actually be non-zero, or "it survived" is vacuous for
@@ -190,7 +194,7 @@ func TestSessionNewCarriesScopeForIntoTheRequest(t *testing.T) {
 
 	var a App
 	caps, _ := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-	auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
+	auth := a.spawnAuthority(v, caps)
 	opts := auth.opts(sessionRequest{ResumeTaskID: v.ResumeTaskID})
 
 	if opts.Caps != protocol.Capability_Cancel {

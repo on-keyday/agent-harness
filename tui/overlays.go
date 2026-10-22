@@ -679,6 +679,13 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			})
 		}
 		caps, spec, cascade, keep := a.authorityPicker.Result()
+		dcaps, dspec, dchanged := a.authorityPicker.Delegation()
+		dscope, err := cli.ParseScope(dspec)
+		if err != nil {
+			// Unreachable for picker-built specs, as below.
+			a.cmdresult.Append(ErrorStyle.Render("delegate-scope: " + err.Error()))
+			return nil
+		}
 		// Carried, not edited: the picker never clears the target's
 		// per-capability narrowings, because they travel with the scope
 		// under one presence bit and an empty list would erase them.
@@ -699,10 +706,12 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 				a.sessionScope = sc
 				a.sessionOverrides = overrides
 			}
+			a.sessionDelegateCaps, a.sessionDelegateScope = dcaps, dscope
 			label := capsLabel(a.sessionCaps) + "  scope=" + cli.ScopeLabel(a.sessionScope)
 			if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
 				label += " +" + ov
 			}
+			label += "  delegate=" + capsLabel(dcaps) + " delegate-scope=" + cli.ScopeLabel(dscope)
 			a.cmdresult.Append(OKStyle.Render("defaults set: ") + label)
 			return nil
 		}
@@ -717,10 +726,17 @@ func (a *App) inAuthorityPicker(msg tea.KeyMsg) tea.Cmd {
 			a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
 			return nil
 		}
-		return DoSetCaps(a.client, cli.SetCapsOpts{
+		opts := cli.SetCapsOpts{
 			TaskID: target, Caps: &caps, Scope: &sc, Overrides: overrides,
 			Cascade: cascade, KeepConns: keep,
-		})
+		}
+		// The bound is written only when the operator changed it: with
+		// --cascade, writing it clamps every descendant to it, and an
+		// unchanged default bound would clamp them to nothing.
+		if dchanged {
+			opts.DelegateCaps, opts.DelegateScope = &dcaps, &dscope
+		}
+		return DoSetCaps(a.client, opts)
 	}
 	return nil
 }

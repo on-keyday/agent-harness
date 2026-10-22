@@ -195,6 +195,11 @@ var surfaceLocal = map[string]string{
 	"session new.CapsPresent/TUI":  "as submit",
 	"session new.ScopePresent/TUI": "as submit",
 
+	"submit.DelegateCapsPresent/TUI":       "derived in spawnAuthority from the pointer, as ScopePresent",
+	"submit.DelegateScopePresent/TUI":      "derived in spawnAuthority from the pointer, as ScopePresent",
+	"session new.DelegateCapsPresent/TUI":  "as submit",
+	"session new.DelegateScopePresent/TUI": "as submit",
+
 	"git diff.TaskID/CLI":   "peeled before the shared parse: the id sits between the family word and the sub-verb",
 	"git diff.TaskID/TUI":   "same peel as the CLI",
 	"git diff.Sub/CLI":      "read as g.Sub in the dispatch switch, which the selector scan sees on the switch expression",

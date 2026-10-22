@@ -83,6 +83,13 @@ type Authority struct {
 	// create. Set only when the command line named --scope explicitly —
 	// the session default must never silently rewrite a resumed task.
 	ScopePresent bool
+	// DelegateCaps / DelegateScope are the delegation bound the spawned task
+	// gets; the two presence bits re-grant each half on a resume, set only
+	// when the command line named that flag (SessionOpts.DelegateCapsPresent).
+	DelegateCaps         protocol.Capability
+	DelegateScope        protocol.TaskScope
+	DelegateCapsPresent  bool
+	DelegateScopePresent bool
 }
 
 // sessionRequest is the half of a session or submit request that is NOT the
@@ -145,6 +152,11 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		Scope:              a.Scope,
 		Overrides:          a.Overrides,
 		ScopePresent:       a.ScopePresent,
+
+		DelegateCaps:         a.DelegateCaps,
+		DelegateScope:        a.DelegateScope,
+		DelegateCapsPresent:  a.DelegateCapsPresent,
+		DelegateScopePresent: a.DelegateScopePresent,
 	}
 }
 

@@ -185,7 +185,11 @@ func (m CapsAuditModal) View() string {
 		if l.holder == nil {
 			s = m.capLine(l.cap)
 		} else {
-			s = "    " + l.holder.Label + "  " + auditScopeCell(*l.holder) + "  parent=" + l.holder.Parent + "  auth=" + l.holder.Authority
+			s = "    " + l.holder.Label + "  " + auditScopeCell(*l.holder) + "  parent=" + l.holder.Parent
+			if l.holder.Delegates {
+				s += " deleg"
+			}
+			s += "  auth=" + l.holder.Authority
 			if !l.holder.Live {
 				s += " (ended)"
 			}

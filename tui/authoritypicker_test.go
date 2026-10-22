@@ -16,12 +16,19 @@ func pickerTask(b byte, prompt string) protocol.TaskInfo {
 	return ti
 }
 
-// moveTo places the cursor on the first row whose label contains want.
+// moveTo places the cursor on the first row of the task's OWN section whose
+// label contains want, reached by moving (so a disabled row is not reachable).
+// The delegation section repeats every label, so "first" is counted from the
+// top, not from wherever the cursor is.
 func moveTo(t *testing.T, m *AuthorityPickerModel, want string) {
 	t.Helper()
+	m.cursor = 0
+	if m.rowDisabled(m.rows[0]) {
+		m.Move(1)
+	}
 	start := m.cursor
 	for {
-		if strings.Contains(m.rows[m.cursor].label, want) {
+		if r := m.rows[m.cursor]; !r.deleg && strings.Contains(r.label, want) {
 			return
 		}
 		m.Move(1)
@@ -81,8 +88,8 @@ func TestAuthorityPickerScopeSerialization(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var m AuthorityPickerModel
 			if tc.session {
-				m.OpenSession(protocol.Capability_All, protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
-					nil, []protocol.TaskInfo{target, sib, other})
+				m.OpenSession(Authority{Caps: protocol.Capability_All, Scope: protocol.TaskScope{Base: protocol.ScopeBase_Subtree}},
+					[]protocol.TaskInfo{target, sib, other})
 			} else {
 				m.OpenRegrant(target, []protocol.TaskInfo{target, sib, other})
 			}
@@ -148,7 +155,8 @@ func TestAuthorityPickerGlobalSkipsTaskRows(t *testing.T) {
 	sibHex := FormatTaskID(sib.Id)
 	start := m.cursor
 	for {
-		if strings.Contains(m.rows[m.cursor].label, sibHex[:8]) {
+		// The own section's task rows; the delegation section has its own base.
+		if r := m.rows[m.cursor]; !r.deleg && strings.Contains(r.label, sibHex[:8]) {
 			t.Fatal("cursor landed on a task row while base==global")
 		}
 		m.Move(1)
@@ -201,7 +209,7 @@ func TestAuthorityPickerStableWidth(t *testing.T) {
 // rows and Result reports both false even after toggling everything.
 func TestAuthorityPickerSessionModeRows(t *testing.T) {
 	var m AuthorityPickerModel
-	m.OpenSession(protocol.Capability_All, protocol.TaskScope{}, nil, nil)
+	m.OpenSession(Authority{Caps: protocol.Capability_All, Scope: protocol.TaskScope{}}, nil)
 	for _, r := range m.rows {
 		if strings.Contains(r.label, "cascade") || strings.Contains(r.label, "keep-conns") {
 			t.Fatalf("session mode must not show %q", r.label)
@@ -300,7 +308,7 @@ func TestPickerCarriesOverridesItDoesNotEdit(t *testing.T) {
 	}
 
 	// A session open with no overrides must not inherit the previous target's.
-	m.OpenSession(protocol.Capability_All, protocol.TaskScope{}, nil, nil)
+	m.OpenSession(Authority{Caps: protocol.Capability_All, Scope: protocol.TaskScope{}}, nil)
 	if got := m.Overrides(); len(got) != 0 {
 		t.Errorf("Overrides() = %+v after a fresh open, want empty", got)
 	}
@@ -483,7 +491,7 @@ func TestPickerVisIDsSurviveAGlobalVisibilityRank(t *testing.T) {
 // otherwise ticking exclude-self would silently do nothing on a spawn.
 func TestPickerSessionModeEmptyOnlyForTheDefault(t *testing.T) {
 	var m AuthorityPickerModel
-	m.OpenSession(protocol.Capability_Spawn, protocol.TaskScope{Base: protocol.ScopeBase_Subtree}, nil, nil)
+	m.OpenSession(Authority{Caps: protocol.Capability_Spawn, Scope: protocol.TaskScope{Base: protocol.ScopeBase_Subtree}}, nil)
 	if _, spec, _, _ := m.Result(); spec != "" {
 		t.Errorf("plain default spec = %q, want the empty spawn default", spec)
 	}
