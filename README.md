@@ -1364,6 +1364,43 @@ closing the tree leaves it. A node wider than its
 parent carries a dotted ring, in or out of reach mode, whose tooltip is the
 `wider than parent:` line.
 
+`caps what-if` shows what a change would do **before it is sent**: a `caps
+set` (with or without `--cascade`), a spawn by the task, or a `caps
+set-parent`. Nothing is sent but the listing request; the answer comes from the
+code the server enforces with — the cascade's clamp is one function the server
+and the what-if both call.
+
+```bash
+bin/harness-cli caps what-if <task-id> --caps spawn --cascade          # a re-grant
+bin/harness-cli caps what-if <task-id> --spawn --caps cancel --scope subtree   # a child it would create
+bin/harness-cli caps what-if <task-id> --parent-none                   # a reparent
+```
+
+```
+  220708dd  caps=cancel → none
+      cancel         -1: 220708dd
+  251180f8  caps=spawn,cancel → spawn
+      cancel         -2: 220708dd 251180f8
+  command: harness-cli caps set 251180f8169421c8e1442ac9d100dfca --caps spawn --cascade
+```
+
+Each changed task gets its changed halves under the keys `ls` prints, then
+per bit the tasks it gains (`+N`) and loses (`-N`) — `view` for what it sees.
+A spawn's child is `new`, and every ancestor whose subtree would hold it gains
+it. A change the server would refuse prints the server's refusal instead (`scope
+id … is outside your own scope`, `would make … its own ancestor`). The last line
+is the command that makes the change — for a spawn, `command (run by <id>):`,
+since it is the creator's to run. Over an agent's listing the report starts
+`(over your listing only)`. The same command runs from the TUI and WebUI
+command lines.
+
+In the WebUI the task sheet's 「🔮 もし…」 opens the re-grant dialog in
+what-if mode, and 🔑's dialog has 「もし（送らない）」 beside 適用. Either one
+draws the answer on the creator tree instead of sending it: changed tasks are
+ringed, a spawn's child (「仮の子を置く」) is drawn dashed under its creator,
+and a panel lists the diff and the command with a 📋 copy button. The overlay
+stays through the poll; Escape, its ✕, closing the tree or reach mode clears it.
+
 The **subtree** walk follows each task's parent link (who spawned whom,
 `by=` in `ls`). The link itself is operator-mutable on a live task:
 
@@ -1483,7 +1520,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
-/ caps set / caps set-parent / caps audit / caps reach / workspace {save,apply,ls,show}
+/ caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;

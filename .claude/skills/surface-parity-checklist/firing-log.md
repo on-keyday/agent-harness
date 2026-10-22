@@ -3261,3 +3261,30 @@ n/a:     3–5 (no TUI key or picker: the TUI's form is the text, V12), 9, 11–
          CapDescription gains a verb; S1–S6 — no agent launch change.
 missed:  — (the live run, not the walk, found `spawn` listed as reaching tasks;
          fixed with cli.ReachBits before landing)
+
+### 2026-10-22 (pre-landing) — visualizer Phase 4: `caps what-if` + the tree's what-if overlay
+done:    1 (`caps what-if` row, CLI|TUI|WebUI, `--json` CLI|WebUI with reason), 2
+         (Exclusive: spawn vs cascade/parent flags, parent flags vs every
+         authority flag; AtLeastOne; Validate: `--parent ""`, a re-grant's
+         `--scope-for` without `--scope`), 6 (sheet 「🔮 もし…」, dialog
+         「もし（送らない）」 and 「仮の子を置く」), 7 (WebUIDispatch capsWhatIfText,
+         main.js `caps what-if` case), 8 (bridges capsWhatIfText / whatIf, both
+         parsing the request through ParseCmdCapsWhatIf), 10, 24 (`--caps` /
+         `--scope` / bound: omitted = keep on a re-grant, none / subtree on a
+         spawn — in each Help), 25 (a re-grant's halves are pointers), 27 (one
+         cli.WhatIfChange for CLI, TUI and wasm), 29 (diff lines name the task and
+         the change; `nothing changes`), 30 (CLI stdout / TUI cmdresult / WebUI
+         panel + command output), 32 (WhatIfCommand through CapsLabel /
+         ScopeLabel / OverridesLabel, TestWhatIfCommandRoundTrips parses it back
+         through caps set and caps set-parent), 33 (no flag ignored: the
+         exclusions refuse), 34a (the dialog's own chips / radios / checklists; the
+         phantom is a checkbox; 390px checked), 35, 36 (skill + mirrors), 37
+         (spec "As implemented"), 39 (Surfaces rows for Phase 4 checked: dialog +
+         sheet, three command lines, skill row widened to 3–4)
+n/a:     3–5 (no TUI key or picker, V12), 9 and 26 — a spawn what-if models a
+         spawn BY A TASK, whose CLI has no session defaults; the dialog's phantom
+         requests what the dialog shows, 11–23 (no task field), 15 (`caps what-if`
+         needs no capability), 28, 28a (the what-if builds no request), 31, 34,
+         38, S1–S6
+missed:  — (the live run found the R+10 ring running into the node's labels; set to
+         reach mode's R+6 before landing)

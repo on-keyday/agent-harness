@@ -512,6 +512,14 @@ and the scope forms (`--json` for the machine-readable form).
   the spawn. `caps reach <worker-id>` afterwards shows what the worker holds.
   Its `wider than parent:` line reads `not computed` for you: your listing has
   gaps, and only an operator's comparison is trustworthy.
+- **Try the spawn before you send it: `harness-cli caps what-if <your-id>
+  --spawn --caps … --scope …`.** It applies the server's spawn rules to your
+  listing and sends nothing: the child (`new`) with the caps and scope it would
+  actually get — a bit you may not delegate already shows as missing — and per
+  bit which of your ancestors' reach gains it. A spawn the server would refuse
+  prints the refusal it would give (`… is outside what you may delegate`), so
+  fix the flags before spawning rather than after a denial. The report starts
+  `(over your listing only)` for you, since your listing has gaps.
 - **See what you handed out with `harness-cli caps audit`.** One line per
   capability, strongest first, listing the tasks your `ls` shows that hold it
   and the scope it reaches; `--cap spawn` lists just that bit's holders. Report
