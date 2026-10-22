@@ -201,3 +201,22 @@ func TestReachReportDelegateCapsAreGrantable(t *testing.T) {
 		t.Errorf("delegate caps should be caps ∩ bound:\n%s", got)
 	}
 }
+
+// A holder of bits that name no task is told so, rather than those bits
+// silently vanishing; and --cap on such a bit says why there is no line.
+func TestReachReportNamesBitsWithoutPerTaskReach(t *testing.T) {
+	tasks := reachListing(protocol.TaskScope{})
+	tasks[0].Capabilities |= protocol.Capability_Spawn | protocol.Capability_BoardObserve
+	got := strings.Join(reachText(t, tasks, reachHex(0x3f), 0), "\n")
+	if !strings.Contains(got, "  also holds (no per-task reach): spawn,board_observe") {
+		t.Errorf("report lacks the untargeted-bits line:\n%s", got)
+	}
+	got = strings.Join(reachText(t, tasks, reachHex(0x3f), protocol.Capability_Spawn), "\n")
+	if !strings.Contains(got, line("spawn", "no per-task reach (it names no task)")) {
+		t.Errorf("--cap spawn says nothing:\n%s", got)
+	}
+	got = strings.Join(reachText(t, tasks, reachHex(0x3f), protocol.Capability_ExecView), "\n")
+	if !strings.Contains(got, line("exec_view", "not held")) {
+		t.Errorf("--cap on a bit it does not hold says nothing:\n%s", got)
+	}
+}

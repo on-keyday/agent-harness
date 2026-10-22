@@ -868,12 +868,10 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 	if v.Cap != "" {
 		focus, _ = verb.ParseCaps(v.Cap) // Validate already proved it one bit
 	}
-	tasks := make([]protocol.TaskInfo, 0, len(a.tasksByID))
-	for _, t := range a.tasksByID {
-		tasks = append(tasks, t)
-	}
+	// The aged listing, as every view reads it, so granter=… (age) advances
+	// between snapshots.
 	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
-	r, err := cli.BuildReachReport(tasks, full, focus, kind != protocol.ClientKind_Agent)
+	r, err := cli.BuildReachReport(a.auditTasks(), full, focus, kind != protocol.ClientKind_Agent)
 	if err != nil {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
 		return nil

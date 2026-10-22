@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
@@ -136,5 +137,25 @@ func TestSetCapsSummaryNamesTheBound(t *testing.T) {
 	got := setCapsSummary(cli.SetCapsOpts{DelegateCaps: &dc, DelegateScope: &ds})
 	if got != "delegate=file_read  delegate-scope=none" {
 		t.Errorf("summary = %q", got)
+	}
+}
+
+// caps reach in the TUI reads the aged listing, as every view does: the
+// granter's age advances between snapshots.
+func TestCapsReachAgesTheGranter(t *testing.T) {
+	a := New(Config{})
+	var ti protocol.TaskInfo
+	ti.Id.Id[0] = 0x44
+	ti.Status = protocol.TaskStatus_Running
+	ti.Capabilities = protocol.Capability_Cancel
+	ti.AuthoritySource = protocol.AuthoritySource_OperatorCapsSet
+	ti.AuthorityAt = 5
+	ti.AuthorityAgeMs = 1000
+	a.Update(SnapshotMsg{Tasks: []protocol.TaskInfo{ti}})
+	id := FormatTaskID(ti.Id)
+	a.authorityRecvAt[id] = a.authorityRecvAt[id].Add(-10 * time.Minute)
+	tuiVerbs{a: a}.CapsReach(verb.CapsReachAction{TaskID: id})
+	if got := a.cmdresult.View(); !strings.Contains(got, "operator_caps_set@operator (10m ago)") {
+		t.Errorf("caps reach granter age not advanced:\n%s", got)
 	}
 }

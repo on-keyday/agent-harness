@@ -53,6 +53,12 @@ type ReachReport struct {
 	// WiderComputed is false over a partial listing, where Wider is zero and
 	// means nothing (see BuildReachReport).
 	WiderComputed bool
+	// Untargeted are held bits that name no task (spawn, notify, …): no line
+	// can show their reach, so the report names them instead of dropping them.
+	Untargeted protocol.Capability
+	// Focus is the --cap name, "" without one; FocusNote says why it produced
+	// no line: "not held", or that the bit names no task.
+	Focus, FocusNote string
 }
 
 // BuildReachReport reads the report for id off the caller's listing. focus,
@@ -91,6 +97,21 @@ func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capab
 			continue
 		}
 		r.Bits = append(r.Bits, ReachLine{Cap: c.String(), ReachResult: authority.ReachOf(view, id, c)})
+	}
+	for _, c := range verb.AuditOrder() {
+		if info.Capabilities&c != 0 && verb.CapScopeKindOf(c) == verb.ScopeNone {
+			r.Untargeted |= c
+		}
+	}
+	if focus != 0 {
+		r.Focus = focus.String()
+	}
+	switch {
+	case focus == 0 || len(r.Bits) > 0:
+	case verb.CapScopeKindOf(focus) == verb.ScopeNone:
+		r.FocusNote = "no per-task reach (it names no task)"
+	default:
+		r.FocusNote = "not held"
 	}
 	return r, nil
 }
@@ -216,7 +237,9 @@ func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
 		return json.NewEncoder(w).Encode(map[string]any{
 			"task": r.TaskID, "granter": r.Granter, "bits": bits,
 			"view": lineJSON(r.View), "delegate": deleg,
-			"wider": map[string]any{"caps": CapsLabel(r.Wider.Bits), "sees": r.Wider.Sees, "computed": r.WiderComputed},
+			"wider":             map[string]any{"caps": CapsLabel(r.Wider.Bits), "sees": r.Wider.Sees, "computed": r.WiderComputed},
+			"no_per_task_reach": CapsLabel(r.Untargeted),
+			"focus_note":        r.FocusNote,
 		})
 	}
 	row := func(name, body string) string { return fmt.Sprintf("  %-14s %s\n", name, body) }
@@ -225,8 +248,14 @@ func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
 	for _, l := range r.Bits {
 		b.WriteString(row(l.Cap, reachBody(l.ReachResult, true)))
 	}
+	if r.FocusNote != "" {
+		b.WriteString(row(r.Focus, r.FocusNote))
+	}
 	b.WriteString(row("view", reachBody(r.View.ReachResult, false)))
 	b.WriteString(row("delegate", "caps="+CapsLabel(r.DelegateCaps)+"  "+reachBody(r.Delegate.ReachResult, true)))
+	if r.Untargeted != 0 {
+		b.WriteString("  also holds (no per-task reach): " + CapsLabel(r.Untargeted) + "\n")
+	}
 	if !r.WiderComputed {
 		b.WriteString("  wider than parent: not computed (your listing is partial)\n")
 	} else if l := WiderLine(r.Wider, r.Granter); l != "" {

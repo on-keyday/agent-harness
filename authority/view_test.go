@@ -212,3 +212,23 @@ func TestWiderThanParentNeedsAListedCreator(t *testing.T) {
 		t.Errorf("an operator-created root = %+v, want empty", w)
 	}
 }
+
+// exec_resize is honoured only on an observer attach, which must itself pass
+// exec_view's scope: its reach is its own scope inside exec_view's, and nothing
+// without exec_view.
+func TestReachOfResizeRidesAnAttach(t *testing.T) {
+	p := Task{ID: viewP, Creator: viewO, Caps: protocol.Capability_ExecView | protocol.Capability_ExecResize, Scope: Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecResize, Base: protocol.ScopeBase_Global}},
+	}}
+	r := ReachOf(viewTree(p, viewC0()), viewP, protocol.Capability_ExecResize)
+	if r.ActAll {
+		t.Fatal("resize reach is global although exec_view reaches only the subtree")
+	}
+	wantIDs(t, "resize act", r.Act, sorted(viewC, viewP))
+
+	p.Caps = protocol.Capability_ExecResize
+	if r := ReachOf(viewTree(p, viewC0()), viewP, protocol.Capability_ExecResize); r.ActAll || len(r.Act) != 0 {
+		t.Errorf("resize without exec_view = %+v, want no reach", r)
+	}
+}

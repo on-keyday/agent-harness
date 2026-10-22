@@ -65,6 +65,41 @@ func inSet(all bool, set map[string]bool) func(string) bool {
 	return func(id string) bool { return all || set[id] }
 }
 
+// actionReach is the target set of t through bit as the server's gates
+// resolve it, ok false when t does not exercise the bit. exec_resize is
+// honoured only on an observer attach, which must itself pass exec_view's
+// scope (resizeAllowed is checked inside the attach handler), so its reach is
+// its own set inside exec_view's.
+func actionReach(t Task, bit protocol.Capability, children map[string][]string) (all bool, set map[string]bool, ok bool) {
+	exercised := ExercisedBits(t.Caps)
+	if exercised&bit == 0 {
+		return false, nil, false
+	}
+	all, set = ActionSet(t.ID, t.Scope, bit, children)
+	if bit != protocol.Capability_ExecResize {
+		return all, set, true
+	}
+	if exercised&protocol.Capability_ExecView == 0 {
+		return false, nil, false
+	}
+	vAll, vSet := ActionSet(t.ID, t.Scope, protocol.Capability_ExecView, children)
+	switch {
+	case all && vAll:
+		return true, nil, true
+	case all:
+		return false, vSet, true
+	case vAll:
+		return false, set, true
+	}
+	both := map[string]bool{}
+	for x := range set {
+		if vSet[x] {
+			both[x] = true
+		}
+	}
+	return false, both, true
+}
+
 // ReachOf is what the task id reaches over the listing through bit, as the
 // server's gates resolve it: through every bit the task exercises
 // (ExercisedBits), each under that bit's own scope. bit Capability_None asks
@@ -77,8 +112,8 @@ func ReachOf(tasks []Task, id string, bit protocol.Capability) ReachResult {
 	}
 	visAll, vis := VisibleSet(id, t.Scope, v.children)
 	actAll, act := false, map[string]bool(nil)
-	if bit != protocol.Capability_None && ExercisedBits(t.Caps)&bit != 0 {
-		actAll, act = ActionSet(id, t.Scope, bit, v.children)
+	if bit != protocol.Capability_None {
+		actAll, act, _ = actionReach(t, bit, v.children)
 	}
 	return v.result(actAll, inSet(actAll, act), visAll, inSet(visAll, vis))
 }
@@ -161,16 +196,12 @@ func WiderThanParent(tasks []Task, id string) Wider {
 		return false
 	}
 	var w Wider
-	parentBits := ExercisedBits(p.Caps)
 	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
-		if ExercisedBits(t.Caps)&bit == 0 {
+		cAll, cSet, ok := actionReach(t, bit, v.children)
+		if !ok {
 			continue
 		}
-		cAll, cSet := ActionSet(id, t.Scope, bit, v.children)
-		pAll, pSet := false, map[string]bool{}
-		if parentBits&bit != 0 {
-			pAll, pSet = ActionSet(p.ID, p.Scope, bit, v.children)
-		}
+		pAll, pSet, _ := actionReach(p, bit, v.children)
 		if exceeds(cAll, cSet, pAll, pSet) {
 			w.Bits |= bit
 		}

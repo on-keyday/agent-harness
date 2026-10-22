@@ -468,6 +468,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // snapshot poll, the selector and the audit cannot draw it differently.
   function drawTaskTree() {
     fillTaskTreeBit();
+    // A task that left the listing (pruned, or now out of sight) has no reach
+    // to draw; say so rather than leave every node dimmed with no reason.
+    if (reachMode && !(lastTasks || []).some((t) => t.id === reachMode.taskId)) {
+      appendCmdOutput(`caps reach ${reachMode.taskId.slice(0, 8)}: the task left the listing; reach mode closed`);
+      reachMode = null;
+    }
     let reach = null;
     if (reachMode && window.harness && typeof window.harness.reachOf === "function") {
       reach = window.harness.reachOf(reachMode);
@@ -486,7 +492,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     reachBanner.hidden = !reach;
     if (!reach) return;
     const names = reach.bits.map((b) => b.name);
-    if (reachSel && (reachSel.dataset.for !== reachMode.taskId || reachSel.options.length !== names.length)) {
+    // The entries follow the task's caps, which a caps set can change while
+    // the mode is on: compare the names, not just their count.
+    if (reachSel && (reachSel.dataset.for !== reachMode.taskId || reachSel.dataset.names !== names.join(","))) {
       reachSel.replaceChildren(...names.map((n) => {
         const o = document.createElement("option");
         o.value = n;
@@ -494,6 +502,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         return o;
       }));
       reachSel.dataset.for = reachMode.taskId;
+      reachSel.dataset.names = names.join(",");
+    }
+    if (!names.includes(reachMode.sel)) {
+      // The bit was taken away: fall back to the first entry and redraw with it.
+      reachMode.sel = names[0];
+      queueMicrotask(drawTaskTree);
     }
     if (reachSel) reachSel.value = reachMode.sel;
     const all = reachMode.sel === "view" ? reach.seeAll : reach.actAll;
@@ -501,7 +515,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     text.textContent = `caps reach ${reachMode.taskId.slice(0, 8)} ${reachMode.sel}: ` + (all
       ? "global (+ tasks you cannot list)"
       : (reachMode.sel === "view" ? "" : `act ${reach.act.length}  `) +
-        (reach.seeAll ? "see global" : `see ${reachMode.sel === "view" ? "" : "+"}${reach.see.length}`));
+        (reach.seeAll ? "see global (+ tasks you cannot list)" : `see ${reachMode.sel === "view" ? "" : "+"}${reach.see.length}`));
     const close = document.createElement("button");
     close.type = "button";
     close.className = "task-chip";
@@ -530,7 +544,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (reachMode) { reachMode.sel = reachSel.value; drawTaskTree(); }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && reachMode && !document.querySelector("dialog[open]")) exitReachMode();
+    if (e.key !== "Escape" || !reachMode || document.querySelector("dialog[open]")) return;
+    // Escape typed into a field or a terminal belongs to that field or to the
+    // program in the terminal (vim), not to the tree.
+    const el = e.target;
+    if (el && el.closest && el.closest("input, textarea, select, [contenteditable], .xterm")) return;
+    exitReachMode();
   });
   // The selector's bits come from the bridge (verb.AuditOrder), filled once
   // the wasm is up.
@@ -550,6 +569,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // that holder's capability, with the node brought into view and pulsed.
   // Re-grant is then that node's own task sheet.
   function showTaskInTree(id, capName) {
+    // The audit leads to a capability's holders, which reach mode would draw
+    // over; leave it first.
+    reachMode = null;
     fillTaskTreeBit();
     const opt = taskTreeBit && [...taskTreeBit.options].find((o) => o.dataset.name === capName);
     if (opt) taskTreeBit.value = opt.value;
@@ -617,6 +639,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
+      // Reach mode is a mode OF the tree: closing the tree ends it.
+      if (!taskTreeMode) reachMode = null;
       drawTaskTree();
     });
   }

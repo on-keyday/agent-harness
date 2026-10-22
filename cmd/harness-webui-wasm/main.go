@@ -930,7 +930,7 @@ func harnessCapsAudit(this js.Value, args []js.Value) any {
 		ended = args[0].Get("includeEnded").Truthy()
 		empty = args[0].Get("includeEmpty").Truthy()
 	}
-	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+	return capsAuditPromise("caps audit", func(tasks []protocol.TaskInfo) (js.Value, error) {
 		blob, err := json.Marshal(cli.AuditRowsJSON(cli.CapsAudit(tasks, ended, empty)))
 		if err != nil {
 			return js.Undefined(), err
@@ -982,7 +982,7 @@ func harnessCapsAuditText(this js.Value, args []js.Value) any {
 			name = v.String()
 		}
 	}
-	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+	return capsAuditPromise("caps audit", func(tasks []protocol.TaskInfo) (js.Value, error) {
 		var focus protocol.Capability
 		if name != "" {
 			c, err := cli.ParseCaps(name)
@@ -1015,7 +1015,7 @@ func harnessCapsReachText(this js.Value, args []js.Value) any {
 		}
 		asJSON = args[0].Get("json").Truthy()
 	}
-	return capsAuditPromise(func(tasks []protocol.TaskInfo) (js.Value, error) {
+	return capsAuditPromise("caps reach", func(tasks []protocol.TaskInfo) (js.Value, error) {
 		var focus protocol.Capability
 		if name != "" {
 			c, err := cli.ParseCaps(name)
@@ -1095,7 +1095,7 @@ func harnessReachOf(this js.Value, args []js.Value) any {
 }
 
 // capsAuditPromise fetches the task listing and resolves with render's value.
-func capsAuditPromise(render func([]protocol.TaskInfo) (js.Value, error)) any {
+func capsAuditPromise(verbName string, render func([]protocol.TaskInfo) (js.Value, error)) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -1107,12 +1107,12 @@ func capsAuditPromise(render func([]protocol.TaskInfo) (js.Value, error)) any {
 			}
 			lr, err := c.Snapshot(rootCtx)
 			if err != nil {
-				rejectErr(reject, fmt.Errorf("caps audit: %w", err))
+				rejectErr(reject, fmt.Errorf("%s: %w", verbName, err))
 				return
 			}
 			v, err := render(lr.Tasks)
 			if err != nil {
-				rejectErr(reject, fmt.Errorf("caps audit: %w", err))
+				rejectErr(reject, fmt.Errorf("%s: %w", verbName, err))
 				return
 			}
 			resolve.Invoke(v)
