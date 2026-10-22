@@ -495,22 +495,25 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       (wi && wi.grantEdges) || lastGrantEdges, lastTasks,
       taskStatusColor, revealTaskInList,
       { markBit: reach || wi ? 0 : Number(taskTreeBit && taskTreeBit.value) || 0,
-        focusId: reach ? reachMode.taskId : treeFocusId,
+        // Not the reach subject: the banner names it, and the ring this would
+        // draw is 権限で強調's holder ring, which read as a reach of its own.
+        focusId: treeFocusId,
         reach, reachSel: reachMode && reachMode.sel,
         whatIf: wi && !wi.error ? new Set(wi.diffs.map((d) => d.id)) : null });
   }
   // showWhatIf puts a harness.whatIf answer on the tree: the panel is built
   // once per answer, so a poll's redraw does not reset its copy button.
   // reopen, when given, returns to the dialog the answer came from with its
-  // edits intact, so looking before applying costs no re-entry.
-  function showWhatIf(result, reopen) {
+  // edits intact, so looking before applying costs no re-entry. what names
+  // the change previewed ("caps set" / "spawn").
+  function showWhatIf(result, reopen, what) {
     reachMode = null;
     whatIfState = { result };
     if (whatIfPanel) {
       const head = document.createElement("div");
       head.className = "tt-whatif-head";
       const title = document.createElement("span");
-      title.textContent = "変更の影響（未送信）";
+      title.textContent = `プレビュー: ${what || "caps what-if"}（未送信）`;
       const close = document.createElement("button");
       close.type = "button";
       close.className = "task-chip";
@@ -4513,18 +4516,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   }
 
-  // opts.whatIf opens it from the sheet's 🔮: 適用 and --keep-conns are gone
-  // (nothing is sent), and 「このタスクが作る子として見る」 can turn the controls
-  // into a child's request. From 🔑, 「影響を見る」 sits beside 適用 over the same
-  // controls.
+  // opts.whatIf opens it from the sheet's 🔮 as a preview: 適用 and
+  // --keep-conns are gone (nothing is sent), and the mode row picks whether the
+  // controls describe this task's caps set or a child it spawns. From 🔑,
+  // プレビュー sits beside 適用 over the same controls.
   function openRegrantDialog(t, opts = {}) {
     if (!regrantModal || typeof window.harness.setCaps !== "function") return;
     const whatIfOnly = !!opts.whatIf;
-    document.getElementById("regrant-heading").textContent = whatIfOnly ? "変更の影響を見る（送信しない）" : "caps/scope 再付与";
+    document.getElementById("regrant-heading").textContent = whatIfOnly ? "プレビュー" : "caps/scope 再付与";
     document.getElementById("regrant-apply").hidden = whatIfOnly;
     document.getElementById("regrant-keep-conns-label").hidden = whatIfOnly;
-    document.getElementById("regrant-phantom-label").hidden = !whatIfOnly;
-    document.getElementById("regrant-phantom").checked = false;
+    document.getElementById("regrant-mode-row").hidden = !whatIfOnly;
+    regrantModal.querySelector('input[name="regrant-mode"][value="set"]').checked = true;
     document.getElementById("regrant-cascade").disabled = false;
     regrantTaskId = t.id;
     regrantBits = typeof t.capsBits === "number" ? t.capsBits : 0;
@@ -4597,12 +4600,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
     // A spawn has no descendants to cascade into.
-    document.getElementById("regrant-phantom").addEventListener("change", (e) => {
-      const cascade = document.getElementById("regrant-cascade");
-      cascade.disabled = e.target.checked;
-      if (e.target.checked) cascade.checked = false;
-    });
-    // 影響を見る: the dialog's request as `caps what-if` flags, answered over the
+    const regrantSpawnMode = () => regrantModal.querySelector('input[name="regrant-mode"][value="spawn"]').checked;
+    for (const r of regrantModal.querySelectorAll('input[name="regrant-mode"]')) {
+      r.addEventListener("change", () => {
+        const cascade = document.getElementById("regrant-cascade");
+        cascade.disabled = regrantSpawnMode();
+        if (cascade.disabled) cascade.checked = false;
+      });
+    }
+    // プレビュー: the dialog's request as `caps what-if` flags, answered over the
     // listing the tree was drawn from. Nothing is sent.
     document.getElementById("regrant-whatif").addEventListener("click", () => {
       if (typeof window.harness.whatIf !== "function") return;
@@ -4617,7 +4623,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         req["delegate-caps"] = capsLabelFor(regrantDeleg.caps);
         req["delegate-scope"] = scopeStateSpec(regrantDeleg);
       };
-      if (document.getElementById("regrant-phantom").checked) {
+      const spawn = regrantSpawnMode();
+      if (spawn) {
         // The child requests every half as shown, as a spawn carries them.
         req.spawn = true;
         delegate();
@@ -4639,7 +4646,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         }
         const t = (lastTasks || []).find((x) => x.id === forId);
         if (t) openRegrantDialog(t, { whatIf: forWhatIfOnly });
-      });
+      }, spawn ? "spawn" : "caps set");
     });
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
@@ -6069,7 +6076,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
     addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
-    addItem("🔮 変更の影響を見る（送信しない）", "", () => openRegrantDialog(t, { whatIf: true }));
+    addItem("🔮 caps set / spawn をプレビュー", "", () => openRegrantDialog(t, { whatIf: true }));
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
     addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
 
@@ -9779,7 +9786,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
 
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
     sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}`
-      : (phantom ? "作る子（未送信）" : "(gone)");
+      : (phantom ? "spawn される子" : "(gone)");
     g.appendChild(sub);
 
     // Which repo the task belongs to. The fleet serves several, and without
