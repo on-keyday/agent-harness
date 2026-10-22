@@ -154,6 +154,16 @@ type CapsAuditAction struct {
 	JSON bool
 }
 
+// CapsReachAction is built by: caps reach.
+type CapsReachAction struct {
+	ActionMarker
+	// show one capability's reach only
+	Cap string
+	// one JSON object, full task ids
+	JSON   bool
+	TaskID string
+}
+
 // CatalogAction is built by: caps, notify-watch, skill, skill ls, version, watch, whoami.
 type CatalogAction struct {
 	ActionMarker
@@ -2626,6 +2636,32 @@ func init() {
 			a.JSON = b.Bool("json")
 			return a, nil
 		},
+		"caps reach\x00cli": func(b Bound) (Action, error) {
+			a := CapsReachAction{}
+			a.Cap = b.Str("cap")
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps reach\x00tui": func(b Bound) (Action, error) {
+			a := CapsReachAction{}
+			a.Cap = b.Str("cap")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps reach\x00webui": func(b Bound) (Action, error) {
+			a := CapsReachAction{}
+			a.Cap = b.Str("cap")
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
 		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
 			a := SetDefaultsAction{}
 			if b.Set["caps"] {
@@ -3432,6 +3468,7 @@ const (
 	CmdRepo                   = "repo"
 	CmdCapsSet                = "caps set"
 	CmdCapsAudit              = "caps audit"
+	CmdCapsReach              = "caps reach"
 	CmdCapsSetDefaults        = "caps set-defaults"
 	CmdScope                  = "scope"
 	CmdCapsSetParent          = "caps set-parent"
@@ -5232,6 +5269,27 @@ func ParseCmdCapsAudit(sf Surface, args []string, ctx map[string]string) (CapsAu
 	return a, nil
 }
 
+func ParseCmdCapsReach(sf Surface, args []string, ctx map[string]string) (CapsReachAction, error) {
+	var zero CapsReachAction
+	sp, ok := Lookup("caps", "reach")
+	if !ok {
+		return zero, fmt.Errorf("caps reach: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CapsReachAction)
+	return a, nil
+}
+
 func ParseCmdCapsSetDefaults(sf Surface, args []string, ctx map[string]string) (SetDefaultsAction, error) {
 	var zero SetDefaultsAction
 	sp, ok := Lookup("caps", "set-defaults")
@@ -6054,6 +6112,8 @@ type CLIDispatch[R any] interface {
 	CapsSet(SetCapsAction) R
 	// caps audit
 	CapsAudit(CapsAuditAction) R
+	// caps reach
+	CapsReach(CapsReachAction) R
 	// caps set-parent
 	CapsSetParent(SetParentAction) R
 	// session attach
@@ -6501,6 +6561,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsAudit(a), true, nil
+	case CmdCapsReach:
+		a, perr := ParseCmdCapsReach(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsReach(a), true, nil
 	case CmdCapsSetParent:
 		a, perr := ParseCmdCapsSetParent(CLI, args, ctx)
 		if perr != nil {
@@ -6879,6 +6945,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsSet(a), true
 	case CapsAuditAction:
 		return h.CapsAudit(a), true
+	case CapsReachAction:
+		return h.CapsReach(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
 	case AwaitProgressAction:
@@ -7317,6 +7385,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdCapsReach:
+			a, perr := ParseCmdCapsReach(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdCapsSetParent:
 			a, perr := ParseCmdCapsSetParent(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -7605,6 +7679,8 @@ type TUIDispatch[R any] interface {
 	CapsSet(SetCapsAction) R
 	// caps audit
 	CapsAudit(CapsAuditAction) R
+	// caps reach
+	CapsReach(CapsReachAction) R
 	// caps set-defaults (also: scope)
 	CapsSetDefaults(SetDefaultsAction) R
 	// caps set-parent
@@ -7960,6 +8036,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsAudit(a), true, nil
+	case CmdCapsReach:
+		a, perr := ParseCmdCapsReach(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsReach(a), true, nil
 	case CmdCapsSetDefaults:
 		a, perr := ParseCmdCapsSetDefaults(TUI, args, ctx)
 		if perr != nil {
@@ -8236,6 +8318,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsSet(a), true
 	case CapsAuditAction:
 		return h.CapsAudit(a), true
+	case CapsReachAction:
+		return h.CapsReach(a), true
 	case SetDefaultsAction:
 		return h.CapsSetDefaults(a), true
 	case SetParentAction:
@@ -8579,6 +8663,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCapsAudit:
 			a, perr := ParseCmdCapsAudit(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsReach:
+			a, perr := ParseCmdCapsReach(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

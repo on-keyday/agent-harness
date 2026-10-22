@@ -855,6 +855,36 @@ func (h tuiVerbs) CapsAudit(v verb.CapsAuditAction) tea.Cmd {
 	return nil
 }
 
+// CapsReach prints `caps reach` for one task into the command output, over
+// the listing this session already holds.
+func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
+	a := h.a
+	full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	var focus protocol.Capability
+	if v.Cap != "" {
+		focus, _ = verb.ParseCaps(v.Cap) // Validate already proved it one bit
+	}
+	tasks := make([]protocol.TaskInfo, 0, len(a.tasksByID))
+	for _, t := range a.tasksByID {
+		tasks = append(tasks, t)
+	}
+	r, err := cli.BuildReachReport(tasks, full, focus)
+	if err != nil {
+		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+		return nil
+	}
+	var b strings.Builder
+	_ = cli.WriteReachReport(&b, r, false)
+	for _, l := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
+		a.cmdresult.Append(l)
+	}
+	return nil
+}
+
 // CapsSetDefaults sets what a spawn from THIS session carries when its own
 // line names no --caps / --scope. Also answers the shorter `scope`.
 //

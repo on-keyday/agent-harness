@@ -2170,6 +2170,44 @@ var Verbs = []VerbSpec{
 		Examples: []string{"caps audit", "caps audit --cap spawn", "caps audit --all --json"},
 	},
 	{
+		// What ONE task reaches, per bit it exercises, plus what it sees, what
+		// it may hand down and how it is wider than its parent. The rows come
+		// from cli.BuildReachReport over the caller's own listing, so a
+		// confined caller is answered about what it can list, and a global set
+		// says so rather than naming the tasks that happen to be listed.
+		Path: []string{"caps", "reach"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "capsReachText"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#task-tree-reach"},
+		},
+		Notes: []string{
+			"what a task reaches per capability, sees, and may hand down; whether it is wider than its parent",
+		},
+		Action: "CapsReachAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		Flags: []Flag{
+			{Name: "cap", Type: FlagString, Default: "", Field: "Cap", Help: "show one capability's reach only"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason: "the TUI prints into its command output, which has no JSON form; the WebUI prints the object into its command output as `caps audit --json` does",
+				Help:          "one JSON object, full task ids"},
+		},
+		Validate: func(b Bound) error {
+			name := b.Str("cap")
+			if name == "" {
+				return nil
+			}
+			c, err := ParseCaps(name)
+			if err != nil {
+				return fmt.Errorf("caps reach --cap: %w", err)
+			}
+			if c == protocol.Capability_None || c == protocol.Capability_All || c&(c-1) != 0 {
+				return fmt.Errorf("caps reach --cap %q: name one capability", name)
+			}
+			return nil
+		},
+		Examples: []string{"caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cap cancel"},
+	},
+	{
 		// The session's SPAWN DEFAULTS: what a submit / session
 		// new on this surface carries when its own line names no --caps or
 		// --scope. Not a request to the server -- nothing is sent -- which is

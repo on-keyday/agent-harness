@@ -631,6 +631,28 @@ func (h cliVerbs) CapsAudit(a verb.CapsAuditAction) error {
 	})
 }
 
+func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
+	var focus protocol.Capability
+	if a.Cap != "" {
+		c, err := cli.ParseCaps(a.Cap)
+		if err != nil {
+			return err
+		}
+		focus = c
+	}
+	return h.withClient(func(c *cli.Client) error {
+		body, err := c.Snapshot(h.ctx)
+		if err != nil {
+			return err
+		}
+		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus)
+		if err != nil {
+			return err
+		}
+		return cli.WriteReachReport(os.Stdout, r, a.JSON)
+	})
+}
+
 func (h cliVerbs) CapsSetParent(a verb.SetParentAction) error {
 	// An empty ParentID IS the detach request on the wire, which is why
 	// `--parent ""` had to be refused at the flag rather than sorted out here:
