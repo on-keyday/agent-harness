@@ -164,6 +164,32 @@ type CapsReachAction struct {
 	TaskID string
 }
 
+// CapsWhatIfAction is built by: caps what-if.
+type CapsWhatIfAction struct {
+	ActionMarker
+	// the caps caps set would write, or the spawn would request; omitted = keep them (a spawn: none)
+	Caps *protocol.Capability
+	// the scope caps set would write, or the spawn would request; omitted = keep it (a spawn: subtree)
+	Scope *protocol.TaskScope
+	// narrow ONE capability below --scope, as on caps set and submit
+	Overrides []protocol.ScopeOverride
+	// the delegation bound's caps; omitted = keep it (a spawn: none)
+	DelegateCaps *protocol.Capability
+	// the delegation bound's scope; omitted = keep it (a spawn: subtree)
+	DelegateScope *protocol.TaskScope
+	// the re-grant also clamps every descendant, as caps set --cascade
+	Cascade bool
+	// a child the task would create with these flags, granted as the server grants a spawn
+	Spawn bool
+	// the task and its subtree move under this task, as caps set-parent --parent
+	ParentID string
+	// the task moves to the operator root, as caps set-parent --none
+	ParentNone bool
+	// one JSON object, full task ids
+	JSON   bool
+	TaskID string
+}
+
 // CatalogAction is built by: caps, notify-watch, skill, skill ls, version, watch, whoami.
 type CatalogAction struct {
 	ActionMarker
@@ -2662,6 +2688,146 @@ func init() {
 			}
 			return a, nil
 		},
+		"caps what-if\x00cli": func(b Bound) (Action, error) {
+			a := CapsWhatIfAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.Cascade = b.Bool("cascade")
+			a.Spawn = b.Bool("spawn")
+			a.ParentID = b.Str("parent")
+			a.ParentNone = b.Bool("parent-none")
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps what-if\x00tui": func(b Bound) (Action, error) {
+			a := CapsWhatIfAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.Cascade = b.Bool("cascade")
+			a.Spawn = b.Bool("spawn")
+			a.ParentID = b.Str("parent")
+			a.ParentNone = b.Bool("parent-none")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
+		"caps what-if\x00webui": func(b Bound) (Action, error) {
+			a := CapsWhatIfAction{}
+			if b.Set["caps"] {
+				v, err := parseCapsFlag(b.Str("caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --caps: %w", err)
+				}
+				a.Caps = v
+			}
+			if b.Set["scope"] {
+				v, err := parseScopeFlag(b.Str("scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope: %w", err)
+				}
+				a.Scope = v
+			}
+			if b.Set["scope-for"] {
+				v, err := parseScopeForList(stringsOf(b.Custom["scope-for"]))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --scope-for: %w", err)
+				}
+				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps what-if: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
+			a.Cascade = b.Bool("cascade")
+			a.Spawn = b.Bool("spawn")
+			a.ParentID = b.Str("parent")
+			a.ParentNone = b.Bool("parent-none")
+			a.JSON = b.Bool("json")
+			if len(b.Args) > 0 {
+				a.TaskID = b.Args[0]
+			}
+			return a, nil
+		},
 		"caps set-defaults\x00tui": func(b Bound) (Action, error) {
 			a := SetDefaultsAction{}
 			if b.Set["caps"] {
@@ -3469,6 +3635,7 @@ const (
 	CmdCapsSet                = "caps set"
 	CmdCapsAudit              = "caps audit"
 	CmdCapsReach              = "caps reach"
+	CmdCapsWhatIf             = "caps what-if"
 	CmdCapsSetDefaults        = "caps set-defaults"
 	CmdScope                  = "scope"
 	CmdCapsSetParent          = "caps set-parent"
@@ -5290,6 +5457,27 @@ func ParseCmdCapsReach(sf Surface, args []string, ctx map[string]string) (CapsRe
 	return a, nil
 }
 
+func ParseCmdCapsWhatIf(sf Surface, args []string, ctx map[string]string) (CapsWhatIfAction, error) {
+	var zero CapsWhatIfAction
+	sp, ok := Lookup("caps", "what-if")
+	if !ok {
+		return zero, fmt.Errorf("caps what-if: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(CapsWhatIfAction)
+	return a, nil
+}
+
 func ParseCmdCapsSetDefaults(sf Surface, args []string, ctx map[string]string) (SetDefaultsAction, error) {
 	var zero SetDefaultsAction
 	sp, ok := Lookup("caps", "set-defaults")
@@ -6114,6 +6302,8 @@ type CLIDispatch[R any] interface {
 	CapsAudit(CapsAuditAction) R
 	// caps reach
 	CapsReach(CapsReachAction) R
+	// caps what-if
+	CapsWhatIf(CapsWhatIfAction) R
 	// caps set-parent
 	CapsSetParent(SetParentAction) R
 	// session attach
@@ -6567,6 +6757,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsReach(a), true, nil
+	case CmdCapsWhatIf:
+		a, perr := ParseCmdCapsWhatIf(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsWhatIf(a), true, nil
 	case CmdCapsSetParent:
 		a, perr := ParseCmdCapsSetParent(CLI, args, ctx)
 		if perr != nil {
@@ -6947,6 +7143,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsAudit(a), true
 	case CapsReachAction:
 		return h.CapsReach(a), true
+	case CapsWhatIfAction:
+		return h.CapsWhatIf(a), true
 	case SetParentAction:
 		return h.CapsSetParent(a), true
 	case AwaitProgressAction:
@@ -7391,6 +7589,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 				return nil, true, perr
 			}
 			return a, true, nil
+		case CmdCapsWhatIf:
+			a, perr := ParseCmdCapsWhatIf(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
 		case CmdCapsSetParent:
 			a, perr := ParseCmdCapsSetParent(CLI, tokens[n:], ctx)
 			if perr != nil {
@@ -7681,6 +7885,8 @@ type TUIDispatch[R any] interface {
 	CapsAudit(CapsAuditAction) R
 	// caps reach
 	CapsReach(CapsReachAction) R
+	// caps what-if
+	CapsWhatIf(CapsWhatIfAction) R
 	// caps set-defaults (also: scope)
 	CapsSetDefaults(SetDefaultsAction) R
 	// caps set-parent
@@ -8042,6 +8248,12 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.CapsReach(a), true, nil
+	case CmdCapsWhatIf:
+		a, perr := ParseCmdCapsWhatIf(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.CapsWhatIf(a), true, nil
 	case CmdCapsSetDefaults:
 		a, perr := ParseCmdCapsSetDefaults(TUI, args, ctx)
 		if perr != nil {
@@ -8320,6 +8532,8 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.CapsAudit(a), true
 	case CapsReachAction:
 		return h.CapsReach(a), true
+	case CapsWhatIfAction:
+		return h.CapsWhatIf(a), true
 	case SetDefaultsAction:
 		return h.CapsSetDefaults(a), true
 	case SetParentAction:
@@ -8669,6 +8883,12 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdCapsReach:
 			a, perr := ParseCmdCapsReach(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdCapsWhatIf:
+			a, perr := ParseCmdCapsWhatIf(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

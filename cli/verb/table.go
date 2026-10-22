@@ -2208,6 +2208,81 @@ var Verbs = []VerbSpec{
 		Examples: []string{"caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "caps reach aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cap cancel"},
 	},
 	{
+		// What a caps set, a spawn or a set-parent WOULD change, before it is
+		// sent: cli.BuildWhatIf over the caller's own listing, through the
+		// rules the server enforces with. Nothing is sent but the listing
+		// request. The positional is the target of a re-grant or a reparent
+		// and the creator of a spawn, so the verb keeps one required id.
+		Path: []string{"caps", "what-if"}, CmdlineSurfaces: CLI | TUI | WebUI,
+		WebUIDispatch: WebUIDispatch{Fn: "capsWhatIfText"},
+		ModalSurfaces: []ModalSurface{
+			{Surface: WebUI, At: "webui/index.html#task-tree-whatif"},
+		},
+		Notes: []string{
+			"what a caps set (--cascade too), a spawn by the task (--spawn) or a set-parent (--parent / --parent-none) would change, and the command that does it; nothing is sent",
+		},
+		Action: "CapsWhatIfAction",
+		Args:   []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		// A spawn's child is new, so there is nothing to cascade into and no
+		// parent to pick; a reparent moves no authority, so an authority flag
+		// beside it describes a second change this verb would not draw.
+		Exclusive: []Rule{
+			{Flags: []string{"spawn", "cascade", "parent", "parent-none"}, Reason: "a spawn has no descendants and its parent is the task; a reparent writes no authority"},
+			{Flags: []string{"parent", "parent-none", "caps"}, Reason: "a reparent writes no authority"},
+			{Flags: []string{"parent", "parent-none", "scope"}, Reason: "a reparent writes no authority"},
+			{Flags: []string{"parent", "parent-none", "scope-for"}, Reason: "a reparent writes no authority"},
+			{Flags: []string{"parent", "parent-none", "delegate-caps"}, Reason: "a reparent writes no authority"},
+			{Flags: []string{"parent", "parent-none", "delegate-scope"}, Reason: "a reparent writes no authority"},
+		},
+		AtLeastOne: []Rule{{Flags: []string{"caps", "scope", "delegate-caps", "delegate-scope", "spawn", "parent", "parent-none"},
+			Reason: "there is nothing to change otherwise"}},
+		// A re-grant's --scope-for needs --scope, as on caps set. A spawn's
+		// does not: its base is the spawn's own scope, subtree when omitted,
+		// as on submit.
+		Validate: func(b Bound) error {
+			if b.Set["parent"] && b.Str("parent") == "" {
+				return fmt.Errorf("caps what-if: --parent needs a task id; pass --parent-none for the operator root")
+			}
+			if b.Set["scope-for"] && !b.Set["scope"] && !b.Bool("spawn") {
+				return fmt.Errorf("caps what-if: --scope-for needs --scope (a narrowing has no base to narrow unless this call names one)")
+			}
+			return nil
+		},
+		Flags: []Flag{
+			{Name: "caps", Type: FlagString, Default: "", Field: "Caps",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
+				Help: "the caps caps set would write, or the spawn would request; omitted = keep them (a spawn: none)"},
+			{Name: "scope", Type: FlagString, Default: "", Field: "Scope",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
+				Help: "the scope caps set would write, or the spawn would request; omitted = keep it (a spawn: subtree)"},
+			{Name: "scope-for", Type: FlagString, Custom: scopeForValue, Field: "Overrides",
+				FieldType: "[]protocol.ScopeOverride", Convert: "parseScopeForList",
+				Help: "narrow ONE capability below --scope, as on caps set and submit"},
+			{Name: "delegate-caps", Type: FlagString, Default: "", Field: "DelegateCaps",
+				FieldType: "*protocol.Capability", Convert: "parseCapsFlag",
+				Help: "the delegation bound's caps; omitted = keep it (a spawn: none)"},
+			{Name: "delegate-scope", Type: FlagString, Default: "", Field: "DelegateScope",
+				FieldType: "*protocol.TaskScope", Convert: "parseScopeFlag",
+				Help: "the delegation bound's scope; omitted = keep it (a spawn: subtree)"},
+			{Name: "cascade", Type: FlagBool, Default: false, Field: "Cascade",
+				Help: "the re-grant also clamps every descendant, as caps set --cascade"},
+			{Name: "spawn", Type: FlagBool, Default: false, Field: "Spawn",
+				Help: "a child the task would create with these flags, granted as the server grants a spawn"},
+			{Name: "parent", Type: FlagString, Default: "", Field: "ParentID",
+				Help: "the task and its subtree move under this task, as caps set-parent --parent"},
+			{Name: "parent-none", Type: FlagBool, Default: false, Field: "ParentNone",
+				Help: "the task moves to the operator root, as caps set-parent --none"},
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON", CmdlineSurfaces: CLI | WebUI,
+				SurfaceReason: "the TUI prints into its command output, which has no JSON form; the WebUI prints the object into its command output as `caps reach --json` does",
+				Help:          "one JSON object, full task ids"},
+		},
+		Examples: []string{
+			"caps what-if aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --caps file_read --cascade",
+			"caps what-if aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --spawn --caps cancel --scope subtree",
+			"caps what-if aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --parent-none",
+		},
+	},
+	{
 		// The session's SPAWN DEFAULTS: what a submit / session
 		// new on this surface carries when its own line names no --caps or
 		// --scope. Not a request to the server -- nothing is sent -- which is

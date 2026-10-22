@@ -884,6 +884,35 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 	return nil
 }
 
+func (h tuiVerbs) CapsWhatIf(v verb.CapsWhatIfAction) tea.Cmd {
+	a := h.a
+	full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+	if errStr != "" {
+		a.cmdresult.Append(ErrorStyle.Render(errStr))
+		return nil
+	}
+	v.TaskID = full
+	if v.ParentID != "" {
+		if v.ParentID, errStr = a.resolveTaskIDPrefix(v.ParentID); errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return nil
+		}
+	}
+	r, err := cli.BuildWhatIf(a.auditTasks(), cli.WhatIfChange(v))
+	if err != nil {
+		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+		return nil
+	}
+	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	r.Partial = kind == protocol.ClientKind_Agent
+	var b strings.Builder
+	_ = cli.WriteWhatIf(&b, r, false)
+	for _, l := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
+		a.cmdresult.Append(l)
+	}
+	return nil
+}
+
 // CapsSetDefaults sets what a spawn from THIS session carries when its own
 // line names no --caps / --scope. Also answers the shorter `scope`.
 //

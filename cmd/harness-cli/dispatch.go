@@ -656,6 +656,22 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 	})
 }
 
+func (h cliVerbs) CapsWhatIf(a verb.CapsWhatIfAction) error {
+	return h.withClient(func(c *cli.Client) error {
+		body, err := c.Snapshot(h.ctx)
+		if err != nil {
+			return err
+		}
+		r, err := cli.BuildWhatIf(body.Tasks, cli.WhatIfChange(a))
+		if err != nil {
+			return err
+		}
+		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
+		r.Partial = kind == protocol.ClientKind_Agent
+		return cli.WriteWhatIf(os.Stdout, r, a.JSON)
+	})
+}
+
 func (h cliVerbs) CapsSetParent(a verb.SetParentAction) error {
 	// An empty ParentID IS the detach request on the wire, which is why
 	// `--parent ""` had to be refused at the flag rather than sorted out here:
