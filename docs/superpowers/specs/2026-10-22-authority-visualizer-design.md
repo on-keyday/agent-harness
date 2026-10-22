@@ -50,7 +50,7 @@ the author chose it while writing; those rows are the ones to check.
 | V14 | Reach is per OPERATION, not per literal bit: a task reaches through every bit it exercises (`exercisedBits`, `server/capabilities.go` since `0313d08c`), so an `exec_control` holder is shown its view and cowrite reach under `exec_view`'s and `exec_cowrite`'s own scopes, as the attach gate resolves them | this spec (builder check) |
 | V15 | "Wider than parent" is never drawn as a defect. Reparent, swap, a resume by someone other than the creator, and a parent narrowed without cascade all produce it legitimately with no write to the child, so no predicate over the live tree tells a failed attenuation apart; attenuation is pinned by the case catalog instead. The mark is one colour, with the provenance as its explanation | this spec (builder check) |
 | V16 | The comparison leaves out the child's own id (a task always acts on itself, whatever its parent may do) and includes visibility: a child that SEES more than its parent is marked too | this spec (builder check) |
-| V17 | `caps set-parent` and `--swap` write `AuthoritySource.reparent` on the task whose parent changed (both tasks of a swap), actor = operator. Its authority did not change, but the bound it is measured against did, which is the explanation the mark needs | this spec (builder check) |
+| V17 | ~~`caps set-parent` and `--swap` write `AuthoritySource.reparent`~~ **Withdrawn 2026-10-22.** The record has one slot, so a reparent overwrote who had actually granted the task's caps, and a reparent grants nothing. `caps set-parent` / `--swap` now leave the record alone and the value is gone from the enum; the moved parent link is read off the tree itself | operator (2026-10-22: the record is the granter's) |
 | V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; `authority_actor_hidden` says so, and the label reads `@hidden`. Operators see every actor | this spec (builder check); wording unified with V21 |
 | V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI sheet, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
 | V20 | "This scenario is a catalog case" is decided up to RENAMING: same tree shape, same caps and scope on each task, same change, task ids ignored (§ Matching a scenario to a case) | operator |
@@ -135,7 +135,6 @@ second copy fails the build, in the manner of
 | `operator_caps_set` | `caps set` wrote caps, scope (or, with the delegation spec, a bound half) |
 | `cascade` | a `caps set --cascade` clamped this task as a descendant (the actor is the cascade's target) |
 | `resume` | a resume re-granted caps or scope (the resumer is the actor; zero for an operator) |
-| `reparent` | `caps set-parent` / `--swap` changed the task's parent (V17) |
 
 A resume that keeps the recorded authority writes nothing: the authority did
 not change.
@@ -153,7 +152,8 @@ not change.
 
 ### Display
 
-`ls` rows carry it as `auth=<AuthorityLabel>` and `ls --json` as its fields.
+`ls` rows carry it as `granter=<AuthorityLabel>` and `ls --json` as its fields
+(the key was `auth=` until 2026-10-22, which read as authentication).
 The TUI detail popup, the WebUI task sheet and each caps audit holder line show
 the same label (V21).
 
@@ -188,8 +188,8 @@ Empty for an operator-created task.
 - Arrows and creator-edge labels stay as they are (V4).
 - A node whose `WiderThanParent` is non-empty carries one mark (V15); its
   tooltip names the bits (and `vis` when it sees more) and the task's
-  `AuthorityLabel` (V21) — `operator_caps_set@…`, `reparent@…`,
-  `spawn@…` for a parent narrowed after the fact, `unknown`.
+  `AuthorityLabel` (V21) — `operator_caps_set@…`, `spawn@…` for a parent
+  narrowed after the fact or a task moved under a narrower one, `unknown`.
 
 ### CLI / TUI
 
@@ -327,7 +327,7 @@ the plan, and this table is checked back against the code at the end (item 39).
   cascade, resume with re-grant; NOT a resume that keeps).
 - Phase 3: `Reach` and `WiderThanParent` on fixed trees, including an operator
   grant (`operator_caps_set`), a parent narrowed without cascade (`spawn`), a
-  swap (`reparent`), an `exec_control` holder's view reach under `exec_view`'s
+  swap (the granter unchanged), an `exec_control` holder's view reach under `exec_view`'s
   scope, and a child of a `none` parent acting on itself (NOT marked).
 - Phase 4: `WhatIf(Regrant…Cascade)` equals what `handleSetCaps` then stores,
   on the same tree (the server test calls both).
