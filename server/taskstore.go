@@ -470,7 +470,6 @@ func (s *TaskStore) writeParentChangedLocked(e *TaskEntry) {
 		creatorHex = hex.EncodeToString(parent.Id[:])
 	}
 	ev := WALEvent{Type: "task_parent_changed", TaskID: id, CreatorTaskID: creatorHex}
-	e.applyAuthorityToWAL(&ev)
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_parent_changed", "task_id", id, "err", err)
 	}
@@ -487,7 +486,6 @@ func (s *TaskStore) SetParent(id string, parent protocol.TaskID) (TaskEntry, boo
 		return TaskEntry{}, false
 	}
 	e.CreatorTaskID = parent
-	e.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
 	s.writeParentChangedLocked(e)
 	snapshot := *e
 	s.mu.Unlock()
@@ -529,8 +527,6 @@ func (s *TaskStore) SwapWithParent(id string) (target, former TaskEntry, err err
 		return TaskEntry{}, TaskEntry{}, ErrSwapNotFound // store keys are valid hex by construction
 	}
 	t.CreatorTaskID, p.CreatorTaskID = p.CreatorTaskID, tid
-	t.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
-	p.stampAuthority(AuthorityWrite{Source: protocol.AuthoritySource_Reparent})
 	s.writeParentChangedLocked(t)
 	s.writeParentChangedLocked(p)
 	return *t, *p, nil
@@ -1357,7 +1353,6 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 					}
 				}
 				t.CreatorTaskID = p
-				t.authorityFromWAL(ev)
 			}
 		case "task_restored":
 			// Nothing to apply: the entry is rebuilt by the events this

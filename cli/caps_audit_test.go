@@ -210,7 +210,7 @@ func TestCapsAuditHolderCarriesAuthority(t *testing.T) {
 	if err := WriteCapsAudit(&b, rows, 0, []protocol.TaskInfo{a}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "auth=operator_caps_set@operator (1m ago)") {
+	if !strings.Contains(b.String(), "granter=operator_caps_set@operator (1m ago)") {
 		t.Errorf("text audit lacks the holder's auth:\n%s", b.String())
 	}
 }

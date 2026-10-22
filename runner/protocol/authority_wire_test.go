@@ -22,7 +22,7 @@ func TestTaskInfoAuthorityRoundTrip(t *testing.T) {
 		t.Errorf("round trip = source %v actor %x at %d age %d hidden %v",
 			got.AuthoritySource, got.AuthorityActor.Id[:2], got.AuthorityAt, got.AuthorityAgeMs, got.AuthorityActorHidden())
 	}
-	if AuthoritySource_Reparent.String() != "reparent" || AuthoritySource_Unknown != 0 {
-		t.Errorf("enum: reparent=%q unknown=%d", AuthoritySource_Reparent.String(), AuthoritySource_Unknown)
+	if AuthoritySource_Resume.String() != "resume" || AuthoritySource_Unknown != 0 {
+		t.Errorf("enum: resume=%q unknown=%d", AuthoritySource_Resume.String(), AuthoritySource_Unknown)
 	}
 }

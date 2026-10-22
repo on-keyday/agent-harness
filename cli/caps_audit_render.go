@@ -71,7 +71,7 @@ func auditHolderText(h AuditHolder) string {
 	if h.Delegates {
 		s += " deleg"
 	}
-	return s + " auth=" + h.Authority
+	return s + " granter=" + h.Authority
 }
 
 func auditScopeText(h AuditHolder) string {

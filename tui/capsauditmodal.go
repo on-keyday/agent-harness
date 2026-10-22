@@ -189,7 +189,7 @@ func (m CapsAuditModal) View() string {
 			if l.holder.Delegates {
 				s += " deleg"
 			}
-			s += "  auth=" + l.holder.Authority
+			s += "  granter=" + l.holder.Authority
 			if !l.holder.Live {
 				s += " (ended)"
 			}

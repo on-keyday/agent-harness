@@ -884,7 +884,6 @@ enum AuthoritySource:
     operator_caps_set = 3, "operator_caps_set"  # caps set wrote caps or scope
     cascade           = 4, "cascade"            # clamped by caps set --cascade on the actor
     resume            = 5, "resume"             # a resume re-granted caps or scope (actor: the resumer; zero for an operator)
-    reparent          = 6, "reparent"           # caps set-parent / --swap moved the parent link
 
 format TaskInfo:
     id :TaskID

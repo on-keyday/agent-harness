@@ -153,14 +153,14 @@ func TestTaskDetailAssignedToNamesTheRunnerAndWhereItIs(t *testing.T) {
 // surface shares; a pre-provenance task says unknown rather than nothing.
 func TestFormatTaskDetailShowsAuthority(t *testing.T) {
 	task := protocol.TaskInfo{Status: protocol.TaskStatus_Running}
-	if got := formatTaskDetail(task, nil); !strings.Contains(got, "authority:     unknown") {
+	if got := formatTaskDetail(task, nil); !strings.Contains(got, "granter:       unknown") {
 		t.Errorf("legacy task lacks authority: unknown:\n%s", got)
 	}
 	task.AuthoritySource = protocol.AuthoritySource_Spawn
 	task.AuthorityActor.Id[0] = 0x3f
 	task.AuthorityAt = 1
 	task.AuthorityAgeMs = 2 * 3600 * 1000
-	if got := formatTaskDetail(task, nil); !strings.Contains(got, "authority:     spawn@3f000000 (2h ago)") {
+	if got := formatTaskDetail(task, nil); !strings.Contains(got, "granter:       spawn@3f000000 (2h ago)") {
 		t.Errorf("spawned task lacks its authority line:\n%s", got)
 	}
 }

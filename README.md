@@ -1264,16 +1264,17 @@ narrowing drops the affected tasks' open connections unless
 picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to
 「🔑 caps/scope 再付与」.
 
-Every task also records **who last wrote its authority** — its caps, its
-scope or its parent link — and when. `ls` shows it as
-`auth=<source>@<actor> (<age>)`, e.g. `auth=spawn@3f2a9c1d (2h ago)` or
-`auth=operator_caps_set@operator (5m ago)`; `ls --json` / `session ls` carry
+Every task also records **who last granted its authority** — wrote its caps
+or scope — and when. `ls` shows it as
+`granter=<source>@<actor> (<age>)`, e.g. `granter=spawn@3f2a9c1d (2h ago)` or
+`granter=operator_caps_set@operator (5m ago)`; `ls --json` / `session ls` carry
 `authority_source`, `authority_actor`, `authority_actor_hidden`,
 `authority_at` and `authority_age_ms`. The sources are `spawn` (created by
 another task), `operator_spawn`, `operator_caps_set`, `cascade` (clamped by a
-`caps set --cascade` on the actor), `resume` (a resume that re-granted),
-`reparent` (`caps set-parent` / `--swap`), and `unknown` for a task recorded
-before this field existed. An actor the caller cannot see reads `@hidden`. The
+`caps set --cascade` on the actor), `resume` (a resume that re-granted), and
+`unknown` for a task recorded before this field existed. `caps set-parent` /
+`--swap` grant nothing — caps and scope are untouched — so they leave the
+record alone. An actor the caller cannot see reads `@hidden`. The
 TUI `d` popup, the WebUI task sheet and every `caps audit` holder line show
 the same label. It is what explains a task that is wider than its parent: a
 grant the operator wrote, or a parent narrowed after the fact.

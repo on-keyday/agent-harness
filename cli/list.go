@@ -300,7 +300,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	caps += "  delegate=" + CapsLabel(t.DelegateCaps) + " delegate-scope=" + ScopeLabel(t.DelegateScope)
 	// Who wrote that authority. Always printed, `unknown` included, for the
 	// reason scope is.
-	caps += "  auth=" + AuthorityLabel(t)
+	caps += "  granter=" + AuthorityLabel(t)
 	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),

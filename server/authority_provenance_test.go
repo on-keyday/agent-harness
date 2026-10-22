@@ -90,21 +90,23 @@ func TestProvenanceResume(t *testing.T) {
 	}
 }
 
-func TestProvenanceReparent(t *testing.T) {
+// Moving a task's parent link grants nothing — its caps and scope are
+// untouched — so it leaves the record of who granted them alone, on both
+// tasks of a swap too.
+func TestProvenanceReparentKeepsTheGranter(t *testing.T) {
 	s, _ := provenanceStore(t)
 	p := createTask(s, protocol.TaskID{})
 	c := createTask(s, taskIDFromHex(p))
 	other := createTask(s, protocol.TaskID{})
 	s.SetParent(c, taskIDFromHex(other))
-	wantProvenance(t, s, c, protocol.AuthoritySource_Reparent, protocol.TaskID{})
+	wantProvenance(t, s, c, protocol.AuthoritySource_Spawn, taskIDFromHex(p))
 
 	g := createTask(s, taskIDFromHex(c))
 	if _, _, err := s.SwapWithParent(g); err != nil {
 		t.Fatalf("swap: %v", err)
 	}
-	// Both tasks of a swap had their parent changed.
-	wantProvenance(t, s, g, protocol.AuthoritySource_Reparent, protocol.TaskID{})
-	wantProvenance(t, s, c, protocol.AuthoritySource_Reparent, protocol.TaskID{})
+	wantProvenance(t, s, g, protocol.AuthoritySource_Spawn, taskIDFromHex(c))
+	wantProvenance(t, s, c, protocol.AuthoritySource_Spawn, taskIDFromHex(p))
 }
 
 // What was written survives a restart, and a record from before this field

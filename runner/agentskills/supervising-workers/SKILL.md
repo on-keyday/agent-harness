@@ -507,10 +507,10 @@ and the scope forms (`--json` for the machine-readable form).
   capability, strongest first, listing the tasks your `ls` shows that hold it
   and the scope it reaches; `--cap spawn` lists just that bit's holders. Report
   a grant that outlived its reason to the operator — `caps set` is theirs.
-- **`auth=` says who last wrote a task's authority.** Every `ls` row ends its
-  authority with `auth=<source>@<actor> (<age>)` — `spawn@<creator>` for one a
-  task created, `operator_caps_set@operator` for an operator grant, `cascade`,
-  `resume`, `reparent`, or `unknown` for a task older than the field. A worker
+- **`granter=` says who last granted a task's authority.** Every `ls` row ends
+  its authority with `granter=<source>@<actor> (<age>)` — `spawn@<creator>` for
+  one a task created, `operator_caps_set@operator` for an operator grant,
+  `cascade`, `resume`, or `unknown` for a task older than the field. A worker
   holding more than you gave it is usually `operator_caps_set`: the operator
   widened it, which is legitimate. `@hidden` is an actor you cannot see.
 

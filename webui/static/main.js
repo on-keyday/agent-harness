@@ -5660,7 +5660,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (t.authority) {
       const auth = document.createElement("div");
       auth.className = "task-authority";
-      auth.textContent = "auth=" + t.authority;
+      auth.textContent = "granter=" + t.authority;
       sheet.appendChild(auth);
     }
 
@@ -7285,7 +7285,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           line.append(" / " + (h.live ? "live" : "ended"));
           // May hand this bit to tasks it creates (cli's `deleg`).
           if (h.delegates) line.append(" deleg");
-          if (h.authority) line.append(" auth=" + h.authority);
+          if (h.authority) line.append(" granter=" + h.authority);
           detail.append(line);
         }
         box.append(detail);
