@@ -269,6 +269,41 @@ turns the what-if into the real `caps set` command line (shown, not sent).
 --spawn-under <id> --caps … --scope …` prints the `TaskDiff`s. Nothing is
 sent but the listing request.
 
+### As implemented (2026-10-22)
+
+- The cascade's per-descendant clamp is `authority.CascadeClamp`, which
+  `handleSetCaps` and `WhatIf` both call: caps to the target's and scope under
+  its reach with the bound kept, or — when the call writes a bound half — the
+  whole grant through `Granter.ClampDescendant` (delegation D19).
+  `TestWhatIfAgreesWithSetCaps` sends the real request after the what-if and
+  compares every stored grant.
+- The bound is part of `Regrant` and `Spawn` (`--delegate-caps` /
+  `--delegate-scope`); a spawn is granted through `Granter.ChildCaps` /
+  `ChildScope` / `ChildBound`, and a refusal is the server's own text.
+- `caps what-if <id> --spawn …` rather than `--spawn-under <id>`: the one
+  positional is the target of a re-grant or reparent and the creator of a
+  spawn. `Reparent` is `--parent <id>` / `--parent-none`, refused as a cycle
+  like `caps set-parent`; the WebUI offers no control for it.
+- `TaskDiff` carries the before/after grant and, per bit the task exercises
+  before or after (`view` for visibility), the listed tasks gained and lost. A
+  bit that names no task is left out of the report, as in `caps reach`. A
+  spawn's child is `new` and every ancestor whose subtree would hold it gains
+  it. Unchanged tasks are not listed; a change that alters nothing prints
+  `nothing changes`.
+- The changed halves print under `ls`'s keys (`caps=A → B`, `scope=`,
+  `delegate=`, `delegate-scope=`). The last line is the command; a spawn's is
+  `command (run by <creator>): harness-cli submit …`, the creator's to run.
+  Over an agent's listing the report starts `(over your listing only)`.
+- WebUI: the sheet's 「🔮 もし…」 opens the re-grant dialog without 適用 and
+  `--keep-conns`, with 「仮の子を置く」 (which disables `--cascade`); 🔑's
+  dialog has 「もし（送らない）」 beside 適用. The dialog's re-grant carries caps
+  and scope as 適用 sends them, so its command names `--scope`. Both bridges
+  take the request under `caps what-if`'s declared flag names and parse it
+  through that verb, so the dialog and the command input cannot mean two
+  things by one request. The overlay keeps the answer it was given across the
+  poll; Escape, the panel's ✕, closing the tree, reach mode or the caps
+  audit's "show in tree" ends it.
+
 ## Phase 5 — practice tree and case catalog
 
 ### Catalog
@@ -350,7 +385,7 @@ the plan, and this table is checked back against the code at the end (item 39).
 | WebUI new tab | 5 | practice tree + catalog |
 | TUI graph, TUI practice tree | 3–5 | **omitted**: the TUI has no canvas; its text forms are `caps reach` / `caps what-if` (V12) |
 | README, `caps` catalog text | 3–5 | the two verbs; the practice tab |
-| Agent skill (`supervising-workers`) | 3 | `caps reach <own id>` as the way an agent checks what a worker it is about to spawn could reach |
+| Agent skill (`supervising-workers`) | 3–4 | `caps reach <own id>` as the way an agent checks what a worker it is about to spawn could reach; `caps what-if <own id> --spawn …` to try the spawn first |
 
 ## Testing
 
