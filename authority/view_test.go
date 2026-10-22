@@ -101,10 +101,61 @@ func TestDelegableOfDefaultAndDescendants(t *testing.T) {
 	wantIDs(t, "descendants act", r.Act, []string{viewC})
 	wantIDs(t, "descendants see", r.See, []string{viewP})
 
+	// A global ceiling does not let a subtree task hand down what it cannot
+	// reach itself: the server checks its own scope first.
 	p.DelegateScope = Scope{Base: protocol.ScopeBase_Global}
-	if r := DelegableOf(viewTree(p, viewC0()), viewP); !r.ActAll || !r.SeeAll {
-		t.Errorf("a global ceiling = %+v, want ActAll and SeeAll", r)
+	r = DelegableOf(viewTree(p, viewC0()), viewP)
+	if r.ActAll || r.SeeAll {
+		t.Errorf("a global ceiling over a subtree scope = %+v, want its own reach", r)
 	}
+	wantIDs(t, "global ceiling act", r.Act, sorted(viewC, viewP))
+}
+
+// DelegableOf answers exactly what a spawn would be allowed: an id is an
+// action id it may hand down iff Granter.ChildScope accepts ids:<id> for a
+// child holding everything it may delegate, and a view-only one iff
+// vis-ids:<id> is accepted.
+func TestDelegableOfAgreesWithChildScope(t *testing.T) {
+	scopes := []Scope{
+		{}, {Base: protocol.ScopeBase_None}, {Base: protocol.ScopeBase_Global},
+		{Base: protocol.ScopeBase_Subtree, IDs: []string{viewX}},
+		{Base: protocol.ScopeBase_None, VisIDs: []string{viewX}},
+	}
+	bounds := []Scope{
+		{}, {Base: protocol.ScopeBase_None}, {Base: protocol.ScopeBase_Global},
+		{Base: protocol.ScopeBase_Subtree, ExcludeSelf: true},
+		{Base: protocol.ScopeBase_None, VisIDs: []string{viewX}},
+	}
+	for _, own := range scopes {
+		for _, bound := range bounds {
+			for _, dcaps := range []protocol.Capability{0, cancel, cancel | fileRead} {
+				p := Task{ID: viewP, Creator: viewO, Caps: cancel | fileRead, Scope: own, DelegateCaps: dcaps, DelegateScope: bound}
+				tasks := viewTree(p, viewC0())
+				r := DelegableOf(tasks, viewP)
+				g := NewGranter(viewP, Grant{Caps: p.Caps, Scope: own, DelegateCaps: dcaps, DelegateScope: bound}, newView(tasks).children)
+				held := g.ChildCaps(protocol.Capability_All)
+				for _, x := range []string{viewO, viewP, viewC, viewX} {
+					_, errAct := g.ChildScope(Scope{Base: protocol.ScopeBase_None, IDs: []string{x}}, held)
+					_, errSee := g.ChildScope(Scope{Base: protocol.ScopeBase_None, VisIDs: []string{x}}, held)
+					inAct := r.ActAll || contains(r.Act, x)
+					inSee := inAct || r.SeeAll || contains(r.See, x)
+					if inAct != (errAct == nil) || inSee != (errSee == nil) {
+						t.Errorf("own=%s bound=%s dcaps=%s id=%s: delegable act=%v see=%v, ChildScope act=%v see=%v",
+							own, bound, CapsLabel(dcaps), x[:2], inAct, inSee, errAct == nil, errSee == nil)
+					}
+				}
+			}
+		}
+	}
+}
+
+func contains(ids []string, x string) bool {
+	for _, id := range ids {
+		if id == x {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWiderThanParentCases(t *testing.T) {

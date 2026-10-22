@@ -872,7 +872,8 @@ func (h tuiVerbs) CapsReach(v verb.CapsReachAction) tea.Cmd {
 	for _, t := range a.tasksByID {
 		tasks = append(tasks, t)
 	}
-	r, err := cli.BuildReachReport(tasks, full, focus)
+	kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Tui)
+	r, err := cli.BuildReachReport(tasks, full, focus, kind != protocol.ClientKind_Agent)
 	if err != nil {
 		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
 		return nil

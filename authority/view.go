@@ -85,8 +85,10 @@ func ReachOf(tasks []Task, id string, bit protocol.Capability) ReachResult {
 
 // DelegableOf is what the task id may hand down: Act the ids it may write into
 // a child's scope as action ids, See those it may hand down only as view-only
-// ids — the delegation bound read as a scope around the task, through the same
-// Granter ceiling a spawn is checked against.
+// ids. It is what Granter.ChildScope accepts for a child holding everything the
+// task may delegate (ChildCaps(all)): an id inside the task's OWN reach for
+// those bits AND inside its delegation bound read as a scope around it.
+// TestDelegableOfAgreesWithChildScope holds the two together.
 func DelegableOf(tasks []Task, id string) ReachResult {
 	v := newView(tasks)
 	t, ok := v.byID[id]
@@ -94,12 +96,24 @@ func DelegableOf(tasks []Task, id string) ReachResult {
 		return ReachResult{}
 	}
 	g := NewGranter(id, Grant{Caps: t.Caps, Scope: t.Scope, DelegateCaps: t.DelegateCaps, DelegateScope: t.DelegateScope}, v.children)
-	actAll, _ := ActionSet(id, t.DelegateScope, ceilingBit, v.children)
-	visAll, _ := VisibleSet(id, t.DelegateScope, v.children)
-	return v.result(actAll && visAll,
-		func(x string) bool { return g.ceil.Reaches(x, ceilingBit) },
-		visAll,
-		func(x string) bool { return g.ceil.Reaches(x, protocol.Capability_None) })
+	held := ExercisedBits(g.ChildCaps(protocol.Capability_All))
+
+	ceilAct, _ := ActionSet(id, t.DelegateScope, ceilingBit, v.children)
+	ceilVis, _ := VisibleSet(id, t.DelegateScope, v.children)
+	ownVis, _ := VisibleSet(id, t.Scope, v.children)
+	ownAct := true
+	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+		if held&bit != 0 {
+			all, _ := ActionSet(id, t.Scope, bit, v.children)
+			ownAct = ownAct && all
+		}
+	}
+	return v.result(ceilAct && ceilVis && ownVis && ownAct,
+		func(x string) bool { return g.ceil.Reaches(x, ceilingBit) && g.own.Reaches(x, held) },
+		ceilVis && ownVis,
+		func(x string) bool {
+			return g.ceil.Reaches(x, protocol.Capability_None) && g.own.Reaches(x, protocol.Capability_None)
+		})
 }
 
 // Wider is how a task reaches further than its creator: the exercised bits

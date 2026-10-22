@@ -31,7 +31,7 @@ func reachListing(cScope protocol.TaskScope) []protocol.TaskInfo {
 
 func reachText(t *testing.T, tasks []protocol.TaskInfo, id string, focus protocol.Capability) []string {
 	t.Helper()
-	r, err := BuildReachReport(tasks, id, focus)
+	r, err := BuildReachReport(tasks, id, focus, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestReachReportGlobalSaysUnlisted(t *testing.T) {
 }
 
 func TestReachReportFocus(t *testing.T) {
-	r, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x3f), protocol.Capability_Cancel)
+	r, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x3f), protocol.Capability_Cancel, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +93,13 @@ func TestReachReportFocus(t *testing.T) {
 }
 
 func TestReachReportUnknownTask(t *testing.T) {
-	if _, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x11), 0); err == nil || !strings.Contains(err.Error(), "11111111") {
+	if _, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x11), 0, true); err == nil || !strings.Contains(err.Error(), "11111111") {
 		t.Errorf("err = %v, want one naming the id", err)
 	}
 }
 
 func TestReachReportJSON(t *testing.T) {
-	r, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x3f), 0)
+	r, err := BuildReachReport(reachListing(protocol.TaskScope{}), reachHex(0x3f), 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestReachReportSkipsUntargetedBits(t *testing.T) {
 	if strings.Contains(got, "spawn ") || strings.Contains(got, "notify ") {
 		t.Errorf("an untargeted bit is listed as reaching tasks:\n%s", got)
 	}
-	r, err := BuildReachReport(tasks, reachHex(0x8f), 0)
+	r, err := BuildReachReport(tasks, reachHex(0x8f), 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,5 +170,34 @@ func TestReachReportSkipsUntargetedBits(t *testing.T) {
 	}
 	if bits := ReachBits(protocol.Capability_Spawn | protocol.Capability_Cancel); len(bits) != 1 || bits[0] != protocol.Capability_Cancel {
 		t.Errorf("ReachBits = %v, want cancel only", bits)
+	}
+}
+
+// A confined caller's listing has gaps — tasks it cannot see between its
+// parent and its targets — so a comparison with the parent over it can claim a
+// widening that does not exist. The report says it was not computed instead.
+func TestReachReportPartialListingOmitsWider(t *testing.T) {
+	tasks := reachListing(protocol.TaskScope{Base: protocol.ScopeBase_Global})
+	r, err := BuildReachReport(tasks, reachHex(0x8f), 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := WriteReachReport(&b, r, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "  wider than parent: not computed (your listing is partial)") || strings.Contains(b.String(), "cancel +vis") {
+		t.Errorf("partial listing report:\n%s", b.String())
+	}
+}
+
+// The delegate line's caps are what a child can actually be given: the
+// holder's caps inside its bound, not the bound as written.
+func TestReachReportDelegateCapsAreGrantable(t *testing.T) {
+	tasks := reachListing(protocol.TaskScope{})
+	tasks[0].DelegateCaps = protocol.Capability_All
+	got := strings.Join(reachText(t, tasks, reachHex(0x3f), 0), "\n")
+	if !strings.Contains(got, "caps=cancel,file_read") {
+		t.Errorf("delegate caps should be caps ∩ bound:\n%s", got)
 	}
 }

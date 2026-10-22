@@ -645,7 +645,10 @@ func (h cliVerbs) CapsReach(a verb.CapsReachAction) error {
 		if err != nil {
 			return err
 		}
-		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus)
+		// An agent's listing is partial; the parent comparison is only made
+		// over an operator's (BuildReachReport).
+		kind, _ := cli.EffectiveClientKind(protocol.ClientKind_Cli)
+		r, err := cli.BuildReachReport(body.Tasks, a.TaskID, focus, kind != protocol.ClientKind_Agent)
 		if err != nil {
 			return err
 		}

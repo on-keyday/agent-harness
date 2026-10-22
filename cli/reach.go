@@ -41,19 +41,30 @@ type ReachLine struct {
 // it sees, what it may hand down, and how it is wider than its parent. Every
 // surface renders it through WriteReachReport.
 type ReachReport struct {
-	TaskID       string
-	Granter      string
-	Bits         []ReachLine
-	View         ReachLine
-	Delegate     ReachLine
+	TaskID   string
+	Granter  string
+	Bits     []ReachLine
+	View     ReachLine
+	Delegate ReachLine
+	// DelegateCaps is what a child can actually be given: the task's caps
+	// inside its bound (Granter.ChildCaps of all), not the bound as written.
 	DelegateCaps protocol.Capability
 	Wider        authority.Wider
+	// WiderComputed is false over a partial listing, where Wider is zero and
+	// means nothing (see BuildReachReport).
+	WiderComputed bool
 }
 
 // BuildReachReport reads the report for id off the caller's listing. focus,
 // when non-zero, keeps one bit; otherwise every exercised bit, strongest
 // first.
-func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capability) (ReachReport, error) {
+//
+// complete says the listing is everything (an operator's). A confined
+// caller's listing has gaps — tasks it cannot see between its parent and its
+// targets — and a subtree walk stops at a gap, so comparing with the parent
+// over it can report a widening that does not exist. Over a partial listing
+// the comparison is not made.
+func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capability, complete bool) (ReachReport, error) {
 	view := AuthorityTasks(tasks)
 	var info *protocol.TaskInfo
 	for i := range tasks {
@@ -65,12 +76,15 @@ func BuildReachReport(tasks []protocol.TaskInfo, id string, focus protocol.Capab
 		return ReachReport{}, fmt.Errorf("caps reach: no such task %s", shortID(id))
 	}
 	r := ReachReport{
-		TaskID:       id,
-		Granter:      AuthorityLabel(*info),
-		View:         ReachLine{Cap: "view", ReachResult: authority.ReachOf(view, id, protocol.Capability_None)},
-		Delegate:     ReachLine{Cap: "delegate", ReachResult: authority.DelegableOf(view, id)},
-		DelegateCaps: info.DelegateCaps,
-		Wider:        WiderOf(view, id),
+		TaskID:        id,
+		Granter:       AuthorityLabel(*info),
+		View:          ReachLine{Cap: "view", ReachResult: authority.ReachOf(view, id, protocol.Capability_None)},
+		Delegate:      ReachLine{Cap: "delegate", ReachResult: authority.DelegableOf(view, id)},
+		DelegateCaps:  info.Capabilities & info.DelegateCaps,
+		WiderComputed: complete,
+	}
+	if complete {
+		r.Wider = WiderOf(view, id)
 	}
 	for _, c := range ReachBits(info.Capabilities) {
 		if focus != 0 && c != focus {
@@ -202,7 +216,7 @@ func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
 		return json.NewEncoder(w).Encode(map[string]any{
 			"task": r.TaskID, "granter": r.Granter, "bits": bits,
 			"view": lineJSON(r.View), "delegate": deleg,
-			"wider": map[string]any{"caps": CapsLabel(r.Wider.Bits), "sees": r.Wider.Sees},
+			"wider": map[string]any{"caps": CapsLabel(r.Wider.Bits), "sees": r.Wider.Sees, "computed": r.WiderComputed},
 		})
 	}
 	row := func(name, body string) string { return fmt.Sprintf("  %-14s %s\n", name, body) }
@@ -213,7 +227,9 @@ func WriteReachReport(w io.Writer, r ReachReport, asJSON bool) error {
 	}
 	b.WriteString(row("view", reachBody(r.View.ReachResult, false)))
 	b.WriteString(row("delegate", "caps="+CapsLabel(r.DelegateCaps)+"  "+reachBody(r.Delegate.ReachResult, true)))
-	if l := WiderLine(r.Wider, r.Granter); l != "" {
+	if !r.WiderComputed {
+		b.WriteString("  wider than parent: not computed (your listing is partial)\n")
+	} else if l := WiderLine(r.Wider, r.Granter); l != "" {
 		b.WriteString("  " + l + "\n")
 	}
 	_, err := io.WriteString(w, b.String())

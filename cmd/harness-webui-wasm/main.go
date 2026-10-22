@@ -1024,7 +1024,8 @@ func harnessCapsReachText(this js.Value, args []js.Value) any {
 			}
 			focus = c
 		}
-		r, err := cli.BuildReachReport(tasks, id, focus)
+		// The WebUI is an operator surface: its listing is everything.
+		r, err := cli.BuildReachReport(tasks, id, focus, true)
 		if err != nil {
 			return js.Undefined(), err
 		}
