@@ -54,7 +54,7 @@ the author chose it while writing; those rows are the ones to check.
 | V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; `authority_actor_hidden` says so, and the label reads `@hidden`. Operators see every actor | this spec (builder check); wording unified with V21 |
 | V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI row, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
 | V20 | "This scenario is a catalog case" is decided up to RENAMING: same tree shape, same caps and scope on each task, same change, task ids ignored (§ Matching a scenario to a case) | operator |
-| V19 | The delegation bound lands after Phase 5, inside `authority` (V7's order). Each feature makes its own `TaskInfo` change | operator (the agreed order), restated after the builder check |
+| V19 | ~~The delegation bound lands after Phase 5~~ **Overtaken 2026-10-22**: the bound landed before Phase 3, inside `authority`, so Phases 3–5 show it from the start (Phase 3's `delegate` entry). Each feature still makes its own `TaskInfo` change | operator (2026-10-22: delegation first, then the visualizer) |
 
 ## Phases
 
@@ -197,6 +197,40 @@ Empty for an operator-created task.
 `caps reach <id> [--cap NAME] [--json]` (verb table, `CmdlineSurfaces: CLI |
 TUI | WebUI`): per bit, the tasks acted on, then the tasks only seen; global
 as `global`. Plus a `wider than parent: <bits> (<provenance>)` line when non-empty.
+
+### As implemented (2026-10-22)
+
+- The function is `authority.ReachOf`: `Reach` is the Phase 1 type.
+- The selector's entries are the task's bits, then **`view`** (the visibility
+  set; 「閲覧」 above, spelled as `caps reach` prints it) and **`delegate`**
+  (`authority.DelegableOf`: what `Granter.ChildScope` would accept from this
+  task for a child holding everything it may delegate — an id inside its OWN
+  reach AND inside its bound read as a scope around it; filled = as action
+  ids, outlined = view-only. `caps=` beside it is `caps ∩ delegate_caps`, what
+  a child can actually receive. `TestDelegableOfAgreesWithChildScope` holds it
+  to the server's check.)
+- `exec_resize` is honoured only on an observer attach, which must pass
+  `exec_view`'s scope, so its reach is its own set inside `exec_view`'s, and
+  nothing without `exec_view`.
+- Held bits that name no task are not dropped silently: the report ends with
+  `also holds (no per-task reach): …`, and `--cap` on such a bit (or on one not
+  held) prints why it has no line.
+- Leaving reach mode: Escape (not while typing in a field or a terminal pane),
+  the banner's ✕, closing the 🌳 tree, or the caps audit's "show in tree";
+  the sheet's close does not end it, since a sheet is not the mode's owner and
+  several can be open at once. A task that leaves the listing ends the mode
+  with a line in the command output.
+- "Wider than parent" is computed only over an operator's listing. A confined
+  caller's listing has gaps between its parent and its targets, and the
+  parent's subtree walk stops at a gap, so the comparison would claim
+  widenings that do not exist; `caps reach` prints `not computed (your listing
+  is partial)` instead.
+- Bits that name no task (`spawn`, `notify`, `runner_admin`, `board_observe`,
+  `board_send`) have no per-task reach: they are left out of the report, the
+  selector and the wider comparison (`cli.ReachBits` / `cli.WiderOf`).
+- The wider line reads `wider than parent: <caps>[ +vis] (granter=<label>)`
+  everywhere — `caps reach` and the node's tooltip use the one
+  `cli.WiderLine`.
 
 ## Phase 4 — what-if on the live tree
 
