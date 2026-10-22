@@ -5506,6 +5506,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
       // The bound, always — the default too, as ls prints it.
       if (t.delegateCaps !== undefined) metaText += `  delegate=${t.delegateCaps} delegate-scope=${t.delegateScope}`;
+      // Who last granted that authority, last in the authority group as on an
+      // ls row (cli.AuthorityLabel, rendered in Go; `unknown` included).
+      if (t.authority) metaText += `  granter=${t.authority}`;
       // A held task's remaining window. Present only when there IS a hold —
       // a task with none has nothing to describe here, unlike the observer
       // counts below, whose zeros are measurements. Counted down from the raw
@@ -5656,13 +5659,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
-    // Who last wrote this task's authority (cli.AuthorityLabel, rendered in Go).
-    if (t.authority) {
-      const auth = document.createElement("div");
-      auth.className = "task-authority";
-      auth.textContent = "granter=" + t.authority;
-      sheet.appendChild(auth);
-    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.

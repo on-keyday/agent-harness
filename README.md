@@ -1275,7 +1275,7 @@ another task), `operator_spawn`, `operator_caps_set`, `cascade` (clamped by a
 `unknown` for a task recorded before this field existed. `caps set-parent` /
 `--swap` grant nothing — caps and scope are untouched — so they leave the
 record alone. An actor the caller cannot see reads `@hidden`. The
-TUI `d` popup, the WebUI task sheet and every `caps audit` holder line show
+TUI `d` popup, the WebUI task row and every `caps audit` holder line show
 the same label. It is what explains a task that is wider than its parent: a
 grant the operator wrote, or a parent narrowed after the fact.
 
