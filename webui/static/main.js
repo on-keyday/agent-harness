@@ -5663,12 +5663,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       auth.textContent = "権限の記録: " + t.authority;
       sheet.appendChild(auth);
     }
-    if (t.delegateCaps !== undefined) {
-      const deleg = document.createElement("div");
-      deleg.className = "task-authority";
-      deleg.textContent = "委譲の上限: delegate=" + t.delegateCaps + " delegate-scope=" + t.delegateScope;
-      sheet.appendChild(deleg);
-    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.

@@ -271,7 +271,7 @@ and this table is checked back against the code at the end (item 39).
 | TUI detail popup | `formatTaskDetail` (`tui/detail.go`): a `delegate` line and a `delegate-scope` line |
 | TUI authority picker | spawn, re-grant and set-defaults modes gain a delegation section built from the existing controls: caps chips, base and visibility radio rows, the task checklist for action ids and for view-only ids. Re-grant prefills from the task's current bound |
 | TUI keys `r`/`R`/`u`/`U` | **omitted**: they keep the recorded authority and never re-grant |
-| WebUI task row meta / task sheet | both values |
+| WebUI task row meta | both values. ~~task sheet~~ — omitted: the sheet repeats none of the row's authority fields (caps / scope live in the row meta), so a second copy of the bound there was a duplicate under an invented label |
 | WebUI compose panel and re-grant dialog | a delegation section of the same controls (`buildCapChips`, base radios, `buildTaskChecklist`), serialised through `cli.ScopeSpec` over the bridge (item 32), prefilled from raw values |
 | wasm snapshot | `delegateCaps` label + `delegateCapsBits`, `delegateScope` label + `delegateScopeBase` / `delegateScopeVisBase` / `delegateScopeIds` / `delegateScopeVisIds` raw (item 22) |
 | WebUI command input | the new flags through the wasm bridge's parse |

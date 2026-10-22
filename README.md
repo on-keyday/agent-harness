@@ -1042,7 +1042,7 @@ On resume each half is re-granted only when its flag is typed.
 It shows as `delegate=… delegate-scope=…` on every `ls` row and in `whoami`
 (the operator's reads `delegate=all delegate-scope=global`),
 `delegate_caps` / `delegate_scope` in `ls --json`, `session ls` and `whoami
---json`, two lines in the TUI `d` popup, and on the WebUI task row and sheet.
+--json`, two lines in the TUI `d` popup, and on the WebUI task row.
 `caps audit` marks a holder `deleg` when it may hand that bit down. It is
 edited with the same controls as the task's own authority: a delegation
 section in the TUI `a` picker, the WebUI compose form and re-grant dialog,
