@@ -52,12 +52,13 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		return
 	}
 
-	newCaps, newScope := before.Capabilities, before.Scope
-	if req.CapsPresent() {
-		newCaps = req.Caps
+	u := GrantUpdate{
+		Caps: req.CapsPresent(), Scope: req.ScopePresent(),
+		DelegateCaps: req.DelegateCapsPresent(), DelegateScope: req.DelegateScopePresent(),
+		To: authority.Grant{Caps: req.Caps, DelegateCaps: req.DelegateCaps},
 	}
 	if req.ScopePresent() {
-		newScope = authority.ScopeFromWire(req.Scope, req.Overrides)
+		newScope := authority.ScopeFromWire(req.Scope, req.Overrides)
 		// Operator identity is a licence to grant any AUTHORITY, not to store
 		// an incoherent value: an empty or overlapping override mask would
 		// make ForCap's "at most one entry matches" false, and a non-canonical
@@ -71,16 +72,29 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
 			return
 		}
+		u.To.Scope = newScope
+	}
+	// The bound is validated like any scope and otherwise written as given:
+	// the operator may grant any bound. It carries no overrides on the wire.
+	if req.DelegateScopePresent() {
+		bound := authority.ScopeFromWire(req.DelegateScope, nil)
+		if err := authority.Validate(bound); err != nil {
+			slog.Warn("set_caps denied: inconsistent delegate scope", "cid", cid, "err", err)
+			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
+			return
+		}
+		u.To.DelegateScope = bound
 	}
 
-	after, ok := h.Tasks.SetCaps(targetHex, GrantUpdate{Caps: req.CapsPresent(), Scope: req.ScopePresent(), To: authority.Grant{Caps: newCaps, Scope: newScope}},
-		AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet})
+	after, ok := h.Tasks.SetCaps(targetHex, u, AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet})
 
 	if !ok {
 		respond(protocol.SetCapsStatus_NotFound, nil, 0)
 		return
 	}
 	affected := []string{targetHex}
+	// Over caps and scope only: the bound is exercised over no connection, so
+	// a change to it alone tears nothing down.
 	narrowed := authority.IsNarrowing(before.Capabilities, before.Scope, after.Capabilities, after.Scope)
 
 	if req.Cascade() {
@@ -89,6 +103,15 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		// through a child it created while still wide. The cascade re-imposes
 		// the monotonic invariant over the whole subtree.
 		children := h.childIndex()
+		// Only a call that writes the bound clamps descendants to it. Every
+		// task recorded before the bound replays with the empty one, so
+		// clamping on every cascade would turn the first ordinary
+		// `caps set <supervisor> --caps … --cascade` into caps=none for all its
+		// workers.
+		var g *authority.Granter
+		if u.DelegateCaps || u.DelegateScope {
+			g = authority.NewGranter(after.ID, after.Grant(), children)
+		}
 		descendants := make(map[string]bool)
 		authority.DescendantsOf(children, targetHex, descendants)
 		for childHex := range descendants {
@@ -99,10 +122,15 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 			if !ok {
 				continue
 			}
-			clampedCaps := cBefore.Capabilities & after.Capabilities
-			clampedScope := authority.ClampUnder(cBefore.Scope, clampedCaps, authority.NewReach(after.ID, after.Scope, children))
-			cAfter, ok := h.Tasks.SetCaps(childHex, GrantUpdate{Caps: true, Scope: true, To: authority.Grant{Caps: clampedCaps, Scope: clampedScope}},
-				AuthorityWrite{Source: protocol.AuthoritySource_Cascade, Actor: req.TaskId})
+			cu := GrantUpdate{Caps: true, Scope: true}
+			if g != nil {
+				cu.DelegateCaps, cu.DelegateScope = true, true
+				cu.To = g.ClampDescendant(cBefore.Grant(), childHex)
+			} else {
+				cu.To.Caps = cBefore.Capabilities & after.Capabilities
+				cu.To.Scope = authority.ClampUnder(cBefore.Scope, cu.To.Caps, authority.NewReach(after.ID, after.Scope, children))
+			}
+			cAfter, ok := h.Tasks.SetCaps(childHex, cu, AuthorityWrite{Source: protocol.AuthoritySource_Cascade, Actor: req.TaskId})
 
 			if !ok {
 				continue
