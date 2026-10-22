@@ -3243,3 +3243,21 @@ missed:  29 — DoSetCaps' result line named `caps=` / `scope=` only, so a
 TestEverySurfaceReadsEveryActionField went red the moment the CLI declared the
 flags, naming each surface that did not yet read them, and stayed red until the
 TUI did — the plan had put the TUI two tasks later.
+
+### 2026-10-22 (pre-landing) — visualizer Phase 3: `caps reach` + the tree's reach mode
+done:    1 (`caps reach` row, CLI|TUI|WebUI, `--json` CLI|WebUI with reason), 2
+         (`--cap` one bit, in Validate), 6 (task sheet 「🎯 到達範囲を見る」, the
+         reach selector replacing 権限で強調), 7 (WebUIDispatch capsReachText,
+         main.js `caps reach` case), 8 (bridges capsReachText / reachOf), 10, 23
+         (snapshot node `wider`), 29 (banner names the task and the entry), 30
+         (report → command output), 31 (`see +0`, `act 0` printed), 32 (one
+         `cli.WiderLine` for the report and the tooltip; one report writer for
+         three command lines), 34a (a `<select>` like the one it replaces), 35
+         (README: section + the TUI cmdline verb list), 36 (skill + mirrors), 37
+         (spec "As implemented"; V19 overtaken), 39
+n/a:     3–5 (no TUI key or picker: the TUI's form is the text, V12), 9, 11–22
+         (no new task field; `wider` is derived per draw), 24–28a (no request
+         field), 33, 34, 38; 15 — `caps reach` needs no capability, so no bit's
+         CapDescription gains a verb; S1–S6 — no agent launch change.
+missed:  — (the live run, not the walk, found `spawn` listed as reaching tasks;
+         fixed with cli.ReachBits before landing)

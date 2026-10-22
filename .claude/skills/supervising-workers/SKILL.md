@@ -503,6 +503,13 @@ and the scope forms (`--json` for the machine-readable form).
   (`--json` for the machine-readable form). No cap is required — it is
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.
+- **See what a worker could reach before you spawn it: `harness-cli caps reach
+  <your-id>`.** Per bit you exercise, the tasks you act on (`act`) and only
+  see (`see +N`); a child you spawn reaches at most that, per bit. Its
+  `delegate` line is the tighter bound: the caps you may hand down
+  (`caps=`) and the ids you may write into the child's scope. `caps reach
+  <worker-id>` afterwards shows what the worker actually holds, and a
+  `wider than parent:` line with its `granter=` when the operator widened it.
 - **See what you handed out with `harness-cli caps audit`.** One line per
   capability, strongest first, listing the tasks your `ls` shows that hold it
   and the scope it reaches; `--cap spawn` lists just that bit's holders. Report

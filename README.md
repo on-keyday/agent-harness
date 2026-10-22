@@ -1319,6 +1319,43 @@ Ended tasks are marked too, because a resume brings their recorded caps
 back. A task older than the TUI table's 100 newest rows is kept in the
 table, with its creators, while the audit points at it.
 
+`caps reach` answers the per-task question: what ONE task reaches, per
+capability it exercises, what it sees, and what it may hand down —
+
+```bash
+bin/harness-cli caps reach <task-id>               # every bit, then view and delegate
+bin/harness-cli caps reach <task-id> --cap cancel  # one bit
+bin/harness-cli caps reach <task-id> --json        # full ids
+```
+
+```
+caps reach 589d8017  granter=operator_caps_set@operator (1m ago)
+  cancel         act 2: 589d8017 bbca566e   see +1: 2bb4b0b7
+  view           see 3: 2bb4b0b7 589d8017 bbca566e
+  delegate       caps=all  act global (+ tasks you cannot list)
+  wider than parent: cancel +vis (granter=operator_caps_set@operator (1m ago))
+```
+
+`act` is the tasks the bit may be pointed at, `see +N` the ones only seen;
+`delegate` is the delegation bound read as ids (action ids / view-only ids it
+may write into a child's scope). An `exec_control` holder is shown its
+`exec_view` / `exec_cowrite` reach under those bits' own scopes, as the attach
+gates resolve them. Bits that name no task — `spawn`, `notify`,
+`runner_admin`, `board_observe`, `board_send` — have no per-task reach and are
+not listed. It reads the caller's own listing, so a global set prints as
+`global (+ tasks you cannot list)` rather than as the tasks that happen to be
+listed. `wider than parent:` appears when the task reaches or sees beyond its
+creator; that is never a defect by itself — `granter=` says who made it so.
+The same command runs from the TUI and WebUI command lines.
+
+In the WebUI the task sheet's 「🎯 到達範囲を見る」 puts the creator tree into
+**reach mode** for that task: a selector of the same entries replaces
+「権限で強調」, the tasks it acts on are filled, the ones it only sees are
+outlined, the rest dim, and a global answer shows a banner instead of filling
+every node. Escape or the banner's ✕ leaves it. A node wider than its
+parent carries a dotted ring, in or out of reach mode, whose tooltip is the
+`wider than parent:` line.
+
 The **subtree** walk follows each task's parent link (who spawned whom,
 `by=` in `ls`). The link itself is operator-mutable on a live task:
 
@@ -1438,7 +1475,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
-/ caps set / caps set-parent / caps audit / workspace {save,apply,ls,show}
+/ caps set / caps set-parent / caps audit / caps reach / workspace {save,apply,ls,show}
 / server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
