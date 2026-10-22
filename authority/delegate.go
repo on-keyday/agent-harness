@@ -126,23 +126,31 @@ func attenuateError(offender string) error {
 // exclude_self is forced on when the child is not among the action ids g may
 // hand down: otherwise, under a none ceiling, the child could hand its own id
 // to a grandchild although g may not hand that id to anyone.
+//
+// The caps come back even when the scope half is refused: the two halves are
+// re-granted independently on a resume, so a refusal of the one not being
+// written must not change the one that is.
 func (g *Granter) ChildBound(reqCaps protocol.Capability, req Scope, childHex string) (protocol.Capability, Scope, error) {
+	caps := reqCaps
+	if g != nil {
+		caps &= g.held.DelegateCaps
+	}
 	if len(req.Overrides) != 0 {
-		return 0, Scope{}, &InvalidScopeError{Err: fmt.Errorf("a delegation bound carries no per-capability overrides")}
+		return caps, Scope{}, &InvalidScopeError{Err: fmt.Errorf("a delegation bound carries no per-capability overrides")}
 	}
 	if err := Validate(req); err != nil {
-		return 0, Scope{}, &InvalidScopeError{Err: err}
+		return caps, Scope{}, &InvalidScopeError{Err: err}
 	}
 	req.IDs, req.VisIDs = NormalizeIDs(req.IDs), NormalizeIDs(req.VisIDs)
 	if g == nil {
-		return reqCaps, req, nil
+		return caps, req, nil
 	}
 	out, err := g.ceiling(req, "delegate-scope", false)
 	if err != nil {
-		return 0, Scope{}, err
+		return caps, Scope{}, err
 	}
 	out.ExcludeSelf = out.ExcludeSelf || !g.coversChild(childHex)
-	return reqCaps & g.held.DelegateCaps, out, nil
+	return caps, out, nil
 }
 
 // ClampDescendant re-imposes g's whole grant on a descendant d after g's
@@ -158,11 +166,14 @@ func (g *Granter) ClampDescendant(d Grant, dHex string) Grant {
 }
 
 // coversChild reports whether a task is among the action ids g may hand
-// down. A task not yet created has no id an id list could name, so only the
-// ceiling's base decides.
+// down. A task not yet created has no id an id list could name, so the
+// ceiling's ranks decide: its base must reach a new child AND its visibility
+// rank must see one, since an action id must also be visible (Reach.Reaches).
+// A `subtree/none` ceiling reaches the child by base and does not see it.
 func (g *Granter) coversChild(childHex string) bool {
 	if childHex == "" {
-		return CoversNewChild(g.held.DelegateScope, ceilingBit)
+		c := g.held.DelegateScope
+		return CoversNewChild(c, ceilingBit) && BaseRank(c.VisRank()) >= BaseRank(protocol.ScopeBase_Subtree)
 	}
 	return g.ceil.Reaches(childHex, ceilingBit)
 }

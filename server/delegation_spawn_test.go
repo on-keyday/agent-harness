@@ -273,3 +273,23 @@ func TestExactResumeRefusesBoundHalves(t *testing.T) {
 		}
 	}
 }
+
+// The reviewer's probe: a resume that re-grants only delegate_caps, carrying
+// an UNWRITTEN delegate_scope its granter would refuse, writes the caps it
+// asked for and reports ok — the unwritten half's refusal is not its concern.
+func TestResumeCapsHalfIgnoresUnwrittenScopeRefusal(t *testing.T) {
+	x := hex.EncodeToString(make([]byte, 15)) + "ef"
+	for _, site := range spawnSites {
+		if !isResume(site.name) {
+			continue
+		}
+		h, _, cid, r := delegFixture(t, authority.Scope{IDs: []string{x}}, protocol.Capability_Cancel, authority.Scope{})
+		e, msg, ok := site.do(t, h, cid, r, delegHeld, delegReq{
+			dcaps: protocol.Capability_Cancel, dscope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{x}},
+			dcapsPresent: true,
+		})
+		if !ok || e.DelegateCaps != protocol.Capability_Cancel {
+			t.Errorf("%s: ok=%v msg=%q delegate_caps=%s, want ok and cancel", site.name, ok, msg, CapsLabelT(e.DelegateCaps))
+		}
+	}
+}

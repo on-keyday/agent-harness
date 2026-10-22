@@ -258,3 +258,34 @@ func TestDelegationErrorTexts(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// The two halves of a bound are independent: a refused scope half must not
+// change what the caps half computes, or a resume that re-grants only the
+// caps writes them from the other half's failed check.
+func TestChildBoundCapsSurviveAScopeRefusal(t *testing.T) {
+	g := granterP(fileRead|cancel, Scope{})
+	caps, _, err := g.ChildBound(cancel, Scope{Base: protocol.ScopeBase_None, IDs: []string{delegX}}, "")
+	if err == nil {
+		t.Fatal("ids:X under a subtree ceiling was admitted; the fixture no longer refuses")
+	}
+	if caps != cancel {
+		t.Errorf("caps beside a refused scope = %s, want cancel", CapsLabel(caps))
+	}
+}
+
+// A ceiling whose visibility rank is below its base does not see a new child,
+// so the child is not among the action ids it may hand down: exclude_self is
+// forced, as it is for an existing child under the same ceiling.
+func TestChildBoundForcesExcludeSelfUnderLowVisibility(t *testing.T) {
+	for _, base := range []protocol.ScopeBase{protocol.ScopeBase_Subtree, protocol.ScopeBase_Global} {
+		g := granterP(fileRead, Scope{Base: base, VisBase: protocol.ScopeBase_None, VisBasePresent: true})
+		_, fresh, err := g.ChildBound(0, Scope{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, existing, _ := g.ChildBound(0, Scope{}, delegS)
+		if !fresh.ExcludeSelf || !existing.ExcludeSelf {
+			t.Errorf("ceiling %s/none: fresh excl=%v existing excl=%v, want both forced", base, fresh.ExcludeSelf, existing.ExcludeSelf)
+		}
+	}
+}

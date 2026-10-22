@@ -440,4 +440,16 @@ decided as follows.
 - **The WebUI caps-on-resume checkbox does not re-grant the bound.** It names
   caps and scope; only a typed `--delegate-caps` / `--delegate-scope` re-grants
   the bound on a resume.
+- **Correction to § The child's own bound, `exclude_self` row.** "A new child
+  is in `actD` exactly when `scopeCoversNewChild(C, …)` holds" is false when
+  `C`'s visibility rank is below `subtree` (`subtree/none`, `global/none`):
+  `actD` also requires the id to be in `C`'s visible set, and such a ceiling
+  does not see a new child. The implementation forces `exclude_self` unless
+  `C`'s base covers a new child AND its visibility rank is at least `subtree`,
+  which agrees with what resume and cascade measure for an existing child.
+  Found in the final review.
+- **The two halves of the bound are independent on a resume.** A refusal of
+  the `delegate_scope` half the request does not write leaves the
+  `delegate_caps` half it does write unchanged (`ChildBound` returns the caps
+  beside a scope error). Found in the final review.
 
