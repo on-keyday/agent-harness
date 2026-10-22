@@ -228,7 +228,17 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n"+
 		"subtree membership follows the task's parent link (who spawned whom);\n"+
 		"`caps set-parent` re-points that link on a live task (--swap inverts\n"+
-		"the task with its current parent) without touching caps or scope.\n")
+		"the task with its current parent) without touching caps or scope.\n"+
+		"\nDELEGATION\n"+
+		"A task also carries a delegation bound: what it may write onto the tasks\n"+
+		"it spawns or re-grants. A child gets your caps ∩ your --delegate-caps ∩\n"+
+		"what it asks for, and its scope at most your --delegate-scope, which\n"+
+		"takes the --scope grammar and is read around YOU for the ids you may\n"+
+		"name. The default (delegate=none delegate-scope=subtree) hands down no\n"+
+		"bits, and lets you name your own and your descendants' ids. `whoami`\n"+
+		"shows yours. An id refused as \"outside what you may delegate\" is the\n"+
+		"operator's to widen: `caps set <id> --delegate-caps … --delegate-scope …`\n"+
+		"(with --cascade, also clamps the task's descendants to the new bound).\n")
 	return err
 }
 

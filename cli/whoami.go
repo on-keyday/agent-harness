@@ -109,8 +109,9 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		// it), so a script can compare it against a sha without parsing the
 		// "unknown …" prose the text form prints.
 		_, err = fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"server_revision\":%q,\"server_dirty\":%t}\n",
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s,\"delegate_caps\":%q,\"delegate_scope\":%q,\"server_revision\":%q,\"server_dirty\":%t}\n",
 			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap,
+			CapsLabel(resp.DelegateCaps), ScopeLabel(resp.DelegateScope),
 			string(resp.ServerRevision), resp.ServerDirty())
 		return err
 	}
@@ -123,6 +124,9 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	if ov := OverridesLabel(resp.Overrides); ov != "" {
 		caps += " +" + ov
 	}
+	// What this caller may hand to the tasks it spawns — the line to read
+	// before promising a worker a bit.
+	caps += "  delegate=" + CapsLabel(resp.DelegateCaps) + " delegate-scope=" + ScopeLabel(resp.DelegateScope)
 	if operator {
 		_, err := fmt.Fprintf(out, "operator  %s\nserver=%s\n", caps, ServerRevisionLabel(resp))
 		return err

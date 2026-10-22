@@ -293,6 +293,11 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if ov := OverridesLabel(t.Overrides); ov != "" {
 		caps += " +" + ov
 	}
+	// The delegation bound: what this task may write onto the tasks it
+	// grants to. Always printed, the default (none / subtree) included — a
+	// supervisor that may hand down nothing is exactly what an operator scans
+	// this row for.
+	caps += "  delegate=" + CapsLabel(t.DelegateCaps) + " delegate-scope=" + ScopeLabel(t.DelegateScope)
 	// Who wrote that authority. Always printed, `unknown` included, for the
 	// reason scope is.
 	caps += "  auth=" + AuthorityLabel(t)
@@ -471,6 +476,9 @@ type taskJSON struct {
 	// merge. Emitted always, overrides or not, so a machine reader never has
 	// to redo the merge to learn what a verb may target.
 	ScopeByCap   map[string]string `json:"scope_by_cap"`
+	// The delegation bound, in the forms caps and scope use.
+	DelegateCaps  string `json:"delegate_caps"`
+	DelegateScope string `json:"delegate_scope"`
 	CreatedBy    string            `json:"created_by,omitempty"`
 	Prompt       string            `json:"prompt"`
 	ExitCode     int32             `json:"exit_code"`
@@ -582,6 +590,8 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Caps:           CapsLabel(t.Capabilities),
 		Scope:          ScopeLabel(t.Scope),
 		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
+		DelegateCaps:   CapsLabel(t.DelegateCaps),
+		DelegateScope:  ScopeLabel(t.DelegateScope),
 		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
 		Prompt:         string(t.Prompt),
 		ExitCode:       t.ExitCode,

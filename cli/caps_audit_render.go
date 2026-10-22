@@ -68,6 +68,9 @@ func auditHolderText(h AuditHolder) string {
 	if !h.Live {
 		s += "(ended)"
 	}
+	if h.Delegates {
+		s += " deleg"
+	}
 	return s + " auth=" + h.Authority
 }
 
@@ -113,6 +116,7 @@ type AuditHolderJSON struct {
 	Override  bool   `json:"override"`
 	TaskScope string `json:"task_scope"`
 	Authority string `json:"authority"`
+	Delegates bool   `json:"delegates"`
 }
 
 // AuditRowsJSON converts rows to their JSON form.
@@ -125,7 +129,7 @@ func AuditRowsJSON(rows []AuditRow) []AuditRowJSON {
 		}
 		for _, h := range r.Holders {
 			hj := AuditHolderJSON{TaskID: h.TaskID, Label: h.Label, Parent: h.Parent, Live: h.Live,
-				ScopeKind: "own", ScopeText: auditScopeText(h), Scope: h.Scope, Override: h.Override, TaskScope: h.TaskScope, Authority: h.Authority}
+				ScopeKind: "own", ScopeText: auditScopeText(h), Scope: h.Scope, Override: h.Override, TaskScope: h.TaskScope, Authority: h.Authority, Delegates: h.Delegates}
 			if h.ScopeKind == verb.ScopeNone {
 				hj.ScopeKind = "none"
 			} else {

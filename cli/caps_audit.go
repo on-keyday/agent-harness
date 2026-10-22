@@ -29,6 +29,9 @@ type AuditHolder struct {
 	Override              bool // Scope came from a --scope-for override
 	TaskScope             string
 	Authority             string // AuthorityLabel: who last wrote the holder's authority
+	// Delegates: the holder's delegation bound names this bit too, so it may
+	// hand the bit to tasks it creates — "who can spread X".
+	Delegates bool
 }
 
 // AuditRow is one capability and every task holding it literally.
@@ -84,6 +87,7 @@ func auditHolder(t protocol.TaskInfo, c protocol.Capability, live bool) AuditHol
 		ScopeKind: verb.CapScopeKindOf(c),
 		TaskScope: ScopeLabel(t.Scope),
 		Authority: AuthorityLabel(t),
+		Delegates: t.DelegateCaps&c != 0,
 	}
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		h.Parent = hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
