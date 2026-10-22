@@ -464,6 +464,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let reachMode = null; // {taskId, sel} | null
   const reachSel = document.getElementById("task-tree-reach-sel");
   const reachBanner = document.getElementById("task-tree-reach");
+  // What-if: the diff of a change NOT sent (harness.whatIf, the rows `caps
+  // what-if` prints) over the tree — changed nodes ringed, a spawn's phantom
+  // child dashed — with the command that would make it, to copy. It keeps the
+  // answer it was given across the poll's redraws: that answer is about the
+  // listing it was asked over.
+  let whatIfState = null; // {result} | null
+  const whatIfPanel = document.getElementById("task-tree-whatif");
   // drawTaskTree is the ONE call into renderTaskTreeGraph, so the chip, the
   // snapshot poll, the selector and the audit cannot draw it differently.
   function drawTaskTree() {
@@ -479,11 +486,87 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       reach = window.harness.reachOf(reachMode);
     }
     syncReachControls(reach);
-    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastGrantEdges, lastTasks,
+    const wi = whatIfState && whatIfState.result;
+    if (whatIfPanel) whatIfPanel.hidden = !wi;
+    renderTaskTreeGraph(taskTreeMode ? ((wi && wi.tree) || lastTaskTree) : null,
+      (wi && wi.grantEdges) || lastGrantEdges, lastTasks,
       taskStatusColor, revealTaskInList,
-      { markBit: reach ? 0 : Number(taskTreeBit && taskTreeBit.value) || 0,
+      { markBit: reach || wi ? 0 : Number(taskTreeBit && taskTreeBit.value) || 0,
         focusId: reach ? reachMode.taskId : treeFocusId,
-        reach, reachSel: reachMode && reachMode.sel });
+        reach, reachSel: reachMode && reachMode.sel,
+        whatIf: wi && !wi.error ? new Set(wi.diffs.map((d) => d.id)) : null });
+  }
+  // showWhatIf puts a harness.whatIf answer on the tree: the panel is built
+  // once per answer, so a poll's redraw does not reset its copy button.
+  function showWhatIf(result) {
+    reachMode = null;
+    whatIfState = { result };
+    if (whatIfPanel) {
+      const head = document.createElement("div");
+      head.className = "tt-whatif-head";
+      const title = document.createElement("span");
+      title.textContent = "もし（送っていない）";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "task-chip";
+      close.textContent = "✕";
+      close.title = "Esc";
+      close.addEventListener("click", exitWhatIf);
+      head.append(title, close);
+      const parts = [head];
+      if (result.error) {
+        const err = document.createElement("div");
+        err.className = "task-err";
+        err.textContent = result.error;
+        parts.push(err);
+      } else {
+        const pre = document.createElement("pre");
+        pre.className = "tt-whatif-diff";
+        const lines = [];
+        for (const d of result.diffs) {
+          lines.push("  " + d.head);
+          for (const b of d.bits) lines.push("      " + b.line);
+        }
+        pre.textContent = lines.length ? lines.join("\n") : "  nothing changes";
+        parts.push(pre);
+        if (result.diffs.length) {
+          // Shown, never sent: the operator runs it (or, for a spawn, the
+          // creator does).
+          const row = document.createElement("div");
+          row.className = "tt-whatif-cmd";
+          const label = document.createElement("span");
+          label.textContent = result.runBy ? `command (run by ${result.runBy.slice(0, 8)}):` : "command:";
+          const code = document.createElement("code");
+          code.textContent = result.command;
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "task-chip";
+          copy.textContent = "📋";
+          copy.title = "コピー（送信はしない）";
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(result.command);
+              copy.textContent = "✓";
+            } catch (e) {
+              appendCmdOutput("copy failed: " + (e && e.message ? e.message : e));
+            }
+          });
+          row.append(label, code, copy);
+          parts.push(row);
+        }
+      }
+      whatIfPanel.replaceChildren(...parts);
+    }
+    if (!taskTreeMode) {
+      taskTreeMode = true;
+      taskTreeChip.classList.add("is-active");
+    }
+    drawTaskTree();
+    if (whatIfPanel) whatIfPanel.scrollIntoView({ block: "nearest" });
+  }
+  function exitWhatIf() {
+    whatIfState = null;
+    drawTaskTree();
   }
   function syncReachControls(reach) {
     if (taskTreeBit) taskTreeBit.hidden = !!reach;
@@ -528,6 +611,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (!window.harness || typeof window.harness.reachOf !== "function") return;
     const first = window.harness.reachOf({ taskId: id, sel: "view" }).bits[0];
     reachMode = { taskId: id, sel: first ? first.name : "view" };
+    whatIfState = null;
     if (!taskTreeMode) {
       taskTreeMode = true;
       taskTreeChip.classList.add("is-active");
@@ -544,12 +628,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (reachMode) { reachMode.sel = reachSel.value; drawTaskTree(); }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || !reachMode || document.querySelector("dialog[open]")) return;
+    if (e.key !== "Escape" || (!reachMode && !whatIfState) || document.querySelector("dialog[open]")) return;
     // Escape typed into a field or a terminal belongs to that field or to the
     // program in the terminal (vim), not to the tree.
     const el = e.target;
     if (el && el.closest && el.closest("input, textarea, select, [contenteditable], .xterm")) return;
-    exitReachMode();
+    reachMode = null;
+    exitWhatIf();
   });
   // The selector's bits come from the bridge (verb.AuditOrder), filled once
   // the wasm is up.
@@ -569,9 +654,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // that holder's capability, with the node brought into view and pulsed.
   // Re-grant is then that node's own task sheet.
   function showTaskInTree(id, capName) {
-    // The audit leads to a capability's holders, which reach mode would draw
-    // over; leave it first.
+    // The audit leads to a capability's holders, which reach mode or a
+    // what-if would draw over; leave them first.
     reachMode = null;
+    whatIfState = null;
     fillTaskTreeBit();
     const opt = taskTreeBit && [...taskTreeBit.options].find((o) => o.dataset.name === capName);
     if (opt) taskTreeBit.value = opt.value;
@@ -639,8 +725,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
-      // Reach mode is a mode OF the tree: closing the tree ends it.
-      if (!taskTreeMode) reachMode = null;
+      // Reach mode and a what-if are modes OF the tree: closing the tree ends
+      // them.
+      if (!taskTreeMode) { reachMode = null; whatIfState = null; }
       drawTaskTree();
     });
   }
@@ -4411,8 +4498,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
   }
 
-  function openRegrantDialog(t) {
+  // opts.whatIf opens it from the sheet's 🔮: 適用 and --keep-conns are gone
+  // (nothing is sent), and 「仮の子を置く」 can turn the controls into a child's
+  // request. From 🔑, もし sits beside 適用 over the same controls.
+  function openRegrantDialog(t, opts = {}) {
     if (!regrantModal || typeof window.harness.setCaps !== "function") return;
+    const whatIfOnly = !!opts.whatIf;
+    document.getElementById("regrant-heading").textContent = whatIfOnly ? "もし… caps/scope" : "caps/scope 再付与";
+    document.getElementById("regrant-apply").hidden = whatIfOnly;
+    document.getElementById("regrant-keep-conns-label").hidden = whatIfOnly;
+    document.getElementById("regrant-phantom-label").hidden = !whatIfOnly;
+    document.getElementById("regrant-phantom").checked = false;
+    document.getElementById("regrant-cascade").disabled = false;
     regrantTaskId = t.id;
     regrantBits = typeof t.capsBits === "number" ? t.capsBits : 0;
     regrantBase = t.scopeBase || "subtree";
@@ -4483,6 +4580,39 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       });
     }
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
+    // A spawn has no descendants to cascade into.
+    document.getElementById("regrant-phantom").addEventListener("change", (e) => {
+      const cascade = document.getElementById("regrant-cascade");
+      cascade.disabled = e.target.checked;
+      if (e.target.checked) cascade.checked = false;
+    });
+    // もし: the dialog's request as `caps what-if` flags, answered over the
+    // listing the tree was drawn from. Nothing is sent.
+    document.getElementById("regrant-whatif").addEventListener("click", () => {
+      if (typeof window.harness.whatIf !== "function") return;
+      const req = {
+        taskId: regrantTaskId,
+        caps: capsLabelFor(regrantBits),
+        scope: scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false,
+          regrantVisBase, regrantVisIds),
+        "scope-for": overrideSpecsFrom("regrant"),
+      };
+      const delegate = () => {
+        req["delegate-caps"] = capsLabelFor(regrantDeleg.caps);
+        req["delegate-scope"] = scopeStateSpec(regrantDeleg);
+      };
+      if (document.getElementById("regrant-phantom").checked) {
+        // The child requests every half as shown, as a spawn carries them.
+        req.spawn = true;
+        delegate();
+      } else {
+        req.cascade = document.getElementById("regrant-cascade").checked;
+        // As 適用: the bound is written only when it was changed.
+        if (delegKey(regrantDeleg) !== regrantDelegOpened) delegate();
+      }
+      regrantModal.close();
+      showWhatIf(window.harness.whatIf(req));
+    });
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
         taskId: regrantTaskId,
@@ -5911,6 +6041,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
     addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
+    addItem("🔮 もし…", "", () => openRegrantDialog(t, { whatIf: true }));
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
     addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
 
@@ -8102,6 +8233,19 @@ async function runVerbCommandDispatch(tokens, ctx) {
         });
         break;
       }
+      if (sub === "what-if") {
+        // What a caps set, a spawn or a set-parent would change: the CLI's
+        // report over a fresh listing. Only the flags given cross, under
+        // their declared names, and the bridge parses them through the same
+        // declaration again. Nothing is sent.
+        const b = parseOrHelp(ctx, tokens, {});
+        const req = { taskId: b.args[0] };
+        for (const k of Object.keys(b.set || {})) {
+          req[k] = (b.custom && b.custom[k]) || b.flags[k];
+        }
+        out = await ctx.harness.capsWhatIfText(req);
+        break;
+      }
       if (sub === "audit") {
         // Who holds which capability: the CLI's text, from the same writer.
         // The 権限 tab draws the same rows.
@@ -9396,6 +9540,9 @@ function repoBasename(p) {
 // scope, or reaching every task through a global base.
 // opts.markBit marks the holders of one capability (a ring; the rest dimmed),
 // ended tasks included. opts.focusId pulses the node the caps audit pointed at.
+// WHATIF_PHANTOM is the id a spawn what-if's child carries (authority.PhantomID).
+const WHATIF_PHANTOM = "new";
+
 function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, opts = {}) {
   const host = document.getElementById("task-tree-graph");
   if (!host) return;
@@ -9477,7 +9624,8 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     // would read the same as one whose label failed to render.
     const caps = n.reachCaps || "none";
     const reachText = caps !== "none" ? caps : (n.reachVisible ? "閲覧のみ" : "なし");
-    const g = svgEl("g", { class: "tt-creator" + (caps === "none" ? " tt-creator-noreach" : "") });
+    const g = svgEl("g", { class: "tt-creator" + (caps === "none" ? " tt-creator-noreach" : "") +
+      (n.id === WHATIF_PHANTOM ? " tt-phantom" : "") });
     // Elbow rather than a straight diagonal: with several children the
     // straight lines fan into a starburst that is hard to trace back.
     const d = `M ${a.x} ${a.y + R} V ${midY} H ${b.x} V ${b.y - R}`;
@@ -9558,13 +9706,19 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
       else if (reach.seeAll || reach.see.includes(n.id)) reachKind = "see";
       else reachKind = "dim";
     }
+    // A what-if (opts.whatIf, the ids harness.whatIf diffed): changed nodes
+    // ringed, a spawn's phantom child dashed.
+    const phantom = n.id === WHATIF_PHANTOM;
     const g = svgEl("g", {
       class: "tt-node" + (n.orphan ? " tt-orphan" : "") +
         ((markBit !== 0 && !holds) || reachKind === "dim" ? " tt-dim" : "") +
-        (n.id === opts.focusId ? " tt-focus" : ""),
+        (n.id === opts.focusId ? " tt-focus" : "") + (phantom ? " tt-phantom" : ""),
       transform: `translate(${p.x},${p.y})`,
       "data-task-id": n.id,
     });
+    // Reach mode's radius: the two never draw at once, and a wider ring runs
+    // into the id label above and the status line below.
+    if (opts.whatIf && opts.whatIf.has(n.id)) g.appendChild(svgEl("circle", { r: R + 6, class: "tt-whatif" }));
     if (holds || n.id === opts.focusId) g.appendChild(svgEl("circle", { r: R + 8, class: "tt-holds-ring" }));
     // Global reach has no target to draw an edge to, so it is a ring on the
     // node itself — under the dot, so the status colour stays readable.
@@ -9596,7 +9750,8 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     }
 
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
-    sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}` : "(gone)";
+    sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}`
+      : (phantom ? "仮の子（もし）" : "(gone)");
     g.appendChild(sub);
 
     // Which repo the task belongs to. The fleet serves several, and without
@@ -9645,7 +9800,8 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     // list below. The list's own rules (which sheet may be open, what the
     // filters currently hide) belong to the list, so this hands the id over
     // rather than reaching into it.
-    if (onSelect) g.addEventListener("click", () => onSelect(n.id));
+    // A phantom is in no list.
+    if (onSelect && !phantom) g.addEventListener("click", () => onSelect(n.id));
     svg.appendChild(g);
   }
   host.appendChild(svg);

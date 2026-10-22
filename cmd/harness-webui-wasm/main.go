@@ -150,6 +150,8 @@ func main() {
 		"capsAuditText":      js.FuncOf(harnessCapsAuditText),
 		"capsReachText":      js.FuncOf(harnessCapsReachText),
 		"reachOf":            js.FuncOf(harnessReachOf),
+		"capsWhatIfText":     js.FuncOf(harnessCapsWhatIfText),
+		"whatIf":             js.FuncOf(harnessWhatIf),
 		"capsAuditOrder":     js.FuncOf(harnessCapsAuditOrder),
 		"parseAuthority":     js.FuncOf(harnessParseAuthority),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
@@ -1094,6 +1096,194 @@ func harnessReachOf(this js.Value, args []js.Value) any {
 	})
 }
 
+// taskTreeOf is the creator tree's nodes and grant edges over a listing: the
+// snapshot draws the live tree with it, and a spawn what-if the tree with its
+// phantom child, so the two cannot draw a node differently.
+func taskTreeOf(tasks []protocol.TaskInfo) ([]any, []any) {
+	treeRows := cli.BuildTaskTree(tasks)
+	reachView := cli.AuthorityTasks(tasks)
+	labelOf := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		labelOf[hex.EncodeToString(t.Id.Id[:])] = cli.AuthorityLabel(t)
+	}
+	// The authority the creator edges do not show, from the same
+	// listing: id-named grants as edges, global reach and pruned
+	// targets as node properties.
+	grants := cli.BuildTaskGrants(tasks)
+	taskTree := make([]any, 0, len(treeRows))
+	for _, n := range cli.TaskTreeLayout(treeRows) {
+		node := map[string]any{
+			"id":        n.ID,
+			"parent":    n.Parent,
+			"depth":     float64(n.Depth),
+			"col":       n.Col,
+			"orphan":    n.Orphan,
+			"offscreen": float64(grants.Offscreen[n.ID]),
+		}
+		// What the creator edge into this node carries; absent for a
+		// root or an orphan, which have no such edge.
+		if r, ok := grants.ParentReach[n.ID]; ok {
+			node["reachCaps"] = cli.CapsLabel(r.Caps) // "none" when zero
+			node["reachVisible"] = r.Visible
+		}
+		if g, ok := grants.Global[n.ID]; ok {
+			node["global"] = g.Kind.String()
+			node["globalCaps"] = cli.CapsLabel(g.Caps)
+		}
+		// One mark, explained by who granted the authority (V15, V21);
+		// the same line `caps reach` prints.
+		if w := cli.WiderOf(reachView, n.ID); !w.Empty() {
+			node["wider"] = cli.WiderLine(w, labelOf[n.ID])
+		}
+		taskTree = append(taskTree, node)
+	}
+	grantEdges := make([]any, 0, len(grants.Edges))
+	for _, e := range grants.Edges {
+		grantEdges = append(grantEdges, map[string]any{
+			"from": e.From,
+			"to":   e.To,
+			"kind": e.Kind.String(),
+			"caps": cli.CapsLabel(e.Caps),
+		})
+	}
+	return taskTree, grantEdges
+}
+
+// whatIfAction parses a what-if request keyed by `caps what-if`'s declared
+// flag names (taskId for the positional) through that verb's declaration, so
+// the command input and the re-grant dialog cannot mean two things by one
+// request.
+func whatIfAction(req js.Value) (verb.CapsWhatIfAction, error) {
+	sp, _ := verb.Lookup("caps", "what-if")
+	var args []string
+	if req.Type() == js.TypeObject {
+		if v := req.Get("taskId"); v.Type() == js.TypeString {
+			args = append(args, v.String())
+		}
+		for _, f := range sp.Flags {
+			switch v := req.Get(f.Name); v.Type() {
+			case js.TypeBoolean:
+				if v.Bool() {
+					args = append(args, "--"+f.Name)
+				}
+			case js.TypeString:
+				args = append(args, "--"+f.Name, v.String())
+			case js.TypeObject: // a repeatable flag's list
+				for i := 0; i < v.Length(); i++ {
+					args = append(args, "--"+f.Name, v.Index(i).String())
+				}
+			}
+		}
+	}
+	return verb.ParseCmdCapsWhatIf(verb.WebUI, args, nil)
+}
+
+// harnessCapsWhatIfText is `caps what-if` in the command input: the CLI's
+// report from the same writer, over a fresh listing. Nothing else is sent.
+//
+//	harness.capsWhatIfText({taskId, caps, scope, "scope-for", …, json}) -> Promise<string>
+func harnessCapsWhatIfText(this js.Value, args []js.Value) any {
+	var req js.Value
+	if len(args) > 0 {
+		req = args[0]
+	}
+	a, err := whatIfAction(req)
+	return capsAuditPromise("caps what-if", func(tasks []protocol.TaskInfo) (js.Value, error) {
+		if err != nil {
+			return js.Undefined(), err
+		}
+		// The WebUI is an operator surface: its listing is everything.
+		r, err := cli.BuildWhatIf(tasks, cli.WhatIfChange(a))
+		if err != nil {
+			return js.Undefined(), err
+		}
+		var buf strings.Builder
+		if err := cli.WriteWhatIf(&buf, r, a.JSON); err != nil {
+			return js.Undefined(), err
+		}
+		return js.ValueOf(buf.String()), nil
+	})
+}
+
+// harnessWhatIf answers the tree's what-if over lastListing, as caps what-if
+// would: per changed task its head line and bit lines, the command, and for a
+// spawn the tree with the phantom child placed under its creator (id
+// authority.PhantomID).
+//
+//	harness.whatIf({taskId, spawn, caps, scope, "scope-for", "delegate-caps",
+//	  "delegate-scope", cascade}) -> {error} | {diffs: [{id, isNew, head,
+//	  bits: [{name, added, removed, line}]}], command, runBy, tree, grantEdges}
+func harnessWhatIf(this js.Value, args []js.Value) any {
+	fail := func(err error) any { return js.ValueOf(map[string]any{"error": err.Error()}) }
+	var req js.Value
+	if len(args) > 0 {
+		req = args[0]
+	}
+	a, err := whatIfAction(req)
+	if err != nil {
+		return fail(err)
+	}
+	change := cli.WhatIfChange(a)
+	r, err := cli.BuildWhatIf(lastListing, change)
+	if err != nil {
+		return fail(err)
+	}
+	strs := func(ids []string) []any {
+		out := make([]any, 0, len(ids))
+		for _, x := range ids {
+			out = append(out, x)
+		}
+		return out
+	}
+	diffs := make([]any, 0, len(r.Diffs))
+	var phantom *authority.TaskDiff
+	for i, d := range r.Diffs {
+		if d.New {
+			phantom = &r.Diffs[i]
+		}
+		bits := make([]any, 0)
+		for _, b := range cli.WhatIfBits(d) {
+			bits = append(bits, map[string]any{"name": b.Cap, "added": strs(b.Added), "removed": strs(b.Removed), "line": b.Line()})
+		}
+		diffs = append(diffs, map[string]any{"id": d.ID, "isNew": d.New, "head": cli.WhatIfHead(d), "bits": bits})
+	}
+	out := map[string]any{"diffs": diffs, "command": r.Command, "runBy": r.RunBy}
+	if s, ok := change.(authority.Spawn); ok && phantom != nil {
+		tree, edges := taskTreeOf(withPhantom(lastListing, s.Creator, phantom.After))
+		for _, list := range [][]any{tree, edges} {
+			for _, x := range list {
+				m := x.(map[string]any)
+				for _, k := range []string{"id", "parent", "from", "to"} {
+					if m[k] == phantomHex {
+						m[k] = authority.PhantomID
+					}
+				}
+			}
+		}
+		out["tree"], out["grantEdges"] = tree, edges
+	}
+	return js.ValueOf(out)
+}
+
+// phantomHex is the id withPhantom gives a spawn's child until the tree is
+// laid out, when it becomes authority.PhantomID.
+var phantomHex = strings.Repeat("ff", 16)
+
+// withPhantom is the listing plus a spawn's child under its creator, holding
+// what the spawn would grant it.
+func withPhantom(tasks []protocol.TaskInfo, creator string, g authority.Grant) []protocol.TaskInfo {
+	var id, cid protocol.TaskID
+	b, _ := hex.DecodeString(phantomHex)
+	copy(id.Id[:], b)
+	if b, err := hex.DecodeString(creator); err == nil && len(b) == len(cid.Id) {
+		copy(cid.Id[:], b)
+	}
+	ov := g.Scope.OverridesToWire()
+	p := protocol.TaskInfo{Id: id, CreatorTaskId: cid, Capabilities: g.Caps, Scope: g.Scope.ToWire(),
+		Overrides: ov, OverridesLen: uint8(len(ov)), DelegateCaps: g.DelegateCaps, DelegateScope: g.DelegateScope.ToWire()}
+	return append(append([]protocol.TaskInfo(nil), tasks...), p)
+}
+
 // capsAuditPromise fetches the task listing and resolves with render's value.
 func capsAuditPromise(verbName string, render func([]protocol.TaskInfo) (js.Value, error)) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
@@ -1629,55 +1819,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			// centre) — Go is where this repo can test that. JS is left a
 			// painter: multiply col/depth by a spacing, draw a circle and an
 			// edge to parent.
-			treeRows := cli.BuildTaskTree(lr.Tasks)
-			// Kept for the tree's reach mode, which asks about it on every
-			// redraw and must not wait on a request to do so.
+			// Kept for the tree's reach mode and what-if, which ask about it on
+			// every redraw and must not wait on a request to do so.
 			lastListing = lr.Tasks
-			reachView := cli.AuthorityTasks(lr.Tasks)
-			labelOf := make(map[string]string, len(lr.Tasks))
-			for _, t := range lr.Tasks {
-				labelOf[hex.EncodeToString(t.Id.Id[:])] = cli.AuthorityLabel(t)
-			}
-			// The authority the creator edges do not show, from the same
-			// listing: id-named grants as edges, global reach and pruned
-			// targets as node properties.
-			grants := cli.BuildTaskGrants(lr.Tasks)
-			taskTree := make([]any, 0, len(treeRows))
-			for _, n := range cli.TaskTreeLayout(treeRows) {
-				node := map[string]any{
-					"id":        n.ID,
-					"parent":    n.Parent,
-					"depth":     float64(n.Depth),
-					"col":       n.Col,
-					"orphan":    n.Orphan,
-					"offscreen": float64(grants.Offscreen[n.ID]),
-				}
-				// What the creator edge into this node carries; absent for a
-				// root or an orphan, which have no such edge.
-				if r, ok := grants.ParentReach[n.ID]; ok {
-					node["reachCaps"] = cli.CapsLabel(r.Caps) // "none" when zero
-					node["reachVisible"] = r.Visible
-				}
-				if g, ok := grants.Global[n.ID]; ok {
-					node["global"] = g.Kind.String()
-					node["globalCaps"] = cli.CapsLabel(g.Caps)
-				}
-				// One mark, explained by who granted the authority (V15, V21);
-				// the same line `caps reach` prints.
-				if w := cli.WiderOf(reachView, n.ID); !w.Empty() {
-					node["wider"] = cli.WiderLine(w, labelOf[n.ID])
-				}
-				taskTree = append(taskTree, node)
-			}
-			grantEdges := make([]any, 0, len(grants.Edges))
-			for _, e := range grants.Edges {
-				grantEdges = append(grantEdges, map[string]any{
-					"from": e.From,
-					"to":   e.To,
-					"kind": e.Kind.String(),
-					"caps": cli.CapsLabel(e.Caps),
-				})
-			}
+			taskTree, grantEdges := taskTreeOf(lr.Tasks)
 
 			// Fetch the live connection list using the same long-lived client
 			// (Pitfall 3 / feedback_reuse_long_lived_client: never dial+close here).

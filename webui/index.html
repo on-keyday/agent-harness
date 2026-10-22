@@ -503,7 +503,10 @@
      file-preview-modal above. -->
 <dialog id="regrant-modal" class="picker-modal regrant-modal">
   <form method="dialog" class="picker-form">
-    <h3 class="picker-title">caps/scope 再付与 <span id="regrant-task"></span></h3>
+    <h3 class="picker-title"><span id="regrant-heading">caps/scope 再付与</span> <span id="regrant-task"></span></h3>
+    <!-- What-if mode only (the sheet's 🔮): the controls below become what a
+         child this task creates would request, granted as a spawn is. -->
+    <label class="regrant-flag" id="regrant-phantom-label" hidden><input type="checkbox" id="regrant-phantom"> 仮の子を置く（このタスクが作る子として）</label>
     <div id="regrant-chips" class="caps-row" aria-label="Capability chips"></div>
     <div class="scope-base-row" id="regrant-base-row" aria-label="Scope base">
       <label><input type="radio" name="regrant-base" value="subtree"> subtree</label>
@@ -534,8 +537,8 @@
       <div id="regrant-deleg"></div>
       <p class="hint">変えたときだけ送ります。--cascade と一緒なら子孫もこの上限まで締めます。</p>
     </details>
-    <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
-    <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
+    <label class="regrant-flag" id="regrant-cascade-label"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
+    <label class="regrant-flag" id="regrant-keep-conns-label"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
     <details id="regrant-scope-for-details">
       <summary>個別 capability を絞る（--scope-for）</summary>
       <div id="regrant-scope-for-rows" class="override-rows"></div>
@@ -544,6 +547,8 @@
     </details>
     <code id="regrant-echo" class="scope-echo"></code>
     <menu class="picker-actions">
+      <!-- Draws the change on the tree (harness.whatIf) and sends nothing. -->
+      <button type="button" id="regrant-whatif">もし（送らない）</button>
       <button type="button" id="regrant-apply">適用</button>
       <button type="button" id="regrant-cancel">キャンセル</button>
     </menu>

@@ -76,7 +76,7 @@ func BuildWhatIf(tasks []protocol.TaskInfo, c authority.Change) (WhatIfReport, e
 	// A task whose only change is on a bit naming no task (spawn, notify, …)
 	// has no line to show, as caps reach draws none for those bits.
 	for _, d := range diffs {
-		if d.New || len(diffHead(d)) > 0 || len(diffBits(d)) > 0 {
+		if d.New || len(diffHead(d)) > 0 || len(WhatIfBits(d)) > 0 {
 			r.Diffs = append(r.Diffs, d)
 		}
 	}
@@ -121,18 +121,19 @@ func diffHead(d authority.TaskDiff) []string {
 	return out
 }
 
-type bitDelta struct {
+// WhatIfBit is one bit's change on one task: the tasks it gains and loses.
+type WhatIfBit struct {
 	Cap            string
 	Added, Removed []string
 }
 
-// diffBits are the bits that name tasks, strongest first, then view — as caps
-// reach orders them — each with the tasks gained and lost.
-func diffBits(d authority.TaskDiff) []bitDelta {
-	var out []bitDelta
+// WhatIfBits are the bits that name tasks, strongest first, then view — as
+// caps reach orders them — each with the tasks gained and lost.
+func WhatIfBits(d authority.TaskDiff) []WhatIfBit {
+	var out []WhatIfBit
 	add := func(name string, c protocol.Capability) {
 		if len(d.Added[c]) > 0 || len(d.Removed[c]) > 0 {
-			out = append(out, bitDelta{Cap: name, Added: d.Added[c], Removed: d.Removed[c]})
+			out = append(out, WhatIfBit{Cap: name, Added: d.Added[c], Removed: d.Removed[c]})
 		}
 	}
 	for _, c := range verb.AuditOrder() {
@@ -194,11 +195,26 @@ func WhatIfCommand(c authority.Change) string {
 	return strings.Join(tok, " ")
 }
 
-func diffID(d authority.TaskDiff) string {
+// WhatIfHead is a diff's head line: the id (`new` for a spawn's child), then
+// the changed halves.
+func WhatIfHead(d authority.TaskDiff) string {
+	id := shortID(d.ID)
 	if d.New {
-		return d.ID
+		id = d.ID
 	}
-	return shortID(d.ID)
+	return strings.Join(append([]string{id}, diffHead(d)...), "  ")
+}
+
+// Line is the bit's line: its name, then +N and -M with the ids (short).
+func (b WhatIfBit) Line() string {
+	var parts []string
+	if len(b.Added) > 0 {
+		parts = append(parts, fmt.Sprintf("+%d:%s", len(b.Added), idList(b.Added)))
+	}
+	if len(b.Removed) > 0 {
+		parts = append(parts, fmt.Sprintf("-%d:%s", len(b.Removed), idList(b.Removed)))
+	}
+	return fmt.Sprintf("%-14s %s", b.Cap, strings.Join(parts, "  "))
 }
 
 // WriteWhatIf prints r as text (ids short, the command's full) or as one JSON
@@ -220,7 +236,7 @@ func WriteWhatIf(w io.Writer, r WhatIfReport, asJSON bool) error {
 		diffs := make([]map[string]any, 0, len(r.Diffs))
 		for _, d := range r.Diffs {
 			bits := []bitJSON{}
-			for _, b := range diffBits(d) {
+			for _, b := range WhatIfBits(d) {
 				j := bitJSON{Cap: b.Cap, Added: b.Added, Removed: b.Removed}
 				if j.Added == nil {
 					j.Added = []string{}
@@ -250,16 +266,9 @@ func WriteWhatIf(w io.Writer, r WhatIfReport, asJSON bool) error {
 		return err
 	}
 	for _, d := range r.Diffs {
-		b.WriteString("  " + strings.Join(append([]string{diffID(d)}, diffHead(d)...), "  ") + "\n")
-		for _, bit := range diffBits(d) {
-			var parts []string
-			if len(bit.Added) > 0 {
-				parts = append(parts, fmt.Sprintf("+%d:%s", len(bit.Added), idList(bit.Added)))
-			}
-			if len(bit.Removed) > 0 {
-				parts = append(parts, fmt.Sprintf("-%d:%s", len(bit.Removed), idList(bit.Removed)))
-			}
-			fmt.Fprintf(&b, "      %-14s %s\n", bit.Cap, strings.Join(parts, "  "))
+		b.WriteString("  " + WhatIfHead(d) + "\n")
+		for _, bit := range WhatIfBits(d) {
+			b.WriteString("      " + bit.Line() + "\n")
 		}
 	}
 	if r.RunBy != "" {

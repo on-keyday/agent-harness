@@ -2472,3 +2472,16 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .tt-reach-see { fill: none; stroke: #4fc1ff; stroke-width: 1.5; stroke-dasharray: 3 2; }
 .tt-wider { fill: none; stroke: #d7ba7d; stroke-width: 2; stroke-dasharray: 2 3; }
 .task-tree-reach { display: flex; gap: .5em; align-items: center; margin: .25em 0; font-family: monospace; font-size: .9em; color: #4fc1ff; flex-wrap: wrap; }
+
+/* What-if (a change not sent): changed nodes ringed, a spawn's phantom child
+   and its creator edge dashed; the panel holds the diff and the command. */
+.tt-whatif { fill: none; stroke: #c586c0; stroke-width: 2.5; }
+.tt-phantom .tt-dot { fill: transparent; stroke: #c586c0; stroke-dasharray: 3 2; }
+.tt-phantom .tt-label, .tt-phantom .tt-sub { fill: #c586c0; }
+.tt-node.tt-phantom { cursor: default; }
+.tt-creator.tt-phantom .tt-edge { stroke: #c586c0; stroke-dasharray: 4 3; }
+.task-tree-whatif { margin: .25em 0; border: 1px solid #c586c0; border-radius: 4px; padding: .25em .5em; max-width: 100%; box-sizing: border-box; }
+.tt-whatif-head { display: flex; gap: .5em; align-items: center; justify-content: space-between; color: #c586c0; font-size: .9em; }
+.tt-whatif-diff { margin: .25em 0; font-size: .85em; overflow-x: auto; white-space: pre; }
+.tt-whatif-cmd { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; font-size: .85em; }
+.tt-whatif-cmd code { overflow-wrap: anywhere; min-width: 0; }

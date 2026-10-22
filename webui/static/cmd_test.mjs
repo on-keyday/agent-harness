@@ -707,3 +707,11 @@ test("caps reach dispatches its report", async () => {
   eq(r.calls, [["capsReachText", { taskId: ID, cap: "cancel", json: true }]]);
   assert.equal(r.out, "{}");
 });
+
+// caps what-if: the CLI's report over a fresh listing; nothing is sent.
+test("caps what-if dispatches its report", async () => {
+  const ID = "a".repeat(32);
+  const r = await run(`caps what-if ${ID} --caps cancel --cascade`, { capsWhatIfText: "  nothing changes\n" });
+  assert.equal(r.err, undefined);
+  eq(r.calls, [["capsWhatIfText", { taskId: ID, caps: "cancel", cascade: true }]]);
+});
