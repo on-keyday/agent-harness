@@ -60,7 +60,7 @@ func TestOpenInteractiveStatusError(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.status.String(), func(t *testing.T) {
-			err := openInteractiveStatusError("/repo/path", "codex", tc.status)
+			err := openInteractiveStatusError("/repo/path", "codex", tc.status, nil)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected nil, got %v", err)

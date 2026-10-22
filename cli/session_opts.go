@@ -73,6 +73,15 @@ type SessionOpts struct {
 	// the request must then carry no prompt, args, agent, caps or scope
 	// re-grant, and needs only the resume_exact capability.
 	ResumeExact bool
+	// DelegateCaps and DelegateScope are the delegation bound written onto the
+	// task: what IT may put into the tasks it creates. Zero is the default
+	// bound, which delegates nothing — the same fail-closed reading as Caps.
+	// On a resume each half is written only behind its presence bit, so a
+	// session default can never silently rewrite a resumed task's bound.
+	DelegateCaps         protocol.Capability
+	DelegateScope        protocol.TaskScope
+	DelegateCapsPresent  bool
+	DelegateScopePresent bool
 	// Detached opens the session without attaching the caller: the server
 	// creates no client stream, so the caller never holds the control seat
 	// (which needs exec_control). The initial size then travels in the request,
@@ -98,6 +107,9 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.Overrides = opts.Overrides
 	oi.OverridesLen = uint8(len(opts.Overrides))
 	oi.SetScopePresent(opts.ScopePresent)
+	oi.DelegateCaps, oi.DelegateScope = opts.DelegateCaps, opts.DelegateScope
+	oi.SetDelegateCapsPresent(opts.DelegateCapsPresent)
+	oi.SetDelegateScopePresent(opts.DelegateScopePresent)
 	oi.SetEventStream(opts.EventStream)
 	oi.SetResumeExact(opts.ResumeExact)
 	if opts.Detached {

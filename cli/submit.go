@@ -49,6 +49,9 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.Overrides = opts.Overrides
 	sub.OverridesLen = uint8(len(opts.Overrides))
 	sub.SetScopePresent(opts.ScopePresent)
+	sub.DelegateCaps, sub.DelegateScope = opts.DelegateCaps, opts.DelegateScope
+	sub.SetDelegateCapsPresent(opts.DelegateCapsPresent)
+	sub.SetDelegateScopePresent(opts.DelegateScopePresent)
 	sub.SetResumeExact(opts.ResumeExact)
 	return sub
 }

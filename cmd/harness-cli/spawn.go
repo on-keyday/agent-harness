@@ -23,6 +23,14 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 	if a.Scope != nil {
 		scope = *a.Scope
 	}
+	var dcaps protocol.Capability
+	if a.DelegateCaps != nil {
+		dcaps = *a.DelegateCaps
+	}
+	var dscope protocol.TaskScope
+	if a.DelegateScope != nil {
+		dscope = *a.DelegateScope
+	}
 	sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: a.Runner, Host: a.Host, IP: a.IP})
 	if err != nil {
 		die(err)
@@ -32,7 +40,10 @@ func spawnOpts(a verb.SpawnAction) cli.SessionOpts {
 		Caps: caps, Scope: scope, Overrides: a.Overrides,
 		ResumeCapsOverride: a.ResumeTaskID != "" && a.CapsPresent,
 		ScopePresent:       a.ResumeTaskID != "" && a.ScopePresent,
-		ResumeConversation: a.ResumeConversation, AgentProfile: a.Agent,
+		DelegateCaps:       dcaps, DelegateScope: dscope,
+		DelegateCapsPresent:  a.ResumeTaskID != "" && a.DelegateCapsPresent,
+		DelegateScopePresent: a.ResumeTaskID != "" && a.DelegateScopePresent,
+		ResumeConversation:   a.ResumeConversation, AgentProfile: a.Agent,
 		ResumeExact: a.Exact,
 	}
 }

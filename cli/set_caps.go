@@ -24,7 +24,12 @@ type SetCapsOpts struct {
 	// a non-nil Scope with an empty Overrides is therefore the only way to
 	// CLEAR them -- the same shape as writing an empty ids list.
 	Overrides []protocol.ScopeOverride
-	Cascade   bool
+	// DelegateCaps / DelegateScope rewrite the delegation bound; nil keeps
+	// it. Either set with Cascade also clamps the descendants to the new
+	// bound; a cascade naming neither clamps caps and scope only.
+	DelegateCaps  *protocol.Capability
+	DelegateScope *protocol.TaskScope
+	Cascade       bool
 	KeepConns bool
 }
 
@@ -46,8 +51,8 @@ type SetCapsResult struct {
 // principal task — an in-task agent gets SetCapsStatus_NotOperator however it
 // asks. Long-lived embedders (TUI/WebUI) call this form.
 func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (SetCapsResult, error) {
-	if opts.Caps == nil && opts.Scope == nil {
-		return SetCapsResult{}, fmt.Errorf("set-caps: nothing to change (pass --caps, --scope, or both)")
+	if opts.Caps == nil && opts.Scope == nil && opts.DelegateCaps == nil && opts.DelegateScope == nil {
+		return SetCapsResult{}, fmt.Errorf("set-caps: nothing to change (pass --caps, --scope, --delegate-caps or --delegate-scope)")
 	}
 	tid, err := parseTaskIDHex(opts.TaskID)
 	if err != nil {
@@ -64,6 +69,14 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 		body.Overrides = opts.Overrides
 		body.OverridesLen = uint8(len(opts.Overrides))
 		body.SetScopePresent(true)
+	}
+	if opts.DelegateCaps != nil {
+		body.DelegateCaps = *opts.DelegateCaps
+		body.SetDelegateCapsPresent(true)
+	}
+	if opts.DelegateScope != nil {
+		body.DelegateScope = *opts.DelegateScope
+		body.SetDelegateScopePresent(true)
 	}
 	body.SetCascade(opts.Cascade)
 	body.SetKeepConns(opts.KeepConns)

@@ -114,15 +114,21 @@ func (c *Client) roundTripOpen(ctx context.Context, repoPath string, opts Sessio
 		}
 		return nil, &AmbiguousRunnerError{Candidates: cands}
 	}
-	if err := openInteractiveStatusError(repoPath, opts.AgentProfile, oir.Status); err != nil {
+	if err := openInteractiveStatusError(repoPath, opts.AgentProfile, oir.Status, oir.ErrorMsg); err != nil {
 		return nil, err
 	}
 	return oir, nil
 }
 
 // openInteractiveStatusError converts a non-Ok OpenInteractiveStatus into a
-// Go error. Returns nil for OpenInteractiveStatus_Ok.
-func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenInteractiveStatus) error {
+// Go error. Returns nil for OpenInteractiveStatus_Ok. serverMsg is the
+// response's error_msg: when the server says why, that is the answer — it
+// names the refused id and which bound refused it, which the fixed sentences
+// below cannot.
+func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenInteractiveStatus, serverMsg []byte) error {
+	if len(serverMsg) != 0 && status != protocol.OpenInteractiveStatus_Ok {
+		return fmt.Errorf("interactive %s: %s", status, serverMsg)
+	}
 	switch status {
 	case protocol.OpenInteractiveStatus_Ok:
 		return nil

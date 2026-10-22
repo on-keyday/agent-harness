@@ -600,6 +600,7 @@ func (h cliVerbs) CapsSet(a verb.SetCapsAction) error {
 		opts.Scope = a.Scope
 		opts.Overrides = a.Overrides
 	}
+	opts.DelegateCaps, opts.DelegateScope = a.DelegateCaps, a.DelegateScope
 	res, err := cli.SetCaps(h.ctx, h.cid(), opts)
 	if err != nil {
 		return err

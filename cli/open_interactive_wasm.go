@@ -158,6 +158,10 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	if oiResp == nil {
 		return "", errors.New("empty OpenInteractive response")
 	}
+	// The server's own reason, when it gives one, as the native client does.
+	if len(oiResp.ErrorMsg) != 0 && oiResp.Status != protocol.OpenInteractiveStatus_Ok {
+		return "", fmt.Errorf("%s: %s", oiResp.Status, oiResp.ErrorMsg)
+	}
 	switch oiResp.Status {
 	case protocol.OpenInteractiveStatus_Ok:
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:

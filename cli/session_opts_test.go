@@ -80,13 +80,13 @@ func TestStatusErrorsNameTheFix(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--exact") || !strings.Contains(err.Error(), "--agent-arg") {
 		t.Errorf("submit mismatch: %v, want it to name --exact and the server's field", err)
 	}
-	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeExactMismatch); err == nil || !strings.Contains(err.Error(), "--exact") {
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ResumeExactMismatch, nil); err == nil || !strings.Contains(err.Error(), "--exact") {
 		t.Errorf("open mismatch: %v, want it to name --exact", err)
 	}
-	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ScopeNotPermitted); err == nil || !strings.Contains(err.Error(), "scope_not_permitted") || !strings.Contains(err.Error(), "resume") {
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_ScopeNotPermitted, nil); err == nil || !strings.Contains(err.Error(), "scope_not_permitted") || !strings.Contains(err.Error(), "resume") {
 		t.Errorf("scope_not_permitted: %v, want it named, with the spawn-override hint naming resume", err)
 	}
-	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_DetachRequired); err == nil || !strings.Contains(err.Error(), "-d") {
+	if err := openInteractiveStatusError("/r", "", protocol.OpenInteractiveStatus_DetachRequired, nil); err == nil || !strings.Contains(err.Error(), "-d") {
 		t.Errorf("detach_required: %v, want it to name -d", err)
 	}
 }

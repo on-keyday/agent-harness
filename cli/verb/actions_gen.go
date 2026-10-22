@@ -613,6 +613,10 @@ type SetCapsAction struct {
 	Scope *protocol.TaskScope
 	// narrow ONE capability below --scope (written with --scope; they are one half of the authority)
 	Overrides []protocol.ScopeOverride
+	// new delegation bound: the caps the task may put into the tasks it creates; omitted = keep it
+	DelegateCaps *protocol.Capability
+	// the most scope it may give them (--scope's grammar); with --cascade, also clamps its descendants to …
+	DelegateScope *protocol.TaskScope
 	// also clamp every descendant to the new authority — without this a revoked task can still act throu…
 	Cascade bool
 	// on a narrowing, leave the affected tasks' connections open
@@ -629,6 +633,10 @@ type SetDefaultsAction struct {
 	Scope *protocol.TaskScope
 	// narrow ONE capability below --scope in that default (written with --scope)
 	Overrides []protocol.ScopeOverride
+	// delegation bound (--delegate-caps on submit) future spawns carry by default; omitted = leave it as i…
+	DelegateCaps *protocol.Capability
+	// delegate scope future spawns carry by default; omitted = leave it as it is
+	DelegateScope *protocol.TaskScope
 }
 
 // SetParentAction is built by: caps set-parent.
@@ -666,6 +674,14 @@ type SpawnAction struct {
 	Agent string
 	// narrow ONE capability (or a comma-separated list of them) to a tighter scope than --scope
 	Overrides []protocol.ScopeOverride
+	// whether --delegate-caps was typed, which its zero value cannot say
+	DelegateCapsPresent bool
+	// capabilities the new task may put into the tasks IT creates (default none)
+	DelegateCaps *protocol.Capability
+	// whether --delegate-scope was typed, which its zero value cannot say
+	DelegateScopePresent bool
+	// the most scope it may give them, in --scope's grammar (default subtree)
+	DelegateScope *protocol.TaskScope
 	// extra CLI arg to forward to the agent (repeatable; appended after the runner-global --agent-args)
 	ExtraArgs []string
 	// pin to a specific runner by ConnectionID (the id= value from `ls`)
@@ -1871,6 +1887,22 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
@@ -1911,6 +1943,22 @@ func init() {
 					return nil, fmt.Errorf("submit: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -1953,6 +2001,22 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("submit: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
 			a.Host = b.Str("host")
@@ -1993,6 +2057,22 @@ func init() {
 					return nil, fmt.Errorf("session new: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -2036,6 +2116,22 @@ func init() {
 					return nil, fmt.Errorf("session new: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			a.DelegateCapsPresent = b.Set["delegate-caps"]
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			a.DelegateScopePresent = b.Set["delegate-scope"]
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("session new: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			a.ExtraArgs = stringsOf(b.Custom["agent-arg"])
 			a.Runner = b.Str("runner")
@@ -2442,6 +2538,20 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
 			a.Cascade = b.Bool("cascade")
 			a.KeepConns = b.Bool("keep-conns")
 			if len(b.Args) > 0 {
@@ -2471,6 +2581,20 @@ func init() {
 					return nil, fmt.Errorf("caps set: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			a.Cascade = b.Bool("cascade")
 			a.KeepConns = b.Bool("keep-conns")
@@ -2525,6 +2649,20 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
 			return a, nil
 		},
 		"caps set-defaults\x00webui": func(b Bound) (Action, error) {
@@ -2549,6 +2687,20 @@ func init() {
 					return nil, fmt.Errorf("caps set-defaults: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("caps set-defaults: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			return a, nil
 		},
@@ -2575,6 +2727,20 @@ func init() {
 				}
 				a.Overrides = v
 			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
+			}
 			return a, nil
 		},
 		"scope\x00webui": func(b Bound) (Action, error) {
@@ -2599,6 +2765,20 @@ func init() {
 					return nil, fmt.Errorf("scope: --scope-for: %w", err)
 				}
 				a.Overrides = v
+			}
+			if b.Set["delegate-caps"] {
+				v, err := parseCapsFlag(b.Str("delegate-caps"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --delegate-caps: %w", err)
+				}
+				a.DelegateCaps = v
+			}
+			if b.Set["delegate-scope"] {
+				v, err := parseScopeFlag(b.Str("delegate-scope"))
+				if err != nil {
+					return nil, fmt.Errorf("scope: --delegate-scope: %w", err)
+				}
+				a.DelegateScope = v
 			}
 			return a, nil
 		},
