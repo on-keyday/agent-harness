@@ -70,6 +70,8 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 				Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None,
 			}},
 		},
+		DelegateCaps:    protocol.Capability_FileRead,
+		DelegateScope:   authority.Scope{Base: protocol.ScopeBase_None},
 		AgentProfile:    "codex",
 		Status:          protocol.TaskStatus_Running,
 		AssignedTo:      testRunnerID("ws:127.0.0.1:8539-1"),
@@ -213,7 +215,7 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 			VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
 			VisIDs:    []string{"aabbccddeeff00112233445566778899"},
 			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
-		}},
+		}, DelegateCaps: protocol.Capability_FileRead, DelegateScope: authority.Scope{Base: protocol.ScopeBase_None}},
 
 		"")
 

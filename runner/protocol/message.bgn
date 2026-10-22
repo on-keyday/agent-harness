@@ -1013,6 +1013,10 @@ format TaskInfo:
     authority_actor  :TaskID
     authority_at     :u64
     authority_age_ms :u64
+    # The task's delegation bound (SubmitRequest.delegate_caps): what it may
+    # write onto the tasks it grants to.
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -1077,8 +1081,9 @@ format SubmitRequest:
     extra_args :AgentArgs
     # requested_caps is a Capability bitmask the spawning principal requests for
     # this task. The server computes caps_child = caps_creator ∩ requested_caps.
-    # Use Capability.all (0x3fffff) to inherit the creator's full set (the
-    # default when no explicit confinement is desired). A zero value grants
+    # The server computes caps_child = caps_creator ∩ delegate_caps_creator ∩
+    # requested_caps, so Capability.all (0x3fffff) means "everything the
+    # creator may delegate", not the creator's full set. A zero value grants
     # nothing.
     requested_caps :Capability
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
@@ -1097,7 +1102,13 @@ format SubmitRequest:
     # must carry none (empty prompt / extra_args / agent_profile, both override
     # bits 0), else resume_exact_mismatch. Satisfied by resume_exact or resume.
     resume_exact :u1
-    reserved :u4
+    # resume only: 1 = write delegate_caps / delegate_scope onto the resumed
+    # task (bounded by the resumer's own bound); 0 = keep the recorded one.
+    # Ignored on create, where both always apply and their zero is the default
+    # bound. Independent of each other and of the caps / scope bits.
+    delegate_caps_present  :u1
+    delegate_scope_present :u1
+    reserved :u2
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -1118,6 +1129,14 @@ format SubmitRequest:
     scope :TaskScope
     overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
     overrides     :[overrides_len]ScopeOverride
+    # The delegation bound written onto the new task: the caps it may put into
+    # the tasks IT grants to, and the most scope it may give them (read as a
+    # ceiling on the ranks, and as a scope around the task for the ids it may
+    # name). Bounded by the creator's own bound. The zero values are the
+    # default bound, which delegates no bits; no overrides — the bound is one
+    # ceiling for every capability.
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
@@ -1930,7 +1949,10 @@ format OpenInteractiveRequest:
     # the response carries no stream_id. 0 = the requester takes the control
     # seat, which requires exec_control over the target.
     detached :u1
-    reserved :u1
+    # resume only: same semantics as SubmitRequest.delegate_caps_present. Its
+    # sibling delegate_scope_present lives in the byte after delegate_scope:
+    # this byte had one bit left.
+    delegate_caps_present :u1
     resume_task_id :TaskID
     # agent_profile: same semantics as SubmitRequest.agent_profile.
     agent_profile_len :u8
@@ -1939,6 +1961,12 @@ format OpenInteractiveRequest:
     scope :TaskScope
     overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
     overrides     :[overrides_len]ScopeOverride
+    # delegate_caps / delegate_scope: same semantics as SubmitRequest's.
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
+    # resume only: same semantics as SubmitRequest.delegate_scope_present.
+    delegate_scope_present :u1
+    reserved2 :u7
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -2020,6 +2048,11 @@ format OpenInteractiveResponse:
                        # via RunnerRequest{open_exec, task_id, stream_id} and
                        # feeds it to exec.ExecuteCommand for an interactive
                        # PTY claude session.
+    # Why the request was refused, as SubmitResponse.error_msg: set on
+    # scope_not_permitted so the refused id and which bound refused it reach
+    # the client. Empty otherwise; a client prints its fixed text then.
+    error_msg_len :u16
+    error_msg :[error_msg_len]u8
     # Populated ONLY when status == ambiguous_runner: the stream carrying a
     # RunnerCandidatesBody. The client picks and re-issues pinned.
     if status == OpenInteractiveStatus.ambiguous_runner:
@@ -2133,6 +2166,11 @@ format WhoAmIResponse:
     # It is NOT a reason to widen the suspect list for a defect.
     server_dirty :u1
     reserved3 :u7
+    # The caller's delegation bound: what it may write onto the tasks it
+    # spawns or re-grants. An operator's is unbounded (all, global), as its
+    # capabilities are.
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
@@ -2446,7 +2484,16 @@ format SetCapsRequest:
     keep_conns    :u1   # 1 = leave the affected tasks' connections open even on
                         # a narrowing (default: close them, so in-flight attaches
                         # and transfers die with the grant)
-    reserved      :u4
+    delegate_caps_present  :u1   # 1 = write delegate_caps;  0 = keep the persisted one
+    delegate_scope_present :u1   # 1 = write delegate_scope; 0 = keep the persisted one
+                                 # With cascade, either bit also clamps every
+                                 # descendant to the target's new bound; a
+                                 # cascade with neither clamps caps and scope only.
+    reserved      :u2
+    # The delegation bound to write (SubmitRequest.delegate_caps). No
+    # attenuation: the operator may grant any bound.
+    delegate_caps  :Capability
+    delegate_scope :TaskScope
 
 format SetCapsResponse:
     status       :SetCapsStatus

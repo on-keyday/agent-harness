@@ -867,10 +867,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// An operator has no principal task and therefore no stored scope; its
 		// effective one is global, which is what scopeSet already answers.
 		scope := authority.Scope{Base: protocol.ScopeBase_Global}
+		// Likewise its delegation bound is unbounded, as its caps are all.
+		delegCaps, delegScope := protocol.Capability_All, authority.Scope{Base: protocol.ScopeBase_Global}
 		if pid.Id != ([16]byte{}) {
+			delegCaps, delegScope = protocol.Capability_None, authority.Scope{Base: protocol.ScopeBase_None}
 			if t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:])); ok {
 				creator = t.CreatorTaskID
 				scope = t.Scope
+				delegCaps, delegScope = t.DelegateCaps, t.DelegateScope
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.RequestId}
@@ -881,6 +885,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			Scope:           scope.ToWire(),
 			Overrides:       scope.OverridesToWire(),
 			OverridesLen:    uint8(len(scope.Overrides)),
+			DelegateCaps:    delegCaps,
+			DelegateScope:   delegScope.ToWire(),
 		}
 		// Which commit THIS server is running. Ungated with the rest of the
 		// answer: a build id is not authority, and the caller who most needs it
@@ -2398,6 +2404,8 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		Capabilities:   t.Capabilities,
 		Scope:          t.Scope.ToWire(),
 		Overrides:      t.Scope.OverridesToWire(),
+		DelegateCaps:   t.DelegateCaps,
+		DelegateScope:  t.DelegateScope.ToWire(),
 		OverridesLen:   uint8(len(t.Scope.Overrides)),
 		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
 	}
