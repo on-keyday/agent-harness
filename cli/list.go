@@ -475,19 +475,19 @@ type taskJSON struct {
 	// task holds, with the scope that actually applies after the override
 	// merge. Emitted always, overrides or not, so a machine reader never has
 	// to redo the merge to learn what a verb may target.
-	ScopeByCap   map[string]string `json:"scope_by_cap"`
+	ScopeByCap map[string]string `json:"scope_by_cap"`
 	// The delegation bound, in the forms caps and scope use.
 	DelegateCaps  string `json:"delegate_caps"`
 	DelegateScope string `json:"delegate_scope"`
-	CreatedBy    string            `json:"created_by,omitempty"`
-	Prompt       string            `json:"prompt"`
-	ExitCode     int32             `json:"exit_code"`
-	ErrorMessage string            `json:"error_message,omitempty"`
-	CreatedAt    uint64            `json:"created_at"`
-	StartedAt    uint64            `json:"started_at"`
-	EndedAt      uint64            `json:"ended_at"`
-	LastOutputAt uint64            `json:"last_output_at"`
-	OutputIdleMs uint64            `json:"output_idle_ms"`
+	CreatedBy     string `json:"created_by,omitempty"`
+	Prompt        string `json:"prompt"`
+	ExitCode      int32  `json:"exit_code"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	CreatedAt     uint64 `json:"created_at"`
+	StartedAt     uint64 `json:"started_at"`
+	EndedAt       uint64 `json:"ended_at"`
+	LastOutputAt  uint64 `json:"last_output_at"`
+	OutputIdleMs  uint64 `json:"output_idle_ms"`
 	// The self-reported progress line and its server stamp / age, and the
 	// live window title. All present at zero: progress_at == 0 is "never
 	// written", live_terminal false is "no title to report".

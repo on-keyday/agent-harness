@@ -30,7 +30,7 @@ type SetCapsOpts struct {
 	DelegateCaps  *protocol.Capability
 	DelegateScope *protocol.TaskScope
 	Cascade       bool
-	KeepConns bool
+	KeepConns     bool
 }
 
 // CapsPtr wraps a Capability for SetCapsOpts.Caps, whose pointer still encodes
