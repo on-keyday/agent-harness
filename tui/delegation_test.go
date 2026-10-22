@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -124,5 +125,16 @@ func TestCapsAuditModalMarksDelegators(t *testing.T) {
 	a = press(t, a, runes("i"), enter) // the first row is spawn
 	if v := a.capsAuditModal.View(); !strings.Contains(v, " deleg") {
 		t.Fatalf("holder that may delegate spawn lacks the deleg mark:\n%s", v)
+	}
+}
+
+// A caps set result line names the change (surface-parity item 29), the bound
+// included: a bound-only re-grant used to print an empty summary.
+func TestSetCapsSummaryNamesTheBound(t *testing.T) {
+	dc := protocol.Capability_FileRead
+	ds := protocol.TaskScope{Base: protocol.ScopeBase_None}
+	got := setCapsSummary(cli.SetCapsOpts{DelegateCaps: &dc, DelegateScope: &ds})
+	if got != "delegate=file_read  delegate-scope=none" {
+		t.Errorf("summary = %q", got)
 	}
 }

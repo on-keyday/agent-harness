@@ -413,3 +413,31 @@ went red before the fix. Live, against `scripts/dummy-harness.sh`:
 cancel-holding child from `subtree` to `subtree/none` and dropped a sibling's
 `ids:<G1>` (A may no longer cancel G1); `caps set <B> --scope subtree
 --cascade` kept a child's `ids:<sibling>`.
+
+## Amendment — as implemented (2026-10-22)
+
+Where this spec was silent or named code that has since moved, the
+implementation (`docs/superpowers/plans/2026-10-22-delegation-bound.md`)
+decided as follows.
+
+- **The rule lives in `authority.Granter`** (`authority/delegate.go`): one task
+  measured by its own scope (`Reach`) and by its bound read as a scope around it.
+  `ChildCaps`, `ChildScope`, `ChildBound` and `ClampDescendant` are the four
+  uses. Every server grant site goes through `TaskHandler.grantFor`;
+  `intersectCaps` is gone and guarded against (`authority/no_copies_test.go`).
+- **WAL keys gain `delegate_scope_exclude_self`.** § Persistence listed six keys
+  and omitted it, but the bound has `exclude_self` (D22) and it is forced on
+  under a `none` ceiling, so without the key that would be lost at a restart.
+- **A refused id in the child's own bound** reads `delegate-scope id <id> is
+  outside what you may delegate (see whoami: delegate-scope)`; § Refusal text
+  fixed only the scope form.
+- **`whoami` for an operator** carries `delegate_caps = all`,
+  `delegate_scope = global` on the wire (D17), so both branches print what the
+  wire says. A principal whose record is gone reports `none` / `none`, which is
+  what enforcement treats it as.
+- **`OpenInteractiveResponse.error_msg`** is also set on
+  `resume_exact_mismatch`, naming the flag, as `SubmitResponse` does.
+- **The WebUI caps-on-resume checkbox does not re-grant the bound.** It names
+  caps and scope; only a typed `--delegate-caps` / `--delegate-scope` re-grants
+  the bound on a resume.
+

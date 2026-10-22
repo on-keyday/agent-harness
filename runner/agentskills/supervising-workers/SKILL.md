@@ -187,7 +187,7 @@ harness-cli session send -enter "$TASK_ID" 'echo back'
 `--exact` takes the task's recorded agent, args, kind, caps and scope, so it
 needs only **`resume_exact`** (which `resume` implies), and it refuses every
 setting flag beside it — `--agent`, `--agent-arg`, `--caps`, `--scope`,
-`--scope-for`, and a prompt. Leave `--repo` and `--runner` off: the server
+`--scope-for`, `--delegate-caps`, `--delegate-scope`, and a prompt. Leave `--repo` and `--runner` off: the server
 reopens it on the runner it last ran on. `--resume-conversation` still works.
 
 Keep the `-d`. Opening a session WITHOUT `-d` hands you its control seat,
@@ -207,7 +207,7 @@ against `ls` before acting on it.
 ### Listing and killing your sessions
 
 ```bash
-harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title, authority_source, authority_actor, authority_actor_hidden, authority_at, authority_age_ms) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
+harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms, progress, progress_at, progress_age_ms, live_terminal, title, authority_source, authority_actor, authority_actor_hidden, authority_at, authority_age_ms, delegate_caps, delegate_scope) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
@@ -399,14 +399,26 @@ without a scope is not "may cancel" — it is "may cancel anything on the
 server", which is why both exist. `harness-cli caps` lists the capability names
 and the scope forms (`--json` for the machine-readable form).
 
-- **Attenuating, never amplifying.** A child receives `creator_caps ∩ requested`
-  — you can only grant a subset of what you yourself hold, and caps are
-  monotonically non-increasing down a spawn chain.
+- **Attenuating, never amplifying.** A child receives
+  `creator_caps ∩ delegate_caps ∩ requested` — you can only grant a subset of
+  what you yourself hold AND may delegate, and caps are monotonically
+  non-increasing down a spawn chain.
+- **By default you may delegate no bits.** Your `delegate` (the caps you may
+  put into a child's) and `delegate-scope` (the most scope you may give it) are
+  the operator's to set; the default is `delegate=none delegate-scope=subtree`,
+  so every child you spawn holds no caps whatever `--caps` says. Read
+  `harness-cli whoami` before promising a worker a bit. A bit you hold but may
+  not delegate is DROPPED silently, like one you do not hold; an id refused as
+  "outside what you may delegate (see whoami: delegate-scope)" is outside your
+  bound, not your own scope — the operator widens it with `caps set <you>
+  --delegate-caps … / --delegate-scope …`, so ask, do not retry. A child's own
+  bound (`--delegate-caps` / `--delegate-scope` on the spawn) is clamped to
+  yours.
 - **Omitted ⇒ none.** No `--caps` flag means the child gets NOTHING: it is a
   data-plane-only worker (agentboard within its base set + its own logs/ls) and every
   control-plane verb answers `permission denied`. Name what it needs —
-  `--caps spawn,file_read`, or `--caps all` for an unattenuated child (still
-  intersected with your own set). A worker you expect to spawn, resume or
+  `--caps spawn,file_read`, or `--caps all` for everything you may delegate
+  (intersected with your own set and your `delegate`). A worker you expect to spawn, resume or
   supervise its own children, attach to a PTY, move files, or notify the
   operator will NOT be able to until you say so — and spawning and resuming are
   two grants, `spawn` and `resume`. Forgot at spawn time? `caps set <id>
@@ -424,7 +436,11 @@ and the scope forms (`--json` for the machine-readable form).
 - **Scope attenuates like caps.** A child's base is clamped to yours
   (`none < subtree < global`), and every id you name must already be inside
   your own set at spawn time. An id that is not is an error, not a silent drop.
-  You may name your own id, which is how you hand a child access to yourself.
+  You may name your own id, which is how you hand a child access to yourself —
+  under the default `delegate-scope` (subtree: your own id and your
+  descendants'); under `descendants` your own id can be handed down only as a
+  view-only id (`vis-ids:`). The bit that recipe grants must also be in your
+  `delegate`, or it is dropped.
 - **Visibility is an axis of the scope, not a cap.** A scope is written
   `[<visibility>/]<action>`; omitting the visibility half makes it follow the
   action half. `--scope global/subtree` sees every task and acts on its own
@@ -454,7 +470,9 @@ and the scope forms (`--json` for the machine-readable form).
   `--caps …,board_peer --scope-for board_peer=ids:<sibling>` (each id must be
   inside your own scope, as for any grant), at spawn or later with `caps set`
   — which rewrites the whole scope, so it also needs `--scope <base>` and any
-  other override the worker should keep.
+  other override the worker should keep. The worker's siblings are your own
+  children, so their ids are inside the default `delegate-scope`; but
+  `board_peer` itself must be in your `delegate`, or it is dropped.
   A team channel for you and your workers is
   `tree.<your-full-task-id>.<suffix>`, readable and writable by the whole
   subtree with no bit. The `harness-cli` skill's "Who you can reach" has the
@@ -481,7 +499,7 @@ and the scope forms (`--json` for the machine-readable form).
   with it.
 - **Check your own caps with `harness-cli whoami`.** It prints THIS connection's
   own principal task id and the exact capability set and scope the server
-  enforces for you
+  enforces for you, and your delegation bound (`delegate=… delegate-scope=…`)
   (`--json` for the machine-readable form). No cap is required — it is
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.

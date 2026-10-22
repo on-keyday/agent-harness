@@ -256,14 +256,7 @@ type SetCapsResultMsg struct {
 // client the TUI already holds (cli.SetCapsWith), not the dial-and-close
 // cli.SetCaps — a fresh connection would throw away the handshake for one RPC.
 func DoSetCaps(c *cli.Client, opts cli.SetCapsOpts) tea.Cmd {
-	var parts []string
-	if opts.Caps != nil {
-		parts = append(parts, "caps="+capsLabel(*opts.Caps))
-	}
-	if opts.Scope != nil {
-		parts = append(parts, "scope="+cli.ScopeLabel(*opts.Scope))
-	}
-	summary := strings.Join(parts, "  ")
+	summary := setCapsSummary(opts)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -273,6 +266,24 @@ func DoSetCaps(c *cli.Client, opts cli.SetCapsOpts) tea.Cmd {
 			ConnsClosed: res.ConnsClosed, Err: err,
 		}
 	}
+}
+
+// setCapsSummary names each half a caps set writes, in the keys ls uses.
+func setCapsSummary(opts cli.SetCapsOpts) string {
+	var parts []string
+	if opts.Caps != nil {
+		parts = append(parts, "caps="+capsLabel(*opts.Caps))
+	}
+	if opts.Scope != nil {
+		parts = append(parts, "scope="+cli.ScopeLabel(*opts.Scope))
+	}
+	if opts.DelegateCaps != nil {
+		parts = append(parts, "delegate="+capsLabel(*opts.DelegateCaps))
+	}
+	if opts.DelegateScope != nil {
+		parts = append(parts, "delegate-scope="+cli.ScopeLabel(*opts.DelegateScope))
+	}
+	return strings.Join(parts, "  ")
 }
 
 // SetParentResultMsg carries the outcome of a parent-link change. Opts rides

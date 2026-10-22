@@ -123,11 +123,13 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `ws-path` / `repo`. See **Workspace config** below.
     - Capabilities: `submit` / `session new` take
       `--caps NAMES` to grant a spawned task a restricted capability set
-      (`caps_child = caps_parent ∩ requested`, server-enforced) and
-      `--scope SPEC` to bound WHICH tasks those capabilities may target
-      (omitted `--caps` = **none**: authority is granted, never
-      inherited); `caps` lists the grantable names and scope forms, and
-      `caps set` re-grants both on a live task. See **Capabilities and
+      (`caps_child = caps_parent ∩ delegate_parent ∩ requested`,
+      server-enforced), `--scope SPEC` to bound WHICH tasks those
+      capabilities may target (omitted `--caps` = **none**: authority is
+      granted, never inherited), and `--delegate-caps` / `--delegate-scope`
+      for what the new task may in turn hand to ITS children (default:
+      nothing); `caps` lists the grantable names and scope forms, and
+      `caps set` re-grants all of it on a live task. See **Capabilities and
       scope** below.
   - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
@@ -940,9 +942,10 @@ attach, file read/write, forwards, notify, prune, purge, runner-admin,
 global info) answers `permission denied` until something grants it.
 `--caps NAMES` and `--scope SPEC` (on `submit` / `session new`, also
 in the TUI and WebUI spawn surfaces) widen or
-redirect that within what the spawner itself holds: the server grants
-`caps_child = caps_parent ∩ requested` and clamps the scope to the
-spawner's own reach, so a task can never exceed its parent. A supervisor
+redirect that within what the spawner itself holds AND may delegate: the
+server grants `caps_child = caps_parent ∩ delegate_parent ∩ requested` and
+clamps the scope to the spawner's own reach and its delegation bound (see
+**Delegation bound** below), so a task can never exceed its parent. A supervisor
 that spawns, restarts and drives workers therefore has to say so —
 `--caps spawn,resume,exec_cowrite,notify` — and anything missed afterwards is
 `caps set <id> --caps …` on the live task, no restart. `NAMES`
@@ -992,6 +995,59 @@ All of it is visible per task in `ls`, `whoami`, the TUI detail popup
 and the WebUI task rows; `ls --json` and `whoami --json` additionally
 carry `scope_by_cap`, the fully resolved capability→scope map, so a
 machine reader never redoes the override merge.
+
+### Delegation bound
+
+What a task may DO and what it may GIVE are separate. Every task also
+carries a **delegation bound** — `delegate_caps`, a capability mask, and
+`delegate_scope`, a scope in the `--scope` grammar — limiting what it may
+write onto a task it spawns or re-grants on resume:
+
+- the child's caps are `your caps ∩ your delegate_caps ∩ requested`, so
+  `--caps all` means "everything you may delegate";
+- the child's ranks (action base, visibility, every `--scope-for`) are at
+  most `delegate_scope`'s, clamped silently like the caps;
+- the ids you may write into a child's scope are read from `delegate_scope`
+  **around you**: action ids from its action set, view-only ids from its
+  visible set. One outside it is refused with `scope id <id> is outside what
+  you may delegate (see whoami: delegate-scope)` — distinct from "outside your
+  own scope";
+- the child's own bound is clamped to yours, so the limit carries down the
+  chain.
+
+**The default delegates nothing**: `delegate=none delegate-scope=subtree`.
+A parent spawned without a bound can still spawn (with `spawn`), and every
+child it makes holds no caps; the ids it may name are its own and its
+descendants'. `--delegate-scope descendants` keeps its own id out of the
+action ids it may hand down — a child holding `exec_cowrite` on its parent
+could otherwise type into a session wider than itself. The bound limits no
+operator, and nothing the task itself does. A task recorded before the bound
+existed replays with the default.
+
+```bash
+bin/harness-cli submit --repo /abs/repo --caps spawn,exec_cowrite \
+    --delegate-caps exec_cowrite --delegate-scope descendants --task "supervise"
+bin/harness-cli caps set <task-id> --delegate-caps file_read        # widen it live
+bin/harness-cli caps set <task-id> --delegate-scope none --cascade  # and clamp the subtree
+```
+
+`caps set` writes either half alone. With `--cascade`, a call that writes a
+bound half also clamps every descendant's caps, scope and bound to the
+target's new bound; a cascade that writes neither clamps caps and scope
+exactly as before — which is what keeps the first ordinary `caps set
+<supervisor> --caps … --cascade` from zeroing every worker of a supervisor
+recorded with the default. A change to the bound alone drops no connection.
+On resume each half is re-granted only when its flag is typed.
+
+It shows as `delegate=… delegate-scope=…` on every `ls` row and in `whoami`
+(the operator's reads `delegate=all delegate-scope=global`),
+`delegate_caps` / `delegate_scope` in `ls --json`, `session ls` and `whoami
+--json`, two lines in the TUI `d` popup, and on the WebUI task row and sheet.
+`caps audit` marks a holder `deleg` when it may hand that bit down. It is
+edited with the same controls as the task's own authority: a delegation
+section in the TUI `a` picker, the WebUI compose form and re-grant dialog,
+and `caps set-defaults --delegate-caps / --delegate-scope` for a session's
+fresh spawns.
 
 Not everything an agent can destroy is a capability. `agent retract
 <seq>` withdraws a message the caller itself published — the server
@@ -1201,7 +1257,8 @@ bin/harness-cli caps set <task-id> --caps all,-spawn --scope subtree \
 ```
 
 `caps set` rewrites a live task's authority with no restart — effective
-on its next request; `--cascade` clamps its descendants too, and a
+on its next request; `--delegate-caps` / `--delegate-scope` rewrite its
+delegation bound (see **Delegation bound**); `--cascade` clamps its descendants too, and a
 narrowing drops the affected tasks' open connections unless
 `--keep-conns`. The TUI task list binds this to `a` (a selection
 picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to

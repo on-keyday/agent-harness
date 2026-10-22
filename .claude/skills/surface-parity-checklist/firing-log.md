@@ -3204,3 +3204,42 @@ missed:  —
 **36 fired where the plan did not look.** The plan's walk expectation listed 35
 and not 36. `supervising-workers` spells out the `ls --json` vocabulary field by
 field, so five new fields made that sentence stale. Walking the item caught it.
+
+### 2026-10-22 (pre-landing) — delegation bound (`--delegate-caps` / `--delegate-scope`)
+done:    1 (spawnFlags + caps set + caps set-defaults / scope rows), 2 (both
+         flags in spawnRules' --exact conflicts; caps set AtLeastOne widened to
+         four flags), 5 (TUI picker: a delegation section of the same row kinds,
+         own controls now one embedded pickerScope), 6 (WebUI: buildScopeControls
+         for compose + re-grant), 8 (bridge: boundFromOpts on submit / open,
+         setCaps halves, parseAuthority decomposes the bound), 9 (TUI
+         sessionDelegate*, WebUI spawnDeleg), 11, 12 / 14 (`delegate_caps` /
+         `delegate_scope` on the shared taskJSON), 13 (both branches; operator
+         from the wire), 15 (DELEGATION section in WriteCaps), 17, 19 (n/a in
+         effect: picker task rows name tasks, not bounds), 20, 21, 22 / 23
+         (eight raw keys incl. delegateScopeExcludeSelf), 24 (fresh writes all
+         halves; resume each behind its bit; exact refuses both; caps set writes
+         either; cascade clamps the bound ONLY when the call writes one — D19),
+         25 (two presence bits per request), 26 (TUI `r`/`R`/`u`/`U` and the
+         WebUI caps-on-resume checkbox never re-grant the bound; pinned in
+         tui/delegation_test.go and live), 27 (SessionOpts / SetCapsOpts /
+         Authority.opts), 28 (seven WAL keys on task_created + every
+         task_caps_changed; legacy replays as the default bound), 28a (5
+         SessionOpts literals, 4 SetCapsOpts literals — each sets the bound or
+         is a zero-value fresh submit), 29 (see below), 30, 31 (default printed:
+         `delegate=none delegate-scope=subtree`), 32 (cli.ScopeLabel /
+         harness.scopeSpec only), 33, 34a (same control kinds, built on
+         `toggle`, 390px checked), 35, 36 (embed + both mirrors), 37 (spec
+         Amendment section), 39 (spec Surfaces table walked row by row)
+omitted: 16 — the TUI task table is width-bound; the spec omits it, the `d`
+         popup carries the bound.
+n/a:     3, 4 (no new key), 7 (no new verb path), 10, 18 / 18a (task field,
+         not a runner one), 34 (no column set changed), 38 (not a screen
+         property); S1–S6 — no agent preset, launch argv or agent env changed.
+missed:  29 — DoSetCaps' result line named `caps=` / `scope=` only, so a
+         bound-only TUI re-grant printed an empty summary. Found by walking 29,
+         fixed with setCapsSummary + TestSetCapsSummaryNamesTheBound.
+
+**The consumers guard did 28a's job across tasks.** `cli/verb`'s
+TestEverySurfaceReadsEveryActionField went red the moment the CLI declared the
+flags, naming each surface that did not yet read them, and stayed red until the
+TUI did — the plan had put the TUI two tasks later.
