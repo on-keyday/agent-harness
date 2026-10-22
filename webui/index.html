@@ -155,6 +155,12 @@
             先へは届きません）。</p>
         </details>
         <code id="spawn-scope-echo" class="scope-echo"></code>
+        <details id="spawn-deleg-details">
+          <summary id="spawn-deleg-summary">委譲の上限（--delegate-caps / --delegate-scope）</summary>
+          <div id="spawn-deleg"></div>
+          <p class="hint">新しいタスクが、自分の作るタスクに渡してよい caps と scope の上限。
+            既定は none / subtree（何も渡せない）。</p>
+        </details>
       </div>
       <div class="actions">
         <button id="open-detachable">Open interactive session</button>
@@ -515,6 +521,11 @@
     <details id="regrant-vis-details">
       <summary id="regrant-vis-summary">追加で見えるだけのタスク (0)</summary>
       <div id="regrant-vis-tasks" class="task-checklist"></div>
+    </details>
+    <details id="regrant-deleg-details">
+      <summary id="regrant-deleg-summary">委譲の上限</summary>
+      <div id="regrant-deleg"></div>
+      <p class="hint">変えたときだけ送ります。--cascade と一緒なら子孫もこの上限まで締めます。</p>
     </details>
     <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
     <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>

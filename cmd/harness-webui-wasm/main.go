@@ -664,6 +664,32 @@ func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 	return sc, nil
 }
 
+// boundFromOpts reads the delegation bound a spawn carries: delegateCaps (a
+// mask, or the caps grammar), delegateScope (the --scope grammar; "" or absent
+// is the default bound's subtree), and the two resume-only presence bits.
+func boundFromOpts(opts js.Value) (bound cli.SessionOpts, err error) {
+	switch cv := opts.Get("delegateCaps"); cv.Type() {
+	case js.TypeNumber:
+		bound.DelegateCaps = protocol.Capability(uint32(cv.Int()))
+	case js.TypeString:
+		if bound.DelegateCaps, err = cli.ParseCaps(cv.String()); err != nil {
+			return bound, fmt.Errorf("delegate-caps: %w", err)
+		}
+	}
+	if sv := opts.Get("delegateScope"); sv.Type() == js.TypeString && sv.String() != "" {
+		if bound.DelegateScope, err = cli.ParseScope(sv.String()); err != nil {
+			return bound, fmt.Errorf("delegate-scope: %w", err)
+		}
+	}
+	if v := opts.Get("delegateCapsPresent"); v.Type() == js.TypeBoolean {
+		bound.DelegateCapsPresent = v.Bool()
+	}
+	if v := opts.Get("delegateScopePresent"); v.Type() == js.TypeBoolean {
+		bound.DelegateScopePresent = v.Bool()
+	}
+	return bound, nil
+}
+
 // harnessScopeSpec serializes an edited scope to the --scope grammar via
 // cli.ScopeSpec, so the browser holds no copy of it.
 //
@@ -761,6 +787,19 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 					return
 				}
 				sc.Overrides = ov
+			}
+			// The bound's halves, each written only when the key is given, as
+			// caps and scope are.
+			if cv := opts.Get("delegateCaps"); cv.Type() == js.TypeNumber {
+				sc.DelegateCaps = cli.CapsPtr(protocol.Capability(uint32(cv.Int())))
+			}
+			if sv := opts.Get("delegateScope"); sv.Type() == js.TypeString && sv.String() != "" {
+				parsed, perr := cli.ParseScope(sv.String())
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("setCaps: delegate-scope: %w", perr))
+					return
+				}
+				sc.DelegateScope = &parsed
 			}
 			if v := opts.Get("cascade"); v.Type() == js.TypeBoolean {
 				sc.Cascade = v.Bool()
@@ -999,8 +1038,8 @@ func capsAuditPromise(render func([]protocol.TaskInfo) (js.Value, error)) any {
 // caller passed a non-empty string, which is how "leave it as it is" survives
 // the round trip.
 //
-//	harness.parseAuthority({caps, scope, scopeFor: [..]}) ->
-//	  {caps?, capsLabel?, scope?, scopeLabel?} | {error}
+//	harness.parseAuthority({caps, scope, scopeFor: [..], delegateCaps, delegateScope}) ->
+//	  {caps?, capsLabel?, scope?, scopeLabel?, delegateCaps?, delegateScope?, …} | {error}
 func harnessParseAuthority(this js.Value, args []js.Value) any {
 	out := map[string]any{}
 	if len(args) < 1 || args[0].Type() != js.TypeObject {
@@ -1055,6 +1094,30 @@ func harnessParseAuthority(this js.Value, args []js.Value) any {
 			}
 		}
 		out["scopeLabel"] = label
+	}
+	// The delegation bound's defaults, in the same two shapes: the caps as a
+	// mask and a label, the scope as its spec and decomposed for the panel's
+	// own controls.
+	if v := o.Get("delegateCaps"); v.Type() == js.TypeString && v.String() != "" {
+		c, err := cli.ParseCaps(v.String())
+		if err != nil {
+			return js.ValueOf(map[string]any{"error": err.Error()})
+		}
+		out["delegateCaps"] = float64(uint32(c))
+		out["delegateCapsLabel"] = cli.CapsLabel(c)
+	}
+	if v := o.Get("delegateScope"); v.Type() == js.TypeString && v.String() != "" {
+		sc, err := cli.ParseScope(v.String())
+		if err != nil {
+			return js.ValueOf(map[string]any{"error": err.Error()})
+		}
+		out["delegateScope"] = v.String()
+		out["delegateScopeLabel"] = cli.ScopeLabel(sc)
+		out["delegateScopeBase"] = sc.Base.String()
+		out["delegateScopeExcludeSelf"] = sc.ExcludeSelf()
+		out["delegateScopeVisBase"] = visBaseString(sc)
+		out["delegateScopeIds"] = scopeIDStrings(sc)
+		out["delegateScopeVisIds"] = scopeVisIDStrings(sc)
 	}
 	return js.ValueOf(out)
 }
@@ -1143,12 +1206,19 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if av := opts.Get("agent"); av.Type() == js.TypeString {
 				agentProfile = av.String()
 			}
+			bound, boundErr := boundFromOpts(opts)
+			if boundErr != nil {
+				rejectErr(reject, fmt.Errorf("submit: %w", boundErr))
+				return
+			}
 			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, Overrides: overrides,
 				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-				ResumeExact: resumeExact,
+				ResumeExact:  resumeExact,
+				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
+				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
 			})
 			if err != nil {
 				if rejectAmbiguous(reject, err) {
@@ -1403,6 +1473,16 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"scopeFor":      cli.OverridesLabel(t.Overrides),
 					"scopeForSpecs": overrideSpecs(t.Overrides),
 					"scopeByCap":    scopeByCapJS(t.Capabilities, t.Scope, t.Overrides),
+					// The delegation bound: labels for the row and sheet, raw
+					// values in the scope's own shape for the dialogs' prefill.
+					"delegateCaps":             cli.CapsLabel(t.DelegateCaps),
+					"delegateCapsBits":         float64(uint32(t.DelegateCaps)),
+					"delegateScope":            cli.ScopeLabel(t.DelegateScope),
+					"delegateScopeBase":        t.DelegateScope.Base.String(),
+					"delegateScopeExcludeSelf": t.DelegateScope.ExcludeSelf(),
+					"delegateScopeVisBase":     visBaseString(t.DelegateScope),
+					"delegateScopeIds":         scopeIDStrings(t.DelegateScope),
+					"delegateScopeVisIds":      scopeVisIDStrings(t.DelegateScope),
 					// agentProfile is the named profile this task last ran under
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
@@ -2844,6 +2924,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if ev := opts.Get("eventStream"); ev.Type() == js.TypeBoolean {
 				eventStream = ev.Bool()
 			}
+			bound, boundErr := boundFromOpts(opts)
+			if boundErr != nil {
+				rejectErr(reject, fmt.Errorf("interactive: %w", boundErr))
+				return
+			}
 			sopts := cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, Overrides: overrides,
@@ -2851,7 +2936,9 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				ResumeExact: resumeExact,
 				InitialRows: initRows, InitialCols: initCols,
-				EventStream: eventStream,
+				EventStream:  eventStream,
+				DelegateCaps: bound.DelegateCaps, DelegateScope: bound.DelegateScope,
+				DelegateCapsPresent: bound.DelegateCapsPresent, DelegateScopePresent: bound.DelegateScopePresent,
 			}
 			// c.Interactive itself declines to mount the xterm when
 			// EventStream is set (cli/open_interactive_wasm.go): this kind has

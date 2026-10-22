@@ -322,6 +322,10 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
+  // The delegation bound a FRESH spawn carries: what the new task may hand to
+  // the tasks it creates. A resume re-grants it only from a typed
+  // --delegate-caps / --delegate-scope, never from this panel.
+  const spawnDeleg = newScopeState();
   // Mirrors protocol.IsPTYKind / IsSessionKind (runner/protocol/task_kind.go).
   // Two kinds are sessions; only one drives a TERMINAL, so every site has to
   // say which question it is asking — a bare `kind === "Interactive"` reads as
@@ -363,7 +367,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   function sessionReq({ repo = "", task = "", host = "", runner = "", ip = "", agent = "",
                         agentArgs = [], resumeTaskId = "", resumeConversation = false,
                         eventStream = false, resumeExact = false,
-                        caps = null, scope = null, scopeFor = null }) {
+                        caps = null, scope = null, scopeFor = null,
+                        delegateCaps = null, delegateScope = null }) {
     // An exact resume takes the task's recorded agent, args, caps and scope,
     // and the server refuses a request that carries any of them, so none of
     // the Compose state rides along.
@@ -392,6 +397,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // prevent.
       resumeCapsOverride: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
       scopePresent: resumeTaskId && !resumeExact ? applyCapsOnResume : false,
+      // The bound: a typed flag wins over the panel, and only a typed flag
+      // re-grants it on a resume — the caps-on-resume checkbox names caps and
+      // scope, and widening what it silently rewrites is item 26's failure.
+      delegateCaps: delegateCaps !== null ? delegateCaps : spawnDeleg.caps,
+      delegateScope: delegateScope !== null ? delegateScope : scopeStateSpec(spawnDeleg),
+      delegateCapsPresent: !!resumeTaskId && !resumeExact && delegateCaps !== null,
+      delegateScopePresent: !!resumeTaskId && !resumeExact && delegateScope !== null,
       resumeExact,
     };
     if (runner) req.runner = runner;
@@ -2930,7 +2942,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // the setter drives the CONTROLS and lets the existing updateSpawnScope
     // recompute the spec -- writing spawnScope directly would show the
     // operator their scope and lose it the next time a radio moved.
-    spawnDefaults: () => ({ caps: spawnCaps, capsLabel: capsLabelFor(spawnCaps), scope: spawnScope }),
+    spawnDefaults: () => ({ caps: spawnCaps, capsLabel: capsLabelFor(spawnCaps), scope: spawnScope,
+      delegateCapsLabel: capsLabelFor(spawnDeleg.caps), delegateScope: scopeStateSpec(spawnDeleg) }),
     setSpawnDefaults: (d) => setSpawnDefaults(d),
   };
 
@@ -3753,6 +3766,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       });
     }
     initScope();
+    // Built on open as well as now: a section first opened on an empty server
+    // would otherwise list no tasks (checklist item 34a).
+    renderSpawnDeleg();
+    const delegDetails = document.getElementById("spawn-deleg-details");
+    if (delegDetails) delegDetails.addEventListener("toggle", () => { if (delegDetails.open) renderSpawnDeleg(); });
   }
 
   // ---- per-capability overrides -----------------------------------------
@@ -4083,6 +4101,108 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       syncScopeControls();
       refreshSpawnScopeChecklist();
     }
+    if (typeof d.delegateCaps === "number") spawnDeleg.caps = d.delegateCaps;
+    if (typeof d.delegateScopeBase === "string") setScopeState(spawnDeleg, {
+      base: d.delegateScopeBase, excludeSelf: d.delegateScopeExcludeSelf, visBase: d.delegateScopeVisBase,
+      ids: d.delegateScopeIds, visIds: d.delegateScopeVisIds,
+    });
+    if (typeof d.delegateCaps === "number" || typeof d.delegateScopeBase === "string") renderSpawnDeleg();
+  }
+
+  // ---- delegation bound ----------------------------------------------------
+  //
+  // The bound is a caps mask plus a scope, so it is built from the controls
+  // the task's own authority already uses — chips, the base and visibility
+  // radio rows, the two task checklists — and serialized through the same
+  // harness.scopeSpec. A scope state is {caps, base, excludeSelf, visBase,
+  // ids, visIds}; "" visBase is the unstated rank, as everywhere.
+  function newScopeState() {
+    return { caps: 0, base: "subtree", excludeSelf: false, visBase: "", ids: new Set(), visIds: new Set() };
+  }
+
+  function setScopeState(st, { base, excludeSelf, visBase, ids, visIds }) {
+    st.base = base || "subtree";
+    st.excludeSelf = !!excludeSelf;
+    st.visBase = visBase || "";
+    st.ids = new Set(ids || []);
+    st.visIds = new Set(visIds || []);
+  }
+
+  // Always explicit: the bound has no "not named" form on this page.
+  function scopeStateSpec(st) {
+    return scopeSpec(st.base, st.excludeSelf, st.ids, false, st.visBase, st.visIds);
+  }
+
+  // buildScopeControls renders one scope state's controls into root and
+  // calls onChange after every edit. Radio names are derived from root's id,
+  // so two of these on one page do not share a radio group.
+  function buildScopeControls(root, st, excludeId, onChange) {
+    if (!root) return;
+    root.replaceChildren();
+    const echo = document.createElement("code");
+    echo.className = "scope-echo";
+    const paint = () => {
+      echo.textContent = "delegate=" + capsLabelFor(st.caps) + "  delegate-scope=" + scopeStateSpec(st);
+    };
+    const changed = () => { onChange(); paint(); };
+    const chips = document.createElement("div");
+    chips.className = "caps-row";
+    root.appendChild(chips);
+    buildCapChips(chips, () => st.caps, (v) => { st.caps = v; changed(); });
+
+    const radioRow = (label, name, values, current, set) => {
+      const row = document.createElement("div");
+      row.className = "scope-base-row";
+      const head = document.createElement("span");
+      head.className = "scope-row-label";
+      head.textContent = label;
+      row.appendChild(head);
+      for (const [value, text] of values) {
+        const l = document.createElement("label");
+        const r = document.createElement("input");
+        r.type = "radio";
+        r.name = name;
+        r.value = value;
+        r.checked = value === current;
+        r.addEventListener("change", () => { if (r.checked) { set(value); changed(); } });
+        l.append(r, " " + text);
+        row.appendChild(l);
+      }
+      return row;
+    };
+    const baseRow = radioRow("base:", root.id + "-base",
+      [["subtree", "subtree"], ["none", "none"], ["global", "global"]], st.base, (v) => { st.base = v; });
+    const selfLabel = document.createElement("label");
+    const selfCb = document.createElement("input");
+    selfCb.type = "checkbox";
+    selfCb.checked = st.excludeSelf;
+    selfCb.addEventListener("change", () => { st.excludeSelf = selfCb.checked; changed(); });
+    selfLabel.append(selfCb, " 自分自身を除く");
+    baseRow.appendChild(selfLabel);
+    root.appendChild(baseRow);
+    root.appendChild(radioRow("見える範囲:", root.id + "-vis",
+      [["", "base に従う"], ["subtree", "subtree"], ["none", "none"], ["global", "global"]],
+      st.visBase, (v) => { st.visBase = v; }));
+
+    const section = (summary, set) => {
+      const d = document.createElement("details");
+      const s = document.createElement("summary");
+      s.textContent = summary;
+      const list = document.createElement("div");
+      list.className = "task-checklist";
+      d.append(s, list);
+      buildTaskChecklist(list, set, excludeId, changed);
+      root.appendChild(d);
+    };
+    section("渡してよい対象タスク", st.ids);
+    section("見えるだけなら渡してよいタスク", st.visIds);
+
+    paint();
+    root.appendChild(echo);
+  }
+
+  function renderSpawnDeleg() {
+    buildScopeControls(document.getElementById("spawn-deleg"), spawnDeleg, "", () => {});
   }
 
   // syncScopeControls pushes spawnBase / spawnExcludeSelf / spawnVisBase back
@@ -4175,6 +4295,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   // control for, but it could not change it either.
   let regrantVisBase = "";
   const regrantVisIds = new Set();
+  // The target's delegation bound, edited; sent only when it differs from
+  // what the dialog opened with (regrantDelegOpened), because with --cascade
+  // writing the bound clamps every descendant to it.
+  const regrantDeleg = newScopeState();
+  let regrantDelegOpened = "";
+  const delegKey = (st) => st.caps + " " + scopeStateSpec(st);
 
   function updateRegrantEcho() {
     const list = document.getElementById("regrant-tasks");
@@ -4233,6 +4359,13 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     buildTaskChecklist(document.getElementById("regrant-vis-tasks"),
       regrantVisIds, t.id, updateRegrantEcho);
     buildOverrideRows("regrant", "regrant-scope-for-rows", updateRegrantEcho);
+    regrantDeleg.caps = typeof t.delegateCapsBits === "number" ? t.delegateCapsBits : 0;
+    setScopeState(regrantDeleg, {
+      base: t.delegateScopeBase, excludeSelf: t.delegateScopeExcludeSelf, visBase: t.delegateScopeVisBase,
+      ids: t.delegateScopeIds, visIds: t.delegateScopeVisIds,
+    });
+    regrantDelegOpened = delegKey(regrantDeleg);
+    buildScopeControls(document.getElementById("regrant-deleg"), regrantDeleg, t.id, () => {});
     document.getElementById("regrant-cascade").checked = false;
     document.getElementById("regrant-keep-conns").checked = false;
     updateRegrantEcho();
@@ -4268,6 +4401,11 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,
       };
+      const delegChanged = delegKey(regrantDeleg) !== regrantDelegOpened;
+      if (delegChanged) {
+        req.delegateCaps = regrantDeleg.caps;
+        req.delegateScope = scopeStateSpec(regrantDeleg);
+      }
       regrantModal.close();
       // Results go to the Command output like the other task-sheet actions
       // (see the ✕ Cancel handler) — setStatus is the CONNECTION indicator,
@@ -4279,6 +4417,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
         // cascade actually reached descendants.
         let msg = "caps set " + regrantTaskId.slice(0, 8) +
           ": caps=" + capsLabelFor(regrantBits) + "  scope=" + req.scope;
+        if (delegChanged) msg += "  delegate=" + capsLabelFor(req.delegateCaps) + " delegate-scope=" + req.delegateScope;
         const extra = res.affected.length - 1;
         if (extra > 0) msg += `  (+${extra} descendant(s) clamped)`;
         if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
@@ -5365,6 +5504,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // scope is half a task's authority and is never absent, a narrowing that
       // is not there has nothing to report.
       if (t.scopeFor) metaText += `  +${t.scopeFor}`;
+      // The bound, always — the default too, as ls prints it.
+      if (t.delegateCaps !== undefined) metaText += `  delegate=${t.delegateCaps} delegate-scope=${t.delegateScope}`;
       // A held task's remaining window. Present only when there IS a hold —
       // a task with none has nothing to describe here, unlike the observer
       // counts below, whose zeros are measurements. Counted down from the raw
@@ -5521,6 +5662,12 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       auth.className = "task-authority";
       auth.textContent = "権限の記録: " + t.authority;
       sheet.appendChild(auth);
+    }
+    if (t.delegateCaps !== undefined) {
+      const deleg = document.createElement("div");
+      deleg.className = "task-authority";
+      deleg.textContent = "委譲の上限: delegate=" + t.delegateCaps + " delegate-scope=" + t.delegateScope;
+      sheet.appendChild(deleg);
     }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
@@ -7142,6 +7289,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           line.append(auditScopeChip(h));
           if (h.override) line.append(" (task 全体は " + h.task_scope + ")");
           line.append(" / " + (h.live ? "live" : "ended"));
+          // May hand this bit to tasks it creates (cli's `deleg`).
+          if (h.delegates) line.append(" / 委譲可");
           if (h.authority) line.append(" / 記録 " + h.authority);
           detail.append(line);
         }
@@ -7784,6 +7933,8 @@ async function runVerbCommandDispatch(tokens, ctx) {
         caps: b.set && b.set.caps ? b.flags.caps : null,
         scope: b.set && b.set.scope ? b.flags.scope : null,
         scopeFor: scopeFor && scopeFor.length ? scopeFor : null,
+        delegateCaps: b.set && b.set["delegate-caps"] ? b.flags["delegate-caps"] : null,
+        delegateScope: b.set && b.set["delegate-scope"] ? b.flags["delegate-scope"] : null,
         resumeTaskId,
         resumeConversation: !!b.flags["resume-conversation"],
         resumeExact: !!b.flags.exact,
@@ -7837,12 +7988,15 @@ async function runVerbCommandDispatch(tokens, ctx) {
           caps: b.flags.caps || "",
           scope: b.flags.scope || "",
           scopeFor: b.flags["scope-for"] || [],
+          delegateCaps: b.flags["delegate-caps"] || "",
+          delegateScope: b.flags["delegate-scope"] || "",
         };
-        if (!raw.caps && !raw.scope) {
+        if (!raw.caps && !raw.scope && !raw.delegateCaps && !raw.delegateScope) {
           // Naming nothing is a question. The TUI opens its picker; here the
           // panel is already on screen, so the answer is the current value.
           const d = ctx.spawnDefaults();
-          out = "caps: " + d.capsLabel + "\nscope: " + (d.scope || "subtree (default)");
+          out = "caps: " + d.capsLabel + "\nscope: " + (d.scope || "subtree (default)") +
+            "\ndelegate: " + d.delegateCapsLabel + "\ndelegate-scope: " + d.delegateScope;
           break;
         }
         const parsed = ctx.harness.parseAuthority(raw);
@@ -7851,6 +8005,8 @@ async function runVerbCommandDispatch(tokens, ctx) {
         const lines = [];
         if (parsed.capsLabel !== undefined) lines.push("caps set: " + parsed.capsLabel);
         if (parsed.scopeLabel !== undefined) lines.push("scope set: " + parsed.scopeLabel);
+        if (parsed.delegateCapsLabel !== undefined) lines.push("delegate set: " + parsed.delegateCapsLabel);
+        if (parsed.delegateScopeLabel !== undefined) lines.push("delegate-scope set: " + parsed.delegateScopeLabel);
         out = lines.join("\n");
         break;
       }
