@@ -1332,13 +1332,16 @@ bin/harness-cli caps reach <task-id> --json        # full ids
 caps reach 589d8017  granter=operator_caps_set@operator (1m ago)
   cancel         act 2: 589d8017 bbca566e   see +1: 2bb4b0b7
   view           see 3: 2bb4b0b7 589d8017 bbca566e
-  delegate       caps=all  act global (+ tasks you cannot list)
+  delegate       caps=spawn,cancel  act 2: 589d8017 bbca566e   see +1: 2bb4b0b7
   wider than parent: cancel +vis (granter=operator_caps_set@operator (1m ago))
 ```
 
-`act` is the tasks the bit may be pointed at, `see +N` the ones only seen;
-`delegate` is the delegation bound read as ids (action ids / view-only ids it
-may write into a child's scope). An `exec_control` holder is shown its
+`act` is the tasks the bit may be pointed at, `see +N` the ones only seen.
+`delegate` is what a spawn by this task would be allowed to give: `caps=` the
+bits a child can actually receive (its caps inside its bound), then the ids it
+may write into a child's scope as action ids and, after `see +N`, as view-only
+ids — inside its own reach AND its bound, exactly as the server checks a
+spawn. An `exec_control` holder is shown its
 `exec_view` / `exec_cowrite` reach under those bits' own scopes, as the attach
 gates resolve them. Bits that name no task — `spawn`, `notify`,
 `runner_admin`, `board_observe`, `board_send` — have no per-task reach and are
@@ -1346,6 +1349,9 @@ not listed. It reads the caller's own listing, so a global set prints as
 `global (+ tasks you cannot list)` rather than as the tasks that happen to be
 listed. `wider than parent:` appears when the task reaches or sees beyond its
 creator; that is never a defect by itself — `granter=` says who made it so.
+It is computed only over an operator's listing: an agent's listing has gaps
+between its parent and its targets, so for an agent the line reads `not
+computed (your listing is partial)`.
 The same command runs from the TUI and WebUI command lines.
 
 In the WebUI the task sheet's 「🎯 到達範囲を見る」 puts the creator tree into
