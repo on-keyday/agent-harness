@@ -108,10 +108,9 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		// clamping on every cascade would turn the first ordinary
 		// `caps set <supervisor> --caps … --cascade` into caps=none for all its
 		// workers.
-		var g *authority.Granter
-		if u.DelegateCaps || u.DelegateScope {
-			g = authority.NewGranter(after.ID, after.Grant(), children)
-		}
+		boundWritten := u.DelegateCaps || u.DelegateScope
+		target := authority.Task{ID: after.ID, Caps: after.Capabilities, Scope: after.Scope,
+			DelegateCaps: after.DelegateCaps, DelegateScope: after.DelegateScope}
 		descendants := make(map[string]bool)
 		authority.DescendantsOf(children, targetHex, descendants)
 		for childHex := range descendants {
@@ -122,14 +121,8 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 			if !ok {
 				continue
 			}
-			cu := GrantUpdate{Caps: true, Scope: true}
-			if g != nil {
-				cu.DelegateCaps, cu.DelegateScope = true, true
-				cu.To = g.ClampDescendant(cBefore.Grant(), childHex)
-			} else {
-				cu.To.Caps = cBefore.Capabilities & after.Capabilities
-				cu.To.Scope = authority.ClampUnder(cBefore.Scope, cu.To.Caps, authority.NewReach(after.ID, after.Scope, children))
-			}
+			cu := GrantUpdate{Caps: true, Scope: true, DelegateCaps: boundWritten, DelegateScope: boundWritten,
+				To: authority.CascadeClamp(target, cBefore.Grant(), childHex, boundWritten, children)}
 			cAfter, ok := h.Tasks.SetCaps(childHex, cu, AuthorityWrite{Source: protocol.AuthoritySource_Cascade, Actor: req.TaskId})
 
 			if !ok {
