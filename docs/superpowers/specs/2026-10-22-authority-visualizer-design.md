@@ -52,7 +52,7 @@ the author chose it while writing; those rows are the ones to check.
 | V16 | The comparison leaves out the child's own id (a task always acts on itself, whatever its parent may do) and includes visibility: a child that SEES more than its parent is marked too | this spec (builder check) |
 | V17 | ~~`caps set-parent` and `--swap` write `AuthoritySource.reparent`~~ **Withdrawn 2026-10-22.** The record has one slot, so a reparent overwrote who had actually granted the task's caps, and a reparent grants nothing. `caps set-parent` / `--swap` now leave the record alone and the value is gone from the enum; the moved parent link is read off the tree itself | operator (2026-10-22: the record is the granter's) |
 | V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; `authority_actor_hidden` says so, and the label reads `@hidden`. Operators see every actor | this spec (builder check); wording unified with V21 |
-| V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI sheet, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
+| V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI row, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
 | V20 | "This scenario is a catalog case" is decided up to RENAMING: same tree shape, same caps and scope on each task, same change, task ids ignored (§ Matching a scenario to a case) | operator |
 | V19 | The delegation bound lands after Phase 5, inside `authority` (V7's order). Each feature makes its own `TaskInfo` change | operator (the agreed order), restated after the builder check |
 
@@ -154,8 +154,9 @@ not change.
 
 `ls` rows carry it as `granter=<AuthorityLabel>` and `ls --json` as its fields
 (the key was `auth=` until 2026-10-22, which read as authentication).
-The TUI detail popup, the WebUI task sheet and each caps audit holder line show
-the same label (V21).
+The TUI detail popup, the WebUI task row (after `delegate=`, as on an `ls` row;
+it was on the task sheet until 2026-10-22, alone among the row's authority
+fields) and each caps audit holder line show the same label (V21).
 
 ## Phase 3 — reach
 
@@ -306,7 +307,7 @@ the plan, and this table is checked back against the code at the end (item 39).
 | --- | --- | --- |
 | WebUI tree | 1 | arrows and labels computed by `authority` |
 | `ls` rows / `--json`, `session ls` | 2 | provenance |
-| TUI detail popup, WebUI task sheet | 2 | provenance, the same label (V21) |
+| TUI detail popup, WebUI task row | 2 | provenance, the same label (V21) |
 | `caps audit` (CLI, TUI modal, WebUI) | 2 | provenance per holder |
 | WebUI tree, task sheet | 3 | reach mode, wider-than-parent marks |
 | CLI / TUI / WebUI command line | 3 | `caps reach` |
