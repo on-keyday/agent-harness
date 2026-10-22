@@ -294,12 +294,17 @@ sent but the listing request.
   `delegate=`, `delegate-scope=`). The last line is the command; a spawn's is
   `command (run by <creator>): harness-cli submit …`, the creator's to run.
   Over an agent's listing the report starts `(over your listing only)`.
-- WebUI: the sheet's 「🔮 変更の影響を見る（送信しない）」 opens the re-grant
-  dialog without 適用 and `--keep-conns`, with 「このタスクが作る子として見る」
-  (which disables `--cascade`); 🔑's dialog has 「影響を見る（送信しない）」
-  beside 適用. The spec's 「もし…」 / 「仮の子を置く」 were renamed on operator
-  feedback (2026-10-22): a bare 「もし」 did not say what it did. The panel's
-  「↩ ダイアログに戻る」 reopens the dialog as it was left. The dialog's re-grant carries caps
+- WebUI: the sheet's 「🔮 caps set / spawn をプレビュー」 opens the re-grant
+  dialog without 適用 and `--keep-conns`, with a two-way choice 「このタスクに
+  caps set」 / 「このタスクが子を spawn」 (the latter disables `--cascade`);
+  🔑's dialog has 「プレビュー」 beside 適用. The panel reads 「プレビュー: caps
+  set（未送信）」 or 「… spawn …」 — 「未送信」 is said there once rather than on
+  every control — and its 「↩ ダイアログに戻る」 reopens the dialog as it was
+  left. The spec's 「もし…」 / 「仮の子を置く」 were renamed on operator feedback
+  (2026-10-22): a bare 「もし」 did not say what it did, and a checkbox could not
+  say that it changes what the whole dialog describes.
+- Reach mode no longer rings its subject (Phase 3 drew 権限で強調's holder
+  ring on it, which read as a reach of its own); the banner names the task. The dialog's re-grant carries caps
   and scope as 適用 sends them, so its command names `--scope`. Both bridges
   take the request under `caps what-if`'s declared flag names and parse it
   through that verb, so the dialog and the command input cannot mean two
