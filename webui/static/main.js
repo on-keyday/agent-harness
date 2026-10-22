@@ -5660,7 +5660,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     if (t.authority) {
       const auth = document.createElement("div");
       auth.className = "task-authority";
-      auth.textContent = "権限の記録: " + t.authority;
+      auth.textContent = "auth=" + t.authority;
       sheet.appendChild(auth);
     }
 
@@ -7284,8 +7284,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           if (h.override) line.append(" (task 全体は " + h.task_scope + ")");
           line.append(" / " + (h.live ? "live" : "ended"));
           // May hand this bit to tasks it creates (cli's `deleg`).
-          if (h.delegates) line.append(" / 委譲可");
-          if (h.authority) line.append(" / 記録 " + h.authority);
+          if (h.delegates) line.append(" deleg");
+          if (h.authority) line.append(" auth=" + h.authority);
           detail.append(line);
         }
         box.append(detail);
