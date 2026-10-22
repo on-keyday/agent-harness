@@ -23,18 +23,6 @@ func TestHasCap(t *testing.T) {
 	}
 }
 
-func TestIntersectCaps(t *testing.T) {
-	parent := protocol.Capability_Spawn | protocol.Capability_FileRead
-	req := protocol.Capability_All // inherit-all
-	if got := intersectCaps(parent, req); got != parent {
-		t.Fatalf("intersect with all = %#x, want parent %#x", got, parent)
-	}
-	// request more than parent holds → cannot widen.
-	if got := intersectCaps(parent, protocol.Capability_FileWrite); got != protocol.Capability_None {
-		t.Fatalf("intersect beyond parent = %#x, want none", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Task 3: callerCaps
 // ---------------------------------------------------------------------------
@@ -112,8 +100,10 @@ func TestSpawnAttenuation(t *testing.T) {
 	parentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "A",
-		protocol.RunnerSelector{}, nil, authority.Grant{Caps: parentCaps, Scope: authority.Scope{}},
-
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: parentCaps, Scope: authority.Scope{},
+			// Unbounded, so this test pins caps ∩ requested alone; the bound
+			// has its own tests in delegation_spawn_test.go.
+			DelegateCaps: protocol.Capability_All, DelegateScope: authority.Scope{Base: protocol.ScopeBase_Global}},
 		"")
 
 	ptid := hexToTaskID(t, parentIDHex)
@@ -129,7 +119,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	req1.SetRepoPath([]byte("/x/repo"))
 	req1.SetPrompt([]byte("child1"))
 
-	resp1, _ := h.handleSubmit("", req1, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
+	resp1, _ := h.handleSubmit("agent-conn", req1, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
 	if resp1.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("case1 status=%v want Ok", resp1.Status)
 	}
@@ -147,7 +137,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	req2.SetRepoPath([]byte("/x/repo"))
 	req2.SetPrompt([]byte("child2"))
 
-	resp2, _ := h.handleSubmit("", req2, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
+	resp2, _ := h.handleSubmit("agent-conn", req2, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
 	if resp2.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("case2 status=%v want Ok", resp2.Status)
 	}
@@ -1155,7 +1145,7 @@ func TestResumeCapsOverride(t *testing.T) {
 
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), Scope: authority.Scope{}}},
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_All & protocol.Capability_FileRead, Scope: authority.Scope{}}},
 			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
@@ -1227,7 +1217,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// Agent requests All caps with override=true.
 		// intersect(agentCaps, All) = agentCaps (agent cannot widen).
 		callerCaps := h.callerCaps(agentConnID)
-		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
+		newCaps := callerCaps & protocol.Capability_All
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}},
 			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
@@ -1243,7 +1233,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// Verify: agent requesting a cap it lacks → that cap is stripped.
 		// FileWrite is NOT in agentCaps → intersect(agentCaps, FileWrite) = None.
 		markTerminalForTest(t, h, targetID)
-		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
+		newCaps2 := callerCaps & protocol.Capability_FileWrite
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps2, Scope: authority.Scope{}}},
 			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume2: %v", err)

@@ -153,12 +153,6 @@ func hasCap(have, want protocol.Capability) bool {
 	return have&want == want
 }
 
-// intersectCaps is spawn-time attenuation: a child receives the bits its
-// creator holds AND requested. Monotonically non-increasing.
-func intersectCaps(creator, requested protocol.Capability) protocol.Capability {
-	return creator & requested
-}
-
 // callerCaps resolves the connection's principal task and returns its
 // capability set. Operator connections (no principal task → zero TaskID) are
 // the trusted root and receive the full set.
@@ -318,28 +312,31 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 	return h.inScope(connID, want, targetHex)
 }
 
-// attenuateScope is authority.Attenuate with the creator resolved from the
-// connection: an operator is unbounded (nil), and a creator no longer in the
-// store reaches nothing.
-func (h *TaskHandler) attenuateScope(creatorCID string, req authority.Scope, childCaps protocol.Capability) (authority.Scope, string, bool) {
-	pid := h.lookupPrincipal(creatorCID)
+// granter is the connection's principal as the task that will write a grant:
+// nil for an operator, which is unbounded in what it grants as in what it
+// holds. A principal whose record is gone keeps callerCaps but reaches and
+// delegates nothing.
+func (h *TaskHandler) granter(cid string, callerCaps protocol.Capability) *authority.Granter {
+	pid := h.lookupPrincipal(cid)
 	if pid.Id == ([16]byte{}) {
-		return authority.Attenuate(req, childCaps, nil)
+		return nil
 	}
-	creatorHex := hex.EncodeToString(pid.Id[:])
-	creator := authority.Scope{Base: protocol.ScopeBase_None}
-	if t, ok := h.Tasks.Get(creatorHex); ok {
-		creator = t.Scope
+	hexID := hex.EncodeToString(pid.Id[:])
+	held := authority.Grant{Caps: callerCaps, Scope: authority.Scope{Base: protocol.ScopeBase_None},
+		DelegateScope: authority.Scope{Base: protocol.ScopeBase_None}}
+	if t, ok := h.Tasks.Get(hexID); ok {
+		held = t.Grant()
+		held.Caps = callerCaps
 	}
-	return authority.Attenuate(req, childCaps, authority.NewReach(creatorHex, creator, h.childIndex()))
+	return authority.NewGranter(hexID, held, h.childIndex())
 }
 
-// resumedCaps is the capability mask a resumed task will hold: re-granted from
+// resumedCaps is the capability mask a resumed task will hold: re-granted by
 // the resumer when the request overrides it, the record's otherwise — which may
 // exceed the resumer's own (the resume bit's documented behaviour).
-func (h *TaskHandler) resumedCaps(idHex string, override bool, resumerCaps, requested protocol.Capability) protocol.Capability {
+func (h *TaskHandler) resumedCaps(idHex string, override bool, g *authority.Granter, requested protocol.Capability) protocol.Capability {
 	if override {
-		return intersectCaps(resumerCaps, requested)
+		return g.ChildCaps(requested)
 	}
 	rec, _ := h.Tasks.Get(idHex)
 	return rec.Capabilities

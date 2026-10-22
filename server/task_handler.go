@@ -1099,10 +1099,10 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	// for this scope does not depend on which runners happen to be up, and
 	// resolving first would answer no_runner to a request that is malformed
 	// either way.
-	scope, offender, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides), intersectCaps(creatorCaps, req.RequestedCaps))
-	if !scopeOK {
+	grant, err := h.grantFor(h.granter(cid, creatorCaps), submitGrantRequest(req), "")
+	if err != nil {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
+		resp.SetErrorMsg([]byte(err.Error()))
 		return resp, nil
 	}
 
@@ -1134,8 +1134,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	}
 	bound := combos[0].Entry
 	resolved := combos[0].Profile
-	caps := intersectCaps(creatorCaps, req.RequestedCaps)
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), authority.Grant{Caps: caps, Scope: scope}, resolved)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1143,16 +1142,71 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}, nil
 }
 
-// scopeRejectionMsg renders attenuateScope's `offender`. It carries two kinds
-// of failure — an id outside the caller's reach, or a scope that is
-// inconsistent on its own terms — and wrapping both in "scope id X is outside
-// your own scope" produced sentences like "scope id invalid scope: … is
-// outside your own scope".
-func scopeRejectionMsg(offender string) string {
-	if strings.HasPrefix(offender, "invalid scope: ") {
-		return offender
+// grantRequest is the authority half of a submit or an interactive open,
+// read once so the two paths cannot read it differently. The presence bits
+// matter on a resume only; a fresh task writes every half.
+type grantRequest struct {
+	Caps          protocol.Capability
+	Scope         authority.Scope
+	DelegateCaps  protocol.Capability
+	DelegateScope authority.Scope
+
+	CapsPresent, ScopePresent, DelegateCapsPresent, DelegateScopePresent bool
+}
+
+func submitGrantRequest(req *protocol.SubmitRequest) grantRequest {
+	return grantRequest{
+		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
+		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
+		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
 	}
-	return "scope id " + offender + " is outside your own scope"
+}
+
+func openGrantRequest(req *protocol.OpenInteractiveRequest) grantRequest {
+	return grantRequest{
+		Caps: req.RequestedCaps, Scope: authority.ScopeFromWire(req.Scope, req.Overrides),
+		DelegateCaps: req.DelegateCaps, DelegateScope: authority.ScopeFromWire(req.DelegateScope, nil),
+		CapsPresent: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+		DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
+	}
+}
+
+// grantFor is the authority g writes for r onto the task idHex ("" = a task
+// it is creating), as the halves to write. Every grant site goes through it,
+// so caps, scope and bound are bounded by the granter the same way on submit
+// and open, fresh and resumed.
+//
+// A fresh task writes every half. A resume writes a half only behind its
+// presence bit and keeps the recorded one otherwise; the scope is still
+// bounded for the caps the task will END UP holding, re-granted or kept.
+// A refusal is reported only for a half that is being written.
+//
+// The error's text is the client's refusal message: the authority package's
+// errors already tell an id outside the granter's own reach from one outside
+// what it may delegate, and an inconsistent scope from both.
+func (h *TaskHandler) grantFor(g *authority.Granter, r grantRequest, idHex string) (GrantUpdate, error) {
+	fresh := idHex == ""
+	u := GrantUpdate{
+		Caps: fresh || r.CapsPresent, Scope: fresh || r.ScopePresent,
+		DelegateCaps: fresh || r.DelegateCapsPresent, DelegateScope: fresh || r.DelegateScopePresent,
+	}
+	if fresh {
+		u.To.Caps = g.ChildCaps(r.Caps)
+	} else {
+		u.To.Caps = h.resumedCaps(idHex, r.CapsPresent, g, r.Caps)
+	}
+	scope, err := g.ChildScope(r.Scope, u.To.Caps)
+	if err != nil && u.Scope {
+		return GrantUpdate{}, err
+	}
+	u.To.Scope = scope
+	dcaps, dscope, err := g.ChildBound(r.DelegateCaps, r.DelegateScope, idHex)
+	if err != nil && u.DelegateScope {
+		return GrantUpdate{}, err
+	}
+	u.To.DelegateCaps, u.To.DelegateScope = dcaps, dscope
+	return u, nil
 }
 
 // handleSubmitResume implements the resume_task_id branch of handleSubmit.
@@ -1193,11 +1247,10 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// resume_caps_override, scope behind scope_present — same shape as
 	// SetCapsRequest. Validated up front for the same reason as the fresh
 	// path, but only when the scope will actually be written.
-	newScope, offender, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides),
-		h.resumedCaps(idHex, req.ResumeCapsOverride(), callerCaps, req.RequestedCaps))
-	if req.ScopePresent() && !scopeOK {
+	grant, err := h.grantFor(h.granter(cid, callerCaps), submitGrantRequest(req), idHex)
+	if err != nil {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
+		resp.SetErrorMsg([]byte(err.Error()))
 		return resp, nil
 	}
 	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
@@ -1218,6 +1271,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 		if field := exactMismatch(exactFields{
 			Prompt: prompt, ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 			CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+			DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
 			Kind: protocol.TaskKind_Oneshot,
 		}, rec); field != "" {
 			return exactMismatchResponse(field), nil
@@ -1279,14 +1333,12 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	}
 	bound := cands[0]
 
-	override := req.ResumeCapsOverride()
-	newCaps := intersectCaps(callerCaps, req.RequestedCaps)
 	// Invoked mode is Oneshot (this is the submit path); resolved is the
 	// profile computed above (explicit --agent, else the task's recorded
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, GrantUpdate{Caps: override, Scope: req.ScopePresent(), To: authority.Grant{Caps: newCaps, Scope: newScope}}, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid)); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, grant, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid)); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1323,7 +1375,10 @@ type exactFields struct {
 	AgentProfile string
 	CapsOverride bool
 	ScopePresent bool
-	Kind         protocol.TaskKind
+	// The delegation bound's two halves: a re-grant like caps and scope.
+	DelegateCapsPresent  bool
+	DelegateScopePresent bool
+	Kind                 protocol.TaskKind
 }
 
 // exactMismatch names the first setting an exact resume request carries, or the
@@ -1342,6 +1397,10 @@ func exactMismatch(req exactFields, rec TaskEntry) string {
 		return "--caps"
 	case req.ScopePresent:
 		return "--scope"
+	case req.DelegateCapsPresent:
+		return "--delegate-caps"
+	case req.DelegateScopePresent:
+		return "--delegate-scope"
 	case req.Kind != rec.Kind:
 		return "kind (the task was recorded as " + rec.Kind.String() + ")"
 	}
@@ -1497,15 +1556,15 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
 	// Validated before runner resolution — see handleSubmit.
-	childCaps := intersectCaps(creatorCaps, req.RequestedCaps)
+	grantTarget := ""
 	if !isZeroTaskID(req.ResumeTaskId) {
-		childCaps = h.resumedCaps(hex.EncodeToString(req.ResumeTaskId.Id[:]), req.ResumeCapsOverride(), creatorCaps, req.RequestedCaps)
+		grantTarget = hex.EncodeToString(req.ResumeTaskId.Id[:])
 	}
-	reqScope, _, scopeOK := h.attenuateScope(cid, authority.ScopeFromWire(req.Scope, req.Overrides), childCaps)
-	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()) {
-		// OpenInteractiveResponse has no error_msg field, so the status is the
-		// whole answer; the client names the ids it sent.
-		return errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
+	grant, err := h.grantFor(h.granter(cid, creatorCaps), openGrantRequest(req), grantTarget)
+	if err != nil {
+		resp, body := errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
+		resp.SetErrorMsg([]byte(err.Error()))
+		return resp, body
 	}
 
 	resuming := !isZeroTaskID(req.ResumeTaskId)
@@ -1538,12 +1597,15 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 			if !ok {
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 			}
-			if exactMismatch(exactFields{
+			if field := exactMismatch(exactFields{
 				ExtraArgs: args, AgentProfile: string(req.AgentProfile),
 				CapsOverride: req.ResumeCapsOverride(), ScopePresent: req.ScopePresent(),
+				DelegateCapsPresent: req.DelegateCapsPresent(), DelegateScopePresent: req.DelegateScopePresent(),
 				Kind: interactiveKind(req),
-			}, rec) != "" {
-				return errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
+			}, rec); field != "" {
+				resp, body := errResp(protocol.OpenInteractiveStatus_ResumeExactMismatch)
+				resp.SetErrorMsg(exactMismatchResponse(field).ErrorMsg)
+				return resp, body
 			}
 			exactRec = &rec
 			args = rec.ExtraArgs
@@ -1641,14 +1703,12 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Allocate or revive the task entry.
 	var taskIDHex string
 	if resuming {
-		override := req.ResumeCapsOverride()
-		newCaps := intersectCaps(creatorCaps, req.RequestedCaps)
 		// Invoked mode is Interactive (this is the open_interactive path);
 		// resolved is the (runner,profile) combo's profile computed above —
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, GrantUpdate{Caps: override, Scope: req.ScopePresent(), To: authority.Grant{Caps: newCaps, Scope: reqScope}}, interactiveKind(req), resolved, h.lookupPrincipal(cid)); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, grant, interactiveKind(req), resolved, h.lookupPrincipal(cid)); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1663,11 +1723,10 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
-		caps := intersectCaps(creatorCaps, req.RequestedCaps)
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), authority.Grant{Caps: caps, Scope: reqScope}, resolved)
+		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), grant.To, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID

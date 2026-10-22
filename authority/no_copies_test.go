@@ -18,7 +18,7 @@ var formerCopies = []string{
 	"clampScopeUnder", "isNarrowing", "minScopeBase", "scopeBaseRank", "validateScope",
 	"exercisedBits", "attachModeScopeCap", "attachModeCap", "scopeCoversNewChild",
 	"normalizeScopeIDs", "scopeFromWire", "newGrantReach", "reachNarrowed", "visibleIDs",
-	"grantReach",
+	"grantReach", "intersectCaps",
 }
 
 // TestNoSecondScopeImplementation fails when a function under one of those
