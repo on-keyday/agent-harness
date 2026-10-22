@@ -207,14 +207,16 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	// A grandchild: non-zero principal AND non-zero creator.
 	child := h.Tasks.Create("/r", "gc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		hexToTaskID(t, c), "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn, authority.Scope{
+		hexToTaskID(t, c), "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{
 			Base: protocol.ScopeBase_None,
-			// Non-zero on every axis for the same reason as toTaskInfo's fixture.
+
 			VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
 			VisIDs:    []string{"aabbccddeeff00112233445566778899"},
 			Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
-		}, "")
+		}},
+
+		"")
+
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

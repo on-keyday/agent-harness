@@ -44,6 +44,12 @@ type TaskEntry struct {
 	// rule the server applied to visibility before scopes existed. See
 	// server/scope.go.
 	Scope authority.Scope
+	// DelegateCaps and DelegateScope are the delegation bound: what this task
+	// may write onto the tasks it grants to (authority.Granter). The zero
+	// values are the default bound, which delegates no bits — a task recorded
+	// before the bound existed included.
+	DelegateCaps  protocol.Capability
+	DelegateScope authority.Scope
 	// AuthoritySource, AuthorityActor and AuthorityAt are who last wrote this
 	// task's authority — its caps, its scope or its parent link — and when.
 	// The zero values are a task recorded before provenance existed.
@@ -210,7 +216,7 @@ func newTaskID() string {
 // --agent-args at exec time; pass nil for none.
 // agentProfile is the resolved agent profile name (see TaskEntry.AgentProfile);
 // pass "" when the bound runner advertised no profiles (legacy runner).
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, scope authority.Scope, agentProfile string) string {
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, g authority.Grant, agentProfile string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -220,8 +226,10 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		Kind:          kind,
 		OriginKind:    origin,
 		CreatorTaskID: creatorTaskID,
-		Capabilities:  caps,
-		Scope:         scope,
+		Capabilities:  g.Caps,
+		Scope:         g.Scope,
+		DelegateCaps:  g.DelegateCaps,
+		DelegateScope: g.DelegateScope,
 		AgentProfile:  agentProfile,
 		Status:        protocol.TaskStatus_Queued,
 		CreatedAt:     time.Now(),
@@ -251,10 +259,11 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			BoundRunnerID: boundRunnerID,
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
-			Capabilities:  uint32(caps),
+			Capabilities:  uint32(g.Caps),
 			AgentProfile:  agentProfile,
 		}
-		applyScopeToWAL(scope, &ev)
+		applyScopeToWAL(g.Scope, &ev)
+		applyDelegationToWAL(g.DelegateCaps, g.DelegateScope, &ev)
 		s.tasks[id].applyAuthorityToWAL(&ev)
 		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
@@ -266,6 +275,32 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		onCreate(id)
 	}
 	return id
+}
+
+// GrantUpdate is a write of some halves of a task's Grant: each flag names a
+// half to write from To, and a false one keeps the recorded value. The four
+// halves re-grant independently, as the presence bits on the wire do.
+type GrantUpdate struct {
+	Caps, Scope, DelegateCaps, DelegateScope bool
+	To                                       authority.Grant
+}
+
+// Any reports whether the update writes anything.
+func (u GrantUpdate) Any() bool { return u.Caps || u.Scope || u.DelegateCaps || u.DelegateScope }
+
+// applyBound writes the delegation-bound halves u names.
+func (e *TaskEntry) applyBound(u GrantUpdate) {
+	if u.DelegateCaps {
+		e.DelegateCaps = u.To.DelegateCaps
+	}
+	if u.DelegateScope {
+		e.DelegateScope = u.To.DelegateScope
+	}
+}
+
+// Grant is the entry's authority as one value.
+func (e TaskEntry) Grant() authority.Grant {
+	return authority.Grant{Caps: e.Capabilities, Scope: e.Scope, DelegateCaps: e.DelegateCaps, DelegateScope: e.DelegateScope}
 }
 
 // AuthorityWrite is who is writing a task's authority: the kind of write and
@@ -322,6 +357,7 @@ func (s *TaskStore) writeCapsChangedLocked(e *TaskEntry) {
 		Capabilities: uint32(e.Capabilities),
 	}
 	applyScopeToWAL(e.Scope, &ev)
+	applyDelegationToWAL(e.DelegateCaps, e.DelegateScope, &ev)
 	e.applyAuthorityToWAL(&ev)
 	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
@@ -398,19 +434,20 @@ func (s *TaskStore) restoreProgress(l progressLine) bool {
 // force from the target's next RPC with nothing restarted.
 //
 // Returns the post-change entry and whether the task existed.
-func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope authority.Scope, by AuthorityWrite) (TaskEntry, bool) {
+func (s *TaskStore) SetCaps(id string, u GrantUpdate, by AuthorityWrite) (TaskEntry, bool) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
 		s.mu.Unlock()
 		return TaskEntry{}, false
 	}
-	if setCaps {
-		e.Capabilities = caps
+	if u.Caps {
+		e.Capabilities = u.To.Caps
 	}
-	if setScope {
-		e.Scope = scope
+	if u.Scope {
+		e.Scope = u.To.Scope
 	}
+	e.applyBound(u)
 	e.stampAuthority(by)
 	s.writeCapsChangedLocked(e)
 	snapshot := *e
@@ -543,7 +580,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope authority.Scope, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, u GrantUpdate, newKind protocol.TaskKind, agentProfile string, resumer protocol.TaskID) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -598,13 +635,14 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 		}
 	}
 
-	if capsOverride || scopeOverride {
-		if capsOverride {
-			e.Capabilities = newCaps
+	if u.Any() {
+		if u.Caps {
+			e.Capabilities = u.To.Caps
 		}
-		if scopeOverride {
-			e.Scope = newScope
+		if u.Scope {
+			e.Scope = u.To.Scope
 		}
+		e.applyBound(u)
 		// One event carries the post-change state of BOTH halves, whichever was
 		// asked for: replay applies what the record says, so writing only the
 		// changed half would leave the other reading as its zero on restart.
@@ -1207,6 +1245,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				ExtraArgs:     ev.ExtraArgs,
 			}
 			s.tasks[ev.TaskID].authorityFromWAL(ev)
+			s.tasks[ev.TaskID].DelegateCaps, s.tasks[ev.TaskID].DelegateScope = delegationFromWAL(ev)
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
 			if t, ok := s.tasks[ev.TaskID]; ok {
@@ -1303,6 +1342,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
 				t.Scope = scopeFromWAL(ev)
+				t.DelegateCaps, t.DelegateScope = delegationFromWAL(ev)
 				t.authorityFromWAL(ev)
 			}
 		case "task_parent_changed":

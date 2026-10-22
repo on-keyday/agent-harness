@@ -231,12 +231,10 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	// capability, so `none` is the sharpest case for the notify-sink gate.
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None,
-		// The target is not a descendant, so give the caller an explicit scope
-		// id for it. Without this the target gate answers not_found first and
-		// the sink gate under test is never reached — which is correct
-		// behaviour, but not what this test is about.
-		authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"ee000000000000000000000000000000"}}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"ee000000000000000000000000000000"}}},
+
+		"")
+
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

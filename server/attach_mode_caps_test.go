@@ -105,8 +105,10 @@ func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
 	const targetHex = "ee000000000000000000000000000000"
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_ExecView,
-		authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{targetHex}}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_ExecView, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{targetHex}}},
+
+		"")
+
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9702-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

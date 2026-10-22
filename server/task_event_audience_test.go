@@ -70,10 +70,10 @@ func subscribeTasksStatus(t *testing.T, s *Server, cid string) *eventStream {
 // (D14), and task_pruned to everyone (D19).
 func TestTaskEvents_FilteredByListVisibility(t *testing.T) {
 	s := makeEventServer(t)
-	aHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+	aHex := s.tasks.Create("/r", "a", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}}, "")
 	aID := hexToTaskID(t, aHex)
-	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, aID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
-	kHex := s.tasks.Create("/r", "k", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, aID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, aID, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}, "")
+	kHex := s.tasks.Create("/r", "k", protocol.TaskKind_Interactive, protocol.ClientKind_Agent, aID, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}, "")
 
 	const opCID, aCID, kCID = "ws:127.0.0.1:9901-1", "ws:127.0.0.1:9902-1", "ws:127.0.0.1:9903-1"
 	recordAgent(s, aCID, aID)

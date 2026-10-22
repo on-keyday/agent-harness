@@ -20,11 +20,13 @@ func TestResumeScopePresence(t *testing.T) {
 	t.Run("caps_override_alone_keeps_scope", func(t *testing.T) {
 		h := newTestHandler(t)
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, kept, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: kept},
+			"")
+
 		markTerminalForTest(t, h, id)
 
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, protocol.Capability_FileRead, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)
@@ -39,11 +41,13 @@ func TestResumeScopePresence(t *testing.T) {
 	t.Run("scope_presence_alone_applies_scope_keeps_caps", func(t *testing.T) {
 		h := newTestHandler(t)
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, kept, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: kept},
+			"")
+
 		markTerminalForTest(t, h, id)
 
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Global}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, _ := h.Tasks.Get(id)

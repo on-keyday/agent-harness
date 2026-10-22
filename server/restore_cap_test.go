@@ -14,7 +14,10 @@ func restoreCaller(t *testing.T, h *TaskHandler, caps protocol.Capability, port 
 	t.Helper()
 	idHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, caps, authority.DefaultScope(), "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: caps, Scope: authority.DefaultScope()},
+
+		"")
+
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -108,7 +111,9 @@ func TestRestoreProceedsWithPruneCap(t *testing.T) {
 	// before RestoreFn sees it, which would hide whether the CAP gate passed.
 	targetHex := h.Tasks.Create("repo", "child", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, caller, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.DefaultScope(), "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.DefaultScope()},
+
+		"")
 
 	h.Handle(conn, restoreRequest(t, 0, hexToTaskID(t, targetHex)))
 

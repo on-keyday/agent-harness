@@ -47,8 +47,10 @@ func TestRestoreBringsBackAPrunedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := s.Create("/repo", "the prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, []string{"--flag"},
-		protocol.Capability_Spawn, authority.DefaultScope(), "codex")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, []string{"--flag"}, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.DefaultScope()},
+
+		"codex")
+
 	s.MarkFailed(id, "done") // terminal, so the age sweep takes it
 
 	if n := s.PruneTerminal(nil, time.Now().Add(time.Hour), logs); n != 1 {
@@ -100,7 +102,9 @@ func TestRestoreBringsBackAPrunedTask(t *testing.T) {
 func TestRestoreLeavesALiveTaskAlone(t *testing.T) {
 	s, events, _ := walStore(t)
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	s.MarkFailed(id, "boom")
 
 	restored, present, missing := s.RestoreFromWAL(events(), []string{id})
@@ -139,7 +143,9 @@ func TestRestoreSurvivesAReplayOfTheWholeWAL(t *testing.T) {
 	s, events, dir := walStore(t)
 	logs := filepath.Join(dir, "logs")
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	s.MarkFailed(id, "done")
 	s.PruneTerminal(nil, time.Now().Add(time.Hour), logs)
 	if restored, _, _ := s.RestoreFromWAL(events(), []string{id}); len(restored) != 1 {
@@ -163,11 +169,17 @@ func TestRestorableListsWhatAPruneForgot(t *testing.T) {
 	s, events, dir := walStore(t)
 	logs := filepath.Join(dir, "logs")
 	a := s.Create("/repo", "first", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	b := s.Create("/repo", "second", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	live := s.Create("/repo", "still here", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	s.MarkFailed(a, "x")
 	s.MarkFailed(b, "x")
 	s.PruneByIDs(nil, []string{a, b}, false, logs)

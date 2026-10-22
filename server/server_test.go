@@ -26,7 +26,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		ActiveTasks:  map[string]struct{}{},
 		Conn:         fc,
 	})
-	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	if err := s.sendAssign(fc.id, taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestSendAssignDisconnected(t *testing.T) {
 func TestRestartCancelsDetached(t *testing.T) {
 	s := New(Config{})
 
-	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	s.tasks.Assign(taskID, testRunnerID("runner-1"), "/wt", false)
 	if err := s.tasks.SetDetached(taskID); err != nil {
 		t.Fatalf("SetDetached: %v", err)

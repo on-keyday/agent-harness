@@ -23,15 +23,18 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 	s.SetWAL(wal)
 
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
 		t.Fatalf("status = %v, want Running (the precondition this method must NOT have)", got.Status)
 	}
 
 	peer := strings.Repeat("ab", 16)
-	e, ok := s.SetCaps(id, true, protocol.Capability_Cancel, true,
-		authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{peer}}, AuthorityWrite{})
+	e, ok := s.SetCaps(id, GrantUpdate{Caps: true, Scope: true, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{peer}}}},
+		AuthorityWrite{})
+
 	if !ok {
 		t.Fatal("SetCaps reported the task missing")
 	}
@@ -43,7 +46,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 	}
 
 	// Half-writes must leave the other half alone.
-	if e2, _ := s.SetCaps(id, false, protocol.Capability_All, true, authority.Scope{Base: protocol.ScopeBase_Global}, AuthorityWrite{}); true {
+	if e2, _ := s.SetCaps(id, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{Base: protocol.ScopeBase_Global}}}, AuthorityWrite{}); true {
 		if e2.Capabilities != protocol.Capability_Cancel {
 			t.Errorf("caps changed on a scope-only write: %v", e2.Capabilities)
 		}
@@ -51,7 +54,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 			t.Errorf("scope = %v, want global", e2.Scope.Base)
 		}
 	}
-	if _, ok := s.SetCaps("no-such-task", true, protocol.Capability_None, false, authority.Scope{}, AuthorityWrite{}); ok {
+	if _, ok := s.SetCaps("no-such-task", GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, AuthorityWrite{}); ok {
 		t.Error("SetCaps on a missing task reported ok")
 	}
 

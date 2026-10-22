@@ -64,7 +64,10 @@ func TestCallerCaps(t *testing.T) {
 	parentCaps := protocol.Capability_FileRead | protocol.Capability_Spawn
 	agentTaskIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, parentCaps, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: parentCaps, Scope: authority.Scope{}},
+
+		"")
+
 	tid := hexToTaskID(t, agentTaskIDHex)
 
 	// Set the principal directly on the map (white-box; same package).
@@ -109,7 +112,10 @@ func TestSpawnAttenuation(t *testing.T) {
 	parentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "A",
-		protocol.RunnerSelector{}, nil, parentCaps, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: parentCaps, Scope: authority.Scope{}},
+
+		"")
+
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire the parent as the principal on "agent-conn".
@@ -205,7 +211,10 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Create the agent principal task holding NO caps.
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+
+		"")
+
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire a caller conn with a distinct CID.
@@ -219,7 +228,10 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Victim task to attempt cancelling (with full caps — irrelevant; caller's caps are what matter).
 	victimIDHex := h.Tasks.Create("repo", "v", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+
+		"")
+
 	vtid := hexToTaskID(t, victimIDHex)
 
 	// Build and encode a Cancel request targeting the victim.
@@ -307,7 +319,10 @@ func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeC
 	h := newTestHandler(t)
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, caps, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: caps, Scope: authority.Scope{}},
+
+		"")
+
 	ptid := hexToTaskID(t, parentIDHex)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
 	if h.principals == nil {
@@ -552,16 +567,20 @@ func TestVisibleSubtree(t *testing.T) {
 
 	// B: has Spawn but no InfoGlobal; no parent.
 	bHex := h.Tasks.Create("r", "B", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
+
 	bTID := hexToTaskID(t, bHex)
 
 	// C: child of B.
 	cHex := h.Tasks.Create("r", "C", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		bTID, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+		"")
 
 	// D: sibling (no parent), unrelated to B.
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+		"")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -605,14 +624,18 @@ func TestListFilteredToSubtree(t *testing.T) {
 
 	// Create two root tasks (operator-created).
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
+
 	_ = h.Tasks.Create("r", "B-root", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
 
 	// Create a child of A.
 	aTID := hexToTaskID(t, aHex)
 	aChildHex := h.Tasks.Create("r", "A-child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		aTID, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+		"")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -673,18 +696,25 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	h.LogsDir = t.TempDir() // so the log gate runs before the file open
 
 	aHex := h.Tasks.Create("/repo/a", "grandparent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "claude")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"claude")
+
 	bHex := h.Tasks.Create("/repo/b", "parent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "claude")
+		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"claude")
+
 	bTID := hexToTaskID(t, bHex)
 	// exec_view so the log assertion below tests SCOPE rather than the cap: a
 	// task log has been gated on that bit since 2026-08-21, and a caller
 	// without it is refused before scope is consulted.
 	cHex := h.Tasks.Create("/repo/c", "child prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn|protocol.Capability_ExecView, authority.Scope{}, "claude")
+		bTID, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn | protocol.Capability_ExecView, Scope: authority.Scope{}},
+
+		"claude")
+
 	sHex := h.Tasks.Create("/repo/s", "stranger prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
 
 	// Give B a worktree + assigned runner so redaction has something to strip.
 	h.Tasks.mu.Lock()
@@ -828,7 +858,9 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 
 	// Confined caller: task A with Spawn but no InfoGlobal.
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
+
 	aTID := hexToTaskID(t, aHex)
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -913,13 +945,17 @@ func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 	h.LogsDir = t.TempDir() // enable log path so the gate runs before the open
 
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn|protocol.Capability_ExecView, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn | protocol.Capability_ExecView, Scope: authority.Scope{}},
+
+		"")
+
 	aTID := hexToTaskID(t, aHex)
 
 	// D is an unrelated task (operator-created).
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+		"")
+
 	dTID := hexToTaskID(t, dHex)
 
 	if h.principals == nil {
@@ -1112,14 +1148,15 @@ func TestResumeCapsOverride(t *testing.T) {
 	t.Run("operator_override_replaces_caps", func(t *testing.T) {
 		h := newTestHandler(t)
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+			"")
 
 		markTerminalForTest(t, h, id)
 
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), Scope: authority.Scope{}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1138,13 +1175,14 @@ func TestResumeCapsOverride(t *testing.T) {
 		h := newTestHandler(t)
 		wantCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps, authority.Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: wantCaps, Scope: authority.Scope{}},
+			"")
 
 		markTerminalForTest(t, h, id)
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
-		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1166,12 +1204,17 @@ func TestResumeCapsOverride(t *testing.T) {
 		agentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		agentTaskIDHex := h.Tasks.Create("/r", "agent", protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, protocol.TaskID{}, "",
-			protocol.RunnerSelector{}, nil, agentCaps, authority.Scope{}, "")
+			protocol.RunnerSelector{}, nil, authority.Grant{Caps: agentCaps, Scope: authority.Scope{}},
+
+			"")
+
 		agentTID := hexToTaskID(t, agentTaskIDHex)
 
 		// Create the target task (original caps = All).
 		targetID := h.Tasks.Create("/r", "target", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+			"")
+
 		markTerminalForTest(t, h, targetID)
 
 		// Wire the agent as a principal on a distinct conn.
@@ -1185,8 +1228,8 @@ func TestResumeCapsOverride(t *testing.T) {
 		// intersect(agentCaps, All) = agentCaps (agent cannot widen).
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
-		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -1201,8 +1244,8 @@ func TestResumeCapsOverride(t *testing.T) {
 		// FileWrite is NOT in agentCaps → intersect(agentCaps, FileWrite) = None.
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
-		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps2, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps2, Scope: authority.Scope{}}},
+			protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)
@@ -1236,7 +1279,10 @@ func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
 	mk := func(prompt string, creator protocol.TaskID) string {
 		return h.Tasks.Create("/r", prompt, protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, creator, "", protocol.RunnerSelector{},
-			nil, caps, authority.Scope{}, "")
+			nil, authority.Grant{Caps: caps, Scope: authority.Scope{}},
+
+			"")
+
 	}
 	p = mk("p", protocol.TaskID{})
 	c = mk("c", hexToTaskID(t, p))
@@ -1258,7 +1304,7 @@ func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) string {
 
 func setScope(t *testing.T, h *TaskHandler, taskHex string, sc authority.Scope) {
 	t.Helper()
-	if _, ok := h.Tasks.SetCaps(taskHex, false, 0, true, sc, AuthorityWrite{}); !ok {
+	if _, ok := h.Tasks.SetCaps(taskHex, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: 0, Scope: sc}}, AuthorityWrite{}); !ok {
 		t.Fatalf("SetCaps on %s: task not found", taskHex)
 	}
 }
@@ -1310,12 +1356,12 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 		t.Error("authorized a stranger while scope is subtree")
 	}
 	// Target in scope, cap missing.
-	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}, AuthorityWrite{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}}, AuthorityWrite{}) //nolint:errcheck
 	if h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("authorized cancel without the cancel bit")
 	}
 	// Both.
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{}, AuthorityWrite{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{}}}, AuthorityWrite{}) //nolint:errcheck
 	if !h.authorize(cid, protocol.Capability_Cancel, c) {
 		t.Error("denied a self-target with the cap held")
 	}
@@ -1332,9 +1378,11 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 func TestVisBaseWidensVisibilityNotAction(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, true, authority.Scope{ //nolint:errcheck
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: true, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{
 		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
-	}, AuthorityWrite{})
+	}}},
+
+		AuthorityWrite{})
 
 	if all, _ := h.visibleToCaller(cid); !all {
 		t.Error("vis_base=global did not widen visibility")
@@ -1595,13 +1643,15 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	}
 	id := st.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_All, withOverride, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: withOverride},
+
+		"")
+
 	st.Finish(id, 0, nil)
 
 	// scopeOverride = false: the stored scope, overrides and all, is kept.
-	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}},
+		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	got, _ := st.Get(id)
@@ -1612,8 +1662,8 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 	// scopeOverride = true with an empty list: the only way to clear them, the
 	// same shape as writing an empty ids list.
 	st.Finish(id, 0, nil)
-	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_None, true, authority.Scope{Base: protocol.ScopeBase_Subtree},
+	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}}},
+
 		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -1637,7 +1687,7 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 		Base:      protocol.ScopeBase_Subtree,
 		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
 	}
-	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView, true, withOverride, AuthorityWrite{}); !ok {
+	if _, ok := h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: true, To: authority.Grant{Caps: protocol.Capability_ExecView, Scope: withOverride}}, AuthorityWrite{}); !ok {
 		t.Fatal("SetCaps: task not found")
 	}
 
@@ -1656,7 +1706,7 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 
 	// Granting the bit makes the standing override apply immediately, without
 	// the operator having to restate it.
-	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, authority.Scope{}, AuthorityWrite{}); !ok {
+	if _, ok := h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_ExecView | protocol.Capability_Cancel, Scope: authority.Scope{}}}, AuthorityWrite{}); !ok {
 		t.Fatal("SetCaps: task not found")
 	}
 	if h.authorize(cid, protocol.Capability_Cancel, g) {
@@ -1711,7 +1761,9 @@ func TestGetTaskLogWithoutExecViewIsDenied(t *testing.T) {
 
 	// The caller asks for its OWN log, so scope cannot be what refuses it.
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
+
 	aTID := hexToTaskID(t, aHex)
 
 	if h.principals == nil {

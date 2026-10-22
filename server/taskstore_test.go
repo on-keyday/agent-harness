@@ -16,7 +16,7 @@ var hexRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 func TestTaskStoreCreate(t *testing.T) {
 	s := NewTaskStore()
 	before := time.Now()
-	id := s.Create("/repo", "prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	after := time.Now()
 
 	if len(id) != 32 {
@@ -49,7 +49,7 @@ func TestTaskStoreCreate(t *testing.T) {
 // resolved agent profile on the TaskEntry.
 func TestTaskStoreCreateStoresAgentProfile(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "codex")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "codex")
 
 	entry, ok := s.Get(id)
 	if !ok {
@@ -74,7 +74,7 @@ func TestTaskStoreWALReplayRestoresAgentProfile(t *testing.T) {
 
 	s := NewTaskStore()
 	s.SetWAL(wal)
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "codex")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "codex")
 	if err := wal.Close(); err != nil {
 		t.Fatalf("wal.Close: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestTaskStoreWALReplayRestoresAgentProfile(t *testing.T) {
 
 func TestTaskStoreAssignAndFinish(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	s.Assign(id, testRunnerID("runner-1"), "/tmp/wt", false)
 
@@ -152,7 +152,7 @@ func TestTaskStoreAssignAndFinish(t *testing.T) {
 
 func TestTaskStoreFinishNonZero(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(id, testRunnerID("r"), "/wt", false)
 	s.Finish(id, 7, nil)
 
@@ -173,7 +173,7 @@ func TestTaskStoreFinishNonZero(t *testing.T) {
 
 func TestTaskStoreCancel(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	s.Cancel(id)
 
@@ -205,7 +205,7 @@ func TestTaskStoreCancel(t *testing.T) {
 func TestTaskStoreFinishAsymmetricIdempotency(t *testing.T) {
 	t.Run("overwrites_Cancelled", func(t *testing.T) {
 		s := NewTaskStore()
-		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 		s.Cancel(id)
 		s.Finish(id, 0, nil)
 		entry, _ := s.Get(id)
@@ -216,7 +216,7 @@ func TestTaskStoreFinishAsymmetricIdempotency(t *testing.T) {
 
 	t.Run("noop_after_Succeeded", func(t *testing.T) {
 		s := NewTaskStore()
-		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 		s.Finish(id, 0, nil)
 		// Late-arriving Finish with non-zero exit must NOT corrupt the real outcome.
 		s.Finish(id, 1, []byte("late"))
@@ -231,7 +231,7 @@ func TestTaskStoreFinishAsymmetricIdempotency(t *testing.T) {
 
 	t.Run("noop_after_Failed", func(t *testing.T) {
 		s := NewTaskStore()
-		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 		s.Finish(id, 1, []byte("first"))
 		s.Finish(id, 0, nil)
 		entry, _ := s.Get(id)
@@ -256,7 +256,7 @@ func TestTaskStoreTerminalClearsIsAttached(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewTaskStore()
-			id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+			id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 			s.MarkAttached(id, true)
 			tc.op(s, id)
 			entry, _ := s.Get(id)
@@ -269,9 +269,9 @@ func TestTaskStoreTerminalClearsIsAttached(t *testing.T) {
 
 func TestTaskStoreNextQueuedForRepo(t *testing.T) {
 	s := NewTaskStore()
-	a := s.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
-	b := s.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
-	_ = s.Create("/y", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	a := s.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
+	b := s.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
+	_ = s.Create("/y", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	got, ok := s.NextQueuedForRepo("/x")
 	if !ok {
@@ -301,7 +301,7 @@ func TestTaskStoreListLimit(t *testing.T) {
 	s := NewTaskStore()
 	ids := make([]string, 5)
 	for i := 0; i < 5; i++ {
-		ids[i] = s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		ids[i] = s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	}
 
 	all := s.List(0)
@@ -333,7 +333,7 @@ func TestTaskStoreListLimit(t *testing.T) {
 // capture-then-fire-after-unlock code path.
 func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.MarkFailed(id, "done") // terminal, so prune (force=false) removes it
 
 	var pruned []string
@@ -354,7 +354,7 @@ func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
 // An active (non-terminal) task skipped by PruneByIDs must NOT fire OnPrune.
 func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	// left Queued (non-terminal)
 
 	fired := false
@@ -371,7 +371,7 @@ func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
 
 func TestTaskStoreCancelRunning(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(id, testRunnerID("runner-x"), "/wt", false)
 	// sanity: now Running
 	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
@@ -389,7 +389,7 @@ func TestTaskStoreCancelRunning(t *testing.T) {
 
 func TestTaskStoreSetWorktreeDir(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	ok := s.SetWorktreeDir(id, "/new/wt")
 	if !ok {
@@ -409,7 +409,7 @@ func TestTaskStoreSetWorktreeDir(t *testing.T) {
 
 func TestTaskStoreReadIsSnapshot(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/original", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/original", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	got, ok := s.Get(id)
 	if !ok {
@@ -432,7 +432,7 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 
 	s := NewTaskStore()
 	s.SetWAL(wal)
-	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	before := time.Now()
 	s.Assign(id, testRunnerID("runner-x"), "/tmp/wt", false)
 	s.Finish(id, 0, []byte("done"))
@@ -462,8 +462,8 @@ func TestTaskStoreOnCreateFires(t *testing.T) {
 	s := NewTaskStore()
 	var got []string
 	s.OnCreate = func(id string) { got = append(got, id) }
-	a := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
-	b := s.Create("/r", "q", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	a := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
+	b := s.Create("/r", "q", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	if len(got) != 2 || got[0] != a || got[1] != b {
 		t.Fatalf("got %v, expected [%s, %s]", got, a, b)
 	}
@@ -490,10 +490,10 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	s := NewTaskStore()
 
 	// 1: queued (still active — must NOT be pruned)
-	idQueued := s.Create("/r", "still-queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idQueued := s.Create("/r", "still-queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 
 	// 2: succeeded long ago (should be pruned)
-	idOldSucc := s.Create("/r", "old-success", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idOldSucc := s.Create("/r", "old-success", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(idOldSucc, testRunnerID("runner-x"), "/wt-1", false)
 	s.Finish(idOldSucc, 0, nil)
 	oldTime := time.Now().Add(-48 * time.Hour)
@@ -501,12 +501,12 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	*s.tasks[got.ID].EndedAt = oldTime
 
 	// 3: failed recently (must NOT be pruned)
-	idRecentFail := s.Create("/r", "recent-fail", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idRecentFail := s.Create("/r", "recent-fail", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(idRecentFail, testRunnerID("runner-x"), "/wt-2", false)
 	s.Finish(idRecentFail, 7, nil)
 
 	// 4: cancelled long ago (should be pruned)
-	idOldCancel := s.Create("/r", "old-cancel", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idOldCancel := s.Create("/r", "old-cancel", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Cancel(idOldCancel)
 	*s.tasks[idOldCancel].EndedAt = oldTime
 
@@ -546,16 +546,16 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 	s := NewTaskStore()
 
 	// One running, one terminal, one we'll request that doesn't exist.
-	idActive := s.Create("/r", "still-running", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idActive := s.Create("/r", "still-running", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(idActive, testRunnerID("runner-x"), "/wt-1", false)
 	// Status stays Running
 
-	idTerminal := s.Create("/r", "done", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idTerminal := s.Create("/r", "done", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(idTerminal, testRunnerID("runner-x"), "/wt-2", false)
 	s.Finish(idTerminal, 0, nil)
 
 	// Keepalive task that shouldn't be touched.
-	idKeep := s.Create("/r", "untouched", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	idKeep := s.Create("/r", "untouched", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(idKeep, testRunnerID("runner-x"), "/wt-3", false)
 	s.Finish(idKeep, 0, nil)
 
@@ -631,7 +631,9 @@ func TestTaskStoreAddCarriesSelectorAndBoundRunner(t *testing.T) {
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
 	sel.SetHostname(mustHostname(t, "gmkhost"))
 	taskID := ts.Create("/x/repo", "hello", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "runner-A", sel, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "runner-A", sel, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	got, ok := ts.Get(taskID)
 	if !ok {
 		t.Fatal("Get failed")
@@ -647,7 +649,9 @@ func TestTaskStoreAddCarriesSelectorAndBoundRunner(t *testing.T) {
 func TestTaskStoreMarkFailedTransitions(t *testing.T) {
 	ts := NewTaskStore()
 	id := ts.Create("/x", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	ts.Assign(id, testRunnerID("runner-x"), "/wt", false)
 	ts.MarkFailed(id, "runner_disconnected")
 	got, _ := ts.Get(id)
@@ -662,7 +666,9 @@ func TestTaskStoreMarkFailedTransitions(t *testing.T) {
 func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
 	ts := NewTaskStore()
 	id := ts.Create("/x", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	ts.Finish(id, 0, nil) // already terminal (Succeeded)
 	ts.MarkFailed(id, "runner_disconnected")
 	got, _ := ts.Get(id)
@@ -675,7 +681,9 @@ func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
 // it to a runner (transitioning it to Running).
 func createSessionTask(ts *TaskStore) string {
 	id := ts.Create("/repo", "detach-test", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	ts.Assign(id, testRunnerID("runner-det"), "/wt/det", false)
 	return id
 }
@@ -706,7 +714,9 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 	t.Run("SetDetached_requires_Running", func(t *testing.T) {
 		ts := NewTaskStore()
 		id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+			"")
+
 		// Task is Queued, not Running — must fail.
 		if err := ts.SetDetached(id); err == nil {
 			t.Fatal("SetDetached on Queued task should return error, got nil")
@@ -818,7 +828,8 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 func TestTaskStore_SetRingBufferBytes(t *testing.T) {
 	ts := NewTaskStore()
 	id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
 
 	if !ts.SetRingBufferBytes(id, 4096) {
 		t.Fatal("SetRingBufferBytes returned false for existing task")
@@ -878,10 +889,10 @@ func TestTaskStore_MarkAttached(t *testing.T) {
 
 func TestResumeRecordsResumedByKind(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -920,18 +931,16 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 		creatorID,
 		"",
 		protocol.RunnerSelector{},
-		nil,
-		protocol.Capability_All,
-		authority.Scope{},
-		"",
-	)
+		nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+
+		"")
 
 	// Finish it (terminal state is required before Resume).
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -969,20 +978,20 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	s := NewTaskStore()
 	var creator protocol.TaskID
 	creator.Id = [16]byte{0xAA, 0xBB}
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, creator, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, creator, "runner1", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	got, _ := s.Get(id)
 	if got.CreatorTaskID.Id != creator.Id {
 		t.Fatalf("creator = %x, want %x", got.CreatorTaskID.Id, creator.Id)
 	}
 	var zero protocol.TaskID
-	id2 := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, zero, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+	id2 := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, zero, "runner1", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()}, "")
 	got2, _ := s.Get(id2)
 	if got2.CreatorTaskID.Id != ([16]byte{}) {
 		t.Fatalf("operator creator should be zero, got %x", got2.CreatorTaskID.Id)
 	}
 	s.Assign(id, testRunnerID("runner1"), "/wt", false)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}}}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -1054,14 +1063,16 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 
 	// Create a task with initial caps.
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Spawn, Scope: authority.Scope{}},
+		"")
+
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	s.Finish(id, 0, nil)
 
 	// Resume with caps override to FileRead (override-to-None is also tested below).
 	newCaps := protocol.Capability_FileRead
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		true, newCaps, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: newCaps, Scope: authority.Scope{}}},
+		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1134,12 +1145,14 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 	s.SetWAL(wal)
 
 	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Tui,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "claude")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"claude")
+
 	s.Assign(id, testRunnerID("runner-x"), "/wt/x", false)
 	s.Finish(id, 0, nil)
 
-	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, protocol.Capability_All, false, authority.Scope{}, protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}},
+		protocol.TaskKind_Oneshot, "codex", protocol.TaskID{}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1183,7 +1196,9 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 func reparentCreate(t *testing.T, s *TaskStore, creator protocol.TaskID) (string, protocol.TaskID) {
 	t.Helper()
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		creator, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	return id, taskIDFromHex(id)
 }
 

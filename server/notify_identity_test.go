@@ -23,7 +23,10 @@ func TestHandleNotify_IdentityFromPrincipalNotClient(t *testing.T) {
 	})
 	tidHex := h.Tasks.Create("/repo/a", "p", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_Notify, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_Notify, Scope: authority.Scope{}},
+
+		"")
+
 	h.Tasks.Assign(tidHex, rid, "/wt", true)
 	tid := hexToTaskID(t, tidHex)
 

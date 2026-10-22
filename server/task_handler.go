@@ -1129,7 +1129,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	bound := combos[0].Entry
 	resolved := combos[0].Profile
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), caps, scope, resolved)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), authority.Grant{Caps: caps, Scope: scope}, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1280,7 +1280,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid)); err != nil {
+	if _, err := h.Tasks.Resume(idHex, prompt, args, req.Selector, bound.ID.String(), origin, GrantUpdate{Caps: override, Scope: req.ScopePresent(), To: authority.Grant{Caps: newCaps, Scope: newScope}}, protocol.TaskKind_Oneshot, resolved, h.lookupPrincipal(cid)); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}, nil
@@ -1642,7 +1642,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved, h.lookupPrincipal(cid)); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", args, req.Selector, runner.ID.String(), origin, GrantUpdate{Caps: override, Scope: req.ScopePresent(), To: authority.Grant{Caps: newCaps, Scope: reqScope}}, interactiveKind(req), resolved, h.lookupPrincipal(cid)); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1661,7 +1661,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
+		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID.String(), req.Selector, req.ExtraArgs.AsStrings(), authority.Grant{Caps: caps, Scope: reqScope}, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID

@@ -121,7 +121,9 @@ func TestAwaitProgress_EndedWhileArmed(t *testing.T) {
 func TestAwaitProgress_OneshotNoMux(t *testing.T) {
 	h := newTestHandler(t)
 	tHex := h.Tasks.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	op := operatorConn("9747")
 	before := armProgress(t, h, op, tHex, 0, protocol.AwaitSink_Reply, "")
 	noReplyYet(t, op, before)
@@ -133,7 +135,9 @@ func TestAwaitProgress_OneshotNoMux(t *testing.T) {
 func TestAwaitProgress_NotVisible(t *testing.T) {
 	f := newProgressFixture(t)
 	other := f.h.Tasks.Create("/repo", "stranger", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 	// f.conn is T's agent connection; the stranger is outside T's subtree.
 	got := awaitProgressReply(t, f.conn, armProgress(t, f.h, f.conn, other, 0, protocol.AwaitSink_Reply, ""))
 	if got.Status != protocol.AwaitProgressStatus_NotFound {

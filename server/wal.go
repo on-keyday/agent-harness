@@ -74,6 +74,16 @@ type WALEvent struct {
 	ScopeExcludeSelf    bool               `json:"scope_exclude_self,omitempty"`
 	ScopeVisIDs         []string           `json:"scope_vis_ids,omitempty"`
 	ScopeOverrides      []WALScopeOverride `json:"scope_overrides,omitempty"`
+	// The delegation bound (TaskEntry.DelegateCaps / DelegateScope), on the
+	// same two events as the scope. A legacy record carries none of these keys,
+	// and every zero is the default bound.
+	DelegateCaps                uint32   `json:"delegate_caps,omitempty"`
+	DelegateScopeBase           uint8    `json:"delegate_scope_base,omitempty"`
+	DelegateScopeVisBase        uint8    `json:"delegate_scope_vis_base,omitempty"`
+	DelegateScopeVisBasePresent bool     `json:"delegate_scope_vis_base_present,omitempty"`
+	DelegateScopeExcludeSelf    bool     `json:"delegate_scope_exclude_self,omitempty"`
+	DelegateScopeIDs            []string `json:"delegate_scope_ids,omitempty"`
+	DelegateScopeVisIDs         []string `json:"delegate_scope_vis_ids,omitempty"`
 	// AgentProfile is the resolved agent profile name for this task (see
 	// TaskEntry.AgentProfile). Written on task_created events; legacy
 	// entries default to "" (zero). Also reused by task_resumed events.
@@ -149,25 +159,32 @@ type walEventJSON struct {
 	// Mirrors of the axes on WALEvent. This shadow struct is the reason
 	// TestWALEventJSONRoundTripCopiesEveryField exists: a field added to
 	// WALEvent and forgotten here is dropped on persistence, silently.
-	ScopeVisBase        uint8              `json:"scope_vis_base,omitempty"`
-	ScopeVisBasePresent bool               `json:"scope_vis_base_present,omitempty"`
-	ScopeExcludeSelf    bool               `json:"scope_exclude_self,omitempty"`
-	ScopeVisIDs         []string           `json:"scope_vis_ids,omitempty"`
-	ScopeOverrides      []WALScopeOverride `json:"scope_overrides,omitempty"`
-	AgentProfile        string             `json:"agent_profile,omitempty"`
-	SkillsInjected      bool               `json:"skills_injected,omitempty"`
-	WorktreeDir         string             `json:"worktree_dir,omitempty"`
-	ExitCode            *int32             `json:"exit_code,omitempty"`
-	DiffInfo            []byte             `json:"diff_info,omitempty"`
-	BoundRunnerID       string             `json:"bound_runner_id,omitempty"`
-	Reason              string             `json:"reason,omitempty"`
-	ExtraArgs           []string           `json:"extra_args,omitempty"`
-	HoldID              string             `json:"hold_id,omitempty"`
-	HoldDeadlineNs      int64              `json:"hold_deadline_ns,omitempty"`
-	AuthoritySource     uint8              `json:"authority_source,omitempty"`
-	AuthorityActor      string             `json:"authority_actor,omitempty"`
-	AuthorityAt         int64              `json:"authority_at,omitempty"`
-	Ts                  int64              `json:"ts"`
+	ScopeVisBase                uint8              `json:"scope_vis_base,omitempty"`
+	ScopeVisBasePresent         bool               `json:"scope_vis_base_present,omitempty"`
+	ScopeExcludeSelf            bool               `json:"scope_exclude_self,omitempty"`
+	ScopeVisIDs                 []string           `json:"scope_vis_ids,omitempty"`
+	ScopeOverrides              []WALScopeOverride `json:"scope_overrides,omitempty"`
+	DelegateCaps                uint32             `json:"delegate_caps,omitempty"`
+	DelegateScopeBase           uint8              `json:"delegate_scope_base,omitempty"`
+	DelegateScopeVisBase        uint8              `json:"delegate_scope_vis_base,omitempty"`
+	DelegateScopeVisBasePresent bool               `json:"delegate_scope_vis_base_present,omitempty"`
+	DelegateScopeExcludeSelf    bool               `json:"delegate_scope_exclude_self,omitempty"`
+	DelegateScopeIDs            []string           `json:"delegate_scope_ids,omitempty"`
+	DelegateScopeVisIDs         []string           `json:"delegate_scope_vis_ids,omitempty"`
+	AgentProfile                string             `json:"agent_profile,omitempty"`
+	SkillsInjected              bool               `json:"skills_injected,omitempty"`
+	WorktreeDir                 string             `json:"worktree_dir,omitempty"`
+	ExitCode                    *int32             `json:"exit_code,omitempty"`
+	DiffInfo                    []byte             `json:"diff_info,omitempty"`
+	BoundRunnerID               string             `json:"bound_runner_id,omitempty"`
+	Reason                      string             `json:"reason,omitempty"`
+	ExtraArgs                   []string           `json:"extra_args,omitempty"`
+	HoldID                      string             `json:"hold_id,omitempty"`
+	HoldDeadlineNs              int64              `json:"hold_deadline_ns,omitempty"`
+	AuthoritySource             uint8              `json:"authority_source,omitempty"`
+	AuthorityActor              string             `json:"authority_actor,omitempty"`
+	AuthorityAt                 int64              `json:"authority_at,omitempty"`
+	Ts                          int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
 	SelectorB64 string `json:"selector_b64,omitempty"`
@@ -195,20 +212,28 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ScopeExcludeSelf:    e.ScopeExcludeSelf,
 		ScopeVisIDs:         e.ScopeVisIDs,
 		ScopeOverrides:      e.ScopeOverrides,
-		AgentProfile:        e.AgentProfile,
-		SkillsInjected:      e.SkillsInjected,
-		WorktreeDir:         e.WorktreeDir,
-		ExitCode:            e.ExitCode,
-		DiffInfo:            e.DiffInfo,
-		BoundRunnerID:       e.BoundRunnerID,
-		Reason:              e.Reason,
-		ExtraArgs:           e.ExtraArgs,
-		HoldID:              e.HoldID,
-		HoldDeadlineNs:      e.HoldDeadlineNs,
-		AuthoritySource:     e.AuthoritySource,
-		AuthorityActor:      e.AuthorityActor,
-		AuthorityAt:         e.AuthorityAt,
-		Ts:                  e.Ts,
+
+		DelegateCaps:                e.DelegateCaps,
+		DelegateScopeBase:           e.DelegateScopeBase,
+		DelegateScopeVisBase:        e.DelegateScopeVisBase,
+		DelegateScopeVisBasePresent: e.DelegateScopeVisBasePresent,
+		DelegateScopeExcludeSelf:    e.DelegateScopeExcludeSelf,
+		DelegateScopeIDs:            e.DelegateScopeIDs,
+		DelegateScopeVisIDs:         e.DelegateScopeVisIDs,
+		AgentProfile:                e.AgentProfile,
+		SkillsInjected:              e.SkillsInjected,
+		WorktreeDir:                 e.WorktreeDir,
+		ExitCode:                    e.ExitCode,
+		DiffInfo:                    e.DiffInfo,
+		BoundRunnerID:               e.BoundRunnerID,
+		Reason:                      e.Reason,
+		ExtraArgs:                   e.ExtraArgs,
+		HoldID:                      e.HoldID,
+		HoldDeadlineNs:              e.HoldDeadlineNs,
+		AuthoritySource:             e.AuthoritySource,
+		AuthorityActor:              e.AuthorityActor,
+		AuthorityAt:                 e.AuthorityAt,
+		Ts:                          e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
 	if e.Selector.Kind != protocol.RunnerSelectorKind_Any {
@@ -242,6 +267,13 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ScopeExcludeSelf = j.ScopeExcludeSelf
 	e.ScopeVisIDs = j.ScopeVisIDs
 	e.ScopeOverrides = j.ScopeOverrides
+	e.DelegateCaps = j.DelegateCaps
+	e.DelegateScopeBase = j.DelegateScopeBase
+	e.DelegateScopeVisBase = j.DelegateScopeVisBase
+	e.DelegateScopeVisBasePresent = j.DelegateScopeVisBasePresent
+	e.DelegateScopeExcludeSelf = j.DelegateScopeExcludeSelf
+	e.DelegateScopeIDs = j.DelegateScopeIDs
+	e.DelegateScopeVisIDs = j.DelegateScopeVisIDs
 	e.AgentProfile = j.AgentProfile
 	e.SkillsInjected = j.SkillsInjected
 	e.WorktreeDir = j.WorktreeDir

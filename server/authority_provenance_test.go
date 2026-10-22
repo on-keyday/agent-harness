@@ -28,7 +28,9 @@ func provenanceStore(t *testing.T) (*TaskStore, string) {
 
 func createTask(s *TaskStore, creator protocol.TaskID) string {
 	return s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, creator, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+		"")
+
 }
 
 func wantProvenance(t *testing.T, s *TaskStore, id string, src protocol.AuthoritySource, actor protocol.TaskID) {
@@ -55,8 +57,9 @@ func TestProvenanceSetCaps(t *testing.T) {
 	s, _ := provenanceStore(t)
 	id := createTask(s, protocol.TaskID{})
 	before, _ := s.Get(id)
-	s.SetCaps(id, true, protocol.Capability_Cancel, false, authority.Scope{},
+	s.SetCaps(id, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{}}},
 		AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet})
+
 	wantProvenance(t, s, id, protocol.AuthoritySource_OperatorCapsSet, protocol.TaskID{})
 	if after, _ := s.Get(id); !after.AuthorityAt.After(before.AuthorityAt) && !after.AuthorityAt.Equal(before.AuthorityAt) {
 		t.Errorf("AuthorityAt went backwards: %v → %v", before.AuthorityAt, after.AuthorityAt)
@@ -68,8 +71,8 @@ func TestProvenanceResume(t *testing.T) {
 	id := createTask(s, protocol.TaskID{})
 	resumer := taskIDFromHex(createTask(s, protocol.TaskID{}))
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-		true, protocol.Capability_FileRead, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", resumer); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}},
+		protocol.TaskKind_Oneshot, "", resumer); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	wantProvenance(t, s, id, protocol.AuthoritySource_Resume, resumer)
@@ -77,8 +80,8 @@ func TestProvenanceResume(t *testing.T) {
 	// A resume that keeps the recorded authority writes nothing.
 	kept, _ := s.Get(id)
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		false, 0, false, authority.Scope{}, protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
+	if _, err := s.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli, GrantUpdate{Caps: false, Scope: false, To: authority.Grant{Caps: 0, Scope: authority.Scope{}}},
+		protocol.TaskKind_Oneshot, "", protocol.TaskID{}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	if e, _ := s.Get(id); e.AuthoritySource != kept.AuthoritySource || e.AuthorityActor != kept.AuthorityActor || !e.AuthorityAt.Equal(kept.AuthorityAt) {
@@ -111,8 +114,9 @@ func TestProvenanceSurvivesReplay(t *testing.T) {
 	p := createTask(s, protocol.TaskID{})
 	c := createTask(s, taskIDFromHex(p))
 	g := createTask(s, taskIDFromHex(c))
-	s.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{},
+	s.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{}}},
 		AuthorityWrite{Source: protocol.AuthoritySource_Cascade, Actor: taskIDFromHex(p)})
+
 	s.SetParent(g, taskIDFromHex(p))
 
 	events, _, err := ReadWAL(path)
@@ -243,8 +247,9 @@ func TestListHidesUnseenActor(t *testing.T) {
 func TestListAuthorityAge(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	h.Registry = NewRegistry()
-	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, authority.Scope{},
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_Cancel, Scope: authority.Scope{}}},
 		AuthorityWrite{Source: protocol.AuthoritySource_OperatorCapsSet})
+
 	h.Tasks.tasks[c].AuthorityAt = time.Now().Add(-2 * time.Second)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9936-1"), nextSendStreamID: 12}
 	row, _ := listRowAs(t, h, opConn, c)

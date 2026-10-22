@@ -112,7 +112,7 @@ func TestSetCapsDropsConnsOnlyWhenNarrowing(t *testing.T) {
 	h.DropConnsForPrincipal = func(id string) int { dropped = append(dropped, id); return 2 }
 
 	// Start narrow so the next call is unambiguously a widening.
-	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, authority.Scope{}, AuthorityWrite{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: true, Scope: false, To: authority.Grant{Caps: protocol.Capability_FileRead, Scope: authority.Scope{}}}, AuthorityWrite{}) //nolint:errcheck
 
 	widen := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Caps: protocol.Capability_All}
 	widen.SetCapsPresent(true)
@@ -179,8 +179,9 @@ func TestSetCapsCascadeHonoursTheParentsOverride(t *testing.T) {
 func TestSetCapsCascadeKeepsOverridesOfExercisedBits(t *testing.T) {
 	h, _, c, g, _ := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9907-1")}
-	h.Tasks.SetCaps(g, true, protocol.Capability_ExecControl, true, authority.Scope{Base: protocol.ScopeBase_Subtree, //nolint:errcheck
-		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}}, AuthorityWrite{})
+	h.Tasks.SetCaps(g, GrantUpdate{Caps: true, Scope: true, To: authority.Grant{Caps: protocol.Capability_ExecControl, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree,
+		Overrides: []authority.ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_None}}}}},
+		AuthorityWrite{})
 
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, c), Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}.ToWire()}
 	req.SetScopePresent(true)
@@ -200,8 +201,8 @@ func TestSetCapsCascadeKeepsOverridesOfExercisedBits(t *testing.T) {
 func TestSetCapsCascadeKeepsIDsInsideTheParentsReach(t *testing.T) {
 	h, p, c, g, u := scopeFixture(t)
 	opConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9906-1")}
-	h.Tasks.SetCaps(p, false, 0, true, authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}, AuthorityWrite{})                      //nolint:errcheck
-	h.Tasks.SetCaps(c, false, 0, true, authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{g, u}, VisIDs: []string{g, u}}, AuthorityWrite{}) //nolint:errcheck
+	h.Tasks.SetCaps(p, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: 0, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}}}, AuthorityWrite{})                      //nolint:errcheck
+	h.Tasks.SetCaps(c, GrantUpdate{Caps: false, Scope: true, To: authority.Grant{Caps: 0, Scope: authority.Scope{Base: protocol.ScopeBase_None, IDs: []string{g, u}, VisIDs: []string{g, u}}}}, AuthorityWrite{}) //nolint:errcheck
 
 	req := protocol.SetCapsRequest{TaskId: hexToTaskID(t, p),
 		Scope: authority.Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}}.ToWire()}

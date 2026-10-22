@@ -46,7 +46,10 @@ func detachedTask(t *testing.T, s *Server) string {
 	t.Helper()
 	id := s.tasks.Create("/repo", "work", protocol.TaskKind_Interactive,
 		protocol.ClientKind_Unspecified, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}},
+
+		"")
+
 	s.tasks.Assign(id, testRunnerID("ws:127.0.0.1:8539-40"), "", false)
 	if err := s.tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)

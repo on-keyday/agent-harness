@@ -22,7 +22,9 @@ func newResumeFixture(t *testing.T, caps protocol.Capability, scope authority.Sc
 	t.Helper()
 	h := newTestHandler(t)
 	self := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, caps, scope, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: caps, Scope: scope},
+		"")
+
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9710-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -39,7 +41,9 @@ func (f *resumeFixture) terminalTask(t *testing.T, child bool) string {
 		creator = hexToTaskID(t, f.selfID)
 	}
 	id := f.h.Tasks.Create("/r", "old", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "")
+		creator, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+		"")
+
 	markTerminalForTest(t, f.h, id)
 	return id
 }

@@ -107,7 +107,9 @@ func TestRestorableReportsOkWhenTheWALWasActuallyRead(t *testing.T) {
 	s, _, dir := walStore(t)
 	path := filepath.Join(dir, "events.log")
 	id := s.Create("/repo", "kept", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+		"")
+
 	s.MarkFailed(id, "x")
 
 	rows, status := restorableFromPath(path, s.Live, nil)

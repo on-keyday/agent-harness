@@ -100,9 +100,13 @@ func TestIdleWatchers_OperatorSeesAllAgentSeesOwn(t *testing.T) {
 	target := "ee000000000000000000000000000000"
 	scope := authority.Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{target}}
 	aHex := h.Tasks.Create("repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, scope, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: scope},
+		"")
+
 	bHex := h.Tasks.Create("repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, scope, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: scope},
+		"")
+
 	a, b := hexToTaskID(t, aHex), hexToTaskID(t, bHex)
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -146,8 +150,10 @@ func TestIdleWatchers_OperatorSeesAllAgentSeesOwn(t *testing.T) {
 func TestIdleWatchers_AgentLosesSightWhenScopeNarrows(t *testing.T) {
 	h := newTestHandler(t)
 	aHex := h.Tasks.Create("repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None,
-		authority.Scope{Base: protocol.ScopeBase_Subtree}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{Base: protocol.ScopeBase_Subtree}},
+
+		"")
+
 	a := hexToTaskID(t, aHex)
 	h.principals = map[string]protocol.TaskID{"ws:127.0.0.1:9601-1": a}
 	armBoardWatcher(h, "ee000000000000000000000000000000", a, "ws:127.0.0.1:9601-1")

@@ -34,7 +34,9 @@ func reachStore(b *testing.B, n, d int) reachFixture {
 	s := NewTaskStore()
 	create := func(creator protocol.TaskID) protocol.TaskID {
 		idHex := s.Create("repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-			creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, authority.Scope{}, "bash")
+			creator, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_None, Scope: authority.Scope{}},
+			"bash")
+
 		raw, err := hex.DecodeString(idHex)
 		if err != nil {
 			b.Fatal(err)

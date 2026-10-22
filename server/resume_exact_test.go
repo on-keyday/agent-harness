@@ -29,7 +29,9 @@ func exactRunner(t *testing.T, h *TaskHandler, name string, conn ConnHandle, pro
 func recordedTask(t *testing.T, h *TaskHandler, kind protocol.TaskKind, prompt string, args []string, profile, on string) string {
 	t.Helper()
 	id := h.Tasks.Create("/shared/repo", prompt, kind, protocol.ClientKind_Cli, protocol.TaskID{}, on,
-		protocol.RunnerSelector{}, args, protocol.Capability_None, authority.DefaultScope(), profile)
+		protocol.RunnerSelector{}, args, authority.Grant{Caps: protocol.Capability_None, Scope: authority.DefaultScope()},
+		profile)
+
 	h.Tasks.Assign(id, testRunnerID(on), "/wt", false)
 	h.Tasks.Finish(id, 0, nil)
 	return id

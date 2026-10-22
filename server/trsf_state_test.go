@@ -24,7 +24,10 @@ func trsfCaller(t *testing.T, h *TaskHandler, port string) *fakeConn {
 	t.Helper()
 	idHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.DefaultScope(), "")
+		protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.DefaultScope()},
+
+		"")
+
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:" + port + "-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

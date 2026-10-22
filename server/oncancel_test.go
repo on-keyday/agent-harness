@@ -57,7 +57,7 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 	})
 
 	// Create a task and manually assign it (simulating TryDispatch success).
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	// Also bind it in the registry (as TryDispatch would have done).
 	reg.BindTask(runnerID, taskID)
@@ -87,7 +87,7 @@ func TestDispatcherOnCancel_NoRunner(t *testing.T) {
 	tasks := NewTaskStore()
 	d := &Dispatcher{Registry: reg, Tasks: tasks}
 
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 
 	// Should not panic; no runner to forward to.
 	d.OnCancel(taskID)
@@ -116,7 +116,7 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 		Conn:             fc,
 	})
 
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, authority.Scope{}, "")
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	tasks.Assign(taskID, testRunnerID(runnerID.String()), "", false)
 	reg.BindTask(runnerID, taskID)
 

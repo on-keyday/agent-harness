@@ -61,3 +61,30 @@ func scopeFromWAL(ev WALEvent) authority.Scope {
 	}
 	return s
 }
+
+// applyDelegationToWAL / delegationFromWAL are the same projection for the
+// delegation bound, under the delegate_ key prefix. A bound carries no
+// overrides, so there is no override list to write.
+//
+// scopeFromWAL's board_observe migration deliberately has no counterpart: it
+// exists for records older than the visibility axis, and every bound is newer.
+func applyDelegationToWAL(caps protocol.Capability, s authority.Scope, ev *WALEvent) {
+	ev.DelegateCaps = uint32(caps)
+	ev.DelegateScopeBase = uint8(s.Base)
+	ev.DelegateScopeVisBase = uint8(s.VisBase)
+	ev.DelegateScopeVisBasePresent = s.VisBasePresent
+	ev.DelegateScopeExcludeSelf = s.ExcludeSelf
+	ev.DelegateScopeIDs = s.IDs
+	ev.DelegateScopeVisIDs = s.VisIDs
+}
+
+func delegationFromWAL(ev WALEvent) (protocol.Capability, authority.Scope) {
+	return protocol.Capability(ev.DelegateCaps), authority.Scope{
+		Base:           protocol.ScopeBase(ev.DelegateScopeBase),
+		VisBase:        protocol.ScopeBase(ev.DelegateScopeVisBase),
+		VisBasePresent: ev.DelegateScopeVisBasePresent,
+		ExcludeSelf:    ev.DelegateScopeExcludeSelf,
+		IDs:            authority.NormalizeIDs(ev.DelegateScopeIDs),
+		VisIDs:         authority.NormalizeIDs(ev.DelegateScopeVisIDs),
+	}
+}
