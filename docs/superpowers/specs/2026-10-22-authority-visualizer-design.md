@@ -51,7 +51,8 @@ the author chose it while writing; those rows are the ones to check.
 | V15 | "Wider than parent" is never drawn as a defect. Reparent, swap, a resume by someone other than the creator, and a parent narrowed without cascade all produce it legitimately with no write to the child, so no predicate over the live tree tells a failed attenuation apart; attenuation is pinned by the case catalog instead. The mark is one colour, with the provenance as its explanation | this spec (builder check) |
 | V16 | The comparison leaves out the child's own id (a task always acts on itself, whatever its parent may do) and includes visibility: a child that SEES more than its parent is marked too | this spec (builder check) |
 | V17 | `caps set-parent` and `--swap` write `AuthoritySource.reparent` on the task whose parent changed (both tasks of a swap), actor = operator. Its authority did not change, but the bound it is measured against did, which is the explanation the mark needs | this spec (builder check) |
-| V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; the UI then says 「見えない task」. Operators see every actor | this spec (builder check) |
+| V18 | `authority_actor` is zeroed in a `TaskInfo` sent to a caller that cannot see the actor, as every other fact about an unseen task is withheld; `authority_actor_hidden` says so, and the label reads `@hidden`. Operators see every actor | this spec (builder check); wording unified with V21 |
+| V21 | Provenance has ONE rendering, `cli.AuthorityLabel` (`<source>@<actor> (<age>)`), on every surface — ls, TUI popup, WebUI sheet, caps audit, and Phase 3's marks. This replaces the per-surface wording the first draft invented (「見えない task」, Japanese tooltip phrases), which no decision asked for | operator (2026-10-22: 「統一でいいのでは」) |
 | V20 | "This scenario is a catalog case" is decided up to RENAMING: same tree shape, same caps and scope on each task, same change, task ids ignored (§ Matching a scenario to a case) | operator |
 | V19 | The delegation bound lands after Phase 5, inside `authority` (V7's order). Each feature makes its own `TaskInfo` change | operator (the agreed order), restated after the builder check |
 
@@ -152,9 +153,9 @@ not change.
 
 ### Display
 
-`ls` rows and `ls --json` carry it (`auth=operator_caps_set@<id8|operator> <age>`
-in a row; the three fields in JSON). The TUI detail popup and the WebUI task
-sheet show it in words. The caps audit shows it on each holder line.
+`ls` rows carry it as `auth=<AuthorityLabel>` and `ls --json` as its fields.
+The TUI detail popup, the WebUI task sheet and each caps audit holder line show
+the same label (V21).
 
 ## Phase 3 — reach
 
@@ -186,9 +187,9 @@ Empty for an operator-created task.
   sheet's close leaves the mode.
 - Arrows and creator-edge labels stay as they are (V4).
 - A node whose `WiderThanParent` is non-empty carries one mark (V15); its
-  tooltip names the bits (and 「閲覧」 when it sees more) and the Phase 2
-  provenance: "operator が caps set で付与", "親子関係が変わった
-  (set-parent)", "作成・再付与の後で親が狭められた", "記録なし".
+  tooltip names the bits (and `vis` when it sees more) and the task's
+  `AuthorityLabel` (V21) — `operator_caps_set@…`, `reparent@…`,
+  `spawn@…` for a parent narrowed after the fact, `unknown`.
 
 ### CLI / TUI
 
@@ -305,7 +306,7 @@ the plan, and this table is checked back against the code at the end (item 39).
 | --- | --- | --- |
 | WebUI tree | 1 | arrows and labels computed by `authority` |
 | `ls` rows / `--json`, `session ls` | 2 | provenance |
-| TUI detail popup, WebUI task sheet | 2 | provenance in words |
+| TUI detail popup, WebUI task sheet | 2 | provenance, the same label (V21) |
 | `caps audit` (CLI, TUI modal, WebUI) | 2 | provenance per holder |
 | WebUI tree, task sheet | 3 | reach mode, wider-than-parent marks |
 | CLI / TUI / WebUI command line | 3 | `caps reach` |
