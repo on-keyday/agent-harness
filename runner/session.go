@@ -96,6 +96,29 @@ var wakeSubmitByte = []byte{'\r'}
 // in one call: the marker as a paste, then Enter.
 var bracketedWake = []byte("\x1b[200~" + wakeMarker + "\x1b[201~\r")
 
+// wakeForm is the shape a wake took on the agent's stdin, logged with
+// `wake written`. An idle agent submits a PTY wake in either PTY form, so the
+// screen cannot tell them apart; the log line is the only place that can.
+type wakeForm int
+
+const (
+	wakeSplit wakeForm = iota // text, wakeSubmitDelay, lone CR
+	wakePaste                 // one bracketed paste and CR
+	wakeTurn                  // one event-stream user turn
+)
+
+func (f wakeForm) String() string {
+	switch f {
+	case wakeSplit:
+		return "split"
+	case wakePaste:
+		return "paste"
+	case wakeTurn:
+		return "turn"
+	}
+	return "wakeForm(" + strconv.Itoa(int(f)) + ")"
+}
+
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
 // trsf.Transport / objproto.Connection so tests can use a mock.
 type Sender interface {
@@ -126,8 +149,9 @@ type taskEntry struct {
 	// takes: a PTY session gets the marker typed and submitted, a stream
 	// session gets it as a user turn. Set from OnStdinWriter by the two
 	// handleOpenExec paths; a oneshot task run via handleAssign has no stdin
-	// and never sets it, so it stays nil for that task's whole lifetime.
-	wake func() error
+	// and never sets it, so it stays nil for that task's whole lifetime. It
+	// reports the form it wrote, for the log.
+	wake func() (wakeForm, error)
 
 	// lastWakeAt is the most recent time WakeStdin actually wrote to
 	// stdin. Wakes within wakeDebounceWindow are dropped (the agent's
@@ -1221,7 +1245,7 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	e.waking = true
 	s.mu.Unlock()
 
-	err := wake()
+	form, err := wake()
 
 	s.mu.Lock()
 	e.waking = false
@@ -1240,11 +1264,11 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	// observable from here. That boundary is exactly what the log is for: with
 	// this line present and no turn, the next investigation starts at the
 	// agent instead of re-reading this file.
-	s.logger().Info("wake written", "task_id", taskIDHex)
+	s.logger().Info("wake written", "task_id", taskIDHex, "form", form)
 }
 
 // setWake installs the task's wake delivery once its agent's stdin exists.
-func (s *Session) setWake(taskIDHex string, wake func() error) {
+func (s *Session) setWake(taskIDHex string, wake func() (wakeForm, error)) {
 	s.mu.Lock()
 	if e, ok := s.reg.get(taskIDHex); ok && e != nil {
 		e.wake = wake
@@ -1257,22 +1281,22 @@ func (s *Session) setWake(taskIDHex string, wake func() error) {
 // an agent can turn bracketed paste on after it starts. With bracketed paste on
 // the marker goes as a paste and the Enter after it, in one write; without, as
 // text, a pause, then a lone Enter. See the wakeMarker comment for why.
-func ptyWake(write func([]byte) (int, error), modes *termmode.Tracker) func() error {
-	return func() error {
+func ptyWake(write func([]byte) (int, error), modes *termmode.Tracker) func() (wakeForm, error) {
+	return func() (wakeForm, error) {
 		if on, _ := modes.Mode(termmode.BracketedPaste); on {
 			if _, err := write(bracketedWake); err != nil {
-				return fmt.Errorf("paste: %w", err)
+				return wakePaste, fmt.Errorf("paste: %w", err)
 			}
-			return nil
+			return wakePaste, nil
 		}
 		if _, err := write([]byte(wakeMarker)); err != nil {
-			return fmt.Errorf("text: %w", err)
+			return wakeSplit, fmt.Errorf("text: %w", err)
 		}
 		time.Sleep(wakeSubmitDelay)
 		if _, err := write(wakeSubmitByte); err != nil {
-			return fmt.Errorf("submit: %w", err)
+			return wakeSplit, fmt.Errorf("submit: %w", err)
 		}
-		return nil
+		return wakeSplit, nil
 	}
 }
 
@@ -1295,10 +1319,10 @@ func (t ptyModeTap) Exit(error)                   {}
 // interleaving with a client's line: the stdin it writes is agentexec's
 // io.Pipe, which serialises concurrent Writes whole, and a client's turn
 // arrives as one Stdin frame written in one call.
-func streamWake(write func([]byte) (int, error)) func() error {
+func streamWake(write func([]byte) (int, error)) func() (wakeForm, error) {
 	w := streamagent.NewWriter(writeFunc(write))
-	return func() error {
-		return w.User(streamagent.UserTurn{Text: wakeMarker})
+	return func() (wakeForm, error) {
+		return wakeTurn, w.User(streamagent.UserTurn{Text: wakeMarker})
 	}
 }
 

@@ -235,6 +235,43 @@ func TestSession_WakeStdin_BracketedPasteIsOneWrite(t *testing.T) {
 	}
 }
 
+// `wake written` names the form the wake took. An idle agent submits either PTY
+// form, so nothing on its screen says which one the runner chose; without the
+// log, "did this runner see bracketed paste" has no answer short of stopping
+// the agent to make the split one fail.
+func TestSession_WakeStdin_LogsTheForm(t *testing.T) {
+	pasting := termmode.New()
+	pasting.Feed([]byte("\x1b[?2004h"))
+	cases := []struct {
+		name string
+		wake func(write func([]byte) (int, error)) func() (wakeForm, error)
+		want string
+	}{
+		{"pty without bracketed paste", func(w func([]byte) (int, error)) func() (wakeForm, error) {
+			return ptyWake(w, termmode.New())
+		}, "form=split"},
+		{"pty with bracketed paste", func(w func([]byte) (int, error)) func() (wakeForm, error) {
+			return ptyWake(w, pasting)
+		}, "form=paste"},
+		{"event stream", streamWake, "form=turn"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			s := &Session{Now: time.Now, Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+			cw := &captureWriter{}
+			s.reg = NewTaskRegistry()
+			s.reg.put("abc", &taskEntry{wake: tc.wake(cw.write)})
+
+			s.WakeStdin("abc")
+
+			if got := buf.String(); !strings.Contains(got, "wake written") || !strings.Contains(got, tc.want) {
+				t.Errorf("want a `wake written` line with %s, got: %s", tc.want, got)
+			}
+		})
+	}
+}
+
 // The mode is read at each wake, not when the session starts: an agent turns
 // bracketed paste on after its first output, and can turn it off again.
 func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
@@ -242,15 +279,15 @@ func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
 	cw := &captureWriter{}
 	wake := ptyWake(cw.write, modes)
 
-	if err := wake(); err != nil {
+	if _, err := wake(); err != nil {
 		t.Fatal(err)
 	}
 	modes.Feed([]byte("\x1b[?2004h"))
-	if err := wake(); err != nil {
+	if _, err := wake(); err != nil {
 		t.Fatal(err)
 	}
 	modes.Feed([]byte("\x1b[?2004l"))
-	if err := wake(); err != nil {
+	if _, err := wake(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,13 +311,13 @@ func TestSession_WakeStdin_OneInFlight(t *testing.T) {
 	release := make(chan struct{})
 	var mu sync.Mutex
 	writes := 0
-	blocking := func() error {
+	blocking := func() (wakeForm, error) {
 		mu.Lock()
 		writes++
 		mu.Unlock()
 		close(entered)
 		<-release
-		return nil
+		return wakeSplit, nil
 	}
 	var buf bytes.Buffer
 	var bufMu sync.Mutex
@@ -330,7 +367,7 @@ func TestTaskWakeDoesNotBlockTheReceiveLoop(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	reg := NewTaskRegistry()
-	reg.put(id, &taskEntry{wake: func() error { <-release; return nil }})
+	reg.put(id, &taskEntry{wake: func() (wakeForm, error) { <-release; return wakeSplit, nil }})
 	s := &Session{reg: reg, Sender: nopSender{}, Now: time.Now}
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_TaskWake}
