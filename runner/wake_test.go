@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -9,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
+	"github.com/on-keyday/agent-harness/termmode"
 )
 
 // captureWriter records every byte slice written to it.
@@ -49,14 +53,15 @@ func (c *captureWriter) writeAt(i int) string {
 }
 
 func TestSession_WakeStdin_SplitWrite(t *testing.T) {
-	// One fire emits two writes: the marker text, then a lone Enter byte
-	// after wakeSubmitDelay. The split is required because Ink-based
-	// claude code TUI treats a single combined write as paste content
-	// (trailing Enter becomes literal newline) — see session.go comments.
+	// Without bracketed paste, one fire emits two writes: the marker text,
+	// then a lone Enter byte after wakeSubmitDelay. Read together they are
+	// taken as pasted content and the Enter becomes a literal newline — see
+	// the session.go comments for why the delay narrows that and the paste
+	// does not have it.
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
 
 	s.WakeStdin("abc")
 
@@ -75,7 +80,7 @@ func TestSession_WakeStdin_Debounce(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
 
 	s.WakeStdin("abc")
 	s.WakeStdin("abc")
@@ -93,7 +98,7 @@ func TestSession_WakeStdin_AfterWindow(t *testing.T) {
 	s := &Session{Now: func() time.Time { return cur }}
 	cw := &captureWriter{}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
 
 	s.WakeStdin("abc")
 	cur = now.Add(wakeDebounceWindow + 100*time.Millisecond)
@@ -119,7 +124,7 @@ func TestSession_WakeStdin_TextWriteError_DoesNotAdvanceCursor(t *testing.T) {
 	s := &Session{Now: time.Now}
 	cw := &captureWriter{failNext: errors.New("pipe closed")}
 	s.reg = NewTaskRegistry()
-	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
 
 	s.WakeStdin("abc") // text write fails — writeCount stays 0
 	if cw.writeCount() != 0 {
@@ -167,7 +172,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
 				// Inside wakeDebounceWindow, so the second fire is dropped.
-				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write), lastWakeAt: s.Now()})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New()), lastWakeAt: s.Now()})
 			},
 			task: "abc",
 			want: "debounced",
@@ -176,7 +181,7 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 			name: "written",
 			setup: func(s *Session, cw *captureWriter) {
 				s.reg = NewTaskRegistry()
-				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write)})
+				s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, termmode.New())})
 			},
 			task: "abc",
 			want: "wake written",
@@ -205,6 +210,147 @@ func TestSession_WakeStdin_LogsWhichGateItTook(t *testing.T) {
 				t.Errorf("log line does not carry the task id: %s", got)
 			}
 		})
+	}
+}
+
+// An agent that asked for bracketed paste gets the marker as one paste and the
+// Enter after it, in ONE write. That is the point: the split write's delay is
+// the writer's, and an agent that reads late takes text and "\r" together and
+// turns the "\r" into a newline. With the paste end explicit, one read is fine.
+func TestSession_WakeStdin_BracketedPasteIsOneWrite(t *testing.T) {
+	modes := termmode.New()
+	modes.Feed([]byte("\x1b[?2004h"))
+	s := &Session{Now: time.Now}
+	cw := &captureWriter{}
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wake: ptyWake(cw.write, modes)})
+
+	s.WakeStdin("abc")
+
+	if got := cw.writeCount(); got != 1 {
+		t.Fatalf("writeCount = %d, want 1 (paste and Enter together)", got)
+	}
+	if want := "\x1b[200~" + wakeMarker + "\x1b[201~\r"; cw.writeAt(0) != want {
+		t.Errorf("write = %q, want %q", cw.writeAt(0), want)
+	}
+}
+
+// The mode is read at each wake, not when the session starts: an agent turns
+// bracketed paste on after its first output, and can turn it off again.
+func TestPtyWake_FollowsTheModeAsItChanges(t *testing.T) {
+	modes := termmode.New()
+	cw := &captureWriter{}
+	wake := ptyWake(cw.write, modes)
+
+	if err := wake(); err != nil {
+		t.Fatal(err)
+	}
+	modes.Feed([]byte("\x1b[?2004h"))
+	if err := wake(); err != nil {
+		t.Fatal(err)
+	}
+	modes.Feed([]byte("\x1b[?2004l"))
+	if err := wake(); err != nil {
+		t.Fatal(err)
+	}
+
+	// split (2) + paste (1) + split (2)
+	if got := cw.writeCount(); got != 5 {
+		t.Fatalf("writeCount = %d, want 5", got)
+	}
+	if !strings.HasPrefix(cw.writeAt(2), "\x1b[200~") {
+		t.Errorf("the wake after ESC[?2004h was not a paste: %q", cw.writeAt(2))
+	}
+	if cw.writeAt(3) != wakeMarker {
+		t.Errorf("the wake after ESC[?2004l was not the plain text: %q", cw.writeAt(3))
+	}
+}
+
+// Wakes run off the receive loop, so two for one task can overlap, and the
+// debounce cannot stop the second: lastWakeAt is set only once a write has
+// finished. The second is dropped while the first is still writing.
+func TestSession_WakeStdin_OneInFlight(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	writes := 0
+	blocking := func() error {
+		mu.Lock()
+		writes++
+		mu.Unlock()
+		close(entered)
+		<-release
+		return nil
+	}
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	s := &Session{
+		Now:    time.Now,
+		Logger: slog.New(slog.NewTextHandler(lockedWriter{&bufMu, &buf}, nil)),
+	}
+	s.reg = NewTaskRegistry()
+	s.reg.put("abc", &taskEntry{wake: blocking})
+
+	done := make(chan struct{})
+	go func() { s.WakeStdin("abc"); close(done) }()
+	<-entered
+	s.WakeStdin("abc") // must return, without writing, while the first blocks
+	close(release)
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if writes != 1 {
+		t.Fatalf("writes = %d, want 1", writes)
+	}
+	bufMu.Lock()
+	defer bufMu.Unlock()
+	if !strings.Contains(buf.String(), "in flight") {
+		t.Errorf("the dropped wake did not say why: %s", buf.String())
+	}
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// A TaskWake must not hold the receive loop while its write is blocked — the
+// rule TestRebindSessionDoesNotBlockTheReceiveLoop pins for a rebind. An agent
+// that leaves its input unread blocks the stdin write, and the loop behind it
+// carries every control message for every task on the runner.
+func TestTaskWakeDoesNotBlockTheReceiveLoop(t *testing.T) {
+	const id = "91560a69a243764d181ed3f6bd7f76cf"
+	release := make(chan struct{})
+	defer close(release)
+	reg := NewTaskRegistry()
+	reg.put(id, &taskEntry{wake: func() error { <-release; return nil }})
+	s := &Session{reg: reg, Sender: nopSender{}, Now: time.Now}
+
+	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_TaskWake}
+	req.SetTaskWake(protocol.TaskWakeRequest{TaskId: taskIDOf(t, id)})
+	payload, err := req.Append(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unlike a rebind, a blocked wake never gives up, so the dispatch runs on a
+	// goroutine and the test fails at a deadline instead of hanging with it.
+	done := make(chan struct{})
+	go func() {
+		dispatchRunnerRequest(context.Background(), s, s.logger(), appwire.AppKind_RunnerControl, payload)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatching a TaskWake held the receive loop while the wake's write was blocked")
 	}
 }
 

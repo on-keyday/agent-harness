@@ -781,7 +781,10 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			break
 		}
 		taskIDHex := hex.EncodeToString(tw.TaskId.Id[:])
-		session.WakeStdin(taskIDHex)
+		// Off the receive loop, like the rebind above: the write into the
+		// agent's stdin blocks for as long as the agent leaves its input
+		// unread, and every control message for every task waits behind it.
+		go session.WakeStdin(taskIDHex)
 	case protocol.RunnerRequestType_OpenFileTransfer:
 		oft := req.OpenFileTransfer()
 		if oft == nil {

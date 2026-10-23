@@ -17,6 +17,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
+	"github.com/on-keyday/agent-harness/termmode"
 	"github.com/on-keyday/agent-harness/topics"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -49,46 +50,51 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 // auto-wake in ANY runtime; and it stays action-agnostic ("reply only if
 // warranted") so the LLM is not forced into an unwarranted reply.
 //
-// IMPORTANT: wakeMarker has NO trailing newline / carriage return. The
-// submit keystroke is sent as a separate write after wakeSubmitDelay (see
-// ptyWake). Observed against claude code, whose UI is built with Ink (a
-// React-based terminal renderer): when the runner writes the marker text
-// and a trailing "\r" or "\n" in a single syscall, the trailing byte
-// becomes a literal newline inside the input box rather than firing the
-// Enter / submit handler, and the human still has to press Enter manually.
-// Splitting the write — text, short pause, lone "\r" — makes the second
-// write parse as a real keystroke and the prompt submits itself.
+// IMPORTANT: wakeMarker has NO trailing newline / carriage return; ptyWake
+// adds the submit keystroke, in one of two ways.
 //
-// Scope of that finding: ptyWake applies the split to EVERY profile and
-// works against codex's Rust TUI too, which is not Ink — so "Ink does X"
-// is the case it was found in, not the general cause.
+// The text and a trailing "\r" read together are taken as PASTED input, and
+// the "\r" becomes a literal newline inside the input box instead of an Enter.
+// First observed against claude code with a single combined write, and the
+// first fix split the write — text, wakeSubmitDelay, lone "\r". That only moves
+// the race to the reader: the delay is the WRITER's, and an agent whose event
+// loop is late by more than it (host overload, a /clear being processed) still
+// reads both at once. Measured: a stopped-and-continued claude leaves the
+// marker in its input box every time, and the stuck markers pile up until a
+// later wake happens to submit them all.
 //
 // The general mechanism has a name: bracketed paste (DECSET 2004,
 // ESC[200~ … ESC[201~), by which a terminal marks pasted text so a TUI can
-// distinguish it from keystrokes. Nothing brackets these bytes — the
-// runner writes straight to the PTY master with no terminal emulator in
-// the path — so each agent falls back to its own heuristic and the correct
-// submit strategy is per-agent rather than universal. Warp, which drives
-// the same CLI agents, keeps an explicit per-agent table and maps codex to
-// bracketed paste while claude gets this same text/delay/CR split.
+// distinguish it from keystrokes. There is no terminal emulator in this path —
+// the runner writes straight to the PTY master — so the runner does what one
+// would: when the agent has set the mode, ptyWake brackets the marker itself,
+// and the "\r" after ESC[201~ is a keystroke however the bytes are read.
+// claude, codex, agy, opencode and pi all set it, and all submit the bracketed
+// marker from one read (measured 2026-10-24; see
+// docs/superpowers/specs/2026-10-24-pty-wake-bracketed-paste-design.md). An
+// agent that never sets it still gets the split write.
 //
-// One strategy is nonetheless adequate HERE because wakeMarker is a fixed
-// single-line constant: it has no interior newline for a TUI to submit
-// early on. That does NOT generalise to arbitrary or multi-line text —
-// `session send` deliberately stays a raw byte pipe and lets the caller
-// emit ESC[200~/ESC[201~ itself with -e.
+// Bracketing is safe HERE because wakeMarker is a fixed constant with no
+// ESC[201~ in it, which would end the paste early and turn the rest into
+// keystrokes. That does NOT generalise to arbitrary text — `session send`
+// deliberately stays a raw byte pipe and lets the caller emit ESC[200~/ESC[201~
+// itself with -e.
 const wakeMarker = "<harness:agentboard-wake> new message(s) — read via `harness-cli agent inbox --json` if not already in context; consult `harness-cli skill` if unsure how to act. Reply only if warranted."
 
 // wakeSubmitDelay is the gap between the marker text write and the lone
-// submit byte write. Long enough for the agent's input parser to flush the
-// first chunk into its text-input state before the trailing keystroke
-// arrives, short enough not to be perceptible. Tuned by feel; see
-// the wakeMarker comment for why a single combined write fails.
+// submit byte write, for an agent without bracketed paste. Long enough for the
+// agent's input parser to flush the first chunk into its text-input state
+// before the trailing keystroke arrives, short enough not to be perceptible.
+// Tuned by feel; see the wakeMarker comment for why it is not a guarantee.
 const wakeSubmitDelay = 100 * time.Millisecond
 
 // wakeSubmitByte is the byte sequence treated as Enter when delivered as a
 // standalone PTY write.
 var wakeSubmitByte = []byte{'\r'}
+
+// bracketedWake is the whole wake for an agent with bracketed paste on, written
+// in one call: the marker as a paste, then Enter.
+var bracketedWake = []byte("\x1b[200~" + wakeMarker + "\x1b[201~\r")
 
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
 // trsf.Transport / objproto.Connection so tests can use a mock.
@@ -127,6 +133,12 @@ type taskEntry struct {
 	// stdin. Wakes within wakeDebounceWindow are dropped (the agent's
 	// next inbox call will pick up everything via --since-last cursor).
 	lastWakeAt time.Time
+
+	// waking is true while a wake is being written. WakeStdin runs off the
+	// receive loop, so two can overlap, and lastWakeAt is only set once a
+	// write finishes — the debounce cannot see one still in progress. A wake
+	// that finds this set is dropped for the same reason a debounced one is.
+	waking bool
 
 	// ticket is the agentboard ticket this task's agent holds, frozen into its
 	// env at spawn. Kept here because the reconnect report has to carry it: a
@@ -1077,9 +1089,16 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	entry.relay = relay
 	defer relay.close()
 
+	// The agent's terminal modes, read off everything it writes from its first
+	// byte. Kept here rather than asked of the server: the server's copy starts
+	// over when it restarts, and an agent that set bracketed paste once at
+	// startup would then be typed at the wrong way.
+	modes := termmode.New()
+
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, relay, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
+		Audit: ptyModeTap{modes: modes},
 		OnStdinWriter: func(write func([]byte) (int, error)) {
-			s.setWake(taskIDHex, ptyWake(write))
+			s.setWake(taskIDHex, ptyWake(write, modes))
 			// The child's stdin is wired, so there IS a child now. This is
 			// the earliest observable "started" on this path, and a hold may
 			// only promise tasks that have one.
@@ -1158,7 +1177,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 }
 
 // WakeStdin delivers a wake to the given task's agent, debounced per task to
-// one delivery per wakeDebounceWindow. Safe to call from any goroutine. No-op
+// one delivery per wakeDebounceWindow and one in flight at a time. Safe to
+// call from any goroutine, and called from its own: the write can block for as
+// long as the agent leaves its input unread. No-op
 // if the task is unknown, or if its agent never wired a stdin writer — both
 // handleOpenExec paths do (PTY and event-stream); a oneshot task started
 // through handleAssign has none, so a TaskWake aimed at one is a permanent,
@@ -1184,6 +1205,11 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "task has no stdin writer (not a session)")
 		return
 	}
+	if e.waking {
+		s.mu.Unlock()
+		s.logger().Info("wake skipped", "task_id", taskIDHex, "reason", "in flight")
+		return
+	}
 	now := s.Now()
 	if !e.lastWakeAt.IsZero() && now.Sub(e.lastWakeAt) < wakeDebounceWindow {
 		since := now.Sub(e.lastWakeAt)
@@ -1192,18 +1218,23 @@ func (s *Session) WakeStdin(taskIDHex string) {
 		return
 	}
 	wake := e.wake
+	e.waking = true
 	s.mu.Unlock()
 
-	if err := wake(); err != nil {
+	err := wake()
+
+	s.mu.Lock()
+	e.waking = false
+	if err == nil {
+		if e2, ok := s.reg.get(taskIDHex); ok && e2 != nil {
+			e2.lastWakeAt = now
+		}
+	}
+	s.mu.Unlock()
+	if err != nil {
 		s.logger().Warn("wake write failed", "task_id", taskIDHex, "err", err)
 		return
 	}
-
-	s.mu.Lock()
-	if e2, ok := s.reg.get(taskIDHex); ok && e2 != nil {
-		e2.lastWakeAt = now
-	}
-	s.mu.Unlock()
 	// The wake reached the agent's stdin. This says the harness did its half —
 	// it does NOT say a turn started, which is the agent's decision and not
 	// observable from here. That boundary is exactly what the log is for: with
@@ -1221,11 +1252,19 @@ func (s *Session) setWake(taskIDHex string, wake func() error) {
 	s.mu.Unlock()
 }
 
-// ptyWake types the marker into a PTY session and submits it: text, a pause,
-// then a lone Enter. See the wakeMarker / wakeSubmitDelay comments for why a
-// single combined write fails, and for the limits of that finding.
-func ptyWake(write func([]byte) (int, error)) func() error {
+// ptyWake types the marker into a PTY session and submits it. modes is the
+// agent's own, fed from its output by ptyModeTap and read at each wake, since
+// an agent can turn bracketed paste on after it starts. With bracketed paste on
+// the marker goes as a paste and the Enter after it, in one write; without, as
+// text, a pause, then a lone Enter. See the wakeMarker comment for why.
+func ptyWake(write func([]byte) (int, error), modes *termmode.Tracker) func() error {
 	return func() error {
+		if on, _ := modes.Mode(termmode.BracketedPaste); on {
+			if _, err := write(bracketedWake); err != nil {
+				return fmt.Errorf("paste: %w", err)
+			}
+			return nil
+		}
 		if _, err := write([]byte(wakeMarker)); err != nil {
 			return fmt.Errorf("text: %w", err)
 		}
@@ -1236,6 +1275,18 @@ func ptyWake(write func([]byte) (int, error)) func() error {
 		return nil
 	}
 }
+
+// ptyModeTap feeds a PTY session's output to its mode tracker as it passes. An
+// agentexec.Auditor, like streamTap: Stdout is what the agent wrote, before it
+// was framed. A PTY has one output, but Stderr is fed too rather than assumed
+// empty. Feed keeps no reference to the buffer, which the caller reuses.
+type ptyModeTap struct{ modes *termmode.Tracker }
+
+func (t ptyModeTap) Start(string, []string, bool) {}
+func (t ptyModeTap) Stdin([]byte)                 {}
+func (t ptyModeTap) Stdout(p []byte)              { t.modes.Feed(p) }
+func (t ptyModeTap) Stderr(p []byte)              { t.modes.Feed(p) }
+func (t ptyModeTap) Exit(error)                   {}
 
 // streamWake hands the marker to an event-stream session as a user turn — the
 // neutral protocol's own message, which the adapter turns into its vendor's.

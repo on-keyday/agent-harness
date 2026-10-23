@@ -88,6 +88,10 @@ server that may have been replaced since the agent set the mode.
 The marker is a constant with no `ESC[201~` in it; that is what makes it safe
 to bracket. Arbitrary text would need that sequence stripped first.
 
+Not measured: a Windows runner, where the agent's output reaches the runner
+through ConPTY. If ConPTY does not pass `?2004h` through, the tracker never
+sees it and that runner keeps the split write — no worse than today.
+
 Measured 2026-10-24, each agent's process group stopped across one such write
 and continued (the merged-read condition): claude 2.1.307, codex 0.163.0,
 agy 1.4.6, opencode 1.18.18 and pi all submitted the text as one prompt. All
