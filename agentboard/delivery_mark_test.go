@@ -173,8 +173,80 @@ func TestBoard_ListSubscribersShowsUnpublishedTopic(t *testing.T) {
 	}
 }
 
+// A resume must not be handed again what its previous agent was given. The
+// task's taskState goes at Revoke while its topic, still holding the message,
+// stays; and the resume may be on another runner, so the key changes too.
+// Observed on a Windows session that resumed after its runner restarted.
+func TestBoard_InboxAdvanceMarkSurvivesRevokeAndResume(t *testing.T) {
+	b := newMarkBoard(t)
+	tid := boardTaskIDFromByte(7)
+	before, after := protocol.RunnerID{Id: [16]byte{1}}, protocol.RunnerID{Id: [16]byte{2}}
+
+	b.RegisterTask(before, tid, [16]byte{1}, "claude")
+	first := b.Attach(before, tid, "h", "claude")
+	if _, _, err := b.Send(SelfTopic(tid), []byte("old"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if adv := b.InboxAdvance(first); len(adv) != 1 {
+		t.Fatalf("first advance = %+v, want the one message", adv)
+	}
+	b.Detach(first)
+	b.Revoke(before, tid)
+
+	b.RegisterTask(after, tid, [16]byte{2}, "claude")
+	resumed := b.Attach(after, tid, "h", "claude")
+	defer b.Detach(resumed)
+	if adv := b.InboxAdvance(resumed); len(adv) != 0 {
+		t.Fatalf("the resumed task was handed again %q", adv[0].Payload)
+	}
+	if _, _, err := b.Send(SelfTopic(tid), []byte("new"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if adv := b.InboxAdvance(resumed); len(adv) != 1 || string(adv[0].Payload) != "new" {
+		t.Fatalf("advance after the resume = %+v, want only 'new'", adv)
+	}
+}
+
+// An agent that starts a new conversation under the same task id has never seen
+// what the earlier one was given, so ForgetShown hands it everything retained.
+func TestBoard_ForgetShownHandsEverythingAgain(t *testing.T) {
+	b := newMarkBoard(t)
+	tid := boardTaskIDFromByte(8)
+	rid := protocol.RunnerID{Id: [16]byte{3}}
+	b.RegisterTask(rid, tid, [16]byte{3}, "claude")
+	conn := b.Attach(rid, tid, "h", "claude")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/other")
+	for _, topic := range []string{SelfTopic(tid), "topic/other"} {
+		if _, _, err := b.Send(topic, []byte(topic), testRid, testTid, "h", "", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adv := b.InboxAdvance(conn); len(adv) != 2 {
+		t.Fatalf("first advance = %+v, want both messages", adv)
+	}
+
+	b.ForgetShown(tid)
+
+	if adv := b.InboxAdvance(conn); len(adv) != 2 {
+		t.Fatalf("advance after ForgetShown = %+v, want both messages again", adv)
+	}
+	// Only this task's mark goes: another task's position on a shared topic is
+	// not touched.
+	other := b.Attach(protocol.RunnerID{Id: [16]byte{4}}, boardTaskIDFromByte(9), "h", "")
+	defer b.Detach(other)
+	_ = b.Subscribe(other, "topic/other")
+	if adv := b.InboxAdvance(other); len(adv) != 1 {
+		t.Fatalf("other task's first advance = %+v, want one", adv)
+	}
+	b.ForgetShown(tid)
+	if adv := b.InboxAdvance(other); len(adv) != 0 {
+		t.Fatalf("ForgetShown of one task re-delivered to another: %+v", adv)
+	}
+}
+
 // Two concurrent advances must not both return the same message: collecting
-// and marking happen under one acquisition of the task's lock.
+// and marking happen under one acquisition of the topic's lock.
 func TestBoard_InboxAdvanceIsAtomic(t *testing.T) {
 	b := newMarkBoard(t)
 	conn := b.Attach(protocol.RunnerID{}, protocol.TaskID{}, "test-host", "")

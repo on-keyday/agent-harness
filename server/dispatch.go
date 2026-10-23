@@ -214,7 +214,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
-		boardRegisterTask(d.Board, runner.Identity, task.ID, ticket, task.AgentProfile)
+		boardRegisterTask(d.Board, runner.Identity, task.ID, ticket, task.AgentProfile, conversationOf(task.ResumeConversation))
 
 		// Allocate the body stream up-front so the AssignTask envelope
 		// can carry its id. On stream-creation failure (e.g. test stub),

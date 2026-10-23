@@ -295,9 +295,9 @@ func payloadStreamOf(req *protocol.TaskControlRequest) uint64 {
 // Only the runner-injected UserPromptSubmit hook sends it.
 //
 // The body is agentHandleInbox's, minus the client-supplied cursor and the
-// next_cursor in the reply: the position is the server's (taskState.shown, per
-// topic), so the client neither asserts one nor is told one. Board.InboxAdvance
-// collects and marks under a single acquisition of the task's lock, so nothing
+// next_cursor in the reply: the position is the server's (topic.shown, per
+// task), so the client neither asserts one nor is told one. Board.InboxAdvance
+// collects and marks under a single acquisition of each topic's lock, so nothing
 // is returned here without also having been recorded as delivered.
 
 // agentHandlePurge destroys a topic's retained-message ring. Gated by

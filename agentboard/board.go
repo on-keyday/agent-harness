@@ -27,8 +27,8 @@ type Config struct {
 	// and outlived the in-memory rings they indexed, so a restart that reset
 	// b.seq to 0 left every stale cursor above the new range, filtering out
 	// every message and silently wedging the auto-inbox hook. The mark now
-	// lives in taskState and dies with the board, which is the lifetime it
-	// should always have had.
+	// lives on the topic it indexes and dies with it, and so with the board,
+	// which is the lifetime it should always have had.
 	//
 	// What monotonicity still buys is readability: a seq named in a log line,
 	// a `retract <seq>` or an `agent read <seq>` cannot silently mean a
@@ -99,6 +99,32 @@ func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket 
 	b.mu.Unlock()
 	ts.setIdentity(rid, tid, "", agentProfile)
 	ts.addPattern(SelfTopic(tid))
+}
+
+// Conversation says whether the agent a task is being registered for carries
+// on the previous agent's conversation. It decides whether the delivery mark —
+// what the automatic injection path already handed this task id — still
+// applies: an agent that has those messages in its context must not be handed
+// them again, and one starting empty has never seen them.
+type Conversation int
+
+const (
+	// NewConversation is a new task, or a resume without the conversation.
+	NewConversation Conversation = iota
+	// ContinuedConversation is a resume with the conversation, or the very
+	// same agent re-adopted after a server restart.
+	ContinuedConversation
+)
+
+// ForgetShown drops tid's delivery mark on every topic, so its next advance
+// hands it everything retained. For an agent starting a NewConversation under a
+// task id that already ran.
+func (b *Board) ForgetShown(tid protocol.TaskID) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, t := range b.topics {
+		t.forgetShown(tid)
+	}
 }
 
 // SetOnDeliver registers a callback fired once per matched subscriber
@@ -382,33 +408,34 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 
 // InboxAdvance returns the retained messages on this task's subscribed topics
 // that the automatic injection path has not been given yet, and records them as
-// given. It is the only reader that moves taskState.shown; Inbox never touches
-// it, so an agent can re-read by hand as often as it likes.
+// given. It is the only reader that moves topic.shown; Inbox never touches it,
+// so an agent can re-read by hand as often as it likes.
 //
 // Lock discipline: b.mu is taken and RELEASED to snapshot the topic pointers,
-// and t.mu is taken afterwards. It never holds t.mu while acquiring b.mu, so
-// the b.mu -> t.mu order documented on Revoke holds. topic.snapshot takes the
-// topic's own lock, so the scan needs neither. A topic evicted between the
-// snapshot and the scan is read through the pointer we already hold — the same
-// approximate-read tradeoff evictExpiredTopics already accepts.
+// and each topic's t.mu is taken afterwards, by takeUnshown. It never holds
+// t.mu while acquiring b.mu, so the b.mu -> t.mu order documented on Revoke
+// holds. A topic evicted between the snapshot and the scan is read through the
+// pointer we already hold — the same approximate-read tradeoff
+// evictExpiredTopics already accepts.
 func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 	if c == nil || c.task == nil {
 		return nil
 	}
+	_, tid, _, _ := c.task.identity()
 	patterns := b.readablePatterns(c.task, c.task.snapshotPatterns())
 
 	b.mu.Lock()
-	found := make(map[string]*topic, len(patterns))
+	found := make([]*topic, 0, len(patterns))
 	for _, p := range patterns {
 		if t, ok := b.topics[p]; ok {
-			found[p] = t
+			found = append(found, t)
 		}
 	}
 	b.mu.Unlock()
 
 	out := make([]RetainedMessage, 0)
-	for p, t := range found {
-		out = append(out, c.task.takeUnshown(p, t.snapshot())...)
+	for _, t := range found {
+		out = append(out, t.takeUnshown(tid)...)
 	}
 	return out
 }
@@ -926,16 +953,16 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 			continue
 		}
 		_, tid, host, profile := ts.identity()
-		marks := ts.shownSnapshot()
 		names := ts.snapshotPatterns()
 		pats := make([]SubscriberPattern, 0, len(names))
 		for _, n := range names {
-			shown := marks[n]
+			var shown uint64
 			var pendingN uint32
 			b.mu.Lock()
 			tp, ok := b.topics[n]
 			b.mu.Unlock()
 			if ok {
+				shown = tp.shownMark(tid)
 				for _, m := range tp.snapshot() {
 					if m.Seq > shown {
 						pendingN++

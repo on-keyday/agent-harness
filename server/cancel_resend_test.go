@@ -45,7 +45,7 @@ func newCancelFixture(t *testing.T, delays []time.Duration) *cancelFixture {
 	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
 	tasks.Assign(taskID, identity, "", false)
 	reg.BindTask(fc.id, taskID)
-	boardRegisterTask(board, identity, taskID, [16]byte{1, 2, 3}, "claude")
+	boardRegisterTask(board, identity, taskID, [16]byte{1, 2, 3}, "claude", agentboard.NewConversation)
 
 	tasks.OnCancel = d.OnCancel
 	tasks.OnCancelRepeated = d.OnCancel

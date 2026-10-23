@@ -301,9 +301,9 @@ func (h *TaskHandler) handleAgentInbox(conn ConnHandle, requestID uint32, r *pro
 
 // handleAgentInboxAdvance is handleAgentInbox's body minus the caller's cursor
 // and minus the next_cursor in the reply: the position is the SERVER's
-// (taskState.shown, per topic), so the client neither asserts one nor is told
-// one. Board.InboxAdvance collects and marks under a single acquisition of the
-// task's lock, so nothing is returned without also having been recorded as
+// (topic.shown, per task), so the client neither asserts one nor is told
+// one. Board.InboxAdvance collects and marks under a single acquisition of each
+// topic's lock, so nothing is returned without also having been recorded as
 // delivered.
 func (h *TaskHandler) handleAgentInboxAdvance(conn ConnHandle, requestID uint32) {
 	out := protocol.AgentInboxAdvanceResponse{RequestId: requestID}

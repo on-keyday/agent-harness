@@ -1753,7 +1753,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		finishWithError("ticket gen failed: " + err.Error())
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
-	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, resolved)
+	boardRegisterTask(h.Board, runner.Identity, taskIDHex, ticket, resolved, conversationOf(req.ResumeConversation()))
 
 	// A detached open creates no client stream: nobody takes the seat.
 	var tuiStream trsf.BidirectionalStream

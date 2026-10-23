@@ -2,6 +2,7 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -13,7 +14,7 @@ import (
 // nothing else pins that.
 func TestBoardKeyHelpersNilBoardAreNoOps(t *testing.T) {
 	rid := protocol.RunnerID{Id: [16]byte{7}}
-	boardRegisterTask(nil, rid, "aa", [16]byte{1}, "claude")
+	boardRegisterTask(nil, rid, "aa", [16]byte{1}, "claude", agentboard.NewConversation)
 	boardRevokeTask(nil, rid, "aa")
 	if tk, ok := boardTaskTicket(nil, rid, protocol.TaskID{}); ok || tk != ([16]byte{}) {
 		t.Fatalf("boardTaskTicket(nil) = (%v, %v), want (zero, false)", tk, ok)
@@ -27,7 +28,7 @@ func TestBoardKeyHelpersNilBoardAreNoOps(t *testing.T) {
 func TestBoardRegisterRefusesZeroIdentity(t *testing.T) {
 	b := agentboard.New(agentboard.Config{})
 	taskIDHex := "00000000000000000000000000000021"
-	boardRegisterTask(b, protocol.RunnerID{}, taskIDHex, [16]byte{9}, "claude")
+	boardRegisterTask(b, protocol.RunnerID{}, taskIDHex, [16]byte{9}, "claude", agentboard.NewConversation)
 	if _, ok := boardTaskTicket(b, protocol.RunnerID{}, taskIDFromHex(taskIDHex)); ok {
 		t.Fatal("a ticket was registered under the zero identity")
 	}
@@ -50,7 +51,7 @@ func TestBoardKeyIsIdentityNotConnection(t *testing.T) {
 
 	// The runner registers on one connection and the task is dispatched to it.
 	reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-7"), Identity: identity})
-	boardRegisterTask(b, identity, taskIDHex, want, "claude")
+	boardRegisterTask(b, identity, taskIDHex, want, "claude", agentboard.NewConversation)
 
 	// It reconnects: a NEW connection id, the SAME identity. The old code
 	// derived the board key from the connection, so this is exactly where an
@@ -72,6 +73,47 @@ func TestBoardKeyIsIdentityNotConnection(t *testing.T) {
 	boardRevokeTask(b, identity, taskIDHex)
 	if _, ok := boardTaskTicket(b, identity, tid); ok {
 		t.Fatal("ticket still registered after revoke")
+	}
+}
+
+// A resume keeps or forgets what the task's earlier agent was handed, according
+// to whether its conversation comes with it. The first run, the finish and the
+// resume are driven through the funnel exactly as the server does; the resume is
+// on another runner identity, as one after a runner restart can be.
+func TestBoardRegisterTaskConversationDecidesTheMark(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conv agentboard.Conversation
+		want int // messages the resumed agent's first advance returns
+	}{
+		{"resume with the conversation", agentboard.ContinuedConversation, 0},
+		{"resume without it", agentboard.NewConversation, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := agentboard.New(agentboard.Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+			defer b.Close()
+			taskIDHex := "00000000000000000000000000000031"
+			tid := taskIDFromHex(taskIDHex)
+			first, second := protocol.RunnerID{Id: [16]byte{1}}, protocol.RunnerID{Id: [16]byte{2}}
+
+			boardRegisterTask(b, first, taskIDHex, [16]byte{1}, "claude", agentboard.NewConversation)
+			c := b.Attach(first, tid, "h", "claude")
+			if _, _, err := b.Send(agentboard.SelfTopic(tid), []byte("given"), protocol.RunnerID{}, protocol.TaskID{}, "", "", 0); err != nil {
+				t.Fatal(err)
+			}
+			if adv := b.InboxAdvance(c); len(adv) != 1 {
+				t.Fatalf("first run's advance = %d messages, want 1", len(adv))
+			}
+			b.Detach(c)
+			boardRevokeTask(b, first, taskIDHex)
+
+			boardRegisterTask(b, second, taskIDHex, [16]byte{2}, "claude", tc.conv)
+			r := b.Attach(second, tid, "h", "claude")
+			defer b.Detach(r)
+			if adv := b.InboxAdvance(r); len(adv) != tc.want {
+				t.Fatalf("resumed agent's first advance = %d messages, want %d", len(adv), tc.want)
+			}
+		})
 	}
 }
 

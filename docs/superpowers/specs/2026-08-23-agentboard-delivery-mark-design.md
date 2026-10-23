@@ -424,6 +424,13 @@ that peer's `pending` by one.
   would leave one entry per finished task in every topic, needing a sweep at
   `Revoke`; `taskState` shares its lifetime with the subscription set it is
   paired with.
+  **REVERSED (operator, 2026-10-24)** — the mark now lives on `topic`, keyed
+  by task id. Amendment 2026-09-18d made `Revoke` keep any topic that still
+  holds something, so the ring outlived the `taskState` and a resume was handed
+  again what its previous agent had already been given (observed on a Windows
+  session). The entries a finished task leaves in a topic — the cost named
+  above — became the requirement, and they last no longer than the ring.
+  `docs/superpowers/specs/2026-10-24-agentboard-delivery-mark-survives-resume-design.md`.
 - **DECIDED (operator, 2026-08-23)** — `SeqSeed` stays, with a rewritten
   rationale.
 - **DECIDED (operator, 2026-08-23)** — topic ownership is not added.
@@ -453,3 +460,7 @@ that peer's `pending` by one.
   with one subscriber per topic that also destroys the topic and its ring, so a
   resumed task on a different runner has an empty ring and nothing for a
   carried-over mark to filter.
+  **PREMISE BROKEN (2026-10-24)** — since Amendment 2026-09-18d, `Revoke` keeps
+  a topic that still holds something, so the resumed task's ring is not empty.
+  The mark moved to `topic` (see the reversal above); the keying of `taskState`
+  itself is unchanged.

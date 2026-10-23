@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -111,7 +112,9 @@ func (s *Server) readoptHeldTasks(identity protocol.RunnerID, report protocol.He
 		// and seeds the task's own inbound topic, without which the credential
 		// validates while `agent send` matches no subscriber — a working agent
 		// nobody can reach, which is worse than BadTicket.
-		boardRegisterTask(s.Board, identity, taskID, ht.Ticket, t.AgentProfile)
+		// ContinuedConversation: this is the very agent that was already running,
+		// held across the restart, not a new one under the same id.
+		boardRegisterTask(s.Board, identity, taskID, ht.Ticket, t.AgentProfile, agentboard.ContinuedConversation)
 
 		// A live child and no client is what Detached means, so that is where a
 		// session lands — in one transition, which is also the one this task's

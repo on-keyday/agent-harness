@@ -83,6 +83,19 @@ type topic struct {
 	ring            []RetainedMessage
 	retracted       []RetainedMessage
 	lastPublishedAt time.Time
+	// shown is the delivery mark: per task, the highest seq of this topic the
+	// automatic injection path has handed it. Only Board.InboxAdvance raises
+	// it; Inbox never touches it. Per (task, topic) rather than one scalar per
+	// task, so a reader covering ONE topic cannot claim progress on others —
+	// what the client-side cursor got wrong.
+	//
+	// Here rather than in taskState so it lives exactly as long as the ring it
+	// indexes. Revoke destroys a finished task's taskState but keeps a topic
+	// that still holds something, and a mark that went with the taskState left
+	// a resumed task's agent handed again what it had already been given.
+	// Keyed by task id alone, so a resume on another runner finds it. A
+	// finished task's entry costs one map slot until the topic itself goes.
+	shown map[protocol.TaskID]uint64
 }
 
 func newTopic(name string, cap int) *topic {
@@ -251,6 +264,43 @@ func (t *topic) snapshot() []RetainedMessage {
 	out := make([]RetainedMessage, len(t.ring))
 	copy(out, t.ring)
 	return out
+}
+
+// takeUnshown returns the live messages above task's mark and raises the mark
+// past them. Collecting and marking happen under one acquisition of t.mu, so
+// two concurrent advances cannot both return the same message.
+func (t *topic) takeUnshown(task protocol.TaskID) []RetainedMessage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	mark := t.shown[task]
+	out := make([]RetainedMessage, 0, len(t.ring))
+	for _, m := range t.ring {
+		if m.Seq > mark {
+			out = append(out, m)
+		}
+	}
+	if len(out) > 0 {
+		if t.shown == nil {
+			t.shown = make(map[protocol.TaskID]uint64)
+		}
+		t.shown[task] = out[len(out)-1].Seq
+	}
+	return out
+}
+
+// shownMark is task's delivery mark on this topic, 0 when it has none.
+func (t *topic) shownMark(task protocol.TaskID) uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.shown[task]
+}
+
+// forgetShown drops task's delivery mark, so the next advance hands it every
+// live message again.
+func (t *topic) forgetShown(task protocol.TaskID) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.shown, task)
 }
 
 // since returns retained messages with Seq > sinceSeq, in ascending order.

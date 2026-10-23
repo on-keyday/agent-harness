@@ -86,7 +86,7 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // retry just picks up where this failure left off.
 //
 // What stops the same seq from being delivered twice lives on the SERVER,
-// per (task, topic), in agentboard.taskState. --user-prompt-submit-hook is the
+// per (task, topic), on the agentboard topic. --user-prompt-submit-hook is the
 // only caller that moves it: it asks for what has not been injected and the
 // server marks it injected in the same operation. A manual
 // `harness-cli agent inbox` is a plain read of the subscribed topics' rings and

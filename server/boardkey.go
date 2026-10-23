@@ -37,7 +37,12 @@ import (
 // the ticket under a key every such runner shares, and RegisterTask overwrites.
 // Failing loudly beats handing out a credential that another dispatch will
 // silently invalidate.
-func boardRegisterTask(b *agentboard.Board, runner protocol.RunnerID, taskIDHex string, ticket [16]byte, agentProfile string) {
+//
+// conv is required, not defaulted, so every registration site decides it: the
+// delivery mark outlives the task (it is on the topic), and only an agent that
+// starts with an empty context should be handed again what this task id was
+// already given. See agentboard.Conversation.
+func boardRegisterTask(b *agentboard.Board, runner protocol.RunnerID, taskIDHex string, ticket [16]byte, agentProfile string, conv agentboard.Conversation) {
 	if b == nil {
 		return
 	}
@@ -46,7 +51,19 @@ func boardRegisterTask(b *agentboard.Board, runner protocol.RunnerID, taskIDHex 
 			"task", taskIDHex)
 		return
 	}
-	b.RegisterTask(runner, taskIDFromHex(taskIDHex), ticket, agentProfile)
+	tid := taskIDFromHex(taskIDHex)
+	if conv == agentboard.NewConversation {
+		b.ForgetShown(tid)
+	}
+	b.RegisterTask(runner, tid, ticket, agentProfile)
+}
+
+// conversationOf maps a task's resume flag to the board's view of its agent.
+func conversationOf(resumeConversation bool) agentboard.Conversation {
+	if resumeConversation {
+		return agentboard.ContinuedConversation
+	}
+	return agentboard.NewConversation
 }
 
 // boardRevokeTask drops the ticket and destroys the taskState, so an agent of a

@@ -1657,7 +1657,7 @@ func (s *Server) sendAssign(runnerID objproto.ConnectionID, taskID string) error
 	if _, err := rand.Read(ticket[:]); err != nil {
 		return fmt.Errorf("ticket gen: %w", err)
 	}
-	boardRegisterTask(s.Board, entry.Identity, taskID, ticket, task.AgentProfile)
+	boardRegisterTask(s.Board, entry.Identity, taskID, ticket, task.AgentProfile, conversationOf(task.ResumeConversation))
 	stream := entry.Conn.CreateSendStream()
 	if stream == nil {
 		return fmt.Errorf("CreateSendStream returned nil")
