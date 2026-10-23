@@ -6,7 +6,7 @@ package cli
 // emulator. This is a sizing measurement for the open question of whether the
 // SERVER can afford to hold a live emulator per session (today only clients
 // build one — cli/snapshot_native.go and tui/pane_streamer.go — while the
-// server keeps a byte ring plus two partial scanners: server/mode_tracker.go
+// server keeps a byte ring plus two partial scanners: termmode/tracker.go
 // and server/replay_ground_scan.go).
 //
 // The two knobs that matter are the corpus shape (a shell scrolling text vs a

@@ -6,7 +6,7 @@ package vtgrid_test
 // The harness answers reattach today by replaying a byte ring, which carries no
 // terminal state: a full-screen app that was torn off mid-episode comes back as
 // debris, and the mode preamble deliberately refuses to replay the alt-screen
-// modes because it has no content to put behind them (server/mode_tracker.go
+// modes because it has no content to put behind them (termmode/tracker.go
 // says so in as many words). A repaint sequence built from the grid is the
 // alternative. This file is the gate on whether it actually reconstructs.
 //

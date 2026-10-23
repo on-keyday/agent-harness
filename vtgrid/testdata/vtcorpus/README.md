@@ -37,7 +37,7 @@ anywhere in the steady-state captures.
 Three things to know before using them:
 
 - **There is no mode preamble.** The server prepends one
-  (`server/mode_tracker.go`), but it sits at the head of the capture and the
+  (`termmode/tracker.go`), but it sits at the head of the capture and the
   trim removed it. A renderer fed one of these starts from its own defaults —
   which is exactly the situation the preamble exists to paper over.
 - **The size is not in the bytes.** `--raw` carries PTY output only; the size

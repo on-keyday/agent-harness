@@ -1,15 +1,15 @@
 //go:build windows
 
-// Does preamble() actually land the cursor bit on a REAL Windows console?
+// Does Preamble() actually land the cursor bit on a REAL Windows console?
 //
-// mode_tracker_test.go asserts the bytes preamble() emits. That is necessary
+// tracker_test.go asserts the bytes Preamble() emits. That is necessary
 // and not sufficient: the defect this file exists for was an ORDERING one, and
 // a byte-level test written against the buggy order passes just as happily as
 // one written against the correct order. Only a terminal can say which order
 // works, and only conhost has the behaviour that makes the order matter —
 // DECTCEM issued while the alternate buffer is already active never reaches it.
 //
-// So this feeds preamble()'s output to a console screen buffer and reads the
+// So this feeds Preamble()'s output to a console screen buffer and reads the
 // cursor state back with GetConsoleCursorInfo. The observer is put in the state
 // a real reattaching Windows client is in: already on the alternate buffer.
 //
@@ -17,7 +17,7 @@
 // vtgrid/repaint_console_windows_test.go rather than sharing with it — see the
 // note above the plumbing section.
 
-package server
+package termmode
 
 import (
 	"syscall"
@@ -26,7 +26,7 @@ import (
 )
 
 // TestPreambleLandsCursorVisibilityOnAConsole is the end-to-end assertion: an
-// app's tracked cursor state, replayed through preamble() into a real console
+// app's tracked cursor state, replayed through Preamble() into a real console
 // whose observer is already on the alternate buffer, must produce the cursor
 // the app asked for.
 //
@@ -69,9 +69,9 @@ func TestPreambleLandsCursorVisibilityOnAConsole(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tr := newModeTracker()
-			tr.feed([]byte(c.app))
-			pre := tr.preamble()
+			tr := New()
+			tr.Feed([]byte(c.app))
+			pre := tr.Preamble()
 			if len(pre) == 0 {
 				t.Fatal("preamble is empty; nothing to replay")
 			}
@@ -94,7 +94,7 @@ func TestPreambleLandsCursorVisibilityOnAConsole(t *testing.T) {
 // It replays the SAME modes in the pre-fix order — the screen switch first,
 // DECTCEM after — and asserts that the cursor bit does NOT land. Without this,
 // a console that simply honoured DECTCEM everywhere would pass the test above
-// no matter what order preamble() chose, and the ordering it is meant to
+// no matter what order Preamble() chose, and the ordering it is meant to
 // protect could be reverted without anything going red.
 func TestPreambleOrderingIsWhatMakesItLand(t *testing.T) {
 	wcRequireConsole(t)
@@ -108,7 +108,7 @@ func TestPreambleOrderingIsWhatMakesItLand(t *testing.T) {
 		t.Error("the pre-fix ordering hid the cursor on an already-active alternate " +
 			"buffer, so this control no longer proves anything and " +
 			"TestPreambleLandsCursorVisibilityOnAConsole would pass regardless of " +
-			"the order preamble() emits — conhost behaviour has changed")
+			"the order Preamble() emits — conhost behaviour has changed")
 	}
 }
 

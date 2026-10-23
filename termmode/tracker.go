@@ -1,4 +1,9 @@
-package server
+// Package termmode follows the DEC private modes a terminal program sets in its
+// output. It is shared by the two places that have to know them without being a
+// terminal: the server, which replays a session to a client that starts from
+// defaults, and the runner, which types into an agent and has to know how the
+// agent wants input delivered.
+package termmode
 
 import (
 	"sort"
@@ -6,7 +11,11 @@ import (
 	"sync"
 )
 
-// modeTracker watches a terminal output byte stream for DEC private mode
+// BracketedPaste is DECSET 2004. While it is set the program has asked for
+// pasted input to arrive wrapped in ESC[200~ … ESC[201~.
+const BracketedPaste = 2004
+
+// Tracker watches a terminal output byte stream for DEC private mode
 // set/reset sequences (CSI ? Pm [;Pm...] h|l) and remembers the last value of
 // each mode. On reattach the server replays a byte-ring snapshot to a new
 // client whose emulator starts in its default state; any mode whose
@@ -14,7 +23,7 @@ import (
 // otherwise be lost. The classic case: an app hides the cursor once at startup
 // with ESC[?25l, that frame is later evicted, the reattaching emulator defaults
 // to cursor-visible, and the app never re-emits the hide — leaving a stray
-// blinking cursor over a UI that assumes none. preamble() reconstructs the
+// blinking cursor over a UI that assumes none. Preamble() reconstructs the
 // missing modes so the replay starts from the right terminal state.
 //
 // Only content-independent 1-bit modes are reconstructable this way. Modes that
@@ -23,11 +32,11 @@ import (
 // them without the content they wrap would make the display worse, not better.
 // Reconstructing alt-screen content needs a full terminal-state model, which
 // this is deliberately not.
-type modeTracker struct {
+type Tracker struct {
 	mu    sync.Mutex
 	modes map[int]bool // private mode number -> last seen value (true = set/h)
 
-	// Incremental parser state. It persists across feed() calls so a sequence
+	// Incremental parser state. It persists across Feed calls so a sequence
 	// split across two frames is still recognised at the boundary.
 	st     parseState
 	params []byte
@@ -47,8 +56,9 @@ const (
 // resyncs to NORMAL rather than growing without bound.
 const maxModeParams = 64
 
-func newModeTracker() *modeTracker {
-	return &modeTracker{modes: make(map[int]bool)}
+// New returns a Tracker that has seen nothing.
+func New() *Tracker {
+	return &Tracker{modes: make(map[int]bool)}
 }
 
 // decCursorVisible is DECTCEM. It is replayed like any other tracked mode, but
@@ -66,9 +76,9 @@ func excludedFromPreamble(mode int) bool {
 	return false
 }
 
-// feed advances the parser over one chunk of terminal output (the payload of a
+// Feed advances the parser over one chunk of terminal output (the payload of a
 // Stdout/Stderr frame, headers already stripped).
-func (t *modeTracker) feed(payload []byte) {
+func (t *Tracker) Feed(payload []byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, b := range payload {
@@ -123,7 +133,7 @@ func (t *modeTracker) feed(payload []byte) {
 
 // applyParams records each ';'-separated mode number in t.params with value set.
 // Caller holds t.mu.
-func (t *modeTracker) applyParams(set bool) {
+func (t *Tracker) applyParams(set bool) {
 	start := 0
 	for i := 0; i <= len(t.params); i++ {
 		if i == len(t.params) || t.params[i] == ';' {
@@ -137,21 +147,30 @@ func (t *modeTracker) applyParams(set bool) {
 	}
 }
 
-// onAltScreen reports whether the session is currently in an alternate-screen
+// Mode reports the last value seen for private mode n, and whether it has been
+// seen at all.
+func (t *Tracker) Mode(n int) (set, seen bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	set, seen = t.modes[n]
+	return set, seen
+}
+
+// OnAltScreen reports whether the session is currently in an alternate-screen
 // buffer (any of the 47 / 1047 / 1049 modes last seen set). Reattach uses this
 // to decide replay scope: while a full-screen app is live we replay the whole
 // ring (the app repaints over any partial frame), but once it has exited we
 // skip the now-meaningless alt-screen episode — replaying its absolute-cursor
 // frame fragments onto the primary screen is exactly what corrupts the display.
-func (t *modeTracker) onAltScreen() bool {
+func (t *Tracker) OnAltScreen() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.modes[47] || t.modes[1047] || t.modes[1049]
 }
 
-// preamble returns the escape-sequence bytes that re-establish every tracked,
-// non-excluded mode at its last-known value, in ascending mode order for
-// determinism. nil if there is nothing to restore.
+// Preamble returns the escape-sequence bytes that re-establish every tracked,
+// non-excluded mode at its last-known value: the screen-switch head described
+// below, then Modes. nil if there is nothing to restore.
 //
 // Special case — the alternate screen. The alt-screen modes (47/1047/1049) are
 // excluded from the generic loop because we must never replay a *reset*
@@ -186,19 +205,10 @@ func (t *modeTracker) onAltScreen() bool {
 // ordinary pattern, leaves every reattaching Windows client with a cursor it
 // asked to have hidden, and one that hides before going full-screen loses the
 // cursor it asked to keep. Neither is recoverable later in the stream.
-func (t *modeTracker) preamble() []byte {
+func (t *Tracker) Preamble() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []byte
-	emit := func(mode int, set bool) {
-		final := byte('l')
-		if set {
-			final = 'h'
-		}
-		out = append(out, 0x1b, '[', '?')
-		out = append(out, strconv.Itoa(mode)...)
-		out = append(out, final)
-	}
 	onAlt := t.modes[1049] || t.modes[1047] || t.modes[47]
 	cursorVis, haveCursor := t.modes[decCursorVisible]
 	// The leave exists ONLY to give the cursor bit a real switch to ride, so it
@@ -206,18 +216,42 @@ func (t *modeTracker) preamble() []byte {
 	// entry alone is what it always was, and a client already on the alternate
 	// buffer is not dragged through a switch that would buy it nothing.
 	if onAlt && haveCursor {
-		emit(1049, false)
+		out = appendMode(out, 1049, false)
 	}
 	if haveCursor {
-		emit(decCursorVisible, cursorVis)
+		out = appendMode(out, decCursorVisible, cursorVis)
 	}
 	if onAlt {
-		emit(1049, true)
+		out = appendMode(out, 1049, true)
 	}
+	out = t.appendModesLocked(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// Modes returns Preamble without its head: every tracked mode except DECTCEM
+// and the excluded ones, at its last value, in ascending mode order for
+// determinism. It is what has to follow a vtgrid Repaint, which carries DECTCEM
+// and the screen selection itself and none of the input-affecting modes. nil
+// if there is nothing to restore.
+func (t *Tracker) Modes() []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := t.appendModesLocked(nil)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// appendModesLocked is Modes into out. Caller holds t.mu.
+func (t *Tracker) appendModesLocked(out []byte) []byte {
 	keys := make([]int, 0, len(t.modes))
 	for m := range t.modes {
 		if m == decCursorVisible {
-			continue // already emitted ahead of the screen switch
+			continue // Preamble emits it ahead of the screen switch
 		}
 		if !excludedFromPreamble(m) {
 			keys = append(keys, m)
@@ -225,10 +259,17 @@ func (t *modeTracker) preamble() []byte {
 	}
 	sort.Ints(keys)
 	for _, m := range keys {
-		emit(m, t.modes[m])
-	}
-	if len(out) == 0 {
-		return nil
+		out = appendMode(out, m, t.modes[m])
 	}
 	return out
+}
+
+func appendMode(out []byte, mode int, set bool) []byte {
+	final := byte('l')
+	if set {
+		final = 'h'
+	}
+	out = append(out, 0x1b, '[', '?')
+	out = append(out, strconv.Itoa(mode)...)
+	return append(out, final)
 }

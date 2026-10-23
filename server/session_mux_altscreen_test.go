@@ -48,7 +48,7 @@ func TestSessionMux_AttachAfterAltScreenExitSkipsEpisode(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	// Session is on the primary screen (last 1049 was reset). modeTracker
+	// Session is on the primary screen (last 1049 was reset). termmode.Tracker
 	// excludes alt-screen from the preamble, so replay is just the exit frame.
 	got := waitPTY(t, tui, len(exit))
 	if bytes.Contains(got, []byte("HTOP-EPISODE-CONTENT")) || bytes.Contains(got, []byte("MORE-HTOP-FRAME-FRAGMENTS")) {

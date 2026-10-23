@@ -13,7 +13,7 @@ package server
 // with the dropped frames, leaving its trailing characters bleeding into the
 // pane (see TestCapReplayTail_NoOSCLeak).
 //
-// Unlike modeTracker (which only recognises CSI private-mode set/reset), this
+// Unlike termmode.Tracker (which only recognises CSI private-mode set/reset), this
 // scanner must recognise string sequences and their BEL / ST terminators,
 // because those are exactly the long sequences a tail crop cuts through.
 type vtGroundScan struct {

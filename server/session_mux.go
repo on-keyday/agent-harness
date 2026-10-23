@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/termmode"
 	"github.com/on-keyday/agent-harness/vtgrid"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -181,7 +182,7 @@ type SessionMux struct {
 	terminal bool
 	runner   trsf.BidirectionalStream
 	ring     *RingBuffer
-	modes    *modeTracker
+	modes    *termmode.Tracker
 
 	// screen is the session's terminal state as a grid, fed from the same
 	// frames the ring gets. It exists from the mux's first byte rather than
@@ -189,7 +190,7 @@ type SessionMux struct {
 	// seen output the ring has since evicted, so one created later could only
 	// be seeded from the ring — which is the ring with extra steps.
 	//
-	// Its own mutex rather than m.mu, for the reason modeTracker has one: the
+	// Its own mutex rather than m.mu, for the reason termmode.Tracker has one: the
 	// feed sits on runnerPump's hot path, and m.mu is held by fan-out and by
 	// attach. vtgrid.Terminal has no internal locking of its own.
 	screenMu sync.Mutex
@@ -281,7 +282,7 @@ func NewSessionMux(parentCtx context.Context, taskID string, kind protocol.TaskK
 		terminal: protocol.IsPTYKind(kind),
 		runner:   runner,
 		ring:     ring,
-		modes:    newModeTracker(),
+		modes:    termmode.New(),
 		// 80x24 because the server has no size to use: the PTY's size reaches
 		// it only as a TerminalWindowSize frame — from the opener's
 		// applyInitialWindowSize, or from a client as it attaches — and the
@@ -349,12 +350,12 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	// Track DEC private-mode state from display output so a reattach can
 	// re-establish modes (e.g. a hidden cursor) whose controlling sequence
 	// has since been evicted from the ring. Only Stdout/Stderr carry it.
-	wasAlt := m.modes.onAltScreen()
+	wasAlt := m.modes.OnAltScreen()
 	if len(frameBytes) >= frameHeaderSize {
 		switch frame.FrameType(frameBytes[0]) {
 		case frame.FrameType_Stdout, frame.FrameType_Stderr:
 			if m.terminal {
-				m.modes.feed(frameBytes[frameHeaderSize:])
+				m.modes.Feed(frameBytes[frameHeaderSize:])
 				m.screenMu.Lock()
 				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
 				m.screenMu.Unlock()
@@ -368,7 +369,7 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 	// full-screen episode that must not be replayed verbatim. The mark is
 	// the just-appended frame's index, so replay includes the ESC[?1049l
 	// itself (ensuring a reattaching client also leaves the alt buffer).
-	if nowAlt := m.modes.onAltScreen(); nowAlt != wasAlt {
+	if nowAlt := m.modes.OnAltScreen(); nowAlt != wasAlt {
 		idx := m.ring.AppendCount() - 1
 		if wasAlt && !nowAlt {
 			m.mainMark.Store(int64(idx))
@@ -410,7 +411,7 @@ func (m *SessionMux) loadScreen(b []byte) {
 	if len(b) == 0 || !m.terminal {
 		return
 	}
-	m.modes.feed(b)
+	m.modes.Feed(b)
 	m.screenMu.Lock()
 	_, _ = m.screen.Write(b)
 	m.screenMu.Unlock()
@@ -457,13 +458,22 @@ func (m *SessionMux) loadHeldCapture(b []byte) (gotSize, gotScreen bool, err err
 // its screen, as frames. Empty when there is nothing worth keeping (a session
 // nobody ever attached to has no size, and a blank grid still repaints, so the
 // size alone can be the whole capture).
+//
+// The screen is the repaint followed by the tracker's Modes — the
+// input-affecting modes (bracketed paste, mouse, application cursor keys) that
+// Repaint deliberately leaves to the tracker. Without them the next server's
+// tracker starts empty, and a program that set bracketed paste once at startup
+// is never again reported as wanting it to an attaching terminal. Modes and not
+// Preamble: the repaint already selects the screen and sets DECTCEM, and a
+// second ESC[?1049h fed to the grid would enter the alternate screen over what
+// it just painted.
 func (m *SessionMux) heldCapture() []byte {
 	var out []byte
 	if wz := m.lastWinSizeBytes(); len(wz) > 0 {
 		out = append(out, wz...)
 	}
 	if rp := m.screenRepaint(); len(rp) > 0 {
-		out = append(out, encodeSynthFrame(rp)...)
+		out = append(out, encodeSynthFrame(append(rp, m.modes.Modes()...))...)
 	}
 	return out
 }
@@ -547,7 +557,7 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	// buffered output. Both go out as ordinary Stdout frames the client parses
 	// exactly like live ones, so the new emulator starts from the right state.
 	var replay []byte
-	if pre := m.modes.preamble(); len(pre) > 0 {
+	if pre := m.modes.Preamble(); len(pre) > 0 {
 		replay = append(replay, encodeSynthFrame(pre)...)
 	}
 	replay = append(replay, m.replaySnapshot()...)
@@ -625,7 +635,7 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 	if len(m.lastWinSize) > 0 {
 		replay = append(replay, m.lastWinSize...)
 	}
-	if pre := m.modes.preamble(); len(pre) > 0 {
+	if pre := m.modes.Preamble(); len(pre) > 0 {
 		replay = append(replay, encodeSynthFrame(pre)...)
 	}
 	// The winsize + mode preamble above are always sent in full (small, and the
@@ -1036,7 +1046,7 @@ func (m *SessionMux) replaySnapshot() []byte {
 // While a full-screen app is still live (in the alt screen) it replays the
 // whole ring, since the app repaints over any partial frame on the next tick.
 func (m *SessionMux) replayRing() []byte {
-	if m.modes.onAltScreen() {
+	if m.modes.OnAltScreen() {
 		return m.ring.Snapshot()
 	}
 	if !m.altAtOldestSurviving() {

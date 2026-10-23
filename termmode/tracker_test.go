@@ -1,31 +1,26 @@
-package server
+package termmode
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
 func TestModeTracker_BasicAndLastValueWins(t *testing.T) {
-	tr := newModeTracker()
-	tr.feed([]byte("hello\x1b[?25lworld")) // hide cursor amid normal output
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25l")) {
+	tr := New()
+	tr.Feed([]byte("hello\x1b[?25lworld")) // hide cursor amid normal output
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[?25l")) {
 		t.Fatalf("preamble = %q, want ESC[?25l", got)
 	}
-	tr.feed([]byte("\x1b[?25h")) // show again → most recent value wins
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25h")) {
+	tr.Feed([]byte("\x1b[?25h")) // show again → most recent value wins
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[?25h")) {
 		t.Fatalf("preamble after show = %q, want ESC[?25h", got)
 	}
 }
 
 func TestModeTracker_AltScreenLiveReentered(t *testing.T) {
-	tr := newModeTracker()
-	tr.feed([]byte("\x1b[?25l\x1b[?1049h\x1b[?2026h")) // cursor + alt-screen + sync
+	tr := New()
+	tr.Feed([]byte("\x1b[?25l\x1b[?1049h\x1b[?2026h")) // cursor + alt-screen + sync
 	// Session is currently in the alt screen → the preamble must re-enter it (so
 	// a reattach lands the live app's frames on the alt buffer even when the
 	// original ESC[?1049h was evicted). Sync (2026) stays excluded (transient
@@ -43,44 +38,44 @@ func TestModeTracker_AltScreenLiveReentered(t *testing.T) {
 	// ESC[?1049l is what keeps the entry from degenerating into a no-op; against
 	// one on the primary buffer it is inert.
 	want := []byte("\x1b[?1049l\x1b[?25l\x1b[?1049h")
-	if got := tr.preamble(); !bytes.Equal(got, want) {
+	if got := tr.Preamble(); !bytes.Equal(got, want) {
 		t.Fatalf("preamble = %q, want %q (leave, hide, enter; sync excluded)", got, want)
 	}
 }
 
 func TestModeTracker_AltScreenExitedNotReentered(t *testing.T) {
-	tr := newModeTracker()
+	tr := New()
 	// Full-screen app entered then exited the alt screen; cursor shown again.
-	tr.feed([]byte("\x1b[?1049h\x1b[?25l\x1b[?25h\x1b[?1049l"))
+	tr.Feed([]byte("\x1b[?1049h\x1b[?25l\x1b[?25h\x1b[?1049l"))
 	// On the primary screen the preamble must NOT emit ESC[?1049h (nor a stray
 	// ESC[?1049l) — only the surviving content-independent mode (cursor shown).
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25h")) {
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[?25h")) {
 		t.Fatalf("preamble = %q, want only ESC[?25h (no alt-screen re-entry on primary)", got)
 	}
 }
 
 func TestModeTracker_MultiParamAndAscendingOrder(t *testing.T) {
-	tr := newModeTracker()
-	tr.feed([]byte("\x1b[?1000;1006h\x1b[?7l")) // 1000=set, 1006=set, 7=reset
+	tr := New()
+	tr.Feed([]byte("\x1b[?1000;1006h\x1b[?7l")) // 1000=set, 1006=set, 7=reset
 	want := []byte("\x1b[?7l\x1b[?1000h\x1b[?1006h")
-	if got := tr.preamble(); !bytes.Equal(got, want) {
+	if got := tr.Preamble(); !bytes.Equal(got, want) {
 		t.Fatalf("preamble = %q, want %q", got, want)
 	}
 }
 
 func TestModeTracker_SequenceSplitAcrossFeeds(t *testing.T) {
-	tr := newModeTracker()
-	tr.feed([]byte("\x1b[?2")) // sequence cut mid-parameter
-	tr.feed([]byte("5l"))      // completed on the next chunk
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25l")) {
+	tr := New()
+	tr.Feed([]byte("\x1b[?2")) // sequence cut mid-parameter
+	tr.Feed([]byte("5l"))      // completed on the next chunk
+	if got := tr.Preamble(); !bytes.Equal(got, []byte("\x1b[?25l")) {
 		t.Fatalf("split-feed preamble = %q, want ESC[?25l", got)
 	}
 }
 
 func TestModeTracker_NonPrivateCSIIgnored(t *testing.T) {
-	tr := newModeTracker()
-	tr.feed([]byte("\x1b[1;31m\x1b[2J")) // SGR + erase: not DEC private modes
-	if got := tr.preamble(); got != nil {
+	tr := New()
+	tr.Feed([]byte("\x1b[1;31m\x1b[2J")) // SGR + erase: not DEC private modes
+	if got := tr.Preamble(); got != nil {
 		t.Fatalf("non-private CSI produced preamble %q, want nil", got)
 	}
 }
@@ -93,9 +88,9 @@ func TestPreambleEmitsTheLeaveOnlyWhenItCarriesSomething(t *testing.T) {
 	const leave = "\x1b[?1049l"
 
 	t.Run("alt screen with a tracked cursor bit", func(t *testing.T) {
-		tr := newModeTracker()
-		tr.feed([]byte("\x1b[?1049h\x1b[?25l"))
-		pre := string(tr.preamble())
+		tr := New()
+		tr.Feed([]byte("\x1b[?1049h\x1b[?25l"))
+		pre := string(tr.Preamble())
 		if !strings.Contains(pre, leave) {
 			t.Fatalf("preamble = %q, want it to contain the leave %q", pre, leave)
 		}
@@ -111,53 +106,43 @@ func TestPreambleEmitsTheLeaveOnlyWhenItCarriesSomething(t *testing.T) {
 	})
 
 	t.Run("alt screen with no tracked cursor bit", func(t *testing.T) {
-		tr := newModeTracker()
-		tr.feed([]byte("\x1b[?1049h"))
-		pre := tr.preamble()
+		tr := New()
+		tr.Feed([]byte("\x1b[?1049h"))
+		pre := tr.Preamble()
 		if bytes.Contains(pre, []byte(leave)) {
 			t.Errorf("preamble = %q emitted a screen switch with no cursor bit to carry", pre)
 		}
 	})
 }
 
-// TestSessionMux_AttachRestoresEvictedCursorMode is the regression for the
-// real symptom: a mode-setting sequence (cursor hide) scrolls out of the ring
-// window, yet a reattach must still re-establish it so the new emulator doesn't
-// show a stray cursor.
-func TestSessionMux_AttachRestoresEvictedCursorMode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	runner := newFakeStream(t)
-	// Ring small enough that the bulk frame evicts the cursor-hide frame.
-	mux := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, runner, NewRingBuffer(16), SessionHooks{})
-
-	hide := makeWireFrame(1, []byte("\x1b[?25l"))  // 6-byte payload → 11-byte frame
-	bulk := makeWireFrame(1, []byte("AAAAAAAAAA")) // 10-byte payload → 15-byte frame
-
-	runner.QueueRead(hide)
-	waitFor(t, func() bool { return mux.RingBufferLen() == len(hide) })
-	runner.QueueRead(bulk)
-	// bulk (15) + hide (11) > cap (16) → hide is evicted, ring holds only bulk.
-	waitFor(t, func() bool { return mux.RingBufferLen() == len(bulk) })
-
-	tui := newFakeStream(t)
-	if err := mux.Attach(ctx, tui); err != nil {
-		t.Fatalf("Attach: %v", err)
+func TestMode_UnseenSetAndReset(t *testing.T) {
+	tr := New()
+	if set, seen := tr.Mode(BracketedPaste); set || seen {
+		t.Fatalf("Mode before any output = (%v, %v), want (false, false)", set, seen)
 	}
-
-	// Replay must re-hide the cursor and then deliver the surviving bulk frame.
-	//
-	// The preamble is a SYNTH frame, not a Stdout one, and that is the point of
-	// asserting its type here rather than filtering it out: it is a byte
-	// sequence this server invented, and `session snapshot --raw` promises to
-	// show only what the PTY produced.
-	wantPreamble := makeWireFrame(byte(frame.FrameType_Synth), []byte("\x1b[?25l"))
-	got := tui.WaitWritten(t, len(wantPreamble)+len(bulk))
-	if !bytes.HasPrefix(got, wantPreamble) {
-		t.Fatalf("replay does not start with a synth-framed cursor preamble\n got=%q\nwant prefix=%q", got, wantPreamble)
+	tr.Feed([]byte("\x1b[?2004h"))
+	if set, seen := tr.Mode(BracketedPaste); !set || !seen {
+		t.Fatalf("Mode after ESC[?2004h = (%v, %v), want (true, true)", set, seen)
 	}
-	if pty := stripSynth(t, got); !bytes.Equal(pty, bulk) {
-		t.Fatalf("PTY bytes in the replay\n got=%q\nwant=%q", pty, bulk)
+	tr.Feed([]byte("\x1b[?2004l"))
+	if set, seen := tr.Mode(BracketedPaste); set || !seen {
+		t.Fatalf("Mode after ESC[?2004l = (%v, %v), want (false, true)", set, seen)
+	}
+}
+
+// Modes is what follows a vtgrid Repaint, which already selects the screen and
+// sets DECTCEM: neither may appear in it, whatever the program last did.
+func TestModes_IsPreambleWithoutTheScreenHead(t *testing.T) {
+	tr := New()
+	tr.Feed([]byte("\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1h"))
+	want := []byte("\x1b[?1h\x1b[?2004h")
+	if got := tr.Modes(); !bytes.Equal(got, want) {
+		t.Fatalf("Modes = %q, want %q", got, want)
+	}
+	if pre := tr.Preamble(); !bytes.HasSuffix(pre, want) {
+		t.Fatalf("Preamble %q does not end with Modes %q", pre, want)
+	}
+	if got := New().Modes(); got != nil {
+		t.Fatalf("Modes with nothing tracked = %q, want nil", got)
 	}
 }

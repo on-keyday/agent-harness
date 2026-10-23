@@ -4,7 +4,7 @@
 // It exists because the harness renders session screens in several places —
 // the CLI's snapshot, the TUI's pane view, and potentially the server, which
 // today keeps only a byte ring plus two partial escape-sequence scanners
-// (server/mode_tracker.go, server/replay_ground_scan.go) that approximate the
+// (termmode/tracker.go, server/replay_ground_scan.go) that approximate the
 // terminal state a real model would hold.
 //
 // It is deliberately NOT a general-purpose emulator. The scope was chosen by

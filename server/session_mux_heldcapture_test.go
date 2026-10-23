@@ -76,6 +76,37 @@ func TestHeldCaptureRoundTripsScreenAndSize(t *testing.T) {
 	}
 }
 
+// An input mode the program set once survives the restart. Bracketed paste is
+// the case that motivated it: codex, agy, opencode and pi set ESC[?2004h only at
+// startup, so a re-adopted session whose tracker starts empty never tells an
+// attaching terminal to bracket pastes again.
+func TestHeldCaptureCarriesInputModes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	before := newFakeStream(t)
+	old := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, before, NewRingBuffer(1<<20), SessionHooks{})
+	before.QueueRead(makeWireFrame(1, []byte("\x1b[?2004h\x1b[?1000hprompt> ")))
+	waitFor(t, func() bool { return strings.Contains(string(old.screenRepaint()), "prompt>") })
+
+	fresh := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, newFakeStream(t), NewRingBuffer(1<<20), SessionHooks{})
+	if _, _, err := fresh.loadHeldCapture(old.heldCapture()); err != nil {
+		t.Fatalf("loadHeldCapture: %v", err)
+	}
+
+	pre := string(fresh.modes.Preamble())
+	for _, want := range []string{"\x1b[?2004h", "\x1b[?1000h"} {
+		if !strings.Contains(pre, want) {
+			t.Errorf("the re-adopted preamble %q lacks %q", pre, want)
+		}
+	}
+	// The screen must still be the one painted: the modes ride in the same Synth
+	// frame, after the repaint, and must not disturb it.
+	if got := string(fresh.screenRepaint()); !strings.Contains(got, "prompt>") {
+		t.Errorf("the restored screen lost its content; repaint = %q", got)
+	}
+}
+
 // The capture is not history and must not be replayed as though the runner had
 // sent it. A client that asks for the PTY-only view (`snapshot --raw
 // --without-synth`) is asking what the process produced, and bytes a previous

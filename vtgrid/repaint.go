@@ -82,7 +82,7 @@ import (
 //
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
-// them; server/mode_tracker.go's preamble does, and the two are complementary.
+// them; termmode/tracker.go's preamble does, and the two are complementary.
 // The preamble must be emitted AFTER this sequence — it restores DECOM/DECAWM,
 // which this one deliberately clears in order to address cells absolutely.
 func (t *Terminal) Repaint() []byte {
