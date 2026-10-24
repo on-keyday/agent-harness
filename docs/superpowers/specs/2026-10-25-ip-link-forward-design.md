@@ -64,7 +64,7 @@ lists only what stage 1 leaves for it.
   needs `CAP_NET_ADMIN` (§8). Attaching to a persistent device created earlier
   by root — the route to running without the capability — is not built.
 - **A changing MTU.** Fixed at 1100 (§7c).
-- **Starting a link from the TUI or WebUI** (§10).
+- **Starting a link from the WebUI** (§10a).
 
 ## 4. Decisions taken
 
@@ -80,7 +80,7 @@ choice the operator made, and a later reader may overturn them on evidence.
 | 4 | Point-to-point only; nothing behind either tun is reachable through the harness | author |
 | 5 | MTU fixed at 1100 | author |
 | 6 | Addresses are given by the operator when the link is created | author |
-| 7 | Only the CLI creates a link; every surface lists and kills one | author |
+| 7 | The CLI and the TUI create a link; the WebUI cannot (a browser opens no tun); every surface lists and kills one | operator |
 | 8 | `ForwardProtocol.ip` plus a new `PortForwardDirection.link` | author |
 | 9 | A link needs a new capability bit, `forward_link`, and only it; later stages reuse the same bit | operator |
 | 10 | Registration waits for the runner's tun, as `-R` waits for its bind | author |
@@ -548,10 +548,40 @@ runner's. One link per invocation; `--ip` and `-L` / `-R` / `-W` in one
 command are refused, because they have different lifetimes on failure (a
 refused link must not leave forwards behind it running).
 
-Starting a link is CLI-only. The WebUI cannot open a tun at all. The TUI is a
-client process and could, but the operator's TUI host is Windows, which stage 1
-does not support; a TUI path would be an untested surface until Windows lands.
-Both are omissions by decision, recorded here, not gaps.
+All of that is declared in `forward`'s entry in `cli/verb/table.go`, not
+hand-checked: two flags; `Exclusive` rules pairing `ip` with each of `L`, `R`
+and `W`; `ip` added to the `AtLeastOne` rule; `Requires` in both directions
+between `ip` and `ip-peer`; a `Notes` line; and a `ModalSurfaces` row for the
+TUI's link mode.
+
+**TUI.** The TUI already holds `-L` / `-R` forwards in its own process
+(`tui/portforward.go`, `DoStartPortForward` / `DoStartRemoteForward`), and a
+link is held the same way: the TUI process owns the client tun, and the link
+ends when the TUI exits.
+
+- **Key.** `L` in the main task view opens the forward modal in a third mode,
+  `ForwardLink`, beside `p` (`-L`) and `b` (`-R`) (`tui/keys.go`'s
+  `mainKeys`, `tui/actions.go`'s `onForwardStart`). `L` is unused in
+  `mainKeys`; the grid view binds `L` in its own dispatch (`tui/grid.go`),
+  which does not see main-view keys. The key tests decide if that reading is
+  wrong.
+- **Modal.** The input is `<client-addr>/<prefix> <runner-addr>` — the same
+  two values `--ip` and `--ip-peer` take, parsed by the same function the CLI
+  uses, so the TUI and the CLI cannot accept different addresses.
+- **Stopping.** Through the forwards modal (`f`, then `x`), which already
+  kills any registration. No dedicated stop key: `P` / `B` exist because a
+  task can carry several forwards of each kind, and the forwards modal
+  already covers picking among them.
+- **Not Linux.** The modal opens, and starting the link fails with the same
+  `ip links are Linux-only` the CLI prints, in the TUI's result pane.
+- **TUI command line.** No change. `forward`'s verb declaration gives
+  starting a forward to the CLI only (`CmdlineSurfaces: CLI`, recorded in the
+  udp spec's first amendment), so `-L` / `-R` cannot be started from the TUI
+  command line either. A link follows its siblings; adding all three there
+  is a separate change.
+
+**WebUI.** A browser cannot open a tun device, so the WebUI does not start
+links. It lists and kills them like any other row.
 
 ### 10b. Listing and killing
 
@@ -637,8 +667,9 @@ outcome, which the walk confirms or corrects:
 |---|---|
 | CLI input (`cmd/harness-cli/dispatch.go`, `forward` help) | `--ip`, `--ip-peer` |
 | workspace file | save omits link rows (§10b); no grammar change |
-| TUI input / cmdline / popups | omitted by decision (§10a) |
-| WebUI input / cmdline | omitted by decision (§10a) |
+| TUI key + modal (`tui/keys.go`, `tui/actions.go`, `tui/portforward.go`) | `L` → `ForwardLink` mode (§10a) |
+| TUI cmdline | none — no forward is started there today (§10a) |
+| WebUI input / cmdline | impossible: a browser opens no tun (§10a) |
 | CLI display | spec string, traffic line, JSON |
 | WebUI display (`cli/forward_snapshot_row.go`) | raw + rendered fields |
 | TUI display (`tui/portforward.go`) | spec cell; conns cell empty on link rows |
@@ -702,7 +733,10 @@ outcome, which the walk confirms or corrects:
    (`exec srv -- ip link`, `exec cli -- ip link`).
 7. Kill the `harness-cli` process with SIGKILL: the client's device is gone,
    the listing drops the row, and the runner's device is gone (§6e).
-8. Bring a link up again and restart the runner (SIGTERM, then start it as
+8. The same link from the TUI: `exec srv -- harness-tui ...`, select the task,
+   `L`, enter `10.200.0.1/30 10.200.0.2`; ping answers as in step 2; quitting
+   the TUI removes both devices.
+9. Bring a link up again and restart the runner (SIGTERM, then start it as
    `up` did): the client exits with `runner_gone`, both devices are gone, and
    the row is gone. Then the same with SIGKILL on the runner: the same
    outcome, bounded by the reconnect (`Registry.Add` displacing the old
