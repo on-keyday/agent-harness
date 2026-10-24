@@ -409,3 +409,38 @@ isolation unit:
 2. **Do clusters ever need to talk to each other**, for example a parent
    cluster directing a child one? If yes, C is out, and A needs a
    cross-tenant send that some capability gates.
+
+---
+
+## `Capability` is running out of bits
+
+**What.** `enum Capability` is `:u32`. With `forward_link`
+(`2026-10-25-ip-link-forward-design.md` §6b) it uses 23 bits, leaving 9, and
+the board-publishing entry above wants two more.
+
+**Evidence** (2026-10-25), the date each recent bit first appears in
+`runner/protocol/message.bgn`:
+
+```
+$ git log -S'<bit line>' --reverse --format=%ad --date=short -- runner/protocol/message.bgn | head -1
+exec_view 0x1000      2026-08-20
+forward_tap 0x10000   2026-08-29
+board_send 0x20000    2026-10-04
+exec_tap 0x40000      2026-10-09
+board_peer 0x80000    2026-10-16
+resume 0x100000       2026-10-19
+resume_exact 0x200000 2026-10-19
+```
+
+Ten bits in two months, five of them in the last fifteen days.
+
+**What widening costs.** `Capability` is the type of 13 fields
+(`grep -c ':Capability\b' runner/protocol/message.bgn`), so it is a wire change
+for every peer, and the WAL persists masks as numbers, so it has the disk axis
+too: a `u32` mask written before the change must still decode after it.
+`all` is a literal and moves with the width.
+
+**Why deferred.** Found while choosing `forward_link`'s bit. The decision there
+was not to fold the link into existing bits to save one, since that would change
+what existing grants mean. Widening is its own change with its own rollout, and
+the remaining bits leave time to do it deliberately.
