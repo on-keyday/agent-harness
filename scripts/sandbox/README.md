@@ -209,6 +209,16 @@ This catches missing binaries, changed package layouts, incompatible runtime
 dependencies, and startup failures. It does not test login, inference, or the
 semantics of model-driven tool calls.
 
+For codex the probe also runs `codex_storage_probe.py` inside the container:
+the storage behaviour `--history-window` depends on, checked with synthetic
+rollouts in both on-disk formats against a disposable `CODEX_HOME`. A fresh
+state DB must list and resume them, filtered by cwd. It must pick up a rollout
+added after startup. A hardlinked rollout must keep its inode. Compression and
+the paginated migration must still be off by default. A failure fails the
+probe. Nothing runs these on a schedule, so **after updating codex on a host,
+run `python3 scripts/sandbox/check_codex_release.py --smoke`** before relying
+on codex's history window.
+
 JSON reports distinguish `runtime_tested: false` (metadata only) from an actual
 successful startup probe. An unavailable registry or an unrecognized package
 is an error, not a compatibility success, and one agent's failure does not hide
@@ -439,6 +449,68 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   The redirect lives in `entrypoint.sh`, so it takes effect only after
   `build.sh` rebuilds the image.
 
+### History window (`--history-window`, claude / pi / codex, opt-in)
+
+Mount auth puts the agent's whole config directory in the container: every
+conversation you ever had with that agent, plus the settings and hooks your
+host agent later loads. With `--history-window` the container instead sees
+**only this task's conversations** (the ones whose cwd is this worktree), and
+those stay in the host's normal store. A later run without the flag, or your
+own unsandboxed agent in that worktree, resumes them as if the sandbox had not
+been there.
+
+| agent | config dir in the container | the window (host, rw) | from the host, singly |
+|---|---|---|---|
+| claude | empty per run (`~/.claude`, `~/.claude.json` = `{}`, seeded like token auth) | `~/.claude/projects/<cwd with every non-alphanumeric byte as ->` | `.credentials.json` (rw; not under `--token-auth`) |
+| pi | empty per run (`~/.pi`) | `~/.pi/agent/sessions/--<cwd, / \ : as ->--` | `auth.json` (rw), `settings.json` and `agent/bin` (ro) |
+| codex | empty per run (`~/.codex`) | a per-task directory at `~/.codex/sessions` (below) | `auth.json` (rw), `config.toml` (ro), `thread-writer-locks/` (rw) |
+
+The empty config dir is a host temp dir (`${TMPDIR:-/tmp}/harness-sandbox-root.*`)
+that the reaper removes. Everything else the agent keeps there — claude's
+auto memory, prompt history, `/rewind` checkpoints, user `CLAUDE.md`, skills,
+plugins, MCP config — starts empty every run and is discarded.
+
+- **Enabling it:** per task, `--agent-arg --history-window` (the CLI, the TUI
+  submit popup's args field, the WebUI). A slot's `--agent-args` does not work:
+  it reaches the default profile only. **A plain resume does not carry it**:
+  only `--exact` reuses a task's recorded args, so resuming without the flag
+  runs that turn shared. Nothing fails; the runner log's `history=shared` is the
+  only trace.
+- **Refused (exit 2, no container):** opencode (one SQLite DB for every
+  session), agy (not measured), bash; a cwd that is not a linked worktree
+  (under `--no-worktree` the window would hold every task's conversations);
+  a claude directory name over 200 bytes (claude hashes those); a missing
+  credential file; for codex, a state dir on another filesystem from
+  `~/.codex`. Never a silent fallback to the shared mode.
+- **claude's credential file is mounted on its own.** claude replaces
+  `.credentials.json` on every write, which a single-file mount cannot take,
+  but its writer then falls back to writing in place (`EBUSY` is in its
+  fallback set; read from claude 2.1.310, and measured on `~/.claude.json`,
+  2026-10-26). Accepted risk: a crash between the truncate and the write leaves
+  an empty credential file and you log in again. Re-check after a claude
+  update (spec gate V2).
+- **codex has no per-cwd directory** (rollouts are filed by date, with the cwd
+  in their first line). The window is
+  `${XDG_STATE_HOME:-~/.local/state}/harness-sandbox/codex/<task-id>/`,
+  rebuilt at every start from hardlinks to the host rollouts of this cwd.
+  The reaper links the container's new rollouts back every 5 s and once more
+  after exit. It never overwrites a host file, and links a file only if its
+  first line names this cwd. Then it has the **host's** codex re-index this cwd
+  (`codex app-server`, one `thread/list` with scan-and-repair), because
+  `resume --last` trusts the host's state DB and that DB never saw a thread
+  the container created. Limits: a host `resume --last` issued *while* the
+  window task runs does not see its new thread yet; after a backtrack (revert)
+  in an interactive codex session in the window, the host may continue the
+  pre-revert file; the shared lock dir shows every host thread's id (not its
+  content); a container can rewrite a rollout's first line after it was
+  linked. The last two sit inside this kit's threat model (accidental blast
+  radius, not a hostile agent).
+- **Every container runs in the host's timezone** (`--tz=local`, all modes):
+  codex files rollouts by local time, and from the image's UTC they sorted
+  hours behind the host's.
+
+Design and measurements: `docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md`.
+
 ### Verifying the above, instead of trusting it
 
 `probe.sh` runs **inside** the container and reports the measured state of every
@@ -448,7 +520,11 @@ against them. The modes are not interchangeable: the ip allowlist leaves udp/53
 open to any host and the proxy mode does not, upstream's blanket ssh rule existed
 only in ip mode, and `~/.claude` is a host-persistent write surface under mount
 auth but absent under token auth. A mode-less "blocked" reads later as "blocked
-in every mode", which is how partial coverage passes for full. The rest — what the mounts actually expose, whether host processes
+in every mode", which is how partial coverage passes for full. `config_auth`
+reads `window-root` under `--history-window`, and `config_history` names the
+declared mode and lists the conversation directories actually visible, each
+host-mounted one marked `(host)` (codex: the rollout count and their cwds).
+The rest — what the mounts actually expose, whether host processes
 are visible, which egress succeeds (it probes one allowlisted target *and* one
 that must be refused), whether the harness-server carve-out is still one port
 (`server_other_port` must not read `open` — that is how the host-wide carve-out

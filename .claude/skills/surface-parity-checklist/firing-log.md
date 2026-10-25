@@ -3343,3 +3343,66 @@ missed:  —
 **No upgrade step**: the presets point at the wrapper script, and every task
 execs it fresh, so a running slot picks up the new defaults with its next task —
 the opposite of a bin rename, which S6 warns about.
+
+### 2026-10-26 (pre-landing) — `--history-window`: a container sees only its own task's conversations
+
+Spec `2026-10-26-sandbox-history-window-design.md`. A wrapper flag that
+changes what an agent's config directory is in the container (claude, pi and
+codex; refused for the rest), so S1–S6 is the walk. Also `--tz=local` on every
+container, found by a gate.
+
+done:    S3 (new table fields — `A_HISTORY`, `A_HISTORY_STORE`, `history_name`,
+         `A_HISTORY_NAME_MAX`, `A_HISTORY_ROOTS`, `A_HISTORY_ROOT_FILES`,
+         `A_CRED_FILES`, `A_RO_CONFIG`, `A_RO_DIRS`, `A_SHARED_DIRS`,
+         `A_HISTORY_SEED` — all inside the `case "$AGENT"` arms, so no per-agent
+         `case` appears outside the table), S5 (`SANDBOX_HISTORY` is not a
+         `HARNESS_*` name, so it is set explicitly on `podman run` rather than
+         forwarded by prefix; the wrapper reads `HARNESS_TASK_ID` itself for the
+         codex per-task directory), S6 (sandbox README: a History window
+         section, `config_history` under Verifying, the codex storage checks
+         and the operator's after-update step; `probe.sh`: `config_history`
+         and a `window-root` reading of `config_auth`), 24 (the flag's meaning
+         per path is written down: per-task `--agent-arg` only; a slot's
+         `--agent-args` reaches the default profile; a plain resume drops it
+         and runs shared, `--exact` keeps it), 33 (every refusal exits 2 with
+         its reason and starts no container — driven against real podman), 35,
+         37 (spec §4 rows 16–20 and the §11 results), 39 (the spec's §11/§12
+         gates, each driven live through the wrapper with real model turns)
+omitted: S1 — no `sandbox-*-window` preset, by the operator's decision (spec §4
+         row 16). runner-up.md gains nothing for the same reason.
+n/a:     S2 (no agent added or renamed), S4 (no domain or firewall-only env
+         change), 1–23, 25–32, 34–34a, 36, 38 (no verb, flag on a `cli/verb`
+         row, wire field, task field or UI control — the flag is the wrapper's
+         own argv, reached through the existing per-task args field on all
+         three UIs).
+missed:  —
+
+**S6's verifier half fired twice during the gates, both times as a probe that
+would have misreported.** First, `config_auth`'s pattern matches the config
+mount point, and under the window that point IS a bind mount — of the per-run
+temp root — so it would have read `mount (host config …)` for a container that
+has no host config at all; it now checks mountinfo's root field. Second, the
+first window run listed TWO conversation directories for claude, which reads as
+a leak: the second was claude's auto-memory directory for the repo root,
+created inside the ephemeral root on the first turn. Each entry is now marked
+`(host)` when it is a host bind mount, which separates the two without a
+special case.
+
+**What no item asked and the gates found, three times.** (1) The image runs in
+UTC and codex files rollouts by local time, so a container's rollout sorted nine
+hours behind the host's; fixed for every mode with `--tz=local`, because
+sandboxed codex in the shared mode writes into the host store too. (2) The
+host's `codex exec resume --last` trusts its SQLite row for the cwd and scans
+files only on a miss, so a thread created in the container — linked into the
+host store, never registered in its DB — was invisible to it; the reaper now
+has the host's codex run its own scan-and-repair listing. (3) pi's helper
+binary (`~/.pi/agent/bin/fd`) lives inside the config root the window replaces,
+so pi warned `fd not found`. All three are "the agent keeps something beside its
+history that the history depends on", which no S-item asks; S3 lists table
+fields, not what an agent's state directory contains. Recorded for a second
+instance to count against.
+
+**The earlier S3 note this closes.** The 2026-09-30 stream-replay entry
+recorded that the host-side adapter finds no transcript for a sandboxed claude
+under token auth. With `--history-window --token-auth` the transcript is
+written into the host's `projects/<enc>/` and the replay finds it.
