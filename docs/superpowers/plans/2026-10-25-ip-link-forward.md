@@ -573,7 +573,7 @@ func TestForwardsModalLinkRowConnsEmpty(t *testing.T)  // tui: the conns cell is
 - Modify: `cli/verb/table.go`; regenerate `cli/verb/actions_gen.go` (`go generate ./cli/verb/`)
 - Modify: `cmd/harness-cli/dispatch.go`
 - Test: `cli/verb/rules_test.go`, `cmd/harness-cli/forward_test.go`
-- Modify: `runner/agentskills/supervising-workers/SKILL.md` and its copy `.claude/skills/supervising-workers/SKILL.md` (identical today; keep them identical), `README.md` (the forward section)
+- Modify: `runner/agentskills/supervising-workers/SKILL.md` and its mirrors `.claude/skills/supervising-workers/SKILL.md` and `.agents/skills/supervising-workers/SKILL.md` (`TestMirrorsMatchEmbeddedSkills` holds them byte-equal), `README.md` (the forward section)
 
 **Interfaces:**
 - Consumes: `cli.ParseIPLink`, `cli.RunIPLink`, `iplink.Supported`.
@@ -676,3 +676,44 @@ No product code unless a step fails.
   - `iperf3` (step 4): check `command -v iperf3` inside the lab. If it is absent, record that; do not install it.
   - Step 8 drives the real TUI with keystrokes.
 - [ ] **Step 5:** Commit: `plan: IP link — acceptance recorded`. Then tell the operator stage 1 is ready to land. Landing (local main, FF, push, then `make build` in the main checkout) follows the landing-to-main skill once they have seen Appendix B.
+
+---
+
+## Appendix A — surface parity walk (2026-10-25, before implementation)
+
+Items 1–39 of `.claude/skills/surface-parity-checklist/SKILL.md`, one verdict each.
+
+1. done (T10) — `forward`'s row gains `ip` / `ip-peer`. The verb is `CmdlineSurfaces: CLI`, so no other command line parses them.
+2. done (T10, T8) — pairing rules are declared (`Exclusive`, `Requires`, `AtLeastOne`). Address validity is `cli.ParseIPLink` → `IpLinkConfig.Validate`, which the server runs too.
+3. see 4, 5, 6, 9.
+4. done (T11) — `mainKeys.ForwardLink = "L"` plus its `keybindings` row (keys_test enforces the pair).
+5. done (T11) — `PortForwardModal` gains `ForwardLink` mode.
+6. omitted — the WebUI cannot open a tun (spec §10a). Listing and kill already exist and render through `cli` (T9).
+7. n/a — no new WebUI-typable path (`forward` open is CLI-only).
+8. n/a — no bridge function interprets these values.
+9. n/a — not a spawn.
+10. noted — CLI stdout/exit, TUI `PortForwardStatusMsg`, no WebUI.
+11–14. n/a — no task field. The forward listing surfaces they do not name are walked under 31 and 39.
+15. done (T3) — `GrantableCaps`, `CapDescription`, `capAuditTable` gain `forward_link`. `WriteCaps` iterates `GrantableCaps`, so the catalog follows.
+16–18a. n/a — no task or runner field.
+19–23. n/a — no task field. The wasm forward row is `cli.ForwardSnapshotRow` (T9), which gains `link`.
+24. done — `--ip` exists only on forward open. On the other paths a link row is: killed under `forwardCapFor` (T3); tapped like any datagram row (T5); omitted from a workspace save (T9); listed everywhere (T9).
+25. done (T2) — `link` is present exactly when `protocol == ip`. No zero-versus-absent ambiguity.
+26. n/a — not a spawn.
+27. done (T8) — one `registerForward` funnel for `RegisterPortForward` and `RegisterIPLink`. The CLI and the TUI both call `cli.RunIPLink`.
+28. n/a — forwards are in memory only (spec §5).
+28a. done — `RegisterPortForwardRequest{` has one literal (`cli/port_forward.go`). `RunnerOpenPortForwardRequest{` has three (`server/port_forward.go`), and only `registerRemoteForward`'s carries a link (T3).
+29. done (T8, T11) — the up line names the device, address and mtu. The exit line names reason and detail. The TUI fail line names the task.
+30. done (T11) — the TUI result goes to `a.cmdresult` via `PortForwardStatusMsg`. WebUI n/a.
+31. done (T9) — `conns=` is omitted on `direction == link` (existence), and the datagram counters print their zeros.
+32. done (T8) — one parser (`ParseIPLink`, which `ParseIPLinkLine` calls). One renderer (`IPLinkSpecString`). A link has no workspace grammar.
+33. done (T10) — `--ip` without `--ip-peer` and the reverse refuse. `--ip` with `-L` / `-R` / `-W` refuses.
+34. n/a — no column set changes. The conns cell is empty, not removed.
+34a. n/a — no WebUI form.
+35. done (T10) — README's forward section. The README's TUI cmdline verb list: n/a (no cmdline change).
+36. done (T10) — `runner/agentskills/supervising-workers/SKILL.md` plus BOTH mirrors, `.claude/skills/` and `.agents/skills/`. The plan named only one mirror; see the T1 ruling.
+37. at the end (T13) — anything implementation changes in the spec's meaning lands as an amendment there.
+38. n/a — no screen-rendering change.
+39. at the end (T13) — walk spec §10d row by row against the code.
+
+S1–S6: n/a — no agent launch change.
