@@ -13,9 +13,10 @@ import (
 )
 
 type fakeConn struct {
-	id     objproto.ConnectionID
-	sentMu sync.Mutex
-	sent   [][]byte
+	id        objproto.ConnectionID
+	sentMu    sync.Mutex
+	sent      [][]byte
+	datagrams [][]byte
 
 	// nextStreamID is the StreamID to assign to the next CreateBidirectionalStream
 	// result. When zero, CreateBidirectionalStream returns nil (legacy behaviour).
@@ -194,12 +195,24 @@ func (f *fakeConn) GetReceiveStream(_ trsf.StreamID) trsf.ReceiveStream { return
 // GetBidirectionalStream resolves a peer-created stream by id from bidiByID
 // (nil if absent), mirroring how the real conn looks up a runner-created
 // remote-forward data stream.
-// The datagram half of ConnHandle. Stubs: nothing in this package's unit tests
-// drives the udp forward relay, which has its own fake (see forward_datagram_test.go).
-// MaxDatagramSize answers a realistic size rather than 0, so a caller that
-// compares a payload against it is not told everything is oversized.
-func (f *fakeConn) SendDatagram(b []byte) error { return nil }
-func (f *fakeConn) MaxDatagramSize() int        { return 1169 }
+// The datagram half of ConnHandle. SendDatagram records what it was handed, so
+// a relay test can see which leg a datagram went out on. MaxDatagramSize
+// answers a realistic size rather than 0, so a caller that compares a payload
+// against it is not told everything is oversized.
+func (f *fakeConn) SendDatagram(b []byte) error {
+	f.sentMu.Lock()
+	f.datagrams = append(f.datagrams, append([]byte(nil), b...))
+	f.sentMu.Unlock()
+	return nil
+}
+func (f *fakeConn) MaxDatagramSize() int { return 1169 }
+
+// Datagrams returns a copy of every datagram SendDatagram was handed.
+func (f *fakeConn) Datagrams() [][]byte {
+	f.sentMu.Lock()
+	defer f.sentMu.Unlock()
+	return append([][]byte(nil), f.datagrams...)
+}
 
 func (f *fakeConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
 	return f.bidiByID[id]

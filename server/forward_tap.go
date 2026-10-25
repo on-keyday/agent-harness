@@ -17,9 +17,14 @@ type forwardTapSink = recordSink[*protocol.ForwardTapRecord]
 // tapStreamKey identifies one byte stream inside a forward: a connection and a
 // direction. Missed-byte counts are per key, because the two directions of one
 // connection are two independent streams.
+//
+// datagram marks a datagram flow, whose seq holds the flow id. A stream's
+// missed bytes and a flow's are never merged under one key, and the gap a
+// datagram key produces is a datagram_gap.
 type tapStreamKey struct {
-	seq uint64
-	dir protocol.ForwardTapDirection
+	seq      uint64
+	dir      protocol.ForwardTapDirection
+	datagram bool
 }
 
 // forwardTap is one reader attached to one forward.
@@ -38,6 +43,11 @@ func newForwardTap(sink forwardTapSink, filter protocol.ForwardTapFilter, maxRec
 }
 
 func forwardGapRecord(key tapStreamKey, missed uint64) *protocol.ForwardTapRecord {
+	if key.datagram {
+		gap := nowTapRecord(protocol.ForwardTapRecordKind_DatagramGap)
+		gap.SetDatagramGap(protocol.ForwardTapDatagramGap{FlowId: uint32(key.seq), Direction: key.dir, DroppedBytes: missed})
+		return gap
+	}
 	gap := nowTapRecord(protocol.ForwardTapRecordKind_Gap)
 	gap.SetGap(protocol.ForwardTapGap{ConnSeq: key.seq, Direction: key.dir, DroppedBytes: missed})
 	return gap
@@ -92,6 +102,31 @@ func (t *forwardTap) offer(seq uint64, dir protocol.ForwardTapDirection, offset 
 	t.q.push(tapStreamKey{seq: seq, dir: dir}, rec, len(data))
 }
 
+// offerDatagram is offer for one whole datagram: the same filter, truncation and
+// copy, keyed by flow so a missed count becomes a datagram_gap. seq is the
+// forward's own count for (flowID, dir), not the tap's.
+func (t *forwardTap) offerDatagram(flowID uint32, dir protocol.ForwardTapDirection, seq uint64, fate protocol.ForwardTapDatagramFate, data []byte) {
+	if t.q.isClosed() || !t.wants(dir) {
+		return
+	}
+	keep := data
+	var cut uint32
+	if t.maxRecordBytes > 0 && uint32(len(keep)) > t.maxRecordBytes {
+		cut = uint32(len(keep)) - t.maxRecordBytes
+		keep = keep[:t.maxRecordBytes]
+	}
+	payload := make([]byte, len(keep))
+	copy(payload, keep)
+
+	d := protocol.ForwardTapDatagram{FlowId: flowID, Direction: dir, Seq: seq, Fate: fate, TruncatedBytes: cut}
+	d.SetData(payload)
+	rec := nowTapRecord(protocol.ForwardTapRecordKind_Datagram)
+	rec.SetDatagram(d)
+	// At least one byte of weight: an empty datagram is still a datagram the
+	// tap missed, and a zero would drop it without a count.
+	t.q.push(tapStreamKey{seq: uint64(flowID), dir: dir, datagram: true}, rec, max(len(data), 1))
+}
+
 // emit queues a record that carries no payload (conn_open / conn_close).
 func (t *forwardTap) emit(rec *protocol.ForwardTapRecord) {
 	t.q.push(recordKey(rec), rec, 0)
@@ -109,6 +144,14 @@ func recordKey(rec *protocol.ForwardTapRecord) tapStreamKey {
 	case protocol.ForwardTapRecordKind_Gap:
 		if g := rec.Gap(); g != nil {
 			return tapStreamKey{seq: g.ConnSeq, dir: g.Direction}
+		}
+	case protocol.ForwardTapRecordKind_Datagram:
+		if d := rec.Datagram(); d != nil {
+			return tapStreamKey{seq: uint64(d.FlowId), dir: d.Direction, datagram: true}
+		}
+	case protocol.ForwardTapRecordKind_DatagramGap:
+		if g := rec.DatagramGap(); g != nil {
+			return tapStreamKey{seq: uint64(g.FlowId), dir: g.Direction, datagram: true}
 		}
 	case protocol.ForwardTapRecordKind_ConnOpen:
 		if o := rec.ConnOpen(); o != nil {

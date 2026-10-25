@@ -132,6 +132,67 @@ func (pf *portForward) noteMaxDatagramSize(n int) {
 	pf.maxDatagramSize.Store(uint32(n))
 }
 
+// datagramSeqIdle is how long a flow's sequence counter survives without a
+// datagram: the udp flow idle timeout both endpoints reap on.
+const datagramSeqIdle = 60 * time.Second
+
+type dgSeqKey struct {
+	flow uint32
+	dir  protocol.ForwardTapDirection
+}
+
+type dgSeqEntry struct {
+	n    uint64
+	last time.Time
+}
+
+// observeDatagram counts one datagram the relay received on (flowID, dir), and
+// offers it, with what became of it, to every tap. Called from the relay: it
+// must not block and must not retain payload.
+func (pf *portForward) observeDatagram(flowID uint32, dir protocol.ForwardTapDirection, fate protocol.ForwardTapDatagramFate, payload []byte) {
+	pf.observeDatagramAt(time.Now(), flowID, dir, fate, payload)
+}
+
+func (pf *portForward) observeDatagramAt(now time.Time, flowID uint32, dir protocol.ForwardTapDirection, fate protocol.ForwardTapDatagramFate, payload []byte) {
+	if pf == nil {
+		return
+	}
+	k := dgSeqKey{flow: flowID, dir: dir}
+	pf.dgSeqMu.Lock()
+	if pf.dgSeq == nil {
+		pf.dgSeq = map[dgSeqKey]*dgSeqEntry{}
+	}
+	e := pf.dgSeq[k]
+	if e == nil {
+		e = &dgSeqEntry{}
+		pf.dgSeq[k] = e
+	}
+	e.n++
+	e.last = now
+	seq := e.n
+	pf.dgSeqMu.Unlock()
+
+	pf.tapMu.Lock()
+	taps := pf.taps
+	pf.tapMu.Unlock()
+	for _, t := range taps {
+		t.offerDatagram(flowID, dir, seq, fate, payload)
+	}
+}
+
+// pruneDatagramSeqs drops the counters of flows idle for datagramSeqIdle, so a
+// forward whose sources keep changing port does not grow one entry per flow for
+// its whole life.
+func (pf *portForward) pruneDatagramSeqs(now time.Time) {
+	pf.dgSeqMu.Lock()
+	defer pf.dgSeqMu.Unlock()
+	for k, e := range pf.dgSeq {
+		if now.Sub(e.last) >= datagramSeqIdle {
+			delete(pf.dgSeq, k)
+		}
+	}
+}
+
 // observe accumulates the per-connection halves and, from the tap change on,
 // offers the bytes to every tap reading this forward. Called from the relay
 // goroutine: it must not block and must not retain data, which the relay

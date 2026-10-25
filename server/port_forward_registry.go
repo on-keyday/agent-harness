@@ -80,6 +80,14 @@ type portForward struct {
 	tapMu sync.Mutex
 	taps  []*forwardTap
 
+	// Datagram sequence numbers per (flow, direction), datagram forwards only.
+	// Counted whether or not a tap is attached, so a tap opened late starts at
+	// the flow's real count -- the rule stream_offset follows for tcp. Pruned
+	// by the stats sweeper once a flow goes idle: the server sees datagrams,
+	// never a flow ending.
+	dgSeqMu sync.Mutex
+	dgSeq   map[dgSeqKey]*dgSeqEntry
+
 	// What the stats sweep last published, so an unchanged forward costs a
 	// comparison and no event.
 	statsMu       sync.Mutex

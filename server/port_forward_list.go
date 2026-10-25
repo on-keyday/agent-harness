@@ -128,13 +128,14 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	if pf.link != nil {
 		info.SetLink(*pf.link) // Protocol, set above, is ip: the arm exists
 	}
-	// The udp group, as a group, zeros included -- and ONLY on a udp row. That
+	// The datagram group, as a group, zeros included -- and ONLY on a row that
+	// carries datagrams (udp, ip). That
 	// split is the existence condition the counter list exists to express: a tcp
 	// forward has no max datagram size and cannot drop a datagram, while a udp
 	// row that has dropped nothing must still say so. "0 packets overflowed" is
 	// the answer to "why will QUIC not connect", and an absent key there would
 	// read as "this row does not report it".
-	if pf.protocolKind == protocol.ForwardProtocol_Udp {
+	if pf.protocolKind.CarriesDatagrams() {
 		info.SetCounter(protocol.ForwardCounterKey_MaxDatagramSize, uint64(pf.maxDatagramSize.Load()))
 		// What THIS SERVER's relay dropped, and nothing else. An endpoint's own
 		// drops are not here and cannot be: a datagram the client refused never

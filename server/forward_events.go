@@ -77,9 +77,14 @@ func (h *TaskHandler) runStatsSweeper(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case now := <-t.C:
 			h.sweepForwardStats()
 			h.sweepExecStats()
+			// Not inside sweepForwardStats, which returns early when nothing
+			// subscribes: the counters grow whether or not anyone listens.
+			for _, pf := range h.pforwards().list() {
+				pf.pruneDatagramSeqs(now)
+			}
 		}
 	}
 }

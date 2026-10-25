@@ -56,6 +56,10 @@ func (s *Server) pumpForwardDatagrams(ctx context.Context, sc streamingConn, tr 
 // back to the client. Anything from a third connection is refused — the
 // registration names exactly two endpoints, and a forward_id is not a
 // capability anyone else may present.
+//
+// Every datagram that belongs to the forward is offered to its taps with what
+// became of it. One refused before that point (an unknown sender, a forward
+// that carries no datagrams) never belonged to it and is not offered.
 func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protocol.ForwardDatagram, raw []byte) {
 	if s.taskHandler == nil {
 		return
@@ -67,21 +71,24 @@ func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protoc
 		// log line per in-flight datagram would be the noisiest thing here.
 		return
 	}
-	if pf.protocolKind != protocol.ForwardProtocol_Udp {
-		s.cfg.Logger.Warn("forward datagram: forward is not udp", "cid", cid, "fwd", dg.ForwardId)
+	if !pf.protocolKind.CarriesDatagrams() {
+		s.cfg.Logger.Warn("forward datagram: forward carries no datagrams", "cid", cid, "fwd", dg.ForwardId,
+			"protocol", pf.protocolKind.String())
 		return
 	}
 
 	var to ConnHandle
+	var dir protocol.ForwardTapDirection
 	switch {
 	case pf.clientCID == cid:
+		dir = protocol.ForwardTapDirection_ToTarget
 		runner, rok := s.registry.GetByIdentity(pf.runnerID)
 		if !rok || runner.Conn == nil {
 			pf.noteDatagramDrop(dropQueue)
+			pf.observeDatagram(dg.FlowId, dir, protocol.ForwardTapDatagramFate_DroppedQueue, dg.Payload)
 			return
 		}
 		to = runner.Conn
-		pf.noteBytes(protocol.ForwardTapDirection_ToTarget, len(dg.Payload))
 	default:
 		runner, rok := s.registry.GetByIdentity(pf.runnerID)
 		if !rok || runner.Conn == nil || runner.Conn.ConnectionID().String() != cid {
@@ -93,14 +100,20 @@ func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protoc
 				"cid", cid, "fwd", dg.ForwardId)
 			return
 		}
+		dir = protocol.ForwardTapDirection_FromTarget
 		to = pf.clientCxn
-		pf.noteBytes(protocol.ForwardTapDirection_FromTarget, len(dg.Payload))
 	}
+	pf.noteBytes(dir, len(dg.Payload))
+	pf.observeDatagram(dg.FlowId, dir, s.sendForwardDatagram(pf, to, raw), dg.Payload)
+}
+
+// sendForwardDatagram re-emits raw on to and reports what became of it,
+// counting every drop against the forward.
+func (s *Server) sendForwardDatagram(pf *portForward, to ConnHandle, raw []byte) protocol.ForwardTapDatagramFate {
 	if to == nil {
 		pf.noteDatagramDrop(dropQueue)
-		return
+		return protocol.ForwardTapDatagramFate_DroppedQueue
 	}
-
 	// Re-emitted byte for byte, framing included: the far end decodes the same
 	// ForwardDatagram, so flow_id keeps its meaning across the hop and the
 	// server needs to know nothing about what a flow is.
@@ -111,18 +124,31 @@ func (s *Server) relayForwardDatagram(from streamingConn, cid string, dg *protoc
 		// is a counted drop, and the counter is what tells an operator why a
 		// datagram protocol will not come up over this particular pair.
 		pf.noteDatagramDrop(dropOversize)
-		return
+		return protocol.ForwardTapDatagramFate_DroppedOversize
 	}
-	if err := to.SendDatagram(raw); err != nil {
-		// The cause matters to whoever reads the row: a closed window is the
-		// transport working, a full queue is this process falling behind.
-		switch {
-		case err == trsf.ErrCongestionBlocked:
-			pf.noteDatagramDrop(dropCongestion)
-		case err == trsf.ErrDatagramTooLarge:
-			pf.noteDatagramDrop(dropOversize)
-		default:
-			pf.noteDatagramDrop(dropQueue)
-		}
+	fate := datagramFate(to.SendDatagram(raw))
+	switch fate {
+	case protocol.ForwardTapDatagramFate_DroppedCongestion:
+		pf.noteDatagramDrop(dropCongestion)
+	case protocol.ForwardTapDatagramFate_DroppedOversize:
+		pf.noteDatagramDrop(dropOversize)
+	case protocol.ForwardTapDatagramFate_DroppedQueue:
+		pf.noteDatagramDrop(dropQueue)
 	}
+	return fate
+}
+
+// datagramFate names what a send error meant. The cause matters to whoever
+// reads the row: a closed window is the transport working, a full queue is
+// this process falling behind.
+func datagramFate(err error) protocol.ForwardTapDatagramFate {
+	switch {
+	case err == nil:
+		return protocol.ForwardTapDatagramFate_Relayed
+	case err == trsf.ErrCongestionBlocked:
+		return protocol.ForwardTapDatagramFate_DroppedCongestion
+	case err == trsf.ErrDatagramTooLarge:
+		return protocol.ForwardTapDatagramFate_DroppedOversize
+	}
+	return protocol.ForwardTapDatagramFate_DroppedQueue
 }
