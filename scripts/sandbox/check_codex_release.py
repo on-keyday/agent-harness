@@ -24,6 +24,7 @@ from pathlib import Path
 
 RELEASE_API = "https://api.github.com/repos/openai/codex/releases/"
 WRAPPER = Path(__file__).with_name("agent-in-podman.sh")
+STORAGE_PROBE = Path(__file__).with_name("codex_storage_probe.py")
 REQUIRED_BINARIES = ("codex", "codex-code-mode-host")
 
 
@@ -117,6 +118,8 @@ def smoke_bundle(binary: Path | None, image: str, directory: Path, *, agent: str
         path.mkdir(parents=True)
     if binary is not None:
         (home / ".local/bin" / agent).symlink_to(binary.resolve())
+    if agent == "codex":
+        shutil.copyfile(STORAGE_PROBE, home / STORAGE_PROBE.name)
     shim = tools / "podman"
     shim.write_text(f"#!{sys.executable}\n" + r'''import os, sys
 args = sys.argv[1:]
@@ -130,6 +133,8 @@ if args and args[0] == "run":
         'helper="$(dirname "$SANDBOX_AGENT_BIN")/codex-code-mode-host"',
         'test -x "$helper"',
         '"$helper" --help',
+        # The storage behaviour --history-window depends on (codex_storage_probe.py).
+        'python3 "$HOME/codex_storage_probe.py" --codex "$SANDBOX_AGENT_BIN"',
         ]
     args[index:] = ["/bin/sh", "-ec", '\n'.join(commands)]
     # Only this disposable, credential-free home is writable. Vendor version
@@ -155,6 +160,8 @@ os.execve(os.environ["SANDBOX_PROBE_PODMAN"], [os.environ["SANDBOX_PROBE_PODMAN"
         raise ValueError("sandbox runtime probe failed: " + (result.stderr + result.stdout)[-4000:])
     if agent == "codex" and ("codex-cli " not in result.stdout or "codex-code-mode-host" not in result.stdout):
         raise ValueError("sandbox probe did not confirm both Codex and its code-mode host")
+    if agent == "codex" and '"storage": "ok"' not in result.stdout:
+        raise ValueError("codex storage probe failed: " + result.stdout[-4000:])
     if not result.stdout.strip():
         raise ValueError("sandbox version probe produced no output")
     return result.stdout.strip()

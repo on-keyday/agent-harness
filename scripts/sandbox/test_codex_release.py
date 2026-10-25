@@ -178,7 +178,7 @@ class CodexReleaseTests(unittest.TestCase):
         capture = self.root / "probe.json"
         podman = tools / "podman"
         podman.parent.mkdir()
-        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\nprint('codex-cli 0.164.0\\nUsage: codex-code-mode-host')\n")
+        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\nprint('codex-cli 0.164.0\\nUsage: codex-code-mode-host\\n{{\"storage\": \"ok\"}}')\n")
         podman.chmod(0o755)
         executable(tools / "setsid", "exit 0")
         with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"], "HARNESS_AUTH_TICKET": "must-not-forward"}):
@@ -190,6 +190,29 @@ class CodexReleaseTests(unittest.TestCase):
         self.assertNotIn("HARNESS_AUTH_TICKET", args)
         self.assertFalse(any(":/" in arg and "/.codex" in arg for arg in args))
         self.assertIn("codex-code-mode-host", report)
+
+    def fake_podman_smoke(self, output):
+        tools = self.root / "host-tools"
+        capture = self.root / "probe.json"
+        podman = tools / "podman"
+        podman.parent.mkdir()
+        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\nprint({output!r})\n")
+        podman.chmod(0o755)
+        executable(tools / "setsid", "exit 0")
+        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}):
+            report = check.smoke_bundle(self.binary, "test-image", self.root / "probe")
+        return report, json.loads(capture.read_text())
+
+    def test_smoke_runs_storage_probe_for_codex(self):
+        _, args = self.fake_podman_smoke('codex-cli 0.164.0\nUsage: codex-code-mode-host\n{"storage": "ok"}')
+        script = args[args.index("-ec") + 1]
+        self.assertIn('python3 "$HOME/codex_storage_probe.py" --codex "$SANDBOX_AGENT_BIN"', script)
+        copied = self.root / "probe/home/codex_storage_probe.py"
+        self.assertEqual(copied.read_text(), check.STORAGE_PROBE.read_text())
+
+    def test_smoke_fails_when_storage_probe_fails(self):
+        with self.assertRaisesRegex(ValueError, "storage probe"):
+            self.fake_podman_smoke('codex-cli 0.164.0\nUsage: codex-code-mode-host\n{"storage": "fail"}')
 
     def test_metadata_requires_the_bundle_and_a_digest(self):
         release = metadata()
