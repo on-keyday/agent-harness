@@ -347,3 +347,38 @@ func TestForwardDropsFindsIPLink(t *testing.T) {
 		t.Fatal("ForwardDrops does not find the link")
 	}
 }
+
+// The connection ended (RunHandle.Close -> releaseForwardState) while a link's
+// device was being opened: the link must not be registered on the dead
+// session, where nothing would ever close it (Final review, Important 2).
+func TestIPLinkSetupAfterReleaseIsRefused(t *testing.T) {
+	dev := newFakeTun()
+	s, ms, tid, _ := linkSession(t, dev, nil)
+	s.releaseForwardState()
+	s.handleOpenPortForward(context.Background(), linkRequest(t, tid, 5))
+	res := setupResults(t, ms)
+	if len(res) != 1 || res[0].Ok() || string(res[0].Detail) != "connection ended during setup" {
+		t.Fatalf("setup results = %+v", res)
+	}
+	if !dev.isClosed() {
+		t.Fatal("the device opened for a dead session was left open")
+	}
+}
+
+// The registry is created once however many goroutines ask first.
+func TestIPLinkRegistryInitIsRaceFree(t *testing.T) {
+	s := &Session{}
+	const n = 16
+	got := make([]*ipLinks, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); got[i] = s.ipLinkRegistry() }(i)
+	}
+	wg.Wait()
+	for i := 1; i < n; i++ {
+		if got[i] != got[0] {
+			t.Fatal("two registries were created")
+		}
+	}
+}

@@ -118,10 +118,7 @@ func (t sessionTelemetry) ForwardDrops(forwardID uint64) (protocol.ForwardDropsB
 			return body, true
 		}
 	}
-	if t.s.ipLinks != nil {
-		return t.s.ipLinks.dropsFor(forwardID)
-	}
-	return protocol.ForwardDropsBody{}, false
+	return t.s.ipLinkRegistry().dropsFor(forwardID)
 }
 
 // handleTelemetry answers whatever the server asked about this runner.

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -185,5 +186,39 @@ func TestRegisterRefusesIllegalShape(t *testing.T) {
 		if len(runnerConn.Sent()) != 0 {
 			t.Errorf("%v × %v: the runner was contacted", shape.p, shape.d)
 		}
+	}
+}
+
+// The runner's connection ends while the server is waiting for its setup
+// answer: the forward must not be answered ok with a dead connection recorded
+// as its holder, or it would sit listed and silent (Final review, Important 1).
+func TestRegisterIPLink_RunnerGoneDuringSetup(t *testing.T) {
+	h, clientConn, runnerConn, _, req := linkFixture(t)
+	respCh := make(chan protocol.RegisterPortForwardResponse, 1)
+	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String()) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(h.pforwards().list()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the registration never reached the registry")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.DropRunnerStateForwards(runnerConn.ConnectionID().String())
+	br := &protocol.ForwardSetupResult{ForwardId: 1}
+	br.SetOk(true)
+	h.handleForwardSetupResult(runnerConn, br)
+	select {
+	case resp := <-respCh:
+		if resp.Status != protocol.OpenPortForwardStatus_LinkFailed {
+			t.Fatalf("status = %v (%s), want LinkFailed", resp.Status, resp.Detail)
+		}
+		if !strings.Contains(string(resp.Detail), "connection ended during setup") {
+			t.Fatalf("detail = %q", resp.Detail)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("registration did not answer")
+	}
+	if n := len(h.pforwards().list()); n != 0 {
+		t.Fatalf("%d registrations left behind", n)
 	}
 }

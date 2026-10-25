@@ -129,6 +129,10 @@ func RunIPLink(ctx context.Context, c *Client, taskIDHex string, cfg protocol.Ip
 	// serveForwardControl closes ctrl on the way out, which is what tells the
 	// server the client end is gone.
 	closed := serveForwardControl(runCtx, ctrl, logf, nil)
+	// fail may be running on the dispatch goroutine right now, writing devErr,
+	// if the control loop ended for its own reason. Passing through the Once
+	// waits for that write and orders it before the read below.
+	devErrOnce.Do(func() {})
 	switch {
 	case closed != nil:
 		return &ForwardClosedError{Reason: closed.Reason, Detail: string(closed.Detail)}

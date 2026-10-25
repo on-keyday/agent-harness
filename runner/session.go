@@ -325,7 +325,8 @@ type Session struct {
 	udpForwards *udpForwards
 	// ipLinks tracks this session's ip links, one tun device each. Lazily
 	// created (see ipLinkRegistry / ip_link.go).
-	ipLinks *ipLinks
+	ipLinks     *ipLinks
+	ipLinksOnce sync.Once
 	// openTun creates a link's device; nil means iplink.OpenTun. Set from
 	// Config.TunOpener, which tests use to stand a fake in for the kernel.
 	openTun iplink.Opener

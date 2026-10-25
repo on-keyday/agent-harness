@@ -18,15 +18,24 @@ import (
 type ipLinks struct {
 	mu sync.Mutex
 	m  map[uint64]*iplink.Link
+	// closed is set by closeAll: the connection holding these links has
+	// ended, and a link registered after that would be owned by nothing.
+	closed bool
 }
 
-func (r *ipLinks) add(id uint64, l *iplink.Link) {
+// add registers l, and reports false when the registry was already released
+// -- the caller then owns l and must close it.
+func (r *ipLinks) add(id uint64, l *iplink.Link) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return false
+	}
 	if r.m == nil {
 		r.m = map[uint64]*iplink.Link{}
 	}
 	r.m[id] = l
+	return true
 }
 
 func (r *ipLinks) get(id uint64) (*iplink.Link, bool) {
@@ -51,6 +60,7 @@ func (r *ipLinks) closeAll() {
 	r.mu.Lock()
 	links := r.m
 	r.m = nil
+	r.closed = true
 	r.mu.Unlock()
 	for _, l := range links {
 		_ = l.Close()
@@ -66,11 +76,11 @@ func (r *ipLinks) dropsFor(id uint64) (protocol.ForwardDropsBody, bool) {
 	return protocol.ForwardDropsBody{}, false
 }
 
-// ipLinkRegistry lazily builds the session's link registry.
+// ipLinkRegistry returns the session's link registry, created once. Asked
+// concurrently from the open path, the datagram pump and the close dispatch,
+// so the creation is guarded rather than a bare nil check.
 func (s *Session) ipLinkRegistry() *ipLinks {
-	if s.ipLinks == nil {
-		s.ipLinks = &ipLinks{}
-	}
+	s.ipLinksOnce.Do(func() { s.ipLinks = &ipLinks{} })
 	return s.ipLinks
 }
 
@@ -117,7 +127,13 @@ func (s *Session) startIPLink(ctx context.Context, req *protocol.RunnerOpenPortF
 		return
 	}
 	l := iplink.NewLink(req.ForwardId, dev, s.Sender)
-	s.ipLinkRegistry().add(req.ForwardId, l)
+	if !s.ipLinkRegistry().add(req.ForwardId, l) {
+		// The connection ended while the device was being opened. Nothing
+		// would ever close a link registered on this session now.
+		_ = l.Close()
+		fail("connection ended during setup")
+		return
+	}
 	s.sendSetupResult(req.ForwardId, true, "")
 	log.Info(iplink.UpLine(l.Name(), addr, int(cfg.Mtu)), "fwd", req.ForwardId)
 	go func() {
@@ -161,7 +177,7 @@ func (s *Session) releaseForwardState() {
 	if s.udpForwards != nil {
 		s.udpForwards.closeAll()
 	}
-	if s.ipLinks != nil {
-		s.ipLinks.closeAll()
-	}
+	// Through the accessor, so a registry not created yet is created closed:
+	// a link whose setup is still opening its device must not land after this.
+	s.ipLinkRegistry().closeAll()
 }

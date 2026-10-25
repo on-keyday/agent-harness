@@ -179,12 +179,27 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 	pf.control = ctrl
-	fid := h.pforwards().add(pf)
 	// A udp -L needs the runner told NOW, because there is no per-connection
 	// open to carry the target later: a flow begins when its first datagram
 	// arrives, and by then the runner must already know where to send it.
+	//
+	// The runner is resolved, and the holder recorded, BEFORE the row is
+	// published: runnerCID is read by other goroutines from the moment add
+	// returns, and a holder written later is one DropRunnerStateForwards could
+	// miss.
+	var udpRunner RunnerEntry
 	if req.Protocol == protocol.ForwardProtocol_Udp {
-		if err := h.sendUDPForwardInstruction(pf, req, task.AssignedTo); err != nil {
+		r, ok := h.Registry.GetByIdentity(task.AssignedTo)
+		if !ok || r.Conn == nil {
+			_ = ctrl.CloseBoth()
+			return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
+		}
+		udpRunner = r
+		pf.runnerCID = r.Conn.ConnectionID().String()
+	}
+	fid := h.pforwards().add(pf)
+	if req.Protocol == protocol.ForwardProtocol_Udp {
+		if err := h.sendUDPForwardInstruction(pf, req, udpRunner); err != nil {
 			h.pforwards().remove(fid)
 			_ = ctrl.CloseBoth()
 			slog.Error("udp forward: could not instruct the runner", "task_id", taskIDHex, "err", err)
@@ -216,6 +231,10 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 	pf.control = ctrl
+	// The connection asked is the one that will hold the runner-side state.
+	// Recorded before the row is published, so DropRunnerStateForwards sees it
+	// even if that connection ends while setup is pending.
+	pf.runnerCID = runner.Conn.ConnectionID().String()
 	fid := h.pforwards().add(pf)
 	// Register the pending bind channel BEFORE sending, so a fast runner reply
 	// isn't missed.
@@ -254,6 +273,12 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 	case <-time.After(remoteForwardBindTimeout):
 		res.detail = "no answer within " + remoteForwardBindTimeout.String()
 	}
+	// A row no longer registered was torn down while setup was pending --
+	// its runner connection ended (runner_gone) or someone killed it. An ok
+	// answer then would hand the client a forward nobody holds.
+	if _, still := h.pforwards().get(fid); res.ok && !still {
+		res = setupResult{detail: "connection ended during setup"}
+	}
 	if !res.ok {
 		h.pforwards().remove(fid)
 		_ = ctrl.CloseBoth()
@@ -269,8 +294,6 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		return resp
 	}
 
-	// The connection that answered holds the runner-side state from here on.
-	pf.runnerCID = runner.Conn.ConnectionID().String()
 	// Announced only once the listener is known to have bound: a registration
 	// that fails its bind is removed again below, and a registered/closed pair
 	// for something that never existed is noise a subscriber has to filter.
@@ -420,11 +443,7 @@ func (h *TaskHandler) watchRemoteForwardControl(pf *portForward) {
 // Sent once per registration rather than per connection, which is the whole
 // shape difference between udp and tcp here: stream_id is 0 because there is no
 // stream, and the runner keeps the target until a ClosePortForward arrives.
-func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.RegisterPortForwardRequest, runnerID protocol.RunnerID) error {
-	runner, ok := h.Registry.GetByIdentity(runnerID)
-	if !ok || runner.Conn == nil {
-		return errRunnerOffline
-	}
+func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.RegisterPortForwardRequest, runner RunnerEntry) error {
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
 	body := protocol.RunnerOpenPortForwardRequest{
 		TaskId:     req.TaskId,
@@ -436,9 +455,5 @@ func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.R
 	}
 	body.SetRemoteHost(req.TargetHost)
 	rreq.SetOpenPortForward(body)
-	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
-		return err
-	}
-	pf.runnerCID = runner.Conn.ConnectionID().String()
-	return nil
+	return sendRunnerRequest(runner.Conn, &rreq)
 }
