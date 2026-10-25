@@ -669,6 +669,8 @@ var Verbs = []VerbSpec{
 			"-W: raw stdio forward (ssh -W): no local listener, this process's stdin/stdout is the client endpoint",
 			"with -W and --http-path: send one built HTTP request and stream the response (stdin is not spliced)",
 			"-W is mutually exclusive with -L / -R; not repeatable; exits with its peer",
+			"--ip/--ip-peer: a tun device at each end carrying whole IP packets (Linux only, MTU 1100, needs forward_link); " +
+				"one link per invocation, alone; exits non-zero when the link is closed",
 		},
 		CmdlineSurfaces: CLI,
 		Action:          "ForwardOpenAction",
@@ -680,10 +682,18 @@ var Verbs = []VerbSpec{
 		Exclusive: []Rule{
 			{Flags: []string{"W", "L"}, Reason: "-W owns the foreground and exits with its peer; -L is a long-lived listener"},
 			{Flags: []string{"W", "R"}, Reason: "-W owns the foreground and exits with its peer; -R is a long-lived listener"},
+			// A refused link must not leave other forwards behind it running:
+			// the two have different lifetimes on failure.
+			{Flags: []string{"ip", "L"}, Reason: "a refused link must not leave other forwards running"},
+			{Flags: []string{"ip", "R"}, Reason: "a refused link must not leave other forwards running"},
+			{Flags: []string{"ip", "W"}, Reason: "a refused link must not leave other forwards running"},
 		},
-		AtLeastOne: []Rule{{Flags: []string{"L", "R", "W"}, Reason: "a forward with no direction opens nothing"}},
-		Requires: []Requirement{{Flags: []string{"http-path"}, Needs: "W",
-			Reason: "an HTTP request needs a target to send it to"}},
+		AtLeastOne: []Rule{{Flags: []string{"L", "R", "W", "ip"}, Reason: "a forward with no direction opens nothing"}},
+		Requires: []Requirement{
+			{Flags: []string{"http-path"}, Needs: "W", Reason: "an HTTP request needs a target to send it to"},
+			{Flags: []string{"ip"}, Needs: "ip-peer", Reason: "a link needs the runner's address"},
+			{Flags: []string{"ip-peer"}, Needs: "ip", Reason: "a link needs this client's address and prefix"},
+		},
 		Flags: []Flag{
 			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
 				Help: "local forward port | [bind:]localport:remotehost:remoteport (repeatable; a bare port means port:127.0.0.1:port)"},
@@ -691,6 +701,10 @@ var Verbs = []VerbSpec{
 				Help: "remote forward port | [bind:]runnerport:dialhost:dialport (repeatable; a bare port means port:127.0.0.1:port)"},
 			{Name: "W", Type: FlagString, Default: "", Field: "W",
 				Help: "raw stdio forward host:port (mutually exclusive with -L / -R)"},
+			{Name: "ip", Type: FlagString, Default: "", Field: "IP",
+				Help: "ip link: this client's tun address with the shared prefix, e.g. 10.200.0.1/30 (Linux; needs forward_link)"},
+			{Name: "ip-peer", Type: FlagString, Default: "", Field: "IPPeer",
+				Help: "ip link: the runner's tun address, inside --ip's prefix, e.g. 10.200.0.2"},
 			{Name: "http-method", Type: FlagString, Default: "GET", Field: "HTTPMethod",
 				Help: "with -W --http-path: HTTP method"},
 			{Name: "http-path", Type: FlagString, Default: "", Field: "HTTPPath",
@@ -700,7 +714,8 @@ var Verbs = []VerbSpec{
 			{Name: "http-header", Type: FlagString, Custom: argListValue, Field: "HTTPHeaders",
 				Help: `with --http-path: "Name: value" (repeatable)`},
 		},
-		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80"},
+		Examples: []string{"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 8080:localhost:80",
+			"forward aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --ip 10.200.0.1/30 --ip-peer 10.200.0.2"},
 	},
 	{
 		Path: []string{"forward", "ls"},

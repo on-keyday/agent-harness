@@ -16,6 +16,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/verb"
+	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -875,6 +876,9 @@ func (h cliVerbs) SessionStreamFinish(a verb.SessionAction) error {
 // not use withClient: the close has to happen after that wait, not on the way
 // out of a closure.
 func (h cliVerbs) Forward(a verb.ForwardOpenAction) error {
+	if a.IP != "" {
+		return h.forwardIPLink(a)
+	}
 	var wHost string
 	var wPort int
 	if a.W != "" {
@@ -958,6 +962,32 @@ func (h cliVerbs) Forward(a verb.ForwardOpenAction) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// forwardIPLink is `forward --ip`: a tun device at each end, alone in its
+// invocation (the declaration refuses -L / -R / -W beside it). Everything that
+// can be refused without the server is refused before dialling: the OS, then
+// the addresses.
+//
+// A link the server ended (killed, its task or runner gone, the runner's end
+// failed) comes back as an error and exits non-zero; Ctrl-C returns nil.
+func (h cliVerbs) forwardIPLink(a verb.ForwardOpenAction) error {
+	if !iplink.Supported() {
+		return iplink.ErrNotLinux
+	}
+	cfg, err := cli.ParseIPLink(a.IP, a.IPPeer)
+	if err != nil {
+		return err
+	}
+	c, err := h.dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	fctx, cancel := interruptContext("forward", h.ctx)
+	defer cancel()
+	logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
+	return cli.RunIPLink(fctx, c, a.TaskID, cfg, logf, cli.IPLinkOptions{})
 }
 
 // --- ssh-gateway --------------------------------------------------------

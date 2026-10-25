@@ -361,6 +361,10 @@ type ForwardOpenAction struct {
 	R []string
 	// raw stdio forward host:port (mutually exclusive with -L / -R)
 	W string
+	// ip link: this client's tun address with the shared prefix, e.g. 10.200.0.1/30 (Linux; needs forward_…
+	IP string
+	// ip link: the runner's tun address, inside --ip's prefix, e.g. 10.200.0.2
+	IPPeer string
 	// with -W --http-path: HTTP method
 	HTTPMethod string
 	// with -W: send this HTTP request path instead of splicing stdin
@@ -1531,6 +1535,8 @@ func init() {
 			a.L = stringsOf(b.Custom["L"])
 			a.R = stringsOf(b.Custom["R"])
 			a.W = b.Str("W")
+			a.IP = b.Str("ip")
+			a.IPPeer = b.Str("ip-peer")
 			a.HTTPMethod = b.Str("http-method")
 			a.HTTPPath = b.Str("http-path")
 			a.HTTPBody = b.Str("http-body")

@@ -28,7 +28,15 @@ func TestDeclaredRulesRefuseWhatTheBuildsRefused(t *testing.T) {
 		// forward: -W owns the foreground, -L/-R are listeners.
 		{"forward", []string{id, "-W", "h:1", "-L", "1:h:2"}, "mutually exclusive"},
 		{"forward", []string{id, "-W", "h:1", "-R", "1:h:2"}, "mutually exclusive"},
-		{"forward", []string{id}, "at least one of -L, -R, -W"},
+		{"forward", []string{id}, "at least one of -L, -R, -W, --ip"},
+		// forward --ip: one link per invocation, nothing beside it, both ends named.
+		{"forward", []string{id, "-L", "1:h:2", "--ip", "a/30", "--ip-peer", "b"}, "mutually exclusive"},
+		{"forward", []string{id, "-R", "1:h:2", "--ip", "a/30", "--ip-peer", "b"}, "mutually exclusive"},
+		{"forward", []string{id, "-W", "h:1", "--ip", "a/30", "--ip-peer", "b"}, "mutually exclusive"},
+		{"forward", []string{id, "--ip", "a/30"}, "--ip needs --ip-peer"},
+		// AtLeastOne is checked before Requires, so a lone --ip-peer is refused
+		// by the direction rule, which names --ip.
+		{"forward", []string{id, "--ip-peer", "b"}, "at least one of -L, -R, -W, --ip"},
 		{"forward", []string{id, "-L", "1:h:2", "--http-path", "/x"}, "-W"},
 
 		// forward tap: one direction, one render mode.
@@ -143,6 +151,7 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 	}{
 		{"forward", []string{id, "-L", "1:h:2", "-R", "2:h:3"}}, // -L WITH -R is ordinary
 		{"forward", []string{id, "-W", "h:1", "--http-path", "/x"}},
+		{"forward", []string{id, "--ip", "10.200.0.1/30", "--ip-peer", "10.200.0.2"}},
 		{"forward tap", []string{"7"}}, // no mode named = hex
 		{"forward tap", []string{"7", "--raw", "--dir", "to-target"}},
 		{"exec tap", []string{"4"}},

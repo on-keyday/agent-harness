@@ -55,6 +55,24 @@ func TestForwardSubVerbsAreNotTaskIDs(t *testing.T) {
 	}
 }
 
+// --ip / --ip-peer reach the open action, in either order around the id.
+func TestForwardIPFlagsParse(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	for _, args := range [][]string{
+		{"forward", id, "--ip", "10.200.0.1/30", "--ip-peer", "10.200.0.2"},
+		{"forward", "--ip", "10.200.0.1/30", "--ip-peer", "10.200.0.2", id},
+	} {
+		act, _, err := verb.ParseCLICommand(args, nil)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		fo, ok := act.(verb.ForwardOpenAction)
+		if !ok || fo.TaskID != id || fo.IP != "10.200.0.1/30" || fo.IPPeer != "10.200.0.2" {
+			t.Fatalf("%v parsed to %#v", args, act)
+		}
+	}
+}
+
 // -W is the stdio forward: no local listener, this process's stdin/stdout IS
 // the endpoint. Combining it with -L or -R asks for two different things on
 // one connection, and the declaration refuses it.

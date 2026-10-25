@@ -533,7 +533,7 @@ and the scope forms (`--json` for the machine-readable form).
 
 Granular names: `spawn`, `resume_exact`, `resume`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `exec_resize`, `exec_run`, `exec_tap`, `file_read`, `file_write`,
-`forward_local`, `forward_remote`, `forward_tap`, `notify`, `prune`,
+`forward_local`, `forward_remote`, `forward_link`, `forward_tap`, `notify`, `prune`,
 `runner_admin`, `board_observe`, `purge`, `board_send`, `board_peer` — plus the aliases `none` / `all`. `harness-cli caps`
 prints the authoritative list with a line each; this one can fall behind it.
 `spawn` creates a task and nothing else. `resume` re-queues a finished one under
@@ -546,7 +546,11 @@ seat, so it also needs `exec_control` — whether the session is new or resumed.
 cleartext, so routinely Authorization headers and credentials. Holding a
 forward is a different power from reading what goes through it, so
 `forward_local` does not imply it and neither does `forward_remote`; the byte
-COUNTS on `forward ls` need neither. `exec_tap` reads the payload crossing an
+COUNTS on `forward ls` need neither. `forward_link` puts a network interface
+at each end of a forward (`forward --ip`): a port forward names one target, a
+link names none, so every service bound to all addresses on either host becomes
+reachable from the other. Neither port-forward bit implies it, and it implies
+neither. `exec_tap` reads the payload crossing an
 exec (`exec tap`) — its stdin as well as its output; `exec_run` does not imply
 it, and the byte counts on `exec ls` need neither. `exec_resize` and `exec_run` sit BESIDE
 the three attach caps rather than inside their ranking — resizing is availability and running a command in the

@@ -92,6 +92,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       NOT imply: opening a forward and reading the cleartext crossing it
       are different powers. Nothing is recorded server-side, so a tap sees
       only what crosses after it opens.
+      `forward <task-id> --ip 10.200.0.1/30 --ip-peer 10.200.0.2` is a
+      layer-3 link instead: a tun device at each end (this host's and the
+      runner's), every IP packet carried unchanged. Linux only at both ends,
+      `CAP_NET_ADMIN` needed (a user + network namespace is enough), its own
+      `forward_link` capability.
     - Commands in a worktree: `exec <task-id> -- <cmd> [args...]` runs one
       command in the task's worktree as its own process — separate stdout and
       stderr, and the command's exit code becomes yours. `exec ls` / `exec
@@ -434,6 +439,13 @@ bin/harness-cli forward <task-id> -L 3000
 # counted -- `forward ls` prints the size that currently fits beside the drop
 # counts, which is what explains a protocol that will not come up.
 bin/harness-cli forward <task-id> -L 5353:127.0.0.1:5353/udp
+# An IP link: a tun device on this host (10.200.0.1/30) and one on the runner
+# (10.200.0.2), MTU 1100, and `ping 10.200.0.2` answers through the harness.
+# Point-to-point only — nothing behind either end is routed. Linux at both ends,
+# CAP_NET_ADMIN (a user + network namespace is enough), the forward_link
+# capability. Alone in its invocation; exits non-zero when the link is closed
+# from the other side. The TUI's `L` opens the same thing.
+bin/harness-cli forward <task-id> --ip 10.200.0.1/30 --ip-peer 10.200.0.2
 
 # 7b. See what a forward is doing. `forward ls` reports traffic per row;
 # `forward tap` shows the bytes, live, as a hexdump (--text for HTTP, --raw
@@ -877,7 +889,8 @@ scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
 
 Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, resume, cancel, the three
-session-attach powers, file read / write, local / remote port-forward,
+session-attach powers, file read / write, local / remote port-forward, an ip
+link (`forward_link`, implied by neither port-forward bit),
 reading a forward's or an exec's payload, notify, prune, purge, runner-admin, global
 info, publishing to the board beyond the task's own lineage, publishing to the
 board as the operator) — and a **target scope** bounding WHICH tasks those
