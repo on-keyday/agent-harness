@@ -494,8 +494,9 @@ plugins, MCP config — starts empty every run and is discarded.
   `${XDG_STATE_HOME:-~/.local/state}/harness-sandbox/codex/<task-id>/`,
   rebuilt at every start from hardlinks to the host rollouts of this cwd.
   The reaper links the container's new rollouts back every 5 s and once more
-  after exit. It never overwrites a host file, and links a file only if its
-  first line names this cwd. Then it has the **host's** codex re-index this cwd
+  after exit. It never overwrites a host file, never follows a symlink in the
+  per-task directory, does not put back a rollout you archived or deleted on
+  the host, and links a file only if its first line names this cwd. Then it has the **host's** codex re-index this cwd
   (`codex app-server`, one `thread/list` with scan-and-repair), because
   `resume --last` trusts the host's state DB and that DB never saw a thread
   the container created. Limits: a host `resume --last` issued *while* the
