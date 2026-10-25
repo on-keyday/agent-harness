@@ -56,7 +56,13 @@ else fw="none (open egress)"; fi
 # a bare `opencode` alternative — which would also match any mounted worktree
 # that happens to be named opencode.
 cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini|\.pi|(\.config|\.cache|\.local/(share|state))/opencode)( |$)'
-if grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
+# Under --history-window the config root IS a bind mount, but of a per-run host
+# temp dir (agent-in-podman.sh names it harness-sandbox-root.*): mountinfo's
+# field 4, the mount's root inside its source filesystem, carries that name.
+# Reading it as "mount" would claim the whole host config is in here.
+if grep -E "$cfg_re" /proc/self/mountinfo 2>/dev/null | awk '$4 ~ /\/harness-sandbox-root\./ {f=1} END {exit !f}'; then
+	auth="window-root (per-run host temp dir as config root; see config_history)"
+elif grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
 	auth="mount (host agent config bind-mounted rw; persists past the container)"
 else
 	auth="token-or-ephemeral (no host agent config mount)"
@@ -67,6 +73,31 @@ add "config_auth" "$auth"
 # report that does not name its subject reads later as a claim about all of
 # them, and the agents differ in exactly what config_auth measures.
 add "config_agent" "${SANDBOX_AGENT:-unset (pre-generic wrapper — assume claude)}"
+# Which conversations are physically visible. The declared mode comes from the
+# wrapper (SANDBOX_HISTORY); the listing after it is the measurement: under
+# --history-window each store must show this task's directory alone (codex:
+# rollouts of this cwd alone), and anything more is the window leaking.
+hist=""
+for s in .claude/projects .pi/agent/sessions; do
+	[ -d "$HOME/$s" ] || continue
+	n=$(ls -1A "$HOME/$s" 2>/dev/null | wc -l)
+	hist="$hist $s=count:$n[$(ls -1A "$HOME/$s" 2>/dev/null | head -n 5 | tr '\n' ',')]"
+done
+if [ -d "$HOME/.codex/sessions" ]; then
+	hist="$hist .codex/sessions=$(python3 - "$HOME/.codex/sessions" <<'PY' 2>&1
+import glob, json, sys
+paths = glob.glob(sys.argv[1] + "/[0-9]*/[0-9]*/[0-9]*/rollout-*.jsonl")
+cwds = set()
+for p in paths:
+    try:
+        cwds.add(json.loads(open(p, "rb").readline()).get("payload", {}).get("cwd"))
+    except (OSError, ValueError, AttributeError):
+        cwds.add("unreadable")
+print("count:%d cwds:%s" % (len(paths), ",".join(sorted(str(c) for c in cwds))))
+PY
+)"
+fi
+add "config_history" "${SANDBOX_HISTORY:-unset (pre-window wrapper)} | visible:${hist:- no agent store}"
 
 # --- identity / am I even in a container -------------------------------------
 add "id" "$(id 2>&1)"
