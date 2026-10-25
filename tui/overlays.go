@@ -783,8 +783,11 @@ func (a *App) inPortForwardModal(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		a.nextForwardID++
-		if mode == ForwardRemote {
+		switch mode {
+		case ForwardRemote:
 			return DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
+		case ForwardLink:
+			return DoStartIPLink(a.client, taskID, spec, a.nextForwardID, a.program)
 		}
 		return DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
 	}

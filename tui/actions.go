@@ -528,13 +528,15 @@ func (a *App) onViewOnly(msg tea.KeyMsg) (tea.Cmd, bool) {
 // handlers below split by what the key does.
 func (a *App) onForward(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.String() {
-	case mainKeys.ForwardLocal, mainKeys.ForwardRemote:
+	case mainKeys.ForwardLocal, mainKeys.ForwardRemote, mainKeys.ForwardLink:
 		return a.onForwardStart(msg)
 	}
 	return a.onForwardStop(msg)
 }
 
-// `p` / `b` open the local / remote port-forward modal for the selected task.
+// `p` / `b` / `L` open the local / remote / ip-link forward modal for the
+// selected task. A link has no stop key: the forwards modal (`f`, `x`) already
+// picks among a task's registrations.
 func (a *App) onForwardStart(msg tea.KeyMsg) (tea.Cmd, bool) {
 	taskID := a.tasks.SelectedID()
 	if taskID == "" {
@@ -542,8 +544,11 @@ func (a *App) onForwardStart(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	dir := ForwardLocal
-	if msg.String() == mainKeys.ForwardRemote {
+	switch msg.String() {
+	case mainKeys.ForwardRemote:
 		dir = ForwardRemote
+	case mainKeys.ForwardLink:
+		dir = ForwardLink
 	}
 	a.portForwardModal.OpenMode(taskID, dir)
 	return nil, true

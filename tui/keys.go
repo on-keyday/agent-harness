@@ -59,6 +59,7 @@ type mainKeyMap struct {
 	ForwardLocalStop       string
 	ForwardRemote          string
 	ForwardRemoteStop      string
+	ForwardLink            string
 	RawConnect             string
 }
 
@@ -99,6 +100,7 @@ var mainKeys = mainKeyMap{
 	ForwardLocalStop:       "P",
 	ForwardRemote:          "b",
 	ForwardRemoteStop:      "B",
+	ForwardLink:            "L",
 	RawConnect:             "t",
 }
 
@@ -275,6 +277,8 @@ var mainKeyBindings = []keyBinding{
 		Short: "p/P L-forward", Long: "start / stop a local port forward for the selected task"},
 	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks, Do: (*App).onForward,
 		Short: "b/B R-forward", Long: "start / stop a remote port forward for the selected task"},
+	{Keys: []string{mainKeys.ForwardLink}, Scope: scopeTasks, Do: (*App).onForward,
+		Short: "L ip link", Long: "start an ip link (a tun device at each end) for the selected task; stop it from f"},
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Do: (*App).onRawConnect, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
 	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Do: (*App).onGridSubtree, Short: "z/Z subtree grid",
 		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},

@@ -15,17 +15,24 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// ForwardDirection distinguishes local (-L) and remote (-R) forwards.
+// ForwardDirection distinguishes local (-L) and remote (-R) forwards and ip
+// links (--ip).
 type ForwardDirection int
 
 const (
 	ForwardLocal ForwardDirection = iota
 	ForwardRemote
+	// ForwardLink is an ip link: a tun device here and one on the runner. This
+	// TUI process holds its end, so the link ends with the TUI.
+	ForwardLink
 )
 
 func (d ForwardDirection) flag() string {
-	if d == ForwardRemote {
+	switch d {
+	case ForwardRemote:
 		return "-R"
+	case ForwardLink:
+		return "--ip"
 	}
 	return "-L"
 }
@@ -63,9 +70,14 @@ func (m *PortForwardModal) OpenMode(taskID string, dir ForwardDirection) {
 	// The bare-port form leads because it is the one an operator types by hand;
 	// the long form is what it expands to, and naming both is what keeps the
 	// placeholder a grammar rather than a single example.
-	if dir == ForwardRemote {
+	switch dir {
+	case ForwardRemote:
 		m.input.Placeholder = "port | [bind:]runnerport:dialhost:dialport"
-	} else {
+	case ForwardLink:
+		// The two values --ip and --ip-peer take, in one line; parsed by the
+		// same function, so the TUI cannot accept an address the CLI refuses.
+		m.input.Placeholder = "<client-addr>/<prefix> <runner-addr>  e.g. 10.200.0.1/30 10.200.0.2"
+	default:
 		m.input.Placeholder = "port | [bind:]localport:remotehost:remoteport"
 	}
 	m.input.SetValue("")
@@ -310,6 +322,34 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 			// only the tcp half, and a udp -R started from here would bind on
 			// the runner and then carry nothing.
 			c.ServeRemoteForward(ctx, sp, ctrl, fid, forwardStatusLogf(ctx, program))
+			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
+		}()
+		return nil
+	}
+}
+
+// DoStartIPLink starts an ip link for taskID from the modal's one line,
+// "<client-addr>/<prefix> <runner-addr>", on the long-lived client. The tun is
+// this process's, so the link lives as long as the TUI does; it is stopped
+// from the forwards modal like any registration.
+//
+// Started is sent before the goroutine runs, for the reason DoStartPortForward
+// gives: a fast failure must not enqueue Stopped first.
+func DoStartIPLink(c *cli.Client, taskID, line string, id int, program *tea.Program) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := cli.ParseIPLinkLine(line)
+		if err != nil {
+			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLink, Spec: line, Cancel: cancel})
+		go func() {
+			opts := cli.IPLinkOptions{OnRegistered: func(fid uint64) {
+				program.Send(PortForwardRegisteredMsg{ID: id, ForwardID: fid})
+			}}
+			if err := cli.RunIPLink(ctx, c, taskID, cfg, forwardStatusLogf(ctx, program), opts); err != nil {
+				program.Send(PortForwardStatusMsg{Line: forwardFailLine(taskID, err)})
+			}
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
 		return nil

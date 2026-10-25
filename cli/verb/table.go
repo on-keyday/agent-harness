@@ -661,6 +661,8 @@ var Verbs = []VerbSpec{
 			{Surface: TUI, At: "tui/rawforward.go:RawConnectModal"},
 			// -L / -R: p / b on the tasks pane prompt for one spec.
 			{Surface: TUI, At: "tui/portforward.go:PortForwardModal"},
+			// --ip / --ip-peer: L on the tasks pane, the same modal in link mode.
+			{Surface: TUI, At: "tui/portforward.go:DoStartIPLink"},
 		},
 		Notes: []string{
 			"-L: forward a local port through the runner to remote host:port (ssh -L)",
