@@ -17,6 +17,12 @@ Checks:
   hardlink_inode_kept  a hardlinked rollout keeps its inode through list and resume
   features_default_off local_thread_store_compression and
                        background_paginated_rollout_migration are disabled
+  reindex_registers_linked_rollout
+                       a rollout added while no server runs, to a DB that already
+                       has a row for its cwd, is in the DB after the wrapper's
+                       reindex request (history_window.reindex_params) and is then
+                       listed from the DB alone. This is what the host's
+                       `resume --last` needs after a window run (spec §7b).
 Observation (not a check): non_date_depth, a rollout outside the date
 directories, measured as listed / readable (spec §7a).
 """
@@ -139,6 +145,30 @@ def main(argv: list[str] | None = None) -> int:
         checks["hardlink_inode_kept"] = legacy_path.stat().st_ino == inode and os.path.samefile(link, legacy_path)
         read = server.rpc("thread/read", {"threadId": nested, "includeTurns": True})
         observations["non_date_depth"] = {"listed": nested in everything, "readable": "result" in read}
+    finally:
+        server.close()
+
+    # The host DB now has rows for `work`. A rollout that appears while no
+    # server runs is what a window run leaves behind on the host.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from history_window import reindex_params
+    linked = "019a15a0-0000-7000-8000-000000000016"
+    write_rollout(sessions, DAY, linked, work, paginated=True)
+    db_only = {"limit": 100, "cwd": str(work), "useStateDbOnly": True, "sourceKinds": reindex_params(str(work))["sourceKinds"]}
+    server = AppServer(args.codex, home, Path("/"), root / "app-server-2.stderr")
+    try:
+        server.rpc("initialize", {"clientInfo": {"name": "storage_probe", "version": "0"}})
+        server.send({"method": "initialized"})
+        observations["db_only_before_reindex"] = linked in server.ids(db_only)
+        repaired = server.rpc("thread/list", reindex_params(str(work)))
+        observations["reindex_reply"] = "result" if "result" in repaired else repaired.get("error")
+    finally:
+        server.close()
+    server = AppServer(args.codex, home, Path("/"), root / "app-server-3.stderr")
+    try:
+        server.rpc("initialize", {"clientInfo": {"name": "storage_probe", "version": "0"}})
+        server.send({"method": "initialized"})
+        checks["reindex_registers_linked_rollout"] = linked in server.ids(db_only)
     finally:
         server.close()
     checks["features_default_off"] = features_off(args.codex, home)

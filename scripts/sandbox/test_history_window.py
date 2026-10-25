@@ -73,6 +73,34 @@ class HelperTests(unittest.TestCase):
         hw.codex_import(self.task, self.host, str(self.work), self.log)
         self.assertEqual((self.host / rel).stat().st_ino, ino)
 
+    def test_import_does_not_follow_a_planted_directory_symlink(self):
+        # The container can write its sessions dir. A symlink planted there
+        # must not lead the host-side clearing into the host store.
+        mine = rollout(self.host, DAY + "/rollout-a.jsonl", self.work)
+        theirs = rollout(self.host, DAY + "/rollout-b.jsonl", self.other)
+        (self.task / "2026").symlink_to(self.host / "2026")
+        hw.codex_import(self.task, self.host, str(self.work), self.log)
+        self.assertTrue(mine.exists())
+        self.assertTrue(theirs.exists())
+        self.assertFalse((self.task / "2026").is_symlink())
+
+    def test_export_ignores_symlinks(self):
+        outside = rollout(self.root / "elsewhere", DAY + "/rollout-x.jsonl", self.work)
+        (self.task / "2026").symlink_to(self.root / "elsewhere/2026")
+        hw.codex_export(self.task, self.host, str(self.work), self.log)
+        self.assertFalse((self.host / DAY / "rollout-x.jsonl").exists())
+        self.assertTrue(outside.exists())
+
+    def test_export_does_not_restore_a_rollout_the_host_removed(self):
+        rel = DAY + "/rollout-a.jsonl"
+        host_copy = rollout(self.host, rel, self.work)
+        hw.codex_import(self.task, self.host, str(self.work), self.log)
+        archived = self.root / "archived.jsonl"
+        host_copy.rename(archived)  # codex archive moves it out of sessions/
+        hw.codex_export(self.task, self.host, str(self.work), self.log)
+        hw.codex_import(self.task, self.host, str(self.work), self.log)
+        self.assertFalse((self.host / rel).exists())
+
     def test_export_never_overwrites_host(self):
         rel = DAY + "/rollout-a.jsonl"
         host_copy = rollout(self.host, rel, self.work)
@@ -108,6 +136,8 @@ class HelperTests(unittest.TestCase):
         fake.write_text(f"#!{sys.executable}\n" + (
             "import json,sys\n"
             f"open({str(seen)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "import os\n"
+            f"open({str(seen)!r}, 'a').write(json.dumps({{'cwd': os.getcwd()}}) + '\\n')\n"
             "for line in sys.stdin:\n"
             "    m = json.loads(line)\n"
             "    if 'id' not in m: continue\n"
@@ -117,6 +147,9 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(hw.codex_reindex(str(fake), str(self.work), self.log))
         lines = [json.loads(l) for l in seen.read_text().splitlines()]
         self.assertEqual(lines[0], ["app-server", "--listen", "stdio://"])
+        # The host's codex must not start in the worktree: the container can
+        # write there (project-scoped config), and it may already be removed.
+        self.assertEqual(lines[1]["cwd"], "/")
         listing = next(l for l in lines[1:] if l.get("method") == "thread/list")["params"]
         self.assertIs(listing["useStateDbOnly"], False)
         self.assertEqual(listing["cwd"], str(self.work))

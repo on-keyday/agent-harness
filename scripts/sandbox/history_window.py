@@ -24,6 +24,8 @@ import argparse
 import json
 import os
 import select
+import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -74,15 +76,45 @@ def same_dir(a: str, b: str) -> bool:
 
 
 def _rollouts(root: Path) -> list[Path]:
-    return sorted(root.glob(PATTERN))
+    """Regular files at YYYY/MM/DD/rollout-*.jsonl, never through a symlink.
+
+    The per-task directory is the container's sessions dir, so the container
+    can plant a symlink in it; Path.glob follows symlinked directories, and the
+    clearing in codex_import then deleted host rollouts of every cwd.
+    """
+    found = []
+    for directory, subdirs, files in os.walk(root, followlinks=False):
+        rel = Path(directory).relative_to(root)
+        for name in files:
+            path = Path(directory) / name
+            if (len(rel.parts) == 3 and (rel / name).match(PATTERN)
+                    and stat.S_ISREG(os.lstat(path).st_mode)):
+                found.append(path)
+    return sorted(found)
+
+
+def _manifest(task_dir: Path) -> Path:
+    """What the last import linked from the host. Kept beside the per-task
+    directory, not in it, because the container can write the directory."""
+    return task_dir.with_name(task_dir.name + ".imported")
+
+
+def _imported(task_dir: Path) -> set[str]:
+    try:
+        return set(_manifest(task_dir).read_text().splitlines())
+    except FileNotFoundError:
+        return set()
 
 
 def codex_export(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> list[Path]:
     """Link rollouts the container created into the host store; never touch an existing host file."""
     _check_device(task_dir, host_sessions)
+    from_host = _imported(task_dir)
     linked = []
     for path in _rollouts(task_dir):
         rel = path.relative_to(task_dir)
+        if str(rel) in from_host:
+            continue  # came from the host; if it is gone there, the host removed it (archive, delete)
         target = host_sessions / rel
         try:
             if target.stat().st_ino != path.stat().st_ino:
@@ -98,7 +130,7 @@ def codex_export(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            os.link(path, target)
+            os.link(path, target, follow_symlinks=False)
         except FileExistsError:
             continue  # the host created it between the stat and the link
         linked.append(target)
@@ -112,13 +144,9 @@ def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
     reaper died with the host) would otherwise be lost to the clearing below.
     """
     codex_export(task_dir, host_sessions, cwd, log)
-    for path in _rollouts(task_dir):
-        path.unlink()
-    for directory in sorted((p for p in task_dir.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
-        try:
-            directory.rmdir()
-        except OSError:
-            pass  # not empty: something other than a rollout lives there
+    # Removes symlinks themselves, never what they point at.
+    shutil.rmtree(task_dir)
+    task_dir.mkdir()
     linked = []
     for path in _rollouts(host_sessions):
         found = rollout_cwd(path)
@@ -126,14 +154,23 @@ def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
             continue
         target = task_dir / path.relative_to(host_sessions)
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.link(path, target)
+        os.link(path, target, follow_symlinks=False)
         linked.append(target)
+    _manifest(task_dir).write_text("".join(f"{p.relative_to(task_dir)}\n" for p in linked))
     return linked
 
 
 # exec/src/lib.rs all_thread_source_kinds(): every kind, so exec threads count.
 SOURCE_KINDS = ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact",
                 "subAgentThreadSpawn", "subAgentOther", "unknown"]
+
+
+def reindex_params(cwd: str) -> dict:
+    """The thread/list that makes codex scan and repair its DB for cwd.
+    codex_storage_probe.py sends exactly this, so a release that stops
+    honouring it fails the upstream probe."""
+    return {"limit": 100, "cwd": cwd, "useStateDbOnly": False, "sortKey": "updated_at",
+            "sourceKinds": SOURCE_KINDS}
 
 
 def codex_reindex(codex: str, cwd: str, log: TextIO, timeout: float = 30) -> bool:
@@ -149,8 +186,12 @@ def codex_reindex(codex: str, cwd: str, log: TextIO, timeout: float = 30) -> boo
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("HARNESS_")}
     try:
+        # cwd "/", not the worktree: the container can write the worktree (a
+        # project-scoped codex config there would run in the host's codex),
+        # and the runner may already have removed it. thread/list names the
+        # cwd itself.
         proc = subprocess.Popen([codex, "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=cwd, env=env, bufsize=1)
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd="/", env=env, bufsize=1)
     except OSError as error:
         print(f"reindex: cannot start {codex}: {error}", file=log)
         return False
@@ -181,8 +222,7 @@ def codex_reindex(codex: str, cwd: str, log: TextIO, timeout: float = 30) -> boo
         if listed:
             proc.stdin.write('{"method":"initialized"}\n')
             proc.stdin.flush()
-            reply = rpc(2, "thread/list", {"limit": 100, "cwd": cwd, "useStateDbOnly": False,
-                                           "sortKey": "updated_at", "sourceKinds": SOURCE_KINDS})
+            reply = rpc(2, "thread/list", reindex_params(cwd))
             listed = reply is not None and "result" in reply
     except OSError:
         listed = False

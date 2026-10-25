@@ -299,14 +299,27 @@ listing, so the host would never find such a conversation.
   conversation in another task's history by naming that task's cwd (§9 for
   what this does not close). It **never overwrites or deletes** a host file:
   an existing host path with a different inode is left alone and logged.
+  It also skips every path the last import took from the host, recorded in a
+  manifest beside the per-task directory (`<task-id>.imported`, outside the
+  container's reach). A rollout the host archived or deleted since is
+  therefore not put back (found in review: "no counterpart on the host" alone
+  cannot tell "not yet linked" from "removed by the host").
+- **Neither direction follows a symlink.** The container can write the
+  per-task directory, so the walk takes regular files only (`os.walk` without
+  following links, `lstat`), and the start-of-run clearing removes the
+  directory with `shutil.rmtree`, which removes a link and not its target. A
+  directory symlink planted there had led the clearing into the host store and
+  deleted rollouts of every cwd (found in review, reproduced, fixed before
+  landing).
 - **Then the host's codex re-indexes this cwd** (added after gate V4 failed
   without it). `codex exec resume --last` asks the state DB first and treats
   any row for the cwd as authoritative; it scans rollout files only when the
   DB has none (codex 0.164.0 `exec/src/lib.rs`, `resolve_resume_thread_id`).
   A thread the container created reaches the host only as a linked file, so
   the host kept resuming an older thread. After its final export the reaper
-  starts the host's `codex app-server` and issues one `thread/list` for this
-  cwd with `useStateDbOnly: false` and every source kind. That is codex's own
+  starts the host's `codex app-server` (with cwd `/`, never the
+  container-writable worktree) and issues one `thread/list` for this cwd with
+  `useStateDbOnly: false` and every source kind. That is codex's own
   scan-and-repair, and it adds the linked rollouts to the host DB. The listing
   is not repeated during the run, so a host `resume --last` issued while a
   window task is still running does not yet see that task's new thread.
@@ -417,7 +430,10 @@ no model turn:
 2. a rollout added after startup appears in the next listing;
 3. a hardlinked rollout keeps its inode through list and resume;
 4. `local_thread_store_compression` and `background_paginated_rollout_migration`
-   are still off by default.
+   are still off by default;
+5. the reaper's re-index request (`history_window.reindex_params`, the same
+   object) adds a rollout that appeared while no server ran to a DB that
+   already has rows for its cwd, so a DB-only listing then shows it.
 
 A failure fails the probe, so a codex release that changes the storage this
 design depends on is caught where the other release incompatibilities are,

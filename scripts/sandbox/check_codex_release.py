@@ -119,7 +119,9 @@ def smoke_bundle(binary: Path | None, image: str, directory: Path, *, agent: str
     if binary is not None:
         (home / ".local/bin" / agent).symlink_to(binary.resolve())
     if agent == "codex":
-        shutil.copyfile(STORAGE_PROBE, home / STORAGE_PROBE.name)
+        # The probe imports the wrapper's own reindex request from history_window.
+        for source in (STORAGE_PROBE, STORAGE_PROBE.with_name("history_window.py")):
+            shutil.copyfile(source, home / source.name)
     shim = tools / "podman"
     shim.write_text(f"#!{sys.executable}\n" + r'''import os, sys
 args = sys.argv[1:]

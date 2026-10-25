@@ -209,6 +209,10 @@ class CodexReleaseTests(unittest.TestCase):
         self.assertIn('python3 "$HOME/codex_storage_probe.py" --codex "$SANDBOX_AGENT_BIN"', script)
         copied = self.root / "probe/home/codex_storage_probe.py"
         self.assertEqual(copied.read_text(), check.STORAGE_PROBE.read_text())
+        # The probe sends the wrapper's own reindex request, so it needs the
+        # module that defines it beside it.
+        helper = self.root / "probe/home/history_window.py"
+        self.assertEqual(helper.read_text(), check.STORAGE_PROBE.with_name("history_window.py").read_text())
 
     def test_smoke_fails_when_storage_probe_fails(self):
         with self.assertRaisesRegex(ValueError, "storage probe"):
