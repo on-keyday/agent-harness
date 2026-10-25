@@ -118,6 +118,7 @@ if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 #
 #   A_HOST_BIN       host path bridged in (readlink -f'd below); "" = image only
 #   A_CONTAINER_BIN  where the agent is exposed inside the container
+#   A_BIN_BUNDLE     1 = bridge the resolved binary's directory, including helpers
 #   A_IMAGE_FALLBACK 1 = the image ships a usable copy if the host bin is absent
 #   A_CONFIG_MOUNTS  host paths bind-mounted at IDENTICAL paths in mount auth
 #   A_RO_MOUNTS      host paths bind-mounted read-only at IDENTICAL paths on
@@ -131,6 +132,7 @@ if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 #   A_EPHEMERAL_HOME HOME under token auth (the image's own writable home)
 declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
 A_EPHEMERAL_HOME=""
+A_BIN_BUNDLE=0
 case "$AGENT" in
   claude)
     A_HOST_BIN="$HOME_DIR/.local/bin/claude"
@@ -149,11 +151,13 @@ case "$AGENT" in
     A_EPHEMERAL_HOME=/home/node
     ;;
   codex)
-    # The host launcher symlinks into ~/.codex, so the config mount already
-    # covers the binary; bridge the resolved path anyway so the container path
-    # does not depend on the host's package layout.
+    # Codex resolves codex-code-mode-host relative to its executable. Mounting
+    # only codex at /usr/local/bin left tools unable to start even with Codex's
+    # own sandbox disabled. Keep the release's bin directory together, read-only;
+    # future sibling executables then follow the same release automatically.
     A_HOST_BIN="$HOME_DIR/.local/bin/codex"
-    A_CONTAINER_BIN=/usr/local/bin/codex
+    A_CONTAINER_BIN=/opt/harness-codex-bin/codex
+    A_BIN_BUNDLE=1
     A_IMAGE_FALLBACK=0
     A_CONFIG_MOUNTS=( "$HOME_DIR/.codex" )
     A_TOKEN_FILE=""
@@ -209,7 +213,7 @@ case "$AGENT" in
     # shape the other three share. Measured 2026-08-19: the packaged binary
     # (Bun-compiled ELF, libc/libm/libpthread/libdl only) runs on this image's
     # glibc and reports 1.18.18 inside the container.
-    A_HOST_BIN=/usr/bin/opencode
+    A_HOST_BIN="${HARNESS_SANDBOX_OPENCODE_BIN:-/usr/bin/opencode}"
     A_CONTAINER_BIN=/usr/local/bin/opencode
     A_IMAGE_FALLBACK=0
     # THREE paths, each load-bearing for a different reason:
@@ -591,7 +595,11 @@ agent_src="image"
 if [ -n "$A_HOST_BIN" ] && [ "$image_agent" != 1 ]; then
   hbin="$(readlink -f "$A_HOST_BIN" 2>/dev/null || true)"
   if [ -n "$hbin" ] && [ -x "$hbin" ]; then
-    HOSTBIN+=( -v "$hbin:$A_CONTAINER_BIN:ro" )
+    if [ "$A_BIN_BUNDLE" = 1 ]; then
+      HOSTBIN+=( -v "$(dirname "$hbin"):$(dirname "$A_CONTAINER_BIN"):ro" )
+    else
+      HOSTBIN+=( -v "$hbin:$A_CONTAINER_BIN:ro" )
+    fi
     agent_src="host:$(basename "$hbin")"
   elif [ "$A_IMAGE_FALLBACK" != 1 ]; then
     echo "[agent-in-podman] $AGENT: no host binary at $A_HOST_BIN and no image fallback" >&2

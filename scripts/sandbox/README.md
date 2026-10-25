@@ -16,7 +16,7 @@ running the wrong agent looks identical to the right one in every listing.
 | agent | host binary bridged in | config mounted (mount auth) | token auth | image fallback |
 |---|---|---|---|---|
 | claude | `~/.local/bin/claude` | `~/.claude` + `~/.claude.json` | yes (`setup-token`) | yes (npm copy) |
-| codex | `~/.local/bin/codex` | `~/.codex` | **no** | no |
+| codex | resolved release `bin/` directory, including helpers | `~/.codex` | **no** | no |
 | agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
 | opencode | `/usr/bin/opencode` | `~/.config/opencode` + `~/.local/share/opencode` + `~/.cache/opencode` + `~/.local/state/opencode` | **no** | no |
 | pi | the `pi-coding-agent` package directory (ro) | `~/.pi` | **no** | no |
@@ -36,6 +36,16 @@ check which one `opencode` resolves to before assuming — the upstream
 curl/npm installer puts a *separate* copy at `~/.opencode/bin/opencode` and
 prepends that to `PATH` in `~/.bashrc`, so a machine with both silently runs the
 older one everywhere, this wrapper included.
+`HARNESS_SANDBOX_OPENCODE_BIN` can select an exact candidate binary without
+replacing the installed `/usr/bin/opencode` (the upstream probe uses this).
+
+Codex is a release bundle rather than a single executable. The wrapper resolves
+`~/.local/bin/codex` and mounts its containing directory read-only at
+`/opt/harness-codex-bin`. Codex then finds `codex-code-mode-host` beside itself;
+mounting only the main executable at `/usr/local/bin/codex` left tool calls
+failing before a command could run. Other executable siblings in the same
+release follow it automatically. The launcher puts the selected executable's
+directory first on `PATH` for subprocesses too.
 
 pi is a node **package**, not one binary: its `dist/bundle/cli.js` loads its
 siblings and `node_modules/` by relative path, so the whole package directory
@@ -104,12 +114,14 @@ worth knowing before you type the name you expected to work.
   containing `node` and the worktree path, and the host saw it as `kforfk:kforfk`.
   It needs `--auto` (its own auto-approve-permissions flag) to act without a
   prompt in one-shot mode; the `sandbox-opencode` preset passes it.
-- **codex** refused: its own sandbox reports the environment read-only for
-  `codex exec`, and its edit tool fails with `codex-code-mode-host` not found
-  (that helper is not in the image). That was measured WITHOUT approval/sandbox
-  flags. Since 2026-10-17 the `sandbox-codex` preset passes
-  `--dangerously-bypass-approvals-and-sandbox`, which turns codex's own sandbox
-  off; whether that makes it write in the worktree has not been measured.
+- **codex** previously failed to start tools because the single-file bridge
+  omitted `codex-code-mode-host`. The release-directory mount fixes that missing
+  executable. Codex 0.164.0 and its helper both start inside the image in the
+  credential-free runtime probe. This is a packaging/startup test, not a claim
+  that an authenticated model session has exercised editing. Since 2026-10-17
+  the `sandbox-codex` preset passes
+  `--dangerously-bypass-approvals-and-sandbox`; the outer container remains the
+  confinement boundary.
 - **agy** created the file in `~/.gemini/antigravity-cli/scratch/`, NOT in the
   worktree — and since mount auth bind-mounts `~/.gemini` read-write, that write
   landed on the **host's real config directory** and outlived the container.
@@ -154,6 +166,61 @@ created in a bind mount are owned by `1000:1000` on the host.
   The wrapper's `--init` needs `catatonit`; Arch's podman hard-depends on it,
   other distros may package it separately.
 - `/etc/subuid` + `/etc/subgid` entries for your user (present by default).
+
+## Regression and upstream release checks
+
+`make scripts-test` runs the offline preset, wrapper-mount, launcher-PATH, and
+release-source regressions. Both `make test` and the ordinary CI test job run
+this target. These tests use temporary fixtures and make no network requests or
+model calls; they do not require podman or installed agents.
+
+To inspect the official current release metadata for all agents:
+
+```sh
+python3 scripts/sandbox/check_agent_releases.py --agent all
+```
+
+To download exact release candidates and test startup through the production
+wrapper and sandbox image:
+
+```sh
+scripts/sandbox/build.sh
+make sandbox-upstream
+# One agent only:
+python3 scripts/sandbox/check_agent_releases.py --agent codex --smoke
+# Check the installed local Codex bundle instead of downloading one:
+python3 scripts/sandbox/check_codex_release.py --smoke
+```
+
+The upstream sources are OpenAI's Codex GitHub Releases, Anthropic's official
+npm packages, Antigravity's official updater manifest (the endpoint used by
+`https://antigravity.google/cli/install.sh`), OpenCode's GitHub Releases, and
+`@earendil-works/pi-coding-agent` on npm. Bash is supplied by the image and has
+no separate agent-release query. Linux x86_64 and aarch64 are supported.
+
+Downloads are checksum-verified and extracted into temporary directories; the
+installed host agents are not updated. Pi's declared production dependencies
+are prepared there using npm with lifecycle scripts disabled. Probes use an
+empty, disposable HOME, `--omit-harness-cli`, and `--network=none`, then run the
+image launcher with `--version`; Codex additionally runs its code-mode helper
+with `--help`. Host credentials and conversation directories are not mounted.
+This catches missing binaries, changed package layouts, incompatible runtime
+dependencies, and startup failures. It does not test login, inference, or the
+semantics of model-driven tool calls.
+
+JSON reports distinguish `runtime_tested: false` (metadata only) from an actual
+successful startup probe. An unavailable registry or an unrecognized package
+is an error, not a compatibility success, and one agent's failure does not hide
+the remaining agents' results. New unrecognized companion artifacts require
+updating the adapter; the Codex bin-directory mount already carries new sibling
+executables automatically.
+
+The **Sandbox upstream compatibility** GitHub Actions workflow runs these
+checks on sandbox-related pull requests/main pushes and can be dispatched
+manually with one agent or all agents. It builds the image from this checkout.
+It is separate from offline regressions so external release availability does
+not affect ordinary local unit tests. No periodic schedule or host auto-update
+is configured.
 
 ## Build the image
 

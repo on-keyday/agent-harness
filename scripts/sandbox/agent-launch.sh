@@ -52,4 +52,8 @@ fi
 # The wrapper's table decides which binary this is; the fallback keeps a
 # container started by an older wrapper (which set no SANDBOX_AGENT_BIN) working
 # rather than exec'ing the empty string.
-exec "${SANDBOX_AGENT_BIN:-/usr/local/bin/claude}" "$@"
+agent_bin="${SANDBOX_AGENT_BIN:-/usr/local/bin/claude}"
+# A bundled agent lives outside /usr/local/bin. Its subprocesses should resolve
+# the same release, not a second image-installed copy or a missing command.
+export PATH="$(dirname "$agent_bin"):$PATH"
+exec "$agent_bin" "$@"

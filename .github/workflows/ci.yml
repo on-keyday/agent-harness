@@ -25,6 +25,9 @@ jobs:
       - name: webui-build
         run: make webui-build
 
+      - name: offline agent preset and sandbox regressions
+        run: make scripts-test
+
       # `make vet` excludes brgen-generated-only packages (currently
       # exec/frame) so future regenerations producing benign vet warnings
       # (e.g. unreachable code from generated switches) don't block CI.

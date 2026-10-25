@@ -2,7 +2,7 @@ CMDS := agent-runner harness-cli harness-server harness-tui harness-stream-adapt
 GOEXE := $(shell go env GOEXE)
 BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 
-.PHONY: all build release check webui-build wasm-check test js-test vet clean protoregen help $(BIN_TARGETS)
+.PHONY: all build release check webui-build wasm-check test scripts-test sandbox-upstream js-test vet clean protoregen help $(BIN_TARGETS)
 
 # Per-target flags appended to `go build` in the BIN_TARGETS recipe. Empty by
 # default so `make build` matches dev expectations (debug info preserved);
@@ -82,8 +82,20 @@ check: webui-build
 wasm-check:
 	GOOS=js GOARCH=wasm go build ./cli/... ./cmd/harness-webui-wasm/
 
-test: js-test
+test: js-test scripts-test
 	go test ./...
+
+# Offline wrapper/preset regressions belong to the ordinary development path.
+scripts-test:
+	bash -n scripts/sandbox/agent-in-podman.sh scripts/sandbox/agent-launch.sh
+	python3 scripts/test_agent_presets.py
+	python3 -m unittest discover -s scripts/sandbox -p 'test_*.py'
+
+# Explicit network/container check, kept out of make test: latest vendor
+# releases and registries must not determine whether a local unit test passes.
+# Build the sandbox image first with scripts/sandbox/build.sh.
+sandbox-upstream:
+	python3 scripts/sandbox/check_agent_releases.py --agent all --smoke
 
 # Every JavaScript assertion in the repo, under node's built-in test runner:
 # the half of main.js that lives outside the page's IIFE -- its command line
@@ -164,7 +176,9 @@ help:
 	@echo "  release       build with -trimpath -ldflags=\"-s -w\" (used by CI matrix)"
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"
 	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
-	@echo "  test          go test ./..."
+	@echo "  test          js-test + scripts-test + go test ./..."
+	@echo "  scripts-test  offline agent preset and sandbox regressions"
+	@echo "  sandbox-upstream  probe latest upstream agent releases in podman (network required)"
 	@echo "  test-integration  go test -tags integration ./integration/..."
 	@echo "  vet           go vet ./..."
 	@echo "  protoregen    regenerate Go from .bgn via brgen api server"
