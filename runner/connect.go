@@ -17,6 +17,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -95,6 +96,10 @@ type Config struct {
 	// without restarting the runner — which the embedded copy cannot do, a
 	// running process keeping its loaded binary across `make build`.
 	AgentSkillsFS fs.FS
+
+	// TunOpener creates an ip link's tun device. nil means iplink.OpenTun, the
+	// real kernel device; an in-process test passes a fake.
+	TunOpener iplink.Opener
 
 	// PingInterval overrides peer.DialConfig.PingInterval (default 15s).
 	PingInterval time.Duration
@@ -185,12 +190,14 @@ func (h *RunHandle) activateDispatch(d func(appwire.AppKind, []byte)) {
 func (h *RunHandle) Done() <-chan struct{} { return h.pc.Done() }
 func (h *RunHandle) Close() {
 	h.closeOnce.Do(func() {
-		// Release this connection's remote port-forward listeners before
-		// dropping the peer conn. PersistLoop calls Close() on every
-		// disconnect and then builds a fresh Session on reconnect, so skipping
-		// this leaks the bound listener ports across reconnects.
-		if h.session != nil && h.session.rforwards != nil {
-			h.session.rforwards.closeAll()
+		// Release this connection's forward state before dropping the peer
+		// conn: -R listeners, udp registrations and sockets, ip links.
+		// PersistLoop calls Close() on every disconnect and then builds a
+		// fresh Session on reconnect, so skipping this leaks bound ports,
+		// sockets and tun devices across reconnects -- and the server ends
+		// those forwards (runner_gone) when this connection goes.
+		if h.session != nil {
+			h.session.releaseForwardState()
 		}
 		h.pc.Close()
 	})
@@ -420,13 +427,15 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		AgentSkillsFS:              cfg.AgentSkillsFS,
+		openTun:                    cfg.TunOpener,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}
-	// The udp forwards' periodic work. On THIS ctx, the connection's, so it
-	// dies with the connection rather than outliving it once per reconnect --
-	// which is the whole reason it is started here and not lazily beside the
-	// registry, where no scope knows when the session ends.
+	// The udp forwards' periodic work. ctx here is NOT the connection's: in
+	// dial mode it is PersistLoop's (cli/persist.go hands its own ctx to
+	// dial), which outlives every connection. The sweep therefore also stops
+	// when RunHandle.Close releases the registry (udpForwards.closeAll), or
+	// each reconnect would leave one more sweeper running.
 	go session.udpForwardRegistry().sweep(ctx)
 
 	// The registry outlives this Session, so a held task's output can find
@@ -832,6 +841,11 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		// the protocol on the close request for no other reason, and a close
 		// that reached the wrong registry would leave the sockets open.
 		session.udpForwardRegistry().close(cpf.ForwardId)
+		// And the link registry. Closed here, the link's pump returns nil and
+		// sends no ForwardEnded: the server asked for this.
+		if l := session.ipLinkRegistry().remove(cpf.ForwardId); l != nil {
+			_ = l.Close()
+		}
 	case protocol.RunnerRequestType_EstablishRelay:
 		er := req.EstablishRelay()
 		if er == nil {

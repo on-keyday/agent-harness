@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/agent-harness/iplink"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
@@ -322,6 +323,12 @@ type Session struct {
 	// these are sockets it dialled for -L, and a udp -L has no listener at all.
 	// Lazily created (see udpForwardRegistry / forward_datagram.go).
 	udpForwards *udpForwards
+	// ipLinks tracks this session's ip links, one tun device each. Lazily
+	// created (see ipLinkRegistry / ip_link.go).
+	ipLinks *ipLinks
+	// openTun creates a link's device; nil means iplink.OpenTun. Set from
+	// Config.TunOpener, which tests use to stand a fake in for the kernel.
+	openTun iplink.Opener
 
 	// ServerCID, Hostname, WSPath, BinDir are required for HARNESS_* env
 	// injection at task spawn time. Filled from Config in connect.go.

@@ -72,6 +72,10 @@ func (s *Session) rforwardListeners() *remoteForwardListeners {
 // closes the stream (the server splice propagates EOF to the client, which
 // closes the accepted local connection — connection-refused semantics).
 func (s *Session) handleOpenPortForward(ctx context.Context, req *protocol.RunnerOpenPortForwardRequest) {
+	if req.Direction == protocol.PortForwardDirection_Link {
+		s.startIPLink(ctx, req)
+		return
+	}
 	if req.Direction == protocol.PortForwardDirection_Remote {
 		if req.Protocol == protocol.ForwardProtocol_Udp {
 			s.startUDPRemoteForward(req)
@@ -115,18 +119,18 @@ func (s *Session) startRemoteForward(ctx context.Context, req *protocol.RunnerOp
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	if s.worktreeDirFor(taskIDHex) == "" {
 		log.Error("remote_forward: unknown task", "task_id", taskIDHex)
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, "unknown task")
 		return
 	}
 	if s.creator == nil {
 		log.Error("remote_forward: no stream creator wired")
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, "no stream creator wired")
 		return
 	}
 	ln, err := s.startRemoteForwardListener(ctx, req.ForwardId, string(req.BindAddr), int(req.BindPort))
 	if err != nil {
 		log.Info("remote_forward: listen failed", "addr", net.JoinHostPort(string(req.BindAddr), strconv.Itoa(int(req.BindPort))), "err", err)
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, err.Error())
 		return
 	}
 	s.rforwardListeners().add(req.ForwardId, ln)

@@ -110,10 +110,18 @@ func (t sessionTelemetry) TrsfStates() []protocol.TrsfConnState { return t.s.trs
 // one from a read would also write a field the forward-open path owns, from a
 // goroutine with no reason to touch it.
 func (t sessionTelemetry) ForwardDrops(forwardID uint64) (protocol.ForwardDropsBody, bool) {
-	if t.s == nil || t.s.udpForwards == nil {
+	if t.s == nil {
 		return protocol.ForwardDropsBody{}, false
 	}
-	return t.s.udpForwards.dropsFor(forwardID)
+	if t.s.udpForwards != nil {
+		if body, ok := t.s.udpForwards.dropsFor(forwardID); ok {
+			return body, true
+		}
+	}
+	if t.s.ipLinks != nil {
+		return t.s.ipLinks.dropsFor(forwardID)
+	}
+	return protocol.ForwardDropsBody{}, false
 }
 
 // handleTelemetry answers whatever the server asked about this runner.

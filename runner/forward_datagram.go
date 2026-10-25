@@ -78,6 +78,38 @@ type udpForwards struct {
 	// because the two are not variations on a type: one dials per flow and the
 	// other listens once, and a forward id belongs to exactly one of them.
 	remotes map[uint64]*udpRemoteForward
+
+	// done closes when closeAll releases the registry, which also ends sweep:
+	// the ctx sweep runs on outlives the connection (see connect.go).
+	doneOnce sync.Once
+	done     chan struct{}
+}
+
+func (u *udpForwards) doneCh() chan struct{} {
+	u.doneOnce.Do(func() { u.done = make(chan struct{}) })
+	return u.done
+}
+
+// closeAll releases every registration and every socket under it, and stops
+// the sweep. Called when the connection that holds them ends: a reconnect
+// builds a fresh Session, and the server ends these forwards with runner_gone.
+func (u *udpForwards) closeAll() {
+	u.mu.Lock()
+	locals, remotes := u.m, u.remotes
+	u.m, u.remotes = nil, nil
+	u.mu.Unlock()
+	for _, f := range locals {
+		f.closeAll()
+	}
+	for _, r := range remotes {
+		_ = r.conn.Close()
+	}
+	done := u.doneCh()
+	select {
+	case <-done:
+	default:
+		close(done)
+	}
 }
 
 func (u *udpForwards) add(id uint64, target string, send datagramSender) *udpForward {
@@ -168,6 +200,14 @@ func (s *Session) udpForwardRegistry() *udpForwards {
 // and a request has to cross the wire before any byte does.
 func (s *Session) handleForwardDatagram(dg *protocol.ForwardDatagram) {
 	log := s.logger()
+	// An ip link's datagram is one IP packet for its tun. flow_id is ignored
+	// rather than checked, so a later stage can give it a meaning.
+	if l, ok := s.ipLinkRegistry().get(dg.ForwardId); ok {
+		if err := l.Deliver(dg.Payload); err != nil {
+			s.endIPLink(dg.ForwardId, err)
+		}
+		return
+	}
 	// A -R forward's datagrams are REPLIES from the client, routed back to the
 	// source that started the flow. Checked first because the two registries
 	// are disjoint and this one needs no dial at all.
@@ -310,14 +350,18 @@ func (f *udpForward) sendBack(id uint32, payload []byte, log *slog.Logger) {
 // comment below already said "runs for the session", but nothing ever started
 // it -- so a runner-side flow was never reaped on its idle timeout and its
 // socket stayed open until the 512-flow cap evicted it. Started here, off the
-// CONNECTION's context, so it dies with the connection rather than outliving it
-// on every reconnect.
+// connection's lifetime, so it dies with the connection rather than outliving
+// it on every reconnect: it returns on ctx or when closeAll releases the
+// registry.
 func (u *udpForwards) sweep(ctx context.Context) {
 	t := time.NewTicker(udpFlowSweepInterval)
 	defer t.Stop()
+	done := u.doneCh()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-done:
 			return
 		case now := <-t.C:
 			u.sweepIdleFlows(now)
@@ -512,12 +556,12 @@ func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardReque
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	if s.worktreeDirFor(taskIDHex) == "" {
 		log.Error("udp remote forward: unknown task", "task_id", taskIDHex)
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, "unknown task")
 		return
 	}
 	if s.Sender == nil {
 		log.Error("udp remote forward: no sender wired")
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, "no sender wired")
 		return
 	}
 	bindAddr := string(req.BindAddr)
@@ -527,13 +571,13 @@ func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardReque
 	addr, err := net.ResolveUDPAddr("udp", targetAddr(bindAddr, req.BindPort))
 	if err != nil {
 		log.Info("udp remote forward: bad bind address", "err", err)
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, err.Error())
 		return
 	}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Info("udp remote forward: listen failed", "addr", addr.String(), "err", err)
-		s.sendSetupResult(req.ForwardId, false, "")
+		s.sendSetupResult(req.ForwardId, false, err.Error())
 		return
 	}
 	rem := s.udpForwardRegistry().addRemote(req.ForwardId, conn, s.Sender)
