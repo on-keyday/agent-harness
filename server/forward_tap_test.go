@@ -150,7 +150,7 @@ func TestTapLearnsWhyTheForwardEnded(t *testing.T) {
 	tap, recs := newTestTap(t, pf, protocol.ForwardTapFilter_Both, 0)
 	defer pf.removeTap(tap)
 
-	pf.closeTaps(protocol.PortForwardCloseReason_Killed)
+	pf.closeTaps(protocol.PortForwardCloseReason_Killed, "")
 	got := drain(t, recs, 1)
 	if got[0].Kind != protocol.ForwardTapRecordKind_ForwardClosed {
 		t.Fatalf("kind %v", got[0].Kind)
@@ -319,7 +319,7 @@ func TestTapStopsAfterForwardClosed(t *testing.T) {
 	done := make(chan struct{})
 	go func() { tap.run(context.Background()); close(done) }()
 
-	pf.closeTaps(protocol.PortForwardCloseReason_Killed)
+	pf.closeTaps(protocol.PortForwardCloseReason_Killed, "")
 	if rec := drain(t, sink.out, 1)[0]; rec.Kind != protocol.ForwardTapRecordKind_ForwardClosed {
 		t.Fatalf("kind %v", rec.Kind)
 	}

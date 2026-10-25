@@ -269,6 +269,8 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		return resp
 	}
 
+	// The connection that answered holds the runner-side state from here on.
+	pf.runnerCID = runner.Conn.ConnectionID().String()
 	// Announced only once the listener is known to have bound: a registration
 	// that fails its bind is removed again below, and a registered/closed pair
 	// for something that never existed is noise a subscriber has to filter.
@@ -368,13 +370,15 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 // pushPortForwardClosed tells the client to stop this forward. Sent as an
 // explicit record — never as a bare stream close — so the client can tell
 // "killed" apart from "the server went away" (which arrives as EOF).
-func pushPortForwardClosed(pf *portForward, reason protocol.PortForwardCloseReason) {
+func pushPortForwardClosed(pf *portForward, reason protocol.PortForwardCloseReason, detail string) {
 	if pf == nil || pf.control == nil {
 		return
 	}
 	var ev protocol.PortForwardEvent
 	ev.Kind = protocol.PortForwardEventKind_Closed
-	ev.SetClosed(protocol.PortForwardClosed{Reason: reason})
+	closed := protocol.PortForwardClosed{Reason: reason}
+	closed.SetDetail([]byte(detail))
+	ev.SetClosed(closed)
 	b, err := ev.Append(nil)
 	if err != nil {
 		slog.Error("port_forward: encode closed event", "fwd", pf.forwardID, "err", err)
@@ -408,7 +412,7 @@ func (h *TaskHandler) watchRemoteForwardControl(pf *portForward) {
 	// we're here), so it already knows it hung up — pushing a `closed`
 	// record onto a stream the client has already walked away from would be
 	// a no-op at best. The reason argument is unused on this path.
-	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
+	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, "", false)
 }
 
 // sendUDPForwardInstruction tells the runner which target a udp forward dials.
@@ -432,5 +436,9 @@ func (h *TaskHandler) sendUDPForwardInstruction(pf *portForward, req *protocol.R
 	}
 	body.SetRemoteHost(req.TargetHost)
 	rreq.SetOpenPortForward(body)
-	return sendRunnerRequest(runner.Conn, &rreq)
+	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
+		return err
+	}
+	pf.runnerCID = runner.Conn.ConnectionID().String()
+	return nil
 }

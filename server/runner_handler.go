@@ -86,6 +86,17 @@ type RunnerHandler struct {
 	// Wired to TaskHandler.handleForwardSetupResult in Server.New.
 	OnForwardSetupResult func(conn ConnHandle, msg *protocol.ForwardSetupResult)
 
+	// OnForwardEnded, when non-nil, handles RunnerMessage{ForwardEnded}: the
+	// runner's end of a forward failed after setup. Wired to
+	// TaskHandler.handleForwardEnded in Server.New.
+	OnForwardEnded func(conn ConnHandle, msg *protocol.ForwardEnded)
+
+	// OnRunnerDisplaced, when non-nil, is called with the connection a hello
+	// took the runner's identity from (Registry.Add's displaced id). That
+	// connection's session is gone on the runner's side, and its own teardown
+	// arrives only at the ping timeout. Wired in Server.New.
+	OnRunnerDisplaced func(displaced objproto.ConnectionID)
+
 	// OnConnIdentified, when non-nil, is called after a runner has been
 	// registered via RunnerHello so the server can emit a conn_identified event
 	// on conns.status. Called with the runner's connection ID string.
@@ -152,7 +163,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				entry.ViaDialAddr = info.ViaDialAddr
 			}
 		}
-		h.Registry.Add(entry)
+		if displaced := h.Registry.Add(entry); displaced != (objproto.ConnectionID{}) && h.OnRunnerDisplaced != nil {
+			h.OnRunnerDisplaced(displaced)
+		}
 
 		// Notify the server that runner identity is now established so it can
 		// emit a conn_identified event on conns.status.
@@ -362,6 +375,18 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.OnForwardSetupResult != nil {
 			// Non-blocking (signals a buffered channel); safe to run inline.
 			h.OnForwardSetupResult(conn, br)
+		}
+		return
+
+	case protocol.RunnerMessageType_ForwardEnded:
+		fe := msg.ForwardEnded()
+		if fe == nil {
+			slog.Error("RunnerHandler: ForwardEnded variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnForwardEnded != nil {
+			// Inline: teardown writes one record per stream and blocks on nothing.
+			h.OnForwardEnded(conn, fe)
 		}
 		return
 

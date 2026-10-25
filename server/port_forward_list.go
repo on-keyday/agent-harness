@@ -91,7 +91,7 @@ func (h *TaskHandler) visiblePortForwards(connID string, filter protocol.TaskID)
 	for _, pf := range h.pforwards().list() {
 		task, ok := h.Tasks.Get(pf.taskIDHex)
 		if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
-			h.closePortForward(pf, protocol.PortForwardCloseReason_TaskGone)
+			h.closePortForward(pf, protocol.PortForwardCloseReason_TaskGone, "")
 			continue
 		}
 		if !all && !allowed[pf.taskIDHex] {
@@ -153,13 +153,14 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 // runner listener for remote forwards. Reports whether THIS call removed it:
 // registry.remove is the single point of arbitration, so two concurrent killers
 // cannot both be told they succeeded.
-func (h *TaskHandler) closePortForward(pf *portForward, reason protocol.PortForwardCloseReason) bool {
-	return h.teardownPortForward(pf, reason, true)
+func (h *TaskHandler) closePortForward(pf *portForward, reason protocol.PortForwardCloseReason, detail string) bool {
+	return h.teardownPortForward(pf, reason, detail, true)
 }
 
 // teardownPortForward is the single tail shared by every path that ends a
-// registration: drop it from the registry, and for a Remote forward tell the
-// runner to stop listening so no orphan listener survives. When notify is
+// registration: drop it from the registry, and when the runner holds state for
+// it (runnerHoldsState) tell the runner to release that state, so no orphan
+// listener, udp registration or tun survives. When notify is
 // true, a `closed` event is pushed on the control stream first — for callers
 // whose client did not already learn about the teardown some other way (a
 // kill, or the lazy task-gone reap). watchRemoteForwardControl passes
@@ -168,25 +169,27 @@ func (h *TaskHandler) closePortForward(pf *portForward, reason protocol.PortForw
 // Reports whether THIS call removed it: registry.remove is the single point
 // of arbitration, so two concurrent teardowns cannot both be told they
 // succeeded.
-func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortForwardCloseReason, notify bool) bool {
+func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortForwardCloseReason, detail string, notify bool) bool {
 	if _, ok := h.pforwards().remove(pf.forwardID); !ok {
 		return false
 	}
 	if notify {
-		pushPortForwardClosed(pf, reason)
+		pushPortForwardClosed(pf, reason, detail)
 	}
 	// Taps are told unconditionally, even when notify is false. notify governs
 	// the OWNER's control stream, and a tapper is not necessarily the owner: it
 	// has no other channel on which to learn the difference between "the
 	// forward ended" and "my own connection dropped".
-	pf.closeTaps(reason)
+	pf.closeTaps(reason, detail)
 	// The single funnel every ending path goes through, so a subscriber's row
 	// disappears whether it was killed, reaped for a gone task, or dropped with
 	// its client's connection.
 	h.emitForwardEvent(protocol.StatusEventKind_ForwardClosed, pf)
-	if pf.direction != protocol.PortForwardDirection_Remote {
+	if !pf.runnerHoldsState() {
 		return true
 	}
+	// By identity: on a runner_gone teardown this reaches the runner's NEW
+	// connection, whose session holds nothing for the id -- a no-op there.
 	runner, ok := h.Registry.GetByIdentity(pf.runnerID)
 	if !ok || runner.Conn == nil {
 		return true
@@ -218,8 +221,54 @@ func (h *TaskHandler) DropPortForwardsForConn(connID string) {
 		if pf.clientCID != connID {
 			continue
 		}
-		h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
+		h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, "", false)
 	}
+}
+
+// runnerHoldsState reports whether the runner keeps state for this forward that
+// only ClosePortForward (or the runner's connection ending) releases: an -R
+// listener, a udp registration, a link's tun. A tcp -L holds none -- each
+// connection is opened afresh -- which is why it alone survives a runner
+// reconnect.
+func (pf *portForward) runnerHoldsState() bool {
+	return pf.direction == protocol.PortForwardDirection_Remote ||
+		pf.direction == protocol.PortForwardDirection_Link ||
+		pf.protocolKind == protocol.ForwardProtocol_Udp
+}
+
+// DropRunnerStateForwards ends every forward whose runner-side state lived on
+// runnerCID, because that state is gone: RunHandle.Close released it when the
+// connection ended, and a runner on a new connection starts with a fresh
+// session. Before this the row stayed listed and silent -- the relay, which
+// resolves the runner by identity, sent the client's datagrams to the new
+// connection, which dropped them uncounted.
+//
+// notify=true: the CLIENT is alive and must learn its forward ended, and why.
+// Called from a runner connection's teardown and from a takeover (Registry.Add
+// displacing the old connection), whose teardown would otherwise arrive only
+// at the server's ping timeout.
+func (h *TaskHandler) DropRunnerStateForwards(runnerCID string) {
+	if runnerCID == "" {
+		return
+	}
+	for _, pf := range h.pforwards().list() {
+		if pf.runnerCID != runnerCID {
+			continue
+		}
+		h.teardownPortForward(pf, protocol.PortForwardCloseReason_RunnerGone, "", true)
+	}
+}
+
+// handleForwardEnded tears a forward down when its runner end reports that it
+// stopped working after setup (a tun read or write failed). Only the
+// connection holding the forward may say so: a forward_id is an identifier,
+// not an authorisation, the same rule the datagram relay applies.
+func (h *TaskHandler) handleForwardEnded(conn ConnHandle, msg *protocol.ForwardEnded) {
+	pf, ok := h.pforwards().get(msg.ForwardId)
+	if !ok || conn == nil || pf.runnerCID == "" || pf.runnerCID != conn.ConnectionID().String() {
+		return
+	}
+	h.teardownPortForward(pf, protocol.PortForwardCloseReason_EndpointFailed, "runner: "+string(msg.Detail), true)
 }
 
 // killPortForward closes one registration on request. An id the caller cannot see
@@ -234,7 +283,7 @@ func (h *TaskHandler) killPortForward(connID string, id uint64) protocol.KillPor
 	if !all && !allowed[pf.taskIDHex] {
 		return protocol.KillPortForwardStatus_NoSuchForward
 	}
-	if !h.closePortForward(pf, protocol.PortForwardCloseReason_Killed) {
+	if !h.closePortForward(pf, protocol.PortForwardCloseReason_Killed, "") {
 		// Someone else removed it between the get and the remove.
 		return protocol.KillPortForwardStatus_NoSuchForward
 	}

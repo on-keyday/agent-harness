@@ -387,6 +387,10 @@ func New(cfg Config) *Server {
 	// runner connection and belongs to the registry the TaskHandler holds.
 	s.runnerHandler.OnExecRunFinished = s.taskHandler.handleExecRunFinished
 	s.runnerHandler.OnForwardSetupResult = s.taskHandler.handleForwardSetupResult
+	s.runnerHandler.OnForwardEnded = s.taskHandler.handleForwardEnded
+	s.runnerHandler.OnRunnerDisplaced = func(id objproto.ConnectionID) {
+		s.taskHandler.DropRunnerStateForwards(id.String())
+	}
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
 		if s.shuttingDown.Load() {
@@ -1361,6 +1365,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		// left its row in `exec ls` and its process on the runner.
 		if s.taskHandler != nil {
 			s.taskHandler.DropPortForwardsForConn(session.ConnectionID().String())
+			// The other side of the same fact: a RUNNER connection ending takes
+			// its session's forward state with it (RunHandle.Close).
+			s.taskHandler.DropRunnerStateForwards(session.ConnectionID().String())
 			s.taskHandler.DropExecRunsForConn(session.ConnectionID().String())
 			s.taskHandler.DropIdleWatchersForConn(session.ConnectionID().String())
 		}

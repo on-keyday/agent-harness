@@ -15,10 +15,16 @@ import (
 // closed on teardown) and allocates a per-connection client data stream
 // against clientCxn each time the runner reports a new accepted connection.
 type portForward struct {
-	forwardID  uint64
-	direction  protocol.PortForwardDirection
-	taskIDHex  string
-	runnerID   protocol.RunnerID // = TaskEntry.AssignedTo (an identity); re-finds the runner at teardown
+	forwardID uint64
+	direction protocol.PortForwardDirection
+	taskIDHex string
+	runnerID  protocol.RunnerID // = TaskEntry.AssignedTo (an identity); re-finds the runner at teardown
+	// runnerCID is the runner CONNECTION that holds this forward's runner-side
+	// state -- the one that answered setup, or received the udp -L instruction.
+	// Empty when the runner holds none (tcp -L). A runner's session state dies
+	// with its connection, so this, not runnerID, is what decides that a
+	// forward has lost its far end.
+	runnerCID  string
 	control    trsf.BidirectionalStream
 	clientCxn  ConnHandle
 	clientCID  string

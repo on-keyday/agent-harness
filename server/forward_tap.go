@@ -204,10 +204,12 @@ func (pf *portForward) tapConnClose(seq uint64, toTarget, fromTarget uint64) {
 //
 // forward_closed is the last record: finish delivers it after everything queued
 // and ends the tap, so the handler closes the reader's stream.
-func (pf *portForward) closeTaps(reason protocol.PortForwardCloseReason) {
+func (pf *portForward) closeTaps(reason protocol.PortForwardCloseReason, detail string) {
 	pf.eachTap(func(t *forwardTap) {
 		rec := nowTapRecord(protocol.ForwardTapRecordKind_ForwardClosed)
-		rec.SetForwardClosed(protocol.ForwardTapForwardClosed{Reason: reason})
+		fc := protocol.ForwardTapForwardClosed{Reason: reason}
+		fc.SetDetail([]byte(detail))
+		rec.SetForwardClosed(fc)
 		t.q.finish(rec)
 	})
 }

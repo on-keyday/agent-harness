@@ -95,7 +95,7 @@ func TestForwardRegisteredAndClosedAreAnnounced(t *testing.T) {
 	pf := &portForward{taskIDHex: "aa", conns: map[uint64]connBytes{}}
 	h.pforwards().add(pf)
 	h.emitForwardEvent(protocol.StatusEventKind_ForwardRegistered, pf)
-	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
+	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, "", false)
 
 	if len(kinds) != 2 ||
 		kinds[0] != protocol.StatusEventKind_ForwardRegistered ||
