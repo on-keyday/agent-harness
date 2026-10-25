@@ -76,12 +76,18 @@ add "config_agent" "${SANDBOX_AGENT:-unset (pre-generic wrapper — assume claud
 # Which conversations are physically visible. The declared mode comes from the
 # wrapper (SANDBOX_HISTORY); the listing after it is the measurement: under
 # --history-window each store must show this task's directory alone (codex:
-# rollouts of this cwd alone), and anything more is the window leaking.
+# rollouts of this cwd alone), and anything more is the window leaking. An
+# entry marked (host) is a bind mount from the host store; an unmarked one was
+# created in here and dies with the container (claude creates its auto-memory
+# dir for the repo root on the first turn: measured 2026-10-26).
 hist=""
 for s in .claude/projects .pi/agent/sessions; do
 	[ -d "$HOME/$s" ] || continue
 	n=$(ls -1A "$HOME/$s" 2>/dev/null | wc -l)
-	hist="$hist $s=count:$n[$(ls -1A "$HOME/$s" 2>/dev/null | head -n 5 | tr '\n' ',')]"
+	entries=$(ls -1A "$HOME/$s" 2>/dev/null | head -n 5 | while IFS= read -r e; do
+		if awk -v p="$HOME/$s/$e" '$5 == p {f=1} END {exit !f}' /proc/self/mountinfo 2>/dev/null; then printf '%s(host),' "$e"; else printf '%s,' "$e"; fi
+	done)
+	hist="$hist $s=count:$n[$entries]"
 done
 if [ -d "$HOME/.codex/sessions" ]; then
 	hist="$hist .codex/sessions=$(python3 - "$HOME/.codex/sessions" <<'PY' 2>&1

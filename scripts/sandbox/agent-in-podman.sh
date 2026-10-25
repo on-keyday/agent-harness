@@ -188,12 +188,14 @@ fi
 #   A_HISTORY_ROOT_FILES  config files replaced by per-run ones holding {}
 #   A_CRED_FILES     credential files mounted singly rw (not under token auth)
 #   A_RO_CONFIG      config files mounted singly ro, when the host has them
+#   A_RO_DIRS        dirs mounted ro when the host has them: helper binaries
+#                    the agent installed for itself, neither history nor config
 #   A_SHARED_DIRS    host dirs mounted rw because the host and the container
 #                    must see the same one (codex's writer locks)
 #   A_HISTORY_SEED   1 = the ephemeral config needs the launcher's first-run
 #                    seeding, as under token auth
 declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
-declare -a A_HISTORY_ROOTS=() A_HISTORY_ROOT_FILES=() A_CRED_FILES=() A_RO_CONFIG=() A_SHARED_DIRS=()
+declare -a A_HISTORY_ROOTS=() A_HISTORY_ROOT_FILES=() A_CRED_FILES=() A_RO_CONFIG=() A_RO_DIRS=() A_SHARED_DIRS=()
 A_EPHEMERAL_HOME=""
 A_BIN_BUNDLE=0
 A_HISTORY=""
@@ -417,13 +419,16 @@ case "$AGENT" in
     A_HOME="$HOME_DIR"
     # sessions/--<cwd without its leading />-- with / \ : turned into '-'
     # (pi 1.0.3 dist/core/session-manager.js:290-294). settings.json names the
-    # provider pi dials, so it is needed, read-only.
+    # provider pi dials, so it is needed, read-only. agent/bin holds the fd
+    # binary pi fetched for itself; without it pi warns "fd not found" and,
+    # offline, cannot fetch another (measured 2026-10-26, pi 1.0.3).
     A_HISTORY=dir
     A_HISTORY_STORE=.pi/agent/sessions
     history_name() { local p="${1#/}"; p="${p//\//-}"; p="${p//\\/-}"; p="${p//:/-}"; printf -- '--%s--' "$p"; }
     A_HISTORY_ROOTS=( .pi )
     A_CRED_FILES=( .pi/agent/auth.json )
     A_RO_CONFIG=( .pi/agent/settings.json )
+    A_RO_DIRS=( .pi/agent/bin )
     ;;
   bash)
     # A shell sandbox, not a conversational agent: nothing to bridge, nothing to
@@ -620,6 +625,8 @@ if [ "$history_window" = 1 ]; then
   done
   declare -a hist_ro=()
   for f in "${A_RO_CONFIG[@]}"; do [ -f "$HOME_DIR/$f" ] && hist_ro+=( "$f" ); done
+  declare -a hist_ro_dirs=()
+  for d in "${A_RO_DIRS[@]}"; do [ -d "$HOME_DIR/$d" ] && hist_ro_dirs+=( "$d" ); done
   hist_src="$HOME_DIR/$hist_store"
   if [ "$A_HISTORY" = sync ]; then
     # codex: rollouts live at sessions/YYYY/MM/DD/ with the cwd only in their
@@ -640,7 +647,7 @@ if [ "$history_window" = 1 ]; then
 
   history_mode=window
   history_root=$(mktemp -d "${TMPDIR:-/tmp}/harness-sandbox-root.XXXXXX")
-  for d in "${A_HISTORY_ROOTS[@]}" "$hist_store" "${A_SHARED_DIRS[@]}"; do mkdir -p "$history_root/$d"; done
+  for d in "${A_HISTORY_ROOTS[@]}" "$hist_store" "${hist_ro_dirs[@]}" "${A_SHARED_DIRS[@]}"; do mkdir -p "$history_root/$d"; done
   for f in "${A_HISTORY_ROOT_FILES[@]}"; do echo '{}' >"$history_root/$f"; done
   for f in "${hist_creds[@]}" "${hist_ro[@]}"; do mkdir -p "$(dirname "$history_root/$f")"; : >"$history_root/$f"; done
   mkdir -p "$HOME_DIR/$hist_store"
@@ -648,7 +655,7 @@ if [ "$history_window" = 1 ]; then
   for x in "${A_HISTORY_ROOTS[@]}" "${A_HISTORY_ROOT_FILES[@]}"; do AUTH+=( -v "$history_root/$x:$AGENT_HOME/$x" ); done
   AUTH+=( -v "$hist_src:$AGENT_HOME/$hist_store" )
   for f in "${hist_creds[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f" ); done
-  for f in "${hist_ro[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
+  for f in "${hist_ro[@]}" "${hist_ro_dirs[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
   for d in "${A_SHARED_DIRS[@]}"; do mkdir -p "$HOME_DIR/$d"; AUTH+=( -v "$HOME_DIR/$d:$AGENT_HOME/$d" ); done
   if [ "$A_HISTORY_SEED" = 1 ] && [ "$token_auth" != 1 ]; then
     AUTH+=( --env SANDBOX_SEED_CONFIG=1 --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")" )

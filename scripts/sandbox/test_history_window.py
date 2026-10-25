@@ -151,6 +151,7 @@ class WrapperTests(unittest.TestCase):
         (self.home / ".pi/agent").mkdir(parents=True)
         (self.home / ".pi/agent/auth.json").write_text("x")
         (self.home / ".pi/agent/settings.json").write_text("{}")
+        executable(self.home / ".pi/agent/bin/fd", "#!/bin/sh\n")
         self.env = {"HOME": str(self.home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.tmp),
                     "HARNESS_SANDBOX_CLAUDE_TOKEN_FILE": str(token), "HARNESS_SANDBOX_PI_PKG": str(pi_pkg)}
 
@@ -206,6 +207,9 @@ class WrapperTests(unittest.TestCase):
         positions = [argv.index(a) for a in expected]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn(f"{home}/.pi:{home}/.pi", argv)
+        # pi's helper binaries (fd): without them pi warns "fd not found" and
+        # tries to download one (measured 2026-10-26).
+        self.assertIn(f"{home}/.pi/agent/bin:{home}/.pi/agent/bin:ro", argv)
 
     def test_shared_mode_unchanged_but_labelled(self):
         err, argv = self.ok("pi")
