@@ -66,7 +66,7 @@ class CodexReleaseTests(unittest.TestCase):
         podman = tools / "podman"
         podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
         podman.chmod(0o755)
-        env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+        env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.root)}
         subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", "codex", "--omit-harness-cli", "--version"],
                        env=env, cwd=self.root, capture_output=True, check=True, timeout=10)
         args = json.loads(capture.read_text())
@@ -94,7 +94,7 @@ class CodexReleaseTests(unittest.TestCase):
                 podman = tools / "podman"
                 podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\n")
                 podman.chmod(0o755)
-                env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(root),
                        "HARNESS_SANDBOX_PI_PKG": str(pi_package), "HARNESS_SANDBOX_OPENCODE_BIN": str(binary)}
                 subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", "--version"],
                                cwd=root, env=env, check=True, capture_output=True, timeout=10)
@@ -109,6 +109,70 @@ class CodexReleaseTests(unittest.TestCase):
                 else:
                     self.assertIn("SANDBOX_AGENT_BIN=/bin/bash", args)
 
+    def test_wrapper_defaults_and_their_opt_outs(self):
+        home, tools = self.root / "home", self.root / "tools"
+        executable(home / ".local/bin/claude", "exit 0")
+        (home / ".claude").mkdir()
+        token_file = home / ".config/harness/sandbox-claude-token"
+        token_file.parent.mkdir(parents=True)
+        token_file.write_text("dedicated-token\n")
+        executable(tools / "setsid", "exit 0")
+        capture = self.root / "args.json"
+        podman = tools / "podman"
+        podman.write_text(f"#!{os.sys.executable}\nimport json,sys\nopen({str(capture)!r},'w').write(json.dumps(sys.argv[1:]))\n")
+        podman.chmod(0o755)
+        env = {"HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+               "TMPDIR": str(self.root), "HARNESS_TASK_ID": "t1"}
+
+        def run(*flags, agent="claude"):
+            capture.unlink(missing_ok=True)
+            result = subprocess.run(["bash", str(check.WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *flags, "--version"],
+                                    cwd=self.root, env=env, capture_output=True, text=True, timeout=10)
+            return result, (json.loads(capture.read_text()) if capture.exists() else None)
+
+        claude_mount = f"{home}/.claude:{home}/.claude"
+        proxy_log_mount = os.path.realpath(self.root / "sandbox-proxy-t1.log") + ":/run/sandbox-proxy.log"
+
+        # No flags: proxy firewall, proxy log in a host file, mount auth even
+        # though a token file exists.
+        _, args = run()
+        self.assertIn("SANDBOX_FIREWALL_PROXY=1", args)
+        self.assertIn(proxy_log_mount, args)
+        self.assertIn(claude_mount, args)
+        self.assertFalse(any(a.startswith("CLAUDE_CODE_OAUTH_TOKEN=") for a in args))
+
+        _, args = run("--no-proxy-log")
+        self.assertIn("SANDBOX_FIREWALL_PROXY=1", args)
+        self.assertNotIn("SANDBOX_PROXY_LOG=/run/sandbox-proxy.log", args)
+
+        _, args = run("--firewall")
+        self.assertIn("SANDBOX_FIREWALL=1", args)
+        self.assertNotIn("SANDBOX_FIREWALL_PROXY=1", args)
+        self.assertNotIn("SANDBOX_PROXY_LOG=/run/sandbox-proxy.log", args)
+
+        _, args = run("--no-firewall")
+        self.assertNotIn("--user", args)
+        self.assertFalse(any(a.startswith("SANDBOX_FIREWALL") for a in args))
+
+        _, args = run("--token-auth")
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN=dedicated-token", args)
+        self.assertNotIn(claude_mount, args)
+
+        for flags, agent in [(("--no-firewall", "--firewall-proxy"), "claude"),
+                             (("--no-firewall", "--firewall"), "claude"),
+                             (("--no-proxy-log", "--proxy-log"), "claude"),
+                             (("--token-auth", "--mount-auth"), "claude"),
+                             (("--token-auth",), "codex")]:
+            with self.subTest(flags=flags, agent=agent):
+                result, args = run(*flags, agent=agent)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIsNone(args)
+
+        token_file.write_text("")
+        result, args = run("--token-auth")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIsNone(args)
+
     def test_smoke_uses_real_wrapper_without_auth_mounts_or_network(self):
         tools = self.root / "host-tools"
         capture = self.root / "probe.json"
@@ -121,6 +185,7 @@ class CodexReleaseTests(unittest.TestCase):
             report = check.smoke_bundle(self.binary, "test-image", self.root / "probe")
         args = json.loads(capture.read_text())
         self.assertIn("--network=none", args)
+        self.assertFalse(any(a.startswith("SANDBOX_FIREWALL") for a in args))
         self.assertIn(str(self.binary.parent) + ":/opt/harness-codex-bin:ro", args)
         self.assertNotIn("HARNESS_AUTH_TICKET", args)
         self.assertFalse(any(":/" in arg and "/.codex" in arg for arg in args))

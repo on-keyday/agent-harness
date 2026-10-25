@@ -205,3 +205,28 @@ rather than hard-coded to `~/.claude`.
 4. `scripts/test_agent_presets.py` extended for the four new preset names,
    including that each derives its base's argv/logFormat rather than restating
    them.
+
+## Amendment 1 (2026-10-25): the wrapper's defaults
+
+DECIDED (operator, 2026-10-25). This replaces "keep their current meaning" in
+**Wrapper interface** for three of the flags named there. With no control flag,
+a task now runs:
+
+| axis | before | now | opt-out |
+|---|---|---|---|
+| egress | open network | `--firewall-proxy` mode | `--firewall` (ip allowlist), `--no-firewall` (open) |
+| proxy log | container stderr | `${TMPDIR:-/tmp}/sandbox-proxy-<task>.log` | `--no-proxy-log`; `--proxy-log=PATH` picks the file |
+| claude auth | token auth whenever the token file exists | mount auth | `--token-auth` |
+
+`--firewall-proxy` and `--mount-auth` keep working and now restate the
+default; `--firewall-proxy` still wins over `--firewall`. A contradictory pair
+(`--no-firewall` with either firewall flag, `--no-proxy-log` with
+`--proxy-log`, `--token-auth` with `--mount-auth`) exits 2 instead of being
+settled by order. `--token-auth` also exits 2 for an agent without token auth
+and when the token file is missing or empty, rather than falling back to mount
+auth.
+
+Consequence for **Measuring `egress_domains`**: a domain missing from an
+agent's table entry used to break only tasks that opted into a firewall. It now
+breaks every task that does not pass `--no-firewall`, and the proxy log names
+the refused host.

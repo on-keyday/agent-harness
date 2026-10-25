@@ -1,10 +1,11 @@
 #!/bin/bash
-# Sandbox entrypoint. Used ONLY when the wrapper enables egress filtering
-# (--firewall): the container then starts as root (--user 0 + NET_ADMIN/NET_RAW)
-# so this can apply the iptables allowlist, after which it drops to the agent
-# user (the keep-id host uid) and execs the real command (claude ...).
+# Sandbox entrypoint. Used whenever the wrapper enables egress filtering (the
+# default proxy mode, or --firewall): the container then starts as root
+# (--user 0 + NET_ADMIN/NET_RAW) so this can apply the iptables rules, after
+# which it drops to the agent user (the keep-id host uid) and execs the real
+# command (claude ...).
 #
-# Without --firewall the wrapper runs claude directly as the keep-id user and
+# Under --no-firewall the wrapper runs claude directly as the keep-id user and
 # this entrypoint is not used.
 set -euo pipefail
 
@@ -28,7 +29,8 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   # proxy to catatonit, which does reap it.
   # (Measured 2026-08-18: `&` -> ppid=claude, 1 zombie; `( & )` -> ppid=1, 0.)
   # Its DENY/BUSY lines go to stderr, which under an interactive session is the
-  # agent's PTY; --proxy-log points them at a bind-mounted host file instead.
+  # agent's PTY; the wrapper points them at a bind-mounted host file unless
+  # --no-proxy-log.
   # The redirect is opened here, as container root, so the file need not be
   # writable by the proxy uid.
   ( if [ -n "${SANDBOX_PROXY_LOG:-}" ]; then exec 2>>"$SANDBOX_PROXY_LOG"; fi

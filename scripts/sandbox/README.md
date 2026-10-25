@@ -60,8 +60,9 @@ provider host. **The allowlisted `openrouter.ai` is the provider of the host
 this was measured on, not pi's**: on a host whose `~/.pi/agent` uses another
 provider, set `HARNESS_SANDBOX_PI_DOMAINS=<host>[,<host>…]` in the runner's
 environment. It replaces the list in both firewall modes (`SANDBOX_PROXY_ALLOW`
-would reach `--firewall-proxy` only). To find the name, run once with
-`--firewall-proxy --proxy-log` and read the `DENY` lines. The wrapper turns off pi's version check on every run
+would reach `--firewall-proxy` only). To find the name, run once and read the
+`DENY` lines in the proxy log (the runner log's `[agent-in-podman]` line names
+the file). The wrapper turns off pi's version check on every run
 (`PI_SKIP_VERSION_CHECK`; the read-only package cannot be updated from inside)
 and its remaining automatic traffic under a firewall (`PI_OFFLINE`).
 
@@ -74,8 +75,8 @@ this host, but present) — `~/.local/share/opencode/auth.json` for opencode, an
 `~/.pi/agent/auth.json` for pi. The `~/.pi` mount is also read-write for
 `settings.json` and `extensions/`, which the host's own pi loads and runs — the
 same host-execution surface `~/.claude`'s hooks are under mount auth.
-`--firewall-proxy` is the mitigation that matters for them, since it removes
-raw-socket egress entirely.
+The default `--firewall-proxy` mode is the mitigation that matters for them,
+since it removes raw-socket egress entirely; `--no-firewall` gives that up.
 
 **opencode needs four mounts, and each is load-bearing.** It spreads across all
 four XDG directories: config + plugins, `auth.json` + `opencode.db`, the
@@ -311,16 +312,20 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 - **Mount auth (default, and the ONLY mode for codex, agy, opencode and pi):** bind-mounts the
   agent's config paths (see the table above) so the sandbox reuses your host
   login + session resume. Simplest, but the personal **refresh token** is in
-  the container — combined with open egress + untrusted input that's a real
-  exfil-to-permanent-compromise risk (mitigate with `--firewall-proxy`).
-- **Token auth (hardened, recommended for untrusted work):** put a dedicated,
+  the container — combined with egress + untrusted input that's a real
+  exfil-to-permanent-compromise risk. The default `--firewall-proxy` mode
+  limits egress to allowlisted hosts; `--no-firewall` removes that limit.
+  `--mount-auth` names this mode explicitly and changes nothing.
+- **Token auth (`--token-auth`, claude only, opt-in):** put a dedicated,
   revocable token in a file and the wrapper authenticates via
   `CLAUDE_CODE_OAUTH_TOKEN` **without mounting `~/.claude`** — so a leak means
   revoking *that one token*, not your account. Session state is ephemeral, so
-  **`--continue` / resume do NOT work** in token auth. Need resume on a given
-  task? pass **`--mount-auth`** to force mount auth (host `~/.claude`, resume
-  works) even when the token file is present — trading the refresh-token exposure
-  back in for that task. One-time setup:
+  **`--continue` / resume do NOT work** in token auth. Until 2026-10-25 the
+  wrapper switched to it on its own whenever the token file existed, and
+  `--mount-auth` was how a task got resume back; now it is used only when a task
+  or slot passes `--token-auth`. `--token-auth` exits 2 for an agent without
+  token auth, when the token file is missing or empty, and together with
+  `--mount-auth`. One-time setup:
 
   ```sh
   claude setup-token            # interactive; prints a long-lived token
@@ -328,8 +333,8 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   ( umask 077; printf '%s\n' '<the token>' > ~/.config/harness/sandbox-claude-token )
   ```
 
-  The wrapper auto-detects that file (override path with
-  `HARNESS_SANDBOX_CLAUDE_TOKEN_FILE`) and switches to token auth; it never reads
+  `--token-auth` reads that file (override the path with
+  `HARNESS_SANDBOX_CLAUDE_TOKEN_FILE`); the wrapper never reads
   the token's bytes (hands it to podman as an env). The token is *long-lived*, not
   short-TTL — the win is "dedicated + revocable", not "harmless if leaked".
 - **harness control plane bridged in (default):** the host `harness-cli` binary
@@ -371,8 +376,11 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   use `--agent-arg --omit-harness-cli` / `--agent-args "--omit-harness-cli"`.
   (Bridge assumes the server is directly reachable; behind
   `HARNESS_PROXY_VIA_RUNNER` it would need `--network=host` — not handled yet.)
-- **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
-  `--agent-arg --firewall` (or runner `--agent-args "--firewall"`) to apply a
+- **Network: the `--firewall-proxy` mode (below) by default.** Pass
+  `--agent-arg --firewall` for the ip allowlist described here instead, or
+  `--agent-arg --no-firewall` for an open network (exits 2 together with
+  either firewall flag). Before 2026-10-25 the network was open unless a flag
+  asked otherwise. `--firewall` applies a
   default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
   (api.github.com/meta) + the shared dev hosts (npm / pypi) + **the running
   agent's own endpoints** (`SANDBOX_AGENT_DOMAINS`, from the agent table — so a
@@ -401,7 +409,7 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   auto-update, error reporting) is disabled in-container via
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so the allowlist needn't include
   those endpoints and fail-closed won't stall on them.
-- **`--firewall-proxy` (stronger egress):** instead of an IP allowlist, deny ALL
+- **`--firewall-proxy` (the default; stronger egress):** instead of an IP allowlist, deny ALL
   raw egress for the agent uid (iptables owner-match) and run an in-container
   allowlisting CONNECT proxy (`cmd/sandbox-connect-proxy`) as a separate uid; the agent's
   API/WebFetch are forced through it via `HTTPS_PROXY`. Wins over `--firewall`:
@@ -416,17 +424,18 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a
   GitHub gist, since `github.com` is allowlisted). Trim the allowlist for
   sensitive tasks; full DLP would need a MITM proxy (out of scope).
-  The proxy logs every connection (`ALLOW` / `DENY` / `BUSY`) to the
-  container's stderr, which in an interactive session is the agent's PTY: the
-  lines are drawn straight over the TUI. agy makes this unusable, because it
-  retries `POST https://play.googleapis.com/log` (Clearcut) twice every 5s and
-  every attempt is a `DENY`. Pass **`--proxy-log`** to write them to a host
-  file instead: `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log` by default, or
-  `--proxy-log=PATH`. Each container start truncates the file and writes a
+  The proxy logs every connection (`ALLOW` / `DENY` / `BUSY`), by default to
+  a host file, `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log`, or to PATH with
+  `--proxy-log=PATH`. **`--no-proxy-log`** sends them to the container's stderr
+  instead (exits 2 together with `--proxy-log`). In an interactive session that
+  stderr is the agent's PTY, so the lines are drawn straight over the TUI. agy
+  makes this unusable, because it retries
+  `POST https://play.googleapis.com/log` (Clearcut) twice every 5s and every
+  attempt is a `DENY`. Each container start truncates the file and writes a
   header line naming the agent and task id, so it holds the current run only:
   the file is bind-mounted into the container, and the agent can read it.
   The runner log's `[agent-in-podman]` summary line names the file. Nothing
-  deletes these files.
+  deletes these files, and since 2026-10-25 every proxy-mode task writes one.
   The redirect lives in `entrypoint.sh`, so it takes effect only after
   `build.sh` rebuilds the image.
 
@@ -475,13 +484,13 @@ harness-cli submit --repo <sandbox-root> \
   `session snapshot` still warns "reported no terminal size; rendering at
   120x40" for a session opened with no attached terminal; that is the
   renderer's fallback, not the container's PTY.
-- **egress firewall (opt-in `--firewall`):** default-deny iptables+ipset allowlist
+- **egress firewall (`--firewall`):** default-deny iptables+ipset allowlist
   (GitHub ranges + npm/pypi + the agent's own endpoints + the harness server),
   IPv6 blocked, applied
   as container-root then dropped to the agent user. Adapted from Anthropic's
   `init-firewall.sh`; fail-closed. Verified end-to-end (blocked domains rejected,
   allowed reachable, claude runs + writes the worktree as the host user). ✅
-- **proxy-broker egress (opt-in `--firewall-proxy`, stronger):** an in-container
+- **proxy-broker egress (`--firewall-proxy`, the default, stronger):** an in-container
   allowlisting CONNECT proxy (`cmd/sandbox-connect-proxy`) runs as a dedicated uid; iptables
   **owner-match** gives the agent uid NO raw-socket egress, so its API + WebFetch
   funnel through the proxy (domain allowlist, no CDN-IP fragility, **WebFetch

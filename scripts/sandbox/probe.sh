@@ -105,9 +105,9 @@ add "proc_total" "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l) procs (via /proc)"
 add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runner|agent-in-pod') matches (expect 0)"
 
 # --- network: one allowlisted target, one that must be refused ---------------
-# The second one is a control: it is EXPECTED to succeed when the slot runs
-# without --firewall / --firewall-proxy. It only proves confinement when one of
-# those is on — read it together with the wrapper's "firewall=" log line.
+# The second one is a control: it is EXPECTED to succeed under --no-firewall.
+# It only proves confinement when a firewall mode is on — read it together with
+# the wrapper's "firewall=" log line.
 add "egress_allowed" "$(curl -sS -m 6 https://api.github.com/zen 2>&1 | head -c 90)"
 add "egress_nonallowlisted" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90) (refusal expected ONLY under --firewall*; read against config_firewall)"
 

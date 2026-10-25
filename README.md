@@ -1474,13 +1474,15 @@ edits land on disk owned by the host user (podman, not docker, makes
 non-root + host-owned writes coexist). The wrapper bind-mounts the repo
 root (worktree + shared `.git`) and, in the default **mount auth** mode,
 the agent's config paths (host login / session resume — note this
-exposes that provider's credentials to the container). **Token auth** (a
-dedicated revocable `CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount)
-removes that exposure but disables resume, and **only claude has it**:
-codex and agy are mount-auth only. Egress is open by default;
-`--agent-arg --firewall` applies a default-deny iptables+ipset
-allowlist, and `--firewall-proxy` routes egress through an in-container
-allowlisting CONNECT proxy (raw sockets blocked, WebFetch works).
+exposes that provider's credentials to the container). **Token auth**
+(`--agent-arg --token-auth`: a dedicated revocable
+`CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount) removes that exposure but
+disables resume, and **only claude has it**: the other agents are mount-auth
+only. By default egress goes through an in-container allowlisting CONNECT
+proxy (`--firewall-proxy`: raw sockets blocked, WebFetch works), whose
+connection log goes to a host file under `${TMPDIR:-/tmp}`;
+`--agent-arg --firewall` swaps in a default-deny iptables+ipset allowlist,
+and `--agent-arg --no-firewall` opens the network.
 
 This is the **OS-layer** half of a two-layer model; the **server-layer**
 half is the capability bitmask (**Capabilities and scope** above), which

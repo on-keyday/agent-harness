@@ -3324,3 +3324,22 @@ and the link's far end is noticed only by the GC, ~60 s later (measured 61 s).
 The spec had said the reconnect bounds it. Not a surface question; recorded so
 a second "this path assumes the same process came back" can be counted against
 it.
+
+### 2026-10-25 — sandbox wrapper defaults: proxy firewall, proxy log to a file, mount auth
+
+`agent-in-podman.sh` only (no UI field, no verb), so S1–S6 is the walk; 1–39
+fired only for the docs.
+
+done:    S3 (token auth opt-in via `--token-auth`; the agent-table comment says
+         which agents error on it), S4 (`A_DOMAINS` / `A_FW_ENV` now apply to
+         every task that does not pass `--no-firewall` — a missing domain fails
+         closed by default, named in the proxy log), S5 (the default mode now
+         depends on parsing `HARNESS_SERVER_CID`; a real-podman run printed the
+         one-port carve-out), S6 (sandbox README, runner-up.md; probe.sh's
+         egress control comment), 35, 37 (spec Amendment 1)
+n/a:     S1 (no preset change), S2, 1–34a, 36, 38, 39
+missed:  —
+
+**No upgrade step**: the presets point at the wrapper script, and every task
+execs it fresh, so a running slot picks up the new defaults with its next task —
+the opposite of a bin rename, which S6 warns about.

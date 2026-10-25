@@ -63,18 +63,23 @@ Arguments: $ARGUMENTS
    One wrapper serves all six: which agent runs is `--sandbox-agent <name>`,
    which the preset supplies. codex, agy, opencode and pi are **mount-auth only**
    (their provider credentials go into the container; no revocable-token mode
-   exists for them) — see `scripts/sandbox/README.md`. Optional wrapper
-   controls, passed per task with `--agent-arg` (any profile) or per slot with
-   runner `--agent-args` (the DEFAULT profile only): `--firewall`
-   (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
-   allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
-   `--proxy-log[=PATH]` (with `--firewall-proxy`: the proxy's DENY/ALLOW lines
-   go to a host file — default `${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log` —
-   instead of the session's terminal; needed for an interactive agy slot, whose
-   TUI they otherwise overwrite),
-   `--omit-harness-cli` (drop the control-plane bridge for full isolation), and
-   `--mount-auth` (force host `~/.claude` mount auth — resume/`--continue` works —
-   even when a setup-token file is present) — see `scripts/sandbox/README.md`.
+   exists for them) — see `scripts/sandbox/README.md`. With no wrapper flags a
+   task runs behind the `--firewall-proxy` egress mode (in-container
+   allowlisting CONNECT proxy, no raw agent egress, WebFetch works), with the
+   proxy's DENY/ALLOW lines in a host file
+   (`${TMPDIR:-/tmp}/sandbox-proxy-<task-id>.log`) rather than on the session's
+   terminal, and in mount auth (host agent config mounted, resume/`--continue`
+   works). Wrapper controls that change this, passed per task with
+   `--agent-arg` (any profile) or per slot with runner `--agent-args` (the
+   DEFAULT profile only): `--firewall` (default-deny IP allowlist instead of
+   the proxy), `--no-firewall` (open network), `--proxy-log=PATH` (another log
+   file), `--no-proxy-log` (lines on the terminal; an interactive agy TUI
+   becomes unusable under them), `--token-auth` (claude only: revocable
+   setup-token, no `~/.claude` mount, no resume), and `--omit-harness-cli`
+   (drop the control-plane bridge for full isolation). A contradictory pair
+   (`--no-firewall` with either firewall flag, `--no-proxy-log` with
+   `--proxy-log`, `--token-auth` with `--mount-auth`) exits 2 — see
+   `scripts/sandbox/README.md`.
    Because the roots
    usually overlap a broad existing slot (e.g. the `bash` runner serving
    `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot

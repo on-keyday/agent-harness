@@ -43,27 +43,35 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       right one in every listing.
 #   --omit-harness-cli  run with NO harness control plane in the container (full
 #                       isolation); default is to bridge harness-cli + HARNESS_* in.
-#   --firewall          apply the iptables+ipset egress allowlist
-#                       (init-firewall.sh); default is an open network.
-#   --firewall-proxy    stronger egress: deny-all + an in-container allowlisting
-#                       CONNECT proxy (cmd/sandbox-connect-proxy); the agent gets no raw
-#                       egress and its API/WebFetch funnel through the proxy.
-#                       Takes precedence over --firewall if both are given.
-#   --proxy-log[=PATH]  with --firewall-proxy: write the proxy's ALLOW/DENY/BUSY
-#                       lines to a HOST file instead of the container's stderr —
-#                       PATH, or by default ${TMPDIR:-/tmp}/sandbox-proxy-<task>.log.
-#                       Each container start truncates it.
+#   --firewall-proxy    the DEFAULT egress mode: deny-all + an in-container
+#                       allowlisting CONNECT proxy (cmd/sandbox-connect-proxy); the
+#                       agent gets no raw egress and its API/WebFetch funnel
+#                       through the proxy. Passing it changes nothing, except
+#                       that it wins over --firewall.
+#   --firewall          the iptables+ipset egress allowlist (init-firewall.sh)
+#                       instead of the proxy.
+#   --no-firewall       an open network. Exits 2 together with --firewall or
+#                       --firewall-proxy.
+#   --proxy-log[=PATH]  write the proxy's ALLOW/DENY/BUSY lines to a HOST file
+#                       instead of the container's stderr — PATH, or
+#                       ${TMPDIR:-/tmp}/sandbox-proxy-<task>.log, which is also
+#                       where proxy mode writes them when neither this nor
+#                       --no-proxy-log is given. Each container start truncates it.
 #                       Under an interactive session that stderr IS the agent's
 #                       PTY, so every line is drawn over the TUI; agy retries
 #                       play.googleapis.com/log twice every 5s and its UI becomes
-#                       unusable. Ignored (with a warning) without --firewall-proxy.
-#   --mount-auth        force MOUNT auth (bind-mount the host agent config) even
-#                       when a token file exists. Mount auth persists session
-#                       state, so --continue / resume work — at the cost of
-#                       exposing the refresh token. Use it for trusted, resumable
-#                       tasks; leave it off for untrusted work (token auth,
-#                       ephemeral). Only claude HAS token auth; for the others
-#                       mount auth is the only mode and this flag is a no-op.
+#                       unusable. Ignored (with a warning) outside proxy mode.
+#   --no-proxy-log      leave the proxy's lines on the container's stderr. Exits 2
+#                       together with --proxy-log.
+#   --mount-auth        MOUNT auth (bind-mount the host agent config), which is
+#                       the default; passing it changes nothing. Mount auth
+#                       persists session state, so --continue / resume work — at
+#                       the cost of exposing the refresh token.
+#   --token-auth        claude only: authenticate with the revocable token in
+#                       A_TOKEN_FILE from an ephemeral home instead (no refresh
+#                       token in the container, no resume). Exits 2 for an agent
+#                       without token auth, for a missing or empty token file,
+#                       and together with --mount-auth.
 #   --image-agent       run the image's own copy of the agent instead of bridging
 #                       the host binary in (see "Host binary bridge" below). Only
 #                       claude has an image copy. --image-claude is accepted as a
@@ -90,9 +98,13 @@ esac
 bridge_cli=1
 firewall=0
 firewall_proxy=0
-force_mount=0
+no_firewall=0
+mount_auth=0
+token_auth=0
 image_agent=0
+default_proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log"
 proxy_log=""
+no_proxy_log=0
 declare -a ARGS=()
 want_agent=0
 for a in "$@"; do
@@ -103,15 +115,39 @@ for a in "$@"; do
     --omit-harness-cli) bridge_cli=0 ;;
     --firewall)         firewall=1 ;;
     --firewall-proxy)   firewall_proxy=1 ;;
-    --proxy-log)        proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log" ;;
+    --no-firewall)      no_firewall=1 ;;
+    --proxy-log)        proxy_log="$default_proxy_log" ;;
     --proxy-log=*)      proxy_log="${a#*=}" ;;
-    --mount-auth)       force_mount=1 ;;
+    --no-proxy-log)     no_proxy_log=1 ;;
+    --mount-auth)       mount_auth=1 ;;
+    --token-auth)       token_auth=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
 [ "$want_agent" = 1 ] && { echo "[agent-in-podman] --sandbox-agent needs a value" >&2; exit 2; }
 if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
+
+# A contradictory pair is refused rather than settled by order: these flags
+# arrive from a slot's recorded --agent-args AND a task's --agent-arg, and with
+# last-wins the log line would be the only place saying which one lost.
+conflict() { echo "[agent-in-podman] $1 and $2 contradict each other" >&2; exit 2; }
+[ "$no_firewall" = 1 ] && [ "$firewall" = 1 ] && conflict --no-firewall --firewall
+[ "$no_firewall" = 1 ] && [ "$firewall_proxy" = 1 ] && conflict --no-firewall --firewall-proxy
+[ "$no_proxy_log" = 1 ] && [ -n "$proxy_log" ] && conflict --no-proxy-log --proxy-log
+[ "$token_auth" = 1 ] && [ "$mount_auth" = 1 ] && conflict --token-auth --mount-auth
+fw_mode=proxy
+if [ "$firewall_proxy" = 1 ]; then fw_mode=proxy
+elif [ "$firewall" = 1 ]; then fw_mode=ip
+elif [ "$no_firewall" = 1 ]; then fw_mode=none
+fi
+if [ -n "$proxy_log" ] && [ "$fw_mode" != proxy ]; then
+  echo "[agent-in-podman] --proxy-log ignored: there is no proxy in firewall=$fw_mode" >&2
+  proxy_log=""
+fi
+if [ "$fw_mode" = proxy ] && [ "$no_proxy_log" != 1 ] && [ -z "$proxy_log" ]; then
+  proxy_log="$default_proxy_log"
+fi
 
 # --- agent table -------------------------------------------------------------
 # The ONE place per-agent differences live.
@@ -411,28 +447,41 @@ fi
 
 # Auth. Two modes, and which are AVAILABLE is a property of the agent (table):
 #
-#  (a) Token (preferred, hardened): if the agent has a token file — claude's is
-#      ~/.config/harness/sandbox-claude-token, override with
-#      HARNESS_SANDBOX_CLAUDE_TOKEN_FILE — auth via the agent's token env (a
-#      DEDICATED, revocable `claude setup-token`) and DO NOT mount the personal
-#      config dir (which holds the *permanent* refresh token). The agent runs
-#      from the image's own writable home, so its config is ephemeral per run
-#      (no host-session resume — accepted trade for not exposing the refresh
-#      token). We never read the token's bytes; podman receives it as an env.
+#  (a) Mount (default): reuse the host login by bind-mounting the agent's
+#      config paths. Session state persists, so --continue / resume work. This
+#      exposes that provider's credentials to the container — see the README
+#      security section.
 #
-#      ONLY claude has this. codex, agy and opencode have no known
+#  (b) Token (--token-auth): auth via the agent's token env from its token
+#      file — claude's is ~/.config/harness/sandbox-claude-token, override with
+#      HARNESS_SANDBOX_CLAUDE_TOKEN_FILE, holding a DEDICATED, revocable
+#      `claude setup-token` — and DO NOT mount the personal config dir (which
+#      holds the *permanent* refresh token). The agent runs from the image's
+#      own writable home, so its config is ephemeral per run (no host-session
+#      resume). We never read the token's bytes; podman receives it as an env.
+#      It used to be chosen automatically whenever the token file existed, and
+#      --mount-auth was the way out; opt-in since 2026-10-25 (operator), since
+#      a mode without resume was rarely the one wanted.
+#
+#      ONLY claude has this. codex, agy, opencode and pi have no known
 #      revocable-token mode, so their table entries leave A_TOKEN_FILE empty and
-#      they always land on (b) — which the README states plainly rather than
-#      implying.
-#
-#  (b) Mount (fallback): reuse the host login by bind-mounting the agent's
-#      config paths. This exposes that provider's credentials to the container
-#      — see the README security section.
+#      --token-auth is an error for them — which the README states plainly
+#      rather than implying.
 TOKEN_FILE="$A_TOKEN_FILE"
 AGENT_HOME="$A_HOME"
 declare -a AUTH=()
 auth_mode="mount"
-if [ -n "$TOKEN_FILE" ] && [ -s "$TOKEN_FILE" ] && [ "$force_mount" != 1 ]; then
+if [ "$token_auth" = 1 ]; then
+  if [ -z "$TOKEN_FILE" ]; then
+    echo "[agent-in-podman] --token-auth: $AGENT has no token auth" >&2
+    exit 2
+  fi
+  if [ ! -s "$TOKEN_FILE" ]; then
+    echo "[agent-in-podman] --token-auth: no token in $TOKEN_FILE" >&2
+    exit 2
+  fi
+fi
+if [ "$token_auth" = 1 ]; then
   auth_mode="token"
   AGENT_HOME="$A_EPHEMERAL_HOME"
   # SANDBOX_SEED_CONFIG tells the in-container launcher to pre-seed onboarding +
@@ -507,12 +556,12 @@ if [ "$bridge_cli" = 1 ]; then
   done < <(env)
 fi
 
-# Egress firewall (opt-in via --firewall). Start as container-root with the caps
-# the iptables setup needs; the entrypoint applies the allowlist then drops to
-# the keep-id host user to run claude. The harness server (parsed from
+# Egress firewall (on unless --no-firewall). Start as container-root with the
+# caps the iptables setup needs; the entrypoint applies the allowlist then drops
+# to the keep-id host user to run claude. The harness server (parsed from
 # HARNESS_SERVER_CID) is allowlisted so the bridged harness-cli still reaches it.
 declare -a FW=()
-if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
+if [ "$fw_mode" != none ]; then
   # Split HARNESS_SERVER_CID into the three fields the harness-server carve-out
   # needs. Format is objproto ConnectionID.String(): "<transport>:<host>:<port>-<id>"
   # (the id may be a literal "*"). Both firewall modes used to pass only the IP
@@ -546,7 +595,7 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
   # modes read instead of carrying a hard-coded provider list.
   for e in "${A_FW_ENV[@]}"; do FW+=( --env "$e" ); done
   FW+=( --env SANDBOX_AGENT_DOMAINS="$A_DOMAINS" )
-  if [ "$firewall_proxy" = 1 ]; then
+  if [ "$fw_mode" = proxy ]; then
     FW+=( --env SANDBOX_FIREWALL_PROXY=1 )
     # Extend the proxy's domain allowlist (comma-separated) for WebFetch research
     # targets via SANDBOX_PROXY_ALLOW in the runner's env.
@@ -558,7 +607,7 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
       # path, so appending let every incarnation read the earlier ones' traffic
       # and grew the file without bound.
       if ! echo "$(date "+%F %T") agent=$AGENT task=${HARNESS_TASK_ID:-?}" >"$proxy_log"; then
-        echo "[agent-in-podman] --proxy-log: cannot write $proxy_log" >&2
+        echo "[agent-in-podman] proxy log: cannot write $proxy_log (--no-proxy-log keeps it on stderr)" >&2
         exit 2
       fi
       FW+=( -v "$(readlink -f "$proxy_log"):/run/sandbox-proxy.log"
@@ -567,11 +616,6 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
   else
     FW+=( --env SANDBOX_FIREWALL=1 )
   fi
-fi
-
-if [ -n "$proxy_log" ] && [ "$firewall_proxy" != 1 ]; then
-  echo "[agent-in-podman] --proxy-log ignored: there is no proxy without --firewall-proxy" >&2
-  proxy_log=""
 fi
 
 # Host binary bridge (default ON; --image-agent opts out where a copy exists).
@@ -615,7 +659,6 @@ for m in "${A_RO_MOUNTS[@]}"; do
 done
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
 echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
