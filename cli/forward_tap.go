@@ -75,9 +75,10 @@ func RunForwardTap(ctx context.Context, c *Client, forwardID uint64, opts Forwar
 		return err
 	}
 	defer func() { _ = st.CloseBoth() }()
+	render := NewTapRenderer(opts.Mode)
 	return streamTapRecords(ctx, st, func(recs []*protocol.ForwardTapRecord) error {
 		for _, rec := range recs {
-			if err := writeTapLines(w, RenderTapRecord(rec, opts.Mode), opts.Mode); err != nil {
+			if err := writeTapLines(w, render.Render(rec), opts.Mode); err != nil {
 				return err
 			}
 		}
@@ -119,7 +120,7 @@ func RunForwardTapDial(ctx context.Context, peerCID objproto.ConnectionID, forwa
 //
 // It is RunForwardTap with a callback instead of an io.Writer, for the two
 // surfaces that draw into something other than a file: the TUI's view and the
-// browser's panel. Rendering stays in RenderTapRecord so all three print the
+// browser's panel. Rendering stays in TapRenderer so all three print the
 // same text.
 func StreamForwardTap(ctx context.Context, c *Client, forwardID uint64, opts ForwardTapOpts, onLines func([]string)) error {
 	st, err := c.OpenForwardTap(ctx, forwardID, opts)
@@ -127,10 +128,11 @@ func StreamForwardTap(ctx context.Context, c *Client, forwardID uint64, opts For
 		return err
 	}
 	defer func() { _ = st.CloseBoth() }()
+	render := NewTapRenderer(opts.Mode)
 	return streamTapRecords(ctx, st, func(recs []*protocol.ForwardTapRecord) error {
 		var lines []string
 		for _, rec := range recs {
-			lines = append(lines, RenderTapRecord(rec, opts.Mode)...)
+			lines = append(lines, render.Render(rec)...)
 		}
 		if len(lines) > 0 && onLines != nil {
 			onLines(lines)

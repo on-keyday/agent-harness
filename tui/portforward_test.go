@@ -203,6 +203,25 @@ func TestForwardRowHasOneCellPerColumn(t *testing.T) {
 	}
 }
 
+// A link has no connections: its conns cell is empty, gated on the direction,
+// while an idle tcp row still says 0/0. Same cell count either way.
+func TestForwardsModalLinkRowConnsEmpty(t *testing.T) {
+	var link protocol.PortForwardInfo
+	link.Direction = protocol.PortForwardDirection_Link
+	link.Protocol = protocol.ForwardProtocol_Ip
+	var tcp protocol.PortForwardInfo
+	connsCol := 4 // ID, DIR, TASK, SPEC, CONNS
+	if got := portForwardInfoRow(&link)[connsCol]; got != "" {
+		t.Fatalf("link conns cell = %q, want empty", got)
+	}
+	if got := portForwardInfoRow(&tcp)[connsCol]; got != "0/0" {
+		t.Fatalf("tcp conns cell = %q, want 0/0", got)
+	}
+	if len(portForwardInfoRow(&link)) != len(NewForwardsModal().baseCols) {
+		t.Fatal("a link row has a different cell count")
+	}
+}
+
 func TestForwardsModalEmpty(t *testing.T) {
 	m := NewForwardsModal()
 	m.SetSize(80, 24)

@@ -136,6 +136,14 @@ func KillPortForward(ctx context.Context, peerCID objproto.ConnectionID, id uint
 // in-process client endpoint has no address to show on the client side, so it
 // says so instead of printing the empty bind pair as ":0".
 func PortForwardSpecString(fi *protocol.PortForwardInfo) string {
+	if fi.Direction == protocol.PortForwardDirection_Link {
+		// A link has no listener and no target; its two addresses are the spec.
+		if l := fi.Link(); l != nil {
+			return IPLinkSpecString(l)
+		}
+		// Reached only from a peer whose link shape this build does not know.
+		return "ip (no link config)"
+	}
 	listen := fmt.Sprintf("%s:%d", fi.BindAddr, fi.BindPort)
 	switch {
 	case fi.Direction == protocol.PortForwardDirection_Remote:
@@ -163,8 +171,11 @@ func protocolSuffix(p protocol.ForwardProtocol) string {
 
 // PortForwardDirFlag renders the direction as the CLI flag that creates it.
 func PortForwardDirFlag(d protocol.PortForwardDirection) string {
-	if d == protocol.PortForwardDirection_Remote {
+	switch d {
+	case protocol.PortForwardDirection_Remote:
 		return "-R"
+	case protocol.PortForwardDirection_Link:
+		return "--ip"
 	}
 	return "-L"
 }
@@ -176,10 +187,10 @@ func PortForwardInfoLines(fs []protocol.PortForwardInfo) []string {
 	if len(fs) == 0 {
 		return append(lines, "  (none)")
 	}
-	lines = append(lines, fmt.Sprintf("  %-6s  %-3s  %-12s  %-40s  %s", "ID", "DIR", "TASK", "SPEC", "ORIGIN"))
+	lines = append(lines, fmt.Sprintf("  %-6s  %-4s  %-12s  %-40s  %s", "ID", "DIR", "TASK", "SPEC", "ORIGIN"))
 	for i := range fs {
 		fi := &fs[i]
-		lines = append(lines, fmt.Sprintf("  %-6d  %-3s  %-12s  %-40s  %s",
+		lines = append(lines, fmt.Sprintf("  %-6d  %-4s  %-12s  %-40s  %s",
 			fi.ForwardId, PortForwardDirFlag(fi.Direction), PrincipalShort(fi.TaskId.Id[:]),
 			PortForwardSpecString(fi), PortForwardOrigin(fi)))
 		// A second line rather than five more columns: the spec and origin
@@ -203,10 +214,15 @@ func PortForwardTrafficLine(fi *protocol.PortForwardInfo) string {
 	if fi.LastActivityUnixMs != 0 {
 		last = time.Since(time.UnixMilli(int64(fi.LastActivityUnixMs))).Truncate(time.Second).String() + " ago"
 	}
-	line := fmt.Sprintf("conns=%d/%d  to-target=%s  from-target=%s  last=%s  taps=%d",
-		fi.ConnsOpen, fi.ConnsTotal,
+	line := fmt.Sprintf("to-target=%s  from-target=%s  last=%s  taps=%d",
 		FormatByteCount(fi.BytesToTarget), FormatByteCount(fi.BytesFromTarget),
 		last, fi.Taps)
+	// A link has no connections and no flows, so it has no conns to report --
+	// gated on the direction, which is whether the subject exists, never on
+	// the value. Every other row prints conns=0/0 when idle.
+	if fi.Direction != protocol.PortForwardDirection_Link {
+		line = fmt.Sprintf("conns=%d/%d  ", fi.ConnsOpen, fi.ConnsTotal) + line
+	}
 	// Gated on the KEY being present, not on protocol and not on the values.
 	// A tcp forward reports no datagram counters at all — a different statement
 	// from zero — while a udp row that has dropped nothing still prints
@@ -272,6 +288,26 @@ type portForwardJSON struct {
 	// carries none — a tcp forward — which is the same existence statement the
 	// rendered line makes.
 	Counters map[string]uint64 `json:"counters,omitempty"`
+	// The link of an ip row, present exactly when protocol is ip.
+	Link *ipLinkJSON `json:"link,omitempty"`
+}
+
+// ipLinkJSON is a link's configuration in the JSON forms. Addresses as text,
+// not bytes: a consumer compares them with what it typed into --ip.
+type ipLinkJSON struct {
+	ClientAddr string `json:"client_addr"`
+	RunnerAddr string `json:"runner_addr"`
+	PrefixLen  uint8  `json:"prefix_len"`
+	Mtu        uint16 `json:"mtu"`
+}
+
+func linkJSON(fi *protocol.PortForwardInfo) *ipLinkJSON {
+	l := fi.Link()
+	if l == nil {
+		return nil
+	}
+	return &ipLinkJSON{ClientAddr: l.ClientPrefix().Addr().String(), RunnerAddr: l.RunnerPrefix().Addr().String(),
+		PrefixLen: l.PrefixLen, Mtu: l.Mtu}
 }
 
 // clientEndpointJSON renders the JSON contract's own spelling for the enum:
@@ -355,6 +391,7 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 		LastActivityUnixMs: fi.LastActivityUnixMs,
 
 		Counters: forwardCountersMap(fi),
+		Link:     linkJSON(fi),
 	})
 	return string(b)
 }
@@ -382,7 +419,14 @@ func PortForwardOrigin(fi *protocol.PortForwardInfo) string {
 //
 // The four-field [bind:]port:host:port form is used rather than the three-field
 // short form so a non-default bind address survives a save/apply round trip.
+//
+// ok is also false for a link. Its endpoint IS os_socket -- the tun is an OS
+// device -- so the refusal is on the direction: rendered here it would come out
+// as `-L :0::0` and re-apply as a tcp forward.
 func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
+	if fi.Direction == protocol.PortForwardDirection_Link {
+		return "", false
+	}
 	if fi.ClientEndpoint != protocol.ClientEndpointKind_OsSocket {
 		return "", false
 	}
@@ -394,8 +438,8 @@ func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
 		protocolSuffix(fi.Protocol)), true
 }
 
-// PortForwardDatagramCell renders a udp row's datagram accounting compactly
-// enough for a table cell, and an EMPTY string for a tcp row.
+// PortForwardDatagramCell renders a datagram row's (udp, ip) accounting
+// compactly enough for a table cell, and an EMPTY string for a tcp row.
 //
 // Empty is an existence gate, not a value gate: a tcp forward has no max
 // datagram size and cannot drop a datagram, so there is nothing to report. A
@@ -408,7 +452,7 @@ func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
 // the terse form on purpose: the traffic line names each one, and this is the
 // cell that has to fit beside eight others.
 func PortForwardDatagramCell(fi *protocol.PortForwardInfo) string {
-	if fi.Protocol != protocol.ForwardProtocol_Udp {
+	if !fi.Protocol.CarriesDatagrams() {
 		return ""
 	}
 	mtu, ok := fi.Counter(protocol.ForwardCounterKey_MaxDatagramSize)

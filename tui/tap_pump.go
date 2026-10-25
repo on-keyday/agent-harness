@@ -10,7 +10,7 @@ import (
 )
 
 // TapLinesMsg carries already-rendered lines from a pump into the view.
-// Rendering happens in cli (RenderTapRecord / RenderExecTapRecord), so this
+// Rendering happens in cli (TapRenderer / RenderExecTapRecord), so this
 // surface cannot drift from what harness-cli prints.
 type TapLinesMsg struct {
 	Subject tapSubject

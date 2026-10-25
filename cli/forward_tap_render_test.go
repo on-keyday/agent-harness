@@ -23,7 +23,7 @@ func tapCloseRec(seq uint64, to, from uint64) *protocol.ForwardTapRecord {
 }
 
 func TestRenderHexHeaderAndBody(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "GET /x"), TapHex)
+	lines := NewTapRenderer(TapHex).Render(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "GET /x"))
 	if len(lines) < 2 {
 		t.Fatalf("want a header and a body line, got %v", lines)
 	}
@@ -45,14 +45,14 @@ func TestRenderHexHeaderAndBody(t *testing.T) {
 // The offset column is the record's own stream_offset. A renderer-side counter
 // would start at 0 when the tap opened rather than when the connection did.
 func TestRenderHexOffsetComesFromTheWire(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0x1000, 0, "ab"), TapHex)
+	lines := NewTapRenderer(TapHex).Render(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0x1000, 0, "ab"))
 	if !strings.Contains(lines[1], "00001000") {
 		t.Fatalf("offset column must be the record's stream_offset: %q", lines[1])
 	}
 }
 
 func TestRenderHexNamesTheCut(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_FromTarget, 0, 1331, "HTTP"), TapHex)
+	lines := NewTapRenderer(TapHex).Render(tapDataRec(3, protocol.ForwardTapDirection_FromTarget, 0, 1331, "HTTP"))
 	if !strings.Contains(lines[0], "<-") {
 		t.Fatalf("from_target renders as <-: %q", lines[0])
 	}
@@ -64,7 +64,7 @@ func TestRenderHexNamesTheCut(t *testing.T) {
 func TestRenderGapNamesWhatWasMissed(t *testing.T) {
 	rec := &protocol.ForwardTapRecord{Kind: protocol.ForwardTapRecordKind_Gap, UnixMs: 1756000000000}
 	rec.SetGap(protocol.ForwardTapGap{ConnSeq: 3, Direction: protocol.ForwardTapDirection_ToTarget, DroppedBytes: 3 << 20})
-	line := RenderTapRecord(rec, TapHex)[0]
+	line := NewTapRenderer(TapHex).Render(rec)[0]
 	if !strings.Contains(line, "gap") || !strings.Contains(line, "missed") || !strings.Contains(line, "3.0MB") {
 		t.Fatalf("gap line: %q", line)
 	}
@@ -75,11 +75,11 @@ func TestRenderConnOpenAndCloseBracketTheConnection(t *testing.T) {
 	o := protocol.ForwardTapConnOpen{ConnSeq: 3, TargetPort: 3000}
 	o.SetTargetHost([]byte("localhost"))
 	open.SetConnOpen(o)
-	if line := RenderTapRecord(open, TapHex)[0]; !strings.Contains(line, "open") || !strings.Contains(line, "localhost:3000") {
+	if line := NewTapRenderer(TapHex).Render(open)[0]; !strings.Contains(line, "open") || !strings.Contains(line, "localhost:3000") {
 		t.Fatalf("conn_open line: %q", line)
 	}
 
-	line := RenderTapRecord(tapCloseRec(3, 4198, 1<<20), TapHex)[0]
+	line := NewTapRenderer(TapHex).Render(tapCloseRec(3, 4198, 1<<20))[0]
 	if !strings.Contains(line, "close") || !strings.Contains(line, "->4.1kB") || !strings.Contains(line, "<-1.0MB") {
 		t.Fatalf("close line must carry that connection's two totals: %q", line)
 	}
@@ -88,14 +88,14 @@ func TestRenderConnOpenAndCloseBracketTheConnection(t *testing.T) {
 func TestRenderForwardClosedSaysWhy(t *testing.T) {
 	rec := &protocol.ForwardTapRecord{Kind: protocol.ForwardTapRecordKind_ForwardClosed, UnixMs: 1756000000000}
 	rec.SetForwardClosed(protocol.ForwardTapForwardClosed{Reason: protocol.PortForwardCloseReason_Killed})
-	line := RenderTapRecord(rec, TapHex)[0]
+	line := NewTapRenderer(TapHex).Render(rec)[0]
 	if !strings.Contains(line, "forward") || !strings.Contains(line, "killed") {
 		t.Fatalf("forward_closed line must name the reason: %q", line)
 	}
 }
 
 func TestRenderTextDropsTheOffsetColumn(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "GET /x\x00\x01"), TapText)
+	lines := NewTapRenderer(TapText).Render(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "GET /x\x00\x01"))
 	if len(lines) < 2 {
 		t.Fatalf("want header + body, got %v", lines)
 	}
@@ -108,7 +108,7 @@ func TestRenderTextDropsTheOffsetColumn(t *testing.T) {
 }
 
 func TestRenderJSONIsOneObjectPerRecord(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 4096, 2, "hi"), TapJSON)
+	lines := NewTapRenderer(TapJSON).Render(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 4096, 2, "hi"))
 	if len(lines) != 1 {
 		t.Fatalf("one line per record, got %d", len(lines))
 	}
@@ -128,7 +128,7 @@ func TestRenderJSONIsOneObjectPerRecord(t *testing.T) {
 
 func TestRenderJSONCloseCarriesTotals(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal([]byte(RenderTapRecord(tapCloseRec(3, 10, 20), TapJSON)[0]), &got); err != nil {
+	if err := json.Unmarshal([]byte(NewTapRenderer(TapJSON).Render(tapCloseRec(3, 10, 20))[0]), &got); err != nil {
 		t.Fatalf("not JSON: %v", err)
 	}
 	if got["bytes_to_target"].(float64) != 10 || got["bytes_from_target"].(float64) != 20 {
@@ -137,11 +137,11 @@ func TestRenderJSONCloseCarriesTotals(t *testing.T) {
 }
 
 func TestRenderRawIsPayloadOnly(t *testing.T) {
-	lines := RenderTapRecord(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "hi"), TapRaw)
+	lines := NewTapRenderer(TapRaw).Render(tapDataRec(3, protocol.ForwardTapDirection_ToTarget, 0, 0, "hi"))
 	if len(lines) != 1 || lines[0] != "hi" {
 		t.Fatalf("raw must be the payload and nothing else: %v", lines)
 	}
-	if got := RenderTapRecord(tapCloseRec(3, 1, 2), TapRaw); len(got) != 0 {
+	if got := NewTapRenderer(TapRaw).Render(tapCloseRec(3, 1, 2)); len(got) != 0 {
 		t.Fatalf("raw must emit nothing for a non-data record, got %v", got)
 	}
 }

@@ -20,7 +20,7 @@ import (
 // be re-parsed — and `traffic` is exactly the line `forward ls` prints, so the
 // browser shows the same text without re-deriving the format in JS.
 func ForwardSnapshotRow(fi *protocol.PortForwardInfo) map[string]any {
-	return map[string]any{
+	row := map[string]any{
 		"forward_id": float64(fi.ForwardId),
 		"dir":        PortForwardDirFlag(fi.Direction),
 		"task":       hex.EncodeToString(fi.TaskId.Id[:]),
@@ -57,6 +57,13 @@ func ForwardSnapshotRow(fi *protocol.PortForwardInfo) map[string]any {
 
 		"traffic": PortForwardTrafficLine(fi),
 	}
+	// An ip row's link, by the same names the JSON listing uses. Absent on any
+	// other row: whether a row HAS a link is the information.
+	if l := linkJSON(fi); l != nil {
+		row["link"] = map[string]any{"client_addr": l.ClientAddr, "runner_addr": l.RunnerAddr,
+			"prefix_len": float64(l.PrefixLen), "mtu": float64(l.Mtu)}
+	}
+	return row
 }
 
 // forwardCountersAny is forwardCountersMap in the shape this snapshot uses:

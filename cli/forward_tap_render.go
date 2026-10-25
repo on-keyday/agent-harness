@@ -86,13 +86,90 @@ func tapTimestamp(unixMs uint64) string {
 	return time.UnixMilli(int64(unixMs)).Format("15:04:05.000")
 }
 
-// RenderTapRecord turns one record into the lines to print. The SERVER never
+// TapRenderer turns a tap's records into the lines to print. The SERVER never
 // formats anything — it sends records and this runs in the client, natively or
 // compiled to wasm in the browser, so all three surfaces show the same text.
-func RenderTapRecord(rec *protocol.ForwardTapRecord, mode TapRenderMode) []string {
+//
+// One per tap stream, because a datagram's missed count is the jump in seq
+// from the previous record on the same flow and direction -- which only a
+// renderer that saw that record can print.
+type TapRenderer struct {
+	mode    TapRenderMode
+	lastSeq map[tapFlowKey]uint64
+}
+
+type tapFlowKey struct {
+	flow uint32
+	dir  protocol.ForwardTapDirection
+}
+
+// NewTapRenderer starts a renderer for one tap stream.
+func NewTapRenderer(mode TapRenderMode) *TapRenderer {
+	return &TapRenderer{mode: mode, lastSeq: map[tapFlowKey]uint64{}}
+}
+
+// Render turns one record into the lines to print.
+func (r *TapRenderer) Render(rec *protocol.ForwardTapRecord) []string {
 	if rec == nil {
 		return nil
 	}
+	if rec.Kind == protocol.ForwardTapRecordKind_Datagram {
+		return r.renderDatagram(rec)
+	}
+	return renderTapRecord(rec, r.mode)
+}
+
+// renderDatagram is one whole datagram: a header naming its flow, direction,
+// seq and fate, and the payload as the other modes render data. A seq jump on
+// the same flow and direction is printed first, as its own line.
+func (r *TapRenderer) renderDatagram(rec *protocol.ForwardTapRecord) []string {
+	d := rec.Datagram()
+	if d == nil {
+		return nil
+	}
+	k := tapFlowKey{flow: d.FlowId, dir: d.Direction}
+	prev, seen := r.lastSeq[k]
+	r.lastSeq[k] = d.Seq
+	switch r.mode {
+	case TapJSON:
+		return []string{tapRecordJSON(rec)}
+	case TapRaw:
+		return []string{string(d.Data)}
+	}
+	ts := tapTimestamp(rec.UnixMs)
+	flow := fmt.Sprintf("flow %d", d.FlowId)
+	var out []string
+	if seen && d.Seq > prev+1 {
+		out = append(out, tapHeader(flow, dirArrow(d.Direction), ts, fmt.Sprintf("missed %d datagrams", d.Seq-prev-1)))
+	}
+	detail := fmt.Sprintf("#%d %s %s", d.Seq, tapFateWord(d.Fate), FormatByteCount(uint64(len(d.Data))))
+	if d.TruncatedBytes > 0 {
+		detail += fmt.Sprintf("  (truncated, %s cut)", FormatByteCount(uint64(d.TruncatedBytes)))
+	}
+	out = append(out, tapHeader(flow, dirArrow(d.Direction), ts, detail))
+	if r.mode == TapText {
+		return append(out, "  "+printableASCII(d.Data))
+	}
+	return append(out, hexDumpLines(d.Data, 0)...)
+}
+
+// tapFateWord names what the relay did with a datagram.
+func tapFateWord(f protocol.ForwardTapDatagramFate) string {
+	switch f {
+	case protocol.ForwardTapDatagramFate_Relayed:
+		return "relayed"
+	case protocol.ForwardTapDatagramFate_DroppedOversize:
+		return "dropped-oversize"
+	case protocol.ForwardTapDatagramFate_DroppedCongestion:
+		return "dropped-congestion"
+	case protocol.ForwardTapDatagramFate_DroppedQueue:
+		return "dropped-queue"
+	}
+	return strings.ToLower(f.String())
+}
+
+// renderTapRecord renders every kind whose lines depend on that record alone.
+func renderTapRecord(rec *protocol.ForwardTapRecord, mode TapRenderMode) []string {
 	if mode == TapJSON {
 		return []string{tapRecordJSON(rec)}
 	}
@@ -158,9 +235,31 @@ func RenderTapRecord(rec *protocol.ForwardTapRecord, mode TapRenderMode) []strin
 		if f == nil {
 			return nil
 		}
-		return []string{tapHeader("", "forward", ts, "closed ("+tapCloseReason(f.Reason)+")")}
+		return []string{tapHeader("", "forward", ts, "closed ("+tapClosedText(f)+")")}
+
+	case protocol.ForwardTapRecordKind_DatagramGap:
+		if mode == TapRaw {
+			return nil
+		}
+		g := rec.DatagramGap()
+		if g == nil {
+			return nil
+		}
+		// Bytes, because that is what the tap counted; how many datagrams is
+		// the seq jump on the flow's next record, printed there.
+		return []string{tapHeader(fmt.Sprintf("flow %d", g.FlowId), "gap", ts,
+			FormatByteCount(g.DroppedBytes)+" missed "+dirArrow(g.Direction))}
 	}
 	return nil
+}
+
+// tapClosedText is the reason a forward ended, with the server's detail after
+// it when there is one.
+func tapClosedText(f *protocol.ForwardTapForwardClosed) string {
+	if len(f.Detail) > 0 {
+		return tapCloseReason(f.Reason) + ": " + string(f.Detail)
+	}
+	return tapCloseReason(f.Reason)
 }
 
 func tapCloseReason(r protocol.PortForwardCloseReason) string {
@@ -169,6 +268,10 @@ func tapCloseReason(r protocol.PortForwardCloseReason) string {
 		return "killed"
 	case protocol.PortForwardCloseReason_TaskGone:
 		return "task gone"
+	case protocol.PortForwardCloseReason_RunnerGone:
+		return "runner gone"
+	case protocol.PortForwardCloseReason_EndpointFailed:
+		return "endpoint failed"
 	}
 	return strings.ToLower(r.String())
 }
@@ -222,6 +325,9 @@ type tapRecordJSONLine struct {
 	Kind            string  `json:"kind"`
 	UnixMs          uint64  `json:"unix_ms"`
 	Conn            uint64  `json:"conn,omitempty"`
+	Flow            *uint32 `json:"flow,omitempty"`
+	Seq             *uint64 `json:"seq,omitempty"`
+	Fate            string  `json:"fate,omitempty"`
 	Dir             string  `json:"dir,omitempty"`
 	Offset          *uint64 `json:"offset,omitempty"`
 	Len             *int    `json:"len,omitempty"`
@@ -232,6 +338,7 @@ type tapRecordJSONLine struct {
 	BytesToTarget   *uint64 `json:"bytes_to_target,omitempty"`
 	BytesFromTarget *uint64 `json:"bytes_from_target,omitempty"`
 	Reason          string  `json:"reason,omitempty"`
+	Detail          string  `json:"detail,omitempty"`
 }
 
 func tapDirName(d protocol.ForwardTapDirection) string {
@@ -293,6 +400,30 @@ func tapRecordJSON(rec *protocol.ForwardTapRecord) string {
 		}
 		line.Kind = "forward_closed"
 		line.Reason = tapCloseReason(f.Reason)
+		line.Detail = string(f.Detail)
+	case protocol.ForwardTapRecordKind_Datagram:
+		d := rec.Datagram()
+		if d == nil {
+			return ""
+		}
+		flow, seq, n, cut := d.FlowId, d.Seq, len(d.Data), d.TruncatedBytes
+		line.Kind = "datagram"
+		line.Flow, line.Seq = &flow, &seq
+		line.Fate = tapFateWord(d.Fate)
+		line.Dir = tapDirName(d.Direction)
+		line.Len = &n
+		line.TruncatedBytes = &cut
+		line.Data = base64.StdEncoding.EncodeToString(d.Data)
+	case protocol.ForwardTapRecordKind_DatagramGap:
+		g := rec.DatagramGap()
+		if g == nil {
+			return ""
+		}
+		flow, dropped := g.FlowId, g.DroppedBytes
+		line.Kind = "datagram_gap"
+		line.Flow = &flow
+		line.Dir = tapDirName(g.Direction)
+		line.DroppedBytes = &dropped
 	default:
 		return ""
 	}

@@ -394,6 +394,12 @@ func DoKillForward(c *cli.Client, id uint64, taskID, spec string) tea.Cmd {
 // shared registry — and duplicating the rendering would let this surface and
 // harness-cli's `forward ls` silently disagree on what "origin" means.
 func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
+	// A link has no connections, so its conns cell is empty -- gated on the
+	// direction, never on the value; an idle tcp row still says 0/0.
+	conns := fmt.Sprintf("%d/%d", fi.ConnsOpen, fi.ConnsTotal)
+	if fi.Direction == protocol.PortForwardDirection_Link {
+		conns = ""
+	}
 	return table.Row{
 		fmt.Sprintf("%d", fi.ForwardId),
 		cli.PortForwardDirFlag(fi.Direction),
@@ -402,7 +408,7 @@ func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
 		// Traffic, always rendered: a forward that has carried nothing shows
 		// 0/0 and 0, because a blank cell would say this row does not report
 		// traffic rather than that there is none.
-		fmt.Sprintf("%d/%d", fi.ConnsOpen, fi.ConnsTotal),
+		conns,
 		cli.FormatByteCount(fi.BytesToTarget),
 		cli.FormatByteCount(fi.BytesFromTarget),
 		fmt.Sprintf("%d", fi.Taps),

@@ -5015,7 +5015,7 @@ func harnessStreamFinish(this js.Value, args []js.Value) any {
 // or the page closes it. A Promise would resolve once, which is the wrong shape
 // for something that produces output for as long as the operator watches.
 //
-// Lines are rendered by cli.RenderTapRecord on this side of the bridge, so the
+// Lines are rendered by cli.TapRenderer on this side of the bridge, so the
 // panel prints exactly what `harness-cli forward tap` prints and the page never
 // formats a record itself.
 //
