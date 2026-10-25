@@ -72,7 +72,15 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       token in the container, no resume). Exits 2 for an agent
 #                       without token auth, for a missing or empty token file,
 #                       and together with --mount-auth.
-#   --image-agent       run the image's own copy of the agent instead of bridging
+#   --history-window    claude, pi, codex: the container sees only THIS task's
+#                       conversations (the ones whose cwd is this worktree) plus
+#                       the agent's credential file, not the rest of its config
+#                       dir. Those conversations stay in the host's normal store,
+#                       so a later run without the flag, or the host's own
+#                       agent, resumes them. Exits 2 for any other agent, outside
+#                       a linked worktree, and when the window cannot be built.
+#                       See "History window" below.
+#   --image-agent      run the image's own copy of the agent instead of bridging
 #                       the host binary in (see "Host binary bridge" below). Only
 #                       claude has an image copy. --image-claude is accepted as a
 #                       deprecated alias: it can still appear in a live runner
@@ -101,6 +109,7 @@ firewall_proxy=0
 no_firewall=0
 mount_auth=0
 token_auth=0
+history_window=0
 image_agent=0
 default_proxy_log="${TMPDIR:-/tmp}/sandbox-proxy-${HARNESS_TASK_ID:-$$}.log"
 proxy_log=""
@@ -121,6 +130,7 @@ for a in "$@"; do
     --no-proxy-log)     no_proxy_log=1 ;;
     --mount-auth)       mount_auth=1 ;;
     --token-auth)       token_auth=1 ;;
+    --history-window)   history_window=1 ;;
     --image-agent|--image-claude) image_agent=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
@@ -166,9 +176,30 @@ fi
 #   A_DOMAINS        comma-separated egress domains this agent needs
 #   A_HOME           HOME inside the container when NOT using token auth
 #   A_EPHEMERAL_HOME HOME under token auth (the image's own writable home)
+# --history-window fields; every path is relative to the agent's home:
+#   A_HISTORY        dir = bind the host's per-cwd directory; sync = codex's
+#                    hardlink-synced sessions dir (history_window.py); "" = no
+#                    window, the flag exits 2
+#   A_HISTORY_STORE  where the agent keeps conversations
+#   history_name     function: the per-cwd directory name under the store
+#   A_HISTORY_NAME_MAX  longest name the wrapper can compute (claude hashes
+#                    longer ones in a way not documented); 0 = no limit
+#   A_HISTORY_ROOTS  config dirs replaced by empty per-run ones
+#   A_HISTORY_ROOT_FILES  config files replaced by per-run ones holding {}
+#   A_CRED_FILES     credential files mounted singly rw (not under token auth)
+#   A_RO_CONFIG      config files mounted singly ro, when the host has them
+#   A_SHARED_DIRS    host dirs mounted rw because the host and the container
+#                    must see the same one (codex's writer locks)
+#   A_HISTORY_SEED   1 = the ephemeral config needs the launcher's first-run
+#                    seeding, as under token auth
 declare -a A_CONFIG_MOUNTS=() A_ALWAYS_ENV=() A_FW_ENV=() A_RO_MOUNTS=()
+declare -a A_HISTORY_ROOTS=() A_HISTORY_ROOT_FILES=() A_CRED_FILES=() A_RO_CONFIG=() A_SHARED_DIRS=()
 A_EPHEMERAL_HOME=""
 A_BIN_BUNDLE=0
+A_HISTORY=""
+A_HISTORY_STORE=""
+A_HISTORY_NAME_MAX=0
+A_HISTORY_SEED=0
 case "$AGENT" in
   claude)
     A_HOST_BIN="$HOME_DIR/.local/bin/claude"
@@ -185,6 +216,16 @@ case "$AGENT" in
     A_DOMAINS="api.anthropic.com,platform.claude.com,console.anthropic.com,statsig.anthropic.com,statsig.com,sentry.io"
     A_HOME="$HOME_DIR"
     A_EPHEMERAL_HOME=/home/node
+    # projects/<enc>: every byte that is not an ASCII letter or digit becomes
+    # '-' (runner/streamagent/claude_transcript.go reads the same name).
+    A_HISTORY=dir
+    A_HISTORY_STORE=.claude/projects
+    history_name() { printf %s "$1" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g'; }
+    A_HISTORY_NAME_MAX=200
+    A_HISTORY_ROOTS=( .claude )
+    A_HISTORY_ROOT_FILES=( .claude.json )
+    A_CRED_FILES=( .claude/.credentials.json )
+    A_HISTORY_SEED=1
     ;;
   codex)
     # Codex resolves codex-code-mode-host relative to its executable. Mounting
@@ -207,6 +248,17 @@ case "$AGENT" in
     # how this list was built in the first place — extend it then, don't guess.
     A_DOMAINS="chatgpt.com"
     A_HOME="$HOME_DIR"
+    # Rollouts are partitioned by DATE with the cwd only in their first line,
+    # so there is no per-cwd directory to bind: see "History window" below.
+    # The writer locks are the host's because a host `codex resume` and this
+    # container may append to the same (hardlinked) rollout; only one lock dir
+    # serialises them (rollout/src/writer_lock.rs, flock).
+    A_HISTORY=sync
+    A_HISTORY_STORE=.codex/sessions
+    A_HISTORY_ROOTS=( .codex )
+    A_CRED_FILES=( .codex/auth.json )
+    A_RO_CONFIG=( .codex/config.toml )
+    A_SHARED_DIRS=( .codex/thread-writer-locks )
     ;;
   agy)
     A_HOST_BIN="$HOME_DIR/.local/bin/agy"
@@ -363,6 +415,15 @@ case "$AGENT" in
     # under --firewall-proxy --proxy-log and reading the DENY lines.
     A_DOMAINS="${HARNESS_SANDBOX_PI_DOMAINS:-openrouter.ai}"
     A_HOME="$HOME_DIR"
+    # sessions/--<cwd without its leading />-- with / \ : turned into '-'
+    # (pi 1.0.3 dist/core/session-manager.js:290-294). settings.json names the
+    # provider pi dials, so it is needed, read-only.
+    A_HISTORY=dir
+    A_HISTORY_STORE=.pi/agent/sessions
+    history_name() { local p="${1#/}"; p="${p//\//-}"; p="${p//\\/-}"; p="${p//:/-}"; printf -- '--%s--' "$p"; }
+    A_HISTORY_ROOTS=( .pi )
+    A_CRED_FILES=( .pi/agent/auth.json )
+    A_RO_CONFIG=( .pi/agent/settings.json )
     ;;
   bash)
     # A shell sandbox, not a conversational agent: nothing to bridge, nothing to
@@ -417,6 +478,7 @@ esac
 # is no boundary to keep. hooks/ and config go ro so git itself is not the
 # vector; the rest stays writable.
 declare -a MOUNTS=() SEED_PATHS=()
+linked_wt=0
 mount_rw() { MOUNTS+=( -v "$1:$1" ); }
 mount_ro() { MOUNTS+=( -v "$1:$1:ro" ); }
 if gitdir=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&
@@ -425,6 +487,7 @@ if gitdir=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&
   root=$(dirname "$common")
   SEED_PATHS+=( "$root" )
   if [ "$gitdir" != "$common" ]; then
+    linked_wt=1
     # git creates logs/ on the first reflog write, which it cannot do under a ro
     # common dir.
     mkdir -p "$common/logs"
@@ -497,6 +560,8 @@ if [ "$token_auth" = 1 ]; then
     --env SANDBOX_SEED_CONFIG=1
     --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")"
   )
+elif [ "$history_window" = 1 ]; then
+  : # the history window below mounts the agent's state piece by piece
 else
   # Mount every config path the table names, skipping ones the host lacks (a
   # missing ~/.claude.json is normal on a fresh login; podman would otherwise
@@ -508,6 +573,65 @@ else
   # there would put a credential-exposure mode in the log line for a container
   # that exposes no credentials.
   [ "${#A_CONFIG_MOUNTS[@]}" -eq 0 ] && auth_mode="none"
+fi
+
+# History window (--history-window). Instead of the whole config dir, the
+# container gets:
+#  - an EMPTY config root per run, taken from a host temp dir. Not left to
+#    podman: podman creates a missing mount parent root-owned, and the agent's
+#    first mkdir beside it then aborts (measured for opencode 2026-08-19:
+#    `EACCES: mkdir '$HOME/.cache'`). A host dir with every mount target
+#    pre-created is owned by the user. The reaper removes it.
+#  - the window: the host's directory for THIS cwd under the agent's store,
+#    bind-mounted, so what the agent writes is in the host's normal store at
+#    once and a later run without the flag, or the host's own agent, resumes it.
+#  - the credential file(s), singly. claude replaces .credentials.json on every
+#    write (birth time == modify time, 2026-10-26), which a single-file mount
+#    cannot take; but its atomic writer falls back to truncating and writing in
+#    place on EXDEV/EPERM/EEXIST/EBUSY (read from claude 2.1.310), and a
+#    single-file-mounted ~/.claude.json took a container's write that way, same
+#    inode, same day. Accepted: a crash between the truncate and the write
+#    leaves the host an empty credential file and a re-login.
+#  - read-only config the agent cannot start without.
+# Refused outside a linked worktree: there the cwd is the shared checkout, so
+# the window would hold every task's conversations (and claude's auto memory).
+# A refusal never falls back to the shared mode, and creates nothing.
+# See docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md.
+history_mode=shared
+history_root=""
+if [ "$history_window" = 1 ]; then
+  hw_refuse() { echo "[agent-in-podman] --history-window: $1" >&2; exit 2; }
+  [ -n "$A_HISTORY" ] || hw_refuse "$AGENT has no window (no way to show one task's conversations alone)"
+  [ "$linked_wt" = 1 ] || hw_refuse "$WT is not a linked worktree; the window would hold every task's conversations"
+  [ "$A_HISTORY" = sync ] && hw_refuse "codex window not wired yet"
+  hist_store="$A_HISTORY_STORE/$(history_name "$WT")"
+  hist_len=$(printf %s "${hist_store##*/}" | wc -c)
+  if [ "$A_HISTORY_NAME_MAX" -gt 0 ] && [ "$hist_len" -gt "$A_HISTORY_NAME_MAX" ]; then
+    hw_refuse "the history directory name for $WT is $hist_len bytes; over $A_HISTORY_NAME_MAX $AGENT shortens it with a hash this wrapper does not compute"
+  fi
+  declare -a hist_creds=()
+  [ "$token_auth" = 1 ] || hist_creds=( "${A_CRED_FILES[@]}" )
+  for f in "${hist_creds[@]}"; do
+    [ -f "$HOME_DIR/$f" ] || hw_refuse "no credential file $HOME_DIR/$f (is $AGENT logged in on this host?)"
+  done
+  declare -a hist_ro=()
+  for f in "${A_RO_CONFIG[@]}"; do [ -f "$HOME_DIR/$f" ] && hist_ro+=( "$f" ); done
+
+  history_mode=window
+  history_root=$(mktemp -d "${TMPDIR:-/tmp}/harness-sandbox-root.XXXXXX")
+  for d in "${A_HISTORY_ROOTS[@]}" "$hist_store" "${A_SHARED_DIRS[@]}"; do mkdir -p "$history_root/$d"; done
+  for f in "${A_HISTORY_ROOT_FILES[@]}"; do echo '{}' >"$history_root/$f"; done
+  for f in "${hist_creds[@]}" "${hist_ro[@]}"; do mkdir -p "$(dirname "$history_root/$f")"; : >"$history_root/$f"; done
+  mkdir -p "$HOME_DIR/$hist_store"
+  # Parents before what sits inside them: the config root, then the window in it.
+  for x in "${A_HISTORY_ROOTS[@]}" "${A_HISTORY_ROOT_FILES[@]}"; do AUTH+=( -v "$history_root/$x:$AGENT_HOME/$x" ); done
+  AUTH+=( -v "$HOME_DIR/$hist_store:$AGENT_HOME/$hist_store" )
+  for f in "${hist_creds[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f" ); done
+  for f in "${hist_ro[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
+  for d in "${A_SHARED_DIRS[@]}"; do mkdir -p "$HOME_DIR/$d"; AUTH+=( -v "$HOME_DIR/$d:$AGENT_HOME/$d" ); done
+  if [ "$A_HISTORY_SEED" = 1 ] && [ "$token_auth" != 1 ]; then
+    AUTH+=( --env SANDBOX_SEED_CONFIG=1 --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${SEED_PATHS[@]}")" )
+  fi
 fi
 # Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
 # runner forwards via --agent-args / submit --agent-arg) arrive in "$@". The
@@ -659,7 +783,7 @@ for m in "${A_RO_MOUNTS[@]}"; do
 done
 
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
-echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE${proxy_log:+ proxy-log=$proxy_log}" >&2
+echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) bin=$agent_src image=$IMAGE history=$history_mode${proxy_log:+ proxy-log=$proxy_log}" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
@@ -688,7 +812,7 @@ echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-c
 # post-mortem evidence of why.
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
-  wrapper_pid="$1"; cidfile="$2"
+  wrapper_pid="$1"; cidfile="$2"; history_root="$3"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
   # cd out of the inherited cwd (= the task worktree): the runner deletes the
   # worktree on session kill, and podman aborts on a vanished cwd ("error
@@ -697,13 +821,24 @@ setsid bash -c '
   while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
   echo "$(date "+%F %T") reaper: wrapper $wrapper_pid gone cid=$(head -c12 "$cidfile" 2>/dev/null || echo no-cidfile)" >>"$log"
   deadline=$((SECONDS + 60))
+  removed=0
+  [ -e "$cidfile" ] || removed=1   # podman never created a container
   while [ -e "$cidfile" ] && [ "$SECONDS" -lt "$deadline" ]; do
-    err=$(timeout 10 podman rm -f -i -t 1 --cidfile "$cidfile" 2>&1) && { echo "$(date "+%F %T") reaper: removed" >>"$log"; break; }
+    err=$(timeout 10 podman rm -f -i -t 1 --cidfile "$cidfile" 2>&1) && { echo "$(date "+%F %T") reaper: removed" >>"$log"; removed=1; break; }
     echo "$(date "+%F %T") reaper: rm rc=$? ${err}" >>"$log"
     sleep 1
   done
   rm -f "$cidfile"
-' _ "$$" "$cidfile" </dev/null >/dev/null 2>&1 &
+  # The history window root is the live config dir of a container that is
+  # still there, so it goes only once the container is gone.
+  if [ -n "$history_root" ]; then
+    if [ "$removed" = 1 ]; then
+      case "$history_root" in "${TMPDIR:-/tmp}"/harness-sandbox-root.*) rm -rf -- "$history_root" ;; esac
+    else
+      echo "$(date "+%F %T") reaper: kept $history_root" >>"$log"
+    fi
+  fi
+' _ "$$" "$cidfile" "$history_root" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
 # (entrypoint.sh -> gosu -> agent-launch.sh -> the agent), so the AGENT itself ends
@@ -732,6 +867,7 @@ exec podman run --rm -i "${TTY[@]}" \
   --env HOME="$AGENT_HOME" \
   --env SANDBOX_AGENT="$AGENT" \
   --env SANDBOX_AGENT_BIN="$A_CONTAINER_BIN" \
+  --env SANDBOX_HISTORY="$history_mode" \
   "${AUTH[@]}" \
   "${CLI[@]}" \
   "${FW[@]}" \

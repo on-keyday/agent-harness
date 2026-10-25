@@ -4,6 +4,9 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -103,6 +106,147 @@ class HelperTests(unittest.TestCase):
         with mock.patch.object(hw, "_device", side_effect=[1, 2]), mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(hw.main(argv), 2)
         self.assertIn("different filesystems", err.getvalue())
+
+
+WRAPPER = Path(__file__).with_name("agent-in-podman.sh")
+
+
+def executable(path, body):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(0o755)
+    return path
+
+
+def git(*args):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, capture_output=True)
+
+
+class WrapperTests(unittest.TestCase):
+    """The podman argv the wrapper assembles, captured by a podman shim."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.tmp = Path(temp.name)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.repo, self.wt = self.tmp / "repo", self.tmp / "wt"
+        git("init", "-q", str(self.repo))
+        git("-C", str(self.repo), "commit", "-q", "--allow-empty", "-m", "init")
+        git("-C", str(self.repo), "worktree", "add", "-q", str(self.wt))
+        self.plain_dir = self.tmp / "plain"
+        self.plain_dir.mkdir()
+        self.capture = self.tmp / "capture.json"
+        tools = self.tmp / "tools"
+        executable(tools / "setsid", "#!/bin/sh\nexit 0\n")
+        executable(tools / "podman", f"#!{sys.executable}\nimport json,sys\nopen({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude/.credentials.json").write_text("x")
+        token = self.tmp / "token"
+        token.write_text("x")
+        pi_pkg = self.tmp / "pi-pkg"
+        executable(pi_pkg / "dist/bundle/cli.js", "#!/bin/sh\n")
+        (self.home / ".pi/agent").mkdir(parents=True)
+        (self.home / ".pi/agent/auth.json").write_text("x")
+        (self.home / ".pi/agent/settings.json").write_text("{}")
+        self.env = {"HOME": str(self.home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TMPDIR": str(self.tmp),
+                    "HARNESS_SANDBOX_CLAUDE_TOKEN_FILE": str(token), "HARNESS_SANDBOX_PI_PKG": str(pi_pkg)}
+
+    def wrap(self, agent, *args, cwd=None):
+        self.capture.unlink(missing_ok=True)
+        result = subprocess.run(["bash", str(WRAPPER), "--sandbox-agent", agent, "--omit-harness-cli", *args],
+                                env=self.env, cwd=cwd or self.wt, capture_output=True, text=True, timeout=20)
+        argv = json.loads(self.capture.read_text()) if self.capture.exists() else None
+        return result.returncode, result.stderr, argv
+
+    def ok(self, agent, *args):
+        rc, err, argv = self.wrap(agent, *args)
+        self.assertEqual(rc, 0, err)
+        return err, argv
+
+    def test_claude_window_mounts(self):
+        _, argv = self.ok("claude", "--history-window")
+        home, enc = self.home, re.sub(r"[^A-Za-z0-9]", "-", str(self.wt))
+        root_pair = next(a for a in argv if a.endswith(f":{home}/.claude"))
+        self.assertRegex(root_pair, re.escape(str(self.tmp)) + r"/harness-sandbox-root\.[^/]+/\.claude:")
+        self.assertTrue(any(re.search(r"/harness-sandbox-root\.[^/]+/\.claude\.json:" + re.escape(f"{home}/.claude.json") + "$", a)
+                            for a in argv))
+        win = f"{home}/.claude/projects/{enc}:{home}/.claude/projects/{enc}"
+        self.assertIn(win, argv)
+        self.assertLess(argv.index(root_pair), argv.index(win))
+        self.assertIn(f"{home}/.claude/.credentials.json:{home}/.claude/.credentials.json", argv)
+        self.assertNotIn(f"{home}/.claude:{home}/.claude", argv)
+        self.assertNotIn(f"{home}/.claude.json:{home}/.claude.json", argv)
+        self.assertIn("SANDBOX_SEED_CONFIG=1", argv)
+        self.assertIn("SANDBOX_HISTORY=window", argv)
+        self.assertTrue((home / ".claude/projects" / enc).is_dir())
+
+    def test_claude_window_token_auth(self):
+        _, argv = self.ok("claude", "--history-window", "--token-auth")
+        home, enc = self.home, re.sub(r"[^A-Za-z0-9]", "-", str(self.wt))
+        root_pair = next(a for a in argv if a.endswith(":/home/node/.claude"))
+        self.assertIn("/harness-sandbox-root.", root_pair)
+        win = f"{home}/.claude/projects/{enc}:/home/node/.claude/projects/{enc}"
+        self.assertIn(win, argv)
+        self.assertLess(argv.index(root_pair), argv.index(win))
+        self.assertFalse(any(".credentials.json" in a for a in argv))
+
+    def test_pi_window_mounts(self):
+        _, argv = self.ok("pi", "--history-window")
+        home = self.home
+        name = "--" + str(self.wt).lstrip("/").replace("/", "-") + "--"
+        root_pair = next(a for a in argv if a.endswith(f":{home}/.pi"))
+        self.assertIn("/harness-sandbox-root.", root_pair)
+        expected = [root_pair,
+                    f"{home}/.pi/agent/sessions/{name}:{home}/.pi/agent/sessions/{name}",
+                    f"{home}/.pi/agent/auth.json:{home}/.pi/agent/auth.json",
+                    f"{home}/.pi/agent/settings.json:{home}/.pi/agent/settings.json:ro"]
+        positions = [argv.index(a) for a in expected]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn(f"{home}/.pi:{home}/.pi", argv)
+
+    def test_shared_mode_unchanged_but_labelled(self):
+        err, argv = self.ok("pi")
+        self.assertIn(f"{self.home}/.pi:{self.home}/.pi", argv)
+        self.assertIn("SANDBOX_HISTORY=shared", argv)
+        self.assertIn("history=shared", err)
+
+    def refusal_cases(self):
+        long_wt = self.tmp / ("w" * 210)
+        git("-C", str(self.repo), "worktree", "add", "-q", str(long_wt))
+        return [
+            ("opencode", self.wt, "no window", None),
+            ("agy", self.wt, "no window", None),
+            ("bash", self.wt, "no window", None),
+            ("claude", self.repo, "linked worktree", None),
+            ("claude", self.plain_dir, "linked worktree", None),
+            ("claude", long_wt, "200", None),
+            ("claude", self.wt, ".credentials.json", self.home / ".claude/.credentials.json"),
+            ("pi", self.wt, "auth.json", self.home / ".pi/agent/auth.json"),
+        ]
+
+    def test_refusals(self):
+        for agent, cwd, why, remove in self.refusal_cases():
+            with self.subTest(agent=agent, why=why):
+                if remove is not None:
+                    remove.unlink()
+                rc, err, argv = self.wrap(agent, "--history-window", cwd=cwd)
+                if remove is not None:
+                    remove.write_text("x")
+                self.assertEqual(rc, 2, err)
+                self.assertIn("--history-window", err)
+                self.assertIn(why, err)
+                self.assertIsNone(argv)
+
+    def test_refusal_leaves_no_temp_root(self):
+        for agent, cwd, _, remove in self.refusal_cases():
+            if remove is not None:
+                remove.unlink()
+            self.wrap(agent, "--history-window", cwd=cwd)
+            if remove is not None:
+                remove.write_text("x")
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
 
 
 if __name__ == "__main__":
