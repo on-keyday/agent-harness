@@ -115,32 +115,35 @@ func (s *Session) startRemoteForward(ctx context.Context, req *protocol.RunnerOp
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	if s.worktreeDirFor(taskIDHex) == "" {
 		log.Error("remote_forward: unknown task", "task_id", taskIDHex)
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	if s.creator == nil {
 		log.Error("remote_forward: no stream creator wired")
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	ln, err := s.startRemoteForwardListener(ctx, req.ForwardId, string(req.BindAddr), int(req.BindPort))
 	if err != nil {
 		log.Info("remote_forward: listen failed", "addr", net.JoinHostPort(string(req.BindAddr), strconv.Itoa(int(req.BindPort))), "err", err)
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	s.rforwardListeners().add(req.ForwardId, ln)
-	s.sendBindResult(req.ForwardId, true)
+	s.sendSetupResult(req.ForwardId, true, "")
 	log.Info("remote_forward: listening", "forward_id", req.ForwardId, "addr", ln.Addr().String())
 }
 
-// sendBindResult tells the server whether the listener bound, so the server can
-// return Ok / BindFailed to the client instead of silently succeeding.
-func (s *Session) sendBindResult(forwardID uint64, ok bool) {
-	m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_RemoteForwardBindResult}
-	br := protocol.RemoteForwardBindResult{ForwardId: forwardID}
+// sendSetupResult tells the server whether this runner's setup for a forward
+// worked -- an -R listener bound, a link's tun came up -- so the server can
+// answer the client instead of silently succeeding. detail is why, when it
+// did not; the operator usually cannot read this runner's log.
+func (s *Session) sendSetupResult(forwardID uint64, ok bool, detail string) {
+	m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_ForwardSetupResult}
+	br := protocol.ForwardSetupResult{ForwardId: forwardID}
 	br.SetOk(ok)
-	m.SetRemoteForwardBindResult(br)
+	br.SetDetail([]byte(detail))
+	m.SetForwardSetupResult(br)
 	_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 }
 

@@ -606,11 +606,11 @@ func runRemoteRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *
 	respCh := make(chan protocol.RegisterPortForwardResponse, 1)
 	cid := clientConn.ConnectionID().String()
 	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, cid) }()
-	br := &protocol.RemoteForwardBindResult{ForwardId: 1}
+	br := &protocol.ForwardSetupResult{ForwardId: 1}
 	br.SetOk(bindOK)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		h.handleRemoteForwardBindResult(runnerConn, br)
+		h.handleForwardSetupResult(runnerConn, br)
 		select {
 		case r := <-respCh:
 			return r

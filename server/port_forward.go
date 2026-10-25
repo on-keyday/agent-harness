@@ -246,9 +246,9 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 // bind result before giving up with BindFailed.
 const remoteForwardBindTimeout = 5 * time.Second
 
-// handleRemoteForwardBindResult delivers a runner's listener-bind result to the
+// handleForwardSetupResult delivers a runner's listener-bind result to the
 // registration goroutine blocked in registerRemoteForward.
-func (h *TaskHandler) handleRemoteForwardBindResult(_ ConnHandle, msg *protocol.RemoteForwardBindResult) {
+func (h *TaskHandler) handleForwardSetupResult(_ ConnHandle, msg *protocol.ForwardSetupResult) {
 	h.pforwards().signalBind(msg.ForwardId, msg.Ok())
 }
 

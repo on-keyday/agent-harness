@@ -386,7 +386,7 @@ func New(cfg Config) *Server {
 	// Same wiring, same reason: an out-of-band exec's outcome arrives on the
 	// runner connection and belongs to the registry the TaskHandler holds.
 	s.runnerHandler.OnExecRunFinished = s.taskHandler.handleExecRunFinished
-	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
+	s.runnerHandler.OnForwardSetupResult = s.taskHandler.handleForwardSetupResult
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
 		if s.shuttingDown.Load() {

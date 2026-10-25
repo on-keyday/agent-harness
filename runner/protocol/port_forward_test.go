@@ -91,15 +91,15 @@ func TestClosePortForwardRequest_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestRemoteForwardBindResult_RoundTrip(t *testing.T) {
+func TestForwardSetupResult_RoundTrip(t *testing.T) {
 	for _, ok := range []bool{true, false} {
-		in := RemoteForwardBindResult{ForwardId: 13}
+		in := ForwardSetupResult{ForwardId: 13}
 		in.SetOk(ok)
 		enc, err := in.Append(nil)
 		if err != nil {
 			t.Fatalf("append: %v", err)
 		}
-		got := &RemoteForwardBindResult{}
+		got := &ForwardSetupResult{}
 		if _, err := got.Decode(enc); err != nil {
 			t.Fatalf("decode: %v", err)
 		}

@@ -81,10 +81,10 @@ type RunnerHandler struct {
 	// TaskHandler.handleRemoteForwardConn in Server.New.
 	OnRemoteForwardConn func(conn ConnHandle, msg *protocol.RemoteForwardConn)
 
-	// OnRemoteForwardBindResult, when non-nil, handles
-	// RunnerMessage{RemoteForwardBindResult} (the runner's listener-bind result).
-	// Wired to TaskHandler.handleRemoteForwardBindResult in Server.New.
-	OnRemoteForwardBindResult func(conn ConnHandle, msg *protocol.RemoteForwardBindResult)
+	// OnForwardSetupResult, when non-nil, handles
+	// RunnerMessage{ForwardSetupResult} (the runner's setup result for a forward).
+	// Wired to TaskHandler.handleForwardSetupResult in Server.New.
+	OnForwardSetupResult func(conn ConnHandle, msg *protocol.ForwardSetupResult)
 
 	// OnConnIdentified, when non-nil, is called after a runner has been
 	// registered via RunnerHello so the server can emit a conn_identified event
@@ -353,15 +353,15 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		// Does not mutate Registry/Tasks; suppress the trailing OnChange.
 		return
 
-	case protocol.RunnerMessageType_RemoteForwardBindResult:
-		br := msg.RemoteForwardBindResult()
+	case protocol.RunnerMessageType_ForwardSetupResult:
+		br := msg.ForwardSetupResult()
 		if br == nil {
-			slog.Error("RunnerHandler: RemoteForwardBindResult variant is nil", "runnerID", runnerID)
+			slog.Error("RunnerHandler: ForwardSetupResult variant is nil", "runnerID", runnerID)
 			return
 		}
-		if h.OnRemoteForwardBindResult != nil {
+		if h.OnForwardSetupResult != nil {
 			// Non-blocking (signals a buffered channel); safe to run inline.
-			h.OnRemoteForwardBindResult(conn, br)
+			h.OnForwardSetupResult(conn, br)
 		}
 		return
 

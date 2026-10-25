@@ -512,12 +512,12 @@ func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardReque
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	if s.worktreeDirFor(taskIDHex) == "" {
 		log.Error("udp remote forward: unknown task", "task_id", taskIDHex)
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	if s.Sender == nil {
 		log.Error("udp remote forward: no sender wired")
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	bindAddr := string(req.BindAddr)
@@ -527,17 +527,17 @@ func (s *Session) startUDPRemoteForward(req *protocol.RunnerOpenPortForwardReque
 	addr, err := net.ResolveUDPAddr("udp", targetAddr(bindAddr, req.BindPort))
 	if err != nil {
 		log.Info("udp remote forward: bad bind address", "err", err)
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Info("udp remote forward: listen failed", "addr", addr.String(), "err", err)
-		s.sendBindResult(req.ForwardId, false)
+		s.sendSetupResult(req.ForwardId, false, "")
 		return
 	}
 	rem := s.udpForwardRegistry().addRemote(req.ForwardId, conn, s.Sender)
-	s.sendBindResult(req.ForwardId, true)
+	s.sendSetupResult(req.ForwardId, true, "")
 	log.Info("udp remote forward: listening", "fwd", req.ForwardId, "addr", conn.LocalAddr().String())
 	go rem.readLoop(log)
 }

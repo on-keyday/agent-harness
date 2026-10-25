@@ -14,7 +14,9 @@ enum RunnerMessageType:
     establish_relay_response
     request_chained_relay
     remote_forward_conn
-    remote_forward_bind_result
+    forward_setup_result   # renamed from remote_forward_bind_result; same
+                           # ordinal. It answers every setup the runner does
+                           # for a forward now, not only an -R bind.
     exec_run_finished  # an out-of-band exec ended; carries its exit code
     authorize_data_plane_response  # answer to AuthorizeDataPlaneRequest
     revoke_data_plane_response     # answer to RevokeDataPlaneRequest
@@ -25,6 +27,8 @@ enum RunnerMessageType:
                                    # runs the old build; free to reuse after.
     hold_tasks_ack                 # the exact task set this runner will keep
                                    # alive across a deliberate server restart
+    forward_ended                  # the runner's end of a forward stopped
+                                   # working after setup succeeded
 
 enum RunnerRequestType:
     :u8
@@ -374,13 +378,14 @@ format RunnerMessage:
         RunnerMessageType.establish_relay_response => establish_relay_response :EstablishRelayResponse
         RunnerMessageType.request_chained_relay => request_chained_relay :RequestChainedRelay
         RunnerMessageType.remote_forward_conn => remote_forward_conn :RemoteForwardConn
-        RunnerMessageType.remote_forward_bind_result => remote_forward_bind_result :RemoteForwardBindResult
+        RunnerMessageType.forward_setup_result => forward_setup_result :ForwardSetupResult
         RunnerMessageType.exec_run_finished => exec_run_finished :ExecRunFinished
         RunnerMessageType.authorize_data_plane_response => authorize_data_plane_response :AuthorizeDataPlaneResponse
         RunnerMessageType.revoke_data_plane_response => revoke_data_plane_response :RevokeDataPlaneResponse
         RunnerMessageType.data_plane_finished => data_plane_finished :DataPlaneFinished
         RunnerMessageType.trsf_state_response => trsf_state_response :RunnerTrsfStateResponse
         RunnerMessageType.hold_tasks_ack => hold_tasks_ack :HoldTasksAck
+        RunnerMessageType.forward_ended => forward_ended :ForwardEnded
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -1081,7 +1086,7 @@ format SubmitRequest:
     # requested_caps is a Capability bitmask the spawning principal requests for
     # this task. The server computes caps_child = caps_creator ∩ requested_caps.
     # The server computes caps_child = caps_creator ∩ delegate_caps_creator ∩
-    # requested_caps, so Capability.all (0x3fffff) means "everything the
+    # requested_caps, so Capability.all (0x7fffff) means "everything the
     # creator may delegate", not the creator's full set. A zero value grants
     # nothing.
     requested_caps :Capability
@@ -3185,6 +3190,8 @@ enum ForwardProtocol:
     :u8
     tcp = "tcp"
     udp = "udp"
+    ip  = "ip"    # appended: payload is one whole IP packet. Legal only with
+                  # PortForwardDirection.link, and link only with this.
 
 # ForwardDatagram is one UDP datagram crossing a forward, inside an
 # appwire.AppKind_ForwardDatagram payload.
@@ -3526,6 +3533,20 @@ enum PortForwardDirection:
     :u8
     local    # client listens, runner dials remote_host:remote_port (SSH -L).
     remote   # runner listens on bind_addr:bind_port, client dials remote_host:remote_port (SSH -R).
+    link     # appended: NEITHER end listens or dials; each holds an interface, and a
+             # packet read from one is written to the other. Legal only with
+             # protocol == ip, and ip is legal only with link.
+
+# IpLinkConfig is everything both ends of an ip link need to bring their
+# interface up. One address family per link: addr_len is 4 or 16 and applies to
+# both addresses, so a link cannot mix families by construction. Stage 1 accepts
+# 4 only; the width is here so IPv6 needs no wire change.
+format IpLinkConfig:
+    addr_len    :u8
+    client_addr :[addr_len]u8
+    runner_addr :[addr_len]u8
+    prefix_len  :u8          # shared: both addresses are on one subnet
+    mtu         :u16         # both tun devices are set to this
 
 enum ClientEndpointKind:
     :u8
@@ -3705,16 +3726,27 @@ enum Capability:
     # the caller picks only the runner, resume_conversation, x11, detached and
     # the initial size. Implied by resume. Default-off, appended.
     resume_exact   = 0x200000, "resume_exact"
+    # forward_link authorizes putting a network INTERFACE at each end of a
+    # forward: a tun device on the client's host and one on the runner's,
+    # carrying whole IP packets between them. Not implied by forward_local or
+    # forward_remote, and does not imply them. A port forward names one target;
+    # a link names none, so every service bound to all addresses on either
+    # host is reachable from the other, over any IP protocol. Different blast
+    # radius, its own bit, default-off, appended — so no existing grant
+    # changes meaning. Later stages of the same feature (a routing mode, an
+    # L2 device) are the same power and stay on this bit.
+    forward_link   = 0x400000, "forward_link"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
-    # does NOT gain forward_tap until it is re-granted. That is the safe
+    # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
+    # forward_link). That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x3fffff, "all"
+    all            = 0x7fffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,
@@ -3800,6 +3832,9 @@ enum OpenPortForwardStatus:
     # decision. Also the answer for a protocol x route cell the schema accepts
     # but no handler implements yet.
     route_unavailable = "route_unavailable"
+    # An end could not bring up its interface; detail says which end and why.
+    # Appended.
+    link_failed = "link_failed"
 
 # RegisterPortForwardRequest: one registration, either direction. Direction
 # decides what the address pair means:
@@ -3807,6 +3842,8 @@ enum OpenPortForwardStatus:
 #            RUNNER dials per connection.
 #   remote : bind_* is the listener the RUNNER is asked to open; target_* is what
 #            the CLIENT dials per connection.
+#   link   : both pairs are empty and both ports 0 -- a link has no listener and
+#            no dial target. `link` below carries everything.
 format RegisterPortForwardRequest:
     task_id         :TaskID
     direction       :PortForwardDirection
@@ -3828,6 +3865,8 @@ format RegisterPortForwardRequest:
     # silently replaced, for the reason DataPlaneRoute's own comment gives.
     protocol :ForwardProtocol
     route    :DataPlaneRoute
+    if protocol == ForwardProtocol.ip:
+        link :IpLinkConfig
 
 # Reuses OpenPortForwardStatus. A local registration can only answer ok,
 # no_such_task or internal_error: its listener is bound client-side before the
@@ -3836,6 +3875,11 @@ format RegisterPortForwardResponse:
     status     :OpenPortForwardStatus
     forward_id :u64
     stream_id  :u64   # server-created control stream; 0 on failure
+    # Appended: why, when status is not ok and the server knows more than the
+    # status says -- the runner's own error for bind_failed / link_failed.
+    # "It failed" is not enough for an operator who cannot read the runner's log.
+    detail_len :u16
+    detail     :[detail_len]u8
 
 format PortForwardListQuery:
     task_id :TaskID   # all-zero = every forward visible to the caller
@@ -3944,6 +3988,8 @@ format PortForwardInfo:
     # has it, so it has no existence condition to express.
     counter_count :u16
     counters      :[counter_count]ForwardCounter
+    if protocol == ForwardProtocol.ip:
+        link :IpLinkConfig
 
 format PortForwardListResultBody:
     forwards_len :u16
@@ -3973,9 +4019,15 @@ enum PortForwardCloseReason:
     :u8
     killed     # kill_port_forward was called
     task_gone  # the owning task left Running/Detached
+    runner_gone      # appended: the runner connection that held this
+                     # forward's runner-side state ended or was replaced
+    endpoint_failed  # appended: the runner reported its end failed;
+                     # detail says how
 
 format PortForwardClosed:
-    reason :PortForwardCloseReason
+    reason     :PortForwardCloseReason
+    detail_len :u16                 # appended: empty except endpoint_failed
+    detail     :[detail_len]u8
 
 format PortForwardEvent:
     kind :PortForwardEventKind
@@ -4033,6 +4085,8 @@ enum ForwardTapRecordKind:
     gap             # the tap could not keep up; dropped_bytes were missed
     conn_close      # that connection ended, the forward is still up
     forward_closed  # the forward itself ended; the stream EOFs after this
+    datagram        # appended: one whole datagram, as the relay saw it
+    datagram_gap    # appended: the tap could not keep up with one flow
 
 format ForwardTapConnOpen:
     conn_seq        :u64   # per-forward, 1-based, assigned at accept
@@ -4065,8 +4119,40 @@ format ForwardTapConnClose:
     bytes_to_target   :u64   # what this ONE connection carried, each way
     bytes_from_target :u64
 
+# What the relay did with a datagram after the tap saw it. The relay's
+# per-forward drop counters say HOW MANY; this says WHICH ONES.
+enum ForwardTapDatagramFate:
+    :u8
+    relayed
+    dropped_oversize
+    dropped_congestion
+    dropped_queue
+
+# Not ForwardTapData with a flag: that format's stream_offset says record
+# boundaries "carry no application meaning", and for a datagram the boundary
+# is the only meaning there is.
+format ForwardTapDatagram:
+    flow_id         :u32     # as the endpoints assigned it; 0 on an ip forward
+    direction       :ForwardTapDirection
+    seq             :u64     # per (flow_id, direction), counted by the server
+                             # from the first datagram it relayed on that flow,
+                             # 1-based. A jump is datagrams this tap missed.
+    fate            :ForwardTapDatagramFate
+    truncated_bytes :u32     # cut by max_record_bytes
+    data_len        :u32
+    data            :[data_len]u8
+
+format ForwardTapDatagramGap:
+    flow_id       :u32
+    direction     :ForwardTapDirection
+    dropped_bytes :u64       # the count is the jump in seq on the next record
+
+# The tap's copy of PortForwardClosed, so a tapper -- who is not necessarily the
+# owner and never sees the control stream -- reads the same detail.
 format ForwardTapForwardClosed:
-    reason :PortForwardCloseReason
+    reason     :PortForwardCloseReason
+    detail_len :u16          # appended: empty except endpoint_failed
+    detail     :[detail_len]u8
 
 format ForwardTapRecord:
     # One of these exists per relayed chunk, on the relay goroutine that must
@@ -4082,6 +4168,8 @@ format ForwardTapRecord:
         ForwardTapRecordKind.gap            => gap            :ForwardTapGap
         ForwardTapRecordKind.conn_close     => conn_close     :ForwardTapConnClose
         ForwardTapRecordKind.forward_closed => forward_closed :ForwardTapForwardClosed
+        ForwardTapRecordKind.datagram       => datagram       :ForwardTapDatagram
+        ForwardTapRecordKind.datagram_gap   => datagram_gap   :ForwardTapDatagramGap
         .. => error("Unexpected forward tap record")
 
 # OpenPortForwardRequest: remote_host/remote_port are the runner's dial target
@@ -4134,8 +4222,13 @@ format RunnerOpenPortForwardRequest:
     # is being handed. A udp request is a standing instruction: remember that
     # forward_id dials remote_host:remote_port, and expect datagrams naming it.
     protocol :ForwardProtocol
+    # An ip request (direction link) arrives once, like udp, and asks the runner
+    # to bring up its end of the link; it answers with ForwardSetupResult.
+    if protocol == ForwardProtocol.ip:
+        link :IpLinkConfig
 
-# ClosePortForwardRequest tells the runner to stop a remote-forward listener.
+# ClosePortForwardRequest tells the runner to release whatever runner-side state
+# this forward holds -- an -R listener, a udp registration, a link's tun.
 format ClosePortForwardRequest:
     forward_id :u64
 
@@ -4150,14 +4243,26 @@ format RemoteForwardConn:
 format RemoteForwardConnNotify:
     stream_id :u64
 
-# RemoteForwardBindResult (runner -> server): result of trying to open the
-# remote-forward listener. ok=1 if bound, 0 if net.Listen failed. The server
-# blocks the registration response until this arrives, so the client learns
-# success/failure instead of a silent no-op.
-format RemoteForwardBindResult:
+# ForwardSetupResult (runner -> server): result of the runner's setup for a
+# forward -- binding an -R listener, or bringing up a link's tun. ok=1 on
+# success. The server blocks the registration response until this arrives, so
+# the client learns success/failure instead of a silent no-op.
+#
+# Renamed from RemoteForwardBindResult when links made it more than a bind.
+format ForwardSetupResult:
     forward_id :u64
     ok         :u1
     reserved   :u7
+    detail_len :u16              # appended: why, when ok == 0 (the error text);
+    detail     :[detail_len]u8   # empty when ok == 1
+
+# ForwardEnded (runner -> server): the runner's end of a forward stopped
+# working after setup succeeded -- a tun read or write failed. The server
+# tears the forward down and tells the client.
+format ForwardEnded:
+    forward_id :u64
+    detail_len :u16
+    detail     :[detail_len]u8
 
 # === Read-only git view (see specs/2026-08-03-git-view-design.md) ===
 
