@@ -26,18 +26,17 @@ import (
 // Wire encoding used for the runner path:
 //
 //	runner_hello → [0x43] + RunnerMessage{Kind:Hello, hello}
-func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) {
+func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) bool {
 	switch req.Role {
 	case protocol.AuthRole_Client:
 		hello := req.ClientHello()
 		if hello == nil {
-			return
+			return false
 		}
 		if d.RecordClientIdentity != nil {
 			// Fast path: record identity directly — no TaskControlResponse emitted.
 			cid := conn.ConnectionID().String()
-			d.RecordClientIdentity(cid, conn, hello)
-			return
+			return d.RecordClientIdentity(cid, conn, hello) == protocol.ClientHelloStatus_Ok
 		}
 		// Fallback (tests without RecordClientIdentity wired): re-dispatch via
 		// the normal TaskControl wire path. This emits an extra
@@ -47,24 +46,27 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})
 		if err != nil {
 			slog.Error("pskDispatchIdentity: encode TaskControlRequest failed", "err", err)
-			return
+			return false
 		}
 		d.Dispatch(conn, data)
+		return true
 
 	case protocol.AuthRole_Runner:
 		rh := req.RunnerHello()
 		if rh == nil {
-			return
+			return false
 		}
 		rmsg := protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
 		rmsg.SetHello(*rh)
 		data, err := rmsg.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 		if err != nil {
 			slog.Error("pskDispatchIdentity: encode RunnerMessage failed", "err", err)
-			return
+			return false
 		}
 		d.Dispatch(conn, data)
+		return true
 	}
+	return false
 }
 
 // pskGate enforces a merged PSK + identity handshake on each connection.
@@ -84,6 +86,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 type pskGate struct {
 	psk    []byte
 	authed bool
+	role   protocol.AuthRole // fixed by the accepted handshake, never by later messages
 	// operatorPSK, when non-empty, is the separate secret that operator-surface
 	// connections (kind=cli/tui/webui, i.e. anything but agent) must prove via
 	// the binder. It is NEVER injected into agent task environments, so an
@@ -105,6 +108,31 @@ func newPSKGate(psk []byte) *pskGate {
 }
 
 func (g *pskGate) Authed() bool { return g.authed }
+
+// AllowsMessage binds application traffic to the role authenticated by Check.
+// Both roles use pubsub (runners publish task logs) and answer telemetry, but
+// only clients issue task control and only runners report task state. Hello
+// messages belong exclusively to the initial handshake: accepting another one
+// would let a peer replace its authenticated identity on the same connection.
+func (g *pskGate) AllowsMessage(data []byte) bool {
+	if !g.authed || len(data) == 0 {
+		return false
+	}
+	switch appwire.AppKind(data[0]) {
+	case appwire.AppKind_Pubsub, appwire.AppKind_Telemetry:
+		return g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Runner
+	case appwire.AppKind_TaskControl:
+		// TaskControlRequest starts with a one-byte TaskControlKind.
+		return g.role == protocol.AuthRole_Client && len(data) > 1 &&
+			protocol.TaskControlKind(data[1]) != protocol.TaskControlKind_ClientHello
+	case appwire.AppKind_RunnerControl:
+		// RunnerMessage starts with a one-byte RunnerMessageType.
+		return g.role == protocol.AuthRole_Runner && len(data) > 1 &&
+			protocol.RunnerMessageType(data[1]) != protocol.RunnerMessageType_Hello
+	default:
+		return false
+	}
+}
 
 // binderKey selects which secret the request's binder must prove. Operator-
 // surface clients (role=Client, kind != agent: cli/tui/webui) prove operatorPSK
@@ -261,6 +289,7 @@ func (g *pskGate) Check(
 	}
 
 	// Step 5: Accept — mark authed, reply ok, return decoded request for dispatch.
+	g.role = req.Role
 	g.authed = true
 	g.respond(sendFn, transcript, protocol.PskAuthStatus_Ok)
 	return true, false, &req

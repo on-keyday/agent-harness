@@ -274,7 +274,7 @@ func TestTaskAcceptedUpdatesTaskActivity(t *testing.T) {
 	}
 }
 
-func TestTaskAcceptedMismatchStillUpdatesTaskActivity(t *testing.T) {
+func TestTaskAcceptedMismatchDoesNotUpdateTaskActivity(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()
 	changeCalled := 0
@@ -326,18 +326,17 @@ func TestTaskAcceptedMismatchStillUpdatesTaskActivity(t *testing.T) {
 	payload := encodeRunnerMessage(t, msg)
 	h.Handle(fc, payload)
 
-	// Assert: LastSeen was updated to t1 despite the mismatch warning.
+	// An unrelated task report must not update activity or trigger scheduling.
 	entry, ok := reg.Get(runnerID)
 	if !ok {
 		t.Fatalf("runner %q not found after Handle", runnerID)
 	}
-	if !entry.LastTaskActivity.Equal(t1) {
-		t.Errorf("expected LastTaskActivity %v after TaskAccepted (mismatch case), got %v", t1, entry.LastTaskActivity)
+	if !entry.LastTaskActivity.Equal(t0) {
+		t.Errorf("expected LastTaskActivity unchanged at %v, got %v", t0, entry.LastTaskActivity)
 	}
 
-	// The mismatch warning does not prevent OnChange from being called.
-	if changeCalled != 1 {
-		t.Errorf("expected OnChange called 1 time, got %d", changeCalled)
+	if changeCalled != 0 {
+		t.Errorf("expected no OnChange call, got %d", changeCalled)
 	}
 }
 

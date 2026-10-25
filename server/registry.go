@@ -249,6 +249,28 @@ func (r *Registry) Get(id objproto.ConnectionID) (RunnerEntry, bool) {
 	return *e, true
 }
 
+// ownsTask checks the assignment reservation, not just a caller-supplied task
+// id. A displaced connection must not report outcomes for its replacement.
+// The reservation exists before AssignTask is sent, so even a fast runner's
+// acknowledgement can be authorized before TaskStore.Assign has completed.
+func (r *Registry) ownsTask(id objproto.ConnectionID, taskID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.runners[id]
+	if !ok || e.Identity.IsZero() || r.byIdentity[e.Identity] != id {
+		return false
+	}
+	_, assigned := e.ActiveTasks[taskID]
+	return assigned
+}
+
+func (r *Registry) isCurrentRunner(id objproto.ConnectionID, identity protocol.RunnerID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.runners[id]
+	return ok && !identity.IsZero() && e.Identity == identity && r.byIdentity[identity] == id
+}
+
 // NoteTaskActivity stamps when this runner last did something with a TASK.
 //
 // NOT a liveness signal, which is what the old name (SetLastSeen) promised: a

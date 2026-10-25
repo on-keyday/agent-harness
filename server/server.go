@@ -385,7 +385,7 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnRemoteForwardConn = s.taskHandler.handleRemoteForwardConn
 	// Same wiring, same reason: an out-of-band exec's outcome arrives on the
 	// runner connection and belongs to the registry the TaskHandler holds.
-	s.runnerHandler.OnExecRunFinished = s.taskHandler.onExecRunFinished
+	s.runnerHandler.OnExecRunFinished = s.taskHandler.handleExecRunFinished
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.runnerHandler.OnHoldTasksAck = s.deliverHoldTasksAck
 	s.runnerHandler.OnHeldTasksReported = func(identity protocol.RunnerID, report protocol.HeldTasksReport) ReadoptResult {
@@ -1425,13 +1425,22 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// Reused code: TaskHandler.Handle (task_handler.go:148) and
 				// RunnerHandler.Handle (runner_handler.go:64) — both are invoked
 				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
-				pskDispatchIdentity(s.dispatcher, wrapped, accepted)
+				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted) {
+					_ = trsf.SendClose(session)
+					cancel()
+				}
 			}
 			return
 		}
 		kind := appwire.AppKind(msg.Data[0])
 		if kind == appwire.AppKind_PskAuth {
 			return // stray PskAuth after auth complete — discard
+		}
+		if !gate.AllowsMessage(msg.Data) {
+			s.cfg.Logger.Warn("server: message outside authenticated role", "cid", session.ConnectionID().String(), "kind", kind)
+			_ = trsf.SendClose(session)
+			cancel()
+			return
 		}
 		if kind == appwire.AppKind_Pubsub {
 			// HandleMessage already returns the response wire-kind prefixed.

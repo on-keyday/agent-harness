@@ -61,7 +61,7 @@ type RunnerHandler struct {
 	//
 	// Nil-safe: a runner handler with no exec registry behind it drops the
 	// report, which is what a test constructing one in isolation wants.
-	OnExecRunFinished func(fin *protocol.ExecRunFinished)
+	OnExecRunFinished func(conn ConnHandle, fin *protocol.ExecRunFinished)
 
 	// TakePendingViaInfo, when non-nil, retrieves and removes the
 	// ViaRegistrationInfo stashed by the OnDialed callback for the given
@@ -203,11 +203,8 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		accepted := hex.EncodeToString(ta.TaskId.Id[:])
-		if e, ok := h.Registry.Get(runnerID); ok {
-			if _, has := e.ActiveTasks[accepted]; !has && len(e.ActiveTasks) > 0 {
-				slog.Warn("runner_handler: runner accepted task not in ActiveTasks",
-					"runner", runnerID, "accepted", accepted)
-			}
+		if !h.acceptTaskReport(runnerID, accepted) {
+			return
 		}
 		if !h.Registry.NoteTaskActivity(runnerID, now) {
 			slog.Error("runner_handler: NoteTaskActivity on unknown runner", "runner", runnerID)
@@ -221,6 +218,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(taskStarted.TaskId.Id[:])
+		if !h.acceptTaskReport(runnerID, taskID) {
+			return
+		}
 		if !h.Tasks.SetWorktreeDir(taskID, string(taskStarted.WorktreeDir)) {
 			slog.Error("RunnerHandler: TaskStarted for unknown task", "runnerID", runnerID, "taskID", taskID)
 			return
@@ -231,7 +231,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.RunnerMessageType_ExecRunFinished:
 		if fin := msg.ExecRunFinished(); fin != nil && h.OnExecRunFinished != nil {
-			h.OnExecRunFinished(fin)
+			h.OnExecRunFinished(conn, fin)
 		}
 
 	case protocol.RunnerMessageType_TaskFinished:
@@ -241,6 +241,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(tf.TaskId.Id[:])
+		if !h.acceptTaskReport(runnerID, taskID) {
+			return
+		}
 		// Tasks.Finish silently no-ops if task is not found — that is acceptable.
 		h.Tasks.Finish(taskID, tf.ExitCode, tf.ErrorMessage)
 		// Release the capacity slot so the dispatcher can re-use it.
@@ -370,4 +373,12 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 	if h.OnChange != nil {
 		h.OnChange()
 	}
+}
+
+func (h *RunnerHandler) acceptTaskReport(runner objproto.ConnectionID, taskID string) bool {
+	if h.Registry != nil && h.Registry.ownsTask(runner, taskID) {
+		return true
+	}
+	slog.Warn("runner_handler: task report from non-owner", "runner", runner, "task_id", taskID)
+	return false
 }

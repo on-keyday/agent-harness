@@ -258,6 +258,16 @@ func execBodyStatus(err error) protocol.ExecRunStatus {
 	return protocol.ExecRunStatus_BadBody
 }
 
+// handleExecRunFinished accepts network reports only from the runner that owns
+// this exec. Execs can outlive their task, so use the exec's stored assignment.
+func (h *TaskHandler) handleExecRunFinished(conn ConnHandle, fin *protocol.ExecRunFinished) {
+	e, ok := h.execs().get(fin.ExecId)
+	if !ok || conn == nil || h.Registry == nil || !h.Registry.isCurrentRunner(conn.ConnectionID(), e.runnerID) {
+		return
+	}
+	h.onExecRunFinished(fin)
+}
+
 // onExecRunFinished delivers the outcome to the waiting client and
 // deregisters. An unknown id is a no-op: the client may have gone away first,
 // taking the registration with it.
