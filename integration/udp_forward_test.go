@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,7 +128,30 @@ func TestUDPPortForwardE2E(t *testing.T) {
 
 	fwdCtx, fwdCancel := context.WithCancel(ctx)
 	fwdDone := make(chan error, 1)
-	go func() { fwdDone <- cli.RunForward(fwdCtx, c, taskID, []cli.ForwardSpec{spec}, nil, nil) }()
+	fidCh := make(chan uint64, 1)
+	go func() {
+		fwdDone <- cli.RunForward(fwdCtx, c, taskID, []cli.ForwardSpec{spec}, nil,
+			func(_ cli.ForwardSpec, id uint64) { fidCh <- id })
+	}()
+
+	// A tap on the udp row, opened before the first datagram. Until datagram
+	// taps existed it attached, raised the row's taps count, and showed nothing.
+	var fid uint64
+	select {
+	case fid = <-fidCh:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the udp forward never registered")
+	}
+	var tapMu sync.Mutex
+	var tapLines []string
+	go func() {
+		_ = cli.StreamForwardTap(fwdCtx, c, fid, cli.ForwardTapOpts{Mode: cli.TapJSON}, func(lines []string) {
+			tapMu.Lock()
+			tapLines = append(tapLines, lines...)
+			tapMu.Unlock()
+		})
+	}()
+	time.Sleep(300 * time.Millisecond)
 
 	target := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
 
@@ -135,6 +159,20 @@ func TestUDPPortForwardE2E(t *testing.T) {
 	reply := roundTripUDP(t, target, []byte("hello"), 20*time.Second)
 	if string(reply) != "echo:hello" {
 		t.Fatalf("reply = %q, want %q", reply, "echo:hello")
+	}
+
+	// --- (1b) the tap saw the datagrams, each way ---
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		tapMu.Lock()
+		joined := strings.Join(tapLines, "\n")
+		tapMu.Unlock()
+		if strings.Contains(joined, `"kind":"datagram"`) && strings.Contains(joined, `"dir":"to_target"`) &&
+			strings.Contains(joined, `"dir":"from_target"`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the tap on a udp forward showed no datagram each way: %q", joined)
+		}
 	}
 
 	// --- (2) two source ports are independent flows ---
