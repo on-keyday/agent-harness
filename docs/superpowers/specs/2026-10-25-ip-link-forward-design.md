@@ -207,6 +207,13 @@ format PortForwardClosed:
     reason     :PortForwardCloseReason
     detail_len :u16                 # appended: empty except endpoint_failed
     detail     :[detail_len]u8
+
+# The tap's copy of the same fact, so a tapper — who is not necessarily the
+# owner and never sees the control stream — reads the same detail (§10b).
+format ForwardTapForwardClosed:
+    reason     :PortForwardCloseReason
+    detail_len :u16                 # appended, as above
+    detail     :[detail_len]u8
 ```
 
 The new capability bit is in §6b.
@@ -644,7 +651,8 @@ made to work on every datagram forward — udp and ip — rather than refused
   datagrams missed is the `seq` jump on the next record, which the renderer
   prints.
 - **What is not emitted.** No `conn_open` / `conn_close`: the server does not
-  see a flow begin or end, only datagrams. `forward_closed` is unchanged.
+  see a flow begin or end, only datagrams. `forward_closed` is emitted as for
+  tcp, now carrying the close detail (§5).
 - **Filters and truncation.** `direction_filter` and `max_record_bytes` apply
   as they do to `data` records.
 - **Rendering.** `RenderTapRecord` (`cli/forward_tap_render.go`) is the one
