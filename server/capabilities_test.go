@@ -324,6 +324,15 @@ func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeC
 
 // assertPermissionDenied checks that the last response is a PermissionDenied
 // with the expected required capability and that the RequestId is echoed.
+// linkRegisterRequest is an ip × link registration with a valid link: an ip
+// request without one does not encode.
+func linkRegisterRequest(t *testing.T) protocol.RegisterPortForwardRequest {
+	t.Helper()
+	r := protocol.RegisterPortForwardRequest{Direction: protocol.PortForwardDirection_Link, Protocol: protocol.ForwardProtocol_Ip}
+	r.SetLink(testLinkConfig(t, "10.200.0.1/30", "10.200.0.2"))
+	return r
+}
+
 func assertPermissionDenied(t *testing.T, conn *fakeConn, reqID uint32, wantCap protocol.Capability) {
 	t.Helper()
 	resp := lastTaskControlResponse(t, conn)
@@ -491,6 +500,36 @@ func TestDirectionGate(t *testing.T) {
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 19, protocol.Capability_ForwardRemote)
+	})
+
+	// A link needs forward_link and nothing else. Holding both port-forward
+	// directions must not open one: every task already holding both would gain
+	// links the day this landed.
+	t.Run("link_with_both_forward_bits_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal|protocol.Capability_ForwardRemote)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 60}
+		req.SetRegisterPortForward(linkRegisterRequest(t))
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 60, protocol.Capability_ForwardLink)
+	})
+	t.Run("link_with_forward_link_passes_gate", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLink)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: 61}
+		req.SetRegisterPortForward(linkRegisterRequest(t))
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertNotPermissionDenied(t, conn)
+	})
+	// Kill needs the bit create needs.
+	t.Run("kill_link_with_both_forward_bits_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal|protocol.Capability_ForwardRemote)
+		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownHex := hex.EncodeToString(ownTID.Id[:])
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Link,
+			protocolKind: protocol.ForwardProtocol_Ip, taskIDHex: ownHex})
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_KillPortForward, RequestId: 62}
+		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 62, protocol.Capability_ForwardLink)
 	})
 
 	// Case 10: kill a Local forward the caller can see, WITH ForwardLocal →

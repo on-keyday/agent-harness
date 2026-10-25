@@ -39,6 +39,9 @@ type portForward struct {
 	// flows — and route says whether this process is reading the bytes.
 	protocolKind protocol.ForwardProtocol
 	route        protocol.DataPlaneRoute
+	// link is the ip link's configuration, set exactly when protocolKind is
+	// ip. Stated at registration and never changed, like the two above.
+	link *protocol.IpLinkConfig
 
 	// Datagram accounting, udp only. Kept apart from the byte counters because
 	// they answer a different question: the bytes say how much crossed, these
@@ -78,24 +81,31 @@ type portForward struct {
 }
 
 // portForwardRegistry maps server-assigned forwardId → registration. Safe for
-// concurrent use. Lives on TaskHandler. It also tracks pending bind-result
+// concurrent use. Lives on TaskHandler. It also tracks pending setup-result
 // channels so a registration can block until the runner reports whether its
-// listener bound.
+// setup (an -R bind, a link's tun) worked.
 type portForwardRegistry struct {
 	mu      sync.Mutex
 	next    uint64
 	m       map[uint64]*portForward
-	pending map[uint64]chan bool
+	pending map[uint64]chan setupResult
+}
+
+// setupResult is the runner's answer to a forward's setup: whether it worked
+// and, when it did not, the runner's own error text.
+type setupResult struct {
+	ok     bool
+	detail string
 }
 
 func newPortForwardRegistry() *portForwardRegistry {
-	return &portForwardRegistry{m: map[uint64]*portForward{}, pending: map[uint64]chan bool{}}
+	return &portForwardRegistry{m: map[uint64]*portForward{}, pending: map[uint64]chan setupResult{}}
 }
 
 // addPending registers a buffered channel the registration waits on for the
-// runner's bind result. Caller must removePending when done.
-func (r *portForwardRegistry) addPending(id uint64) chan bool {
-	ch := make(chan bool, 1)
+// runner's setup result. Caller must removePending when done.
+func (r *portForwardRegistry) addPending(id uint64) chan setupResult {
+	ch := make(chan setupResult, 1)
 	r.mu.Lock()
 	r.pending[id] = ch
 	r.mu.Unlock()
@@ -108,15 +118,15 @@ func (r *portForwardRegistry) removePending(id uint64) {
 	r.mu.Unlock()
 }
 
-// signalBind delivers a runner bind result to the waiting registration, if any.
-// Non-blocking: a missing or already-signalled entry is a no-op.
-func (r *portForwardRegistry) signalBind(id uint64, ok bool) {
+// signalSetup delivers a runner setup result to the waiting registration, if
+// any. Non-blocking: a missing or already-signalled entry is a no-op.
+func (r *portForwardRegistry) signalSetup(id uint64, ok bool, detail string) {
 	r.mu.Lock()
 	ch := r.pending[id]
 	r.mu.Unlock()
 	if ch != nil {
 		select {
-		case ch <- ok:
+		case ch <- setupResult{ok: ok, detail: detail}:
 		default:
 		}
 	}

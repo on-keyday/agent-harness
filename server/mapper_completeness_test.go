@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -194,7 +195,40 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 	pf.noteDatagramDrop(dropQueue)
 
 	info := portForwardInfo(pf)
-	assertNoZeroFields(t, info, map[string]string{})
+	assertNoZeroFields(t, info, linkArmSkip(info, "present only on an ip row; TestPortForwardInfoMapsLink covers it"))
+}
+
+// linkArmSkip names PortForwardInfo's generated storage for the `if protocol ==
+// ip` arm -- an unexported field whose generated name changes on every regen --
+// so a row that legitimately has no link can say so without spelling it.
+func linkArmSkip(info protocol.PortForwardInfo, reason string) map[string]string {
+	skip := map[string]string{}
+	rt := reflect.TypeOf(info)
+	for i := 0; i < rt.NumField(); i++ {
+		if !rt.Field(i).IsExported() {
+			skip[rt.Field(i).Name] = reason
+		}
+	}
+	return skip
+}
+
+// TestPortForwardInfoMapsLink: an ip row carries its link on the listing, and
+// the arm is the only place it can go.
+func TestPortForwardInfoMapsLink(t *testing.T) {
+	cfg, err := protocol.NewIpLinkConfig(netip.MustParsePrefix("10.200.0.1/30"), netip.MustParseAddr("10.200.0.2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pf := &portForward{forwardID: 7, direction: protocol.PortForwardDirection_Link,
+		protocolKind: protocol.ForwardProtocol_Ip, link: &cfg}
+	info := portForwardInfo(pf)
+	got := info.Link()
+	if got == nil || got.PrefixLen != 30 || got.Mtu != 1100 || string(got.RunnerAddr) != string(cfg.RunnerAddr) {
+		t.Fatalf("Link() = %+v, want %+v", got, cfg)
+	}
+	if _, err := info.EncodeCopy(nil); err != nil {
+		t.Fatalf("an ip row must encode: %v", err)
+	}
 }
 
 // WhoAmIResponse is built by hand in the Whoami dispatch case, with the same

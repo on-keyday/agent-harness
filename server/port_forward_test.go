@@ -603,11 +603,19 @@ func (s *recordingBidiStream) CloseBoth() error {
 // registration consumes it, then the response is returned.
 func runRemoteRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *protocol.RegisterPortForwardRequest, runnerConn *fakeConn, bindOK bool) protocol.RegisterPortForwardResponse {
 	t.Helper()
+	return runSetupRegister(t, h, clientConn, req, runnerConn, bindOK, "")
+}
+
+// runSetupRegister is runRemoteRegister with the runner's detail: what a
+// failed setup says about why.
+func runSetupRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *protocol.RegisterPortForwardRequest, runnerConn *fakeConn, ok bool, detail string) protocol.RegisterPortForwardResponse {
+	t.Helper()
 	respCh := make(chan protocol.RegisterPortForwardResponse, 1)
 	cid := clientConn.ConnectionID().String()
 	go func() { respCh <- h.handleRegisterPortForward(clientConn, req, cid) }()
 	br := &protocol.ForwardSetupResult{ForwardId: 1}
-	br.SetOk(bindOK)
+	br.SetOk(ok)
+	br.SetDetail([]byte(detail))
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		h.handleForwardSetupResult(runnerConn, br)

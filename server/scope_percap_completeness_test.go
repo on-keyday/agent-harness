@@ -63,6 +63,7 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_FileWrite:     {kind: capResolvedVia, via: "need"},
 	protocol.Capability_ForwardLocal:  {kind: capResolvedVia, via: "need"},
 	protocol.Capability_ForwardRemote: {kind: capResolvedVia, via: "need"},
+	protocol.Capability_ForwardLink:   {kind: capResolvedVia, via: "need"},
 
 	// forward_tap names a FORWARD, which resolves to the task that owns it, and
 	// the handler passes the bit to authorize by name. Not capNoTargetResolution:

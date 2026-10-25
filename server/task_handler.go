@@ -676,10 +676,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// Hoisted out of the block it used to live in: the scope now resolves
 		// through the same bit the capability check used, so the two cannot
 		// disagree about which direction is being authorised.
-		need := protocol.Capability_ForwardLocal
-		if rf.Direction == protocol.PortForwardDirection_Remote {
-			need = protocol.Capability_ForwardRemote
-		}
+		need := forwardCapFor(rf.Direction)
 		if !hasCap(h.callerCaps(cid), need) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 			return
@@ -714,10 +711,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// enumeration oracle the no_such_forward rule exists to close.
 		if pf, ok := h.pforwards().get(kr.ForwardId); ok {
 			if all, allowed := h.visibleToCaller(cid); all || allowed[pf.taskIDHex] {
-				need := protocol.Capability_ForwardLocal
-				if pf.direction == protocol.PortForwardDirection_Remote {
-					need = protocol.Capability_ForwardRemote
-				}
+				need := forwardCapFor(pf.direction)
 				// authorize, not hasCap: a forward VISIBLE through the caller's
 				// visibility rank may still belong to a task outside its ACTION
 				// scope, and the two are deliberately different sets.

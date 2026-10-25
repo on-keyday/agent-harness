@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -126,6 +127,30 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		protocolKind:   req.Protocol,
 		route:          req.Route,
 	}
+	if !validForwardShape(req.Protocol, req.Direction) {
+		slog.Warn("port_forward: protocol x direction pairing refused",
+			"task_id", taskIDHex, "protocol", req.Protocol.String(), "direction", req.Direction)
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
+	}
+	if req.Protocol == protocol.ForwardProtocol_Ip {
+		// Checked again here although the client checked first: a hand-built
+		// request can skip the client, and the runner should not be asked to
+		// bring up an interface no client could have asked for.
+		link := req.Link()
+		var err error
+		if link == nil {
+			err = errors.New("no link configuration")
+		} else {
+			err = link.Validate()
+		}
+		if err != nil {
+			resp := errResp(protocol.OpenPortForwardStatus_InternalError)
+			resp.SetDetail([]byte("invalid ip link: " + err.Error()))
+			return resp
+		}
+		cp := *link
+		pf.link = &cp
+	}
 	// A runner-side listener whose accepted connections are answered by an
 	// in-process handler on the client is a separate design (the browser as a
 	// service endpoint). Refuse it rather than letting it half-work: the
@@ -139,7 +164,10 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 			"task_id", taskIDHex)
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
-	if req.Direction == protocol.PortForwardDirection_Remote {
+	// remote and link both wait for the runner's setup: an -R for its bind, a
+	// link for its tun. A link that did not wait would leave the client's tun
+	// up and silent whenever the runner's could not be created.
+	if req.Direction == protocol.PortForwardDirection_Remote || req.Direction == protocol.PortForwardDirection_Link {
 		runner, ok := h.Registry.GetByIdentity(task.AssignedTo)
 		if !ok || runner.Conn == nil {
 			return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
@@ -172,9 +200,10 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 	}
 }
 
-// registerRemoteForward (ssh -R) records the server-created control stream, asks
-// the runner to open a listener, and returns the control stream id + assigned
-// forwardId. Per-connection data streams are created later in
+// registerRemoteForward records the server-created control stream, asks the
+// runner to set up its end -- open the listener for ssh -R, bring up the tun
+// for an ip link -- waits for the answer, and returns the control stream id +
+// assigned forwardId. For -R, per-connection data streams are created later in
 // handleRemoteForwardConn when the runner reports an accepted connection.
 func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.RegisterPortForwardRequest, runner RunnerEntry) protocol.RegisterPortForwardResponse {
 	errResp := func(s protocol.OpenPortForwardStatus) protocol.RegisterPortForwardResponse {
@@ -196,7 +225,7 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
 	body := protocol.RunnerOpenPortForwardRequest{
 		TaskId:    req.TaskId,
-		Direction: protocol.PortForwardDirection_Remote,
+		Direction: req.Direction,
 		// Carried through, because it decides WHICH listener the runner opens:
 		// a udp -R binds a datagram socket and announces flows by their first
 		// packet, where a tcp -R accepts and names a stream per connection.
@@ -205,6 +234,9 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		ForwardId: fid,
 	}
 	body.SetBindAddr(req.BindAddr)
+	if pf.link != nil {
+		body.SetLink(*pf.link) // Protocol is ip, set above
+	}
 	rreq.SetOpenPortForward(body)
 	if err := sendRunnerRequest(runner.Conn, &rreq); err != nil {
 		h.pforwards().remove(fid)
@@ -213,20 +245,28 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 
-	// Wait for the runner to report whether the listener bound, so the client
-	// learns success/failure instead of a silent no-op (e.g. port already in use).
-	var bound bool
+	// Wait for the runner to report whether its setup worked, so the client
+	// learns success/failure instead of a silent no-op (e.g. port already in
+	// use, no CAP_NET_ADMIN).
+	var res setupResult
 	select {
-	case bound = <-resultCh:
+	case res = <-resultCh:
 	case <-time.After(remoteForwardBindTimeout):
+		res.detail = "no answer within " + remoteForwardBindTimeout.String()
 	}
-	if !bound {
+	if !res.ok {
 		h.pforwards().remove(fid)
 		_ = ctrl.CloseBoth()
-		// In case the runner DID bind but the result was slow/lost, tell it to
-		// stop listening so no orphan listener is left behind.
+		// In case the runner DID set up but the result was slow/lost, tell it
+		// to release its end so nothing is left behind.
 		sendClosePortForward(runner.Conn, fid)
-		return errResp(protocol.OpenPortForwardStatus_BindFailed)
+		status := protocol.OpenPortForwardStatus_BindFailed
+		if req.Direction == protocol.PortForwardDirection_Link {
+			status = protocol.OpenPortForwardStatus_LinkFailed
+		}
+		resp := errResp(status)
+		resp.SetDetail([]byte("runner: " + res.detail))
+		return resp
 	}
 
 	// Announced only once the listener is known to have bound: a registration
@@ -243,13 +283,38 @@ func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.Regis
 }
 
 // remoteForwardBindTimeout bounds how long registration waits for the runner's
-// bind result before giving up with BindFailed.
+// setup result before giving up with BindFailed / LinkFailed.
 const remoteForwardBindTimeout = 5 * time.Second
 
-// handleForwardSetupResult delivers a runner's listener-bind result to the
+// handleForwardSetupResult delivers a runner's setup result to the
 // registration goroutine blocked in registerRemoteForward.
 func (h *TaskHandler) handleForwardSetupResult(_ ConnHandle, msg *protocol.ForwardSetupResult) {
-	h.pforwards().signalBind(msg.ForwardId, msg.Ok())
+	h.pforwards().signalSetup(msg.ForwardId, msg.Ok(), string(msg.Detail))
+}
+
+// validForwardShape is the one home of the protocol x direction pairing rule:
+// tcp and udp go either way, and ip goes only as a link, which nothing else
+// does.
+func validForwardShape(p protocol.ForwardProtocol, d protocol.PortForwardDirection) bool {
+	switch p {
+	case protocol.ForwardProtocol_Tcp, protocol.ForwardProtocol_Udp:
+		return d == protocol.PortForwardDirection_Local || d == protocol.PortForwardDirection_Remote
+	case protocol.ForwardProtocol_Ip:
+		return d == protocol.PortForwardDirection_Link
+	}
+	return false
+}
+
+// forwardCapFor is the capability a forward of this direction needs, to
+// create and to kill alike. One function so the two gates cannot disagree.
+func forwardCapFor(d protocol.PortForwardDirection) protocol.Capability {
+	switch d {
+	case protocol.PortForwardDirection_Remote:
+		return protocol.Capability_ForwardRemote
+	case protocol.PortForwardDirection_Link:
+		return protocol.Capability_ForwardLink
+	}
+	return protocol.Capability_ForwardLocal
 }
 
 // sendClosePortForward best-effort tells a runner to stop a remote-forward listener.

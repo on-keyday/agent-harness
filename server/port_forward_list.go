@@ -125,6 +125,9 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.BytesToTarget, info.BytesFromTarget, info.ConnsTotal, info.ConnsOpen,
 		info.LastActivityUnixMs = pf.counters()
 	info.Taps = pf.tapCount()
+	if pf.link != nil {
+		info.SetLink(*pf.link) // Protocol, set above, is ip: the arm exists
+	}
 	// The udp group, as a group, zeros included -- and ONLY on a udp row. That
 	// split is the existence condition the counter list exists to express: a tcp
 	// forward has no max datagram size and cannot drop a datagram, while a udp

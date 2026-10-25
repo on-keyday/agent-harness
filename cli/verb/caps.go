@@ -41,6 +41,9 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
 		protocol.Capability_ForwardRemote,
+		// forward_link after the two port-forward bits, and implied by neither:
+		// a port forward names one target, a link names none.
+		protocol.Capability_ForwardLink,
 		// forward_tap is listed after the two that OPEN a forward, and is
 		// implied by neither: holding a forward and reading what crosses it are
 		// different powers.
@@ -100,6 +103,10 @@ func CapDescription(c protocol.Capability) string {
 		return "open local port forwards (-L)"
 	case protocol.Capability_ForwardRemote:
 		return "open remote port forwards (-R)"
+	case protocol.Capability_ForwardLink:
+		return "put a network interface at each end of a forward (forward --ip): every service bound to all addresses " +
+			"on either host becomes reachable from the other, over any IP protocol; " +
+			"NOT implied by forward_local or forward_remote"
 	case protocol.Capability_ForwardTap:
 		return "read the payload crossing a port forward (forward tap) — cleartext, " +
 			"so routinely Authorization headers, git credentials and database passwords; " +
@@ -399,6 +406,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_ForwardTap:    {tier: TierStrong},
 	protocol.Capability_ForwardLocal:  {tier: TierStrong},
 	protocol.Capability_ForwardRemote: {tier: TierStrong},
+	protocol.Capability_ForwardLink:   {tier: TierStrong},
 	protocol.Capability_ExecCowrite:   {tier: TierMid, impliedBy: []protocol.Capability{protocol.Capability_ExecControl}},
 	protocol.Capability_ExecRun:       {tier: TierMid},
 	protocol.Capability_FileWrite:     {tier: TierMid},
