@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -138,7 +139,7 @@ class WrapperTests(unittest.TestCase):
         self.plain_dir = self.tmp / "plain"
         self.plain_dir.mkdir()
         self.capture = self.tmp / "capture.json"
-        tools = self.tmp / "tools"
+        self.tools = tools = self.tmp / "tools"
         executable(tools / "setsid", "#!/bin/sh\nexit 0\n")
         executable(tools / "podman", f"#!{sys.executable}\nimport json,sys\nopen({str(self.capture)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
         (self.home / ".claude").mkdir()
@@ -246,6 +247,51 @@ class WrapperTests(unittest.TestCase):
             self.wrap(agent, "--history-window", cwd=cwd)
             if remove is not None:
                 remove.write_text("x")
+        self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+
+    def codex_fixture(self):
+        bundle = self.tmp / "codex-release/bin"
+        executable(bundle / "codex", "#!/bin/sh\n")
+        executable(bundle / "codex-code-mode-host", "#!/bin/sh\n")
+        (self.home / ".local/bin").mkdir(parents=True)
+        (self.home / ".local/bin/codex").symlink_to(bundle / "codex")
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex/auth.json").write_text("x")
+        (self.home / ".codex/config.toml").write_text("")
+        self.host_sessions = self.home / ".codex/sessions"
+        rollout(self.host_sessions, DAY + "/rollout-a.jsonl", self.wt)
+        rollout(self.host_sessions, DAY + "/rollout-b.jsonl", self.plain_dir)
+        self.task_id = "0" * 31 + "1"
+        self.env.update(XDG_STATE_HOME=str(self.tmp / "state"), HARNESS_TASK_ID=self.task_id)
+        return self.tmp / "state/harness-sandbox/codex" / self.task_id
+
+    def test_codex_window_mounts_and_imports(self):
+        d = self.codex_fixture()
+        _, argv = self.ok("codex", "--history-window")
+        home = self.home
+        self.assertIn(f"{d}:{home}/.codex/sessions", argv)
+        self.assertIn(f"{home}/.codex/thread-writer-locks:{home}/.codex/thread-writer-locks", argv)
+        self.assertIn(f"{home}/.codex/auth.json:{home}/.codex/auth.json", argv)
+        self.assertIn(f"{home}/.codex/config.toml:{home}/.codex/config.toml:ro", argv)
+        self.assertNotIn(f"{home}/.codex:{home}/.codex", argv)
+        self.assertEqual(sorted(p.name for p in d.rglob("rollout-*.jsonl")), ["rollout-a.jsonl"])
+
+    def test_codex_reaper_exports_after_exit(self):
+        d = self.codex_fixture()
+        (self.tools / "setsid").unlink()  # the real one: this test needs the reaper
+        new = d / "2026/10/26/rollout-new.jsonl"
+        executable(self.tools / "podman", f"#!{sys.executable}\n" + (
+            "import json,sys,pathlib\n"
+            "if sys.argv[1] == 'run':\n"
+            f"    p = pathlib.Path({str(new)!r}); p.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"    p.write_text(json.dumps({{'type':'session_meta','payload':{{'cwd':{str(self.wt)!r}}}}}) + '\\n')\n"))
+        self.ok("codex", "--history-window")
+        target = self.host_sessions / "2026/10/26/rollout-new.jsonl"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not (target.exists() and not list(self.tmp.glob("harness-sandbox-root.*"))):
+            time.sleep(0.2)
+        self.assertTrue(target.exists(), (self.tmp / "sandbox-reaper.log").read_text() if (self.tmp / "sandbox-reaper.log").exists() else "")
+        self.assertEqual(target.stat().st_ino, new.stat().st_ino)
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
 
 

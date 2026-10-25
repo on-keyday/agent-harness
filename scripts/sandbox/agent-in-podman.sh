@@ -599,15 +599,19 @@ fi
 # See docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md.
 history_mode=shared
 history_root=""
+history_helper="" hist_sync="" hist_host=""
 if [ "$history_window" = 1 ]; then
   hw_refuse() { echo "[agent-in-podman] --history-window: $1" >&2; exit 2; }
   [ -n "$A_HISTORY" ] || hw_refuse "$AGENT has no window (no way to show one task's conversations alone)"
   [ "$linked_wt" = 1 ] || hw_refuse "$WT is not a linked worktree; the window would hold every task's conversations"
-  [ "$A_HISTORY" = sync ] && hw_refuse "codex window not wired yet"
-  hist_store="$A_HISTORY_STORE/$(history_name "$WT")"
-  hist_len=$(printf %s "${hist_store##*/}" | wc -c)
-  if [ "$A_HISTORY_NAME_MAX" -gt 0 ] && [ "$hist_len" -gt "$A_HISTORY_NAME_MAX" ]; then
-    hw_refuse "the history directory name for $WT is $hist_len bytes; over $A_HISTORY_NAME_MAX $AGENT shortens it with a hash this wrapper does not compute"
+  if [ "$A_HISTORY" = sync ]; then
+    hist_store="$A_HISTORY_STORE"
+  else
+    hist_store="$A_HISTORY_STORE/$(history_name "$WT")"
+    hist_len=$(printf %s "${hist_store##*/}" | wc -c)
+    if [ "$A_HISTORY_NAME_MAX" -gt 0 ] && [ "$hist_len" -gt "$A_HISTORY_NAME_MAX" ]; then
+      hw_refuse "the history directory name for $WT is $hist_len bytes; over $A_HISTORY_NAME_MAX $AGENT shortens it with a hash this wrapper does not compute"
+    fi
   fi
   declare -a hist_creds=()
   [ "$token_auth" = 1 ] || hist_creds=( "${A_CRED_FILES[@]}" )
@@ -616,6 +620,23 @@ if [ "$history_window" = 1 ]; then
   done
   declare -a hist_ro=()
   for f in "${A_RO_CONFIG[@]}"; do [ -f "$HOME_DIR/$f" ] && hist_ro+=( "$f" ); done
+  hist_src="$HOME_DIR/$hist_store"
+  if [ "$A_HISTORY" = sync ]; then
+    # codex: rollouts live at sessions/YYYY/MM/DD/ with the cwd only in their
+    # first line, and a rollout placed at any other depth is resumable by id
+    # but never listed (measured, codex 0.164.0), so `resume --last` would not
+    # find it. The window is a per-task directory, outside ~/.codex so the host
+    # never lists a rollout twice, rebuilt here from hardlinks to the host
+    # rollouts of this cwd; the reaper links the container's new ones back.
+    # Kept across runs only so a rollout the reaper never got to link (it died
+    # with the host) is linked by the next start before the rebuild.
+    history_helper="$(dirname "$(readlink -f "$0")")/history_window.py"
+    hist_sync="${XDG_STATE_HOME:-$HOME_DIR/.local/state}/harness-sandbox/codex/${HARNESS_TASK_ID:-cwd-$(printf %s "$WT" | sha256sum | cut -c1-32)}"
+    hist_host="$HOME_DIR/$hist_store"
+    mkdir -p "$hist_sync" "$hist_host"
+    python3 "$history_helper" codex-import --task-dir "$hist_sync" --host-sessions "$hist_host" --cwd "$WT" || exit $?
+    hist_src="$hist_sync"
+  fi
 
   history_mode=window
   history_root=$(mktemp -d "${TMPDIR:-/tmp}/harness-sandbox-root.XXXXXX")
@@ -625,7 +646,7 @@ if [ "$history_window" = 1 ]; then
   mkdir -p "$HOME_DIR/$hist_store"
   # Parents before what sits inside them: the config root, then the window in it.
   for x in "${A_HISTORY_ROOTS[@]}" "${A_HISTORY_ROOT_FILES[@]}"; do AUTH+=( -v "$history_root/$x:$AGENT_HOME/$x" ); done
-  AUTH+=( -v "$HOME_DIR/$hist_store:$AGENT_HOME/$hist_store" )
+  AUTH+=( -v "$hist_src:$AGENT_HOME/$hist_store" )
   for f in "${hist_creds[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f" ); done
   for f in "${hist_ro[@]}"; do AUTH+=( -v "$HOME_DIR/$f:$AGENT_HOME/$f:ro" ); done
   for d in "${A_SHARED_DIRS[@]}"; do mkdir -p "$HOME_DIR/$d"; AUTH+=( -v "$HOME_DIR/$d:$AGENT_HOME/$d" ); done
@@ -813,12 +834,24 @@ echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-c
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"; history_root="$3"
+  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
+  # codex history window: link the rollouts the container created into the
+  # host store, every 5s while it runs (so the host can list and resume the
+  # conversation during the run) and once more after the container is gone.
+  export_rollouts() {
+    [ -n "$sync_dir" ] && python3 "$helper" codex-export --task-dir "$sync_dir" --host-sessions "$host_sessions" --cwd "$wt" >>"$log" 2>&1
+  }
   # cd out of the inherited cwd (= the task worktree): the runner deletes the
   # worktree on session kill, and podman aborts on a vanished cwd ("error
   # getting current working directory") before it ever touches the container.
   cd /
-  while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
+  polls=0
+  while kill -0 "$wrapper_pid" 2>/dev/null; do
+    sleep 0.5
+    polls=$((polls + 1))
+    [ $((polls % 10)) -eq 0 ] && export_rollouts
+  done
   echo "$(date "+%F %T") reaper: wrapper $wrapper_pid gone cid=$(head -c12 "$cidfile" 2>/dev/null || echo no-cidfile)" >>"$log"
   deadline=$((SECONDS + 60))
   removed=0
@@ -829,6 +862,7 @@ setsid bash -c '
     sleep 1
   done
   rm -f "$cidfile"
+  export_rollouts
   # The history window root is the live config dir of a container that is
   # still there, so it goes only once the container is gone.
   if [ -n "$history_root" ]; then
@@ -838,7 +872,7 @@ setsid bash -c '
       echo "$(date "+%F %T") reaper: kept $history_root" >>"$log"
     fi
   fi
-' _ "$$" "$cidfile" "$history_root" </dev/null >/dev/null 2>&1 &
+' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
 # (entrypoint.sh -> gosu -> agent-launch.sh -> the agent), so the AGENT itself ends
