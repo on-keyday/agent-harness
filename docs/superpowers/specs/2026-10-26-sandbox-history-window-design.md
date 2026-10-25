@@ -311,6 +311,17 @@ listing, so the host would never find such a conversation.
   directory symlink planted there had led the clearing into the host store and
   deleted rollouts of every cwd (found in review, reproduced, fixed before
   landing).
+- **The only copy of a rollout is never deleted.** The clearing keeps any
+  rollout the host neither holds (same inode) nor gave to the last import. If a
+  codex release moved the cwd out of the first line, export would link nothing,
+  and clearing would otherwise delete every conversation made in the window,
+  with nothing to notice it (the storage probe writes its own rollouts). The
+  kept file is logged on every clearing.
+- **The per-task directory is removed after the run** (and its manifest), by
+  the reaper after the re-index, unless it holds such an only copy. Kept, its
+  hardlinks would hold on to conversations the host has since deleted, and one
+  directory would accumulate per task. So the import's "export first" covers
+  only a run whose reaper never finished.
 - **Then the host's codex re-indexes this cwd** (added after gate V4 failed
   without it). `codex exec resume --last` asks the state DB first and treats
   any row for the cwd as authoritative; it scans rollout files only when the
@@ -324,7 +335,8 @@ listing, so the host would never find such a conversation.
   is not repeated during the run, so a host `resume --last` issued while a
   window task is still running does not yet see that task's new thread.
 - **The container runs in the host's timezone** (`podman run --tz=local`, every
-  mode). codex names rollouts and files them under `YYYY/MM/DD` by local time.
+  mode, when the host has `/etc/localtime`; without one the container stays
+  UTC rather than failing to start). codex names rollouts and files them under `YYYY/MM/DD` by local time.
   In the image's UTC a rollout written at 03:30 JST was filed as
   `2026/10/25/…T18-30-08` and sorted behind the host's.
 - **Writer locks are the host's.** codex serialises writers to one thread

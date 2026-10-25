@@ -492,7 +492,9 @@ plugins, MCP config — starts empty every run and is discarded.
 - **codex has no per-cwd directory** (rollouts are filed by date, with the cwd
   in their first line). The window is
   `${XDG_STATE_HOME:-~/.local/state}/harness-sandbox/codex/<task-id>/`,
-  rebuilt at every start from hardlinks to the host rollouts of this cwd.
+  rebuilt at every start from hardlinks to the host rollouts of this cwd and
+  removed by the reaper after the run — unless it holds a rollout that never
+  reached the host, which is then kept and logged rather than deleted.
   The reaper links the container's new rollouts back every 5 s and once more
   after exit. It never overwrites a host file, never follows a symlink in the
   per-task directory, does not put back a rollout you archived or deleted on
@@ -506,7 +508,8 @@ plugins, MCP config — starts empty every run and is discarded.
   content); a container can rewrite a rollout's first line after it was
   linked. The last two sit inside this kit's threat model (accidental blast
   radius, not a hostile agent).
-- **Every container runs in the host's timezone** (`--tz=local`, all modes):
+- **Every container runs in the host's timezone** (`--tz=local`, all modes,
+  when the host has `/etc/localtime`):
   codex files rollouts by local time, and from the image's UTC they sorted
   hours behind the host's.
 

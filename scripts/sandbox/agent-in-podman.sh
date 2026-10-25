@@ -877,6 +877,10 @@ setsid bash -c '
   # DB first, and that DB never saw a thread the container created.
   [ -n "$sync_dir" ] && [ -n "$host_codex" ] &&
     timeout 60 python3 "$helper" codex-reindex --codex "$host_codex" --cwd "$wt" >>"$log" 2>&1
+  # Then drop the per-task dir unless it holds the only copy of something:
+  # its hardlinks would otherwise outlive conversations the host deletes.
+  [ -n "$sync_dir" ] &&
+    python3 "$helper" codex-prune --task-dir "$sync_dir" --host-sessions "$host_sessions" --cwd "$wt" >>"$log" 2>&1
   # The history window root is the live config dir of a container that is
   # still there, so it goes only once the container is gone.
   if [ -n "$history_root" ]; then
@@ -911,10 +915,14 @@ setsid bash -c '
 # does both (sessions/YYYY/MM/DD/rollout-<local time>-…): a rollout written in
 # here sorted behind the host's, the host's state DB never picked it up, and
 # `codex exec resume --last` on the host continued an older thread (measured
-# 2026-10-26, codex 0.164.0, host JST).
+# 2026-10-26, codex 0.164.0, host JST). Only when the host HAS a local zone:
+# "local" is read from /etc/localtime, and a host with none set must still be
+# able to start a container (then UTC, as before).
+declare -a TZ_ARGS=()
+[ -e /etc/localtime ] && TZ_ARGS=( --tz=local )
 exec podman run --rm -i "${TTY[@]}" \
   --init \
-  --tz=local \
+  "${TZ_ARGS[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \

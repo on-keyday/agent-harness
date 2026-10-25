@@ -137,6 +137,57 @@ def codex_export(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
     return linked
 
 
+def _only_here(task_dir: Path, host_sessions: Path, rel: Path, path: Path) -> bool:
+    """A rollout whose only copy is in the per-task directory: the container
+    wrote it and the host neither holds it (same inode) nor gave it to us."""
+    if str(rel) in _imported(task_dir):
+        return False  # came from the host; if the host dropped it, so do we
+    try:
+        host = (host_sessions / rel).stat()
+    except FileNotFoundError:
+        return True
+    mine = path.stat()
+    return (host.st_dev, host.st_ino) != (mine.st_dev, mine.st_ino)
+
+
+def _clear(task_dir: Path, host_sessions: Path, log: TextIO) -> None:
+    """Empty the per-task directory for a rebuild, except rollouts whose only
+    copy is here. Never follows a symlink: the container can plant one, and a
+    followed one had led this into the host store (found in review)."""
+    rollouts = set(_rollouts(task_dir))
+    for directory, subdirs, files in os.walk(task_dir, topdown=False, followlinks=False):
+        for name in files + subdirs:
+            path = Path(directory) / name
+            mode = os.lstat(path).st_mode
+            if stat.S_ISDIR(mode):
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass  # still holds a kept rollout
+                continue
+            if path in rollouts and _only_here(task_dir, host_sessions, path.relative_to(task_dir), path):
+                print(f"kept {path.relative_to(task_dir)}: not linked to the host (first line unreadable, or another cwd)",
+                      file=log)
+                continue
+            path.unlink()  # a symlink is removed itself, never its target
+
+
+def codex_prune(task_dir: Path, host_sessions: Path, log: TextIO) -> bool:
+    """Remove the per-task directory (and its manifest) once nothing in it is
+    the only copy. Otherwise its hardlinks would keep conversations the host
+    deleted, and one such directory would pile up per task."""
+    if not task_dir.is_dir():
+        return False
+    for path in _rollouts(task_dir):
+        rel = path.relative_to(task_dir)
+        if _only_here(task_dir, host_sessions, rel, path):
+            print(f"kept {task_dir}: {rel} exists only there", file=log)
+            return False
+    shutil.rmtree(task_dir)
+    _manifest(task_dir).unlink(missing_ok=True)
+    return True
+
+
 def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> list[Path]:
     """Rebuild the per-task directory from the host rollouts of cwd.
 
@@ -144,9 +195,7 @@ def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
     reaper died with the host) would otherwise be lost to the clearing below.
     """
     codex_export(task_dir, host_sessions, cwd, log)
-    # Removes symlinks themselves, never what they point at.
-    shutil.rmtree(task_dir)
-    task_dir.mkdir()
+    _clear(task_dir, host_sessions, log)
     linked = []
     for path in _rollouts(host_sessions):
         found = rollout_cwd(path)
@@ -154,7 +203,11 @@ def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
             continue
         target = task_dir / path.relative_to(host_sessions)
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.link(path, target, follow_symlinks=False)
+        try:
+            os.link(path, target, follow_symlinks=False)
+        except FileExistsError:
+            print(f"kept {target.relative_to(task_dir)}: the container's own file is in the way of the host's", file=log)
+            continue
         linked.append(target)
     _manifest(task_dir).write_text("".join(f"{p.relative_to(task_dir)}\n" for p in linked))
     return linked
@@ -239,7 +292,7 @@ def codex_reindex(codex: str, cwd: str, log: TextIO, timeout: float = 30) -> boo
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("codex-import", "codex-export", "codex-reindex"))
+    parser.add_argument("command", choices=("codex-import", "codex-export", "codex-reindex", "codex-prune"))
     parser.add_argument("--task-dir", type=Path)
     parser.add_argument("--host-sessions", type=Path)
     parser.add_argument("--codex", help="codex-reindex: the host's codex binary")
@@ -251,6 +304,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if codex_reindex(args.codex, args.cwd, sys.stderr) else 1
     if args.task_dir is None or args.host_sessions is None:
         parser.error(f"{args.command} needs --task-dir and --host-sessions")
+    if args.command == "codex-prune":
+        codex_prune(args.task_dir, args.host_sessions, sys.stderr)
+        return 0
     run = codex_import if args.command == "codex-import" else codex_export
     try:
         run(args.task_dir, args.host_sessions, args.cwd, sys.stderr)

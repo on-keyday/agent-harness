@@ -101,6 +101,33 @@ class HelperTests(unittest.TestCase):
         hw.codex_import(self.task, self.host, str(self.work), self.log)
         self.assertFalse((self.host / rel).exists())
 
+    def test_import_keeps_a_container_rollout_it_could_not_link(self):
+        # If a codex release moved the cwd out of the first line, export would
+        # never link the container's rollouts; clearing them at the next start
+        # would delete every conversation made in the window, silently.
+        rel = "2026/10/26/rollout-unreadable.jsonl"
+        (self.task / rel).parent.mkdir(parents=True)
+        (self.task / rel).write_text('{"type":"session_meta_v2"}\n')
+        hw.codex_import(self.task, self.host, str(self.work), self.log)
+        self.assertEqual((self.task / rel).read_text(), '{"type":"session_meta_v2"}\n')
+        self.assertIn("kept", self.log.getvalue())
+
+    def test_prune_removes_a_fully_linked_task_dir(self):
+        rollout(self.host, DAY + "/rollout-a.jsonl", self.work)
+        hw.codex_import(self.task, self.host, str(self.work), self.log)
+        rollout(self.task, "2026/10/26/rollout-new.jsonl", self.work)
+        hw.codex_export(self.task, self.host, str(self.work), self.log)
+        self.assertTrue(hw.codex_prune(self.task, self.host, self.log))
+        self.assertFalse(self.task.exists())
+        self.assertFalse(hw._manifest(self.task).exists())
+
+    def test_prune_keeps_a_task_dir_holding_an_unlinked_rollout(self):
+        rel = "2026/10/26/rollout-unreadable.jsonl"
+        (self.task / rel).parent.mkdir(parents=True)
+        (self.task / rel).write_text("{}\n")
+        self.assertFalse(hw.codex_prune(self.task, self.host, self.log))
+        self.assertTrue((self.task / rel).exists())
+
     def test_export_never_overwrites_host(self):
         rel = DAY + "/rollout-a.jsonl"
         host_copy = rollout(self.host, rel, self.work)
@@ -365,7 +392,7 @@ class WrapperTests(unittest.TestCase):
         while time.monotonic() < deadline and not (target.exists() and not list(self.tmp.glob("harness-sandbox-root.*"))):
             time.sleep(0.2)
         self.assertTrue(target.exists(), (self.tmp / "sandbox-reaper.log").read_text() if (self.tmp / "sandbox-reaper.log").exists() else "")
-        self.assertEqual(target.stat().st_ino, new.stat().st_ino)
+        self.assertIn(str(self.wt), target.read_text())
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
         # Then the host's codex re-indexes this cwd, or `resume --last` on the
         # host never sees a thread the container created.
@@ -373,6 +400,12 @@ class WrapperTests(unittest.TestCase):
         while time.monotonic() < deadline and not self.codex_calls.exists():
             time.sleep(0.2)
         self.assertIn("app-server", self.codex_calls.read_text())
+        # And the per-task dir goes once every rollout in it is on the host:
+        # its hardlinks would otherwise outlive conversations the host deletes.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and d.exists():
+            time.sleep(0.2)
+        self.assertFalse(d.exists())
 
 
 if __name__ == "__main__":
