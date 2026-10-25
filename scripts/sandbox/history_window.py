@@ -9,6 +9,9 @@ hardlinks the host rollouts of one cwd into the per-task directory before the
 container starts (codex-import), and links rollouts the container created back
 to the host (codex-export, run by the wrapper's reaper). Both names are one
 inode, and codex appends with append(true), so writes reach both sides at once.
+After the container is gone the reaper also has the host's codex re-index the
+cwd (codex-reindex), because the host's state DB never saw the threads the
+container created.
 
 The host is the source of truth: nothing under the host directory is ever
 written, overwritten or unlinked here, only linked into. See
@@ -20,7 +23,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import select
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TextIO
 
@@ -125,13 +131,86 @@ def codex_import(task_dir: Path, host_sessions: Path, cwd: str, log: TextIO) -> 
     return linked
 
 
+# exec/src/lib.rs all_thread_source_kinds(): every kind, so exec threads count.
+SOURCE_KINDS = ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact",
+                "subAgentThreadSpawn", "subAgentOther", "unknown"]
+
+
+def codex_reindex(codex: str, cwd: str, log: TextIO, timeout: float = 30) -> bool:
+    """Make the host's state DB index this cwd's rollouts, including linked ones.
+
+    `codex exec resume --last` (and the TUI's) asks the state DB first and treats
+    any match for the cwd as authoritative; it scans rollout files only when the
+    DB has none (exec/src/lib.rs resolve_resume_thread_id, codex 0.164.0). A
+    thread the container created reached the host as a linked file the host's DB
+    never saw, so the host resumed an older thread instead (measured
+    2026-10-26). A thread/list with useStateDbOnly=false is codex's own
+    scan-and-repair, which adds such rollouts to the DB.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HARNESS_")}
+    try:
+        proc = subprocess.Popen([codex, "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=cwd, env=env, bufsize=1)
+    except OSError as error:
+        print(f"reindex: cannot start {codex}: {error}", file=log)
+        return False
+    deadline = time.monotonic() + timeout
+
+    def rpc(request_id: int, method: str, params: dict) -> dict | None:
+        try:
+            proc.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
+            proc.stdin.flush()
+        except OSError:
+            return None
+        while time.monotonic() < deadline:
+            if not select.select([proc.stdout], [], [], 0.5)[0]:
+                continue
+            line = proc.stdout.readline()
+            if not line:
+                return None
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if reply.get("id") == request_id:
+                return reply
+        return None
+
+    try:
+        listed = rpc(1, "initialize", {"clientInfo": {"name": "harness_history_window", "version": "0"}}) is not None
+        if listed:
+            proc.stdin.write('{"method":"initialized"}\n')
+            proc.stdin.flush()
+            reply = rpc(2, "thread/list", {"limit": 100, "cwd": cwd, "useStateDbOnly": False,
+                                           "sortKey": "updated_at", "sourceKinds": SOURCE_KINDS})
+            listed = reply is not None and "result" in reply
+    except OSError:
+        listed = False
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    if not listed:
+        print(f"reindex: {codex} app-server gave no thread/list for {cwd}", file=log)
+    return listed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("codex-import", "codex-export"))
-    parser.add_argument("--task-dir", type=Path, required=True)
-    parser.add_argument("--host-sessions", type=Path, required=True)
+    parser.add_argument("command", choices=("codex-import", "codex-export", "codex-reindex"))
+    parser.add_argument("--task-dir", type=Path)
+    parser.add_argument("--host-sessions", type=Path)
+    parser.add_argument("--codex", help="codex-reindex: the host's codex binary")
     parser.add_argument("--cwd", required=True)
     args = parser.parse_args(argv)
+    if args.command == "codex-reindex":
+        if not args.codex:
+            parser.error("codex-reindex needs --codex")
+        return 0 if codex_reindex(args.codex, args.cwd, sys.stderr) else 1
+    if args.task_dir is None or args.host_sessions is None:
+        parser.error(f"{args.command} needs --task-dir and --host-sessions")
     run = codex_import if args.command == "codex-import" else codex_export
     try:
         run(args.task_dir, args.host_sessions, args.cwd, sys.stderr)

@@ -604,7 +604,7 @@ fi
 # See docs/superpowers/specs/2026-10-26-sandbox-history-window-design.md.
 history_mode=shared
 history_root=""
-history_helper="" hist_sync="" hist_host=""
+history_helper="" hist_sync="" hist_host="" hist_codex=""
 if [ "$history_window" = 1 ]; then
   hw_refuse() { echo "[agent-in-podman] --history-window: $1" >&2; exit 2; }
   [ -n "$A_HISTORY" ] || hw_refuse "$AGENT has no window (no way to show one task's conversations alone)"
@@ -643,6 +643,9 @@ if [ "$history_window" = 1 ]; then
     mkdir -p "$hist_sync" "$hist_host"
     python3 "$history_helper" codex-import --task-dir "$hist_sync" --host-sessions "$hist_host" --cwd "$WT" || exit $?
     hist_src="$hist_sync"
+    # The host's own codex, for the reaper's re-index (history_window.py
+    # codex_reindex): the host's state DB never sees a thread created in here.
+    hist_codex=$(readlink -f "$A_HOST_BIN" 2>/dev/null || true)
   fi
 
   history_mode=window
@@ -841,7 +844,7 @@ echo "[agent-in-podman] agent=$AGENT auth=$auth_mode firewall=$fw_mode harness-c
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"; history_root="$3"
-  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"
+  helper="$4"; sync_dir="$5"; host_sessions="$6"; wt="$7"; host_codex="$8"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
   # codex history window: link the rollouts the container created into the
   # host store, every 5s while it runs (so the host can list and resume the
@@ -870,6 +873,10 @@ setsid bash -c '
   done
   rm -f "$cidfile"
   export_rollouts
+  # ...and have the codex of the host index them: resume --last asks its state
+  # DB first, and that DB never saw a thread the container created.
+  [ -n "$sync_dir" ] && [ -n "$host_codex" ] &&
+    timeout 60 python3 "$helper" codex-reindex --codex "$host_codex" --cwd "$wt" >>"$log" 2>&1
   # The history window root is the live config dir of a container that is
   # still there, so it goes only once the container is gone.
   if [ -n "$history_root" ]; then
@@ -879,7 +886,7 @@ setsid bash -c '
       echo "$(date "+%F %T") reaper: kept $history_root" >>"$log"
     fi
   fi
-' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" </dev/null >/dev/null 2>&1 &
+' _ "$$" "$cidfile" "$history_root" "$history_helper" "$hist_sync" "$hist_host" "$WT" "$hist_codex" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
 # (entrypoint.sh -> gosu -> agent-launch.sh -> the agent), so the AGENT itself ends
@@ -898,8 +905,16 @@ setsid bash -c '
 # and forwards signals; it costs one ~800KB binary bind-mounted at
 # /run/podman-init and does not disturb the TTY (the child stays in the
 # foreground process group).
+#
+# --tz=local: the image runs in UTC, and an agent that names or files its
+# history by LOCAL time writes it hours "earlier" than the host does. codex
+# does both (sessions/YYYY/MM/DD/rollout-<local time>-…): a rollout written in
+# here sorted behind the host's, the host's state DB never picked it up, and
+# `codex exec resume --last` on the host continued an older thread (measured
+# 2026-10-26, codex 0.164.0, host JST).
 exec podman run --rm -i "${TTY[@]}" \
   --init \
+  --tz=local \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \

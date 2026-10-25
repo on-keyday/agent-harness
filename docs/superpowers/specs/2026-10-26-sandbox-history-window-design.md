@@ -126,6 +126,9 @@ choice the operator made, and a later reader may overturn them on evidence.
 | 15 | A rollout the container creates is linked to the host only if its first line names this cwd; rewriting it after the link is an accepted residual (§9) | author |
 | 16 | Enabled per task with `--agent-arg --history-window` only; no window presets and no remembered per-task mode, so a resume without the flag runs shared (§5) | operator |
 | 17 | claude's window works under mount auth with `.credentials.json` mounted on its own. **Reversal:** this row first required `--token-auth`, on the measurement that claude replaces the file. Two findings moved it: the writer's in-place fallback on `EBUSY`, and a live single-file mount that took the write (§6). The empty-file-on-crash risk is accepted | operator chose to measure; author on the result |
+| 18 | Every container runs with `--tz=local` (§7b), in every mode, since sandboxed codex in the shared mode writes UTC-filed rollouts into the host store too | author, on gate V4 |
+| 19 | The reaper re-indexes the host's codex state DB for this cwd after the final export (§7b). **Departs from row 9 / §7d**, which said a failed V4 refuses codex. V4 failed without the re-index and passed with it, using codex's own scan-and-repair | author, on gate V4 |
+| 20 | pi's `~/.pi/agent/bin` is mounted read-only. It holds a helper binary, not history or config | author, on gate V7 |
 
 ## 5. Interface
 
@@ -173,7 +176,7 @@ starting it would fail later and less clearly).
 | agent | config root (ephemeral) | window | credential file | read-only config |
 |---|---|---|---|---|
 | claude | `~/.claude`, `~/.claude.json` | `~/.claude/projects/<enc>/`, where `<enc>` replaces every byte that is not an ASCII letter or digit with `-` | `~/.claude/.credentials.json` under mount auth; none under `--token-auth` | none |
-| pi | `~/.pi` | `~/.pi/agent/sessions/--<cwd without its leading />--` with `/`, `\` and `:` replaced by `-` (pi 1.0.3 `dist/core/session-manager.js:290-294`) | `~/.pi/agent/auth.json` | `~/.pi/agent/settings.json` (it names the provider) |
+| pi | `~/.pi` | `~/.pi/agent/sessions/--<cwd without its leading />--` with `/`, `\` and `:` replaced by `-` (pi 1.0.3 `dist/core/session-manager.js:290-294`) | `~/.pi/agent/auth.json` | `~/.pi/agent/settings.json` (it names the provider); the directory `~/.pi/agent/bin` (the `fd` binary pi fetched; without it pi warns `fd not found`, measured 2026-10-26) |
 | codex | `~/.codex` | the per-task sync directory mounted at `~/.codex/sessions` (§7), plus the host's `~/.codex/thread-writer-locks/` read-write (§7b) | `~/.codex/auth.json` | `~/.codex/config.toml` |
 
 **Why a single-file credential mount is safe for pi and codex.** A file bind
@@ -296,6 +299,21 @@ listing, so the host would never find such a conversation.
   conversation in another task's history by naming that task's cwd (§9 for
   what this does not close). It **never overwrites or deletes** a host file:
   an existing host path with a different inode is left alone and logged.
+- **Then the host's codex re-indexes this cwd** (added after gate V4 failed
+  without it). `codex exec resume --last` asks the state DB first and treats
+  any row for the cwd as authoritative; it scans rollout files only when the
+  DB has none (codex 0.164.0 `exec/src/lib.rs`, `resolve_resume_thread_id`).
+  A thread the container created reaches the host only as a linked file, so
+  the host kept resuming an older thread. After its final export the reaper
+  starts the host's `codex app-server` and issues one `thread/list` for this
+  cwd with `useStateDbOnly: false` and every source kind. That is codex's own
+  scan-and-repair, and it adds the linked rollouts to the host DB. The listing
+  is not repeated during the run, so a host `resume --last` issued while a
+  window task is still running does not yet see that task's new thread.
+- **The container runs in the host's timezone** (`podman run --tz=local`, every
+  mode). codex names rollouts and files them under `YYYY/MM/DD` by local time.
+  In the image's UTC a rollout written at 03:30 JST was filed as
+  `2026/10/25/…T18-30-08` and sorted behind the host's.
 - **Writer locks are the host's.** codex serialises writers to one thread
   with `flock` on `$CODEX_HOME/thread-writer-locks/<thread-id>.lock`
   (`rollout/src/writer_lock.rs`, `File::try_lock`). In an ephemeral root a host
@@ -327,7 +345,7 @@ Read at tag `rust-v0.164.0` (`6aaac694`):
 | cold compression (`rollout/src/compression.rs`: files unmodified for 7 days become `.jsonl.zst`, original removed) | the two names stop sharing an inode | feature `local_thread_store_compression`, `Stage::UnderDevelopment`, `default_enabled: false` (`features/src/lib.rs:1330-1334`) |
 | legacy → paginated migration (`thread-store/src/local/rollout_migration.rs`, staged file renamed over the original) | same | feature `background_paginated_rollout_migration`, under development, default off (`:1342-1346`) |
 | archive / unarchive (`archive_thread.rs`, `unarchive_thread.rs`) | moves the file out of `sessions/` | explicit user action |
-| revert of an unloaded paginated thread (`revert_thread.rs:15-18`) | writes a **new** rollout and moves the thread's current-file pointer **only in SQLite** | reachability from the harness not established (V6) |
+| revert of an unloaded paginated thread (`revert_thread.rs:15-18`) | writes a **new** rollout and moves the thread's current-file pointer **only in SQLite** | reachable from the interactive TUI's backtrack (`tui/src/app/event_dispatch.rs:797` → `thread/revert`), not from `exec` (V6) |
 
 The first two are off by default, and the host's `config.toml` enables
 neither (`grep -c 'local_thread_store_compression\|background_paginated_rollout_migration' ~/.codex/config.toml`
@@ -336,9 +354,9 @@ per-task directory is rebuilt from the host at every start (§7b), a broken
 link costs at most the remainder of one run.
 
 Revert is the one path a sync cannot follow, because the fact it changes is in
-a database the other side does not share. If V6 finds it reachable, it is
-recorded as a limitation: after a revert inside the sandbox, the host's next
-`resume --last` continues the pre-revert file.
+a database the other side does not share. V6 found it reachable, so it is a
+recorded limitation: after a backtrack in an interactive codex session inside
+the window, the host may continue the pre-revert file.
 
 ### 7d. Gates before codex ships
 
@@ -348,7 +366,9 @@ recorded as a limitation: after a revert inside the sandbox, the host's next
 (`sqlite3 "file:$HOME/.codex/state_5.sqlite?immutable=1" "select history_mode, count(*), min(cli_version), max(cli_version), max(date(created_at,'unixepoch')) from threads group by 1"`).
 The peer's measurements used hand-written legacy rollouts. So V3–V5 must be
 repeated with paginated rollouts. If V3, V4 or V4b fails, codex's table entry
-gets no window and the flag exits 2 for it, as for opencode.
+gets no window and the flag exits 2 for it, as for opencode. (V4 failed as
+first built, and passes with the re-index and `--tz=local` of §7b: §4 rows
+18–19, §11 results.)
 
 ## 8. Refusals
 
@@ -424,6 +444,28 @@ runner slot unless stated, and recorded with the command that produced it.
 | V5 | codex: the §7a non-date-depth result, as a committed probe | — (evidence) |
 | V6 | codex: is thread revert reachable from an interactive or exec codex task? | the §7c limitation text |
 | V7 | pi: `--continue` works with only the session directory, `auth.json` and `settings.json` from the host | pi |
+
+### Results (2026-10-26)
+
+Measured on a host running claude 2.1.310, pi 1.0.3 and codex 0.164.0. The
+branch's wrapper was invoked directly, with the cwd set to a linked worktree
+of a scratch repo and the `HARNESS_*` env removed. The per-agent symlink was
+run as `<agent>-in-podman.sh --omit-harness-cli --no-proxy-log
+--history-window <the preset's agentArgs and oneshot/resume argv>`. Every
+codeword step is one model turn.
+
+| gate | result |
+|---|---|
+| V1 | answered by measurement and reading (§6) |
+| V2 | **pass.** Window oneshot, then window `--continue`, then host `claude --continue`: all recalled the codeword. `.credentials.json` kept its inode and size. Shared → window resume also recalled |
+| V3 | **pass**, after rows 18 and 19. A window `exec resume --last` continued a host-originated **paginated** thread, and also the newest container-created one |
+| V4 | **failed, then passed.** Without the re-index, the host's `exec resume --last` continued an older thread: the host DB had no row for the container's thread. A second cause was the UTC filing (row 18). With `--tz=local` and the reaper's re-index, the host resumed the container's thread |
+| V4b | **pass.** Host `exec` (A), then window resume (recalled A, added B), then host resume recalled A and B. Both names share one inode |
+| V5 | **reproduced.** `check_codex_release.py --smoke` reports `non_date_depth: {"listed": false, "readable": true}`; all five storage checks are true, with synthetic paginated rollouts too |
+| V6 | **reachable** from the TUI's backtrack, not from `exec` (§7c) |
+| V7 | **pass.** Window, then host `pi --continue`, then shared, then window, each recalled the previous codeword. Interactive start showed no trust prompt in either mode. The window first showed `fd not found` (row 20) |
+| §12.1 | `probe.sh` inside each window. claude: `-wt(host)` plus an unmarked repo-root dir that claude creates in the ephemeral root for its auto memory. pi: its one session dir `(host)` of the host's 11. codex: 6 rollouts, all of this cwd, of the host's 259 |
+| §12.4 | the refusal cases against real podman exited 2 with their reasons; no container started and no temp root was left |
 
 ## 12. Testing
 

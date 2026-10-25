@@ -102,6 +102,33 @@ class HelperTests(unittest.TestCase):
             with self.assertRaises(hw.CrossDevice):
                 hw.codex_export(self.task, self.host, str(self.work), self.log)
 
+    def test_reindex_requests_scan_and_repair(self):
+        seen = self.root / "seen.json"
+        fake = self.root / "codex"
+        fake.write_text(f"#!{sys.executable}\n" + (
+            "import json,sys\n"
+            f"open({str(seen)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "for line in sys.stdin:\n"
+            "    m = json.loads(line)\n"
+            "    if 'id' not in m: continue\n"
+            f"    open({str(seen)!r}, 'a').write(json.dumps(m) + '\\n')\n"
+            "    print(json.dumps({'id': m['id'], 'result': {'data': []}}), flush=True)\n"))
+        fake.chmod(0o755)
+        self.assertTrue(hw.codex_reindex(str(fake), str(self.work), self.log))
+        lines = [json.loads(l) for l in seen.read_text().splitlines()]
+        self.assertEqual(lines[0], ["app-server", "--listen", "stdio://"])
+        listing = next(l for l in lines[1:] if l.get("method") == "thread/list")["params"]
+        self.assertIs(listing["useStateDbOnly"], False)
+        self.assertEqual(listing["cwd"], str(self.work))
+        self.assertIn("exec", listing["sourceKinds"])
+
+    def test_reindex_reports_a_dead_server(self):
+        fake = self.root / "codex"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        self.assertFalse(hw.codex_reindex(str(fake), str(self.work), self.log))
+        self.assertIn("reindex", self.log.getvalue())
+
     def test_cli_cross_device_exits_2(self):
         argv = ["codex-import", "--task-dir", str(self.task), "--host-sessions", str(self.host), "--cwd", str(self.work)]
         with mock.patch.object(hw, "_device", side_effect=[1, 2]), mock.patch("sys.stderr", io.StringIO()) as err:
@@ -217,6 +244,15 @@ class WrapperTests(unittest.TestCase):
         self.assertIn("SANDBOX_HISTORY=shared", argv)
         self.assertIn("history=shared", err)
 
+    def test_container_uses_host_timezone(self):
+        # codex names and files rollouts by LOCAL time; a UTC container's
+        # rollouts sorted hours behind the host's and `resume --last` on the
+        # host never found them (measured 2026-10-26).
+        for args in ((), ("--history-window",)):
+            with self.subTest(args=args):
+                _, argv = self.ok("pi", *args)
+                self.assertIn("--tz=local", argv)
+
     def refusal_cases(self):
         long_wt = self.tmp / ("w" * 210)
         git("-C", str(self.repo), "worktree", "add", "-q", str(long_wt))
@@ -255,7 +291,8 @@ class WrapperTests(unittest.TestCase):
 
     def codex_fixture(self):
         bundle = self.tmp / "codex-release/bin"
-        executable(bundle / "codex", "#!/bin/sh\n")
+        self.codex_calls = self.tmp / "codex-calls"
+        executable(bundle / "codex", f'#!/bin/sh\necho "$*" >>{self.codex_calls}\n')
         executable(bundle / "codex-code-mode-host", "#!/bin/sh\n")
         (self.home / ".local/bin").mkdir(parents=True)
         (self.home / ".local/bin/codex").symlink_to(bundle / "codex")
@@ -297,6 +334,12 @@ class WrapperTests(unittest.TestCase):
         self.assertTrue(target.exists(), (self.tmp / "sandbox-reaper.log").read_text() if (self.tmp / "sandbox-reaper.log").exists() else "")
         self.assertEqual(target.stat().st_ino, new.stat().st_ino)
         self.assertEqual(list(self.tmp.glob("harness-sandbox-root.*")), [])
+        # Then the host's codex re-indexes this cwd, or `resume --last` on the
+        # host never sees a thread the container created.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not self.codex_calls.exists():
+            time.sleep(0.2)
+        self.assertIn("app-server", self.codex_calls.read_text())
 
 
 if __name__ == "__main__":
