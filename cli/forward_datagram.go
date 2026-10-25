@@ -206,6 +206,9 @@ func runUDPForward(ctx context.Context, send datagramSender, sp ForwardSpec,
 // the same frame as the traffic they measure, so a drop storm's report competed
 // with the storm. They are read here instead, when someone asks.
 func forwardDrops(id uint64) (protocol.ForwardDropsBody, bool) {
+	if l, ok := lookupIPLinkClient(id); ok {
+		return l.link.Drops.Snapshot(id), true
+	}
 	if u, ok := lookupUDPForwardClient(id); ok {
 		return u.drops.Snapshot(id), true
 	}
@@ -247,13 +250,22 @@ func lookupUDPForwardClient(id uint64) (*udpForwardClient, bool) {
 
 // dispatchDatagram is the client's datagram seam, the mirror of
 // dispatchControl. One kind reaches it today; the switch is so a second is a
-// case rather than a rewrite of the caller.
+// case rather than a rewrite of the caller. Three registries sit behind it:
+// ip links, udp -R dialers and udp -L listeners, disjoint by forward id.
 func (c *Client) dispatchDatagram(kind appwire.AppKind, payload []byte) {
 	if kind != appwire.AppKind_ForwardDatagram {
 		return
 	}
 	var dg protocol.ForwardDatagram
 	if err := dg.DecodeExact(payload); err != nil {
+		return
+	}
+	// An ip link's datagram is one IP packet for its tun. flow_id is ignored,
+	// not checked, so a later stage can give it a meaning.
+	if l, ok := lookupIPLinkClient(dg.ForwardId); ok {
+		if err := l.link.Deliver(dg.Payload); err != nil {
+			l.fail(err)
+		}
 		return
 	}
 	// A -R forward's datagrams are REQUESTS from a source on the runner side,

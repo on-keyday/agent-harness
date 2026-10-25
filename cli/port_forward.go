@@ -308,7 +308,11 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 //
 // Deliberately not a method: it needs no Client state, and RawConn has none to
 // give it.
-func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string), onEnd func()) {
+//
+// Returns the closed record when one ended the forward, nil otherwise -- so a
+// caller that exits non-zero on a server-side end (an ip link) can tell it
+// from a stop it asked for.
+func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string), onEnd func()) *protocol.PortForwardClosed {
 	defer ctrl.CloseBoth()
 	if onEnd != nil {
 		defer onEnd()
@@ -322,8 +326,8 @@ func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, log
 			evs, buf = parsePortForwardEvents(buf)
 			for _, ev := range evs {
 				if ev.Kind == protocol.PortForwardEventKind_Closed {
-					logf(closedReasonLine(ev.Closed().Reason))
-					return
+					logf(closedReasonLine(ev.Closed()))
+					return ev.Closed()
 				}
 			}
 		}
@@ -331,7 +335,7 @@ func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, log
 			if ctx.Err() == nil {
 				logf("forward stopped: server connection lost")
 			}
-			return
+			return nil
 		}
 	}
 }
@@ -470,12 +474,47 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 	if err != nil {
 		return nil, 0, fmt.Errorf("forward: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
 	body := protocol.RegisterPortForwardRequest{TaskId: tid, Direction: dir,
 		BindPort: uint16(bindPort), TargetPort: uint16(targetPort), ClientEndpoint: endpoint,
 		Protocol: proto, Route: route}
 	body.SetBindAddr([]byte(bindAddr))
 	body.SetTargetHost([]byte(targetHost))
+	return c.registerForward(ctx, body)
+}
+
+// registerResponseError maps a refused registration to the error a caller
+// prints, with the server's detail -- usually the runner's own reason -- after
+// the status. nil for Ok.
+func registerResponseError(r *protocol.RegisterPortForwardResponse) error {
+	withDetail := func(s string) error {
+		if len(r.Detail) > 0 {
+			return errors.New(s + ": " + string(r.Detail))
+		}
+		return errors.New(s)
+	}
+	switch r.Status {
+	case protocol.OpenPortForwardStatus_Ok:
+		return nil
+	case protocol.OpenPortForwardStatus_NoSuchTask:
+		return errors.New("forward: no such task (id unknown or task not running)")
+	case protocol.OpenPortForwardStatus_RunnerOffline:
+		return errors.New("forward: runner offline")
+	case protocol.OpenPortForwardStatus_BindFailed:
+		return withDetail("forward: runner failed to bind the listen port")
+	case protocol.OpenPortForwardStatus_LinkFailed:
+		return withDetail("forward: ip link failed")
+	}
+	if len(r.Detail) > 0 {
+		return errors.New("forward: server refused: " + string(r.Detail))
+	}
+	return fmt.Errorf("forward: server error (status=%d)", r.Status)
+}
+
+// registerForward sends one registration and picks up its control stream. The
+// one funnel RegisterPortForward and RegisterIPLink share, so the answer is
+// read, and a stranded registration cleaned up, the same way for both.
+func (c *Client) registerForward(ctx context.Context, body protocol.RegisterPortForwardRequest) (trsf.BidirectionalStream, uint64, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
 	req.SetRegisterPortForward(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -486,16 +525,8 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 	if resp.Kind != protocol.TaskControlKind_RegisterPortForward || r == nil {
 		return nil, 0, fmt.Errorf("forward: unexpected response kind %v", resp.Kind)
 	}
-	switch r.Status {
-	case protocol.OpenPortForwardStatus_Ok:
-	case protocol.OpenPortForwardStatus_NoSuchTask:
-		return nil, 0, errors.New("forward: no such task (id unknown or task not running)")
-	case protocol.OpenPortForwardStatus_RunnerOffline:
-		return nil, 0, errors.New("forward: runner offline")
-	case protocol.OpenPortForwardStatus_BindFailed:
-		return nil, 0, errors.New("forward: runner failed to bind the listen port")
-	default:
-		return nil, 0, fmt.Errorf("forward: server error (status=%d)", r.Status)
+	if err := registerResponseError(r); err != nil {
+		return nil, 0, err
 	}
 	ctrl := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 	if ctrl == nil {
@@ -606,7 +637,7 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 				case protocol.PortForwardEventKind_ConnNotify:
 					go c.dialAndSplice(ctx, sp, trsf.StreamID(ev.ConnNotify().StreamId), logf)
 				case protocol.PortForwardEventKind_Closed:
-					logf(closedReasonLine(ev.Closed().Reason))
+					logf(closedReasonLine(ev.Closed()))
 					return
 				}
 			}
@@ -627,10 +658,14 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 
 // closedReasonLine renders why a forward stopped. Kept distinct from the EOF
 // path so an operator can tell a deliberate kill from a dead server.
-func closedReasonLine(r protocol.PortForwardCloseReason) string {
-	switch r {
+func closedReasonLine(c *protocol.PortForwardClosed) string {
+	switch c.Reason {
 	case protocol.PortForwardCloseReason_TaskGone:
 		return "forward stopped: task is no longer running"
+	case protocol.PortForwardCloseReason_RunnerGone:
+		return "forward stopped: the runner's connection ended"
+	case protocol.PortForwardCloseReason_EndpointFailed:
+		return "forward stopped: the runner's end failed: " + string(c.Detail)
 	default:
 		return "forward stopped: killed remotely"
 	}
