@@ -3288,3 +3288,39 @@ n/a:     3–5 (no TUI key or picker, V12), 9 and 26 — a spawn what-if models 
          38, S1–S6
 missed:  — (the live run found the R+10 ring running into the node's labels; set to
          reach mode's R+6 before landing)
+
+### 2026-10-25 (pre-landing) — IP link forwarding, stage 1 (`forward --ip`, TUI `L`, `forward_link`)
+
+Spec `2026-10-25-ip-link-forward-design.md`, plan Appendix A (walked BEFORE
+implementation, on time) and the item 39 walk at the end. A new forward shape,
+a capability bit, a verb option, a TUI key, and datagram records on the taps.
+
+done:    1 (`ip` / `ip-peer` on `forward`'s row), 2 (Exclusive with L/R/W,
+         Requires both ways, ip in AtLeastOne), 4 (`L` + its binding row), 5
+         (`PortForwardModal`'s `ForwardLink` mode), 15 (`forward_link` in
+         `GrantableCaps`, `CapDescription`, `capAuditTable`), 24 (a link row on
+         every other path: kill via `forwardCapFor`, tap, workspace save
+         refused, listing), 25, 27 (`registerForward` funnel shared by -L/-R and
+         the link), 28a (`RegisterPortForwardRequest{` once;
+         `RunnerOpenPortForwardRequest{` three times, one carries the link), 29,
+         30, 31 (`conns=` omitted on link rows by direction, never by value),
+         32 (one parser for the CLI flags and the TUI line), 33, 35, 36 (embed
+         + BOTH mirrors — the plan named one), 37 (spec Amendment 1), 39
+omitted: 6 (a browser opens no tun; listing and kill already on the WebUI)
+n/a:     3 (verb is CmdlineSurfaces CLI), 7, 8, 9, 11–23 (no task field — the
+         forward listing surfaces were walked under 31/39), 26, 28 (forwards
+         are in memory), 34 (no column set change), 34a, 38, S1–S6
+missed:  —
+
+**The executable guards did the catching again.** `TestPortForwardInfoMapsEveryField`
+went red the moment the schema gained the `if protocol == ip` arm — before any
+server code — which pulled the listing change one task earlier than planned;
+`TestAuditOrderIsStrongFirstAndComplete` and the scope-completeness table each
+named the new bit. Same shape as the forward-tap entry's note.
+
+**What no item asked and netem-lab answered:** a runner process killed and
+started again is a NEW RunnerID, so the server's identity takeover never fires
+and the link's far end is noticed only by the GC, ~60 s later (measured 61 s).
+The spec had said the reconnect bounds it. Not a surface question; recorded so
+a second "this path assumes the same process came back" can be counted against
+it.

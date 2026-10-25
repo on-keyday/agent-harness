@@ -747,8 +747,8 @@ outcome, which the walk confirms or corrects:
 9. Bring a link up again and restart the runner (SIGTERM, then start it as
    `up` did): the client exits with `runner_gone`, both devices are gone, and
    the row is gone. Then the same with SIGKILL on the runner: the same
-   outcome, bounded by the reconnect (`Registry.Add` displacing the old
-   connection) rather than by the server's ping timeout.
+   outcome, bounded by the server's GC (~60 s), not by the reconnect — see
+   Amendment 1.
 
 The failure path is not in the lab, because inside it both ends hold the
 capability and outside it the client fails before the runner is asked. It is
@@ -782,3 +782,35 @@ returns `EPERM` (skipped when the test runs as root or off Linux).
   and udp forwards on a runner reconnect where today they stay listed and
   dead. A workflow that relied on the row surviving — re-reading it, or
   killing it later — now finds it gone. That is the intended trade.
+
+## Amendment 1 — as implemented (2026-10-25)
+
+What implementation and the netem-lab acceptance changed in this document's
+meaning. The plan's Appendix B holds the commands and the output.
+
+- **A killed runner is noticed by the GC, not by the reconnect.** §6f's
+  `Registry.Add` displacement fires when a hello on a new connection claims an
+  identity another connection still holds — the same PROCESS reconnecting. A
+  runner that is killed and started again is a new process with a new RunnerID
+  (`runner.Config.RunnerID`: "a restart SHOULD change it"), so nothing is
+  displaced; the old connection's teardown arrives at the server's GC.
+  Measured: SIGKILL on the runner, its tun gone at once, the client told
+  `runner_gone` **61 s** later. During that minute the client's tun is up and
+  its packets are dropped at the runner's new session. SIGTERM ends it at once
+  (0 s). The displacement path stays, for the reconnect it does cover.
+- **A server-side invalid link answers `internal_error`** with detail
+  `invalid ip link: …`; `link_failed` is kept for an END failing to bring up its
+  interface (§5's wording for it).
+- **`mtu` other than 1100 is refused by validation** (§9), both ends and the
+  server, because §7c's no-oversize argument holds only for it.
+- **Throughput at a 150 ms RTT is limited by the relay's congestion window,
+  not by the link.** iperf3 across the link: 21.2 Mbit/s at `lan`, 0.13–0.39
+  Mbit/s at `wan-us`, where the relay's `congested` counter rose by ~20 per
+  8-second run. The congestion-controlled send (§7c) drops a datagram when the
+  window is closed, and the inner TCP reads each drop as loss. Recorded, not
+  acted on: §7c chose this mode deliberately, and whether a link should queue
+  rather than drop is a stage-2 question.
+- **The runner's datagram sweep stopped leaking.** §7b said only the comment
+  was wrong. The sweep ran on PersistLoop's context, so one goroutine
+  accumulated per reconnect; it now also stops when `RunHandle.Close` releases
+  the registry.

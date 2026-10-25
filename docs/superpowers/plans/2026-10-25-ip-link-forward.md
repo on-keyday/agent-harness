@@ -717,3 +717,45 @@ Items 1–39 of `.claude/skills/surface-parity-checklist/SKILL.md`, one verdict 
 39. at the end (T13) — walk spec §10d row by row against the code.
 
 S1–S6: n/a — no agent launch change.
+
+**Item 39, walked at the end against spec §10d:**
+- CLI `--ip` / `--ip-peer`: done.
+- Workspace save omits link rows: done (`PortForwardConfigSpec`).
+- TUI `L` and the modal's link mode: done.
+- TUI cmdline: none, as the spec says.
+- WebUI start: impossible, as the spec says; it lists and kills via `ForwardSnapshotRow`.
+- CLI and JSON display: done.
+- TUI spec cell, and the conns cell empty on link rows: done.
+- `TapRenderer` with the new kinds and the two close reasons: done.
+- `forward_link` in caps (`GrantableCaps` feeds every parser and listing): done.
+- Server and runner: done.
+
+No row is unbuilt.
+
+## Appendix B — acceptance (2026-10-25, netem-lab `--name iplink`, binaries from this worktree's `make build`)
+
+Before the lab, all green:
+- `make check`, `make vet`, `make wasm-check`, `make js-test`;
+- `make test` (126 packages ok) and `make test-integration`, both with the four `HARNESS_*` variables unset;
+- `scripts/wire-skew-check.sh`: PASS, 3/3, between 09520e0b and c69ededa.
+
+`forward --help` lists `--ip`, which shows the new code is in the binary under test. The vcs stamp names the parent commit; that is a known worktree quirk.
+
+| step | command (abridged; `$L` = `netem-lab.py --name iplink`) | observed |
+|---|---|---|
+| 1 | `$L up --profile lan`; `$L exec srv -- harness-cli forward --ip 10.200.0.1/30 --ip-peer 10.200.0.2 <task>` | client `ip link: hlink0 up, 10.200.0.1/30, mtu 1100`; runner log `ip link: hlink0 up, 10.200.0.2/30, mtu 1100 fwd=1`. `exec` keeps CAP_NET_ADMIN |
+| 2 | `exec srv -- ping -c5 10.200.0.2`; `exec cli -- ping -c5 10.200.0.1` | 5/5 each way, rtt avg 3.1 / 2.9 ms |
+| 3 | `$L shape --profile wan-us`; ping again | rtt avg **151.3 ms** (+148): the packets cross the shaped path |
+| 4 | iperf3, server on the runner's end | `lan`: 21.2 Mbit/s received. `wan-us`: 0.13 and 0.39 Mbit/s in two runs; relay `congested` rose 21 → 43 in one run. See spec Amendment 1 |
+| 5 | `forward tap 1` while `ping -c5` runs | 10 lines, `flow 0 -> … #21196 relayed 84B` and `flow 0 <- …`, 5 each way, all relayed; seq continues from the flow's real count |
+| 6 | `forward kill 1` | client prints `forward stopped: killed remotely` and exits **1** (re-run with `wait`); `hlink` count 0 in srv and cli; listing `(none)` |
+| 7 | `kill -9` the client | client device gone at once; row and runner device gone after **61 s** (UDP peer death is noticed by the GC) |
+| 8 | `harness-tui` in srv under tmux; `L`, type `10.200.0.1/30 10.200.0.2`, Enter | modal shows `--ip` and the placeholder; `ip link: hlink0 up` in the result pane; ping 3/3 each way; `q`: both devices gone at once |
+| 9a | `kill -TERM` the runner | client exits 1 at once, `forward stopped: the runner's connection ended`; both devices gone |
+| 9b | `kill -9` the runner, restart it with the same argv | runner's device gone at once; client told `runner_gone` after **61 s**, exit 1. Not bounded by the reconnect: a new process has a new RunnerID (spec Amendment 1) |
+
+Two things went wrong in the run, both mine:
+- A `pkill -f` matched its own shell.
+- The first 9b `kill -9` hit the `netem-lab.py exec` wrapper, whose argv contains the runner's path. Two runners then ran at once and that measurement was discarded. The redo selected the PID by the process's own executable.
+
+Cosmetic, found here: the CLI prints the close line twice — once from the control loop's log, once as the returned error.
