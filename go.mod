@@ -11,6 +11,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/on-keyday/objtrsf v0.0.0-20261014125637-3697525e0dbf
 	golang.org/x/crypto v0.58.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 )
 
@@ -41,6 +42,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
