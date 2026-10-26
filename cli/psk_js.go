@@ -53,9 +53,9 @@ func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind,
 // buildMergedClientHello constructs the ClientHello for the WASM context.
 // WASM runs in the browser (operator context) so agent-env detection is not
 // applicable; the supplied operatorKind is always used.
-func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHelloLegacy {
+func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHello {
 	kind, _ := EffectiveClientKind(operatorKind)
-	return protocol.ClientHelloLegacy{Kind: kind}
+	return protocol.ClientHello{Kind: kind}
 }
 
 // SendMergedHandshake is the WASM variant of the merged PSK+identity handshake.
@@ -63,7 +63,7 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 // client_hello=<operatorKind>}, sends [0x45]+PskAuthRequest, and awaits a
 // PskAuthResponse on respCh. Identical semantics to the native build.
 func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
-	req := protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 
 	if len(psk) > 0 {
 		binder, err := ComputePSKBinder(psk, transcript)
@@ -78,7 +78,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 	}
 
 	hello := buildMergedClientHello(operatorKind)
-	if !req.SetClientHelloLegacy(hello) {
+	if !req.SetClientHello(hello) {
 		return fmt.Errorf("psk: SetClientHello failed")
 	}
 

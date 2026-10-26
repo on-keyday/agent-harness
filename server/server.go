@@ -1415,6 +1415,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	gate.operatorPSK = s.cfg.OperatorPSK
 	gate.serverKey = s.cfg.ServerKey
 	gate.runnerKeys = s.cfg.RunnerKeys
+	if s.Board != nil {
+		gate.TicketFor = s.Board.Registry().Ticket
+	}
 	// Wire ticket validation into the gate: an agent that fails this check
 	// must NOT fall through to operator (this is the hole the merged handshake
 	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.

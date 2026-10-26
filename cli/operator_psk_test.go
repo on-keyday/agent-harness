@@ -49,16 +49,16 @@ func TestResolveBinderPSK_OperatorFallsBackToConnectPSK(t *testing.T) {
 }
 
 // The escalation guard: even when HARNESS_OPERATOR_PSK is present in the
-// environment, an in-task agent must NOT use it — it proves only the connect
-// psk. (This is what stops a runner that inherited HARNESS_OPERATOR_PSK from
-// handing agents an operator-capable binder; agents simply never read it.)
+// environment, an in-task agent must NOT use it. An agent proves its ticket
+// (SendMergedHandshake keys its binder by it), so it resolves no shared secret
+// at all. (This is what stops a runner that inherited HARNESS_OPERATOR_PSK
+// from handing agents an operator-capable binder; agents simply never read it.)
 func TestResolveBinderPSK_AgentNeverUsesOperatorPSK(t *testing.T) {
 	setAgentEnv(t)
 	t.Setenv("HARNESS_PSK", "connect-secret")
 	t.Setenv("HARNESS_OPERATOR_PSK", "operator-secret")
 
-	got := resolveBinderPSK()
-	if !bytes.Equal(got, []byte("connect-secret")) {
-		t.Errorf("agent context: got %q, want connect-secret (must ignore operator psk)", got)
+	if got := resolveBinderPSK(); got != nil {
+		t.Errorf("agent context: got %q, want nil (an agent's binder is keyed by its ticket)", got)
 	}
 }

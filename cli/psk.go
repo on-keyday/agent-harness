@@ -72,14 +72,13 @@ func isAgentContext() bool {
 	return true
 }
 
-// resolveBinderPSK picks the secret whose binder this process should present,
-// consistent with the kind buildMergedClientHello will announce:
-//   - in-task agent  → the connect psk (HARNESS_PSK, runner-injected).
-//   - operator surface → the operator psk (HARNESS_OPERATOR_PSK) when set,
-//     falling back to HARNESS_PSK for deployments that have not split them.
+// resolveBinderPSK picks the operator secret an operator surface's binder
+// proves: HARNESS_OPERATOR_PSK when set, falling back to HARNESS_PSK for
+// deployments that have not split them. An in-task agent needs none — its
+// binder is keyed by its ticket (SendMergedHandshake).
 func resolveBinderPSK() []byte {
 	if isAgentContext() {
-		return GetPSK()
+		return nil
 	}
 	if op := GetOperatorPSK(); len(op) > 0 {
 		return op
@@ -113,10 +112,13 @@ func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind,
 // PskAuthRequest. When the in-task agent env is fully populated, kind is
 // overridden to Agent with AgentInfo; otherwise the supplied operatorKind
 // is used. The override decision itself lives in EffectiveClientKind.
-func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHelloLegacy {
-	hello := protocol.ClientHelloLegacy{Kind: operatorKind}
+//
+// For an agent it also returns the ticket, which keys the request's binder and
+// is never sent.
+func buildMergedClientHello(operatorKind protocol.ClientKind) (protocol.ClientHello, *[16]byte) {
+	hello := protocol.ClientHello{Kind: operatorKind}
 	if kind, _ := EffectiveClientKind(operatorKind); kind != protocol.ClientKind_Agent {
-		return hello
+		return hello, nil
 	}
 	// Re-resolving rather than threading the values out of EffectiveClientKind:
 	// that function answers WHICH principal, this one needs the credential
@@ -124,21 +126,21 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 	// the handshake rather than announce a half-built identity.
 	rid, err := cliopts.ResolveRunnerID("")
 	if err != nil {
-		return hello
+		return hello, nil
 	}
 	tid, err := cliopts.ResolveTaskID("")
 	if err != nil {
-		return hello
+		return hello, nil
 	}
 	ticket, err := cliopts.ResolveAuthTicket()
 	if err != nil {
-		return hello
+		return hello, nil
 	}
-	info := protocol.AgentInfoLegacy{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
+	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid}
 	info.SetHostname([]byte(cliopts.ResolveString("", "HARNESS_HOSTNAME")))
 	hello.Kind = protocol.ClientKind_Agent
 	hello.SetAgentInfo(info)
-	return hello
+	return hello, &ticket
 }
 
 // SendMergedHandshake builds a PskAuthRequest{binder (or empty when psk==nil),
@@ -160,8 +162,14 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 //   - signature missing/wrong with serverKey set → *ServerAuthError (retryable)
 //   - undecodable response → retryable error ("server response did not decode")
 func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
-	req := protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 
+	hello, ticket := buildMergedClientHello(operatorKind)
+	if ticket != nil {
+		// An agent proves its ticket over this transcript and sends nothing
+		// a peer could replay on another connection.
+		psk = ticket[:]
+	}
 	if len(psk) > 0 {
 		binder, err := ComputePSKBinder(psk, transcript)
 		if err != nil {
@@ -174,8 +182,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 		req.SetBinder(nil) // binder_len = 0
 	}
 
-	hello := buildMergedClientHello(operatorKind)
-	if !req.SetClientHelloLegacy(hello) {
+	if !req.SetClientHello(hello) {
 		return fmt.Errorf("psk: SetClientHello failed")
 	}
 

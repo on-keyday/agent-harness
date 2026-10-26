@@ -29,6 +29,24 @@ import (
 //	runner_hello → [0x43] + RunnerMessage{Kind:Hello, hello}
 func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) bool {
 	switch req.Role {
+	case protocol.AuthRole_Client:
+		hello := req.ClientHello()
+		if hello == nil {
+			return false
+		}
+		if d.RecordClientIdentity != nil {
+			return d.RecordClientIdentity(conn.ConnectionID().String(), conn, hello) == protocol.ClientHelloStatus_Ok
+		}
+		tcReq := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+		tcReq.SetClientHello(*hello)
+		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})
+		if err != nil {
+			slog.Error("pskDispatchIdentity: encode TaskControlRequest failed", "err", err)
+			return false
+		}
+		d.Dispatch(conn, data)
+		return true
+
 	case protocol.AuthRole_ClientLegacy:
 		legacy := req.ClientHelloLegacy()
 		if legacy == nil {
@@ -139,8 +157,12 @@ type pskGate struct {
 	operatorPSK []byte
 	// serverKey signs every PskAuthResponse so a client holding the public
 	// half can tell this server from an impostor. server.New guarantees one.
-	serverKey      ed25519.PrivateKey
+	serverKey ed25519.PrivateKey
+	// ValidateTicket checks the ticket a role=client_legacy agent sends.
 	ValidateTicket func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus
+	// TicketFor is the ticket a role=client agent's binder must be keyed by.
+	// nil (test wiring without a Board) refuses every role=client agent.
+	TicketFor func(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte, bool)
 }
 
 func newPSKGate(psk []byte) *pskGate {
@@ -157,6 +179,21 @@ func (g *pskGate) Role() protocol.AuthRole { return g.role }
 
 // Legacy reports that the connection authenticated with a _legacy role.
 func (g *pskGate) Legacy() bool { return g.legacy }
+
+// agentBinderOK checks a role=client agent's binder against the ticket the
+// board holds for its (runner, task).
+func (g *pskGate) agentBinderOK(hello *protocol.ClientHello, binder, transcript []byte) bool {
+	info := hello.AgentInfo()
+	if info == nil || g.TicketFor == nil {
+		return false
+	}
+	ticket, ok := g.TicketFor(info.RunnerId, info.TaskId)
+	if !ok {
+		return false
+	}
+	want, err := cli.ComputePSKBinder(ticket[:], transcript)
+	return err == nil && subtle.ConstantTimeCompare(binder, want) == 1
+}
 
 func (g *pskGate) keyEnrolled(key ed25519.PublicKey) bool {
 	if g.runnerKeys == nil {
@@ -203,6 +240,13 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
 	if req.Role == protocol.AuthRole_Runner {
 		return nil // proves its key with RunnerAuth.sig instead
+	}
+	if req.Role == protocol.AuthRole_Client {
+		// kind=agent is keyed by its ticket (agentBinderOK), not here.
+		if len(g.operatorPSK) > 0 {
+			return g.operatorPSK
+		}
+		return g.psk
 	}
 	if req.Role == protocol.AuthRole_ClientLegacy && len(g.operatorPSK) > 0 {
 		if hello := req.ClientHelloLegacy(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
@@ -280,7 +324,14 @@ func (g *pskGate) Check(
 	// agent holds only the connect psk, so it cannot forge an operator binder.
 	// When the resolved key is empty (no PSK configured for that role) the
 	// compare is skipped — but the identity handshake still runs.
-	if key := g.binderKey(&req); len(key) > 0 {
+	// role=client, kind=agent: the binder is keyed by the task's ticket, so
+	// proving it IS the ticket check. A wrong or missing ticket is bad_ticket.
+	if hello := req.ClientHello(); req.Role == protocol.AuthRole_Client && hello != nil && hello.Kind == protocol.ClientKind_Agent {
+		if !g.agentBinderOK(hello, req.Binder, transcript) {
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadTicket)
+			return true, true, nil
+		}
+	} else if key := g.binderKey(&req); len(key) > 0 {
 		expected, err := cli.ComputePSKBinder(key, transcript)
 		if err != nil || subtle.ConstantTimeCompare(req.Binder, expected) != 1 {
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadPsk)
@@ -315,6 +366,12 @@ func (g *pskGate) Check(
 	// Step 3: Identity required (fail-closed).
 	// At least one role+hello must be present.
 	switch req.Role {
+	case protocol.AuthRole_Client:
+		if req.ClientHello() == nil {
+			slog.Warn("pskGate: client role but ClientHello is nil (identity required)")
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
+			return true, true, nil
+		}
 	case protocol.AuthRole_ClientLegacy:
 		if req.ClientHelloLegacy() == nil {
 			slog.Warn("pskGate: client role but ClientHello is nil (identity required)")
