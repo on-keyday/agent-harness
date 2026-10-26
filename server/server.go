@@ -1426,6 +1426,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	gate.operatorPSK = s.cfg.OperatorPSK
 	gate.serverKey = s.cfg.ServerKey
 	gate.runnerKeys = s.cfg.RunnerKeys
+	gate.cid = session.ConnectionID().String()
 	if s.Board != nil {
 		gate.TicketFor = s.Board.Registry().Ticket
 	}

@@ -132,3 +132,37 @@ func TestEnrolledRunnerRegistersWithKey(t *testing.T) {
 	}
 	t.Fatal("the enrolled runner is not in the snapshot")
 }
+
+// A connection that claims a live runner identity with a different key is
+// refused after the gate said ok, so the refusal has to reach the runner as a
+// close it notices now — a local close alone left it to the runner's GC, about
+// 70s (measured by the Tasks 4–7 review). The holder keeps its registration.
+func TestRefusedTakeoverIsNoticedPromptly(t *testing.T) {
+	p1, k1, _ := ed25519.GenerateKey(nil)
+	p2, k2, _ := ed25519.GenerateKey(nil)
+	keys, _ := server.LoadRunnerKeyStore("", []server.RunnerKeyRecord{
+		{Key: p1, Label: "a", EnrolledBy: "operator"}, {Key: p2, Label: "b", EnrolledBy: "operator"}})
+	cid, srv := startServerWithRunnerKeys(t, keys)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	a := enrollTestConfig(cid, k1, "holder")
+	go runner.Run(ctx, a) //nolint:errcheck
+	waitForRunnerByHostname(t, srv, "holder", 5*time.Second)
+
+	b := enrollTestConfig(cid, k2, "intruder")
+	b.RunnerID = a.RunnerID
+	h, err := runner.Connect(ctx, b)
+	if err != nil {
+		t.Fatalf("the gate refused B: %v (the refusal is the registry's, after ok)", err)
+	}
+	done := make(chan struct{})
+	go func() { runner.OnConnect(ctx, h); close(done) }() //nolint:errcheck
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the refused runner was still connected after 10s")
+	}
+	if e := waitForRunnerByHostname(t, srv, "holder", time.Second); !bytes.Equal(e.Key, p1) {
+		t.Fatalf("the holder lost its registration: %+v", e.Key)
+	}
+}
