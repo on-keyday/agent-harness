@@ -70,8 +70,6 @@ type Config struct {
 	Profiles ProfileSet
 
 	Logger *slog.Logger
-	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
-	PSK []byte
 	// ServerPubKey, when non-nil, is the server's Ed25519 public key: the
 	// handshake refuses a PskAuthResponse whose signature does not verify
 	// against it, and every spawned agent gets it as HARNESS_SERVER_PUBKEY.
@@ -393,11 +391,6 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		cfg.Logger.Warn("os.Executable failed; agent PATH will not include runner bin dir", "err", err)
 	}
 
-	psk := cfg.PSK
-	if psk == nil {
-		psk = cli.GetPSK()
-	}
-
 	// Use the actual peer.Conn's ConnectionID as the server CID so that
 	// HARNESS_SERVER_CID injected into spawned agent processes points to
 	// the live server endpoint. In dial mode this is the candidate that
@@ -420,7 +413,6 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		MintedRunnerID: cfg.RunnerID,
 		WSPath:         cli.WebSocketPath,
 		BinDir:         binDir,
-		PSK:            psk,
 		ServerPubKey:   cfg.ServerPubKey,
 		ProxyVia:       cfg.ProxyVia,
 		Sender:         sender,
@@ -505,7 +497,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pskErr := sendRunnerMergedHandshake(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), cfg, h.pskRespCh)
+	}, pc.Connection().GetTranscript(), cfg, h.pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
@@ -578,14 +570,14 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	return hh
 }
 
-// sendRunnerMergedHandshake builds a PskAuthRequest{binder (or empty when psk==nil),
-// role=runner, runner_hello=<RunnerHello from cfg>}, sends [0x45]+PskAuthRequest via
-// sendFn, then blocks until a PskAuthResponse arrives on respCh or ctx is cancelled.
+// sendRunnerMergedHandshake builds a PskAuthRequest{role=runner,
+// runner_auth=<key, signature over transcript, RunnerHello from cfg>}, sends
+// [0x45]+PskAuthRequest via sendFn, then blocks until a PskAuthResponse
+// arrives on respCh or ctx is cancelled.
 //
 // This is the runner-side counterpart to cli.SendMergedHandshake (which is
-// role=client). The binder computation (HMAC-SHA512 over the objproto transcript)
-// is identical to cli.ComputePSKBinder — only the role and identity union differ.
-func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
+// role=client).
+func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
 	// role=runner proves the enrolled key by signing this connection's
 	// transcript; there is no binder.
 	if len(cfg.RunnerKey) != ed25519.PrivateKeySize {

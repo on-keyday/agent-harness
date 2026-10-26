@@ -60,7 +60,7 @@ func TestResolveAgentSkillsDirFromEnv(t *testing.T) {
 	}
 }
 
-// The flag wins over the env var, matching --psk / HARNESS_PSK in this file.
+// The flag wins over the env var, matching --runner-key-file / HARNESS_RUNNER_KEY_FILE.
 func TestResolveAgentSkillsDirFlagBeatsEnv(t *testing.T) {
 	flagDir := writeSkillDir(t, "from-flag")
 	envDir := writeSkillDir(t, "from-env")

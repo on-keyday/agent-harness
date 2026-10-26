@@ -29,7 +29,7 @@ class CleanChildEnvTest(unittest.TestCase):
         os.environ["CLAUDECODE"] = "1"
         os.environ["HARNESS_OPERATOR_PSK"] = "op"
         os.environ["HARNESS_OPERATOR_PSK_FILE"] = "/tmp/op"
-        os.environ["HARNESS_PSK"] = "connect"
+        os.environ["HARNESS_SERVER_CID"] = "ws:127.0.0.1:8539-*"
         os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/cfg"
 
     def tearDown(self) -> None:
@@ -49,8 +49,8 @@ class CleanChildEnvTest(unittest.TestCase):
         runner_env = daemon._clean_child_env(daemon._DROP_FOR_BIN["agent-runner"])
         for gone in ("HARNESS_OPERATOR_PSK", "HARNESS_OPERATOR_PSK_FILE"):
             self.assertNotIn(gone, runner_env, f"{gone} would reach every agent the runner spawns")
-        self.assertEqual(runner_env.get("HARNESS_PSK"), "connect",
-                         "the connect PSK is what agents DO need")
+        self.assertEqual(runner_env.get("HARNESS_SERVER_CID"), "ws:127.0.0.1:8539-*",
+                         "what agents DO need stays")
 
 
 if __name__ == "__main__":

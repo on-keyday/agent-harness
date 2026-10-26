@@ -25,7 +25,7 @@ secret rotation without retyping the full flag set::
     python scripts/restart.py harness-server --operator-psk NEWSECRET
     python scripts/restart.py harness-server --operator-psk-file /path/to/new-psk
 
-(``--operator-psk`` / ``--psk`` values are redacted in the restart log,
+(``--operator-psk`` values are redacted in the restart log,
 but the value form is still visible in ``ps`` on the new process — use
 the ``-file`` form when that matters.)
 
@@ -60,7 +60,7 @@ _DETACHED_FLAG = "--__detached"
 
 # Flag names whose values are secrets: redacted in the restart log's
 # "flags=" line so a rotation doesn't archive the new secret in plaintext.
-_SECRET_FLAGS = frozenset({"psk", "operator-psk"})
+_SECRET_FLAGS = frozenset({"operator-psk"})
 
 # The server asks its runners to keep their children alive before it goes down,
 # collects their answers, drains each held session and writes the result — and

@@ -14,9 +14,10 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// GetPSK reads the PSK from the URL fragment (#psk=<value>).
+// GetOperatorPSK reads the operator secret from the URL fragment
+// (#psk=<value>; the fragment keeps its name so existing links work).
 // Returns nil when the fragment is absent or contains no psk= key.
-func GetPSK() []byte {
+func GetOperatorPSK() []byte {
 	hash := js.Global().Get("location").Get("hash").String()
 	hash = strings.TrimPrefix(hash, "#")
 	vals, err := url.ParseQuery(hash)
@@ -31,11 +32,9 @@ func GetPSK() []byte {
 }
 
 // resolveBinderPSK in the browser is always the operator surface: WASM never
-// runs as an in-task agent and a browser is not a runner host, so the
-// HARNESS_PSK env-inheritance footgun the non-js variant guards against does
-// not exist here. The #psk fragment IS the operator secret to prove.
+// runs as an in-task agent. The #psk fragment IS the operator secret.
 func resolveBinderPSK() []byte {
-	return GetPSK()
+	return GetOperatorPSK()
 }
 
 // EffectiveClientKind is the WASM variant: a browser is always an operator

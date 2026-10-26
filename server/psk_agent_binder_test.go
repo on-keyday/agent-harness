@@ -18,7 +18,7 @@ func buildAgentBinderReq(ticket [16]byte, transcript []byte, rid protocol.Runner
 }
 
 func agentGate(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) *pskGate {
-	g := newPSKGate(nil)
+	g := newPSKGate()
 	g.TicketFor = func(r protocol.RunnerID, t protocol.TaskID) ([16]byte, bool) {
 		if r == rid && t == tid {
 			return ticket, true
@@ -69,13 +69,13 @@ func TestGateAgentWithNoTicketForTaskIsBadTicket(t *testing.T) {
 }
 
 func TestOperatorKindsUnderRoleClientProveOperatorPSK(t *testing.T) {
-	g := newPSKGate(nil)
+	g := newPSKGate()
 	g.operatorPSK = []byte("op")
 	for _, c := range []struct {
 		key  string
 		want protocol.PskAuthStatus
 	}{{"op", protocol.PskAuthStatus_Ok}, {"wrong", protocol.PskAuthStatus_BadPsk}} {
-		g := newPSKGate(nil)
+		g := newPSKGate()
 		g.operatorPSK = []byte("op")
 		req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 		b, _ := cli.ComputePSKBinder([]byte(c.key), testTranscript)

@@ -14,9 +14,9 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// startServerWithPSK is startServerAt + a configured PSK. Kept local because
-// the shared helper does not take a PSK.
-func startServerWithPSK(t *testing.T, psk []byte) objproto.ConnectionID {
+// startServerWithOperatorPSK is startServerAt + a configured operator PSK.
+// Kept local because the shared helper does not take one.
+func startServerWithOperatorPSK(t *testing.T, psk []byte) objproto.ConnectionID {
 	t.Helper()
 	addr := freePort(t)
 	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
@@ -25,7 +25,7 @@ func startServerWithPSK(t *testing.T, psk []byte) objproto.ConnectionID {
 		t.Fatalf("parse server cid: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir(), PSK: psk})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir(), OperatorPSK: psk})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	t.Cleanup(func() {
@@ -40,14 +40,14 @@ func startServerWithPSK(t *testing.T, psk []byte) objproto.ConnectionID {
 }
 
 // TestPSKBinderE2E_CorrectPSK is the make-or-break check for the transcript-
-// bound PSK binder: it only passes if the client and server derive a
+// bound binder (here the operator PSK's): it only passes if the client and server derive a
 // byte-identical objproto handshake transcript, so their binders match. A
 // client carrying the correct PSK must authenticate over a real handshake.
 func TestPSKBinderE2E_CorrectPSK(t *testing.T) {
 	const psk = "correct-horse-battery-staple"
-	cid := startServerWithPSK(t, []byte(psk))
-	t.Setenv("HARNESS_PSK", psk)
-	t.Setenv("HARNESS_PSK_FILE", "")
+	cid := startServerWithOperatorPSK(t, []byte(psk))
+	t.Setenv("HARNESS_OPERATOR_PSK", psk)
+	t.Setenv("HARNESS_OPERATOR_PSK_FILE", "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -60,9 +60,9 @@ func TestPSKBinderE2E_CorrectPSK(t *testing.T) {
 
 // TestPSKBinderE2E_WrongPSK confirms a mismatched PSK is rejected by the gate.
 func TestPSKBinderE2E_WrongPSK(t *testing.T) {
-	cid := startServerWithPSK(t, []byte("server-side-secret"))
-	t.Setenv("HARNESS_PSK", "client-has-the-wrong-one")
-	t.Setenv("HARNESS_PSK_FILE", "")
+	cid := startServerWithOperatorPSK(t, []byte("server-side-secret"))
+	t.Setenv("HARNESS_OPERATOR_PSK", "client-has-the-wrong-one")
+	t.Setenv("HARNESS_OPERATOR_PSK_FILE", "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -231,15 +231,15 @@ def ns_env(st: dict) -> dict:
     spawns and wrong for everything run against the lab afterwards: the usual
     thing to run is harness-cli, and a scrubbed environment leaves it with no
     credential, so the server answers BadPsk — an error that reads as a WRONG
-    psk rather than an absent one.
+    operator secret rather than an absent one.
 
     This lives in the shared helper rather than in one verb. It was in cmd_exec
     alone at first, and `bench` — a second caller, added later — hit the same
     BadPsk on its first run. A guard belongs where every caller passes.
     """
     env = os.environ.copy()
-    if st.get("HARNESS_PSK"):
-        env["HARNESS_PSK"] = st["HARNESS_PSK"]
+    if st.get("HARNESS_OPERATOR_PSK"):
+        env["HARNESS_OPERATOR_PSK"] = st["HARNESS_OPERATOR_PSK"]
     return env
 
 
@@ -409,8 +409,8 @@ def apply_shaping(st: dict, knobs: shaping.Knobs) -> None:
 # What cmd_env unsets in the CONSUMING shell. Same list dummy-harness.py uses
 # and for the same reason: inside a harness task the shell still carries
 # HARNESS_AUTH_TICKET for the LIVE server, and harness-cli prefers a ticket
-# over the PSK, so every call would fail BadTicket while looking like a PSK
-# problem.
+# over the operator secret, so every call would fail BadTicket while looking
+# like a secret problem.
 _UNSET_IN_CONSUMER = (
     "HARNESS_AUTH_TICKET HARNESS_TASK_ID HARNESS_RUNNER_ID HARNESS_SERVER_CID "
     "HARNESS_WS_PATH HARNESS_REPO_PATH HARNESS_HOSTNAME"
@@ -480,6 +480,9 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
     )
 
     port = dh.pick_port()
+    runner_key = tmp / "runner-key"
+    dh.seed_runner_key(runner_key, data, "netem-lab")
+    # The operator secret: what this lab's harness-cli proves.
     psk = "netem-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
     srv_ip = st["SRV_IP"]
     legs = [srv_ip] + ([st["SRV_IP2"]] if st.get("SRV_IP2") else [])
@@ -504,7 +507,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
         dh.daemon.bin_path("harness-server"),
         "--listen", bind,
         "--udp-listen", bind,
-        "--psk", psk, "--operator-psk", psk,
+        "--operator-psk", psk,
         "--data-dir", str(data),
         *getattr(args, "server_args", []),
     ], tmp / "server.log")
@@ -525,7 +528,8 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
 
     runner_args = [
         dh.daemon.bin_path("agent-runner"),
-        "--server-cid", runner_cid, "--psk", psk, "--roots", str(repo),
+        "--server-cid", runner_cid, "--runner-key-file", str(runner_key),
+        "--roots", str(repo),
         "--no-worktree", "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task; an
@@ -562,7 +566,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
     runner = _ns_spawn(st, "cli", runner_args, tmp / "runner.log")
     st["RUNNER_PID"] = runner.pid
 
-    os.environ["HARNESS_PSK"] = psk  # harness-cli's operator binder falls back to it
+    os.environ["HARNESS_OPERATOR_PSK"] = psk
     cli_bin = str(dh.daemon.bin_path("harness-cli"))
     registered = False
     for _ in range(80):
@@ -579,7 +583,7 @@ def start_harness(st: dict, args, extra: list[str]) -> None:
         dh.kill_pid(server.pid)
         setup_err("runner never registered")
 
-    st.update({"HARNESS_PSK": psk, "CID": cid, "RUNNER_CID": runner_cid,
+    st.update({"HARNESS_OPERATOR_PSK": psk, "CID": cid, "RUNNER_CID": runner_cid,
                "REPO": str(repo), "SERVER_PORT": port})
 
 
@@ -590,7 +594,7 @@ def cmd_env(name: str) -> int:
     print(f"unset {_UNSET_IN_CONSUMER}")
     # TMP is deliberately NOT exported; see state_dir() for the leak that one
     # caused in the tool this borrows from.
-    for key in ("HARNESS_PSK", "CID", "REPO", "SERVER_PORT"):
+    for key in ("HARNESS_OPERATOR_PSK", "CID", "REPO", "SERVER_PORT"):
         print(f"export {key}='{st[key]}'")
     # RUNNER_CID can be a LIST and CID never is: harness-cli takes one address,
     # the runner takes candidates. Exported separately so neither is pasted
@@ -669,7 +673,7 @@ def cmd_exec(name: str, ns: str, argv: list[str]) -> int:
     if not argv:
         die("exec needs a command after `--`")
     prefix = nsutil.nsenter_argv(int(st["USERNS_PID"]), int(st[_PID_KEY[ns]]))
-    # ns_env re-injects this instance's PSK; see there for why. It means `exec`
+    # ns_env re-injects this instance's operator secret; see there for why. It means `exec`
     # works whether or not the caller ran `eval "$(netem-lab.py env)"` first.
     return subprocess.run([*prefix, *argv], env=ns_env(st)).returncode
 

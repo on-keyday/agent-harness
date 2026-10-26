@@ -344,10 +344,6 @@ type Session struct {
 	MintedRunnerID protocol.RunnerID
 	WSPath         string
 	BinDir         string
-	// PSK, when non-nil, is forwarded to the agent subprocess via
-	// HARNESS_PSK so harness-cli invocations from inside the agent can
-	// authenticate against the PSK-protected server.
-	PSK []byte
 	// ServerPubKey is forwarded to agents as HARNESS_SERVER_PUBKEY.
 	ServerPubKey ed25519.PublicKey
 
@@ -752,7 +748,6 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		WSPath:       s.WSPath,
 		AuthTicket:   body.AuthTicket,
 		BinDir:       s.BinDir,
-		PSK:          s.PSK,
 		ServerPubKey: s.ServerPubKey,
 		ProxyVia:     s.ProxyVia,
 	})
@@ -1015,7 +1010,6 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		WSPath:       s.WSPath,
 		AuthTicket:   oer.AuthTicket,
 		BinDir:       s.BinDir,
-		PSK:          s.PSK,
 		ServerPubKey: s.ServerPubKey,
 		ProxyVia:     s.ProxyVia,
 		X11Enabled:   x11Enabled,

@@ -159,29 +159,17 @@ func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 	}
 }
 
-func TestBuildAgentEnv_PSKForwarded(t *testing.T) {
-	spec := AgentEnvSpec{
-		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
-		RunnerID:  mustRunnerID(0xB3),
-		WSPath:    "/ws",
-		PSK:       []byte("hunter2"),
-	}
-	got := envMap(BuildAgentEnv(spec))
-	if got["HARNESS_PSK"] != "hunter2" {
-		t.Errorf("HARNESS_PSK = %q, want %q", got["HARNESS_PSK"], "hunter2")
-	}
-}
-
-func TestBuildAgentEnv_PSKEmpty_NoEntry(t *testing.T) {
+// There is no connect PSK any more: an agent proves its ticket, so nothing
+// shared across the fleet is handed to it.
+func TestBuildAgentEnv_NeverSetsHarnessPSK(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
 		RunnerID:  mustRunnerID(0xB3),
 		WSPath:    "/ws",
 	}
-	env := BuildAgentEnv(spec)
-	for _, e := range env {
+	for _, e := range BuildAgentEnv(spec) {
 		if strings.HasPrefix(e, "HARNESS_PSK=") {
-			t.Errorf("HARNESS_PSK should be omitted when PSK nil, got %q", e)
+			t.Errorf("HARNESS_PSK must not be set, got %q", e)
 		}
 	}
 }

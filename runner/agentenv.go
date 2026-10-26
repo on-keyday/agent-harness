@@ -26,11 +26,6 @@ type AgentEnvSpec struct {
 	// per-task worktree distinct from the runner's binary directory, so
 	// PATH inheritance from the runner alone does not surface harness-cli.
 	BinDir string
-	// PSK, when non-nil, is forwarded to the agent subprocess as
-	// HARNESS_PSK so harness-cli invocations from inside the agent
-	// (e.g. agentboard send/recv) can authenticate against the
-	// PSK-protected server.
-	PSK []byte
 	// ServerPubKey, when non-nil, is forwarded as HARNESS_SERVER_PUBKEY so an
 	// in-task harness-cli verifies the server like its runner does. Not a
 	// secret, unlike PSK.
@@ -71,11 +66,10 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 		"MSYS2_ARG_CONV_EXCL=*",
 	}
 	// A zero ticket is not a credential, and advertising one is strictly WORSE
-	// than advertising none: harness-cli prefers a ticket over the PSK, so it
-	// would send sixteen zero bytes, the PSK gate would refuse them as
-	// BadTicket (server/psk.go step 4), and the PSK fallback that would have
-	// worked never runs. Omitted rather than zero-filled, for the same reason
-	// an empty Hostname is omitted.
+	// than advertising none: harness-cli would announce kind=agent, key its
+	// binder by sixteen zero bytes, and be refused as BadTicket where the
+	// absent variable reads as "not an agent". Omitted rather than
+	// zero-filled, for the same reason an empty Hostname is omitted.
 	if s.AuthTicket != ([16]byte{}) {
 		env = append(env, "HARNESS_AUTH_TICKET="+hex.EncodeToString(s.AuthTicket[:]))
 	}
@@ -102,9 +96,6 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 			}
 		}
 		env = append(env, "PATH="+path)
-	}
-	if len(s.PSK) > 0 {
-		env = append(env, "HARNESS_PSK="+string(s.PSK))
 	}
 	if len(s.ServerPubKey) > 0 {
 		env = append(env, cli.ServerPubKeyEnv+"="+hex.EncodeToString(s.ServerPubKey))

@@ -2,13 +2,11 @@ package runner
 
 import (
 	"context"
-	"crypto/subtle"
 	"log/slog"
 	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -30,7 +28,7 @@ import (
 // the grant id: the grant is found by trying the binder against this task's
 // live grants in grants (none matching → bad_ticket), and the answer carries
 // the grant id that matched, so everything after this reads one shape.
-func checkDataPlaneHello(data, transcript, psk []byte, grants *grantStore) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
+func checkDataPlaneHello(data, transcript []byte, grants *grantStore) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
 	if len(data) == 0 || appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
@@ -54,17 +52,9 @@ func checkDataPlaneHello(data, transcript, psk []byte, grants *grantStore) (*pro
 		return &protocol.DataPlaneInfoLegacy{GrantId: g.GrantId, TaskId: taskID}, protocol.PskAuthStatus_Ok
 	}
 
-	// Binder first, before anything is read out of the identity. A runner holds
-	// the connect PSK only — there is no operator secret here, and an operator
-	// surface has no business reaching a runner directly, so there is no
-	// second key to resolve.
-	if len(psk) > 0 {
-		expected, err := cli.ComputePSKBinder(psk, transcript)
-		if err != nil || subtle.ConstantTimeCompare(req.Binder, expected) != 1 {
-			return nil, protocol.PskAuthStatus_BadPsk
-		}
-	}
-
+	// A client_legacy hello carries its grant id as a value and proves nothing
+	// else (there is no connect PSK any more); validateDataPlaneHello checks
+	// that value against the store. Accepted until the follow-up change.
 	if req.Role != protocol.AuthRole_ClientLegacy {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
@@ -187,16 +177,12 @@ func handleDataPlaneConn(
 		log = slog.Default()
 	}
 
-	psk := cfg.PSK
-	if psk == nil {
-		psk = cli.GetPSK()
-	}
 	data := append([]byte{byte(first.kind)}, first.payload...)
 	var grants *grantStore
 	if sess := sessionRef.Load(); sess != nil {
 		grants = sess.Grants
 	}
-	info, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), psk, grants)
+	info, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), grants)
 	if st != protocol.PskAuthStatus_Ok {
 		log.Warn("data plane: handshake refused", "status", st)
 		sendPskAuthStatus(pc, st)

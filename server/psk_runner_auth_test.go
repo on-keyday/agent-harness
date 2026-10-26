@@ -34,7 +34,7 @@ func gateWithKeys(t *testing.T, keys ...ed25519.PublicKey) *pskGate {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := newPSKGate(nil)
+	g := newPSKGate()
 	g.runnerKeys = st
 	return g
 }

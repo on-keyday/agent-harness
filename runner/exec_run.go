@@ -240,7 +240,6 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		WSPath:       s.WSPath,
 		AuthTicket:   body.AuthTicket,
 		BinDir:       s.BinDir,
-		PSK:          s.PSK,
 		ServerPubKey: s.ServerPubKey,
 		ProxyVia:     s.ProxyVia,
 	})

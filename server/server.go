@@ -61,19 +61,11 @@ type Config struct {
 	// and a runner that misses it simply holds nothing.
 	HoldAckTimeout time.Duration
 
-	// PSK, when non-nil, requires every connecting client to present
-	// a matching PskAuthRequest before any other message is accepted.
-	// nil = no PSK enforcement (backward compatible). This is the shared
-	// "connect" secret: runners inject it into spawned agents as HARNESS_PSK
-	// so in-task harness-cli can authenticate.
-	PSK []byte
-
-	// OperatorPSK, when non-empty, is the separate secret that operator-surface
-	// connections (kind=cli/tui/webui) must prove via the binder. It is NEVER
-	// injected into agent task environments, so an in-task agent — which holds
-	// only PSK — cannot send kind=Client and be treated as operator
-	// (Capability_All). Empty = legacy behaviour (operator surfaces validated
-	// against PSK); server.Run logs a loud startup warning in that case, because
+	// OperatorPSK is the secret operator-surface connections (kind=cli/tui/
+	// webui) must prove via the binder. It is NEVER injected into agent task
+	// environments, so an in-task agent cannot announce an operator kind and be
+	// treated as operator (Capability_All). Empty = operator surfaces prove
+	// nothing; server.Run logs a loud startup warning in that case, because
 	// without it a confined task can escalate to operator by dropping its ticket.
 	OperatorPSK []byte
 
@@ -1411,7 +1403,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		}
 	}()
 
-	gate := newPSKGate(s.cfg.PSK)
+	gate := newPSKGate()
 	gate.operatorPSK = s.cfg.OperatorPSK
 	gate.serverKey = s.cfg.ServerKey
 	gate.runnerKeys = s.cfg.RunnerKeys

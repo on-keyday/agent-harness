@@ -43,12 +43,10 @@ var (
 	agentboardTTL        = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
 	agentboardMaxTopics  = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
 	agentboardMaxPayload = flag.Int("agentboard-max-payload", 1024*1024, "agentboard max payload bytes per message. Costs scale with it in two places: retention (max-topics x ring x this) and the transient read of an in-flight send (this + 64KiB each). It does NOT set what an agent is handed inline — the inbox hooks stop inlining a body past 64KiB and point at a command that fetches it, so raising this admits larger messages without spending the recipient's context on them.")
-	psk                  = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
-	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. With neither this nor --operator-psk-file set, one is generated into <data-dir>/operator-psk.")
 	operatorPSKFile      = flag.String("operator-psk-file", "", "path to operator-psk file; auto-generated on first run if absent")
 	serverKeyFile        = flag.String("server-key-file", "", "path to the server's Ed25519 signing key (hex seed); auto-generated if absent. Default <data-dir>/server-key. Its public half is written to <data-dir>/server-key.pub and logged at startup: configure it on clients as HARNESS_SERVER_PUBKEY (runners: --server-pubkey) so they refuse an impostor server.")
-	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces are then validated against --psk (or nothing, when that is empty too), which every in-task agent also holds, so an agent can drop its ticket, reconnect as kind=Client and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
+	permitNoOperatorPSK  = flag.Bool("dangerously-permit-no-operator-psk", false, "run WITHOUT an operator secret. Operator surfaces then prove nothing, so an in-task agent can drop its ticket, reconnect as an operator kind and hold Capability_All. Off by default: an operator secret is required, generated under --data-dir when none is supplied.")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	notifyHook           = flag.String("notify-hook", "", "external command line invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); whitespace-split into executable + args (no quoting). Fallbacks: env HARNESS_NOTIFY_HOOK, then first non-# line of <data-dir>/notify-hook — write the command there once and it survives restarts. Empty everywhere disables egress.")
 
@@ -59,7 +57,9 @@ var (
 	pprofListen = flag.String("pprof-listen", "", "serve net/http/pprof on this host:port (empty = off, the default). Turning it on ALSO enables the block and mutex profilers, which ship off because they sample on every blocking event: a CPU profile alone answers \"where does the CPU go\", which is the wrong question for a process sitting at half a core — the other half is waiting, and only the block profile says on what. Dev-only and unauthenticated: /debug/pprof exposes goroutine stacks and lets anyone who can reach it start a profile, so bind it to loopback or to a namespace nothing else can reach.")
 )
 
-func resolvePSK(pskVal, pskFile string) ([]byte, error) {
+// resolveSecret reads a secret: an explicit value wins; otherwise the file,
+// generated (32 random bytes, hex) when absent or blank.
+func resolveSecret(pskVal, pskFile string) ([]byte, error) {
 	// 1. Explicit value wins.
 	if pskVal != "" {
 		return []byte(pskVal), nil
@@ -96,12 +96,12 @@ func resolvePSK(pskVal, pskFile string) ([]byte, error) {
 // names one: under --data-dir, beside the WAL.
 const operatorPSKFileName = "operator-psk"
 
-// resolveOperatorPSK is resolvePSK with the default the connect PSK does not
-// have: an operator secret is REQUIRED. Given no value and no file it is
-// generated into <data-dir>/operator-psk, so a server started with nothing
-// still refuses operator authority to whoever has not read that file. Only
-// permitNone (--dangerously-permit-no-operator-psk) lifts that; the gate then
-// validates operator surfaces against the connect PSK and server.Run warns.
+// resolveOperatorPSK is resolveSecret with a default: an operator secret is
+// REQUIRED. Given no value and no file it is generated into
+// <data-dir>/operator-psk, so a server started with nothing still refuses
+// operator authority to whoever has not read that file. Only permitNone
+// (--dangerously-permit-no-operator-psk) lifts that; operator surfaces then
+// prove nothing and server.Run warns.
 func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, error) {
 	if val == "" && file == "" {
 		if permitNone {
@@ -116,7 +116,7 @@ func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, err
 		}
 		file = filepath.Join(dataDir, operatorPSKFileName)
 	}
-	return resolvePSK(val, file)
+	return resolveSecret(val, file)
 }
 
 // serverKeyFileName is where the server's signing key lives when
@@ -269,16 +269,6 @@ func main() {
 
 	cli.WatchShutdownFile(ctx, *shutdownFile, holdThenCancel, 250*time.Millisecond, slog.Default())
 
-	resolvedPSKVal := *psk
-	if resolvedPSKVal == "" {
-		resolvedPSKVal = os.Getenv("HARNESS_PSK")
-	}
-	pskBytes, err := resolvePSK(resolvedPSKVal, *pskFile)
-	if err != nil {
-		slog.Error("PSK setup failed", "err", err)
-		os.Exit(1)
-	}
-
 	resolvedOperatorPSKVal := *operatorPSK
 	if resolvedOperatorPSKVal == "" {
 		resolvedOperatorPSKVal = os.Getenv(cli.OperatorPSKEnv)
@@ -339,7 +329,6 @@ func main() {
 		HoldWindow:           *holdWindow,
 		HoldAckTimeout:       *holdAckTimeout,
 		Logger:               slog.Default(),
-		PSK:                  pskBytes,
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
 		RunnerKeys:           runnerKeys,

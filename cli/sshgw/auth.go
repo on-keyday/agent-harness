@@ -17,7 +17,7 @@ import (
 
 // LoadOrCreateHostKey reads the ed25519 host key at path, generating and
 // persisting one on first run — the same "the file is the origin" shape the
-// server's --psk-file uses.
+// server's --operator-psk-file uses.
 //
 // Stability is the point. A host key regenerated per run makes every subsequent
 // ssh print a host-key-changed warning and refuse to connect, so this never

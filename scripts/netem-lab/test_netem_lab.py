@@ -227,7 +227,7 @@ class TestState(unittest.TestCase):
         st = {
             "USERNS_PID": 11, "SRV_PID": 22, "CLI_PID": 33,
             "SERVER_PID": 44, "RUNNER_PID": 55,
-            "CID": "udp:10.90.0.2:9000-*", "HARNESS_PSK": "p",
+            "CID": "udp:10.90.0.2:9000-*", "HARNESS_OPERATOR_PSK": "p",
             "TMP": self.tmp.name, "REPO": self.tmp.name,
             "SUBNET_A": "10.90.0.0/24", "SUBNET_B": "10.91.0.0/24",
             "PROFILE": "wan-us",

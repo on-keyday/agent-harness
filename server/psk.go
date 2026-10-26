@@ -133,7 +133,6 @@ func clientHelloFromLegacy(l *protocol.ClientHelloLegacy) protocol.ClientHello {
 // PskAuthStatus_BadTicket on failure. Nil ValidateTicket degrades to Ok (safe
 // for tests that do not wire a Board).
 type pskGate struct {
-	psk    []byte
 	authed bool
 	// role is fixed by the accepted handshake, never by later messages, and
 	// stored NORMALISED: AuthRole_Client or AuthRole_Runner whichever shape
@@ -147,13 +146,11 @@ type pskGate struct {
 	runnerKey ed25519.PublicKey
 	// runnerKeys is the set of keys allowed to register under role=runner.
 	runnerKeys *RunnerKeyStore
-	// operatorPSK, when non-empty, is the separate secret that operator-surface
-	// connections (kind=cli/tui/webui, i.e. anything but agent) must prove via
-	// the binder. It is NEVER injected into agent task environments, so an
-	// in-task agent — which holds only the connect psk — cannot forge an
-	// operator binder and thus cannot claim operator authority by sending
-	// kind=Client. Empty operatorPSK preserves the legacy behaviour (operator
-	// connections validated against psk, the shared connect secret).
+	// operatorPSK is the secret operator-surface connections (kind=cli/tui/
+	// webui, i.e. anything but agent) must prove via the binder. It is NEVER
+	// injected into agent task environments, so an in-task agent cannot forge
+	// an operator binder and thus cannot claim operator authority by sending
+	// an operator kind. Empty only under --dangerously-permit-no-operator-psk.
 	operatorPSK []byte
 	// serverKey signs every PskAuthResponse so a client holding the public
 	// half can tell this server from an impostor. server.New guarantees one.
@@ -165,10 +162,10 @@ type pskGate struct {
 	TicketFor func(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte, bool)
 }
 
-func newPSKGate(psk []byte) *pskGate {
-	// authed is always false initially: even no-PSK connections must complete
-	// the identity handshake before any other message is processed.
-	return &pskGate{psk: psk, authed: false}
+func newPSKGate() *pskGate {
+	// authed is always false initially: every connection must complete the
+	// identity handshake before any other message is processed.
+	return &pskGate{}
 }
 
 func (g *pskGate) Authed() bool { return g.authed }
@@ -231,29 +228,25 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 	}
 }
 
-// binderKey selects which secret the request's binder must prove. Operator-
-// surface clients (role=Client, kind != agent: cli/tui/webui) prove operatorPSK
-// when it is configured; agents (kind=agent) and runners prove the shared
-// connect psk. When operatorPSK is empty the operator surface falls back to the
-// connect psk — the legacy behaviour — so a deployment that has not configured
-// an operator secret is unchanged (and a startup warning is emitted elsewhere).
+// binderKey selects the secret a binder must prove: the operator PSK, for
+// operator-surface clients (kind cli/tui/webui) of either client role. Nothing
+// else proves a shared secret: an agent's binder is keyed by its ticket
+// (agentBinderOK), a runner signs (RunnerAuth), and a client_legacy agent or
+// runner_legacy runner carried none once the connect PSK was gone. nil = no
+// binder to check; with no operator PSK configured
+// (--dangerously-permit-no-operator-psk) operator surfaces prove nothing.
 func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
-	if req.Role == protocol.AuthRole_Runner {
-		return nil // proves its key with RunnerAuth.sig instead
-	}
-	if req.Role == protocol.AuthRole_Client {
-		// kind=agent is keyed by its ticket (agentBinderOK), not here.
-		if len(g.operatorPSK) > 0 {
+	switch req.Role {
+	case protocol.AuthRole_Client:
+		if h := req.ClientHello(); h != nil && h.Kind != protocol.ClientKind_Agent {
 			return g.operatorPSK
 		}
-		return g.psk
-	}
-	if req.Role == protocol.AuthRole_ClientLegacy && len(g.operatorPSK) > 0 {
-		if hello := req.ClientHelloLegacy(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
+	case protocol.AuthRole_ClientLegacy:
+		if h := req.ClientHelloLegacy(); h != nil && h.Kind != protocol.ClientKind_Agent {
 			return g.operatorPSK
 		}
 	}
-	return g.psk
+	return nil
 }
 
 // respond encodes and sends [AppKind_PskAuth] + PskAuthResponse{status, sig}.

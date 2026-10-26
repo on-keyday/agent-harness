@@ -30,7 +30,7 @@ func TestAuthenticatedConnectionRoles(t *testing.T) {
 	}
 	for _, role := range roles {
 		t.Run(role.name, func(t *testing.T) {
-			g := newPSKGate(nil)
+			g := newPSKGate()
 			g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_Ok }
 			_, closeConn, accepted := g.Check(buildPskAuthData(t, role.req), testTranscript, func([]byte) {})
 			if closeConn || accepted == nil {
@@ -64,7 +64,7 @@ func TestAuthenticatedConnectionRoles(t *testing.T) {
 }
 
 func TestUnauthenticatedConnectionHasNoRoleAuthority(t *testing.T) {
-	g := newPSKGate(nil)
+	g := newPSKGate()
 	for _, kind := range []appwire.AppKind{appwire.AppKind_TaskControl, appwire.AppKind_RunnerControl, appwire.AppKind_Pubsub, appwire.AppKind_Telemetry} {
 		if g.AllowsMessage([]byte{byte(kind), 1}) {
 			t.Errorf("unauthenticated connection allowed %v", kind)

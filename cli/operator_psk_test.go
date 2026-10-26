@@ -26,9 +26,8 @@ func setAgentEnv(t *testing.T) {
 	t.Setenv("HARNESS_AUTH_TICKET", strings.Repeat("cd", 16))
 }
 
-func TestResolveBinderPSK_OperatorPrefersOperatorPSK(t *testing.T) {
+func TestResolveBinderPSK_OperatorUsesOperatorPSK(t *testing.T) {
 	clearAgentEnv(t)
-	t.Setenv("HARNESS_PSK", "connect-secret")
 	t.Setenv("HARNESS_OPERATOR_PSK", "operator-secret")
 
 	got := resolveBinderPSK()
@@ -37,14 +36,16 @@ func TestResolveBinderPSK_OperatorPrefersOperatorPSK(t *testing.T) {
 	}
 }
 
-func TestResolveBinderPSK_OperatorFallsBackToConnectPSK(t *testing.T) {
+// HARNESS_PSK is no longer read by anything: an operator surface without an
+// operator secret proves nothing rather than falling back to it.
+func TestResolveBinderPSK_IgnoresHarnessPSK(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("HARNESS_PSK", "connect-secret")
 	t.Setenv("HARNESS_OPERATOR_PSK", "")
+	t.Setenv("HARNESS_OPERATOR_PSK_FILE", "")
 
-	got := resolveBinderPSK()
-	if !bytes.Equal(got, []byte("connect-secret")) {
-		t.Errorf("operator surface without operator psk: got %q, want connect-secret", got)
+	if got := resolveBinderPSK(); got != nil {
+		t.Errorf("operator surface without operator psk: got %q, want nil", got)
 	}
 }
 

@@ -9,8 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,57 +18,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
-
-func TestGetPSK_Unset(t *testing.T) {
-	t.Setenv("HARNESS_PSK", "")
-	t.Setenv("HARNESS_PSK_FILE", "")
-	if got := cli.GetPSK(); got != nil {
-		t.Errorf("GetPSK() = %q, want nil", got)
-	}
-}
-
-func TestGetPSK_EnvValue(t *testing.T) {
-	t.Setenv("HARNESS_PSK", "hunter2")
-	t.Setenv("HARNESS_PSK_FILE", "")
-	got := cli.GetPSK()
-	if string(got) != "hunter2" {
-		t.Errorf("GetPSK() = %q, want %q", got, "hunter2")
-	}
-}
-
-func TestGetPSK_FileValue(t *testing.T) {
-	t.Setenv("HARNESS_PSK", "")
-	f := filepath.Join(t.TempDir(), "psk")
-	if err := os.WriteFile(f, []byte("filekey\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HARNESS_PSK_FILE", f)
-	got := cli.GetPSK()
-	if string(got) != "filekey" {
-		t.Errorf("GetPSK() = %q, want %q", got, "filekey")
-	}
-}
-
-func TestGetPSK_EnvWinsOverFile(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "psk")
-	if err := os.WriteFile(f, []byte("fromfile\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HARNESS_PSK", "fromenv")
-	t.Setenv("HARNESS_PSK_FILE", f)
-	got := cli.GetPSK()
-	if string(got) != "fromenv" {
-		t.Errorf("GetPSK() = %q, want env value %q", got, "fromenv")
-	}
-}
-
-func TestGetPSK_FileMissing(t *testing.T) {
-	t.Setenv("HARNESS_PSK", "")
-	t.Setenv("HARNESS_PSK_FILE", "/nonexistent/psk")
-	if got := cli.GetPSK(); got != nil {
-		t.Errorf("GetPSK() with missing file = %q, want nil", got)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Tests for the new merged handshake (SendMergedHandshake)

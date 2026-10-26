@@ -117,7 +117,7 @@ if [ -z "$WIRE_CHANGED" ]; then
 fi
 echo "wire-skew-check: wire changed $OLD_SHA -> $NEW_SHA ($WIRE_CHANGED); verifying the skew stays recoverable"
 
-TMP="$(mktemp -d)"; PORT="${WIRE_SKEW_PORT:-18899}"; CID="ws:127.0.0.1:${PORT}-*"; PSK="wire-skew-check"
+TMP="$(mktemp -d)"; PORT="${WIRE_SKEW_PORT:-18899}"; CID="ws:127.0.0.1:${PORT}-*"; PSK="wire-skew-check"  # the operator secret
 SPID=""; RPID=""
 cleanup() {
   [ -n "$RPID" ] && kill "$RPID" 2>/dev/null
@@ -153,10 +153,17 @@ cp webui/static/main.wasm "$TMP/old/webui/static/main.wasm" 2>/dev/null \
 ( cd "$TMP/old" && go build -buildvcs=false -o "$TMP/old-runner" ./cmd/agent-runner ) || exit 2
 
 mkdir -p "$TMP/repo" "$TMP/data"
+# The NEW runner's key, enrolled in the data dir both servers start from: the
+# NEW server reads runner-keys.json at startup, which is what lets phase 2's
+# self-heal be a plain reconnect. The OLD server ignores the file.
+"$TMP/new-runner" --print-pubkey --runner-key-file "$TMP/runner-key" >"$TMP/runner-key.pub" 2>/dev/null \
+  || { echo "wire-skew-check: new agent-runner --print-pubkey failed — setup error"; exit 2; }
+printf '[{"key":"%s","label":"wire-skew","enrolled_at":"%s","enrolled_by":"operator"}]\n' \
+  "$(cat "$TMP/runner-key.pub")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TMP/data/runner-keys.json"
 ( cd "$TMP/repo" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
 
 start_server(){ # $1 = binary
-  "$1" --listen "127.0.0.1:${PORT}" --psk "$PSK" --operator-psk "$PSK" --data-dir "$TMP/data" >"$TMP/server.log" 2>&1 &
+  "$1" --listen "127.0.0.1:${PORT}" --operator-psk "$PSK" --data-dir "$TMP/data" >"$TMP/server.log" 2>&1 &
   SPID=$!
   for _ in $(seq 1 30); do
     grep -qi "server exited" "$TMP/server.log" && return 1
@@ -203,7 +210,7 @@ runner_alive(){ [ -n "$RPID" ] && kill -0 "$RPID" 2>/dev/null; }
 echo
 echo "  [1/3] NEW runner -> OLD server (skew): must be rejected, retry, not exit"
 start_server "$TMP/old-server" || { echo "wire-skew-check: OLD server ($OLD_SHA) failed to listen — setup error, NOT a pass"; head -3 "$TMP/server.log"; exit 2; }
-"$TMP/new-runner" --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
+"$TMP/new-runner" --server-cid "$CID" --runner-key-file "$TMP/runner-key" --roots "$TMP/repo" --no-worktree \
   --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
 RPID=$!
 # Poll for an outcome rather than sleeping a fixed time. An objproto-layer skew
@@ -298,7 +305,7 @@ else
   kill "$RPID" 2>/dev/null; wait "$RPID" 2>/dev/null
   : >"$TMP/runner.log"
   # The NEW server is already the one running from phase 2.
-  "$TMP/old-runner" --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
+  "$TMP/old-runner" --server-cid "$CID" --roots "$TMP/repo" --no-worktree \
     --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
   RPID=$!
   for _ in $(seq 1 40); do

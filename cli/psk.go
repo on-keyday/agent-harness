@@ -14,33 +14,10 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// GetPSK resolves the PSK in priority order:
-//  1. HARNESS_PSK env (value)
-//  2. HARNESS_PSK_FILE env (path → read file, trim whitespace)
-//  3. nil (no PSK)
-func GetPSK() []byte {
-	if v := os.Getenv("HARNESS_PSK"); v != "" {
-		return []byte(v)
-	}
-	if path := os.Getenv("HARNESS_PSK_FILE"); path != "" {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			if v := strings.TrimSpace(string(data)); v != "" {
-				return []byte(v)
-			}
-		}
-	}
-	return nil
-}
-
-// GetOperatorPSK resolves the operator-only secret (OperatorPSKEnv /
-// OperatorPSKFileEnv), mirroring GetPSK. It is deliberately a DISTINCT env var
-// from HARNESS_PSK: an agent-runner reads HARNESS_PSK from its own env
-// (cmd/agent-runner/main.go) and injects it into spawned agents, so if the
-// operator secret lived in HARNESS_PSK it would reach every agent by design —
-// reopening the kind=Client → operator escalation. The other route, an agent
-// inheriting the runner's environment wholesale, is closed by the runner
-// dropping exactly these two names before it spawns anything.
+// GetOperatorPSK resolves the operator-only secret (OperatorPSKEnv, then the
+// file OperatorPSKFileEnv names). An agent inheriting the runner's environment
+// wholesale would reopen the operator-kind escalation, which the runner closes
+// by dropping exactly these two names before it spawns anything.
 func GetOperatorPSK() []byte {
 	if v := os.Getenv(OperatorPSKEnv); v != "" {
 		return []byte(v)
@@ -72,18 +49,14 @@ func isAgentContext() bool {
 	return true
 }
 
-// resolveBinderPSK picks the operator secret an operator surface's binder
-// proves: HARNESS_OPERATOR_PSK when set, falling back to HARNESS_PSK for
-// deployments that have not split them. An in-task agent needs none — its
-// binder is keyed by its ticket (SendMergedHandshake).
+// resolveBinderPSK picks the secret an operator surface's binder proves: the
+// operator PSK. An in-task agent needs none — its binder is keyed by its
+// ticket (SendMergedHandshake).
 func resolveBinderPSK() []byte {
 	if isAgentContext() {
 		return nil
 	}
-	if op := GetOperatorPSK(); len(op) > 0 {
-		return op
-	}
-	return GetPSK()
+	return GetOperatorPSK()
 }
 
 // EffectiveClientKind reports which principal a client dialed from THIS

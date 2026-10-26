@@ -17,7 +17,8 @@ standing one up by hand has two traps that cost real time each rediscovery:
 Both are scrubbed here. Do not "simplify" that away.
 
 The live fleet is never touched: loopback only, an ephemeral port, a fresh
-PSK, and a temp data dir that goes away on teardown.
+operator secret and runner key, and a temp data dir that goes away on
+teardown.
 
 The WebUI is served from webui/ on disk (--webui-dir), not from the binary's
 embedded copy: an embedded one is frozen at compile time, so a JS/wasm edit
@@ -339,15 +340,16 @@ def cmd_env(name: str) -> int:
     # The scrub at the top of this script only cleans the script's own
     # environment. Whoever evals this is a different shell — inside a harness
     # task it still carries HARNESS_AUTH_TICKET for the LIVE server, and
-    # harness-cli prefers a ticket over the PSK, so every call would fail
-    # BadTicket while looking like a PSK problem. Emit the unsets too.
+    # harness-cli prefers a ticket over the operator secret, so every call
+    # would fail BadTicket while looking like a secret problem. Emit the unsets
+    # too.
     print(f"unset {_UNSET_IN_CONSUMER}")
     # UDP_CID / RUNNER_CID are emitted too: `up --udp` puts the runner on the
     # UDP leg, and a client that must join it there — the direct data-plane
     # route refuses unless BOTH ends are on udp — has no other way to learn
     # the port, which is picked fresh per instance. Omitting them made --udp
     # reachable only by reading the state file by hand.
-    for key in ("HARNESS_PSK", "CID", "UDP_CID", "RUNNER_CID", "TMP", "BIN", "REPO",
+    for key in ("HARNESS_OPERATOR_PSK", "CID", "UDP_CID", "RUNNER_CID", "TMP", "BIN", "REPO",
                 "SERVER_PID", "RUNNER_PID", "SERVER_PORT"):
         print(f"export {key}='{st[key]}'")
     return 0
@@ -369,6 +371,22 @@ def cmd_down(name: str) -> int:
     path.unlink(missing_ok=True)
     print("dummy-harness: stopped")
     return 0
+
+
+def seed_runner_key(key_file: Path, data: Path, label: str) -> None:
+    """Give the runner a key and enroll it BEFORE the server starts: the server
+    reads <data>/runner-keys.json at startup, and a runner whose key it does not
+    hold is refused not_enrolled. --print-pubkey creates the key file when it
+    is absent and needs no other flag."""
+    out = subprocess.run(
+        [str(daemon.bin_path("agent-runner")), "--print-pubkey", "--runner-key-file", str(key_file)],
+        check=True, capture_output=True, text=True,
+    )
+    pub = out.stdout.strip()
+    rows = [{"key": pub, "label": label,
+             "enrolled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+             "enrolled_by": "operator"}]
+    (data / "runner-keys.json").write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
 
 
 def make_loopback_cert(tmp: Path) -> tuple[Path, Path]:
@@ -404,6 +422,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     tmp = Path(tempfile.mkdtemp(prefix="harness-dummy.", dir=str(tmp_root())))
     port = pick_port()
     udp_port = pick_port()
+    # The operator secret: what this instance's harness-cli proves.
     psk = "dummy-" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")
     cid = f"{'wss' if tls else 'ws'}:127.0.0.1:{port}-*"
     # --udp points the RUNNER at the UDP leg while the client keeps the ws one,
@@ -419,6 +438,8 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     if tls:
         cert, key = make_loopback_cert(tmp)
         server_args = server_args + ["--tls-cert", str(cert), "--tls-key", str(key)]
+    runner_key = tmp / "runner-key"
+    seed_runner_key(runner_key, data, "dummy")
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     subprocess.run(
         ["git", "-C", str(repo), "-c", "user.email=dummy@example.invalid",
@@ -441,7 +462,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
         [daemon.bin_path("harness-server"), "--listen", f"127.0.0.1:{port}",
          "--udp-listen", f"127.0.0.1:{udp_port}",
          "--webui-dir", str(REPO_ROOT / "webui"),
-         "--psk", psk, "--operator-psk", psk, "--data-dir", str(data)] + server_args,
+         "--operator-psk", psk, "--data-dir", str(data)] + server_args,
         tmp / "server.log",
     )
     for _ in range(40):
@@ -460,7 +481,8 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     # and the symptom is silence, not an error.
     runner_args: list[str] = [
         str(daemon.bin_path("agent-runner")),
-        "--server-cid", runner_cid, "--psk", psk, "--roots", str(repo), "--no-worktree",
+        "--server-cid", runner_cid, "--runner-key-file", str(runner_key),
+        "--roots", str(repo), "--no-worktree",
         "--max-tasks", "4",
     ]
     # No profile at all beats one that registers and then fails per task: an
@@ -502,7 +524,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
 
     runner = spawn(runner_args, tmp / "runner.log")
 
-    os.environ["HARNESS_PSK"] = psk  # harness-cli's operator binder falls back to this
+    os.environ["HARNESS_OPERATOR_PSK"] = psk
     registered = False
     for _ in range(40):
         if runner.poll() is not None:
@@ -528,7 +550,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, udp: bool, tls: bool
     # unusable on the platform it was most needed on. cmd_env renders the export
     # lines from it, so consumers are unchanged.
     path.write_text(json.dumps({
-        "HARNESS_PSK": psk,
+        "HARNESS_OPERATOR_PSK": psk,
         "CID": cid,
         "TMP": str(tmp),
         "BIN": str(BIN),

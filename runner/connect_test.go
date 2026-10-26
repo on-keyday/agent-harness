@@ -268,7 +268,7 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 
 	// No PSK: binder_len should be 0.
 	ctx := context.Background()
-	if err := sendRunnerMergedHandshake(ctx, sendFn, nil, transcript, cfg, respCh); err != nil {
+	if err := sendRunnerMergedHandshake(ctx, sendFn, transcript, cfg, respCh); err != nil {
 		t.Fatalf("sendRunnerMergedHandshake: %v", err)
 	}
 
@@ -487,7 +487,7 @@ func TestRunnerHandshake_ForgedRejectionIsNotFatal(t *testing.T) {
 
 	_, rk, _ := ed25519.GenerateKey(rand.Reader)
 	cfg := Config{RunnerID: NewRunnerID(), ServerPubKey: pub, RunnerKey: rk}
-	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil }, nil, tr, cfg, respCh)
+	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil }, tr, cfg, respCh)
 	var sae *cli.ServerAuthError
 	var rej *cli.PskRejectedError
 	if !errors.As(err, &sae) || errors.As(err, &rej) {
@@ -500,7 +500,7 @@ func TestRunnerHandshake_UndecodableReplyIsRetryable(t *testing.T) {
 	respCh <- cli.DecodePskAuthReply([]byte{0})
 	_, rk, _ := ed25519.GenerateKey(rand.Reader)
 	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil },
-		nil, nil, Config{RunnerID: NewRunnerID(), RunnerKey: rk}, respCh)
+		nil, Config{RunnerID: NewRunnerID(), RunnerKey: rk}, respCh)
 	if err == nil || !strings.Contains(err.Error(), "server response did not decode") {
 		t.Fatalf("err = %v", err)
 	}

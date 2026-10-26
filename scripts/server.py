@@ -17,7 +17,7 @@ ports, different data-dirs); without ``--as`` the slot is
 Examples::
 
     python scripts/server.py up --listen :8539 --data-dir ./harness-data
-    python scripts/server.py up --psk-file ./psk
+    python scripts/server.py up --operator-psk-file ./operator-psk
     python scripts/server.py up --as alt --listen :8540 --data-dir ./harness-data-alt
     python scripts/server.py down
     python scripts/server.py down --as alt

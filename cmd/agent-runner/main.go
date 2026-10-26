@@ -31,21 +31,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func resolvePSK(pskVal, pskFile string) []byte {
-	if pskVal != "" {
-		return []byte(pskVal)
-	}
-	if pskFile != "" {
-		data, err := os.ReadFile(pskFile)
-		if err == nil {
-			if v := strings.TrimSpace(string(data)); v != "" {
-				return []byte(v)
-			}
-		}
-	}
-	return nil
-}
-
 // mainConfig holds all flag-derived state for agent-runner. Using a struct
 // instead of package-level flag vars makes validate() and bindFlags()
 // testable without touching the global flag.CommandLine.
@@ -64,8 +49,6 @@ type mainConfig struct {
 	StreamAdapter              string
 	WSPath                     string
 	Hostname                   string
-	PSK                        string
-	PSKFile                    string
 	ServerPubKey               string
 	ServerPubKeyFile           string
 	RunnerKeyFile              string
@@ -144,8 +127,6 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 			"rather than falling back to a PTY. Read per task, so editing the adapter needs no restart")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
-	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
-	fs.StringVar(&c.PSKFile, "psk-file", c.PSKFile, "path to PSK file (env: HARNESS_PSK_FILE)")
 	fs.StringVar(&c.ServerPubKey, "server-pubkey", c.ServerPubKey, "the server's public key (hex, from <data-dir>/server-key.pub on the server host); when set, the runner refuses a server that cannot prove it holds the matching private key, and agents inherit it (env: HARNESS_SERVER_PUBKEY)")
 	fs.StringVar(&c.ServerPubKeyFile, "server-pubkey-file", c.ServerPubKeyFile, "path to a file holding --server-pubkey (env: HARNESS_SERVER_PUBKEY_FILE)")
 	fs.StringVar(&c.RunnerKeyFile, "runner-key-file", c.RunnerKeyFile, "this runner's Ed25519 key, which the server must have enrolled (`harness-cli runner enroll`); created when absent (env: HARNESS_RUNNER_KEY_FILE; default <home>/.config/harness/runner-key, shared by every slot this user runs)")
@@ -458,12 +439,6 @@ func main() {
 	// the same way either way, so it is ignored here.
 	cli.WatchShutdownFile(ctx, cfg.ShutdownFile, func(string) { cancel() }, 250*time.Millisecond, slog.Default())
 
-	pskVal := cfg.PSK
-	if pskVal == "" {
-		pskVal = os.Getenv("HARNESS_PSK")
-	}
-	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
-
 	pubVal, pubFile := cfg.ServerPubKey, cfg.ServerPubKeyFile
 	if pubVal == "" {
 		pubVal = os.Getenv(cli.ServerPubKeyEnv)
@@ -522,7 +497,6 @@ func main() {
 		Hostname:                   hostname,
 		Profiles:                   cfg.Profiles,
 		Logger:                     slog.Default(),
-		PSK:                        resolvedPSK,
 		ServerPubKey:               serverPubKey,
 		RunnerKey:                  runnerKey,
 		NotEnrolledOnce:            new(sync.Once),

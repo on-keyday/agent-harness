@@ -75,7 +75,7 @@ export LC_ALL=C
 REPO="$(cd "$(dirname "$0")/.." && pwd)"; cd "$REPO" || exit 2
 BIN="$REPO/bin"
 
-PSK="e2e-oneshot-progress"
+PSK="e2e-oneshot-progress"   # the operator secret harness-cli proves
 PROGRESS_LEAD_S=1     # rendered progress must precede terminal by this much
 CLAUDE_DEADLINE_S=30  # hard per-task timeout (brief: 30s)
 CODEX_DEADLINE_S=20   # the guarded bug is a 30-MINUTE hang; keep this in seconds
@@ -208,8 +208,17 @@ PORT="${E2E_PORT:-$(pick_port)}"
 [ -n "$PORT" ] || setup_err "could not find a free loopback port"
 CID="ws:127.0.0.1:${PORT}-*"
 
+RUNNER_BIN="$BIN/agent-runner"; SEED_LABEL="e2e"
+# The runner's key is enrolled before the server starts: the server reads
+# <data-dir>/runner-keys.json at startup and refuses an unknown key.
+RUNNER_KEY="$TMP/runner-key"
+mkdir -p "$TMP/data"
+PUB=$("$RUNNER_BIN" --print-pubkey --runner-key-file "$RUNNER_KEY") || setup_err "agent-runner --print-pubkey failed"
+printf '[{"key":"%s","label":"%s","enrolled_at":"%s","enrolled_by":"operator"}]\n' \
+  "$PUB" "$SEED_LABEL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TMP/data/runner-keys.json"
+
 echo "e2e-oneshot-progress: starting server on loopback port $PORT"
-"$BIN/harness-server" --listen "127.0.0.1:${PORT}" --psk "$PSK" --operator-psk "$PSK" \
+"$BIN/harness-server" --listen "127.0.0.1:${PORT}" --operator-psk "$PSK" \
   --data-dir "$TMP/data" >"$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 listening=0
@@ -252,7 +261,7 @@ JSON
 )
 echo "e2e-oneshot-progress: starting runner (profiles: fake-claude.sh, codex, shell)"
 "$BIN/agent-runner" \
-  --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
+  --server-cid "$CID" --runner-key-file "$RUNNER_KEY" --roots "$TMP/repo" --no-worktree \
   --agent-bin "$TMP/agents/fake-claude.sh" \
   --agent-oneshot-argv '--output-format stream-json --verbose {args} -p {prompt}' \
   --agent-resume-oneshot-argv '--output-format stream-json --verbose {args} --continue -p {prompt}' \
@@ -261,7 +270,7 @@ echo "e2e-oneshot-progress: starting runner (profiles: fake-claude.sh, codex, sh
   --agent-profiles "$PROFILES_JSON" >"$TMP/runner.log" 2>&1 &
 RUNNER_PID=$!
 
-export HARNESS_PSK="$PSK"   # harness-cli falls back to this for the operator binder
+export HARNESS_OPERATOR_PSK="$PSK"
 registered=0
 for _ in $(seq 1 40); do
   kill -0 "$RUNNER_PID" 2>/dev/null || break

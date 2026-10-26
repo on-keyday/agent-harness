@@ -139,10 +139,8 @@ func dialOn(ctx context.Context, pc *peer.Conn, kind protocol.ClientKind, server
 		pending: map[uint32]chan taskControlResult{},
 	}
 
-	// Pick the binder secret by role: operator surfaces prove the operator psk
-	// (HARNESS_OPERATOR_PSK), in-task agents prove the connect psk (HARNESS_PSK).
-	// See resolveBinderPSK — keeping them in distinct env vars stops a runner
-	// from inheriting the operator secret and leaking it to agents.
+	// Operator surfaces prove the operator psk (HARNESS_OPERATOR_PSK); an
+	// in-task agent proves its ticket instead. See resolveBinderPSK.
 	psk := resolveBinderPSK()
 	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
 	pskRespCh := make(chan PskAuthReply, 1)
