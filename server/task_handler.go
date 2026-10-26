@@ -27,9 +27,12 @@ import (
 // and replies with a TaskControlResponse. It also triggers the scheduler
 // via OnChange after mutating operations (Submit, Cancel).
 type TaskHandler struct {
-	Tasks    *TaskStore
-	Registry *Registry
-	OnChange func() // called after Submit / Cancel mutations
+	// RunnerKeys is the enrollment store: the runner key verbs act on it, and
+	// the list handler reads a runner's key label from it.
+	RunnerKeys *RunnerKeyStore
+	Tasks      *TaskStore
+	Registry   *Registry
+	OnChange   func() // called after Submit / Cancel mutations
 
 	// OnSessionActivity fires when a live detachable session's PTY output
 	// crosses the busy/idle edge (SessionHooks.OnActivity, forwarded per
@@ -2119,6 +2122,11 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		runnerInfos = make([]protocol.RunnerInfo, len(runners))
 		for i, r := range runners {
 			runnerInfos[i] = toRunnerInfo(r)
+			if r.Key != nil && h.RunnerKeys != nil {
+				if rec, ok := h.RunnerKeys.Lookup(r.Key); ok {
+					runnerInfos[i].SetKeyLabel([]byte(rec.Label))
+				}
+			}
 		}
 	}
 	var filteredTasks []TaskEntry

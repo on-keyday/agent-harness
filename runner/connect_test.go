@@ -248,11 +248,14 @@ func TestBuildRunnerHello(t *testing.T) {
 // This is the merged-handshake path: one message replaces both SendAndWaitPSK and
 // the separate RunnerHello send that previously occurred in OnConnect.
 func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	cfg := Config{
 		AllowedRoots: []string{"/srv/repo"},
 		MaxTasks:     2,
 		Hostname:     "test-runner",
+		RunnerKey:    key,
 	}
+	transcript := []byte("this connection")
 
 	var sentBytes []byte
 	sendFn := func(b []byte) error {
@@ -265,7 +268,7 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 
 	// No PSK: binder_len should be 0.
 	ctx := context.Background()
-	if err := sendRunnerMergedHandshake(ctx, sendFn, nil, nil, cfg, respCh); err != nil {
+	if err := sendRunnerMergedHandshake(ctx, sendFn, nil, transcript, cfg, respCh); err != nil {
 		t.Fatalf("sendRunnerMergedHandshake: %v", err)
 	}
 
@@ -282,16 +285,23 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 	if _, err := req.Decode(sentBytes[1:]); err != nil {
 		t.Fatalf("Decode PskAuthRequest: %v", err)
 	}
-	if req.Role != protocol.AuthRole_RunnerLegacy {
-		t.Errorf("Role: got %v, want AuthRole_RunnerLegacy", req.Role)
+	if req.Role != protocol.AuthRole_Runner {
+		t.Errorf("Role: got %v, want AuthRole_Runner", req.Role)
 	}
 	if req.BinderLen != 0 {
-		t.Errorf("BinderLen: got %d, want 0 (no-PSK)", req.BinderLen)
+		t.Errorf("BinderLen: got %d, want 0 (a runner signs instead)", req.BinderLen)
 	}
-	rh := req.RunnerHello()
-	if rh == nil {
-		t.Fatal("RunnerHello() returned nil")
+	auth := req.RunnerAuth()
+	if auth == nil {
+		t.Fatal("RunnerAuth() returned nil")
 	}
+	if !ed25519.PublicKey(auth.Key[:]).Equal(key.Public().(ed25519.PublicKey)) {
+		t.Error("RunnerAuth.Key is not the configured key")
+	}
+	if !cli.VerifyRunnerAuth(auth.Key[:], transcript, auth.Sig[:]) {
+		t.Error("RunnerAuth.Sig does not verify over this connection's transcript")
+	}
+	rh := &auth.Hello
 	if rh.Version != 1 {
 		t.Errorf("RunnerHello.Version: got %d, want 1", rh.Version)
 	}
@@ -475,7 +485,8 @@ func TestRunnerHandshake_ForgedRejectionIsNotFatal(t *testing.T) {
 	respCh := make(chan cli.PskAuthReply, 1)
 	respCh <- cli.PskAuthReply{Resp: resp}
 
-	cfg := Config{RunnerID: NewRunnerID(), ServerPubKey: pub}
+	_, rk, _ := ed25519.GenerateKey(rand.Reader)
+	cfg := Config{RunnerID: NewRunnerID(), ServerPubKey: pub, RunnerKey: rk}
 	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil }, nil, tr, cfg, respCh)
 	var sae *cli.ServerAuthError
 	var rej *cli.PskRejectedError
@@ -487,8 +498,9 @@ func TestRunnerHandshake_ForgedRejectionIsNotFatal(t *testing.T) {
 func TestRunnerHandshake_UndecodableReplyIsRetryable(t *testing.T) {
 	respCh := make(chan cli.PskAuthReply, 1)
 	respCh <- cli.DecodePskAuthReply([]byte{0})
+	_, rk, _ := ed25519.GenerateKey(rand.Reader)
 	err := sendRunnerMergedHandshake(context.Background(), func([]byte) error { return nil },
-		nil, nil, Config{RunnerID: NewRunnerID()}, respCh)
+		nil, nil, Config{RunnerID: NewRunnerID(), RunnerKey: rk}, respCh)
 	if err == nil || !strings.Contains(err.Error(), "server response did not decode") {
 		t.Fatalf("err = %v", err)
 	}

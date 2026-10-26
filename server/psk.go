@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/ed25519"
 	"crypto/subtle"
+	"encoding/hex"
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -54,8 +55,8 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		d.Dispatch(conn, data)
 		return true
 
-	case protocol.AuthRole_RunnerLegacy:
-		rh := req.RunnerHello()
+	case protocol.AuthRole_RunnerLegacy, protocol.AuthRole_Runner:
+		rh := runnerHelloOf(req)
 		if rh == nil {
 			return false
 		}
@@ -70,6 +71,17 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		return true
 	}
 	return false
+}
+
+// runnerHelloOf is the RunnerHello of either runner role.
+func runnerHelloOf(req *protocol.PskAuthRequest) *protocol.RunnerHello {
+	if req.Role == protocol.AuthRole_Runner {
+		if a := req.RunnerAuth(); a != nil {
+			return &a.Hello
+		}
+		return nil
+	}
+	return req.RunnerHello()
 }
 
 // clientHelloFromLegacy drops the bearer values an AuthRole.client_legacy hello
@@ -105,7 +117,18 @@ func clientHelloFromLegacy(l *protocol.ClientHelloLegacy) protocol.ClientHello {
 type pskGate struct {
 	psk    []byte
 	authed bool
-	role   protocol.AuthRole // fixed by the accepted handshake, never by later messages
+	// role is fixed by the accepted handshake, never by later messages, and
+	// stored NORMALISED: AuthRole_Client or AuthRole_Runner whichever shape
+	// proved it, with legacy saying whether that was a _legacy role. Every
+	// reader of the role therefore compares against two values, as before
+	// the legacy roles existed.
+	role   protocol.AuthRole
+	legacy bool
+	// runnerKey is the enrolled key a role=runner connection signed with;
+	// nil for every other connection.
+	runnerKey ed25519.PublicKey
+	// runnerKeys is the set of keys allowed to register under role=runner.
+	runnerKeys *RunnerKeyStore
 	// operatorPSK, when non-empty, is the separate secret that operator-surface
 	// connections (kind=cli/tui/webui, i.e. anything but agent) must prove via
 	// the binder. It is NEVER injected into agent task environments, so an
@@ -128,6 +151,24 @@ func newPSKGate(psk []byte) *pskGate {
 
 func (g *pskGate) Authed() bool { return g.authed }
 
+// Role is the authenticated role, normalised to AuthRole_Client or
+// AuthRole_Runner. Meaningful only once Authed.
+func (g *pskGate) Role() protocol.AuthRole { return g.role }
+
+// Legacy reports that the connection authenticated with a _legacy role.
+func (g *pskGate) Legacy() bool { return g.legacy }
+
+func (g *pskGate) keyEnrolled(key ed25519.PublicKey) bool {
+	if g.runnerKeys == nil {
+		return false
+	}
+	_, ok := g.runnerKeys.Lookup(key)
+	return ok
+}
+
+// RunnerKey is the enrolled key a role=runner connection proved; nil otherwise.
+func (g *pskGate) RunnerKey() ed25519.PublicKey { return g.runnerKey }
+
 // AllowsMessage binds application traffic to the role authenticated by Check.
 // Both roles use pubsub (runners publish task logs) and answer telemetry, but
 // only clients issue task control and only runners report task state. Hello
@@ -139,14 +180,14 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 	}
 	switch appwire.AppKind(data[0]) {
 	case appwire.AppKind_Pubsub, appwire.AppKind_Telemetry:
-		return g.role == protocol.AuthRole_ClientLegacy || g.role == protocol.AuthRole_RunnerLegacy
+		return g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Runner
 	case appwire.AppKind_TaskControl:
 		// TaskControlRequest starts with a one-byte TaskControlKind.
-		return g.role == protocol.AuthRole_ClientLegacy && len(data) > 1 &&
+		return g.role == protocol.AuthRole_Client && len(data) > 1 &&
 			protocol.TaskControlKind(data[1]) != protocol.TaskControlKind_ClientHello
 	case appwire.AppKind_RunnerControl:
 		// RunnerMessage starts with a one-byte RunnerMessageType.
-		return g.role == protocol.AuthRole_RunnerLegacy && len(data) > 1 &&
+		return g.role == protocol.AuthRole_Runner && len(data) > 1 &&
 			protocol.RunnerMessageType(data[1]) != protocol.RunnerMessageType_Hello
 	default:
 		return false
@@ -160,6 +201,9 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 // connect psk — the legacy behaviour — so a deployment that has not configured
 // an operator secret is unchanged (and a startup warning is emitted elsewhere).
 func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
+	if req.Role == protocol.AuthRole_Runner {
+		return nil // proves its key with RunnerAuth.sig instead
+	}
 	if req.Role == protocol.AuthRole_ClientLegacy && len(g.operatorPSK) > 0 {
 		if hello := req.ClientHelloLegacy(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
 			return g.operatorPSK
@@ -244,6 +288,30 @@ func (g *pskGate) Check(
 		}
 	}
 
+	// Step 2b: an enrolled runner key (role=runner). The signature is checked
+	// before the key is looked up, so the not_enrolled answer is given only to
+	// a peer that holds the private half of the key it names.
+	if req.Role == protocol.AuthRole_Runner {
+		auth := req.RunnerAuth()
+		if auth == nil {
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
+			return true, true, nil
+		}
+		key := ed25519.PublicKey(auth.Key[:])
+		if !cli.VerifyRunnerAuth(key, transcript, auth.Sig[:]) {
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_BadPsk)
+			return true, true, nil
+		}
+		if !g.keyEnrolled(key) {
+			slog.Warn("runner key not enrolled", "key", hex.EncodeToString(key),
+				"hostname", string(auth.Hello.Hostname),
+				"hint", "harness-cli runner enroll "+hex.EncodeToString(key))
+			g.respond(sendFn, transcript, protocol.PskAuthStatus_NotEnrolled)
+			return true, true, nil
+		}
+		g.runnerKey = append(ed25519.PublicKey(nil), key...)
+	}
+
 	// Step 3: Identity required (fail-closed).
 	// At least one role+hello must be present.
 	switch req.Role {
@@ -253,8 +321,8 @@ func (g *pskGate) Check(
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
-	case protocol.AuthRole_RunnerLegacy:
-		rh := req.RunnerHello()
+	case protocol.AuthRole_RunnerLegacy, protocol.AuthRole_Runner:
+		rh := runnerHelloOf(&req)
 		if rh == nil {
 			slog.Warn("pskGate: runner role but RunnerHello is nil (identity required)")
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
@@ -308,7 +376,15 @@ func (g *pskGate) Check(
 	}
 
 	// Step 5: Accept — mark authed, reply ok, return decoded request for dispatch.
-	g.role = req.Role
+	switch req.Role {
+	case protocol.AuthRole_ClientLegacy:
+		g.role, g.legacy = protocol.AuthRole_Client, true
+	case protocol.AuthRole_RunnerLegacy:
+		g.role, g.legacy = protocol.AuthRole_Runner, true
+		slog.Info("legacy runner handshake", "hostname", string(req.RunnerHello().Hostname))
+	default:
+		g.role = req.Role
+	}
 	g.authed = true
 	g.respond(sendFn, transcript, protocol.PskAuthStatus_Ok)
 	return true, false, &req

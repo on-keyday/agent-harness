@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -154,6 +155,10 @@ func NewRegistry() *Registry {
 	}
 }
 
+// ErrIdentityKeyMismatch: the identity is held by a live connection that
+// authenticated with a different runner key.
+var ErrIdentityKeyMismatch = errors.New("runner identity is held by a connection with a different key")
+
 // Add inserts or replaces the entry keyed by e.ID and claims e.Identity for it.
 //
 // Returns the connection that previously held that identity, when there was
@@ -161,8 +166,21 @@ func NewRegistry() *Registry {
 // not. The caller must tear that connection down: two connections claiming one
 // runner would both be dispatched to, and the agents of one of them hold
 // tickets the board now keys to the other.
-func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID) {
+//
+// A takeover is a runner's own reconnect, so it needs the holder's key: an
+// identity held under key K is refused (ErrIdentityKeyMismatch, nothing
+// registered) to a connection that proved another key. A legacy holder (no
+// key) can be taken over as before.
+func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID, err error) {
 	r.mu.Lock()
+	if !e.Identity.IsZero() {
+		if prevID, ok := r.byIdentity[e.Identity]; ok && prevID != e.ID {
+			if prev, live := r.runners[prevID]; live && prev.Key != nil && !prev.Key.Equal(e.Key) {
+				r.mu.Unlock()
+				return objproto.ConnectionID{}, ErrIdentityKeyMismatch
+			}
+		}
+	}
 	// Ensure ActiveTasks is initialized.
 	if e.ActiveTasks == nil {
 		e.ActiveTasks = make(map[string]struct{})
@@ -180,7 +198,7 @@ func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID) {
 	if onAdd != nil {
 		onAdd(snapshot)
 	}
-	return displaced
+	return displaced, nil
 }
 
 // Remove deletes the entry with the given id. No-op if absent.

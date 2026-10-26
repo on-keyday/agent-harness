@@ -38,7 +38,7 @@ func startServerWithRingSize(t *testing.T, ringSize int64) objproto.ConnectionID
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:                 addr,
 		DataDir:              t.TempDir(),
 		DetachRingBufferSize: ringSize,

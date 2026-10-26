@@ -44,7 +44,7 @@ func startServerAt(t *testing.T, addr string) (objproto.ConnectionID, context.Ca
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    addr,
 		DataDir: t.TempDir(),
 	})
@@ -123,7 +123,7 @@ func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, runner.Config{
+		done <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(serverCID),
 			AllowedRoots:     roots,

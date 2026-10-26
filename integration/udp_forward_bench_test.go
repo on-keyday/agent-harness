@@ -94,7 +94,7 @@ func newForwardBenchFixtureOn(b *testing.B, scheme, addr string) *forwardBenchFi
 		b.Fatalf("parse server cid: %v", err)
 	}
 
-	cfg := server.Config{DataDir: b.TempDir()}
+	cfg := server.Config{RunnerKeys: testRunnerKeys(), DataDir: b.TempDir()}
 	if scheme == "udp" {
 		cfg.UDPAddr = addr
 	} else {
@@ -108,7 +108,7 @@ func newForwardBenchFixtureOn(b *testing.B, scheme, addr string) *forwardBenchFi
 
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- runner.Run(ctx, runner.Config{
+		runDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},

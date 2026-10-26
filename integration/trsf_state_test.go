@@ -38,7 +38,7 @@ func TestClientTrsfStateIsReadableThroughTheServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
@@ -115,7 +115,7 @@ func TestClientTrsfStateOnAnUnknownConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)

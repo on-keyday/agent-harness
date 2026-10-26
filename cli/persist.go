@@ -120,8 +120,12 @@ func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.
 // fleet-wide wipe (2026-07-16: every runner exited within ~1s and none returned
 // when the server was upgraded) — the exact failure this fatal/retryable split
 // was drawn to prevent.
+//
+// NotEnrolled is not a credential failure either: the runner proved its key,
+// and the server does not list it YET. Enrolling it (runner enroll) is how a
+// new runner gets in, and that happens while it waits.
 func (e *PskRejectedError) Retryable() bool {
-	return e.Code == protocol.PskAuthStatus_NoIdentity
+	return e.Code == protocol.PskAuthStatus_NoIdentity || e.Code == protocol.PskAuthStatus_NotEnrolled
 }
 
 // PersistConfig configures PersistLoop.

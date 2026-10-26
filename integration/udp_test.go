@@ -42,7 +42,7 @@ func startUDPServer(t *testing.T) (objproto.ConnectionID, context.CancelFunc) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		UDPAddr: addr,
 		DataDir: t.TempDir(),
 	})
@@ -82,7 +82,7 @@ func startDualStackServer(t *testing.T) (wsCID, udpCID objproto.ConnectionID, ca
 	udpCID = parse("udp", udpAddr)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    wsAddr,
 		UDPAddr: udpAddr,
 		DataDir: t.TempDir(),
@@ -116,7 +116,7 @@ func startRunnerWithCID(t *testing.T, serverCID objproto.ConnectionID, repo, hos
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, runner.Config{
+		done <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(serverCID),
 			AllowedRoots:     []string{repo},

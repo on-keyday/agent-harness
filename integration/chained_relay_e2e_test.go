@@ -68,7 +68,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Start server.
-	srv := server.New(server.Config{
+	srv := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -85,7 +85,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	// 2. Start proxy_runner (dial mode) → registers with server directly via
 	//    the legacy dial flow (no Phase A reverse-dial needed since the
 	//    runner reaches the server outbound).
-	proxyCfg := runner.Config{
+	proxyCfg := runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: runner.CandidatesOf(serverCID),
 		AllowedRoots:     []string{t.TempDir()},
@@ -103,7 +103,7 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	targetDone := make(chan error, 1)
 	go func() {
 		targetDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,

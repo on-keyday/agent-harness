@@ -50,7 +50,7 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Start the server.
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -62,7 +62,7 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 	listenDone := make(chan error, 1)
 	go func() {
 		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,

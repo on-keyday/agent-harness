@@ -17,7 +17,7 @@ func candidateRunnerConfig(t *testing.T, cands runner.ServerCandidates) runner.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runner.Config{
+	return runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: cands,
 		AllowedRoots:     []string{initRepo(t)},
@@ -48,7 +48,7 @@ func TestServerCandidateRotation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{Addr: liveAddr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: liveAddr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
@@ -109,7 +109,7 @@ func TestServerCandidateMixedTransports(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{Addr: wsAddr, UDPAddr: udpAddr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: wsAddr, UDPAddr: udpAddr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"sync"
 	// Aliased: this file already uses `fs` as the local name for a
 	// *flag.FlagSet (bindFlags' parameter, main's flag.CommandLine), so a plain
 	// `io/fs` import would be shadowed inside exactly the functions most likely
@@ -524,6 +525,7 @@ func main() {
 		PSK:                        resolvedPSK,
 		ServerPubKey:               serverPubKey,
 		RunnerKey:                  runnerKey,
+		NotEnrolledOnce:            new(sync.Once),
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		AgentSkillsFS:              agentSkillsFS,

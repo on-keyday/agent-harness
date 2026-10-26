@@ -82,7 +82,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	defer cancel()
 
 	// Start server.
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    addr,
 		DataDir: t.TempDir(),
 	})
@@ -95,7 +95,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	// Start runner.
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -181,7 +181,7 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    addr,
 		DataDir: t.TempDir(),
 	})
@@ -191,7 +191,7 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},

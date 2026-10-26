@@ -275,6 +275,7 @@ func New(cfg Config) *Server {
 	}
 	stamp := buildinfo.Read()
 	s.taskHandler = &TaskHandler{
+		RunnerKeys:     cfg.RunnerKeys,
 		Tasks:          s.tasks,
 		Registry:       s.registry,
 		Sessions:       s.sessions,
@@ -623,6 +624,7 @@ func New(cfg Config) *Server {
 		}
 		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
 	}
+	s.runnerHandler.AuthOf = s.authOf
 	s.runnerHandler.OnConnIdentified = func(cid objproto.ConnectionID) {
 		s.activeConnsMu.Lock()
 		sc, ok := s.activeConns[cid]
@@ -1239,6 +1241,30 @@ type streamingConn struct {
 	objproto.Connection
 	trans          trsf.Transport
 	connectedSince time.Time // stamped at activeConns register; used by ConnList
+	// Set when the gate accepts: whether the connection authenticated with a
+	// _legacy role, and the runner key a role=runner connection proved.
+	legacyAuth bool
+	authKey    ed25519.PublicKey
+}
+
+// recordAuth stores what the gate accepted on the connection's activeConns
+// entry, before the hello is dispatched, so the registration and the conn
+// listing can read it.
+func (s *Server) recordAuth(cid objproto.ConnectionID, legacy bool, key ed25519.PublicKey) {
+	s.activeConnsMu.Lock()
+	defer s.activeConnsMu.Unlock()
+	if sc, ok := s.activeConns[cid]; ok {
+		sc.legacyAuth, sc.authKey = legacy, key
+		s.activeConns[cid] = sc
+	}
+}
+
+// authOf is RunnerHandler.AuthOf.
+func (s *Server) authOf(cid objproto.ConnectionID) (ed25519.PublicKey, bool) {
+	s.activeConnsMu.Lock()
+	defer s.activeConnsMu.Unlock()
+	sc := s.activeConns[cid]
+	return sc.authKey, sc.legacyAuth
 }
 
 // DumpTrsfState logs each active connection's trsf internal state (debug aid;
@@ -1388,6 +1414,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	gate := newPSKGate(s.cfg.PSK)
 	gate.operatorPSK = s.cfg.OperatorPSK
 	gate.serverKey = s.cfg.ServerKey
+	gate.runnerKeys = s.cfg.RunnerKeys
 	// Wire ticket validation into the gate: an agent that fails this check
 	// must NOT fall through to operator (this is the hole the merged handshake
 	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.
@@ -1404,7 +1431,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// Pubsub only flows once the gate has fixed the role (AllowsMessage), so
 	// reading it per JOIN reads the authenticated one.
 	subscriber.SetAuthorizer(func(topic string) pubsub.JoinGrant {
-		return s.authorizeJoin(gate.role, session.ConnectionID(), topic)
+		return s.authorizeJoin(gate.Role(), session.ConnectionID(), topic)
 	})
 
 	// Datagrams arrive on their own queue, not through AutoReceive's callback —
@@ -1449,6 +1476,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// Reused code: TaskHandler.Handle (task_handler.go:148) and
 				// RunnerHandler.Handle (runner_handler.go:64) — both are invoked
 				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
+				s.recordAuth(session.ConnectionID(), gate.Legacy(), gate.RunnerKey())
 				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted) {
 					_ = trsf.SendClose(session)
 					cancel()
@@ -1622,6 +1650,7 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		PrincipalRunner: principalRunner,
 	}
 	info.SetIdentified(identified)
+	info.SetLegacyAuth(sc.legacyAuth)
 	info.SetCid([]byte(cidStr))
 	return info
 }

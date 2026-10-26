@@ -105,7 +105,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	})
 	defer board.Close()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	s.SetBoard(board)
 
 	serverDone := make(chan error, 1)
@@ -125,7 +125,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},

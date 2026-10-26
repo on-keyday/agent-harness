@@ -25,7 +25,7 @@ func startServerWithPSK(t *testing.T, psk []byte) objproto.ConnectionID {
 		t.Fatalf("parse server cid: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir(), PSK: psk})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir(), PSK: psk})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	t.Cleanup(func() {

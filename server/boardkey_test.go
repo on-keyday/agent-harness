@@ -56,7 +56,7 @@ func TestBoardKeyIsIdentityNotConnection(t *testing.T) {
 	// It reconnects: a NEW connection id, the SAME identity. The old code
 	// derived the board key from the connection, so this is exactly where an
 	// agent's credential used to stop validating.
-	displaced := reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-8"), Identity: identity})
+	displaced, _ := reg.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:8539-8"), Identity: identity})
 	if displaced != tcid("ws:127.0.0.1:8539-7") {
 		t.Fatalf("takeover did not report the displaced connection: %q", displaced)
 	}

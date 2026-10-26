@@ -35,11 +35,11 @@ func scopeEnv(t *testing.T, addr string) (context.Context, objproto.ConnectionID
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	go func() { _ = s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 	go func() {
-		_ = runner.Run(ctx, runner.Config{
+		_ = runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},

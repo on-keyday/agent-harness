@@ -60,7 +60,7 @@ func startWSSServer(t *testing.T) objproto.ConnectionID {
 		t.Fatalf("parse server cid: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir(), TLS: loopbackTLSConfig(t)})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir(), TLS: loopbackTLSConfig(t)})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	t.Cleanup(func() {
@@ -93,7 +93,7 @@ func TestWSS_CLIRunnerAndAgentCID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(cid),
 			AllowedRoots:     []string{repo},

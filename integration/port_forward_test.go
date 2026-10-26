@@ -57,14 +57,14 @@ func TestPortForwardE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -330,14 +330,14 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -646,14 +646,14 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -789,14 +789,14 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -966,14 +966,14 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -1189,14 +1189,14 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},
@@ -1345,14 +1345,14 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	time.Sleep(300 * time.Millisecond)
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(serverCID),
 			AllowedRoots:     []string{repo},

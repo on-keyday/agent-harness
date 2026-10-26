@@ -79,7 +79,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	})
 	defer board.Close()
 
-	srv := server.New(server.Config{
+	srv := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -93,7 +93,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	listenDone := make(chan error, 1)
 	go func() {
 		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,

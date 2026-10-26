@@ -56,7 +56,7 @@ func TestRelayE2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Start the server.
-	srv := server.New(server.Config{
+	srv := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -68,7 +68,7 @@ func TestRelayE2E(t *testing.T) {
 	proxyDone := make(chan error, 1)
 	go func() {
 		proxyDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
@@ -83,7 +83,7 @@ func TestRelayE2E(t *testing.T) {
 	targetDone := make(chan error, 1)
 	go func() {
 		targetDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
@@ -189,7 +189,7 @@ func TestRelayE2E_DialModeProxy(t *testing.T) {
 	defer cancel()
 
 	// 1. Start server.
-	srv := server.New(server.Config{
+	srv := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -207,7 +207,7 @@ func TestRelayE2E_DialModeProxy(t *testing.T) {
 	//    endpoint is now EndpointModeMutual at objproto with a nil mux at
 	//    transport — outbound only at the WS layer, but objproto accepts
 	//    incoming Handshakes on the reused conn, enabling relay-proxy use.
-	proxyRunnerCfg := runner.Config{
+	proxyRunnerCfg := runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: runner.CandidatesOf(serverCID),
 		AllowedRoots:     []string{t.TempDir()},
@@ -225,7 +225,7 @@ func TestRelayE2E_DialModeProxy(t *testing.T) {
 	targetDone := make(chan error, 1)
 	go func() {
 		targetDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,

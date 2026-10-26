@@ -53,7 +53,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir()})
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- s.Run(ctx) }()
 	{
@@ -70,7 +70,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 
 	runnerDone := make(chan error, 1)
 	go func() {
-		runnerDone <- runner.Run(ctx, runner.Config{
+		runnerDone <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(peerCID),
 			AllowedRoots:     []string{repo},

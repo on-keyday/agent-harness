@@ -64,7 +64,7 @@ func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, 
 		maxTasks = 1
 	}
 
-	cfg := runner.Config{
+	cfg := runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: runner.CandidatesOf(serverCID),
 		AllowedRoots:     roots,
@@ -219,7 +219,7 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, runner.Config{
+		done <- runner.Run(ctx, runner.Config{RunnerKey: testRunnerKey,
 			RunnerID:         runner.NewRunnerID(),
 			ServerCandidates: runner.CandidatesOf(serverCID),
 			AllowedRoots:     []string{repo},

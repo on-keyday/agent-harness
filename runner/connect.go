@@ -80,6 +80,10 @@ type Config struct {
 	// RunnerKey is this runner's enrolled Ed25519 key (--runner-key-file),
 	// which signs the transcript under AuthRole.runner.
 	RunnerKey ed25519.PrivateKey
+	// NotEnrolledOnce, when set, makes the first not_enrolled refusal log the
+	// key and the command that enrolls it; later attempts log through
+	// PersistLoop as usual. Shared across reconnects, so main sets it.
+	NotEnrolledOnce *sync.Once
 
 	// NoWorktree disables the per-task git worktree creation. Tasks run with
 	// cwd = AssignTask.RepoPath. Settings/skills injection and worktree
@@ -513,6 +517,13 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		// NoIdentity rejection from a version-skewed server that cannot decode
 		// our RunnerHello (see cli.PskRejectedError.Retryable).
 		var rej *cli.PskRejectedError
+		if errors.As(pskErr, &rej) && rej.Code == protocol.PskAuthStatus_NotEnrolled && cfg.NotEnrolledOnce != nil {
+			cfg.NotEnrolledOnce.Do(func() {
+				pub := hex.EncodeToString(cfg.RunnerKey.Public().(ed25519.PublicKey))
+				slog.Warn("runner key is not enrolled; this runner retries until it is",
+					"pubkey", pub, "enroll", "harness-cli runner enroll "+pub+" --label "+cfg.Hostname)
+			})
+		}
 		if errors.As(pskErr, &rej) && !rej.Retryable() {
 			return nil, &cli.PSKAuthError{Err: pskErr}
 		}
@@ -575,23 +586,18 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 // role=client). The binder computation (HMAC-SHA512 over the objproto transcript)
 // is identical to cli.ComputePSKBinder — only the role and identity union differ.
 func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
-	req := protocol.PskAuthRequest{Role: protocol.AuthRole_RunnerLegacy}
-
-	if len(psk) > 0 {
-		binder, err := cli.ComputePSKBinder(psk, transcript)
-		if err != nil {
-			return fmt.Errorf("psk: binder: %w", err)
-		}
-		if !req.SetBinder(binder) {
-			return fmt.Errorf("psk: SetBinder failed (len=%d)", len(binder))
-		}
-	} else {
-		req.SetBinder(nil) // binder_len = 0
+	// role=runner proves the enrolled key by signing this connection's
+	// transcript; there is no binder.
+	if len(cfg.RunnerKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("runner: no runner key configured (Config.RunnerKey)")
 	}
-
-	rh := buildRunnerHello(cfg)
-	if !req.SetRunnerHello(rh) {
-		return fmt.Errorf("psk: SetRunnerHello failed")
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Runner}
+	req.SetBinder(nil)
+	auth := protocol.RunnerAuth{Hello: buildRunnerHello(cfg)}
+	copy(auth.Key[:], cfg.RunnerKey.Public().(ed25519.PublicKey))
+	copy(auth.Sig[:], cli.SignRunnerAuth(cfg.RunnerKey, transcript))
+	if !req.SetRunnerAuth(auth) {
+		return fmt.Errorf("psk: SetRunnerAuth failed")
 	}
 
 	data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})

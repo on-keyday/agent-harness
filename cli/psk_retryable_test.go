@@ -17,9 +17,10 @@ func TestPskRejectedErrorRetryable(t *testing.T) {
 		code          protocol.PskAuthStatus
 		wantRetryable bool
 	}{
-		{protocol.PskAuthStatus_NoIdentity, true}, // wire/version skew — retry once the server is upgraded
-		{protocol.PskAuthStatus_BadPsk, false},    // wrong PSK — no retry fixes it
-		{protocol.PskAuthStatus_BadTicket, false}, // invalid agent ticket — no retry fixes it
+		{protocol.PskAuthStatus_NoIdentity, true},  // wire/version skew — retry once the server is upgraded
+		{protocol.PskAuthStatus_NotEnrolled, true}, // the key is enrolled later; retrying is how the runner gets in
+		{protocol.PskAuthStatus_BadPsk, false},     // wrong PSK — no retry fixes it
+		{protocol.PskAuthStatus_BadTicket, false},  // invalid agent ticket — no retry fixes it
 	}
 	for _, tc := range tests {
 		t.Run(tc.code.String(), func(t *testing.T) {

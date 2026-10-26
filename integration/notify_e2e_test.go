@@ -79,7 +79,7 @@ func TestNotifyEgressHookE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:       addr,
 		DataDir:    t.TempDir(),
 		NotifyHook: hookScript,
@@ -133,7 +133,7 @@ func TestNotifyLiveReplayE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := server.New(server.Config{
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    addr,
 		DataDir: t.TempDir(),
 		// No NotifyHook — live-only recording.

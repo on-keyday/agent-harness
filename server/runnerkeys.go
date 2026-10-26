@@ -75,6 +75,15 @@ func LoadRunnerKeyStore(path string, initial []RunnerKeyRecord) (*RunnerKeyStore
 	return st, nil
 }
 
+// keyPrefix is how a key is shown: its first 16 hex characters.
+func keyPrefix(k ed25519.PublicKey) string {
+	h := hex.EncodeToString(k)
+	if len(h) > 16 {
+		return h[:16]
+	}
+	return h
+}
+
 func (st *RunnerKeyStore) Lookup(pub ed25519.PublicKey) (RunnerKeyRecord, bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()

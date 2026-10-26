@@ -65,7 +65,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Start server.
-	srv := server.New(server.Config{
+	srv := server.New(server.Config{RunnerKeys: testRunnerKeys(),
 		Addr:    serverAddr,
 		DataDir: t.TempDir(),
 	})
@@ -81,7 +81,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 
 	// 2. Start Q via runner.Connect (dial mode, reverse-dial).
 	//    Q registers with the server outbound; acts as the top-level relay proxy.
-	qCfg := runner.Config{
+	qCfg := runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: runner.CandidatesOf(serverCID),
 		AllowedRoots:     []string{t.TempDir()},
@@ -105,7 +105,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	pDone := make(chan error, 1)
 	go func() {
 		pDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,
@@ -143,7 +143,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	lDone := make(chan error, 1)
 	go func() {
 		lDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
-			Config: runner.Config{
+			Config: runner.Config{RunnerKey: testRunnerKey,
 				RunnerID:     runner.NewRunnerID(),
 				AllowedRoots: []string{t.TempDir()},
 				MaxTasks:     1,

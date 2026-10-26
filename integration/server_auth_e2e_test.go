@@ -30,7 +30,7 @@ func startServerWithKey(t *testing.T, key ed25519.PrivateKey) objproto.Connectio
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir(), ServerKey: key})
+	s := server.New(server.Config{RunnerKeys: testRunnerKeys(), Addr: addr, DataDir: t.TempDir(), ServerKey: key})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	t.Cleanup(func() {
@@ -130,7 +130,7 @@ func TestServerAuthE2E_PinnedRunnerRefusesImpostor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := runner.Config{
+	cfg := runner.Config{RunnerKey: testRunnerKey,
 		RunnerID:         runner.NewRunnerID(),
 		ServerCandidates: runner.CandidatesOf(cid),
 		AllowedRoots:     []string{repo},

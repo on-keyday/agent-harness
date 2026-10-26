@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"log/slog"
 	"path"
@@ -15,6 +16,11 @@ import (
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
 // and applies them to Registry and TaskStore.
 type RunnerHandler struct {
+	// AuthOf reports what the connection authenticated with: the enrolled
+	// runner key (nil for a legacy runner) and whether the role was _legacy.
+	// nil (test wiring) reads as a legacy connection.
+	AuthOf func(cid objproto.ConnectionID) (key ed25519.PublicKey, legacy bool)
+
 	Registry      *Registry
 	Tasks         *TaskStore
 	Now           func() time.Time
@@ -163,7 +169,26 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				entry.ViaDialAddr = info.ViaDialAddr
 			}
 		}
-		if displaced := h.Registry.Add(entry); displaced != (objproto.ConnectionID{}) && h.OnRunnerDisplaced != nil {
+		entry.LegacyAuth = true
+		if h.AuthOf != nil {
+			entry.Key, entry.LegacyAuth = h.AuthOf(conn.ConnectionID())
+		}
+		displaced, err := h.Registry.Add(entry)
+		if err != nil {
+			// Another key claims a live identity. The gate already said ok, so
+			// the runner sees a plain drop and retries.
+			var held string
+			if cur, ok := h.Registry.GetByIdentity(hello.RunnerId); ok {
+				held = keyPrefix(cur.Key)
+			}
+			slog.Warn("runner registration refused", "err", err, "identity", hello.RunnerId.Hex(),
+				"key", keyPrefix(entry.Key), "held_by_key", held)
+			if c, ok := conn.(interface{ Close() error }); ok {
+				c.Close() //nolint:errcheck
+			}
+			return
+		}
+		if displaced != (objproto.ConnectionID{}) && h.OnRunnerDisplaced != nil {
 			h.OnRunnerDisplaced(displaced)
 		}
 
