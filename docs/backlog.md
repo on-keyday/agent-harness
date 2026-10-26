@@ -224,6 +224,11 @@ because the PSK reaches every runner's queue. A fix worth doing would be an
 enrollment step that the server grants behind a capability, so that `--caps`
 can withhold it. Even that closes the path only once agents run in a sandbox.
 
+**Not pursued while the trust model holds** (operator, 2026-10-27). This path
+matters only against an agent that sets out to escape its caps, and the threat
+model is decided as accidents, not a hostile agent: "Multi-tenancy" below,
+question 1. Reopen together with that answer.
+
 ---
 
 ## What the task log is for, now that oneshot is unused
@@ -329,7 +334,7 @@ isolation unit:
   separation. The costs: a runner serves one server, the operator connects to
   several, and cross-cluster messaging becomes a new feature.
 
-**Why deferred. Two questions decide the depth, and neither is answered:**
+**Why deferred. Two questions decide the depth; the first is answered:**
 
 1. **Is the boundary against accidents or against a hostile agent?**
    - Accidents (topic name collisions, landing on the wrong runner): board
@@ -337,6 +342,21 @@ isolation unit:
    - A hostile agent: per-tenant `board_observe` /
      `purge` / `global`, and separating the PSK all become required. So does
      the "Any connect-PSK holder can register as a runner" entry above.
+
+   **Answered: accidents** (operator, 2026-10-27). The premise is already the
+   "Trust model" section of `runner/agentskills/harness-cli/SKILL.md`: every
+   connected agent was launched by the user, so an agent is the operator's
+   delegate. Agents are handed the operator's repos and, for some work, ssh
+   access to remote hosts, on purpose. A boundary between agent and operator
+   (sandbox by default, or a runner uid separate from the operator's) would
+   have to pass those same credentials across, so it would protect little the
+   operator values while every task pays its costs (`scripts/sandbox/README.md`
+   lists them). A delegate hijacked by prompt injection is stopped at the
+   agent's own permission layer (that section's Rule 2), not by the harness.
+   The hostile branch, and sandbox-by-default and runner enrollment with it,
+   come back when Rule 3's condition holds: the broker becomes multi-tenant or
+   publicly reachable. Clusters of one operator's agents do not meet it;
+   tenants who are different people do.
 2. **Do clusters ever need to talk to each other**, for example a parent
    cluster directing a child one? If yes, C is out, and A needs a
    cross-tenant send that some capability gates.
