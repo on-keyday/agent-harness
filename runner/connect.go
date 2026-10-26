@@ -77,6 +77,9 @@ type Config struct {
 	// against it, and every spawned agent gets it as HARNESS_SERVER_PUBKEY.
 	// nil = no verification. agent-runner resolves it at startup.
 	ServerPubKey ed25519.PublicKey
+	// RunnerKey is this runner's enrolled Ed25519 key (--runner-key-file),
+	// which signs the transcript under AuthRole.runner.
+	RunnerKey ed25519.PrivateKey
 
 	// NoWorktree disables the per-task git worktree creation. Tasks run with
 	// cwd = AssignTask.RepoPath. Settings/skills injection and worktree

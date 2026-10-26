@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -66,6 +67,9 @@ type mainConfig struct {
 	PSKFile                    string
 	ServerPubKey               string
 	ServerPubKeyFile           string
+	RunnerKeyFile              string
+	PrintPubkey                bool
+	RotateKey                  bool
 	NoWorktree                 bool
 	ForceInjectHarnessSettings bool
 	AgentSkillsDir             string
@@ -143,6 +147,9 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.PSKFile, "psk-file", c.PSKFile, "path to PSK file (env: HARNESS_PSK_FILE)")
 	fs.StringVar(&c.ServerPubKey, "server-pubkey", c.ServerPubKey, "the server's public key (hex, from <data-dir>/server-key.pub on the server host); when set, the runner refuses a server that cannot prove it holds the matching private key, and agents inherit it (env: HARNESS_SERVER_PUBKEY)")
 	fs.StringVar(&c.ServerPubKeyFile, "server-pubkey-file", c.ServerPubKeyFile, "path to a file holding --server-pubkey (env: HARNESS_SERVER_PUBKEY_FILE)")
+	fs.StringVar(&c.RunnerKeyFile, "runner-key-file", c.RunnerKeyFile, "this runner's Ed25519 key, which the server must have enrolled (`harness-cli runner enroll`); created when absent (env: HARNESS_RUNNER_KEY_FILE; default <home>/.config/harness/runner-key, shared by every slot this user runs)")
+	fs.BoolVar(&c.PrintPubkey, "print-pubkey", c.PrintPubkey, "print this runner's public key (creating the key if absent) for `harness-cli runner enroll`, and exit; needs no other flag")
+	fs.BoolVar(&c.RotateKey, "rotate-key", c.RotateKey, "write a new key (the old one is kept as <key file>.prev), print its public key, and exit. Running runners keep the old key until restarted; enroll the new one first")
 	fs.BoolVar(&c.NoWorktree, "no-worktree", c.NoWorktree, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
 	fs.BoolVar(&c.ForceInjectHarnessSettings, "force-inject-harness-settings", c.ForceInjectHarnessSettings, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
 	fs.StringVar(&c.AgentSkillsDir, "agentskills-dir", c.AgentSkillsDir, "hot-reload: inject agent skills from this directory on disk instead of the embedded copy (env: HARNESS_AGENTSKILLS_DIR). Point it at the repo's runner/agentskills dir; then editing a SKILL.md reaches the NEXT task with no runner rebuild or restart. A subdirectory counts as a skill only if it holds a SKILL.md, so non-skill files in the directory are ignored. Empty (default) injects the embedded copy, which is frozen at this process's launch.")
@@ -269,7 +276,7 @@ func parseAgentArgsFlag(name, value string) ([]string, error) {
 // runner's INITIAL environment, which /proc/<pid>/environ shows to any
 // same-uid process regardless of what is unset here.
 func scrubOperatorSecret() {
-	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv} {
+	for _, k := range []string{cli.OperatorPSKEnv, cli.OperatorPSKFileEnv, cli.RunnerKeyFileEnv} {
 		os.Unsetenv(k)
 	}
 }
@@ -279,7 +286,20 @@ func main() {
 	cfg := newMainConfig()
 	cfg.bindFlags(fs)
 	flag.Parse()
+	// Resolved before the scrub, which removes HARNESS_RUNNER_KEY_FILE.
+	runnerKeyPath, err := resolveRunnerKeyPath(cfg.RunnerKeyFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
 	scrubOperatorSecret()
+	if handled, err := runKeyAction(runnerKeyPath, cfg.PrintPubkey, cfg.RotateKey, os.Stdout, os.Stderr); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Detect whether --server-cid was explicitly set on the command line
 	// (as opposed to retaining its default value). fs.Visit only visits
@@ -458,6 +478,14 @@ func main() {
 	if serverPubKey != nil {
 		slog.Info("server key configured: the handshake verifies the server", "pubkey", hex.EncodeToString(serverPubKey))
 	}
+	runnerKey, err := runner.LoadOrCreateRunnerKey(runnerKeyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	// The path AND the key, so a runner reading a different file than the one
+	// that was enrolled shows it here.
+	slog.Info("runner key", "path", runnerKeyPath, "pubkey", hex.EncodeToString(runnerKey.Public().(ed25519.PublicKey)))
 
 	// Agent skills: embedded by default; a non-empty --agentskills-dir (or
 	// HARNESS_AGENTSKILLS_DIR) swaps in an on-disk FS that WriteAgentSkills
@@ -495,6 +523,7 @@ func main() {
 		Logger:                     slog.Default(),
 		PSK:                        resolvedPSK,
 		ServerPubKey:               serverPubKey,
+		RunnerKey:                  runnerKey,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		AgentSkillsFS:              agentSkillsFS,
