@@ -40,39 +40,6 @@ mechanical sweep.
 
 ---
 
-## A capability for an agent's OWN agentboard publishing
-
-**What.** `agent send` takes no capability, so a task spawned `--caps none`
-can publish to any topic it can name — including any task's
-`chat.<short-id>`. Two ranked bits, send ⊇ reply, let an operator either
-silence a task entirely (drop both) or leave it able to answer what it was
-asked without initiating (reply alone).
-
-**The name `board_send` is taken.** This entry first proposed `board_send ⊇
-board_reply`. Since 8122ce53 (2026-10-04), `board_send` (0x20000) is the bit
-for publishing IN THE OPERATOR'S NAME (`board send` / `board wake`, stamped
-`sender_kind=operator`). It does not gate `agent send`, so this entry still
-stands, but the bits it proposes need other names.
-
-**Evidence.** `requiredCap` (`server/capabilities.go`) has no entry for the
-send path, and `readAgentPayloadStream`'s own comment says "agent send is
-reachable with no capability". The wire already distinguishes the two cases —
-`AgentSendRequest.in_reply_to` — which is this schema's stated test for when a
-capability may be split (`message.bgn`, the `exec_resize` comment).
-
-**Why deferred.** Sequenced after the task-control unification on purpose
-(U10 of `2026-09-22-agentboard-task-control-unification-design.md`): with
-`PermissionDenied` now answering every refusal, the bits cost an enum entry and
-a gate, and no new status values. Its own spec is still to be written.
-
-**Known cost to state when it lands.** `Capability.all` is a literal, and the
-WAL persists the number, so a task whose mask was persisted before the change
-holds the old `all` and loses board sending until re-granted. This is the first
-bit to gate something that was previously ungated, so unlike every earlier
-addition the default-off direction is not the safe one.
-
----
-
 ## A dial per inbox hook
 
 **What.** Every `harness-cli agent inbox` invocation opens a connection and
@@ -311,20 +278,22 @@ isolation unit:
 
 | Already bounded by the tree | Outside the tree, one flat namespace |
 |---|---|
-| exec / attach / cancel / prune / file ops / git query | agentboard |
+| exec / attach / cancel / prune / file ops / git query | agentboard free-form topics |
 | port forwards and their taps | runner assignment |
 | `ls`, conns, forwards and execs listings, and their pubsub streams | |
+| agentboard direct messages and `tree.<id>.*` (board reach, 2026-10-16) | |
 
-**Evidence** (2026-10-14, read, not exercised):
+**Evidence** (2026-10-14, read, not exercised; the agentboard part re-read
+2026-10-27 against board reach, `2026-10-16-agentboard-reach-design.md`):
 
 - **Agentboard.**
-  - `AgentSend`, subscribe, `Wait` and list-retained take no capability
-    and do not check the topic against the caller
-    (`server/agent_taskcontrol.go`).
-  - Subscribing refuses only `chat.operator`
-    (`agentboard/board.go` `Subscribe`).
-  - Publishing to another task's `chat.<8hex>` wakes it.
-  - `board_observe` and `purge` act server-wide.
+  - Reach bounds publishing to the spawn tree (the base set) plus whatever
+    `board_peer`'s scope covers, and reading another task's direct messages
+    needs `board_observe`. What stays flat: a free-form topic is readable by
+    every task and writable by any global-scope `board_peer`, so it is shared
+    across clusters by name.
+  - `board_observe` and `purge` act server-wide; `board_observe` is not
+    narrowable by scope.
   - The board has one `MaxTopics` cap, so topic eviction is shared across
     clusters.
 - **Runner assignment.**
@@ -366,10 +335,8 @@ isolation unit:
    - Accidents (topic name collisions, landing on the wrong runner): board
      namespacing plus runner pools are enough.
    - A hostile agent: per-tenant `board_observe` /
-     `purge` / `global`, and separating the PSK all become required. So do
-     the problems in the "capability for an agent's OWN agentboard
-     publishing" entry and the "Any connect-PSK holder
-     can register as a runner" entry above.
+     `purge` / `global`, and separating the PSK all become required. So does
+     the "Any connect-PSK holder can register as a runner" entry above.
 2. **Do clusters ever need to talk to each other**, for example a parent
    cluster directing a child one? If yes, C is out, and A needs a
    cross-tenant send that some capability gates.
@@ -379,8 +346,7 @@ isolation unit:
 ## `Capability` is running out of bits
 
 **What.** `enum Capability` is `:u32`. With `forward_link`
-(`2026-10-25-ip-link-forward-design.md` §6b) it uses 23 bits, leaving 9, and
-the board-publishing entry above wants two more.
+(`2026-10-25-ip-link-forward-design.md` §6b) it uses 23 bits, leaving 9.
 
 **Evidence** (2026-10-25), the date each recent bit first appears in
 `runner/protocol/message.bgn`:

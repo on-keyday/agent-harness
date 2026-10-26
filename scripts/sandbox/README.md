@@ -378,9 +378,9 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
     Its own task subtree stays visible in `ls` — that needs no cap; reading a
     task's log does (`exec_view`) — as does a redacted row for its direct parent: status and busy/idle only,
     with the repo, worktree, prompt and assigned runner stripped.
-  - `submit --caps info_global` — widens that to the full-board view (every
-    task, every runner, the whole agentboard topic list) without granting
-    spawn or file-write.
+  - `submit --scope global/subtree` — widens what it SEES to every task and
+    every runner without granting anything to act with. The agentboard topic
+    list is a separate bit, `board_observe`.
 
   For full control-plane removal (no harness-cli at all inside the container),
   use `--agent-arg --omit-harness-cli` / `--agent-args "--omit-harness-cli"`.
