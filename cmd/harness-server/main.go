@@ -126,6 +126,21 @@ const serverKeyFileName = "server-key"
 // resolveServerKey loads the server's Ed25519 key, generating it on first run
 // the way resolveOperatorPSK does. A file that exists but does not parse is an
 // error: regenerating would silently invalidate every client's pinned key.
+const runnerKeysFileName = "runner-keys.json"
+
+// loadRunnerKeys reads <data-dir>/runner-keys.json. A file that does not parse
+// is a startup error. With no data dir the set lives in memory only.
+func loadRunnerKeys(dataDir string) (*server.RunnerKeyStore, error) {
+	if dataDir == "" {
+		slog.Warn("no --data-dir: runner enrollments will not survive a restart")
+		return server.LoadRunnerKeyStore("", nil)
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	return server.LoadRunnerKeyStore(filepath.Join(dataDir, runnerKeysFileName), nil)
+}
+
 func resolveServerKey(file, dataDir string) (ed25519.PrivateKey, error) {
 	if file == "" {
 		if dataDir == "" {
@@ -273,6 +288,11 @@ func main() {
 		slog.Error("operator-PSK setup failed", "err", err)
 		os.Exit(1)
 	}
+	runnerKeys, err := loadRunnerKeys(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harness-server: %v\n", err)
+		os.Exit(1)
+	}
 	serverKey, err := resolveServerKey(strings.TrimSpace(*serverKeyFile), *dataDir)
 	if err != nil {
 		slog.Error("server key setup failed", "err", err)
@@ -322,6 +342,7 @@ func main() {
 		PSK:                  pskBytes,
 		OperatorPSK:          operatorPSKBytes,
 		ServerKey:            serverKey,
+		RunnerKeys:           runnerKeys,
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,

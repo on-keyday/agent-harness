@@ -77,6 +77,11 @@ type Config struct {
 	// without it a confined task can escalate to operator by dropping its ticket.
 	OperatorPSK []byte
 
+	// RunnerKeys is the set of runner keys that may register under
+	// AuthRole.runner (harness-server loads <data-dir>/runner-keys.json).
+	// nil → New starts an empty in-memory set.
+	RunnerKeys *RunnerKeyStore
+
 	// ServerKey signs every PskAuthResponse (spec 2026-10-11 server signature
 	// auth). nil → New generates an ephemeral one, so a server always signs;
 	// harness-server passes the persistent key from <data-dir>/server-key.
@@ -235,6 +240,9 @@ func New(cfg Config) *Server {
 			panic("server: generate ephemeral server key: " + err.Error())
 		}
 		cfg.ServerKey = priv
+	}
+	if cfg.RunnerKeys == nil {
+		cfg.RunnerKeys, _ = LoadRunnerKeyStore("", nil)
 	}
 	s := &Server{
 		cfg:            cfg,
