@@ -229,6 +229,15 @@ matters only against an agent that sets out to escape its caps, and the threat
 model is decided as accidents, not a hostile agent: "Multi-tenancy" below,
 question 1. Reopen together with that answer.
 
+**Runner enrollment landed for the accident case**
+(`2026-10-27-runner-enrollment-design.md`). A runner now proves an enrolled
+Ed25519 key, and no agent is handed a fleet-wide secret: the connect PSK is
+gone. The path above stays open only through `runner_legacy`, which the
+follow-up change of that spec removes once no runner row reads `legacy`;
+delete this entry then. What remains after it is the same-uid case — an agent
+outside a sandbox can read its runner's key file — which is the hostile-agent
+question again.
+
 ---
 
 ## What the task log is for, now that oneshot is unused
@@ -315,7 +324,6 @@ isolation unit:
 - **Ways out of the tree, independent of tenancy.**
   - A `global` scope or a `VisBase` grant.
   - Explicit cross-tree ids.
-  - The connect PSK, which every agent holds as `HARNESS_PSK`.
 
 **Shapes considered.**
 
@@ -353,8 +361,10 @@ isolation unit:
    operator values while every task pays its costs (`scripts/sandbox/README.md`
    lists them). A delegate hijacked by prompt injection is stopped at the
    agent's own permission layer (that section's Rule 2), not by the harness.
-   The hostile branch, and sandbox-by-default and runner enrollment with it,
-   come back when Rule 3's condition holds: the broker becomes multi-tenant or
+   The hostile branch, and sandbox-by-default with it, come back when Rule
+   3's condition holds (runner enrollment has since landed for the accident
+   case, `2026-10-27-runner-enrollment-design.md`; against a hostile agent it
+   still needs the runner's key out of the agent's reach): the broker becomes multi-tenant or
    publicly reachable. Clusters of one operator's agents do not meet it;
    tenants who are different people do.
 2. **Do clusters ever need to talk to each other**, for example a parent

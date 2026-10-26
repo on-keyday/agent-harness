@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [agent-bin=PATH] [max-tasks=N] [hostname=LABEL] [runner-key-file=PATH] [agent-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -289,6 +289,11 @@ Arguments: $ARGUMENTS
      3. **Change `roots`** — if the user actually meant a narrower / different repo set.
    - Proceed only after the user picks (2) or (3). Never silently override `--hostname` without confirmation.
 
+4b. **Enroll this host's runner key** (once per machine and user; every slot that reads the same key file shares it).
+   - `"$HARNESS_REPO_PATH/bin/agent-runner" --print-pubkey [--runner-key-file <path>]` prints the 64-hex public key on stdout (creating the key at `<home>/.config/harness/runner-key` if absent) and the file it read on stderr.
+   - `harness-cli runner keys` — if a key line starts with the first 16 hex of that key, it is already enrolled; go on to step 5.
+   - Otherwise `harness-cli runner enroll <64-hex> --label "$HARNESS_HOSTNAME"`. This needs the `runner_enroll` capability. If it answers `permission denied`, do not work around it: give the user that exact command to run from an operator surface (or to grant you `runner_enroll` with `caps set`), and continue — a runner started before its key is enrolled retries and connects once it is.
+
 5. **Choose path: ephemeral vs persistent**.
 
    - **Default (ephemeral)** — runner survives only this login. Build:
@@ -301,7 +306,7 @@ Arguments: $ARGUMENTS
          [--hostname <label>] \
          [--no-worktree] \
          [--agent-bin <path>] \
-         [--psk-file <path>] \
+         [--runner-key-file <path>] \
          [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
@@ -321,7 +326,7 @@ Arguments: $ARGUMENTS
          [--hostname <label>] \
          [--no-worktree] \
          [--agent-bin <path>] \
-         [--psk-file <path>] \
+         [--runner-key-file <path>] \
          [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
@@ -342,7 +347,7 @@ Arguments: $ARGUMENTS
 
 6. **Verify** after spawn:
    - `harness-cli ls` — confirm a new RUNNERS row with matching roots (and matching `host=` if `--hostname` was set) appears. If not visible immediately, retry once after ~2s.
-   - `tail -n 30 "$HARNESS_REPO_PATH/bin/.run/agent-runner-<tag>.log"` — check there are no `FATAL` / `dial tcp` / `connection refused` errors.
+   - `tail -n 30 "$HARNESS_REPO_PATH/bin/.run/agent-runner-<tag>.log"` — check there are no `FATAL` / `dial tcp` / `connection refused` errors. A `runner key is not enrolled` line means step 4b is still open; the slot keeps retrying and comes up once the key is enrolled.
 
 7. **Report** to the user: slot tag, reported hostname, RunnerID from ls (e.g. `ws:192.168.3.14:NNNNN-NNNNN`), `tasks=0/N`, roots. If `--hostname` was injected, remind the user that this slot now requires `--host <label>` to pin from CLI/WebUI.
 

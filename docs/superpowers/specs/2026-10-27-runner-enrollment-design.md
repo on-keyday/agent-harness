@@ -318,7 +318,9 @@ the operator by hand, as every server restart is today (operator,
 1. The operator builds the server host and restarts the server on the new
    binary (a deliberate restart: held tasks are re-adopted by the old runners,
    which reconnect as `runner_legacy`; old clients reconnect as
-   `client_legacy`).
+   `client_legacy`). Remove `--psk` / `--psk-file` from the server's command
+   line first if it carries them: the new binary no longer defines them and
+   refuses to start, and `scripts/restart.py` replays the running argv.
 2. Build every other host. From here every agent's `harness-cli` is new and
    speaks `client`, whichever runner it sits on.
 3. Grant `runner_enroll` to an agent (`caps set`). For each runner host it runs
@@ -404,3 +406,33 @@ In `docs/backlog.md`: in "Any connect-PSK holder can register as a runner",
 note that the follow-up change closes it, and delete the entry when that
 change lands; in "Multi-tenancy", drop "The connect PSK, which every agent
 holds as `HARNESS_PSK`" from the ways out of the tree.
+
+## Amendment 2026-10-27 (implementation)
+
+Where the implementation (plan `2026-10-27-runner-enrollment.md`) departs from
+the text above, and why. Each is the implementer's call, recorded so a reader
+verifying against this spec is not misled.
+
+- **The enrollment store reaches the server as `server.Config.RunnerKeys`, a
+  loaded `*RunnerKeyStore`**, not as a path plus an initial key list.
+  `server.New` returns no error, so a corrupt `runner-keys.json` could not stop
+  startup from inside it; `harness-server` loads the store and exits on a bad
+  file. Tests build a store with `LoadRunnerKeyStore("", initial)`.
+- **Malformed keys are refused by the client decode and the server
+  (`invalid_key`), not by the verb declaration.** The verb table's own guards
+  synthesise arbitrary positionals to check every flag is wired, so a hex
+  check there would fail them.
+- **A refused takeover (D12) ends the connection with a wire close, then the
+  local close** (`Server.kickConn`, the shutdown path's order), and
+  `runner unenroll --force` uses the same. A local close alone reached the
+  runner only at its dead-peer GC, about 70 s, which is not the plain drop and
+  retry D12 describes. Pinned by `TestRefusedTakeoverIsNoticedPromptly`.
+- **Operator kinds also move to `AuthRole.client`** in the same change as
+  agents: one hello builder serves both, and the gate keys an operator kind's
+  binder by the operator PSK under either client role.
+- **Testing, correction:** `scripts/wire-skew-check.sh` phase 3 already runs an
+  OLD runner against the NEW server, so the D5 direction is covered by it; the
+  script now seeds the new runner's key into the data dir both servers start
+  from, which is what makes phase 2's self-heal a plain reconnect.
+- **Migration step 1** gained its precondition: the server's own command line
+  must not carry `--psk` / `--psk-file`.

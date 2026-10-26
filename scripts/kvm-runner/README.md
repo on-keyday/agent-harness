@@ -35,6 +35,20 @@ scripts/kvm-runner/kvm-runner.py provision   # binaries + a seeded lab repo
 scripts/kvm-runner/kvm-runner.py runner up   # join the server as a slot
 ```
 
+The guest's slots sign with one runner key, created on first start at the
+guest's `~/.config/harness/runner-key`, and the server lets them in only once
+that key is enrolled. Print it and enroll it from an operator surface (or an
+agent holding `runner_enroll`); a slot started before that retries until it is:
+
+```sh
+scripts/kvm-runner/kvm-runner.py ssh -- .local/bin/agent-runner --print-pubkey
+harness-cli runner enroll <that key> --label kvm-guest
+```
+
+**Create and enroll the key before taking a `snapshot`.** A `revert` to a
+snapshot taken without it brings the guest back keyless; its next start makes a
+new key, which needs enrolling again (and `runner unenroll` the old one).
+
 Then log the guest in once — it keeps that login, because its home is a real
 disk:
 

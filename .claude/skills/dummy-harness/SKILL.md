@@ -36,7 +36,8 @@ certificate for 127.0.0.1 (needs `openssl`); the instance's `CID` is then
 `wss:`. Chromium's certificate interstitial takes `thisisunsafe` typed on the
 page.
 
-Loopback only, ephemeral port, fresh PSK, temp data dir; `down` removes all of
+Loopback only, ephemeral port, fresh operator secret, a fresh runner key
+enrolled in the temp data dir before the server starts; `down` removes all of
 it. The WebUI is served from `webui/` on disk, not from the server binary's
 embedded copy — that default is inverted here on purpose, because an embedded
 WebUI is frozen at compile time and a JS/wasm edit would then show the OLD page
@@ -53,9 +54,10 @@ matter (below).
 ## Four traps, in the order you will hit them
 
 **1. Your shell's inherited `HARNESS_AUTH_TICKET` is for the LIVE server.**
-Every task shell has one. `harness-cli` prefers a ticket over a PSK, so pointing
-it at a dummy server fails with `psk auth: psk: server rejected: BadTicket` —
-which reads like a PSK mistake and sends you to check the PSK. The `env`
+Every task shell has one. `harness-cli` prefers a ticket over the operator
+secret, so pointing it at a dummy server fails with `psk auth: psk: server
+rejected: BadTicket` — which reads like a secret mistake and sends you to check
+the secret. The `env`
 subcommand emits the `unset`s for this reason; if you construct the environment
 by hand, scrub `HARNESS_*` yourself.
 
@@ -112,12 +114,13 @@ Inside that host session the shell still carries host's own `HARNESS_*`, so
 unset them there before running a client against target:
 
 ```bash
-session exec "$HSID" "unset HARNESS_AUTH_TICKET HARNESS_TASK_ID HARNESS_SERVER_CID; export HARNESS_PSK='<target psk>'; echo ready"
+session exec "$HSID" "unset HARNESS_AUTH_TICKET HARNESS_TASK_ID HARNESS_SERVER_CID; export HARNESS_OPERATOR_PSK='<target operator psk>'; echo ready"
 ```
 
 Restarting target's server means killing its pid and relaunching
-`harness-server` with the *same* `--listen` port, PSK and `--data-dir`, so the
-runner and the client reconnect to what they think is the same server.
+`harness-server` with the *same* `--listen` port, `--operator-psk` and
+`--data-dir` — the data dir holds the enrolled runner key — so the runner and
+the client reconnect to what they think is the same server.
 
 ## Driving `harness-tui` specifically
 

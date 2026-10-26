@@ -55,6 +55,14 @@ Server CID:
     register time and rewrites the trailing ``-<digits>`` instance
     suffix to ``-*`` (so the runner reconnects across server
     restarts). If neither is set, register aborts.
+
+Runner key:
+    The runner signs with <home>/.config/harness/runner-key (created on its
+    first start; ``--runner-key-file`` passes another) and the server lets it
+    register only once that key is enrolled: ``agent-runner --print-pubkey``
+    then ``harness-cli runner enroll <key> --label <host>`` (README, "Runner
+    enrollment"). Enroll before or after ``register``: a runner refused
+    ``not_enrolled`` keeps retrying and connects once it is.
 """
 
 from __future__ import annotations

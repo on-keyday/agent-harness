@@ -3406,3 +3406,38 @@ instance to count against.
 recorded that the host-side adapter finds no transcript for a sandboxed claude
 under token auth. With `--history-window --token-auth` the transcript is
 written into the host's `projects/<enc>/` and the replay finds it.
+
+### 2026-10-27 (pre-landing) — runner enrollment: `runner enroll / keys / unenroll`, key on runner and conn rows, the connect PSK removed
+
+Spec `2026-10-27-runner-enrollment-design.md`, plan (walked in the plan,
+BEFORE implementation, and the item 39 walk at the end against the spec's
+Operator surfaces section). A verb family, a capability bit, two row fields,
+and an env var the runner no longer hands agents.
+
+done:    1 (three `VerbSpec`s, family `runner`), 2 (key / prefix checked by the
+         client decode and the server's `invalid_key` — not in the
+         declaration: its guards synthesise positionals), 7 (`WebUIDispatch`
+         per verb + `main.js` `case "runner"`), 11, 12 (`key=` on both `ls`
+         renderers; `key` / `key_label` / `legacy_auth` in `--json`), 15
+         (`runner_enroll` in the audit order, `capAuditTable`, `CapDescription`),
+         18 (detail `key:` line), 18a + 34 (a width-conditional `Key` column,
+         built in `runnerColsFor` + `rebuild` together), 23 (wasm runner and
+         conn maps), 24, 25, 29, 30, 31 (`runners=0`, `legacy runners=0`
+         printed), 32 (one `cli.FormatRunner*` set; the wasm bridge returns
+         its text), 33 (unenroll of a key in use refused without `--force`), 35,
+         37 (spec Amendment), 39, S5 (`HARNESS_PSK` no longer handed to agents;
+         `HARNESS_RUNNER_KEY_FILE` unset before spawning), S6 (sandbox docs and
+         probe checked: no PSK, `~/.config/harness` not mounted)
+omitted: 4, 6 (no key or button: rare administrative verbs, reached from the
+         command line on every surface, like `server dial-runner`)
+n/a:     3, 5, 8, 9, 10, 13 (cap names come from the enum), 14, 16, 17, 19–22,
+         26–28a, 34a, 36 (no embedded skill named the connect PSK), 38, S1–S4
+missed:  —
+
+**The executable guards did the catching again**, five of them in Task 1:
+`TestAuditOrderIsStrongFirstAndComplete`, the tier table, `TestCapabilityBits`,
+`TestToRunnerInfoMapsEveryField` and the scope / cap completeness pair each
+named the new bit, kind or field before any handler existed. The verb table's
+`TestExamplesParse` / `TestUsagePositionalsParse` /
+`TestEveryDeclaredFlagIsReadByItsBuild` then refused a hex `Validate` on the
+declarations, which is why item 2 lands in the client and the server here.

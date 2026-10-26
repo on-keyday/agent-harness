@@ -150,32 +150,40 @@ QUIC-like layering in `trsf`). Both can run simultaneously
 over TLS: start the server with `--tls-cert FILE --tls-key FILE` (PEM)
 and address it as `wss:HOST:PORT-*`. The WebUI on the same listener is
 then served over `https://`. Clients do not verify the certificate,
-because objproto's PSK handshake already authenticates the peer. TLS
+because the handshake below already authenticates both ends. TLS
 here is for browsers, not security. The `trsf`
 stream-multiplexing layer carries control / data frames on top of
-either. PSK pre-authentication gates incoming connections before the
-secure session starts. The server takes the PSK via `--psk` (or env
-`HARNESS_PSK`) or `--psk-file` — the file is the PSK *origin*:
-auto-generated on first run if absent, then persisted there. Clients
-and runners *consume* an already-established PSK via `--psk` / `--psk-file`
-or env `HARNESS_PSK` / `HARNESS_PSK_FILE` (env `HARNESS_PSK_FILE` is
-read-only — it is not honored by the server, which only generates to the
-`--psk-file` flag path). The PSK handshake is 1-RTT and carries the
-connecting party's identity (role + principal) in the same message, so
-the server knows whether a connection is a runner, an in-task agent, or
-an operator surface before the secure session opens. Operator surfaces
-(CLI / TUI / WebUI) prove a **separate** operator secret via
-`harness-server --operator-psk` (env `HARNESS_OPERATOR_PSK` /
-`HARNESS_OPERATOR_PSK_FILE`), which is deliberately never injected into
-agents — without it an in-task agent could drop its capability ticket,
-reconnect as a plain client, and escalate to operator. The operator secret
-is **required**: with neither `--operator-psk` nor `--operator-psk-file`
-given, the server generates one into `<data-dir>/operator-psk` on first
-run and reads it back on every later start, and operator surfaces are
-handed that file's contents through the client-side `HARNESS_OPERATOR_PSK`
-/ `HARNESS_OPERATOR_PSK_FILE`. Only `--dangerously-permit-no-operator-psk`
-runs without one — operator surfaces are then validated against `--psk`,
-which every agent also holds, and the server says so at startup. Server and runner can
+either. The first message on every connection authenticates it and
+carries the connecting party's identity (role + principal), so the server
+knows whether a connection is a runner, an in-task agent, or an operator
+surface before anything else is accepted. What each one proves is bound to
+that connection's handshake transcript, so nothing a peer sees on one
+connection can be replayed on another:
+
+- **A runner** signs with its own Ed25519 key, which the server must have
+  enrolled (see **Runner enrollment** below).
+- **An in-task agent** proves the per-task ticket the runner handed it
+  (`HARNESS_AUTH_TICKET`) without sending it.
+- **A data-plane connection** (file transfer straight to a runner) proves the
+  grant the server minted for that one request, the same way.
+- **Operator surfaces** (CLI / TUI / WebUI) prove the operator secret,
+  `harness-server --operator-psk` (env `HARNESS_OPERATOR_PSK` /
+  `HARNESS_OPERATOR_PSK_FILE`), which is deliberately never injected into
+  agents — without it an in-task agent could drop its capability ticket,
+  reconnect as a plain client, and escalate to operator. The operator
+  secret is **required**: with neither `--operator-psk` nor
+  `--operator-psk-file` given, the server generates one into
+  `<data-dir>/operator-psk` on first run and reads it back on every later
+  start, and operator surfaces are handed that file's contents through the
+  client-side `HARNESS_OPERATOR_PSK` / `HARNESS_OPERATOR_PSK_FILE`. Only
+  `--dangerously-permit-no-operator-psk` runs without one — operator
+  surfaces then prove nothing, and the server says so at startup.
+
+The server signs its answer with `<data-dir>/server-key`, so a client
+configured with its public half (`HARNESS_SERVER_PUBKEY`, runners
+`--server-pubkey`) refuses an impostor. There is no fleet-wide shared
+secret: the connect PSK (`--psk`, `HARNESS_PSK`) was removed with runner
+enrollment. Server and runner can
 run on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
 ConnectionID (`ws:host:port-id`, `wss:host:port-id` or `udp:host:port-id`)
 that the runner / clients dial; the transport prefix selects the underlay.
@@ -202,8 +210,7 @@ binaries under `bin/`; the examples below assume that.
 # 1. Start the server. --listen accepts host:port (use :8539 to bind all
 # interfaces; defaults to 127.0.0.1:8539 / loopback). With no --operator-psk
 # the operator secret is generated into <data-dir>/operator-psk; the CLI / TUI
-# terminals below read it via HARNESS_OPERATOR_PSK_FILE. --psk / --psk-file
-# set the connect PSK runners and agents prove (unset = none). The WebUI is
+# terminals below read it via HARNESS_OPERATOR_PSK_FILE. The WebUI is
 # mounted on the same HTTP listener, so http://<server-host>:8539/ in a
 # browser gives you the WASM frontend.
 bin/harness-server --listen :8539 --data-dir ./harness-data
@@ -213,9 +220,14 @@ bin/harness-server --listen :8539 --data-dir ./harness-data
 # Optional: serve wss:// and an https:// WebUI (then dial 'wss:HOSTNAME:8539-*').
 # bin/harness-server --listen :8539 --tls-cert cert.pem --tls-key key.pem --data-dir ./harness-data
 
-# 2. Start a runner. --roots is a comma-separated list of repo paths this
-# runner is allowed to serve (matched verbatim against submit --repo).
-# --max-tasks N lets one runner process handle N concurrent tasks.
+# 2. Enroll the runner host's key, then start a runner. The key is created on
+# first use at <home>/.config/harness/runner-key; the enroll runs wherever the
+# operator secret is (see Runner enrollment below).
+bin/agent-runner --print-pubkey                  # on the runner host
+bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' runner enroll <that key> --label HOSTNAME
+# --roots is a comma-separated list of repo paths this runner is allowed to
+# serve (matched verbatim against submit --repo). --max-tasks N lets one
+# runner process handle N concurrent tasks.
 bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
                  --roots /abs/path/to/repo,/abs/path/to/other-repo \
                  --max-tasks 4
@@ -814,6 +826,49 @@ the runner starts: an address that does not resolve yet is simply the
 candidate that fails this attempt, and the reconnect backoff tries the list
 again.
 
+### Runner enrollment
+
+A runner proves an Ed25519 key, and the server lets it register only if that
+key is **enrolled**. The server knows keys, not machines or slots: any number of
+runners may sign with one key. Each runner reads its key from
+`<home>/.config/harness/runner-key` (`--runner-key-file` /
+`HARNESS_RUNNER_KEY_FILE` to choose another), creating it on first use, so by
+default every slot one user runs on one machine shares a key and one enrollment
+covers them. The path deliberately ignores `XDG_CONFIG_HOME`: a systemd unit and
+an agent's shell must resolve the same file.
+
+```bash
+bin/agent-runner --print-pubkey                      # the key to enroll (stdout), its file (stderr)
+bin/harness-cli runner enroll <64-hex> --label build-box
+bin/harness-cli runner keys                          # enrolled keys, the runners on each, legacy runners
+bin/harness-cli runner unenroll <8+ hex prefix>      # refused while a runner uses it…
+bin/harness-cli runner unenroll <prefix> --force     # …this closes them, and prints the enroll that undoes it
+bin/agent-runner --rotate-key                        # new key; the old one kept as runner-key.prev
+```
+
+A runner whose key is not enrolled is refused `not_enrolled`, logs its key and
+the command that enrolls it, and keeps retrying, so a runner started first and
+enrolled afterwards connects by itself. The three verbs need the
+`runner_enroll` capability (an operator holds it); an agent that brings runners
+up for you needs it granted. `runner_admin` is a different power — `server
+dial-runner`, the server's own network reach — and implies nothing here. The
+verbs are on the CLI, the TUI command line and the WebUI command input, and
+`ls` shows each runner's key as `key=<label>` (or its prefix, or `legacy`).
+
+**Rotating a key** overlaps the old and the new, so nothing is cut off:
+`--rotate-key`, `runner enroll` the new key, restart the runners that use the
+file when convenient, then `runner unenroll` the old one once `runner keys`
+shows nothing on it. Unenrolling first would close every slot on the machine.
+
+**Old binaries still connect** — a runner or client from before enrollment
+authenticates with the old handshake, marked `legacy` on runner rows, on
+`conns` rows and in `runner keys` — until a follow-up change removes that
+acceptance; it lands once nothing reads `legacy`. Upgrade the **server
+first**: a new client or runner cannot talk to an old server. A server started
+with `--psk` / `--psk-file` must have them removed from its command line, or
+the new binary refuses to start. Design:
+`docs/superpowers/specs/2026-10-27-runner-enrollment-design.md`.
+
 ## Operating modes
 
 By default the runner creates a `git worktree` per task under
@@ -891,8 +946,8 @@ Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, resume, cancel, the three
 session-attach powers, file read / write, local / remote port-forward, an ip
 link (`forward_link`, implied by neither port-forward bit),
-reading a forward's or an exec's payload, notify, prune, purge, runner-admin, global
-info, publishing to the board beyond the task's own lineage, publishing to the
+reading a forward's or an exec's payload, notify, prune, purge, runner-admin,
+enrolling runner keys (`runner_enroll`), global info, publishing to the board beyond the task's own lineage, publishing to the
 board as the operator) — and a **target scope** bounding WHICH tasks those
 capabilities may be pointed at.
 
@@ -952,7 +1007,8 @@ nothing — the task can still message its own lineage on the agentboard
 (see **Board reach** below) and see its own subtree in `ls` / `watch`, but
 every control-plane verb (spawn, cancel,
 attach, file read/write, forwards, notify, prune, purge, runner-admin,
-global info) answers `permission denied` until something grants it.
+runner enrollment, global info) answers `permission denied` until something
+grants it.
 Reading a task's log is `exec_view`, whether by `logs`, by following it, or
 by joining its pubsub topic directly. The `runners.status` and
 `notifications` streams go only to whom `ls` shows runners to — an
@@ -1312,7 +1368,7 @@ bin/harness-cli caps audit --all --empty --json   # ended tasks too, unheld bits
 Each capability is tiered 強 / 中 / 弱. Each holder is labelled with its
 id, agent, repo, status and prompt head, and shows the scope that bit
 resolves to, `*` when it comes from a `--scope-for` override. `spawn`,
-`notify`, `runner_admin`, `board_observe` and `board_send` reach the
+`notify`, `runner_admin`, `runner_enroll`, `board_observe` and `board_send` reach the
 server's shared resources whatever the task's scope says, so they show
 `global（固定）`: global, and not narrowable by `--scope` or
 `--scope-for`. A row lists the tasks holding that literal bit — what a
@@ -1365,7 +1421,7 @@ spawn. An `exec_control` holder is shown its
 `exec_view` / `exec_cowrite` reach under those bits' own scopes, as the attach
 gates resolve them, and `exec_resize` inside `exec_view`'s scope (a resize
 rides an observer attach). Bits that name no task — `spawn`, `notify`,
-`runner_admin`, `board_observe`, `board_send` — have no per-task reach: the
+`runner_admin`, `runner_enroll`, `board_observe`, `board_send` — have no per-task reach: the
 report names the ones held on an `also holds (no per-task reach):` line. It reads the caller's own listing, so a global set prints as
 `global (+ tasks you cannot list)` rather than as the tasks that happen to be
 listed. `wider than parent:` appears when the task reaches or sees beyond its
@@ -1546,7 +1602,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
 / caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,ls,show}
-/ server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
+/ server dial-runner / runner {enroll,keys,unenroll} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
 `exec ls` / `exec kill <exec-id>` / `exec tap <exec-id>` list, stop and watch
@@ -1619,7 +1675,8 @@ An unknown key, header or enum value is a parse error rather than a skipped
 line, so a typo'd `fowardd` cannot silently establish nothing. `forward` and
 `grid` values are handed to the same parsers `harness-cli forward` and the
 `grid` command use, so the config can never accept a spelling the command line
-rejects. There is no key for the PSK: the secret keeps its two existing homes.
+rejects. There is no key for the operator secret: it keeps its two existing
+homes.
 
 Nothing here is a wire change. Both forward directions terminate in a client
 process, so a declaration held server-side could never enact itself — which is
