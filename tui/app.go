@@ -1220,6 +1220,13 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render(cli.SetParentMessage(msg.Opts, msg.Res)))
 		return a, RefreshSnapshot(a.client)
 
+	case RunnerKeyResultMsg:
+		a.appendRunnerKeyResult(msg)
+		if msg.Refresh {
+			return a, RefreshSnapshot(a.client)
+		}
+		return a, nil
+
 	case ServerDialResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)))

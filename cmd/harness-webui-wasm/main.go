@@ -137,6 +137,9 @@ func main() {
 		"awaitIdleKill":      js.FuncOf(harnessAwaitIdleKill),
 		"execArgvText":       js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
+		"runnerEnroll":       js.FuncOf(harnessRunnerEnroll),
+		"runnerKeys":         js.FuncOf(harnessRunnerKeys),
+		"runnerUnenroll":     js.FuncOf(harnessRunnerUnenroll),
 		"help":               js.FuncOf(harnessHelp),
 		"dispatch":           js.FuncOf(harnessDispatch),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
@@ -2948,6 +2951,85 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// runnerKeyPromise runs fn on the connected client and resolves with
+// {text, ok}: text rendered by the cli.FormatRunner* function the CLI and TUI
+// print with, ok false for any answer the CLI would exit non-zero on.
+func runnerKeyPromise(fn func(c *cli.Client) (string, bool, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			text, ok, err := fn(c)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{"text": text, "ok": ok}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harness.runnerEnroll(pubkeyHex, label) -> Promise<{text, ok}>
+func harnessRunnerEnroll(this js.Value, args []js.Value) any {
+	var pubkey, label string
+	if len(args) > 0 {
+		pubkey = args[0].String()
+	}
+	if len(args) > 1 && args[1].Type() == js.TypeString {
+		label = args[1].String()
+	}
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		key, err := hex.DecodeString(pubkey)
+		if err != nil {
+			return "", false, fmt.Errorf("runner enroll: %w", err)
+		}
+		st, err := cli.RunnerEnrollWith(rootCtx, c, key, label)
+		if err != nil {
+			return "", false, err
+		}
+		return cli.FormatRunnerEnroll(st, key, label), st == protocol.RunnerKeyStatus_Ok || st == protocol.RunnerKeyStatus_AlreadyEnrolled, nil
+	})
+}
+
+// harness.runnerKeys() -> Promise<{text, ok}>
+func harnessRunnerKeys(this js.Value, args []js.Value) any {
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		rows, legacy, err := cli.RunnerKeysWith(rootCtx, c)
+		if err != nil {
+			return "", false, err
+		}
+		return cli.FormatRunnerKeys(rows, legacy), true, nil
+	})
+}
+
+// harness.runnerUnenroll(prefix, force) -> Promise<{text, ok}>
+func harnessRunnerUnenroll(this js.Value, args []js.Value) any {
+	var prefix string
+	var force bool
+	if len(args) > 0 {
+		prefix = args[0].String()
+	}
+	if len(args) > 1 {
+		force = args[1].Truthy()
+	}
+	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
+		st, res, err := cli.RunnerUnenrollWith(rootCtx, c, prefix, force)
+		if err != nil {
+			return "", false, err
+		}
+		text, ok := cli.FormatRunnerUnenroll(st, res)
+		return text, ok, nil
+	})
 }
 
 // harnessWatch starts a watch goroutine. Events are pushed via

@@ -617,6 +617,8 @@ func New(cfg Config) *Server {
 		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
 	}
 	s.runnerHandler.AuthOf = s.authOf
+	s.runnerHandler.KickConn = s.kickConn
+	s.taskHandler.KickConn = s.kickConn
 	s.runnerHandler.OnConnIdentified = func(cid objproto.ConnectionID) {
 		s.activeConnsMu.Lock()
 		sc, ok := s.activeConns[cid]
@@ -1249,6 +1251,23 @@ func (s *Server) recordAuth(cid objproto.ConnectionID, legacy bool, key ed25519.
 		sc.legacyAuth, sc.authKey = legacy, key
 		s.activeConns[cid] = sc
 	}
+}
+
+// kickConn ends one connection from the server side, the way shutdown does:
+// a wire close so the peer notices now (a local close alone leaves it to the
+// peer's GC, about a minute), then the local close.
+func (s *Server) kickConn(cid objproto.ConnectionID) {
+	s.activeConnsMu.Lock()
+	sc, ok := s.activeConns[cid]
+	s.activeConnsMu.Unlock()
+	if !ok {
+		return
+	}
+	_ = trsf.SendClose(sc)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = sc.Close()
+	}()
 }
 
 // authOf is RunnerHandler.AuthOf.

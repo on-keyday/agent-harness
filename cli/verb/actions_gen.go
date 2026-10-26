@@ -496,6 +496,27 @@ type RestoreAction struct {
 	TaskIDs []string
 }
 
+// RunnerEnrollAction is built by: runner enroll.
+type RunnerEnrollAction struct {
+	ActionMarker
+	// a name for the key, shown by `runner keys` and on runner rows (empty keeps an enrolled key's label)
+	Label  string
+	PubKey string
+}
+
+// RunnerKeysAction is built by: runner keys.
+type RunnerKeysAction struct {
+	ActionMarker
+}
+
+// RunnerUnenrollAction is built by: runner unenroll.
+type RunnerUnenrollAction struct {
+	ActionMarker
+	// remove the key even though runners use it, closing their connections
+	Force  bool
+	Prefix string
+}
+
 // SSHGatewayAction is built by: ssh-gateway, ssh-gateway start, ssh-gateway status, ssh-gateway stop.
 type SSHGatewayAction struct {
 	ActionMarker
@@ -1689,6 +1710,66 @@ func init() {
 			a.Via = b.Str("via")
 			if len(b.Args) > 0 {
 				a.RunnerCID = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner enroll\x00cli": func(b Bound) (Action, error) {
+			a := RunnerEnrollAction{}
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.PubKey = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner enroll\x00tui": func(b Bound) (Action, error) {
+			a := RunnerEnrollAction{}
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.PubKey = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner enroll\x00webui": func(b Bound) (Action, error) {
+			a := RunnerEnrollAction{}
+			a.Label = b.Str("label")
+			if len(b.Args) > 0 {
+				a.PubKey = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner keys\x00cli": func(b Bound) (Action, error) {
+			a := RunnerKeysAction{}
+			return a, nil
+		},
+		"runner keys\x00tui": func(b Bound) (Action, error) {
+			a := RunnerKeysAction{}
+			return a, nil
+		},
+		"runner keys\x00webui": func(b Bound) (Action, error) {
+			a := RunnerKeysAction{}
+			return a, nil
+		},
+		"runner unenroll\x00cli": func(b Bound) (Action, error) {
+			a := RunnerUnenrollAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.Prefix = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner unenroll\x00tui": func(b Bound) (Action, error) {
+			a := RunnerUnenrollAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.Prefix = b.Args[0]
+			}
+			return a, nil
+		},
+		"runner unenroll\x00webui": func(b Bound) (Action, error) {
+			a := RunnerUnenrollAction{}
+			a.Force = b.Bool("force")
+			if len(b.Args) > 0 {
+				a.Prefix = b.Args[0]
 			}
 			return a, nil
 		},
@@ -3583,6 +3664,9 @@ const (
 	CmdForwardKill            = "forward kill"
 	CmdForwardTap             = "forward tap"
 	CmdServerDialRunner       = "server dial-runner"
+	CmdRunnerEnroll           = "runner enroll"
+	CmdRunnerKeys             = "runner keys"
+	CmdRunnerUnenroll         = "runner unenroll"
 	CmdSshGateway             = "ssh-gateway"
 	CmdSshGatewayStart        = "ssh-gateway start"
 	CmdSshGatewayStatus       = "ssh-gateway status"
@@ -4233,6 +4317,69 @@ func ParseCmdServerDialRunner(sf Surface, args []string, ctx map[string]string) 
 		return zero, err
 	}
 	a := act.(ServerDialRunnerAction)
+	return a, nil
+}
+
+func ParseCmdRunnerEnroll(sf Surface, args []string, ctx map[string]string) (RunnerEnrollAction, error) {
+	var zero RunnerEnrollAction
+	sp, ok := Lookup("runner", "enroll")
+	if !ok {
+		return zero, fmt.Errorf("runner enroll: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerEnrollAction)
+	return a, nil
+}
+
+func ParseCmdRunnerKeys(sf Surface, args []string, ctx map[string]string) (RunnerKeysAction, error) {
+	var zero RunnerKeysAction
+	sp, ok := Lookup("runner", "keys")
+	if !ok {
+		return zero, fmt.Errorf("runner keys: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerKeysAction)
+	return a, nil
+}
+
+func ParseCmdRunnerUnenroll(sf Surface, args []string, ctx map[string]string) (RunnerUnenrollAction, error) {
+	var zero RunnerUnenrollAction
+	sp, ok := Lookup("runner", "unenroll")
+	if !ok {
+		return zero, fmt.Errorf("runner unenroll: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(RunnerUnenrollAction)
 	return a, nil
 }
 
@@ -6226,6 +6373,12 @@ type CLIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// runner enroll
+	RunnerEnroll(RunnerEnrollAction) R
+	// runner keys
+	RunnerKeys(RunnerKeysAction) R
+	// runner unenroll
+	RunnerUnenroll(RunnerUnenrollAction) R
 	// ssh-gateway
 	SshGateway(SSHGatewayAction) R
 	// workspace save
@@ -6517,6 +6670,24 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdRunnerEnroll:
+		a, perr := ParseCmdRunnerEnroll(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerEnroll(a), true, nil
+	case CmdRunnerKeys:
+		a, perr := ParseCmdRunnerKeys(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerKeys(a), true, nil
+	case CmdRunnerUnenroll:
+		a, perr := ParseCmdRunnerUnenroll(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerUnenroll(a), true, nil
 	case CmdSshGateway:
 		a, perr := ParseCmdSshGateway(CLI, args, ctx)
 		if perr != nil {
@@ -7023,6 +7194,12 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case RunnerEnrollAction:
+		return h.RunnerEnroll(a), true
+	case RunnerKeysAction:
+		return h.RunnerKeys(a), true
+	case RunnerUnenrollAction:
+		return h.RunnerUnenroll(a), true
 	case SSHGatewayAction:
 		return h.SshGateway(a), true
 	case WorkspaceAction:
@@ -7345,6 +7522,24 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdServerDialRunner:
 			a, perr := ParseCmdServerDialRunner(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerEnroll:
+			a, perr := ParseCmdRunnerEnroll(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerKeys:
+			a, perr := ParseCmdRunnerKeys(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerUnenroll:
+			a, perr := ParseCmdRunnerUnenroll(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -7833,6 +8028,12 @@ type TUIDispatch[R any] interface {
 	ForwardTap(ForwardTapAction) R
 	// server dial-runner
 	ServerDialRunner(ServerDialRunnerAction) R
+	// runner enroll
+	RunnerEnroll(RunnerEnrollAction) R
+	// runner keys
+	RunnerKeys(RunnerKeysAction) R
+	// runner unenroll
+	RunnerUnenroll(RunnerUnenrollAction) R
 	// ssh-gateway start
 	SshGatewayStart(SSHGatewayAction) R
 	// ssh-gateway status
@@ -8068,6 +8269,24 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.ServerDialRunner(a), true, nil
+	case CmdRunnerEnroll:
+		a, perr := ParseCmdRunnerEnroll(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerEnroll(a), true, nil
+	case CmdRunnerKeys:
+		a, perr := ParseCmdRunnerKeys(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerKeys(a), true, nil
+	case CmdRunnerUnenroll:
+		a, perr := ParseCmdRunnerUnenroll(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.RunnerUnenroll(a), true, nil
 	case CmdSshGatewayStart:
 		a, perr := ParseCmdSshGatewayStart(TUI, args, ctx)
 		if perr != nil {
@@ -8440,6 +8659,12 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 		return h.ForwardTap(a), true
 	case ServerDialRunnerAction:
 		return h.ServerDialRunner(a), true
+	case RunnerEnrollAction:
+		return h.RunnerEnroll(a), true
+	case RunnerKeysAction:
+		return h.RunnerKeys(a), true
+	case RunnerUnenrollAction:
+		return h.RunnerUnenroll(a), true
 	case SSHGatewayAction:
 		switch a.Sub {
 		case "start":
@@ -8703,6 +8928,24 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdServerDialRunner:
 			a, perr := ParseCmdServerDialRunner(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerEnroll:
+			a, perr := ParseCmdRunnerEnroll(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerKeys:
+			a, perr := ParseCmdRunnerKeys(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdRunnerUnenroll:
+			a, perr := ParseCmdRunnerUnenroll(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

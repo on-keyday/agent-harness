@@ -20,6 +20,8 @@ type RunnerHandler struct {
 	// runner key (nil for a legacy runner) and whether the role was _legacy.
 	// nil (test wiring) reads as a legacy connection.
 	AuthOf func(cid objproto.ConnectionID) (key ed25519.PublicKey, legacy bool)
+	// KickConn ends a connection from the server side (Server.kickConn).
+	KickConn func(cid objproto.ConnectionID)
 
 	Registry      *Registry
 	Tasks         *TaskStore
@@ -183,8 +185,8 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			}
 			slog.Warn("runner registration refused", "err", err, "identity", hello.RunnerId.Hex(),
 				"key", keyPrefix(entry.Key), "held_by_key", held)
-			if c, ok := conn.(interface{ Close() error }); ok {
-				c.Close() //nolint:errcheck
+			if h.KickConn != nil {
+				h.KickConn(conn.ConnectionID())
 			}
 			return
 		}

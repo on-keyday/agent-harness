@@ -30,9 +30,13 @@ type TaskHandler struct {
 	// RunnerKeys is the enrollment store: the runner key verbs act on it, and
 	// the list handler reads a runner's key label from it.
 	RunnerKeys *RunnerKeyStore
-	Tasks      *TaskStore
-	Registry   *Registry
-	OnChange   func() // called after Submit / Cancel mutations
+	// KickConn ends one connection from the server side (a wire close, then
+	// the local close), so the peer notices at once instead of at its GC.
+	// runner unenroll --force uses it on the runners of the removed key.
+	KickConn func(cid objproto.ConnectionID)
+	Tasks    *TaskStore
+	Registry *Registry
+	OnChange func() // called after Submit / Cancel mutations
 
 	// OnSessionActivity fires when a live detachable session's PTY output
 	// crosses the busy/idle edge (SessionHooks.OnActivity, forwarded per
@@ -1036,6 +1040,19 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_AwaitProgress:
 		h.handleAwaitProgress(conn, &req)
+
+	case protocol.TaskControlKind_RunnerEnroll:
+		if r := req.RunnerEnroll(); r != nil {
+			h.handleRunnerEnroll(conn, req.RequestId, r)
+		}
+
+	case protocol.TaskControlKind_RunnerUnenroll:
+		if r := req.RunnerUnenroll(); r != nil {
+			h.handleRunnerUnenroll(conn, req.RequestId, r)
+		}
+
+	case protocol.TaskControlKind_RunnerKeys:
+		h.handleRunnerKeys(conn, req.RequestId)
 
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()

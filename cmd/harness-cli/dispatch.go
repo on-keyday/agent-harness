@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -516,6 +517,46 @@ func (h cliVerbs) ServerDialRunner(a verb.ServerDialRunnerAction) error {
 	}
 	fmt.Println(resp.Status.String())
 	if resp.Status != protocol.DialRunnerStatus_Ok {
+		os.Exit(1)
+	}
+	return nil
+}
+
+// --- runner keys ---------------------------------------------------------
+
+func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
+	key, err := hex.DecodeString(a.PubKey)
+	if err != nil {
+		return fmt.Errorf("runner enroll: %w", err)
+	}
+	st, err := cli.RunnerEnroll(h.ctx, h.cid(), key, a.Label)
+	if err != nil {
+		return err
+	}
+	fmt.Println(cli.FormatRunnerEnroll(st, key, a.Label))
+	if st != protocol.RunnerKeyStatus_Ok && st != protocol.RunnerKeyStatus_AlreadyEnrolled {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func (h cliVerbs) RunnerKeys(verb.RunnerKeysAction) error {
+	rows, legacy, err := cli.RunnerKeys(h.ctx, h.cid())
+	if err != nil {
+		return err
+	}
+	fmt.Print(cli.FormatRunnerKeys(rows, legacy))
+	return nil
+}
+
+func (h cliVerbs) RunnerUnenroll(a verb.RunnerUnenrollAction) error {
+	st, res, err := cli.RunnerUnenroll(h.ctx, h.cid(), a.Prefix, a.Force)
+	if err != nil {
+		return err
+	}
+	out, ok := cli.FormatRunnerUnenroll(st, res)
+	fmt.Print(out)
+	if !ok {
 		os.Exit(1)
 	}
 	return nil

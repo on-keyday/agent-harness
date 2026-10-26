@@ -138,6 +138,30 @@ func (h tuiVerbs) Notify(v verb.NotifyAction) tea.Cmd {
 	return DoNotify(a.client, v.Level, v.Title, v.Text)
 }
 
+func (h tuiVerbs) RunnerEnroll(v verb.RunnerEnrollAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner enroll: not connected to server"))
+		return nil
+	}
+	return DoRunnerEnroll(h.a.client, v.PubKey, v.Label)
+}
+
+func (h tuiVerbs) RunnerKeys(verb.RunnerKeysAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner keys: not connected to server"))
+		return nil
+	}
+	return DoRunnerKeys(h.a.client)
+}
+
+func (h tuiVerbs) RunnerUnenroll(v verb.RunnerUnenrollAction) tea.Cmd {
+	if h.a.client == nil {
+		h.a.cmdresult.Append(ErrorStyle.Render("runner unenroll: not connected to server"))
+		return nil
+	}
+	return DoRunnerUnenroll(h.a.client, v.Prefix, v.Force)
+}
+
 func (h tuiVerbs) ServerDialRunner(v verb.ServerDialRunnerAction) tea.Cmd {
 	a := h.a
 	if a.client == nil {

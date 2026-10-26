@@ -869,6 +869,66 @@ var Verbs = []VerbSpec{
 		Examples: []string{"server dial-runner ws:127.0.0.1:9000-abcd"},
 	},
 
+	// --- runner keys (2026-10-27-runner-enrollment-design.md) ---
+	{
+		Path:           []string{"runner", "enroll"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerEnroll"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"enroll a runner's public key so a runner holding it may register"}, TUI: {"enroll a runner's public key so a runner holding it may register"}},
+		NoModalSurface: "an administrative verb run a handful of times per machine, like server dial-runner: the command line is the way in on every surface",
+		Notes: []string{
+			"enroll a runner's public key: a runner signing with it may register",
+			"PUBKEY is 64 hex, printed by `agent-runner --print-pubkey` on the runner host",
+			"one key serves every slot that reads the same key file (by default, every",
+			"slot one user runs on one machine)",
+			"an already enrolled key keeps its record; --label replaces its label",
+			"needs runner_enroll",
+		},
+		Action:          "RunnerEnrollAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "pubkey", Type: ArgString, Field: "PubKey"}},
+		Flags: []Flag{
+			{Name: "label", Type: FlagString, Default: "", Field: "Label",
+				Help: "a name for the key, shown by `runner keys` and on runner rows (empty keeps an enrolled key's label)"},
+		},
+		Examples: []string{"runner enroll 3f9c01ab7e2d4c5a9b8f6e1d0c2b3a4958675a4b3c2d1e0f9a8b7c6d5e4f3a2b --label gmkhost"},
+	},
+	{
+		Path:           []string{"runner", "keys"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerKeys"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"list enrolled runner keys and the runners on each"}, TUI: {"list enrolled runner keys and the runners on each"}},
+		NoModalSurface: "an administrative listing, like conns: the command line is the way in on every surface",
+		Notes: []string{
+			"list enrolled runner keys: label, when and by whom each was enrolled,",
+			"and the runners registered with it right now; then the runners that",
+			"registered without a key (legacy) — none once the fleet has migrated",
+			"needs runner_enroll",
+		},
+		Action:          "RunnerKeysAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Examples:        []string{"runner keys"},
+	},
+	{
+		Path:           []string{"runner", "unenroll"},
+		WebUIDispatch:  WebUIDispatch{Fn: "runnerUnenroll"},
+		SurfaceNotes:   map[Surface][]string{WebUI: {"remove an enrolled runner key; --force if runners use it"}, TUI: {"remove an enrolled runner key; --force if runners use it"}},
+		NoModalSurface: "an administrative verb, like server dial-runner: the command line is the way in on every surface",
+		Notes: []string{
+			"remove an enrolled key, named by a unique prefix of at least 8 hex",
+			"refused while a runner uses it, listing those runners; --force closes",
+			"them (their tasks end as on any runner death)",
+			"prints the removed key in full and the `runner enroll` that restores it",
+			"needs runner_enroll",
+		},
+		Action:          "RunnerUnenrollAction",
+		CmdlineSurfaces: CLI | TUI | WebUI,
+		Args:            []Arg{{Name: "key-prefix", Type: ArgString, Field: "Prefix"}},
+		Flags: []Flag{
+			{Name: "force", Type: FlagBool, Default: false, Field: "Force",
+				Help: "remove the key even though runners use it, closing their connections"},
+		},
+		Examples: []string{"runner unenroll 3f9c01ab", "runner unenroll 3f9c01ab --force"},
+	},
+
 	// --- ssh-gateway ---
 	//
 	// Two shapes, not one: the CLI runs the gateway in the foreground with
