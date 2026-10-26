@@ -2,6 +2,7 @@ package runner
 
 import (
 	"crypto/subtle"
+	"github.com/on-keyday/agent-harness/cli"
 	"sync"
 	"time"
 
@@ -66,6 +67,27 @@ func (s *grantStore) MTUForSlot(slot uint16) uint16 {
 		}
 	}
 	return 0
+}
+
+// MatchBinder finds the live grant of taskID whose id keys binder over this
+// connection's transcript. Every candidate is compared in constant time; a
+// task holds a handful of grants at most, so the trial is bounded by what the
+// store already holds. The match still goes through Validate afterwards.
+func (s *grantStore) MatchBinder(taskID protocol.TaskID, transcript, binder []byte) (protocol.DataPlaneGrant, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var found protocol.DataPlaneGrant
+	ok := false
+	for _, e := range s.entries {
+		if e.grant.TaskId.Id != taskID.Id {
+			continue
+		}
+		want, err := cli.ComputePSKBinder(e.grant.GrantId[:], transcript)
+		if err == nil && subtle.ConstantTimeCompare(binder, want) == 1 {
+			found, ok = e.grant, true
+		}
+	}
+	return found, ok
 }
 
 // Validate answers with the ClientHelloStatus the runner should send back.

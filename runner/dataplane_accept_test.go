@@ -75,7 +75,7 @@ func TestCheckDataPlaneHelloAcceptsAGoodBinder(t *testing.T) {
 	transcript := []byte("transcript-bytes")
 	data := dataPlaneHelloBytes(t, psk, transcript, 3)
 
-	info, st := checkDataPlaneHello(data, transcript, psk)
+	info, st := checkDataPlaneHello(data, transcript, psk, nil)
 	if st != protocol.PskAuthStatus_Ok {
 		t.Fatalf("want ok, got %v", st)
 	}
@@ -86,7 +86,7 @@ func TestCheckDataPlaneHelloAcceptsAGoodBinder(t *testing.T) {
 
 func TestCheckDataPlaneHelloRefusesABadBinder(t *testing.T) {
 	data := dataPlaneHelloBytes(t, []byte("wrong-psk"), []byte("transcript-bytes"), 3)
-	_, st := checkDataPlaneHello(data, []byte("transcript-bytes"), []byte("secret"))
+	_, st := checkDataPlaneHello(data, []byte("transcript-bytes"), []byte("secret"), nil)
 	if st != protocol.PskAuthStatus_BadPsk {
 		t.Fatalf("want bad_psk, got %v", st)
 	}
@@ -107,14 +107,14 @@ func TestCheckDataPlaneHelloRefusesOtherClientKinds(t *testing.T) {
 	req.SetClientHelloLegacy(hello)
 	data := req.MustAppend([]byte{byte(appwire.AppKind_PskAuth)})
 
-	_, st := checkDataPlaneHello(data, transcript, psk)
+	_, st := checkDataPlaneHello(data, transcript, psk, nil)
 	if st != protocol.PskAuthStatus_NoIdentity {
 		t.Fatalf("want no_identity for kind=cli, got %v", st)
 	}
 }
 
 func TestCheckDataPlaneHelloRefusesNonPskFirstMessage(t *testing.T) {
-	_, st := checkDataPlaneHello([]byte{byte(appwire.AppKind_RunnerControl), 1, 2}, nil, nil)
+	_, st := checkDataPlaneHello([]byte{byte(appwire.AppKind_RunnerControl), 1, 2}, nil, nil, nil)
 	if st != protocol.PskAuthStatus_NoIdentity {
 		t.Fatalf("want no_identity, got %v", st)
 	}

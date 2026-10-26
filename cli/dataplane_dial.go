@@ -155,9 +155,7 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	})
 	pc.Start(ctx)
 
-	// The connect PSK, never the operator one: the runner holds only the
-	// former, and an operator secret has no business leaving for a runner.
-	if err := sendDataPlaneHello(pc, GetPSK(), t); err != nil {
+	if err := sendDataPlaneHello(pc, t); err != nil {
 		pc.Connection().Close() //nolint:errcheck
 		cancelDial()
 		return nil, nil, err
@@ -180,29 +178,32 @@ func (c *Client) dialDataPlane(ctx context.Context, t dataPlaneTarget) (*peer.Co
 	return pc, cancelDial, nil
 }
 
-// sendDataPlaneHello writes the one message that proves fleet membership and
-// presents the grant. It rides the existing PSK handshake rather than a new
-// first message, so the binder already binds it to THIS connection's
-// transcript.
-func sendDataPlaneHello(pc *peer.Conn, psk []byte, t dataPlaneTarget) error {
-	var req protocol.PskAuthRequest
-	if len(psk) > 0 {
-		binder, err := ComputePSKBinder(psk, pc.Connection().GetTranscript())
-		if err != nil {
-			return fmt.Errorf("file: compute binder: %w", err)
-		}
-		req.Binder = binder
-		req.BinderLen = uint16(len(binder))
+// buildDataPlaneHello is the one message a data-plane connection opens with:
+// role=client, kind=data_plane naming only the task, and a binder keyed by the
+// grant id over THIS connection's transcript. The grant itself never goes on
+// the wire, so a peer that terminates the handshake learns nothing it could
+// redeem on a connection of its own.
+func buildDataPlaneHello(transcript []byte, t dataPlaneTarget) ([]byte, error) {
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+	binder, err := ComputePSKBinder(t.GrantID[:], transcript)
+	if err != nil {
+		return nil, fmt.Errorf("file: compute binder: %w", err)
 	}
-	req.Role = protocol.AuthRole_ClientLegacy
-	var hello protocol.ClientHelloLegacy
-	hello.Kind = protocol.ClientKind_DataPlane
-	hello.SetDataPlaneInfo(protocol.DataPlaneInfoLegacy{GrantId: t.GrantID, TaskId: t.TaskID})
-	req.SetClientHelloLegacy(hello)
-
+	req.SetBinder(binder)
+	hello := protocol.ClientHello{Kind: protocol.ClientKind_DataPlane}
+	hello.SetDataPlaneInfo(protocol.DataPlaneInfo{TaskId: t.TaskID})
+	req.SetClientHello(hello)
 	payload, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})
 	if err != nil {
-		return fmt.Errorf("file: encode data plane hello: %w", err)
+		return nil, fmt.Errorf("file: encode data plane hello: %w", err)
+	}
+	return payload, nil
+}
+
+func sendDataPlaneHello(pc *peer.Conn, t dataPlaneTarget) error {
+	payload, err := buildDataPlaneHello(pc.Connection().GetTranscript(), t)
+	if err != nil {
+		return err
 	}
 	if _, _, err := pc.Connection().SendMessage(payload); err != nil {
 		return fmt.Errorf("file: send data plane hello: %w", err)

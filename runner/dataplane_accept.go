@@ -25,13 +25,33 @@ import (
 // It deliberately does NOT decide whether the grant is good; that is
 // validateDataPlaneHello, so the credential check stays in one place with the
 // store that holds it.
-func checkDataPlaneHello(data, transcript, psk []byte) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
+//
+// Under role=client the hello names only the task, and its binder is keyed by
+// the grant id: the grant is found by trying the binder against this task's
+// live grants in grants (none matching → bad_ticket), and the answer carries
+// the grant id that matched, so everything after this reads one shape.
+func checkDataPlaneHello(data, transcript, psk []byte, grants *grantStore) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
 	if len(data) == 0 || appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
 	var req protocol.PskAuthRequest
 	if err := req.DecodeExact(data[1:]); err != nil {
 		return nil, protocol.PskAuthStatus_NoIdentity
+	}
+	if req.Role == protocol.AuthRole_Client {
+		hello := req.ClientHello()
+		if hello == nil || hello.Kind != protocol.ClientKind_DataPlane || hello.DataPlaneInfo() == nil {
+			return nil, protocol.PskAuthStatus_NoIdentity
+		}
+		taskID := hello.DataPlaneInfo().TaskId
+		if grants == nil {
+			return nil, protocol.PskAuthStatus_BadTicket
+		}
+		g, ok := grants.MatchBinder(taskID, transcript, req.Binder)
+		if !ok {
+			return nil, protocol.PskAuthStatus_BadTicket
+		}
+		return &protocol.DataPlaneInfoLegacy{GrantId: g.GrantId, TaskId: taskID}, protocol.PskAuthStatus_Ok
 	}
 
 	// Binder first, before anything is read out of the identity. A runner holds
@@ -172,7 +192,11 @@ func handleDataPlaneConn(
 		psk = cli.GetPSK()
 	}
 	data := append([]byte{byte(first.kind)}, first.payload...)
-	info, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), psk)
+	var grants *grantStore
+	if sess := sessionRef.Load(); sess != nil {
+		grants = sess.Grants
+	}
+	info, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), psk, grants)
 	if st != protocol.PskAuthStatus_Ok {
 		log.Warn("data plane: handshake refused", "status", st)
 		sendPskAuthStatus(pc, st)
