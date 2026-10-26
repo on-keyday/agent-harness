@@ -214,6 +214,32 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	}
 }
 
+// The runner may answer the moment AssignTask leaves — TaskAccepted, and the
+// JOIN its first log line makes — and both are authorized by ownsTask. So the
+// reservation has to exist before the send, as ownsTask's comment says and
+// TryDispatch already does.
+func TestSchedulerBindsBeforeSending(t *testing.T) {
+	reg := NewRegistry()
+	r := idleRunner("r1", "h1", nil)
+	r.Identity = testRunnerID("r1")
+	reg.Add(r)
+	store := NewTaskStore()
+	store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{Caps: protocol.Capability_All, Scope: authority.Scope{}}, "")
+
+	sent := 0
+	s := NewScheduler(reg, store, func(runnerID objproto.ConnectionID, tID string) error {
+		sent++
+		if !reg.ownsTask(runnerID, tID) {
+			t.Errorf("AssignTask for %s sent before the runner owned it", tID)
+		}
+		return nil
+	})
+	s.Tick()
+	if sent != 1 {
+		t.Fatalf("assign called %d times, want 1", sent)
+	}
+}
+
 // TestSchedulerMultipleRunnersFIFO verifies that when multiple available runners and
 // multiple Queued tasks exist on the same repo, Tick assigns one task per runner
 // in FIFO order and leaves remaining tasks Queued.

@@ -949,10 +949,17 @@ catalog.
 By default a spawned task gets **no capabilities at all**, scoped to
 **subtree** (itself + everything it spawns). An omitted `--caps` grants
 nothing — the task can still message its own lineage on the agentboard
-(see **Board reach** below) and read its own subtree's logs / `ls`, but
+(see **Board reach** below) and see its own subtree in `ls` / `watch`, but
 every control-plane verb (spawn, cancel,
 attach, file read/write, forwards, notify, prune, purge, runner-admin,
 global info) answers `permission denied` until something grants it.
+Reading a task's log is `exec_view`, whether by `logs`, by following it, or
+by joining its pubsub topic directly. The `runners.status` and
+`notifications` streams go only to whom `ls` shows runners to — an
+operator, or a global visibility rank: a confined `watch` gets no runner
+events and a confined `notify-watch` is refused. Nothing a client writes on
+a pubsub stream is published; the one writer is the runner, to the log of a
+task it is running.
 `--caps NAMES` and `--scope SPEC` (on `submit` / `session new`, also
 in the TUI and WebUI spawn surfaces) widen or
 redirect that within what the spawner itself holds AND may delegate: the

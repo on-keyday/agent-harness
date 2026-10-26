@@ -72,6 +72,7 @@ while writing — those rows are the ones worth a second look.
 | D9 | `Scheduler.Tick` binds before it sends, and unbinds on a send error, as `TryDispatch` does | this spec |
 | D10 | A write on a stream without write permission is dropped, with one WARN per stream; the stream stays open | this spec |
 | D11 | The authorization hook runs before `PubSub` takes its lock | this spec |
+| D12 | The JOIN decision depends on the role the connection authenticated as: a runner-role connection may JOIN only the log of a task it owns, whatever the topic. The hook is per subscriber, not per broker (Amendment below) | this spec, during implementation |
 
 ## Rules per topic
 
@@ -88,7 +89,8 @@ while writing — those rows are the ones worth a second look.
 one for a runner identity that has `<id>` in `ActiveTasks`. "`exec_view` AND in
 scope" is `authorize(cid, exec_view, id)` (`server/capabilities.go`), i.e. the
 `hasCap` + `inScope` pair `handleGetTaskLog` checks in two steps. An operator
-connection passes both.
+connection passes both. So would a runner connection — it has no principal
+either — which is why a runner's JOIN is decided by ownership alone (D12).
 
 Why `forbidden` for every task-log refusal (D8): `handleGetTaskLog` answers a
 missing cap with `PermissionDenied` and an out-of-scope id with "not found", so
@@ -112,14 +114,14 @@ refusing it would break `watch` for a confined agent.
 
 ### `pubsub`
 
-- `PubSub` gains a hook, set by the server like `OnSubscribe`:
-  `AuthorizeJoin func(cid objproto.ConnectionID, topic string) JoinGrant`,
-  where `JoinGrant` is `{Allow, Publish bool}`. Nil hook = allow and publish,
-  so `pubsub`'s own tests keep today's behaviour.
-- `Subscriber.HandleMessage` calls it for a JOIN **before** `Subscribe`, i.e.
-  before `ps.m` is taken (D11). The hook reaches into the registry and the task
-  handler; `PublishFiltered`'s comment already explains why such callbacks must
-  not run under `ps.m`.
+- Each `Subscriber` gains an authorizer, installed by the connection that owns
+  it: `SetAuthorizer(func(topic string) JoinGrant)`, where `JoinGrant` is
+  `{Allow, Publish bool}`. None installed = allow and publish, so `pubsub`'s
+  own tests keep today's behaviour. Per subscriber because the answer depends
+  on the authenticated role, which only the connection knows (D12).
+- `Subscribe` calls it **before** `ps.m` is taken (D11). The authorizer reaches
+  into the registry and the task handler; `PublishFiltered`'s comment already
+  explains why such callbacks must not run under `ps.m`.
 - `!Allow` → `PubSubResponse{status: forbidden}`, no subscription, and a WARN
   naming the cid and topic (D5).
 - `Subscribe` stores `Publish` on the `topicJoinInfo`. The per-stream reader
@@ -133,17 +135,19 @@ persists a `PubSubResponse`, so there is no disk axis.
 
 ### Server
 
-- `AuthorizeJoin` implements the JOIN column of the table, parsing the task id
-  out of `task.<id>.log` with the same `topics` naming.
+- `handleConnection` installs the authorizer on its subscriber, reading the
+  PSK gate's role at each JOIN (pubsub only flows once the gate has fixed it).
+  `authorizeJoin(role, cid, topic)` implements the JOIN column of the table,
+  parsing the task id out of `task.<id>.log` (`topics.ParseTaskLog`).
 - The task log's delivery predicate: the per-stream reader currently calls
   `ps.Publish`. It calls `ps.PublishFiltered` instead, with a filter the server
-  supplies per topic (a second hook, `DeliverFilter func(topic string)
+  supplies per topic (a broker hook, `DeliverFilter func(topic string)
   func(objproto.ConnectionID) bool`, nil = everyone). Taps still receive every
   published message, so the log store is unchanged.
 - `publishRunnerEvent` and `OnNotify` switch from `Publish` to
   `PublishFiltered` with the `all` predicate.
 - The notification replay runs under `ps.m` inside `OnSubscribe`; it needs no
-  filter, because only an `all` caller gets past `AuthorizeJoin` for that topic.
+  filter, because only an `all` caller gets past `authorizeJoin` for that topic.
 - `Scheduler.Tick`: `BindTask` → `assign` → on error `UnbindTask` (D9). The
   doc comment's "Order of operations" list is updated to match.
 
@@ -170,6 +174,30 @@ every rule above admits an operator connection.
 tasks)"; that has been false for a confined caller since `18d28190` and becomes
 false for runners too. It is reworded to "tasks and runners you can see"
 (the repo's `.claude/skills` copy follows, per the agentskills embed rule).
+
+## Amendment 2026-10-27 (during implementation): the runner role
+
+**Replaces** the broker-wide `AuthorizeJoin(cid, topic)` hook this spec first
+specified, and the rule table's silence about runners on topics other than a
+task log.
+
+**The fact that moved it.** `callerCaps`, `scopeSet` and `visibleToCaller`
+(`server/capabilities.go`) read a connection with no principal task as an
+operator. A runner connection has no principal task. Implemented as first
+written, every predicate in the table would have admitted a runner connection
+to every topic — and any connect-PSK holder can authenticate as a runner (the
+backlog entry "Any connect-PSK holder can register as a runner"), so P1–P3
+would have stayed open to an agent willing to connect with the runner role.
+Measured: the E2E test `TestPubsubAuthz_RunnerRoleJoinsOnlyOwnedLogs` joins
+`task.<id>.log`, `notifications`, `runners.status` and `tasks.status` as a
+runner that owns nothing; before the change all four succeed.
+
+**What changed.** The role is known only to the connection's PSK gate, so the
+decision moved onto the subscriber (D12). A runner connection may JOIN only
+`task.<id>.log` of a task it owns, and is the only connection whose writes are
+published. The per-publish delivery filter still reads the runner as an
+operator would; that is harmless because the JOIN gate is the only way a
+runner becomes a subscriber.
 
 ## Version skew and rollout
 

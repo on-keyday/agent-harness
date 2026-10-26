@@ -19,6 +19,10 @@ enum Status:
     already_subscribed
     unknown_message
     unknown_topic
+    # forbidden answers a JOIN this connection may not make. One value for every
+    # reason — no capability, a task outside the caller's scope, a task that does
+    # not exist — so the answer says nothing about which tasks exist.
+    forbidden
 
 format PubSubResponse:
     request_id :u32

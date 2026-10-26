@@ -52,9 +52,9 @@ func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler
 //  1. Skip runners that are offline (Conn == nil) or at capacity.
 //  2. Find the next Queued task for any of the runner's AllowedRoots via store.NextQueuedForRoot.
 //  3. If none, skip this runner.
-//  4. Call s.assign(runner.ID, task.ID).
-//  5. On error: log via slog.Error and continue; no state change.
-//  6. On success: store.Assign(task.ID, runner.ID, "", runner.SkillsInjected) and reg.BindTask(runner.ID, task.ID).
+//  4. reg.BindTask(runner.ID, task.ID), then s.assign(runner.ID, task.ID).
+//  5. On error: reg.UnbindTask, log via slog.Error and continue; no state change.
+//  6. On success: store.Assign(task.ID, runner.Identity, "", runner.SkillsInjected).
 //
 // Tick serializes itself via s.mu so concurrent callers run one at a time.
 // No goroutines are spawned. The call returns as soon as all runners have
@@ -107,7 +107,14 @@ func (s *Scheduler) Tick() {
 			continue
 		}
 
+		// Reserve BEFORE sending, as TryDispatch does: the runner may answer the
+		// moment AssignTask leaves, and its TaskAccepted and its log JOIN are
+		// both authorized by ownsTask.
+		if !s.reg.BindTask(runner.ID, task.ID) {
+			continue
+		}
 		if err := s.assign(runner.ID, task.ID); err != nil {
+			s.reg.UnbindTask(runner.ID, task.ID)
 			slog.Error("assign failed",
 				"runner", runner.ID,
 				"task", task.ID,
@@ -120,6 +127,5 @@ func (s *Scheduler) Tick() {
 		// WorktreeDir is left empty here; it will be filled in by TaskStarted
 		// when the runner reports back that it has started the task.
 		s.store.Assign(task.ID, runner.Identity, "", runner.SkillsInjected)
-		s.reg.BindTask(runner.ID, task.ID)
 	}
 }

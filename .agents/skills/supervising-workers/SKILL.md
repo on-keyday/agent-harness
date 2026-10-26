@@ -583,7 +583,7 @@ Because a submitted task gives you no live channel, you observe it from outside:
 
 ```bash
 harness-cli logs [-f|--follow] <TASK_ID>   # dump log history; -f streams live until the task is terminal
-harness-cli watch                          # stream task + runner status events (all tasks)
+harness-cli watch                          # stream status events for what your `ls` shows (runners only if it lists them)
 harness-cli cancel <TASK_ID>               # cancel a queued/running task
 harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget terminal tasks
 ```

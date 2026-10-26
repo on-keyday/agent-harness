@@ -60,11 +60,27 @@ type topicJoinInfo struct {
 	conn trsf.BidirectionalStream
 }
 
+// JoinGrant is a connection's answer for one topic: whether it may JOIN, and
+// whether what it then writes on the stream is published to the topic.
+type JoinGrant struct {
+	Allow   bool
+	Publish bool
+}
+
 type Subscriber struct {
 	id        objproto.ConnectionID
 	transport trsf.Transport
 	topics    map[string]*topicJoinInfo
+	authorize func(topic string) JoinGrant
 }
+
+// SetAuthorizer installs the per-connection JOIN decision. It is per
+// subscriber, not per broker, because the decision depends on the role the
+// connection authenticated as, which only its owner knows. Without one every
+// JOIN is allowed and publishes.
+//
+// It runs before the broker lock is taken, so it may reach into server state.
+func (s *Subscriber) SetAuthorizer(f func(topic string) JoinGrant) { s.authorize = f }
 
 func NewSubscriber(id objproto.ConnectionID, transport trsf.Transport) *Subscriber {
 	return &Subscriber{
@@ -113,6 +129,12 @@ type PubSub struct {
 	// ps.Subscribe, or ps.Unsubscribe — ps.m is already held and is not
 	// reentrant; doing so self-deadlocks.
 	OnSubscribe func(topic string, send func(msg []byte) error)
+
+	// DeliverFilter, when non-nil, returns the filter that what a subscriber
+	// writes on topic is published through (nil = to everyone). The server-side
+	// publishers filter at their own call sites; this covers the one path the
+	// broker publishes by itself.
+	DeliverFilter func(topic string) func(objproto.ConnectionID) bool
 }
 
 func NewPubSub(logger *slog.Logger) *PubSub {
@@ -148,6 +170,20 @@ func (ps *PubSub) TapUnsubscribe(topic string, t *Tap) {
 }
 
 func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub *Subscriber) *protocol.PubSubResponse {
+	grant := JoinGrant{Allow: true, Publish: true}
+	if sub.authorize != nil {
+		grant = sub.authorize(topic)
+	}
+	if !grant.Allow {
+		// Said out loud: peer.Conn.Publish caches a refused JOIN for the life
+		// of its connection, so a runner refused here loses the task's log
+		// without a word of its own.
+		ps.logger.Warn("pubsub: JOIN refused", "topic", topic, "nickName", nickName, "subscriberID", sub.id)
+		return &protocol.PubSubResponse{
+			Status:    protocol.Status_Forbidden,
+			RequestId: requestID,
+		}
+	}
 	ps.m.Lock()
 	defer ps.m.Unlock()
 	if sub.topics == nil {
@@ -165,15 +201,27 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 	// Stream(id). No "<topic>\n" preamble: the legacy header was a leftover
 	// from before request_id / stream_id correlation existed.
 	stream := sub.transport.CreateBidirectionalStream()
+	var deliver func(objproto.ConnectionID) bool
+	if grant.Publish && ps.DeliverFilter != nil {
+		deliver = ps.DeliverFilter(topic)
+	}
 	go func() {
+		warned := false
 		for {
 			data, eof, err := stream.ReadDirect(trsf.InitialFlowWindow)
 			if err != nil {
 				return
 			}
 			ps.logger.Info("received data from subscriber stream", "topic", topic, "length", len(data), "eof", eof)
-			if len(data) != 0 {
-				ps.Publish(nickName, topic, data)
+			if len(data) != 0 && !grant.Publish {
+				// Dropped, and the stream stays open: it is still this
+				// subscriber's read side. Once per stream, not per read.
+				if !warned {
+					ps.logger.Warn("pubsub: dropping writes from a subscriber that may not publish", "topic", topic, "nickName", nickName, "subscriberID", sub.id)
+					warned = true
+				}
+			} else if len(data) != 0 {
+				ps.PublishFiltered(nickName, topic, data, deliver)
 			}
 			if eof {
 				return

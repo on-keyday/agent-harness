@@ -374,11 +374,14 @@ func New(cfg Config) *Server {
 	s.taskHandler.NotifyHook = cfg.NotifyHook
 	s.taskHandler.OnNotify = func(ev protocol.NotifyEvent) {
 		s.notifyRing.append(ev)
-		s.pubsub.Publish("server", topics.Notifications(), ev.MustAppend(nil))
+		s.pubsub.PublishFiltered("server", topics.Notifications(), ev.MustAppend(nil), s.seesEverything)
 	}
+	// Unfiltered: only a caller that sees everything gets past authorizeJoin
+	// for this topic.
 	s.pubsub.OnSubscribe = func(topic string, send func([]byte) error) {
 		replayNotifications(s.notifyRing, topic, send)
 	}
+	s.pubsub.DeliverFilter = s.taskLogDelivery
 	// Route runner-reported remote-forward connections into the TaskHandler
 	// (wired here, after taskHandler construction, since runnerHandler is built
 	// just above it).
@@ -559,7 +562,8 @@ func New(cfg Config) *Server {
 			RunnerId:     identity,
 		}
 		payload := ev.MustAppend(nil)
-		s.pubsub.Publish("server", topics.RunnersStatus(), payload)
+		// Whom `ls` shows runner rows to.
+		s.pubsub.PublishFiltered("server", topics.RunnersStatus(), payload, s.seesEverything)
 	}
 
 	// publishConnEvent constructs a ConnStatusEvent for sc and publishes it to
@@ -1389,6 +1393,11 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		}
 		return protocol.PskAuthStatus_BadTicket
 	}
+	// Pubsub only flows once the gate has fixed the role (AllowsMessage), so
+	// reading it per JOIN reads the authenticated one.
+	subscriber.SetAuthorizer(func(topic string) pubsub.JoinGrant {
+		return s.authorizeJoin(gate.role, session.ConnectionID(), topic)
+	})
 
 	// Datagrams arrive on their own queue, not through AutoReceive's callback —
 	// that is what being acknowledged costs, since the packet has to reach the

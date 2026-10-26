@@ -28,35 +28,35 @@ func (e MessageKind) String() string {
 	}
 }
 
-type tmp135 struct {
+type tmp136 struct {
 	NickNameLen uint8
 	NickName    []uint8
 }
 
 type Variant104 struct {
-	tmp135 tmp135
+	tmp136 tmp136
 }
 
 type PubSubRequest struct {
 	Kind      MessageKind
 	RequestId uint32
-	tmp132    Variant104
+	tmp133    Variant104
 	Topic     []uint8
 }
 
 func (p *PubSubRequest) NickName() *[]uint8 {
 	if p.Kind == MessageKind_JOIN {
-		return &p.tmp132.tmp135.NickName
+		return &p.tmp133.tmp136.NickName
 	}
 	return nil
 }
-func (p *PubSubRequest) SetNickName(tmp183 []uint8) bool {
+func (p *PubSubRequest) SetNickName(tmp182 []uint8) bool {
 	if p.Kind == MessageKind_JOIN {
-		if len(tmp183) > int(255) {
+		if len(tmp182) > int(255) {
 			return false
 		}
-		p.tmp132.tmp135.NickNameLen = uint8(len(tmp183))
-		p.tmp132.tmp135.NickName = tmp183
+		p.tmp133.tmp136.NickNameLen = uint8(len(tmp182))
+		p.tmp133.tmp136.NickName = tmp182
 		return true
 	}
 	return false
@@ -64,13 +64,13 @@ func (p *PubSubRequest) SetNickName(tmp183 []uint8) bool {
 
 func (p *PubSubRequest) NickNameLen() *uint8 {
 	if p.Kind == MessageKind_JOIN {
-		return &p.tmp132.tmp135.NickNameLen
+		return &p.tmp133.tmp136.NickNameLen
 	}
 	return nil
 }
-func (p *PubSubRequest) SetNickNameLen(tmp177 uint8) bool {
+func (p *PubSubRequest) SetNickNameLen(tmp176 uint8) bool {
 	if p.Kind == MessageKind_JOIN {
-		p.tmp132.tmp135.NickNameLen = tmp177
+		p.tmp133.tmp136.NickNameLen = tmp176
 		return true
 	}
 	return false
@@ -96,18 +96,18 @@ func (p *PubSubRequest) Write(tmp17 io.Writer) error {
 	}
 	if p.Kind == MessageKind_JOIN {
 		if tmp17ByteIO != nil {
-			if err := tmp17ByteIO.WriteByte(p.tmp132.tmp135.NickNameLen); err != nil {
+			if err := tmp17ByteIO.WriteByte(p.tmp133.tmp136.NickNameLen); err != nil {
 				return err
 			}
 		} else {
-			if _, err := tmp17.Write([]byte{p.tmp132.tmp135.NickNameLen}); err != nil {
+			if _, err := tmp17.Write([]byte{p.tmp133.tmp136.NickNameLen}); err != nil {
 				return err
 			}
 		}
-		if len(p.tmp132.tmp135.NickName) != int(int(p.tmp132.tmp135.NickNameLen)) {
-			return fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp132::NickName\": expected %d, got %d", int(int(p.tmp132.tmp135.NickNameLen)), len(p.tmp132.tmp135.NickName))
+		if len(p.tmp133.tmp136.NickName) != int(int(p.tmp133.tmp136.NickNameLen)) {
+			return fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp133::NickName\": expected %d, got %d", int(int(p.tmp133.tmp136.NickNameLen)), len(p.tmp133.tmp136.NickName))
 		}
-		if _, err := tmp17.Write(p.tmp132.tmp135.NickName); err != nil {
+		if _, err := tmp17.Write(p.tmp133.tmp136.NickName); err != nil {
 			return err
 		}
 	}
@@ -148,21 +148,21 @@ func (p *PubSubRequest) EncodeSlice(tmp17 []byte, tmp17Offset *int) error {
 	binary.BigEndian.PutUint32(tmp72[:], uint32(p.RequestId))
 	*tmp17Offset += int(4)
 	if p.Kind == MessageKind_JOIN {
-		tmp189 := []uint8{}
+		tmp188 := []uint8{}
 		if len(tmp17)-*tmp17Offset < int(1) {
-			return errors.New("not enough space to reserve data for field \"PubSubRequest::tmp132::NickNameLen\"")
+			return errors.New("not enough space to reserve data for field \"PubSubRequest::tmp133::NickNameLen\"")
 		}
-		tmp189 = tmp17[*tmp17Offset : *tmp17Offset+int(1)]
-		tmp189[0] = p.tmp132.tmp135.NickNameLen
+		tmp188 = tmp17[*tmp17Offset : *tmp17Offset+int(1)]
+		tmp188[0] = p.tmp133.tmp136.NickNameLen
 		*tmp17Offset += int(1)
-		if len(p.tmp132.tmp135.NickName) != int(int(p.tmp132.tmp135.NickNameLen)) {
-			return fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp132::NickName\": expected %d, got %d", int(int(p.tmp132.tmp135.NickNameLen)), len(p.tmp132.tmp135.NickName))
+		if len(p.tmp133.tmp136.NickName) != int(int(p.tmp133.tmp136.NickNameLen)) {
+			return fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp133::NickName\": expected %d, got %d", int(int(p.tmp133.tmp136.NickNameLen)), len(p.tmp133.tmp136.NickName))
 		}
-		if len(tmp17)-*tmp17Offset < int(0+int(p.tmp132.tmp135.NickNameLen)) {
-			return errors.New("not enough space to write for field \"PubSubRequest::tmp132::NickName\"")
+		if len(tmp17)-*tmp17Offset < int(0+int(p.tmp133.tmp136.NickNameLen)) {
+			return errors.New("not enough space to write for field \"PubSubRequest::tmp133::NickName\"")
 		}
-		copy(tmp17[*tmp17Offset:*tmp17Offset+int(int(p.tmp132.tmp135.NickNameLen))], p.tmp132.tmp135.NickName)
-		*tmp17Offset += int(int(p.tmp132.tmp135.NickNameLen))
+		copy(tmp17[*tmp17Offset:*tmp17Offset+int(int(p.tmp133.tmp136.NickNameLen))], p.tmp133.tmp136.NickName)
+		*tmp17Offset += int(int(p.tmp133.tmp136.NickNameLen))
 	}
 	if len(tmp17)-*tmp17Offset < int(0+len(p.Topic)) {
 		return errors.New("not enough space to write for field \"PubSubRequest::Topic\"")
@@ -195,13 +195,13 @@ func (p *PubSubRequest) Append(tmp17 []byte) ([]byte, error) {
 	binary.BigEndian.PutUint32(tmp72[:], uint32(p.RequestId))
 	tmp17 = append(tmp17, tmp72[:4]...)
 	if p.Kind == MessageKind_JOIN {
-		tmp189 := [1]uint8{}
-		tmp189[0] = p.tmp132.tmp135.NickNameLen
-		tmp17 = append(tmp17, tmp189[:1]...)
-		if len(p.tmp132.tmp135.NickName) != int(int(p.tmp132.tmp135.NickNameLen)) {
-			return nil, fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp132::NickName\": expected %d, got %d", int(int(p.tmp132.tmp135.NickNameLen)), len(p.tmp132.tmp135.NickName))
+		tmp188 := [1]uint8{}
+		tmp188[0] = p.tmp133.tmp136.NickNameLen
+		tmp17 = append(tmp17, tmp188[:1]...)
+		if len(p.tmp133.tmp136.NickName) != int(int(p.tmp133.tmp136.NickNameLen)) {
+			return nil, fmt.Errorf("size mismatch when writing field \"PubSubRequest::tmp133::NickName\": expected %d, got %d", int(int(p.tmp133.tmp136.NickNameLen)), len(p.tmp133.tmp136.NickName))
 		}
-		tmp17 = append(tmp17, p.tmp132.tmp135.NickName...)
+		tmp17 = append(tmp17, p.tmp133.tmp136.NickName...)
 	}
 	tmp17 = append(tmp17, p.Topic...)
 	return tmp17, nil
@@ -219,10 +219,10 @@ func (p *PubSubRequest) Read(tmp15 io.Reader) error {
 	tmp15ByteIO, _ := tmp15.(io.ByteReader)
 	_ = tmp15ByteIO
 	/* config.go.union("noheap")*/
-	tmp133 := uint8(0)
+	tmp134 := uint8(0)
 	if tmp15ByteIO != nil {
 		var err error
-		tmp133, err = tmp15ByteIO.ReadByte()
+		tmp134, err = tmp15ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -236,9 +236,9 @@ func (p *PubSubRequest) Read(tmp15 io.Reader) error {
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"PubSubRequest::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp133 = buf[0]
+		tmp134 = buf[0]
 	}
-	p.Kind = MessageKind(tmp133)
+	p.Kind = MessageKind(tmp134)
 	tmp76 := [4]uint8{}
 	if _, err := io.ReadFull(tmp15, tmp76[0:0+4]); err != nil {
 		return err
@@ -247,7 +247,7 @@ func (p *PubSubRequest) Read(tmp15 io.Reader) error {
 	if p.Kind == MessageKind_JOIN {
 		if tmp15ByteIO != nil {
 			var err error
-			p.tmp132.tmp135.NickNameLen, err = tmp15ByteIO.ReadByte()
+			p.tmp133.tmp136.NickNameLen, err = tmp15ByteIO.ReadByte()
 			if err != nil {
 				return err
 			}
@@ -259,9 +259,9 @@ func (p *PubSubRequest) Read(tmp15 io.Reader) error {
 				return err
 			}
 			if n != 1 {
-				return fmt.Errorf("failed to read byte for field \"PubSubRequest::tmp132::NickNameLen\": expected to read 1 byte, but read %d bytes", n)
+				return fmt.Errorf("failed to read byte for field \"PubSubRequest::tmp133::NickNameLen\": expected to read 1 byte, but read %d bytes", n)
 			}
-			p.tmp132.tmp135.NickNameLen = buf[0]
+			p.tmp133.tmp136.NickNameLen = buf[0]
 		}
 		if seeker, ok := tmp15.(io.Seeker); ok {
 			current, err := seeker.Seek(0, io.SeekCurrent)
@@ -276,21 +276,21 @@ func (p *PubSubRequest) Read(tmp15 io.Reader) error {
 			if err != nil {
 				return err
 			}
-			if (endOffset - current) < int64(int(p.tmp132.tmp135.NickNameLen)) {
-				return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(p.tmp132.tmp135.NickNameLen)))
+			if (endOffset - current) < int64(int(p.tmp133.tmp136.NickNameLen)) {
+				return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(p.tmp133.tmp136.NickNameLen)))
 			}
-			p.tmp132.tmp135.NickName = make([]byte, int(p.tmp132.tmp135.NickNameLen))
-			if _, err := io.ReadFull(tmp15, p.tmp132.tmp135.NickName[0:0+int(p.tmp132.tmp135.NickNameLen)]); err != nil {
+			p.tmp133.tmp136.NickName = make([]byte, int(p.tmp133.tmp136.NickNameLen))
+			if _, err := io.ReadFull(tmp15, p.tmp133.tmp136.NickName[0:0+int(p.tmp133.tmp136.NickNameLen)]); err != nil {
 				return err
 			}
 		} else {
 			// To mitigate DoS attack, use incremental buffer allocation
 			// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-			io_temp_704 := bytes.NewBuffer(nil)
-			if _, err := io.CopyN(io_temp_704, tmp15, int64(int(p.tmp132.tmp135.NickNameLen))); err != nil {
+			io_temp_707 := bytes.NewBuffer(nil)
+			if _, err := io.CopyN(io_temp_707, tmp15, int64(int(p.tmp133.tmp136.NickNameLen))); err != nil {
 				return err
 			}
-			p.tmp132.tmp135.NickName = io_temp_704.Bytes()
+			p.tmp133.tmp136.NickName = io_temp_707.Bytes()
 		}
 	}
 	{
@@ -322,15 +322,15 @@ func (s *PubSubRequest) DecodeExactCopy(buf []byte) error {
 }
 func (p *PubSubRequest) DecodeSlice(tmp15 []byte, tmp15Offset *int) error {
 	/* config.go.union("noheap")*/
-	tmp133 := uint8(0)
+	tmp134 := uint8(0)
 	tmp105 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 1 {
 		return errors.New("not enough data to read for field \"PubSubRequest::Kind\"")
 	}
 	tmp105 = tmp15[*tmp15Offset : *tmp15Offset+1]
 	*tmp15Offset += int(1)
-	tmp133 = tmp105[0]
-	p.Kind = MessageKind(tmp133)
+	tmp134 = tmp105[0]
+	p.Kind = MessageKind(tmp134)
 	tmp76 := []uint8{}
 	if len(tmp15)-*tmp15Offset < 4 {
 		return errors.New("not enough data to read for field \"PubSubRequest::RequestId\"")
@@ -339,18 +339,18 @@ func (p *PubSubRequest) DecodeSlice(tmp15 []byte, tmp15Offset *int) error {
 	*tmp15Offset += int(4)
 	p.RequestId = binary.BigEndian.Uint32(tmp76[:])
 	if p.Kind == MessageKind_JOIN {
-		tmp201 := []uint8{}
+		tmp199 := []uint8{}
 		if len(tmp15)-*tmp15Offset < 1 {
-			return errors.New("not enough data to read for field \"PubSubRequest::tmp132::NickNameLen\"")
+			return errors.New("not enough data to read for field \"PubSubRequest::tmp133::NickNameLen\"")
 		}
-		tmp201 = tmp15[*tmp15Offset : *tmp15Offset+1]
+		tmp199 = tmp15[*tmp15Offset : *tmp15Offset+1]
 		*tmp15Offset += int(1)
-		p.tmp132.tmp135.NickNameLen = tmp201[0]
-		if len(tmp15)-*tmp15Offset < int(p.tmp132.tmp135.NickNameLen) {
-			return errors.New("not enough data to read for field \"PubSubRequest::tmp132::NickName\"")
+		p.tmp133.tmp136.NickNameLen = tmp199[0]
+		if len(tmp15)-*tmp15Offset < int(p.tmp133.tmp136.NickNameLen) {
+			return errors.New("not enough data to read for field \"PubSubRequest::tmp133::NickName\"")
 		}
-		p.tmp132.tmp135.NickName = tmp15[*tmp15Offset : *tmp15Offset+int(p.tmp132.tmp135.NickNameLen)]
-		*tmp15Offset += int(int(p.tmp132.tmp135.NickNameLen))
+		p.tmp133.tmp136.NickName = tmp15[*tmp15Offset : *tmp15Offset+int(p.tmp133.tmp136.NickNameLen)]
+		*tmp15Offset += int(int(p.tmp133.tmp136.NickNameLen))
 	}
 	p.Topic = tmp15[*tmp15Offset:]
 	*tmp15Offset += len(p.Topic)
@@ -382,6 +382,7 @@ const (
 	Status_AlreadySubscribed Status = 1
 	Status_UnknownMessage    Status = 2
 	Status_UnknownTopic      Status = 3
+	Status_Forbidden         Status = 4
 )
 
 func (e Status) String() string {
@@ -394,6 +395,8 @@ func (e Status) String() string {
 		return "UnknownMessage"
 	case Status_UnknownTopic:
 		return "UnknownTopic"
+	case Status_Forbidden:
+		return "Forbidden"
 	default:
 		return fmt.Sprintf("Status(%d)", e)
 	}
@@ -406,19 +409,19 @@ type PubSubResponse struct {
 }
 
 func (p *PubSubResponse) Write(tmp30 io.Writer) error {
-	tmp160 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp160[:], uint32(p.RequestId))
-	if _, err := tmp30.Write(tmp160[:4]); err != nil {
+	tmp161 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp161[:], uint32(p.RequestId))
+	if _, err := tmp30.Write(tmp161[:4]); err != nil {
 		return err
 	}
-	tmp157 := [1]uint8{}
-	tmp157[0] = uint8(p.Status)
-	if _, err := tmp30.Write(tmp157[:1]); err != nil {
+	tmp158 := [1]uint8{}
+	tmp158[0] = uint8(p.Status)
+	if _, err := tmp30.Write(tmp158[:1]); err != nil {
 		return err
 	}
-	tmp154 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp154[:], uint64(p.StreamId))
-	if _, err := tmp30.Write(tmp154[:8]); err != nil {
+	tmp155 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp155[:], uint64(p.StreamId))
+	if _, err := tmp30.Write(tmp155[:8]); err != nil {
 		return err
 	}
 	return nil
@@ -439,26 +442,26 @@ func (s *PubSubResponse) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubResponse) EncodeSlice(tmp30 []byte, tmp30Offset *int) error {
-	tmp160 := []uint8{}
+	tmp161 := []uint8{}
 	if len(tmp30)-*tmp30Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PubSubResponse::RequestId\"")
 	}
-	tmp160 = tmp30[*tmp30Offset : *tmp30Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp160[:], uint32(p.RequestId))
+	tmp161 = tmp30[*tmp30Offset : *tmp30Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp161[:], uint32(p.RequestId))
 	*tmp30Offset += int(4)
-	tmp157 := []uint8{}
+	tmp158 := []uint8{}
 	if len(tmp30)-*tmp30Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"PubSubResponse::Status\"")
 	}
-	tmp157 = tmp30[*tmp30Offset : *tmp30Offset+int(1)]
-	tmp157[0] = uint8(p.Status)
+	tmp158 = tmp30[*tmp30Offset : *tmp30Offset+int(1)]
+	tmp158[0] = uint8(p.Status)
 	*tmp30Offset += int(1)
-	tmp154 := []uint8{}
+	tmp155 := []uint8{}
 	if len(tmp30)-*tmp30Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"PubSubResponse::StreamId\"")
 	}
-	tmp154 = tmp30[*tmp30Offset : *tmp30Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp154[:], uint64(p.StreamId))
+	tmp155 = tmp30[*tmp30Offset : *tmp30Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp155[:], uint64(p.StreamId))
 	*tmp30Offset += int(8)
 	return nil
 }
@@ -478,15 +481,15 @@ func (s *PubSubResponse) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubResponse) Append(tmp30 []byte) ([]byte, error) {
-	tmp160 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp160[:], uint32(p.RequestId))
-	tmp30 = append(tmp30, tmp160[:4]...)
-	tmp157 := [1]uint8{}
-	tmp157[0] = uint8(p.Status)
-	tmp30 = append(tmp30, tmp157[:1]...)
-	tmp154 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp154[:], uint64(p.StreamId))
-	tmp30 = append(tmp30, tmp154[:8]...)
+	tmp161 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp161[:], uint32(p.RequestId))
+	tmp30 = append(tmp30, tmp161[:4]...)
+	tmp158 := [1]uint8{}
+	tmp158[0] = uint8(p.Status)
+	tmp30 = append(tmp30, tmp158[:1]...)
+	tmp155 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp155[:], uint64(p.StreamId))
+	tmp30 = append(tmp30, tmp155[:8]...)
 	return tmp30, nil
 }
 func (s *PubSubResponse) MustAppend(buf []byte) []byte {
@@ -498,24 +501,24 @@ func (s *PubSubResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (p *PubSubResponse) Read(tmp32 io.Reader) error {
-	tmp210 := [4]uint8{}
-	if _, err := io.ReadFull(tmp32, tmp210[0:0+4]); err != nil {
+func (p *PubSubResponse) Read(tmp33 io.Reader) error {
+	tmp209 := [4]uint8{}
+	if _, err := io.ReadFull(tmp33, tmp209[0:0+4]); err != nil {
 		return err
 	}
-	p.RequestId = binary.BigEndian.Uint32(tmp210[:])
-	tmp195 := uint8(0)
-	tmp205 := [1]uint8{}
-	if _, err := io.ReadFull(tmp32, tmp205[0:0+1]); err != nil {
+	p.RequestId = binary.BigEndian.Uint32(tmp209[:])
+	tmp202 := uint8(0)
+	tmp207 := [1]uint8{}
+	if _, err := io.ReadFull(tmp33, tmp207[0:0+1]); err != nil {
 		return err
 	}
-	tmp195 = tmp205[0]
-	p.Status = Status(tmp195)
-	tmp213 := [8]uint8{}
-	if _, err := io.ReadFull(tmp32, tmp213[0:0+8]); err != nil {
+	tmp202 = tmp207[0]
+	p.Status = Status(tmp202)
+	tmp214 := [8]uint8{}
+	if _, err := io.ReadFull(tmp33, tmp214[0:0+8]); err != nil {
 		return err
 	}
-	p.StreamId = binary.BigEndian.Uint64(tmp213[:])
+	p.StreamId = binary.BigEndian.Uint64(tmp214[:])
 	return nil
 }
 func (s *PubSubResponse) DecodeCopy(buf []byte) ([]byte, error) {
@@ -536,30 +539,30 @@ func (s *PubSubResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (p *PubSubResponse) DecodeSlice(tmp32 []byte, tmp32Offset *int) error {
-	tmp210 := []uint8{}
-	if len(tmp32)-*tmp32Offset < 4 {
+func (p *PubSubResponse) DecodeSlice(tmp33 []byte, tmp33Offset *int) error {
+	tmp209 := []uint8{}
+	if len(tmp33)-*tmp33Offset < 4 {
 		return errors.New("not enough data to read for field \"PubSubResponse::RequestId\"")
 	}
-	tmp210 = tmp32[*tmp32Offset : *tmp32Offset+4]
-	*tmp32Offset += int(4)
-	p.RequestId = binary.BigEndian.Uint32(tmp210[:])
-	tmp195 := uint8(0)
-	tmp205 := []uint8{}
-	if len(tmp32)-*tmp32Offset < 1 {
+	tmp209 = tmp33[*tmp33Offset : *tmp33Offset+4]
+	*tmp33Offset += int(4)
+	p.RequestId = binary.BigEndian.Uint32(tmp209[:])
+	tmp202 := uint8(0)
+	tmp207 := []uint8{}
+	if len(tmp33)-*tmp33Offset < 1 {
 		return errors.New("not enough data to read for field \"PubSubResponse::Status\"")
 	}
-	tmp205 = tmp32[*tmp32Offset : *tmp32Offset+1]
-	*tmp32Offset += int(1)
-	tmp195 = tmp205[0]
-	p.Status = Status(tmp195)
-	tmp213 := []uint8{}
-	if len(tmp32)-*tmp32Offset < 8 {
+	tmp207 = tmp33[*tmp33Offset : *tmp33Offset+1]
+	*tmp33Offset += int(1)
+	tmp202 = tmp207[0]
+	p.Status = Status(tmp202)
+	tmp214 := []uint8{}
+	if len(tmp33)-*tmp33Offset < 8 {
 		return errors.New("not enough data to read for field \"PubSubResponse::StreamId\"")
 	}
-	tmp213 = tmp32[*tmp32Offset : *tmp32Offset+8]
-	*tmp32Offset += int(8)
-	p.StreamId = binary.BigEndian.Uint64(tmp213[:])
+	tmp214 = tmp33[*tmp33Offset : *tmp33Offset+8]
+	*tmp33Offset += int(8)
+	p.StreamId = binary.BigEndian.Uint64(tmp214[:])
 	return nil
 }
 func (s *PubSubResponse) Decode(buf []byte) ([]byte, error) {
@@ -586,19 +589,19 @@ type PubSubFrame struct {
 	Data    []uint8
 }
 
-func (p *PubSubFrame) SetData(tmp143 []uint8) bool {
-	if len(tmp143) > int(4294967295) {
+func (p *PubSubFrame) SetData(tmp144 []uint8) bool {
+	if len(tmp144) > int(4294967295) {
 		return false
 	}
-	p.DataLen = uint32(len(tmp143))
-	p.Data = tmp143
+	p.DataLen = uint32(len(tmp144))
+	p.Data = tmp144
 	return true
 }
 
 func (p *PubSubFrame) Write(tmp79 io.Writer) error {
-	tmp147 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp147[:], uint32(p.DataLen))
-	if _, err := tmp79.Write(tmp147[:4]); err != nil {
+	tmp148 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp148[:], uint32(p.DataLen))
+	if _, err := tmp79.Write(tmp148[:4]); err != nil {
 		return err
 	}
 	if len(p.Data) != int(int(p.DataLen)) {
@@ -625,12 +628,12 @@ func (s *PubSubFrame) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubFrame) EncodeSlice(tmp79 []byte, tmp79Offset *int) error {
-	tmp147 := []uint8{}
+	tmp148 := []uint8{}
 	if len(tmp79)-*tmp79Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PubSubFrame::DataLen\"")
 	}
-	tmp147 = tmp79[*tmp79Offset : *tmp79Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp147[:], uint32(p.DataLen))
+	tmp148 = tmp79[*tmp79Offset : *tmp79Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp148[:], uint32(p.DataLen))
 	*tmp79Offset += int(4)
 	if len(p.Data) != int(int(p.DataLen)) {
 		return fmt.Errorf("size mismatch when writing field \"PubSubFrame::Data\": expected %d, got %d", int(int(p.DataLen)), len(p.Data))
@@ -658,9 +661,9 @@ func (s *PubSubFrame) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubFrame) Append(tmp79 []byte) ([]byte, error) {
-	tmp147 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp147[:], uint32(p.DataLen))
-	tmp79 = append(tmp79, tmp147[:4]...)
+	tmp148 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp148[:], uint32(p.DataLen))
+	tmp79 = append(tmp79, tmp148[:4]...)
 	if len(p.Data) != int(int(p.DataLen)) {
 		return nil, fmt.Errorf("size mismatch when writing field \"PubSubFrame::Data\": expected %d, got %d", int(int(p.DataLen)), len(p.Data))
 	}
@@ -677,11 +680,11 @@ func (s *PubSubFrame) MustAppend(buf []byte) []byte {
 }
 
 func (p *PubSubFrame) Read(tmp83 io.Reader) error {
-	tmp149 := [4]uint8{}
-	if _, err := io.ReadFull(tmp83, tmp149[0:0+4]); err != nil {
+	tmp150 := [4]uint8{}
+	if _, err := io.ReadFull(tmp83, tmp150[0:0+4]); err != nil {
 		return err
 	}
-	p.DataLen = binary.BigEndian.Uint32(tmp149[:])
+	p.DataLen = binary.BigEndian.Uint32(tmp150[:])
 	if seeker, ok := tmp83.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -732,13 +735,13 @@ func (s *PubSubFrame) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (p *PubSubFrame) DecodeSlice(tmp83 []byte, tmp83Offset *int) error {
-	tmp149 := []uint8{}
+	tmp150 := []uint8{}
 	if len(tmp83)-*tmp83Offset < 4 {
 		return errors.New("not enough data to read for field \"PubSubFrame::DataLen\"")
 	}
-	tmp149 = tmp83[*tmp83Offset : *tmp83Offset+4]
+	tmp150 = tmp83[*tmp83Offset : *tmp83Offset+4]
 	*tmp83Offset += int(4)
-	p.DataLen = binary.BigEndian.Uint32(tmp149[:])
+	p.DataLen = binary.BigEndian.Uint32(tmp150[:])
 	if len(tmp83)-*tmp83Offset < int(p.DataLen) {
 		return errors.New("not enough data to read for field \"PubSubFrame::Data\"")
 	}
@@ -770,9 +773,9 @@ type PubSubFrameHeader struct {
 }
 
 func (p *PubSubFrameHeader) Write(tmp107 io.Writer) error {
-	tmp138 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp138[:], uint32(p.DataLen))
-	if _, err := tmp107.Write(tmp138[:4]); err != nil {
+	tmp139 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp139[:], uint32(p.DataLen))
+	if _, err := tmp107.Write(tmp139[:4]); err != nil {
 		return err
 	}
 	return nil
@@ -793,12 +796,12 @@ func (s *PubSubFrameHeader) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubFrameHeader) EncodeSlice(tmp107 []byte, tmp107Offset *int) error {
-	tmp138 := []uint8{}
+	tmp139 := []uint8{}
 	if len(tmp107)-*tmp107Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PubSubFrameHeader::DataLen\"")
 	}
-	tmp138 = tmp107[*tmp107Offset : *tmp107Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp138[:], uint32(p.DataLen))
+	tmp139 = tmp107[*tmp107Offset : *tmp107Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp139[:], uint32(p.DataLen))
 	*tmp107Offset += int(4)
 	return nil
 }
@@ -818,9 +821,9 @@ func (s *PubSubFrameHeader) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (p *PubSubFrameHeader) Append(tmp107 []byte) ([]byte, error) {
-	tmp138 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp138[:], uint32(p.DataLen))
-	tmp107 = append(tmp107, tmp138[:4]...)
+	tmp139 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp139[:], uint32(p.DataLen))
+	tmp107 = append(tmp107, tmp139[:4]...)
 	return tmp107, nil
 }
 func (s *PubSubFrameHeader) MustAppend(buf []byte) []byte {
@@ -833,11 +836,11 @@ func (s *PubSubFrameHeader) MustAppend(buf []byte) []byte {
 }
 
 func (p *PubSubFrameHeader) Read(tmp109 io.Reader) error {
-	tmp140 := [4]uint8{}
-	if _, err := io.ReadFull(tmp109, tmp140[0:0+4]); err != nil {
+	tmp141 := [4]uint8{}
+	if _, err := io.ReadFull(tmp109, tmp141[0:0+4]); err != nil {
 		return err
 	}
-	p.DataLen = binary.BigEndian.Uint32(tmp140[:])
+	p.DataLen = binary.BigEndian.Uint32(tmp141[:])
 	return nil
 }
 func (s *PubSubFrameHeader) DecodeCopy(buf []byte) ([]byte, error) {
@@ -859,13 +862,13 @@ func (s *PubSubFrameHeader) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (p *PubSubFrameHeader) DecodeSlice(tmp109 []byte, tmp109Offset *int) error {
-	tmp140 := []uint8{}
+	tmp141 := []uint8{}
 	if len(tmp109)-*tmp109Offset < 4 {
 		return errors.New("not enough data to read for field \"PubSubFrameHeader::DataLen\"")
 	}
-	tmp140 = tmp109[*tmp109Offset : *tmp109Offset+4]
+	tmp141 = tmp109[*tmp109Offset : *tmp109Offset+4]
 	*tmp109Offset += int(4)
-	p.DataLen = binary.BigEndian.Uint32(tmp140[:])
+	p.DataLen = binary.BigEndian.Uint32(tmp141[:])
 	return nil
 }
 func (s *PubSubFrameHeader) Decode(buf []byte) ([]byte, error) {

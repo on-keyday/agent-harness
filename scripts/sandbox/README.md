@@ -375,8 +375,8 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
     operations with
     `PermissionDenied`. The escape path (spawn an unsandboxed child) is
     closed server-side regardless of what's in the container.
-    Its own task subtree (`ls`, `logs`) stays readable — that needs no cap —
-    as does a redacted row for its direct parent: status and busy/idle only,
+    Its own task subtree stays visible in `ls` — that needs no cap; reading a
+    task's log does (`exec_view`) — as does a redacted row for its direct parent: status and busy/idle only,
     with the repo, worktree, prompt and assigned runner stripped.
   - `submit --caps info_global` — widens that to the full-board view (every
     task, every runner, the whole agentboard topic list) without granting
