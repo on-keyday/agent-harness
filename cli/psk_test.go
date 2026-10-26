@@ -136,12 +136,12 @@ func TestSendMergedHandshake_OperatorKind_WithPSK(t *testing.T) {
 	}
 
 	// Role must be Client.
-	if req.Role != protocol.AuthRole_Client {
-		t.Errorf("Role = %v, want AuthRole_Client", req.Role)
+	if req.Role != protocol.AuthRole_ClientLegacy {
+		t.Errorf("Role = %v, want AuthRole_ClientLegacy", req.Role)
 	}
 
 	// ClientHello must be present with the passed operator kind.
-	ch := req.ClientHello()
+	ch := req.ClientHelloLegacy()
 	if ch == nil {
 		t.Fatal("ClientHello() returned nil")
 	}
@@ -194,7 +194,7 @@ func TestSendMergedHandshake_NoPSK(t *testing.T) {
 	if len(req.Binder) != 0 {
 		t.Errorf("Binder must be empty for no-PSK, got %d bytes", len(req.Binder))
 	}
-	ch := req.ClientHello()
+	ch := req.ClientHelloLegacy()
 	if ch == nil {
 		t.Fatal("ClientHello() must be present even without PSK")
 	}
@@ -230,7 +230,7 @@ func TestSendMergedHandshake_AgentEnv(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 
-	ch := req.ClientHello()
+	ch := req.ClientHelloLegacy()
 	if ch == nil {
 		t.Fatal("ClientHello() returned nil")
 	}

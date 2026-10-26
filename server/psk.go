@@ -28,21 +28,24 @@ import (
 //	runner_hello → [0x43] + RunnerMessage{Kind:Hello, hello}
 func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) bool {
 	switch req.Role {
-	case protocol.AuthRole_Client:
-		hello := req.ClientHello()
-		if hello == nil {
+	case protocol.AuthRole_ClientLegacy:
+		legacy := req.ClientHelloLegacy()
+		if legacy == nil {
 			return false
 		}
+		// The gate has already checked the ticket a legacy hello carries;
+		// identity code past this point takes the ticket-free shape.
+		hello := clientHelloFromLegacy(legacy)
 		if d.RecordClientIdentity != nil {
 			// Fast path: record identity directly — no TaskControlResponse emitted.
 			cid := conn.ConnectionID().String()
-			return d.RecordClientIdentity(cid, conn, hello) == protocol.ClientHelloStatus_Ok
+			return d.RecordClientIdentity(cid, conn, &hello) == protocol.ClientHelloStatus_Ok
 		}
 		// Fallback (tests without RecordClientIdentity wired): re-dispatch via
 		// the normal TaskControl wire path. This emits an extra
 		// TaskControlResponse{ClientHello} but legacy clients tolerate it.
 		tcReq := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
-		tcReq.SetClientHello(*hello)
+		tcReq.SetClientHello(hello)
 		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})
 		if err != nil {
 			slog.Error("pskDispatchIdentity: encode TaskControlRequest failed", "err", err)
@@ -51,7 +54,7 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		d.Dispatch(conn, data)
 		return true
 
-	case protocol.AuthRole_Runner:
+	case protocol.AuthRole_RunnerLegacy:
 		rh := req.RunnerHello()
 		if rh == nil {
 			return false
@@ -67,6 +70,22 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		return true
 	}
 	return false
+}
+
+// clientHelloFromLegacy drops the bearer values an AuthRole.client_legacy hello
+// carries (the agent's ticket, the data-plane grant id), once the gate has
+// checked them, so code past the gate handles one ClientHello shape.
+func clientHelloFromLegacy(l *protocol.ClientHelloLegacy) protocol.ClientHello {
+	h := protocol.ClientHello{Kind: l.Kind}
+	if a := l.AgentInfo(); a != nil {
+		info := protocol.AgentInfo{RunnerId: a.RunnerId, TaskId: a.TaskId}
+		info.SetHostname(a.Hostname)
+		h.SetAgentInfo(info)
+	}
+	if dp := l.DataPlaneInfo(); dp != nil {
+		h.SetDataPlaneInfo(protocol.DataPlaneInfo{TaskId: dp.TaskId})
+	}
+	return h
 }
 
 // pskGate enforces a merged PSK + identity handshake on each connection.
@@ -98,7 +117,7 @@ type pskGate struct {
 	// serverKey signs every PskAuthResponse so a client holding the public
 	// half can tell this server from an impostor. server.New guarantees one.
 	serverKey      ed25519.PrivateKey
-	ValidateTicket func(info *protocol.AgentInfo) protocol.PskAuthStatus
+	ValidateTicket func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus
 }
 
 func newPSKGate(psk []byte) *pskGate {
@@ -120,14 +139,14 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 	}
 	switch appwire.AppKind(data[0]) {
 	case appwire.AppKind_Pubsub, appwire.AppKind_Telemetry:
-		return g.role == protocol.AuthRole_Client || g.role == protocol.AuthRole_Runner
+		return g.role == protocol.AuthRole_ClientLegacy || g.role == protocol.AuthRole_RunnerLegacy
 	case appwire.AppKind_TaskControl:
 		// TaskControlRequest starts with a one-byte TaskControlKind.
-		return g.role == protocol.AuthRole_Client && len(data) > 1 &&
+		return g.role == protocol.AuthRole_ClientLegacy && len(data) > 1 &&
 			protocol.TaskControlKind(data[1]) != protocol.TaskControlKind_ClientHello
 	case appwire.AppKind_RunnerControl:
 		// RunnerMessage starts with a one-byte RunnerMessageType.
-		return g.role == protocol.AuthRole_Runner && len(data) > 1 &&
+		return g.role == protocol.AuthRole_RunnerLegacy && len(data) > 1 &&
 			protocol.RunnerMessageType(data[1]) != protocol.RunnerMessageType_Hello
 	default:
 		return false
@@ -141,8 +160,8 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 // connect psk — the legacy behaviour — so a deployment that has not configured
 // an operator secret is unchanged (and a startup warning is emitted elsewhere).
 func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
-	if req.Role == protocol.AuthRole_Client && len(g.operatorPSK) > 0 {
-		if hello := req.ClientHello(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
+	if req.Role == protocol.AuthRole_ClientLegacy && len(g.operatorPSK) > 0 {
+		if hello := req.ClientHelloLegacy(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
 			return g.operatorPSK
 		}
 	}
@@ -228,13 +247,13 @@ func (g *pskGate) Check(
 	// Step 3: Identity required (fail-closed).
 	// At least one role+hello must be present.
 	switch req.Role {
-	case protocol.AuthRole_Client:
-		if req.ClientHello() == nil {
+	case protocol.AuthRole_ClientLegacy:
+		if req.ClientHelloLegacy() == nil {
 			slog.Warn("pskGate: client role but ClientHello is nil (identity required)")
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
-	case protocol.AuthRole_Runner:
+	case protocol.AuthRole_RunnerLegacy:
 		rh := req.RunnerHello()
 		if rh == nil {
 			slog.Warn("pskGate: runner role but RunnerHello is nil (identity required)")
@@ -269,8 +288,8 @@ func (g *pskGate) Check(
 	// Step 4: Ticket validation (client role + kind=agent only).
 	// This closes the bad-ticket→operator fallback: an agent presenting an
 	// invalid ticket must NOT proceed as operator.
-	if req.Role == protocol.AuthRole_Client {
-		hello := req.ClientHello()
+	if req.Role == protocol.AuthRole_ClientLegacy {
+		hello := req.ClientHelloLegacy()
 		if hello.Kind == protocol.ClientKind_Agent {
 			info := hello.AgentInfo()
 			if info == nil {

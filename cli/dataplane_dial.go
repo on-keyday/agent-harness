@@ -194,11 +194,11 @@ func sendDataPlaneHello(pc *peer.Conn, psk []byte, t dataPlaneTarget) error {
 		req.Binder = binder
 		req.BinderLen = uint16(len(binder))
 	}
-	req.Role = protocol.AuthRole_Client
-	var hello protocol.ClientHello
+	req.Role = protocol.AuthRole_ClientLegacy
+	var hello protocol.ClientHelloLegacy
 	hello.Kind = protocol.ClientKind_DataPlane
-	hello.SetDataPlaneInfo(protocol.DataPlaneInfo{GrantId: t.GrantID, TaskId: t.TaskID})
-	req.SetClientHello(hello)
+	hello.SetDataPlaneInfo(protocol.DataPlaneInfoLegacy{GrantId: t.GrantID, TaskId: t.TaskID})
+	req.SetClientHelloLegacy(hello)
 
 	payload, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})
 	if err != nil {

@@ -49,10 +49,15 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	// cancel's scope in handleProgressClear.
 	protocol.TaskControlKind_ProgressClear: protocol.Capability_Cancel,
 	protocol.TaskControlKind_DialRunner:    protocol.Capability_RunnerAdmin,
-	protocol.TaskControlKind_BoardTopics:   protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardRead:     protocol.Capability_BoardObserve,
-	protocol.TaskControlKind_BoardPurge:    protocol.Capability_Purge,
-	protocol.TaskControlKind_BoardRetract:  protocol.Capability_Purge,
+	// Which keys may register as runners: enrolling, listing and removing
+	// them. Not runner_admin, which is the server's network reach.
+	protocol.TaskControlKind_RunnerEnroll:   protocol.Capability_RunnerEnroll,
+	protocol.TaskControlKind_RunnerUnenroll: protocol.Capability_RunnerEnroll,
+	protocol.TaskControlKind_RunnerKeys:     protocol.Capability_RunnerEnroll,
+	protocol.TaskControlKind_BoardTopics:    protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardRead:      protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardPurge:     protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardRetract:   protocol.Capability_Purge,
 	// Forgetting a task's contacts removes another task's board state, the
 	// same class as withdrawing its message; the handler adds the scope gate.
 	protocol.TaskControlKind_BoardContactsClear: protocol.Capability_Purge,

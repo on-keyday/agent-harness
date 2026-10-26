@@ -15,23 +15,23 @@ func TestPskAuthRequestClientRoleRoundTrip(t *testing.T) {
 	}
 
 	// Build AgentInfo
-	var agentInfo AgentInfo
+	var agentInfo AgentInfoLegacy
 	agentInfo.RunnerId.Id = [16]byte{0x12, 0x34, 0x56, 0x78}
 	copy(agentInfo.TaskId.Id[:], []byte("task0123456789ab"))
 	copy(agentInfo.AuthTicket[:], []byte("ticketticketticke"))
 	agentInfo.SetHostname([]byte("myhost"))
 
 	// Build ClientHello (kind=agent)
-	hello := ClientHello{Kind: ClientKind_Agent}
+	hello := ClientHelloLegacy{Kind: ClientKind_Agent}
 	hello.SetAgentInfo(agentInfo)
 
 	// Build PskAuthRequest
 	var orig PskAuthRequest
-	orig.Role = AuthRole_Client
+	orig.Role = AuthRole_ClientLegacy
 	if !orig.SetBinder(binder) {
 		t.Fatal("SetBinder returned false")
 	}
-	if !orig.SetClientHello(hello) {
+	if !orig.SetClientHelloLegacy(hello) {
 		t.Fatal("SetClientHello returned false")
 	}
 
@@ -49,8 +49,8 @@ func TestPskAuthRequestClientRoleRoundTrip(t *testing.T) {
 		t.Fatalf("remaining bytes after Decode: %d", len(remain))
 	}
 
-	if got.Role != AuthRole_Client {
-		t.Errorf("Role: got %v, want AuthRole_Client", got.Role)
+	if got.Role != AuthRole_ClientLegacy {
+		t.Errorf("Role: got %v, want AuthRole_ClientLegacy", got.Role)
 	}
 	if !bytes.Equal(got.Binder, binder) {
 		t.Errorf("Binder mismatch")
@@ -59,7 +59,7 @@ func TestPskAuthRequestClientRoleRoundTrip(t *testing.T) {
 		t.Errorf("BinderLen: got %d, want %d", got.BinderLen, len(binder))
 	}
 
-	ch := got.ClientHello()
+	ch := got.ClientHelloLegacy()
 	if ch == nil {
 		t.Fatal("ClientHello() returned nil")
 	}
@@ -101,7 +101,7 @@ func TestPskAuthRequestRunnerRoleRoundTrip(t *testing.T) {
 	rh.SetAgentBin([]byte("claude"))
 
 	var orig PskAuthRequest
-	orig.Role = AuthRole_Runner
+	orig.Role = AuthRole_RunnerLegacy
 	if !orig.SetBinder(binder) {
 		t.Fatal("SetBinder returned false")
 	}
@@ -123,8 +123,8 @@ func TestPskAuthRequestRunnerRoleRoundTrip(t *testing.T) {
 		t.Fatalf("remaining bytes after Decode: %d", len(remain))
 	}
 
-	if got.Role != AuthRole_Runner {
-		t.Errorf("Role: got %v, want AuthRole_Runner", got.Role)
+	if got.Role != AuthRole_RunnerLegacy {
+		t.Errorf("Role: got %v, want AuthRole_RunnerLegacy", got.Role)
 	}
 	if !bytes.Equal(got.Binder, binder) {
 		t.Errorf("Binder mismatch")
@@ -145,7 +145,7 @@ func TestPskAuthRequestRunnerRoleRoundTrip(t *testing.T) {
 	}
 
 	// ClientHello() must return nil for runner role
-	if got.ClientHello() != nil {
+	if got.ClientHelloLegacy() != nil {
 		t.Errorf("ClientHello() should be nil for runner role")
 	}
 }
@@ -153,15 +153,15 @@ func TestPskAuthRequestRunnerRoleRoundTrip(t *testing.T) {
 // TestPskAuthRequestNoPskRoundTrip tests binder_len=0 (no-PSK / dev mode).
 func TestPskAuthRequestNoPskRoundTrip(t *testing.T) {
 	// client role, zero-length binder
-	hello := ClientHello{Kind: ClientKind_Cli}
+	hello := ClientHelloLegacy{Kind: ClientKind_Cli}
 
 	var orig PskAuthRequest
-	orig.Role = AuthRole_Client
+	orig.Role = AuthRole_ClientLegacy
 	// leave binder empty (SetBinder with nil/empty is valid: binder_len == 0)
 	if !orig.SetBinder(nil) {
 		t.Fatal("SetBinder(nil) returned false")
 	}
-	if !orig.SetClientHello(hello) {
+	if !orig.SetClientHelloLegacy(hello) {
 		t.Fatal("SetClientHello returned false")
 	}
 
@@ -185,10 +185,10 @@ func TestPskAuthRequestNoPskRoundTrip(t *testing.T) {
 	if len(got.Binder) != 0 {
 		t.Errorf("Binder: got %d bytes, want 0", len(got.Binder))
 	}
-	if got.Role != AuthRole_Client {
-		t.Errorf("Role: got %v, want AuthRole_Client", got.Role)
+	if got.Role != AuthRole_ClientLegacy {
+		t.Errorf("Role: got %v, want AuthRole_ClientLegacy", got.Role)
 	}
-	ch := got.ClientHello()
+	ch := got.ClientHelloLegacy()
 	if ch == nil {
 		t.Fatal("ClientHello() returned nil")
 	}

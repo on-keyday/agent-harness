@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ed25519"
 	"sort"
 	"sync"
 	"time"
@@ -56,8 +57,13 @@ type RunnerEntry struct {
 	// RunnerHello.AgentProfiles. The first entry is this runner's default
 	// (see DefaultProfile). Empty for legacy runners that don't advertise any
 	// profiles — HasProfile/DefaultProfile fall back to AgentBin in that case.
-	AgentProfiles    []string
-	SkillsInjected   bool                // from RunnerHello.skills_injected
+	AgentProfiles  []string
+	SkillsInjected bool // from RunnerHello.skills_injected
+	// Key is the enrolled Ed25519 key this connection authenticated with
+	// (AuthRole.runner); nil for a runner that registered under
+	// AuthRole.runner_legacy, which LegacyAuth then says.
+	Key              ed25519.PublicKey
+	LegacyAuth       bool
 	ActiveTasks      map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt      time.Time
 	LastTaskActivity time.Time

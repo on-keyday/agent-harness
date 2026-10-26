@@ -53,14 +53,14 @@ func TestDataPlaneStatusErrorDistinguishesRefusals(t *testing.T) {
 // the only thing the runner has to match against what the server pushed it.
 func TestDataPlaneHelloCarriesTheGrant(t *testing.T) {
 	var req protocol.PskAuthRequest
-	req.Role = protocol.AuthRole_Client
-	var hello protocol.ClientHello
+	req.Role = protocol.AuthRole_ClientLegacy
+	var hello protocol.ClientHelloLegacy
 	hello.Kind = protocol.ClientKind_DataPlane
-	hello.SetDataPlaneInfo(protocol.DataPlaneInfo{
+	hello.SetDataPlaneInfo(protocol.DataPlaneInfoLegacy{
 		GrantId: [16]uint8{7, 7},
 		TaskId:  protocol.TaskID{Id: [16]uint8{3}},
 	})
-	req.SetClientHello(hello)
+	req.SetClientHelloLegacy(hello)
 	data := req.MustAppend([]byte{byte(appwire.AppKind_PskAuth)})
 
 	if appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
@@ -70,7 +70,7 @@ func TestDataPlaneHelloCarriesTheGrant(t *testing.T) {
 	if err := back.DecodeExact(data[1:]); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	h := back.ClientHello()
+	h := back.ClientHelloLegacy()
 	if h == nil || h.Kind != protocol.ClientKind_DataPlane {
 		t.Fatalf("hello kind lost: %+v", h)
 	}

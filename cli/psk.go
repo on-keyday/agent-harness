@@ -113,8 +113,8 @@ func EffectiveClientKind(operatorKind protocol.ClientKind) (protocol.ClientKind,
 // PskAuthRequest. When the in-task agent env is fully populated, kind is
 // overridden to Agent with AgentInfo; otherwise the supplied operatorKind
 // is used. The override decision itself lives in EffectiveClientKind.
-func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHello {
-	hello := protocol.ClientHello{Kind: operatorKind}
+func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHelloLegacy {
+	hello := protocol.ClientHelloLegacy{Kind: operatorKind}
 	if kind, _ := EffectiveClientKind(operatorKind); kind != protocol.ClientKind_Agent {
 		return hello
 	}
@@ -134,7 +134,7 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 	if err != nil {
 		return hello
 	}
-	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
+	info := protocol.AgentInfoLegacy{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
 	info.SetHostname([]byte(cliopts.ResolveString("", "HARNESS_HOSTNAME")))
 	hello.Kind = protocol.ClientKind_Agent
 	hello.SetAgentInfo(info)
@@ -160,7 +160,7 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 //   - signature missing/wrong with serverKey set → *ServerAuthError (retryable)
 //   - undecodable response → retryable error ("server response did not decode")
 func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, serverKey ed25519.PublicKey, respCh <-chan PskAuthReply) error {
-	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
 
 	if len(psk) > 0 {
 		binder, err := ComputePSKBinder(psk, transcript)
@@ -175,7 +175,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 	}
 
 	hello := buildMergedClientHello(operatorKind)
-	if !req.SetClientHello(hello) {
+	if !req.SetClientHelloLegacy(hello) {
 		return fmt.Errorf("psk: SetClientHello failed")
 	}
 

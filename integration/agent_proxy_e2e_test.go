@@ -216,14 +216,14 @@ func TestAgentProxyE2E(t *testing.T) {
 	// we build the request manually to embed AgentInfo without setting process env.
 	pskCtx, pskCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pskCancel()
-	info := protocol.AgentInfo{RunnerId: srvRunnerEntry.Identity, TaskId: taskID, AuthTicket: ticket}
+	info := protocol.AgentInfoLegacy{RunnerId: srvRunnerEntry.Identity, TaskId: taskID, AuthTicket: ticket}
 	info.SetHostname([]byte("proxy-e2e-agent"))
 	{
-		req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+		req := protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
 		req.SetBinder(nil) // no PSK in this test
-		hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+		hello := protocol.ClientHelloLegacy{Kind: protocol.ClientKind_Agent}
 		hello.SetAgentInfo(info)
-		if !req.SetClientHello(hello) {
+		if !req.SetClientHelloLegacy(hello) {
 			t.Fatal("SetClientHello failed")
 		}
 		data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})

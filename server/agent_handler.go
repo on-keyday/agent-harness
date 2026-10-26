@@ -57,16 +57,20 @@ func (s *Server) removeAgentConn(cid objproto.ConnectionID) {
 	}
 }
 
-// establishAgentIdentity validates an agent's credential (from ClientHello) and,
-// on success, attaches the per-connID agentConn used by every agentboard handler
-// (ac.helloed gate + ac.state.Identity()). Reuses Registry.Validate + Board.Attach
-// unchanged — the single place agent identity is established, for both
-// task-control ops and agentboard messaging on the same connection.
+// establishAgentIdentity attaches the per-connID agentConn used by every
+// agentboard handler (ac.helloed gate + ac.state.Identity()) — the single place
+// agent identity is established, for both task-control ops and agentboard
+// messaging on the same connection. The ticket itself was proved at the gate
+// (a binder keyed by it, or the value a legacy hello carries); here the task
+// only has to still hold one.
 func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
 	if s.Board == nil {
 		return agentboard.HelloStatusOk // attribution-only degrade (test wiring)
 	}
-	status := s.Board.Registry().Validate(info.RunnerId, info.TaskId, info.AuthTicket)
+	status := agentboard.HelloStatusOk
+	if _, ok := s.Board.Registry().Ticket(info.RunnerId, info.TaskId); !ok {
+		status = agentboard.HelloStatusUnknownTask
+	}
 	if status == agentboard.HelloStatusOk {
 		// The agent profile is authority-side data: read it from the task
 		// record, never from the agent's own hello. Empty when the store has

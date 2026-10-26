@@ -58,9 +58,8 @@ func TestEstablishAgentIdentity_ValidTicket(t *testing.T) {
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
 	info := &protocol.AgentInfo{
-		RunnerId:   protoRID,
-		TaskId:     protoTID,
-		AuthTicket: ticket,
+		RunnerId: protoRID,
+		TaskId:   protoTID,
 	}
 	info.SetHostname([]byte("testhost"))
 
@@ -84,34 +83,30 @@ func TestEstablishAgentIdentity_ValidTicket(t *testing.T) {
 	}
 }
 
-// TestEstablishAgentIdentity_WrongTicket verifies that a wrong ticket returns
-// HelloStatusBadTicket and does not set ac.helloed.
-func TestEstablishAgentIdentity_WrongTicket(t *testing.T) {
+// TestEstablishAgentIdentity_NoTicketForTask verifies that a task holding no
+// ticket returns HelloStatusUnknownTask and does not set ac.helloed. The ticket
+// VALUE is proved at the gate (pskGate.Check); this is the check that the task
+// still has one.
+func TestEstablishAgentIdentity_NoTicketForTask(t *testing.T) {
 	board := newTestBoard(t)
 
 	connIDStr := "ws:127.0.0.1:8539-78"
 	protoRID := makeProtoRunnerID(t, connIDStr)
 	var protoTID protocol.TaskID
 	protoTID.Id = [16]byte{0x11, 0x22}
-	var goodTicket [16]byte
-	goodTicket[0] = 0xFF
-	board.Registry().Register(protoRID, protoTID, goodTicket)
 
 	s := &Server{Board: board}
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
-	var badTicket [16]byte
-	badTicket[0] = 0x00 // wrong
 	info := &protocol.AgentInfo{
-		RunnerId:   protoRID,
-		TaskId:     protoTID,
-		AuthTicket: badTicket,
+		RunnerId: protoRID,
+		TaskId:   protoTID,
 	}
 	info.SetHostname([]byte("testhost"))
 
 	status := s.establishAgentIdentity(conn, info)
-	if status != agentboard.HelloStatusBadTicket {
-		t.Fatalf("expected HelloStatusBadTicket, got %v", status)
+	if status != agentboard.HelloStatusUnknownTask {
+		t.Fatalf("expected HelloStatusUnknownTask, got %v", status)
 	}
 
 	// The agentConn must NOT be helloed.
@@ -119,7 +114,7 @@ func TestEstablishAgentIdentity_WrongTicket(t *testing.T) {
 	ac := s.agentConns[conn.id]
 	s.agentConnsMu.Unlock()
 	if ac != nil && ac.helloed {
-		t.Fatal("expected ac.helloed = false after bad ticket")
+		t.Fatal("expected ac.helloed = false for a task with no ticket")
 	}
 }
 

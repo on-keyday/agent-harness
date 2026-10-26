@@ -25,7 +25,7 @@ import (
 // It deliberately does NOT decide whether the grant is good; that is
 // validateDataPlaneHello, so the credential check stays in one place with the
 // store that holds it.
-func checkDataPlaneHello(data, transcript, psk []byte) (*protocol.DataPlaneInfo, protocol.PskAuthStatus) {
+func checkDataPlaneHello(data, transcript, psk []byte) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
 	if len(data) == 0 || appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
@@ -45,10 +45,10 @@ func checkDataPlaneHello(data, transcript, psk []byte) (*protocol.DataPlaneInfo,
 		}
 	}
 
-	if req.Role != protocol.AuthRole_Client {
+	if req.Role != protocol.AuthRole_ClientLegacy {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
-	hello := req.ClientHello()
+	hello := req.ClientHelloLegacy()
 	if hello == nil || hello.Kind != protocol.ClientKind_DataPlane {
 		return nil, protocol.PskAuthStatus_NoIdentity
 	}
@@ -69,7 +69,7 @@ func checkDataPlaneHello(data, transcript, psk []byte) (*protocol.DataPlaneInfo,
 // indistinguishable from a task this runner does not have.
 func validateDataPlaneHello(
 	sess *Session,
-	info protocol.DataPlaneInfo,
+	info protocol.DataPlaneInfoLegacy,
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	now time.Time,
@@ -314,7 +314,7 @@ func serveDataPlaneRequest(
 	log *slog.Logger,
 	sess *Session,
 	pc *peer.Conn,
-	info protocol.DataPlaneInfo,
+	info protocol.DataPlaneInfoLegacy,
 	kind protocol.TaskControlKind,
 	req *protocol.RunnerRequest,
 ) {

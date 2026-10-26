@@ -95,12 +95,12 @@ func TestAuthorizeDataPlaneAbsentPunchTarget(t *testing.T) {
 }
 
 func TestDataPlaneInfoRoundTrip(t *testing.T) {
-	in := DataPlaneInfo{GrantId: [16]uint8{4, 5}, TaskId: TaskID{Id: [16]uint8{6}}}
+	in := DataPlaneInfoLegacy{GrantId: [16]uint8{4, 5}, TaskId: TaskID{Id: [16]uint8{6}}}
 	b, err := in.Append(nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	var back DataPlaneInfo
+	var back DataPlaneInfoLegacy
 	if _, err := back.Decode(b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

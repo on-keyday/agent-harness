@@ -44,31 +44,31 @@ func buildPskAuthData(t *testing.T, req *protocol.PskAuthRequest) []byte {
 
 // buildOperatorClientHello builds a PskAuthRequest for an operator (kind=Cli, no AgentInfo).
 func buildOperatorClientHello(psk, transcript []byte) *protocol.PskAuthRequest {
-	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
 	if len(psk) > 0 {
 		binder, _ := cli.ComputePSKBinder(psk, transcript)
 		req.SetBinder(binder)
 	}
-	req.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Cli})
+	req.SetClientHelloLegacy(protocol.ClientHelloLegacy{Kind: protocol.ClientKind_Cli})
 	return req
 }
 
 // buildAgentClientHello builds a PskAuthRequest for an in-task agent.
-func buildAgentClientHello(psk, transcript []byte, info protocol.AgentInfo) *protocol.PskAuthRequest {
-	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+func buildAgentClientHello(psk, transcript []byte, info protocol.AgentInfoLegacy) *protocol.PskAuthRequest {
+	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
 	if len(psk) > 0 {
 		binder, _ := cli.ComputePSKBinder(psk, transcript)
 		req.SetBinder(binder)
 	}
-	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+	hello := protocol.ClientHelloLegacy{Kind: protocol.ClientKind_Agent}
 	hello.SetAgentInfo(info)
-	req.SetClientHello(hello)
+	req.SetClientHelloLegacy(hello)
 	return req
 }
 
 // buildRunnerHelloReq builds a PskAuthRequest for a runner.
 func buildRunnerHelloReq(psk, transcript []byte, rh protocol.RunnerHello) *protocol.PskAuthRequest {
-	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_Runner}
+	req := &protocol.PskAuthRequest{Role: protocol.AuthRole_RunnerLegacy}
 	if len(psk) > 0 {
 		binder, _ := cli.ComputePSKBinder(psk, transcript)
 		req.SetBinder(binder)
@@ -120,8 +120,8 @@ func TestPSKGate_ValidBinderOperatorClient(t *testing.T) {
 	if accepted == nil {
 		t.Fatal("accepted: want non-nil on success")
 	}
-	if accepted.ClientHello() == nil {
-		t.Error("accepted.ClientHello(): want non-nil")
+	if accepted.ClientHelloLegacy() == nil {
+		t.Error("accepted.ClientHelloLegacy(): want non-nil")
 	}
 	status := parsePskResponse(t, sent)
 	if status != protocol.PskAuthStatus_Ok {
@@ -199,7 +199,7 @@ func TestPSKGate_AgentStillUsesConnectPSKWhenOperatorPSKSet(t *testing.T) {
 	for i := range ticket {
 		ticket[i] = byte(i + 1)
 	}
-	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		if bytes.Equal(info.AuthTicket[:], ticket[:]) {
 			return protocol.PskAuthStatus_Ok
 		}
@@ -210,7 +210,7 @@ func TestPSKGate_AgentStillUsesConnectPSKWhenOperatorPSKSet(t *testing.T) {
 	protoRID.Id = [16]byte{1}
 	var protoTID protocol.TaskID
 	protoTID.Id = [16]byte{0xAA, 0xBB}
-	info := protocol.AgentInfo{RunnerId: protoRID, TaskId: protoTID, AuthTicket: ticket}
+	info := protocol.AgentInfoLegacy{RunnerId: protoRID, TaskId: protoTID, AuthTicket: ticket}
 	info.SetHostname([]byte("testhost"))
 
 	// Agent proves the CONNECT psk (not the operator psk) + a valid ticket.
@@ -240,7 +240,7 @@ func TestPSKGate_ValidBinderAgentValidTicket(t *testing.T) {
 	}
 
 	// Wire a ValidateTicket callback that succeeds.
-	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		if bytes.Equal(info.AuthTicket[:], ticket[:]) {
 			return protocol.PskAuthStatus_Ok
 		}
@@ -250,7 +250,7 @@ func TestPSKGate_ValidBinderAgentValidTicket(t *testing.T) {
 	var protoRID protocol.RunnerID
 	protoRID.Id = [16]byte{1}
 
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: ticket,
@@ -283,7 +283,7 @@ func TestPSKGate_ValidBinderAgentBadTicket(t *testing.T) {
 	g := newPSKGate(psk)
 
 	// ValidateTicket always fails.
-	g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		return protocol.PskAuthStatus_BadTicket
 	}
 
@@ -294,7 +294,7 @@ func TestPSKGate_ValidBinderAgentBadTicket(t *testing.T) {
 	var badTicket [16]byte
 	badTicket[0] = 0xFF
 
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: badTicket,
@@ -415,7 +415,7 @@ func TestPSKGate_NoPSKNoIdentity(t *testing.T) {
 	data := []byte{
 		byte(appwire.AppKind_PskAuth),
 		0x00, 0x00, // binder_len = 0
-		0x00, // role = AuthRole_Client
+		0x00, // role = AuthRole_ClientLegacy
 		// no ClientHello bytes — truncated
 	}
 
@@ -607,7 +607,7 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
 
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: ticket,
@@ -641,7 +641,7 @@ func TestPSKDispatchIdentity_BadTicketNoPrincipal(t *testing.T) {
 	// called. Here we verify the gate correctly returns no accepted request.
 	psk := []byte("s3cr3t")
 	g := newPSKGate(psk)
-	g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		return protocol.PskAuthStatus_BadTicket
 	}
 
@@ -651,7 +651,7 @@ func TestPSKDispatchIdentity_BadTicketNoPrincipal(t *testing.T) {
 	protoTID.Id = [16]byte{0xEE, 0xFF}
 	var badTicket [16]byte
 
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: badTicket,
@@ -881,7 +881,7 @@ func TestPSKGate_AgentboardFullValidation(t *testing.T) {
 	psk := []byte("s3cr3t-full")
 	g := newPSKGate(psk)
 	// Wire the same ticket validation logic as Server.handleConnection.
-	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		rid := info.RunnerId
 		tid := info.TaskId
 		s := board.Registry().Validate(rid, tid, info.AuthTicket)
@@ -891,7 +891,7 @@ func TestPSKGate_AgentboardFullValidation(t *testing.T) {
 		return protocol.PskAuthStatus_BadTicket
 	}
 
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: ticket,
@@ -940,7 +940,7 @@ func TestPSKGate_AgentboardBadTicket_NoPrincipal(t *testing.T) {
 
 	psk := []byte("s3cr3t-full")
 	g := newPSKGate(psk)
-	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+	g.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		rid := info.RunnerId
 		tid := info.TaskId
 		s := board.Registry().Validate(rid, tid, info.AuthTicket)
@@ -951,7 +951,7 @@ func TestPSKGate_AgentboardBadTicket_NoPrincipal(t *testing.T) {
 	}
 
 	var badTicket [16]byte // all zeros — wrong
-	info := protocol.AgentInfo{
+	info := protocol.AgentInfoLegacy{
 		RunnerId:   protoRID,
 		TaskId:     protoTID,
 		AuthTicket: badTicket,
@@ -1001,12 +1001,12 @@ func TestPSKGate_SignsEveryStatus(t *testing.T) {
 		protocol.PskAuthStatus_BadPsk:     buildPskAuthData(t, buildOperatorClientHello([]byte("wrong"), testTranscript)),
 		protocol.PskAuthStatus_NoIdentity: {byte(appwire.AppKind_PskAuth), 0xff},
 		// ValidateTicket below refuses every ticket.
-		protocol.PskAuthStatus_BadTicket: buildPskAuthData(t, buildAgentClientHello(psk, testTranscript, protocol.AgentInfo{})),
+		protocol.PskAuthStatus_BadTicket: buildPskAuthData(t, buildAgentClientHello(psk, testTranscript, protocol.AgentInfoLegacy{})),
 	}
 	for want, data := range cases {
 		g := newPSKGate(psk)
 		g.serverKey = priv
-		g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
+		g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
 		var sent []byte
 		g.Check(data, testTranscript, func(b []byte) { sent = append(sent, b...) })
 		resp := parsePskResponseFull(t, sent)

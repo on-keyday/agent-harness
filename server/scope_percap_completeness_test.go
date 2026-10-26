@@ -98,6 +98,10 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 		kind:   capNoTargetResolution,
 		reason: "server dial-runner names a RUNNER, which the task scope does not contain",
 	},
+	protocol.Capability_RunnerEnroll: {
+		kind:   capNoTargetResolution,
+		reason: "runner enroll / keys / unenroll name a KEY and the runners on it, which the task scope does not contain",
+	},
 	protocol.Capability_BoardObserve: {
 		kind: capNoTargetResolution,
 		reason: "the agentboard is keyed by topic, which the task hierarchy does not " +

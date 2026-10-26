@@ -51,6 +51,10 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_Notify,
 		protocol.Capability_Prune,
 		protocol.Capability_RunnerAdmin,
+		// runner_enroll beside runner_admin and implied by it in neither
+		// direction: dialing a runner uses the server's reach, enrolling one
+		// decides which keys may register at all.
+		protocol.Capability_RunnerEnroll,
 		protocol.Capability_BoardObserve,
 		protocol.Capability_Purge,
 		// board_send after the other two board bits: it is the only one that
@@ -121,6 +125,9 @@ func CapDescription(c protocol.Capability) string {
 		return "prune terminal tasks"
 	case protocol.Capability_RunnerAdmin:
 		return "runner administration (server dial-runner)"
+	case protocol.Capability_RunnerEnroll:
+		return "decide which runner keys may register: runner enroll, runner keys, runner unenroll; " +
+			"NOT implied by runner_admin"
 	case protocol.Capability_BoardObserve:
 		return "list board topics, read a topic's retained messages, list its subscribers; " +
 			"and read another task's direct messages (its chat.<id>, chat.operator, a tree.<id> you are not in) by any agent verb. " +
@@ -402,6 +409,7 @@ var capAuditTable = map[protocol.Capability]capAuditEntry{
 	protocol.Capability_Prune:         {tier: TierStrong},
 	protocol.Capability_BoardSend:     {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_RunnerAdmin:   {tier: TierStrong, scope: ScopeNone},
+	protocol.Capability_RunnerEnroll:  {tier: TierStrong, scope: ScopeNone},
 	protocol.Capability_ExecTap:       {tier: TierStrong},
 	protocol.Capability_ForwardTap:    {tier: TierStrong},
 	protocol.Capability_ForwardLocal:  {tier: TierStrong},

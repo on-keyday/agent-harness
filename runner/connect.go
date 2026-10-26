@@ -572,7 +572,7 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 // role=client). The binder computation (HMAC-SHA512 over the objproto transcript)
 // is identical to cli.ComputePSKBinder — only the role and identity union differ.
 func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan cli.PskAuthReply) error {
-	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Runner}
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_RunnerLegacy}
 
 	if len(psk) > 0 {
 		binder, err := cli.ComputePSKBinder(psk, transcript)

@@ -28,7 +28,7 @@ func TestRunnerHelloAgentProfilesRoundTrip(t *testing.T) {
 	}
 
 	var orig PskAuthRequest
-	orig.Role = AuthRole_Runner
+	orig.Role = AuthRole_RunnerLegacy
 	if !orig.SetBinder(nil) {
 		t.Fatal("SetBinder(nil) returned false")
 	}

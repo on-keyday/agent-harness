@@ -282,8 +282,8 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 	if _, err := req.Decode(sentBytes[1:]); err != nil {
 		t.Fatalf("Decode PskAuthRequest: %v", err)
 	}
-	if req.Role != protocol.AuthRole_Runner {
-		t.Errorf("Role: got %v, want AuthRole_Runner", req.Role)
+	if req.Role != protocol.AuthRole_RunnerLegacy {
+		t.Errorf("Role: got %v, want AuthRole_RunnerLegacy", req.Role)
 	}
 	if req.BinderLen != 0 {
 		t.Errorf("BinderLen: got %d, want 0 (no-PSK)", req.BinderLen)
@@ -302,7 +302,7 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 		t.Errorf("RunnerHello.Hostname: got %q, want %q", string(rh.Hostname), "test-runner")
 	}
 	// ClientHello must be nil for runner role.
-	if req.ClientHello() != nil {
+	if req.ClientHelloLegacy() != nil {
 		t.Error("ClientHello() should be nil for runner role")
 	}
 }

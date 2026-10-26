@@ -1383,7 +1383,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// Wire ticket validation into the gate: an agent that fails this check
 	// must NOT fall through to operator (this is the hole the merged handshake
 	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.
-	gate.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+	gate.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
 		if s.Board == nil {
 			return protocol.PskAuthStatus_Ok // no board → degrade to ok (test wiring)
 		}

@@ -12,7 +12,7 @@ func TestPSKDispatchIdentityRejectsFailedPrincipalRegistration(t *testing.T) {
 		return protocol.ClientHelloStatus_BadTicket
 	}}
 	conn := &fakeConn{id: tcid("rejected-principal")}
-	if pskDispatchIdentity(d, conn, buildAgentClientHello(nil, testTranscript, protocol.AgentInfo{})) {
+	if pskDispatchIdentity(d, conn, buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{})) {
 		t.Fatal("a revoked ticket was accepted as an unidentified operator")
 	}
 }
@@ -25,18 +25,18 @@ func TestAuthenticatedConnectionRoles(t *testing.T) {
 		req  *protocol.PskAuthRequest
 	}{
 		{"operator", buildOperatorClientHello(nil, testTranscript)},
-		{"agent", buildAgentClientHello(nil, testTranscript, protocol.AgentInfo{TaskId: taskID})},
+		{"agent", buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{TaskId: taskID})},
 		{"runner", buildRunnerHelloReq(nil, testTranscript, protocol.RunnerHello{Version: 1, RunnerId: testRunnerID("role-test")})},
 	}
 	for _, role := range roles {
 		t.Run(role.name, func(t *testing.T) {
 			g := newPSKGate(nil)
-			g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus { return protocol.PskAuthStatus_Ok }
+			g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_Ok }
 			_, closeConn, accepted := g.Check(buildPskAuthData(t, role.req), testTranscript, func([]byte) {})
 			if closeConn || accepted == nil {
 				t.Fatal("initial handshake rejected")
 			}
-			client := role.req.Role == protocol.AuthRole_Client
+			client := role.req.Role == protocol.AuthRole_ClientLegacy
 			for _, tc := range []struct {
 				name string
 				data []byte
@@ -70,8 +70,8 @@ func TestUnauthenticatedConnectionHasNoRoleAuthority(t *testing.T) {
 			t.Errorf("unauthenticated connection allowed %v", kind)
 		}
 	}
-	g.ValidateTicket = func(*protocol.AgentInfo) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
-	req := buildAgentClientHello(nil, testTranscript, protocol.AgentInfo{})
+	g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
+	req := buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{})
 	_, closeConn, accepted := g.Check(buildPskAuthData(t, req), testTranscript, func([]byte) {})
 	if !closeConn || accepted != nil || g.AllowsMessage([]byte{byte(appwire.AppKind_TaskControl), byte(protocol.TaskControlKind_List)}) {
 		t.Fatal("rejected handshake granted application authority")

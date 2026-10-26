@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -138,6 +140,8 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		AgentBin:         "claude",
 		AgentProfiles:    []string{"claude", "codex"},
 		SkillsInjected:   true,
+		Key:              ed25519.PublicKey(bytes.Repeat([]byte{0x5a}, ed25519.PublicKeySize)),
+		LegacyAuth:       true,
 		ActiveTasks:      map[string]struct{}{"00112233445566778899aabbccddeeff": {}},
 		ConnectedAt:      now,
 		LastTaskActivity: now,
@@ -148,7 +152,16 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		// RunnerStatus_Idle is the zero value, and an entry with capacity is
 		// legitimately Idle — a non-zero assertion cannot say anything here.
 		"Status": "RunnerStatus_Idle is the zero value; Status() is covered by its own tests",
+		// The label belongs to the enrollment store and can change with a
+		// re-enroll, so the list handler reads it there at List time.
+		"KeyLabelLen": "filled by the list handler from the enrollment store, not from RunnerEntry",
+		"KeyLabel":    "filled by the list handler from the enrollment store, not from RunnerEntry",
 	})
+	// legacy_auth is bit-packed beside skills_injected, which the reflect sweep
+	// cannot tell apart; it needs its own assertion.
+	if !info.LegacyAuth() {
+		t.Error("RunnerInfo.LegacyAuth is false after mapping LegacyAuth:true — the mapper forgot it")
+	}
 }
 
 // TestPortForwardInfoMapsEveryField is the same completeness guard for

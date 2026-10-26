@@ -133,10 +133,19 @@ format RunnerHello:
     held :HeldTasksReport
 
 # AuthRole discriminates which identity type is carried in a PskAuthRequest.
+#
+# The _legacy values are the two roles every binary spoke before runner
+# enrollment, kept under their old numbers so an old binary still connects
+# while the fleet migrates through the harness itself. They are deleted, with
+# the formats only they carry, by the follow-up change of
+# 2026-10-27-runner-enrollment-design.md. AuthRole is never persisted;
+# ClientKind, which the WAL stores, is not touched.
 enum AuthRole:
     :u8
-    client = 0  # ClientHello identity (operator cli/tui/webui or in-task agent)
-    runner = 1  # RunnerHello identity (runner registration)
+    client_legacy = 0  # ClientHelloLegacy: an agent sends its ticket, a data-plane hello its grant id
+    runner_legacy = 1  # RunnerHello, proving nothing beyond the binder
+    client        = 2  # ClientHello: an agent's binder is keyed by its ticket, a data-plane hello's by its grant id
+    runner        = 3  # RunnerAuth: an enrolled Ed25519 key signs the transcript
 
 # PskAuthStatus is the outcome of the PSK + identity gate.
 # Replaces the hand-written constant in appwire/psk.go (Task 6 migrates refs).
@@ -149,18 +158,34 @@ enum PskAuthStatus:
     expired       = 4  # binder ok, grant exists, but its TTL has passed
     not_permitted = 5  # binder ok, grant is live, but names a different request
                        # than the one that arrived
+    not_enrolled  = 6  # role=runner: the signature verifies, but the server
+                       # has not enrolled this key. Retryable: enrolling it
+                       # lets the runner in on its next attempt.
 
-# PskAuthRequest is the merged PSK + identity first message.
-# binder_len == 0 means no PSK is configured (dev mode); otherwise 64 bytes
-# (HMAC-SHA512 over the objproto transcript). role selects which hello type
-# is present. On-wire: [0x45] + PskAuthRequest(brgen-encoded).
+# PskAuthRequest is the merged authentication + identity first message.
+# binder is HMAC-SHA512 over the objproto transcript (64 bytes) keyed by the
+# secret the role and kind call for: the operator PSK for operator kinds, the
+# task's ticket for kind=agent and the grant id for kind=data_plane under
+# role=client. binder_len == 0 when that secret is not configured, and always
+# for role=runner, which signs instead (RunnerAuth). On-wire: [0x45] +
+# PskAuthRequest(brgen-encoded).
 format PskAuthRequest:
     binder_len :u16
     binder :[binder_len]u8
     role :AuthRole
     match role:
-        AuthRole.client => client_hello :ClientHello
-        AuthRole.runner => runner_hello :RunnerHello
+        AuthRole.client_legacy => client_hello_legacy :ClientHelloLegacy
+        AuthRole.runner_legacy => runner_hello :RunnerHello
+        AuthRole.client        => client_hello :ClientHello
+        AuthRole.runner        => runner_auth :RunnerAuth
+
+# RunnerAuth is a runner's proof of an enrolled key: key is its Ed25519 public
+# key, sig an Ed25519 signature over
+# "agent-harness runner-auth v1" || 0x00 || transcript (cli.SignRunnerAuth).
+format RunnerAuth:
+    key :[32]u8
+    sig :[64]u8
+    hello :RunnerHello
 
 # PskAuthResponse is the server's accept/reject for a PskAuthRequest.
 # On-wire: [0x45] + PskAuthResponse(brgen-encoded).
@@ -592,6 +617,12 @@ enum TaskControlKind:
                             # Gated on cancel, target-gated on cancel's scope:
                             # whoever may end the task may empty its status
                             # line. The operator holds every bit.
+    runner_enroll           # appended: enroll a runner's public key. Gated on
+                            # runner_enroll, as are the next two. See
+                            # docs/superpowers/specs/2026-10-27-runner-enrollment-design.md
+    runner_unenroll         # appended: remove an enrolled key; refused while a
+                            # runner uses it unless forced
+    runner_keys             # appended: list enrolled keys and the runners on them
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -608,21 +639,20 @@ enum ClientKind:
                 # runner. Not a principal: it speaks for one request, not for
                 # a task.
 
-# AgentInfo is the per-task agent credential, mirroring the (now-removed)
-# agentboard AgentBridgeHello triple. Validated server-side via the agentboard
-# Registry. hostname is length-prefixed (0 len = absent).
+# AgentInfo names the task an in-task agent speaks for. It carries no
+# credential: under AuthRole.client the agent proves its ticket with the
+# request's binder, keyed by that ticket over this connection's transcript, so
+# the ticket never goes on the wire. hostname is length-prefixed (0 = absent).
 format AgentInfo:
     runner_id :RunnerID
     task_id :TaskID
-    auth_ticket :[16]u8
     hostname_len :u8
     hostname :[hostname_len]u8
 
-# DataPlaneInfo is what a data-plane connection presents instead of an
-# identity: the grant the server minted, and the task it names. The runner
-# matches both against what the server pushed it.
+# DataPlaneInfo names the task a data-plane connection carries a request for.
+# The grant is proved by the binder (keyed by the grant id), not sent; the
+# runner tries the live grants it holds for task_id.
 format DataPlaneInfo:
-    grant_id :[16]u8
     task_id :TaskID
 
 format ClientHello:
@@ -631,6 +661,29 @@ format ClientHello:
         agent_info :AgentInfo
     if kind == ClientKind.data_plane:
         data_plane_info :DataPlaneInfo
+
+# --- the AuthRole.client_legacy shapes ---------------------------------------
+# What every client sent before runner enrollment: the ticket and the grant id
+# travel as values. Accepted until the follow-up change of
+# 2026-10-27-runner-enrollment-design.md deletes them together with
+# AuthRole.client_legacy.
+format AgentInfoLegacy:
+    runner_id :RunnerID
+    task_id :TaskID
+    auth_ticket :[16]u8
+    hostname_len :u8
+    hostname :[hostname_len]u8
+
+format DataPlaneInfoLegacy:
+    grant_id :[16]u8
+    task_id :TaskID
+
+format ClientHelloLegacy:
+    kind :ClientKind
+    if kind == ClientKind.agent:
+        agent_info :AgentInfoLegacy
+    if kind == ClientKind.data_plane:
+        data_plane_info :DataPlaneInfoLegacy
 
 enum ClientHelloStatus:
     :u8
@@ -870,11 +923,18 @@ format RunnerInfo:
     agent_bin_len :u8
     agent_bin :[agent_bin_len]u8
     skills_injected :u1
-    reserved :u7
+    # legacy_auth: registered under AuthRole.runner_legacy, so with no key.
+    legacy_auth :u1
+    reserved :u6
     # named agent profiles this runner can launch a session under (mirrors
     # RunnerHello.agent_profiles). Echoed by the server.
     agent_profiles_len :u8
     agent_profiles :[agent_profiles_len]AgentProfileName
+    # The enrolled key this runner authenticated with (all zero when
+    # legacy_auth), and that key's label in the enrollment store.
+    key :[32]u8
+    key_label_len :u8
+    key_label :[key_label_len]u8
 
 # AuthoritySource is who last wrote a task's authority — its caps, its scope,
 # or the parent link its subtree scopes are measured from. Carried on TaskInfo
@@ -2372,6 +2432,9 @@ format TaskControlRequest:
         TaskControlKind.progress_set             => progress_set             :ProgressSetRequest
         TaskControlKind.await_progress           => await_progress           :AwaitProgressRequest
         TaskControlKind.progress_clear           => progress_clear           :ProgressClearRequest
+        TaskControlKind.runner_enroll            => runner_enroll            :RunnerEnrollRequest
+        TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollRequest
+        TaskControlKind.runner_keys              => runner_keys              :RunnerKeysRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2451,6 +2514,82 @@ format TaskControlResponse:
         TaskControlKind.progress_set             => progress_set             :ProgressSetResponse
         TaskControlKind.await_progress           => await_progress           :AwaitProgressResponse
         TaskControlKind.progress_clear           => progress_clear           :ProgressSetResponse
+        TaskControlKind.runner_enroll            => runner_enroll            :RunnerEnrollResponse
+        TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollResponse
+        TaskControlKind.runner_keys              => runner_keys              :RunnerKeysResponse
+
+# --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
+# The server lets a runner register under AuthRole.runner only when it signs
+# with a key in this set. The set holds keys, never machines or slots: any
+# number of runners may authenticate with one key.
+
+enum RunnerKeyStatus:
+    :u8
+    ok               = "ok"
+    already_enrolled = "already_enrolled"  # enroll: the key was already in the set
+    not_found        = "not_found"         # unenroll: no enrolled key has the prefix
+    ambiguous_prefix = "ambiguous_prefix"  # unenroll: more than one key has the prefix
+    in_use           = "in_use"            # unenroll: runners use the key and force is unset
+    invalid_key      = "invalid_key"       # enroll: not an Ed25519 public key; unenroll: prefix not 8-64 hex
+
+format RunnerEnrollRequest:
+    key :[32]u8
+    label_len :u8
+    label :[label_len]u8   # empty = keep the label an enrolled key already has
+
+format RunnerEnrollResponse:
+    status :RunnerKeyStatus
+
+format RunnerUnenrollRequest:
+    prefix_len :u8
+    prefix :[prefix_len]u8   # hex text, 8 to 64 characters
+    force :u1
+    reserved :u7
+
+# The body says what the answer is about: on ok, the removed key in full (so
+# the caller can print the enroll that restores it) and the runners it cut off;
+# on in_use, the runners that blocked it.
+format RunnerUnenrollResponse:
+    request_id :u32
+    status :RunnerKeyStatus
+    stream_id :u64
+
+format RunnerUnenrollBody:
+    key :[32]u8
+    label_len :u8
+    label :[label_len]u8
+    runners_len :u16
+    runners :[runners_len]RunnerKeyUser
+
+format RunnerKeysRequest:
+    reserved :u8
+
+format RunnerKeysResponse:
+    request_id :u32
+    stream_id :u64
+
+format RunnerKeysBody:
+    keys_len :u16
+    keys :[keys_len]RunnerKeyRow
+    # Registered runners that authenticated with AuthRole.runner_legacy, i.e.
+    # without a key. Empty once the fleet has migrated.
+    legacy_len :u16
+    legacy :[legacy_len]RunnerKeyUser
+
+format RunnerKeyRow:
+    key :[32]u8
+    label_len :u8
+    label :[label_len]u8
+    enrolled_at_unix_ms :u64
+    enrolled_by_len :u8
+    enrolled_by :[enrolled_by_len]u8   # "operator" or "task:<32 hex>"
+    runners_len :u16
+    runners :[runners_len]RunnerKeyUser
+
+format RunnerKeyUser:
+    id :RunnerID
+    hostname_len :u8
+    hostname :[hostname_len]u8
 
 enum SetCapsStatus:
     :u8
@@ -2970,7 +3109,8 @@ format ConnInfo:
     connected_at :u64               # unix nano, stamped at activeConns register
     identified :u1                  # 1 once role is established (handshake done);
                                     # 0 = opened-but-never-authed (probe / failed)
-    reserved :u7
+    legacy_auth :u1                 # 1 = authenticated with an AuthRole _legacy role
+    reserved :u6
 
 # --- (a) snapshot: streamed body, mirrors ListResult / ListResultBody ---
 format ConnListQuery:
@@ -3736,17 +3876,23 @@ enum Capability:
     # changes meaning. Later stages of the same feature (a routing mode, an
     # L2 device) are the same power and stay on this bit.
     forward_link   = 0x400000, "forward_link"
+    # runner_enroll authorizes `runner enroll / keys / unenroll`: adding a
+    # runner's public key to the set the server lets register, listing it, and
+    # removing it. Not runner_admin: that bit is dial_runner, using the server's
+    # and registered runners' network reach, and a dialed runner still has to
+    # pass the handshake. Default-off, appended.
+    runner_enroll  = 0x800000, "runner_enroll"
     # `all` is a LITERAL, not "every defined bit", so it widens by hand — the
     # same edit exec_view / exec_cowrite / exec_resize each needed. The WAL
     # persists the NUMBER, so a task already granted `all` holds 0xffff and
     # does NOT gain forward_tap until it is re-granted (nor, at 0x3fffff,
-    # forward_link). That is the safe
+    # forward_link; nor, at 0x7fffff, runner_enroll). That is the safe
     # direction and needs no migration.
     #
     # Widening it is REQUIRED, not stylistic: callerCaps hands operator
     # connections Capability_All, so a literal left at 0xffff would deny the
     # operator its own feature.
-    all            = 0x7fffff, "all"
+    all            = 0xffffff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self joins that union unless exclude_self removes it,

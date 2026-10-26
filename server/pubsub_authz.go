@@ -18,11 +18,11 @@ import (
 func (s *Server) authorizeJoin(role protocol.AuthRole, cid objproto.ConnectionID, topic string) pubsub.JoinGrant {
 	taskHex, isLog := topics.ParseTaskLog(topic)
 	switch role {
-	case protocol.AuthRole_Runner:
+	case protocol.AuthRole_RunnerLegacy:
 		if isLog && s.registry.ownsTask(cid, taskHex) {
 			return pubsub.JoinGrant{Allow: true, Publish: true}
 		}
-	case protocol.AuthRole_Client:
+	case protocol.AuthRole_ClientLegacy:
 		switch {
 		case isLog:
 			// The `logs` gate. Refused alike for no exec_view, out of scope and
