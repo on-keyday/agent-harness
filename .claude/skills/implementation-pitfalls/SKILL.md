@@ -267,6 +267,16 @@ Note what it deliberately does NOT assert: that skew *works*. This project has n
 compat shims by design; asserting "works" would push us toward shims we do not
 want.
 
+**The one exception (operator, 2026-10-27): the path the harness upgrades
+itself through** — the handshake, runner registration and reconnect. Break it
+and the agents that would carry out the migration cannot connect, so the
+operator falls back to out-of-band access; the operator wants migrations to
+complete through the harness. A change to that path keeps the old shape working
+for a bounded window, and its spec names the follow-up change that removes the
+old shape and a trigger the operator can see (first instance:
+`2026-10-27-runner-enrollment-design.md`, D5/D10). Every other wire change stays
+shim-free: losing one feature during a rollout costs only that feature.
+
 **Two sub-lessons, both learned the hard way while building that check:**
 
 1. **A guard that cannot fail is worse than none.** The check's first version
@@ -503,7 +513,7 @@ When dispatching an implementer or reviewer subagent in this project, include in
 These are user-driven feedback rules from past sessions, baked into project-local form so subagents on this repo see them. Each one was triggered by a specific past incident; the one-liner is enough to remember the rule, expand by reading the named memory file if needed.
 
 ## Scope / sizing
-- **Individual dogfood scope** (`feedback_individual_dogfood`): No external users. Don't inflate breaking-change / migration concerns. Renames, subcommand splits, schema field additions are quality fixes — just do them. Don't add migration shims, deprecation periods, or backward-compat layers "for users" that don't exist.
+- **Individual dogfood scope** (`feedback_individual_dogfood`): No external users. Don't inflate breaking-change / migration concerns. Renames, subcommand splits, schema field additions are quality fixes — just do them. Don't add migration shims, deprecation periods, or backward-compat layers "for users" that don't exist. Exception: the path the harness upgrades itself through (handshake, runner registration/reconnect) — Pitfall 10.
 - **Don't split schema/spec across plan tasks** (`feedback_no_split_schemas`): When a plan adds new wire types or config fields, put the FULL schema/interface in ONE plan task. No "also add this in Task N" follow-ups — the schema becomes harder to review and easier to diverge against. Same for spec docs: keep the authoritative byte layout in one place.
 
 ## Protocol / schema discipline
