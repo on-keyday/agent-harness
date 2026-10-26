@@ -41,6 +41,11 @@ type RunnersModel struct {
 // NEIGHBOURING column cannot quietly push it back under.
 const idColumnMinWidth = 72
 
+// keyColumnMinWidth is where the Key column joins: the enrolled key's label,
+// its prefix, or "legacy". It sits before Roots, the flex column, so Roots
+// keeps absorbing the slack. Below it the key is in the detail popup.
+const keyColumnMinWidth = 100
+
 // runnerColsFor is the column set for a panel of the given width. One function
 // so NewRunners, SetSize and the row builder cannot disagree about how many
 // cells a row has: bubbles indexes row[i] per COLUMN and panics on a mismatch,
@@ -53,6 +58,9 @@ func runnerColsFor(width int) []table.Column {
 		{Title: "Tasks", Width: 7},
 		{Title: "Agent", Width: 14},
 		{Title: "Roots", Width: 30},
+	}
+	if width >= keyColumnMinWidth {
+		cols = append(cols[:4:4], table.Column{Title: "Key", Width: 12}, cols[4])
 	}
 	if width < idColumnMinWidth {
 		return cols
@@ -69,6 +77,9 @@ func runnerColsFor(width int) []table.Column {
 
 // showsID reports whether the current column set includes ID.
 func (m *RunnersModel) showsID() bool { return m.width >= idColumnMinWidth }
+
+// showsKey reports whether the current column set includes Key.
+func (m *RunnersModel) showsKey() bool { return m.width >= keyColumnMinWidth }
 
 func NewRunners() RunnersModel {
 	cols := runnerColsFor(0)
@@ -141,8 +152,11 @@ func (m *RunnersModel) rebuild() {
 			string(r.Hostname),
 			runnerTasksCell(r),
 			runnerAgentCell(r),
-			runnerRootsCell(r),
 		)
+		if m.showsKey() {
+			row = append(row, cli.RunnerKeyStr(r))
+		}
+		row = append(row, runnerRootsCell(r))
 		rows = append(rows, row)
 	}
 	setTableRows(&m.table, rows)

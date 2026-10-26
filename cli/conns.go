@@ -139,6 +139,11 @@ func connInfoTextLine(ci *protocol.ConnInfo) string {
 	if !ci.Identified() {
 		unident = "  unident"
 	}
+	// legacy: authenticated with an AuthRole _legacy role. Marked while any are
+	// left, because none being left is what the follow-up change waits for.
+	if ci.LegacyAuth() {
+		unident += "  legacy"
+	}
 	return fmt.Sprintf(connRowFormat+"%s", cid, role, principal, runner, age, unident)
 }
 
@@ -157,6 +162,7 @@ type connInfoJSON struct {
 	AgeSec          int64  `json:"age_sec"`
 	ConnectedAt     uint64 `json:"connected_at"`
 	Identified      bool   `json:"identified"`
+	LegacyAuth      bool   `json:"legacy_auth"`
 }
 
 // newConnInfoJSON builds the JSON view of a ConnInfo.
@@ -169,6 +175,7 @@ func newConnInfoJSON(ci *protocol.ConnInfo) connInfoJSON {
 		AgeSec:          connAgeSec(ci.ConnectedAt),
 		ConnectedAt:     ci.ConnectedAt,
 		Identified:      ci.Identified(),
+		LegacyAuth:      ci.LegacyAuth(),
 	}
 }
 

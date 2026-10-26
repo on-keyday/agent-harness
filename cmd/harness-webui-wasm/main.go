@@ -1701,6 +1701,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"agentBin":         string(r.AgentBin),
 					"agentProfiles":    profiles,
 					"skillsInjected":   r.SkillsInjected(),
+					// keyLabel is the display string ls and the TUI show
+					// (label, key prefix, or "legacy"); key/legacyAuth are raw.
+					"keyLabel":   cli.RunnerKeyStr(r),
+					"key":        hex.EncodeToString(r.Key[:]),
+					"legacyAuth": r.LegacyAuth(),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))
@@ -1853,6 +1858,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"principalRunner": runnerIdentityOrEmpty(ci.PrincipalRunner),
 					"connectedAt":     float64(ci.ConnectedAt),
 					"identified":      ci.Identified(),
+					"legacyAuth":      ci.LegacyAuth(),
 				})
 			}
 			// Fetch the live port-forward registry using the same long-lived

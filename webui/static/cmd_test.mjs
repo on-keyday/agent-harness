@@ -668,18 +668,18 @@ test("a runner row: agents as a list, roots one per line, load and status", () =
   eq(page.runnerRowModel({
     status: "Busy", hostname: "gmkhost", goos: "linux", tasks: 8, maxTasks: 8,
     agentProfiles: ["claude", "codex"], skillsInjected: true, roots: ["/a", "/b"],
-    id: "0123456789abcdef0123456789abcdef", cid: "ws:h:1-2",
+    id: "0123456789abcdef0123456789abcdef", cid: "ws:h:1-2", keyLabel: "gmk",
   }), {
     status: "Busy", host: "gmkhost", os: "linux", load: "8/8", full: true,
     agents: ["claude", "codex"], skills: true, roots: ["/a", "/b"],
-    id: "01234567", cid: "ws:h:1-2",
+    id: "01234567", cid: "ws:h:1-2", key: "gmk",
   });
 });
 
 test("a runner row falls back where a runner reported nothing", () => {
   const legacy = page.runnerRowModel({ status: "Idle", tasks: 0, maxTasks: 4, agentBin: "claude" });
-  eq([legacy.host, legacy.os, legacy.agents, legacy.roots, legacy.id, legacy.cid, legacy.full],
-     ["-", "unknown", ["claude"], ["(any)"], "-", "-", false]);
+  eq([legacy.host, legacy.os, legacy.agents, legacy.roots, legacy.id, legacy.cid, legacy.full, legacy.key],
+     ["-", "unknown", ["claude"], ["(any)"], "-", "-", false, "-"]);
   eq(page.runnerRowModel({ status: "Idle", tasks: 0, maxTasks: 4 }).agents, []);
 });
 

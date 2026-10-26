@@ -182,7 +182,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -190,6 +190,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
+			RunnerKeyStr(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -337,7 +338,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s  cid=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  key=%s  id=%s  cid=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			RunnerGOOSStr(r.Goos),
@@ -345,6 +346,7 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
+			RunnerKeyStr(r),
 			r.Id.Hex(),
 			RunnerCIDStr(r.Cid),
 		)
@@ -397,6 +399,31 @@ type runnerJSON struct {
 	Agents         []string `json:"agents"`
 	SkillsInjected bool     `json:"skills_injected"`
 	Roots          []string `json:"roots"`
+	// Key is the enrolled key's hex, "" for a legacy runner, which LegacyAuth
+	// says; KeyLabel is that key's label in the enrollment store.
+	Key        string `json:"key"`
+	KeyLabel   string `json:"key_label"`
+	LegacyAuth bool   `json:"legacy_auth"`
+}
+
+// RunnerKeyStr is what a runner row shows for the key it authenticated with:
+// the key's label, its first 16 hex when it has none, or "legacy" for a runner
+// that registered without one. Never empty, so the column always reads.
+func RunnerKeyStr(r protocol.RunnerInfo) string {
+	switch {
+	case r.LegacyAuth():
+		return "legacy"
+	case len(r.KeyLabel) > 0:
+		return string(r.KeyLabel)
+	}
+	return KeyPrefix16(r.Key[:])
+}
+
+func runnerKeyHex(r protocol.RunnerInfo) string {
+	if r.LegacyAuth() {
+		return ""
+	}
+	return hex.EncodeToString(r.Key[:])
 }
 
 // RunnerCIDStr renders RunnerInfo.cid — WHERE a runner is reached right now.
@@ -537,6 +564,9 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 			Agents:         agentProfileNames(r.AgentProfiles, string(r.AgentBin)),
 			SkillsInjected: r.SkillsInjected(),
 			Roots:          roots,
+			Key:            runnerKeyHex(r),
+			KeyLabel:       string(r.KeyLabel),
+			LegacyAuth:     r.LegacyAuth(),
 		})
 	}
 
