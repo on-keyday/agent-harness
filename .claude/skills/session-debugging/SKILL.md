@@ -286,9 +286,11 @@ replay ring. Two details decide whether it works:
   recovered by reading the rendered text, and they appear only there: the text
   forms print the screen, and the screen cannot show them.
 
-  - **`title`** — the session's last OSC window title. Agents put their turn
-    state there (Claude a spinner glyph while working), which is why it is the
-    highest-priority detection signal. It survives a long quiet stretch: the
+  - **`title`** — the session's last OSC window title. Some agents put their
+    turn state there as a glyph prefix. **Claude in a harness session no longer
+    does**: the server answers its OSC 7501 probe, so claude reports its state
+    through that protocol instead. The state then shows as `program=` on `ls`,
+    and the title carries only text. It survives a long quiet stretch: the
     server's screen repaint re-emits the title from its own model, so one whose
     original OSC has aged out of the replay ring still reaches you. An empty
     `title` therefore means the session has not set one. (`--without-synth`
@@ -403,7 +405,11 @@ stay before `<id>`.
 
 ## Diagnosing a stuck claude worker
 
-`snapshot --detect` first: it names the case and the screen shows the detail.
+Read the worker's row on `ls` first. `lifecycle=waiting` means blocked on a
+human, `idle` means its turn ended, and `working` means it is busy. The
+worker's hooks report these, and `program=` is claude's own report beside them
+(see `harness-cli skill` → "What `ls` says a task is doing"). Then use
+`snapshot --detect` to see the detail on screen.
 `blocked` is the first two cases below, `working` the third. A verdict of
 `unknown` means the rules did not recognise the screen — NOT that the worker
 is free.
