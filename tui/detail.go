@@ -221,7 +221,9 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	}
 	// What the task's hooks last reported, beside its own line and the
 	// output age, so the three can be read against each other.
-	if t.LifecycleAt != 0 {
+	// Gated like the badge (cli.LifecycleStr): written, and the task not
+	// finished — a finished task must not read "working" (spec D14).
+	if cli.LifecycleStr(&t) != "" {
 		fmt.Fprintf(&sb, "lifecycle:     %s (%s)\n", cli.LifecycleWord(t.Lifecycle), cli.AgeStr(t.LifecycleAgeMs))
 	}
 	// The program's own OSC 7501 report, under what its hooks said, so a

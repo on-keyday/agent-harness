@@ -83,6 +83,13 @@ func TestTaskDetail_Lifecycle(t *testing.T) {
 	if d := formatTaskDetail(never, nil); strings.Contains(d, "lifecycle:") {
 		t.Errorf("a never-reported lifecycle printed a line:\n%s", d)
 	}
+	// D14: a finished task must not read "working" — the review found the
+	// popup ignored the terminal status the badge and the WebUI respect.
+	done := lifecycleRow(protocol.LifecycleState_Working, 1000)
+	done.Status = protocol.TaskStatus_Succeeded
+	if d := formatTaskDetail(done, nil); strings.Contains(d, "lifecycle:") {
+		t.Errorf("a finished task printed a lifecycle line:\n%s", d)
+	}
 }
 
 func TestTaskDetail_Program(t *testing.T) {
