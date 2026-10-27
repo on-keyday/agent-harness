@@ -645,8 +645,11 @@ test("task row: program badge and its tooltip line", () => {
   eq(page.programStatusLine({ programState: "", programKind: "", programMsg: "" }), null);
   eq(page.taskProgramModel({ liveTerminal: true, programState: "blocked", programKind: "question", programMsg: "q?" }),
     { text: "prog blocked:question", attention: true, quiet: false, tooltip: "blocked (question) — q?" });
+  // idle / done wait for the next prompt, like ready: not quiet. Only working is.
   eq(page.taskProgramModel({ liveTerminal: true, programState: "done", programKind: "", programMsg: "" }),
-    { text: "prog done", attention: false, quiet: true, tooltip: "done" });
+    { text: "prog done", attention: false, quiet: false, tooltip: "done" });
+  eq(page.taskProgramModel({ liveTerminal: true, programState: "idle", programKind: "", programMsg: "" }).quiet, false);
+  eq(page.taskProgramModel({ liveTerminal: true, programState: "working", programKind: "", programMsg: "" }).quiet, true);
   eq(page.taskProgramModel({ liveTerminal: false, programState: "done", programKind: "", programMsg: "" }), null);
   eq(page.taskProgramModel({ liveTerminal: true, programState: "", programKind: "", programMsg: "" }), null);
 });

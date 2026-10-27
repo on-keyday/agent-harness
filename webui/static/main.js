@@ -7859,14 +7859,18 @@ function taskLifecycleModel(t) {
 
 // taskProgramModel is the program badge beside it, mirroring cli.ProgramStr:
 // `prog blocked:question`, kind only with blocked; the full line, msg
-// included, as its tooltip. null without a live terminal or a report.
+// included, as its tooltip. null without a live terminal or a report. Its
+// colors follow the lifecycle badge's three tiers, since for an agent without
+// hooks this badge is the only state on the row: blocked / error ask for the
+// operator like wait / err, idle / done wait for the next prompt like ready,
+// and only working is quiet.
 function taskProgramModel(t) {
   if (!t.liveTerminal || !t.programState) return null;
   const s = t.programState;
   return {
     text: `prog ${s}${t.programKind ? ":" + t.programKind : ""}`,
     attention: s === "blocked" || s === "error",
-    quiet: s !== "blocked" && s !== "error",
+    quiet: s === "working",
     tooltip: programStatusLine(t),
   };
 }
