@@ -257,6 +257,9 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if l := LifecycleStr(&t); l != "" {
 		act += "  " + l
 	}
+	if p := ProgramStr(&t); p != "" {
+		act += "  " + p
+	}
 	if ti := TitleStr(&t); ti != "" {
 		act += "  " + ti
 	}

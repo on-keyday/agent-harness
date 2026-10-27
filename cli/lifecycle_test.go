@@ -96,3 +96,26 @@ func TestLifecycleDedup(t *testing.T) {
 	}
 	_ = skip
 }
+
+func TestTaskLine_Program(t *testing.T) {
+	live := func(st protocol.ProgramState, k protocol.ProgramKind) protocol.TaskInfo {
+		ti := protocol.TaskInfo{Status: protocol.TaskStatus_Detached, ProgramState: st, ProgramKind: k}
+		ti.SetLiveTerminal(true)
+		ti.SetProgramMsg([]byte("not printed"))
+		return ti
+	}
+	if line := taskLine(live(protocol.ProgramState_Blocked, protocol.ProgramKind_Question), nil); !strings.Contains(line, "program=blocked:question") || strings.Contains(line, "not printed") {
+		t.Errorf("blocked = %q, want program=blocked:question and no msg", line)
+	}
+	if line := taskLine(live(protocol.ProgramState_Working, protocol.ProgramKind_None), nil); !strings.Contains(line, "program=working") || strings.Contains(line, "program=working:") {
+		t.Errorf("working = %q, want program=working", line)
+	}
+	if line := taskLine(live(protocol.ProgramState_None, protocol.ProgramKind_None), nil); strings.Contains(line, "program=") {
+		t.Errorf("none = %q, want no program=", line)
+	}
+	dead := live(protocol.ProgramState_Working, protocol.ProgramKind_None)
+	dead.SetLiveTerminal(false)
+	if line := taskLine(dead, nil); strings.Contains(line, "program=") {
+		t.Errorf("no live terminal = %q, want no program=", line)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // scrollHint names the keys that scroll any viewport-backed pane here. It
@@ -222,6 +223,13 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	// output age, so the three can be read against each other.
 	if t.LifecycleAt != 0 {
 		fmt.Fprintf(&sb, "lifecycle:     %s (%s)\n", cli.LifecycleWord(t.Lifecycle), cli.AgeStr(t.LifecycleAgeMs))
+	}
+	// The program's own OSC 7501 report, under what its hooks said, so a
+	// disagreement between the two is on screen rather than resolved away.
+	// The msg is the program's text: control characters stripped here, as
+	// for the title.
+	if p := cli.ProgramDetail(&t); p != "" {
+		fmt.Fprintf(&sb, "program:       %s\n", vtgrid.SanitizeTitle(p, len(p)))
 	}
 	// Printed for every live terminal, empty included: "untitled" is a
 	// measurement.

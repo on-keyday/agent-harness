@@ -640,6 +640,14 @@ test("task event banner: lifecycle reports print nothing", () => {
 // short age, nothing for working (the activity badge covers it), for a task
 // that never reported, or for one that has ended. wait and err ask for the
 // operator, so they carry attention.
+// The task sheet's program line: the program's own OSC 7501 report, kind only
+// with blocked, msg when it sent one; null when it never reported.
+test("task sheet: program status line", () => {
+  eq(page.programStatusLine({ programState: "blocked", programKind: "question", programMsg: "q?" }), "blocked (question) — q?");
+  eq(page.programStatusLine({ programState: "working", programKind: "", programMsg: "" }), "working");
+  eq(page.programStatusLine({ programState: "", programKind: "", programMsg: "" }), null);
+});
+
 test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 180000, status: "Running" }),
     { word: "wait", age: "3m", attention: true });

@@ -84,3 +84,16 @@ func TestTaskDetail_Lifecycle(t *testing.T) {
 		t.Errorf("a never-reported lifecycle printed a line:\n%s", d)
 	}
 }
+
+func TestTaskDetail_Program(t *testing.T) {
+	ti := lifecycleRow(protocol.LifecycleState_Waiting, 1000)
+	ti.ProgramState, ti.ProgramKind = protocol.ProgramState_Blocked, protocol.ProgramKind_Question
+	ti.SetProgramMsg([]byte("q?"))
+	if d := formatTaskDetail(ti, nil); !strings.Contains(d, "program:       blocked (question) — q?") {
+		t.Errorf("detail lacks the program line:\n%s", d)
+	}
+	ti.ProgramState, ti.ProgramKind = protocol.ProgramState_None, protocol.ProgramKind_None
+	if d := formatTaskDetail(ti, nil); strings.Contains(d, "program:") {
+		t.Errorf("a program that never reported printed a line:\n%s", d)
+	}
+}

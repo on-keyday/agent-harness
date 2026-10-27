@@ -5940,6 +5940,15 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       lcRow.appendChild(lcEl);
       sheet.appendChild(lcRow);
     }
+    // Under it, what the program itself reports (OSC 7501), so the two can
+    // disagree on screen. textContent: the msg is the program's text.
+    const progLine = t.liveTerminal ? programStatusLine(t) : null;
+    if (progLine) {
+      const pRow = document.createElement("div");
+      pRow.className = "task-program-row";
+      pRow.textContent = `program ${progLine}`;
+      sheet.appendChild(pRow);
+    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.
@@ -7838,6 +7847,17 @@ function taskNowModel(t) {
     age,
     title: t.liveTerminal ? (t.title || "") : null,
   };
+}
+
+// programStatusLine is the task sheet's program line, mirroring
+// cli.ProgramDetail: the program's own OSC 7501 report, kind only with
+// blocked, the msg when it sent one; null when it never reported.
+function programStatusLine(t) {
+  if (!t.programState) return null;
+  let s = t.programState;
+  if (t.programKind) s += ` (${t.programKind})`;
+  if (t.programMsg) s += ` — ${t.programMsg}`;
+  return s;
 }
 
 // taskLifecycleModel is the lifecycle badge, mirroring cli.LifecycleBadge:

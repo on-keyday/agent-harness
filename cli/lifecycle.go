@@ -119,18 +119,65 @@ func shortAge(ageMs uint64) string {
 
 // ProgramWord is the wire word for a program state, "" for none.
 func ProgramWord(s protocol.ProgramState) string {
-	if s == protocol.ProgramState_None {
-		return ""
+	// Spelled out: the generated String() capitalizes ("Blocked"), and these
+	// are the protocol's words, shared with ls --json and the WebUI.
+	switch s {
+	case protocol.ProgramState_Idle:
+		return "idle"
+	case protocol.ProgramState_Working:
+		return "working"
+	case protocol.ProgramState_Done:
+		return "done"
+	case protocol.ProgramState_Blocked:
+		return "blocked"
+	case protocol.ProgramState_Error:
+		return "error"
 	}
-	return s.String()
+	return ""
 }
 
 // ProgramKindWord is the wire word for a blocked kind, "" for none.
 func ProgramKindWord(k protocol.ProgramKind) string {
-	if k == protocol.ProgramKind_None {
+	switch k {
+	case protocol.ProgramKind_Permission:
+		return "permission"
+	case protocol.ProgramKind_Question:
+		return "question"
+	case protocol.ProgramKind_Auth:
+		return "auth"
+	}
+	return ""
+}
+
+// ProgramStr is `program=blocked:question` for the CLI `ls` row: the
+// program's own OSC 7501 report, kind only with blocked, never the msg (a
+// free-form line belongs in the detail views). "" when the task has no live
+// terminal or its program never reported.
+func ProgramStr(t *protocol.TaskInfo) string {
+	if !t.LiveTerminal() || t.ProgramState == protocol.ProgramState_None {
 		return ""
 	}
-	return k.String()
+	s := "program=" + ProgramWord(t.ProgramState)
+	if k := ProgramKindWord(t.ProgramKind); k != "" {
+		s += ":" + k
+	}
+	return s
+}
+
+// ProgramDetail is the detail views' program line: `blocked (question) — q?`,
+// each part only when present; "" when the program never reported.
+func ProgramDetail(t *protocol.TaskInfo) string {
+	if t.ProgramState == protocol.ProgramState_None {
+		return ""
+	}
+	s := ProgramWord(t.ProgramState)
+	if k := ProgramKindWord(t.ProgramKind); k != "" {
+		s += " (" + k + ")"
+	}
+	if len(t.ProgramMsg) > 0 {
+		s += " — " + string(t.ProgramMsg)
+	}
+	return s
 }
 
 // lifecycleDedup lets a hook skip a report identical to the last one this
