@@ -47,6 +47,8 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 	// progress_set touches only the caller's own row (its principal), the
 	// reasoning whoami's self-introspection rests on.
 	protocol.TaskControlKind_ProgressSet: capNone,
+	// lifecycle_set touches only the caller's own row, as progress_set.
+	protocol.TaskControlKind_LifecycleSet: capNone,
 	// await_progress reveals progress, which `ls` already hands to any caller
 	// that can see the task; sink=notify is gated on notify in the handler,
 	// as for await_idle.
@@ -143,7 +145,7 @@ var kindCapClass = map[protocol.TaskControlKind]capClass{
 }
 
 func TestEveryTaskControlKindHasACapVerdict(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_RunnerKeys); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_LifecycleSet); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind

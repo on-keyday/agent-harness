@@ -91,6 +91,8 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		Progress:        "stage 2",
 		// A second old, so the server-computed age is non-zero too.
 		ProgressAt:      now.Add(-time.Second).UnixNano(),
+		Lifecycle:       protocol.LifecycleState_Waiting,
+		LifecycleAt:     now.Add(-time.Second).UnixNano(),
 		AuthoritySource: protocol.AuthoritySource_Cascade,
 		AuthorityActor:  protocol.TaskID{Id: [16]byte{0x3f}},
 		AuthorityAt:     now.Add(-time.Second),
@@ -115,6 +117,12 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// time and never stored, like the counters above.
 		"TitleLen": "filled by the list handler from the live SessionMux, not from TaskEntry",
 		"Title":    "filled by the list handler from the live SessionMux, not from TaskEntry",
+		// The program's OSC 7501 report is read off the same screen model as
+		// the title, and is live-only for the same reason.
+		"ProgramState":  "filled by the list handler from the live SessionMux, not from TaskEntry",
+		"ProgramKind":   "filled by the list handler from the live SessionMux, not from TaskEntry",
+		"ProgramMsgLen": "filled by the list handler from the live SessionMux, not from TaskEntry",
+		"ProgramMsg":    "filled by the list handler from the live SessionMux, not from TaskEntry",
 	})
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the

@@ -618,6 +618,12 @@ enum TaskControlKind:
     runner_unenroll         # appended: remove an enrolled key; refused while a
                             # runner uses it unless forced
     runner_keys             # appended: list enrolled keys and the runners on them
+    lifecycle_set           # appended: report the CALLER'S OWN lifecycle state
+                            # (working / waiting / idle / error). Written by the
+                            # agent hooks the runner injects, not by the agent.
+                            # No capability: the target is the connection's
+                            # principal, as progress_set. See
+                            # docs/superpowers/specs/2026-10-27-task-lifecycle-design.md
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -1038,6 +1044,21 @@ format TaskInfo:
     # last_output_at: never stored. Read it only when live_terminal = 1.
     title_len :u16
     title :[title_len]u8
+    # lifecycle is the task's state as its agent's hooks report it
+    # (lifecycle_set). Stored like progress: memory-only, carried across a
+    # DELIBERATE restart by the progress snapshot, lost on a crash.
+    lifecycle :LifecycleState
+    lifecycle_at :u64          # unix nanos, SERVER clock, of the last accepted
+                               # write. 0 = never written.
+    lifecycle_age_ms :u64      # server-computed now - lifecycle_at, as
+                               # progress_age_ms. Meaningless when lifecycle_at == 0.
+    # program status: the root OSC 7501 record the session's program last
+    # reported (spec D17). Live-only like title; read only when
+    # live_terminal = 1. none = never reported (or cleared with state=clear).
+    program_state :ProgramState
+    program_kind :ProgramKind        # only with program_state = blocked
+    program_msg_len :u16
+    program_msg :[program_msg_len]u8 # decoded, sanitized like title, <= 256 B
     # Who last wrote this task's authority, and when (unix nanos, SERVER clock;
     # 0 = unknown). authority_age_ms is now - authority_at computed on the
     # server, as progress_age_ms is, so clock skew cannot distort it;
@@ -2316,6 +2337,54 @@ format ProgressSetResponse:
     status :ProgressSetStatus
     progress_at :u64          # the stamp written (unix nanos, server clock); 0 unless ok
 
+# lifecycle_set: a task's agent hooks report its OWN state. The target is the
+# connection's principal; nothing in the request names a task. See
+# docs/superpowers/specs/2026-10-27-task-lifecycle-design.md
+enum LifecycleState:
+    :u8
+    unset = 0      # never written
+    working = 1
+    waiting = 2    # blocked on the human inside the turn (permission, question)
+    idle = 3       # turn ended; waiting for the next prompt
+    error = 4      # turn ended on an API or model error
+
+format LifecycleSetRequest:
+    lifecycle :LifecycleState  # unset is refused (bad_request). Not `state`:
+                               # that word is reserved in .bgn.
+    reported_at :u64           # unix nanos, REPORTER's clock, stamped when the
+                               # hook process started. Orders async hooks that
+                               # land out of order (spec D10).
+
+enum LifecycleSetStatus:
+    :u8
+    ok = 0
+    no_principal = 1           # caller is not an agent connection (operator)
+    bad_request = 2            # state unset or out of range
+    not_found = 3              # principal's task is no longer in the store
+    stale = 4                  # reported_at older than the stored one; dropped (D10)
+
+format LifecycleSetResponse:
+    status :LifecycleSetStatus
+    lifecycle_at :u64          # SERVER-clock stamp written; 0 unless ok
+
+# OSC 7501 (Program Status Protocol) root-record state and blocked kind, as the
+# server's screen model last parsed them (spec D17). none = never reported.
+enum ProgramState:
+    :u8
+    none = 0
+    idle = 1
+    working = 2
+    done = 3
+    blocked = 4
+    error = 5
+
+enum ProgramKind:
+    :u8
+    none = 0
+    permission = 1
+    question = 2
+    auth = 3
+
 # await_progress: one-shot watch on a task's progress line. Unlike await_idle
 # it needs no live session, so a oneshot task can be watched. It shares the
 # watcher registry (and await_list / await_kill) with await_idle.
@@ -2405,6 +2474,7 @@ format TaskControlRequest:
         TaskControlKind.runner_enroll            => runner_enroll            :RunnerEnrollRequest
         TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollRequest
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysRequest
+        TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -2487,6 +2557,7 @@ format TaskControlResponse:
         TaskControlKind.runner_enroll            => runner_enroll            :RunnerEnrollResponse
         TaskControlKind.runner_unenroll          => runner_unenroll          :RunnerUnenrollResponse
         TaskControlKind.runner_keys              => runner_keys              :RunnerKeysResponse
+        TaskControlKind.lifecycle_set            => lifecycle_set            :LifecycleSetResponse
 
 # --- runner enrollment (2026-10-27-runner-enrollment-design.md) --------------
 # The server lets a runner register under AuthRole.runner only when it signs
@@ -2797,6 +2868,9 @@ enum StatusEventKind:
     task_progress       # appended: the task wrote its progress line
                         # (progress_set). Payload of interest is progress /
                         # progress_at.
+    task_lifecycle      # appended: the task's hooks reported a lifecycle state
+                        # (lifecycle_set, accepted, not stale). Payload of
+                        # interest is lifecycle / lifecycle_at.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -2836,6 +2910,18 @@ format TaskStatusEvent:
     progress_age_ms :u64
     title_len :u16
     title :[title_len]u8
+    # Lifecycle and program status, with the same meaning as on TaskInfo and
+    # stamped on EVERY task event for the same reason progress is. A program
+    # status change emits nothing by itself; it rides the next event, as the
+    # title does. A parent-hop subscriber receives lifecycle and the program
+    # state/kind intact (liveness) and program_msg emptied (content).
+    lifecycle :LifecycleState
+    lifecycle_at :u64
+    lifecycle_age_ms :u64
+    program_state :ProgramState
+    program_kind :ProgramKind
+    program_msg_len :u16
+    program_msg :[program_msg_len]u8
 
 format RunnerStatusEvent:
     kind :StatusEventKind

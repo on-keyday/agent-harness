@@ -2517,6 +2517,9 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetProgress([]byte(t.Progress))
 	info.ProgressAt = uint64(t.ProgressAt)
 	info.ProgressAgeMs = progressAgeMs(t.ProgressAt)
+	info.Lifecycle = t.Lifecycle
+	info.LifecycleAt = uint64(t.LifecycleAt)
+	info.LifecycleAgeMs = progressAgeMs(t.LifecycleAt)
 	info.AuthoritySource = t.AuthoritySource
 	info.AuthorityActor = t.AuthorityActor
 	if !t.AuthorityAt.IsZero() {

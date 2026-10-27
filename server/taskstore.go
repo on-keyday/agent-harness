@@ -132,6 +132,14 @@ type TaskEntry struct {
 	// survive a resume and the task's end.
 	Progress   string
 	ProgressAt int64
+	// Lifecycle is the task's state as its agent's hooks report it
+	// (lifecycle_set). LifecycleAt is the server's unix-nano stamp of the last
+	// accepted write (0 = never); LifecycleReportedAt is the REPORTER's stamp of
+	// that write, which orders async hooks that land out of order. Memory only,
+	// carried across a deliberate stop by the progress snapshot like Progress.
+	Lifecycle           protocol.LifecycleState
+	LifecycleAt         int64
+	LifecycleReportedAt int64
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
