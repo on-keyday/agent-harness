@@ -840,7 +840,7 @@ an agent's shell must resolve the same file.
 ```bash
 bin/agent-runner --print-pubkey                      # the key to enroll (stdout), its file (stderr)
 bin/harness-cli runner enroll <64-hex> --label build-box
-bin/harness-cli runner keys                          # enrolled keys and the runners on each
+bin/harness-cli runner keys [--json]                 # enrolled keys and the runners on each
 bin/harness-cli runner unenroll <8+ hex prefix>      # refused while a runner uses it…
 bin/harness-cli runner unenroll <prefix> --force     # …this closes them, and prints the enroll that undoes it
 bin/agent-runner --rotate-key                        # new key; the old one kept as runner-key.prev

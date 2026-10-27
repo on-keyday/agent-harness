@@ -899,13 +899,18 @@ var Verbs = []VerbSpec{
 		NoModalSurface: "an administrative listing, like conns: the command line is the way in on every surface",
 		Notes: []string{
 			"list enrolled runner keys: label, when and by whom each was enrolled,",
-			"and the runners registered with it right now; then the runners that",
-			"registered without a key (legacy) — none once the fleet has migrated",
+			"and the runners registered with it right now; then the number of keys",
 			"needs runner_enroll",
 		},
 		Action:          "RunnerKeysAction",
 		CmdlineSurfaces: CLI | TUI | WebUI,
-		Examples:        []string{"runner keys"},
+		Flags: []Flag{
+			{Name: "json", Type: FlagBool, Default: false, Field: "JSON",
+				CmdlineSurfaces: CLI,
+				SurfaceReason:   "the TUI and WebUI answer into a results pane, not a pipe, so there is nothing for JSON to be read by",
+				Help:            "one JSON object per key"},
+		},
+		Examples: []string{"runner keys", "runner keys --json"},
 	},
 	{
 		Path:           []string{"runner", "unenroll"},

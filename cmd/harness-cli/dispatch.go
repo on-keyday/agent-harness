@@ -540,10 +540,14 @@ func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
 	return nil
 }
 
-func (h cliVerbs) RunnerKeys(verb.RunnerKeysAction) error {
+func (h cliVerbs) RunnerKeys(a verb.RunnerKeysAction) error {
 	rows, err := cli.RunnerKeys(h.ctx, h.cid())
 	if err != nil {
 		return err
+	}
+	if a.JSON {
+		fmt.Print(cli.FormatRunnerKeysJSON(rows))
+		return nil
 	}
 	fmt.Print(cli.FormatRunnerKeys(rows))
 	return nil

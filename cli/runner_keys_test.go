@@ -52,6 +52,32 @@ func TestFormatRunnerKeysNeverElidesZero(t *testing.T) {
 	}
 }
 
+// --json carries the key and every runner id in full, and a key nobody uses
+// has runners [] rather than null.
+func TestFormatRunnerKeysJSON(t *testing.T) {
+	rows := []RunnerKeyRow{
+		{Key: testKey(1), Label: "gmk", EnrolledAt: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC), EnrolledBy: "operator",
+			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "gmkhost"}}},
+		{Key: testKey(2), EnrolledAt: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC), EnrolledBy: "task:00ff"},
+	}
+	lines := strings.Split(strings.TrimSuffix(FormatRunnerKeysJSON(rows), "\n"), "\n")
+	want := []string{
+		`{"key":"` + strings.Repeat("01", 32) + `","label":"gmk","enrolled_at":"2026-10-27T09:00:00Z","enrolled_by":"operator","runners":[{"id":"aabbccdd000000000000000000000000","hostname":"gmkhost"}]}`,
+		`{"key":"` + strings.Repeat("02", 32) + `","label":"","enrolled_at":"2026-10-27T10:00:00Z","enrolled_by":"task:00ff","runners":[]}`,
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), strings.Join(lines, "\n"))
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d:\n got %s\nwant %s", i, lines[i], want[i])
+		}
+	}
+	if got := FormatRunnerKeysJSON(nil); got != "" {
+		t.Errorf("no keys: %q, want no lines", got)
+	}
+}
+
 func TestFormatRunnerUnenroll(t *testing.T) {
 	k := testKey(0xcd)
 	res := RunnerUnenrollResult{Key: k, Label: "gmk", Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{1, 2, 3, 4}}, Hostname: "gmkhost"}}}

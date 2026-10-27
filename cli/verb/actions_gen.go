@@ -507,6 +507,8 @@ type RunnerEnrollAction struct {
 // RunnerKeysAction is built by: runner keys.
 type RunnerKeysAction struct {
 	ActionMarker
+	// one JSON object per key
+	JSON bool
 }
 
 // RunnerUnenrollAction is built by: runner unenroll.
@@ -1739,6 +1741,7 @@ func init() {
 		},
 		"runner keys\x00cli": func(b Bound) (Action, error) {
 			a := RunnerKeysAction{}
+			a.JSON = b.Bool("json")
 			return a, nil
 		},
 		"runner keys\x00tui": func(b Bound) (Action, error) {

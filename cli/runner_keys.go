@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -193,6 +194,42 @@ func FormatRunnerKeys(rows []RunnerKeyRow) string {
 		runnerUserLines(&sb, r.Runners)
 	}
 	fmt.Fprintf(&sb, "keys=%d\n", len(rows))
+	return sb.String()
+}
+
+type runnerKeyJSON struct {
+	Key        string              `json:"key"`
+	Label      string              `json:"label"`
+	EnrolledAt string              `json:"enrolled_at"`
+	EnrolledBy string              `json:"enrolled_by"`
+	Runners    []runnerKeyUserJSON `json:"runners"`
+}
+
+type runnerKeyUserJSON struct {
+	ID       string `json:"id"`
+	Hostname string `json:"hostname"`
+}
+
+// FormatRunnerKeysJSON renders `runner keys --json`: JSON Lines, one object per
+// key, the key and every runner id in full. runners is [] rather than absent
+// for a key nobody uses.
+func FormatRunnerKeysJSON(rows []RunnerKeyRow) string {
+	var sb strings.Builder
+	for _, r := range rows {
+		j := runnerKeyJSON{
+			Key:        hex.EncodeToString(r.Key),
+			Label:      r.Label,
+			EnrolledAt: r.EnrolledAt.UTC().Format(time.RFC3339),
+			EnrolledBy: r.EnrolledBy,
+			Runners:    make([]runnerKeyUserJSON, 0, len(r.Runners)),
+		}
+		for _, u := range r.Runners {
+			j.Runners = append(j.Runners, runnerKeyUserJSON{ID: u.ID.Hex(), Hostname: u.Hostname})
+		}
+		b, _ := json.Marshal(j)
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
 	return sb.String()
 }
 
