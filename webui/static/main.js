@@ -5730,7 +5730,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const repoEl = document.createElement("span");
       repoEl.className = "task-repo";
       repoEl.textContent = repoTail(t.repoPath);
-      line1.append(dot, statusEl, repoEl);
+      line1.append(dot, statusEl);
+      // What the task's hooks report: wait / ready / err. Red for the two
+      // that ask for the operator, the default task color otherwise.
+      const lc = taskLifecycleModel(t);
+      if (lc) {
+        const lcEl = document.createElement("span");
+        lcEl.className = "task-lifecycle";
+        lcEl.style.color = taskStatusColor(lc.attention ? "Failed" : "");
+        lcEl.textContent = `${lc.word}:${lc.age}`;
+        line1.appendChild(lcEl);
+      }
+      line1.appendChild(repoEl);
       // Busy/idle badge from the server-computed idle age (-1 = no live
       // session output). Threshold mirrors cli.ActivityBusyThreshold (3s):
       // an in-flight agent TUI repaints ~every 100ms, an idle prompt emits
@@ -5916,6 +5927,19 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
+
+    // The lifecycle badge again at the top of the sheet, as on the row.
+    const sheetLc = taskLifecycleModel(t);
+    if (sheetLc) {
+      const lcRow = document.createElement("div");
+      lcRow.className = "task-lifecycle-row";
+      const lcEl = document.createElement("span");
+      lcEl.className = "task-lifecycle";
+      lcEl.style.color = taskStatusColor(sheetLc.attention ? "Failed" : "");
+      lcEl.textContent = `lifecycle ${sheetLc.word}:${sheetLc.age}`;
+      lcRow.appendChild(lcEl);
+      sheet.appendChild(lcRow);
+    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.
@@ -7816,6 +7840,21 @@ function taskNowModel(t) {
   };
 }
 
+// taskLifecycleModel is the lifecycle badge, mirroring cli.LifecycleBadge:
+// wait / ready / err with the short age, null for working (the activity badge
+// covers it), for a task that never reported, and for one that has ended.
+// The words are not the wire names so `ready` cannot be read as the activity
+// badge's `idle:3m`. attention marks the two that ask for the operator.
+function taskLifecycleModel(t) {
+  if (!t.lifecycleAt || t.lifecycleAt === "0") return null;
+  if (["Succeeded", "Failed", "Cancelled"].includes(t.status)) return null;
+  const word = { waiting: "wait", idle: "ready", error: "err" }[t.lifecycle];
+  if (!word) return null;
+  const ms = t.lifecycleAgeMs || 0;
+  const age = ms >= 60000 ? `${Math.floor(ms / 60000)}m` : `${Math.floor(ms / 1000)}s`;
+  return { word, age, attention: word !== "ready" };
+}
+
 // treeNodeProgress is what a task-tree node shows of the task's progress: a
 // fourth line cut to the node's slot (a node is 132px wide), and tooltip lines
 // with the full text, its age and the window title. Built on taskNowModel, so
@@ -7853,7 +7892,8 @@ function watcherWaitsFor(w) {
 // change, and a banner each time would bury the lifecycle lines. The caller
 // still refreshes for the routine kinds that change a row's text.
 function taskEventBanner(line) {
-  if (!line || line.includes("kind=TaskActivity") || line.includes("kind=TaskProgress")) return null;
+  if (!line || line.includes("kind=TaskActivity") || line.includes("kind=TaskProgress") ||
+      line.includes("kind=TaskLifecycle")) return null;
   return line;
 }
 
@@ -9805,6 +9845,15 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
     sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}`
       : (phantom ? "spawn される子" : "(gone)");
+    // The lifecycle badge rides the status line, red when it asks for the
+    // operator.
+    const nodeLc = t ? taskLifecycleModel(t) : null;
+    if (nodeLc) {
+      const lcSpan = svgEl("tspan", { class: "tt-lifecycle" });
+      if (nodeLc.attention && statusColor) lcSpan.setAttribute("fill", statusColor("Failed"));
+      lcSpan.textContent = ` ${nodeLc.word}:${nodeLc.age}`;
+      sub.appendChild(lcSpan);
+    }
     g.appendChild(sub);
 
     // Which repo the task belongs to. The fleet serves several, and without

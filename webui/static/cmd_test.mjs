@@ -630,6 +630,28 @@ test("task event banner: routine kinds print nothing", () => {
   assert.match(String(page.taskEventBanner("task abc kind=TaskEnded status=Succeeded")), /TaskEnded/);
 });
 
+// A lifecycle report fires on every prompt, tool and turn end of every task:
+// routine, like a progress write.
+test("task event banner: lifecycle reports print nothing", () => {
+  eq(page.taskEventBanner("task abc kind=TaskLifecycle status=Detached"), null);
+});
+
+// The lifecycle badge mirrors cli.LifecycleBadge: wait / ready / err with the
+// short age, nothing for working (the activity badge covers it), for a task
+// that never reported, or for one that has ended. wait and err ask for the
+// operator, so they carry attention.
+test("task lifecycle badge: words, age, attention", () => {
+  eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 180000, status: "Running" }),
+    { word: "wait", age: "3m", attention: true });
+  eq(page.taskLifecycleModel({ lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 720000, status: "Detached" }),
+    { word: "ready", age: "12m", attention: false });
+  eq(page.taskLifecycleModel({ lifecycle: "error", lifecycleAt: "5", lifecycleAgeMs: 30000, status: "Running" }),
+    { word: "err", age: "30s", attention: true });
+  eq(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Running" }), null);
+  eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Running" }), null);
+  eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Succeeded" }), null);
+});
+
 // await-progress needs no live session (a oneshot writes progress too), so
 // the sheet offers it on every task that can still write: any non-terminal one.
 test("task sheet: await-progress offered on any live task, oneshot included", () => {

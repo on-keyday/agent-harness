@@ -91,6 +91,9 @@ type App struct {
 	// nothing by itself. Kept apart from actRecvAt because progress outlives
 	// the session: a finished task's line still ages.
 	progressRecvAt map[string]time.Time
+	// lifecycleRecvAt is the same for lifecycle_age_ms, so `WAIT:3m` keeps
+	// counting between events.
+	lifecycleRecvAt map[string]time.Time
 	// authorityRecvAt is the same for authority_age_ms. Only a snapshot brings
 	// provenance (no task event carries it), so only a snapshot stamps it.
 	authorityRecvAt map[string]time.Time
@@ -380,6 +383,7 @@ func New(cfg Config) *App {
 		tasksByID:         map[string]protocol.TaskInfo{},
 		actRecvAt:         map[string]time.Time{},
 		progressRecvAt:    map[string]time.Time{},
+		lifecycleRecvAt:   map[string]time.Time{},
 		authorityRecvAt:   map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
 		sessionCaps:       protocol.Capability_None,
@@ -509,6 +513,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		now := time.Now()
 		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		a.progressRecvAt = make(map[string]time.Time, len(msg.Tasks))
+		a.lifecycleRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		a.authorityRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		for _, t := range msg.Tasks {
 			id := FormatTaskID(t.Id)
@@ -518,6 +523,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if t.ProgressAt != 0 {
 				a.progressRecvAt[id] = now
+			}
+			if t.LifecycleAt != 0 {
+				a.lifecycleRecvAt[id] = now
 			}
 			if t.AuthorityAt != 0 {
 				a.authorityRecvAt[id] = now
@@ -538,6 +546,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(a.tasksByID, id)
 			delete(a.actRecvAt, id)
 			delete(a.progressRecvAt, id)
+			delete(a.lifecycleRecvAt, id)
 			delete(a.authorityRecvAt, id)
 			a.refreshTasksTable()
 			return a, nil
@@ -2051,6 +2060,18 @@ func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.T
 	} else {
 		delete(a.progressRecvAt, id)
 	}
+	// Lifecycle and the program's own report ride every event too.
+	ti.Lifecycle = ev.Lifecycle
+	ti.LifecycleAt = ev.LifecycleAt
+	ti.LifecycleAgeMs = ev.LifecycleAgeMs
+	ti.ProgramState = ev.ProgramState
+	ti.ProgramKind = ev.ProgramKind
+	ti.SetProgramMsg(ev.ProgramMsg)
+	if ev.LifecycleAt != 0 {
+		a.lifecycleRecvAt[id] = time.Now()
+	} else {
+		delete(a.lifecycleRecvAt, id)
+	}
 }
 
 // agedTask is t with every wire age advanced by the local time elapsed since
@@ -2068,6 +2089,11 @@ func (a *App) agedTask(id string, t protocol.TaskInfo, now time.Time) protocol.T
 	if t.ProgressAt != 0 {
 		if rt, ok := a.progressRecvAt[id]; ok {
 			t.ProgressAgeMs += uint64(now.Sub(rt) / time.Millisecond)
+		}
+	}
+	if t.LifecycleAt != 0 {
+		if rt, ok := a.lifecycleRecvAt[id]; ok {
+			t.LifecycleAgeMs += uint64(now.Sub(rt) / time.Millisecond)
 		}
 	}
 	if t.AuthorityAt != 0 {

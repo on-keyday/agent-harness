@@ -1817,6 +1817,16 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// The live window title; meaningful only when liveTerminal.
 					"liveTerminal": t.LiveTerminal(),
 					"title":        string(t.Title),
+					// The hook-reported lifecycle (wire word, "" never
+					// reported); lifecycleAt is a decimal string like
+					// progressAt. And the program's OSC 7501 report, live-only
+					// like the title.
+					"lifecycle":      cli.LifecycleWord(t.Lifecycle),
+					"lifecycleAt":    strconv.FormatUint(t.LifecycleAt, 10),
+					"lifecycleAgeMs": float64(t.LifecycleAgeMs),
+					"programState":   cli.ProgramWord(t.ProgramState),
+					"programKind":    cli.ProgramKindWord(t.ProgramKind),
+					"programMsg":     string(t.ProgramMsg),
 				})
 			}
 			// taskTree is the creator hierarchy WITH its grid positions, both

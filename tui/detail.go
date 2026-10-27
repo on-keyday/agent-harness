@@ -218,6 +218,11 @@ func formatTaskDetail(t protocol.TaskInfo, runnerByID map[string]protocol.Runner
 	if t.ProgressAt != 0 {
 		fmt.Fprintf(&sb, "progress:      %q (%s)\n", string(t.Progress), cli.AgeStr(t.ProgressAgeMs))
 	}
+	// What the task's hooks last reported, beside its own line and the
+	// output age, so the three can be read against each other.
+	if t.LifecycleAt != 0 {
+		fmt.Fprintf(&sb, "lifecycle:     %s (%s)\n", cli.LifecycleWord(t.Lifecycle), cli.AgeStr(t.LifecycleAgeMs))
+	}
 	// Printed for every live terminal, empty included: "untitled" is a
 	// measurement.
 	if t.LiveTerminal() {

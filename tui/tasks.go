@@ -96,7 +96,7 @@ func flatCols() []table.Column {
 		{Title: "ID", Width: 12},
 		{Title: "From", Width: 6},
 		{Title: "Agent", Width: 14},
-		{Title: "Act", Width: 8},
+		{Title: "Act", Width: 10},
 		{Title: "Repo", Width: 28},
 		{Title: "Doing", Width: 0}, // resized later via SetSize; see doingCell
 	}
@@ -118,7 +118,7 @@ func treeCols() []table.Column {
 		{Title: "ID (by creator)", Width: 28},
 		{Title: "From", Width: 6},
 		{Title: "Agent", Width: 14},
-		{Title: "Act", Width: 8},
+		{Title: "Act", Width: 10},
 		{Title: "Repo", Width: 18},
 		{Title: "Doing", Width: 0},
 	}
@@ -302,10 +302,7 @@ func (m *TasksModel) rebuild() {
 		// Busy/idle badge from the live session's server-computed idle age;
 		// blank for tasks without a live interactive session (the server
 		// leaves last_output_at at 0 for those).
-		act := ""
-		if t.LastOutputAt > 0 {
-			act = cli.ActivityStr(t.OutputIdleMs)
-		}
+		act := actCell(t)
 		idCell := idHex[:12]
 		if m.tree && i < len(gutter) {
 			// 8 hex is what `by=` has always shown, so a reader comparing the
@@ -518,6 +515,24 @@ func doingCell(t protocol.TaskInfo) string {
 		return "(title) " + vtgrid.SanitizeTitle(ti, len(ti))
 	}
 	return renderPromptCell(t)
+}
+
+// actCell is the Act column: the lifecycle badge when the task's hooks report
+// it waiting, ready or failed, else the busy/idle badge from the live
+// session's output age, blank for a task with neither. `wait` is marked by
+// case — WAIT:3m — not by an ANSI style: bubbles truncates cells by width and
+// a style can be cut mid-sequence (see doingCell).
+func actCell(t protocol.TaskInfo) string {
+	if b := cli.LifecycleBadge(&t); b != "" {
+		if t.Lifecycle == protocol.LifecycleState_Waiting {
+			return strings.ToUpper(b[:len("wait")]) + b[len("wait"):]
+		}
+		return b
+	}
+	if t.LastOutputAt > 0 {
+		return cli.ActivityStr(t.OutputIdleMs)
+	}
+	return ""
 }
 
 func renderPromptCell(t protocol.TaskInfo) string {
