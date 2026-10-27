@@ -1702,6 +1702,19 @@ var Verbs = []VerbSpec{
 		Examples: []string{"progress fixing the parser / writing tests", "progress --clear", "progress --clear --task aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	},
 	{
+		Path:           []string{"lifecycle"},
+		NoModalSurface: "written by the claude hooks the runner injects into the worktree's .claude/settings.json; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
+		Notes: []string{
+			"report THIS task's lifecycle state; written by hooks, not called by hand or by the agent",
+			"silent on stdout and exits 0 even on failure, so a hook never disturbs the agent; failures go to stderr",
+		},
+		Action:          "LifecycleAction",
+		CmdlineSurfaces: CLI,
+		Args: []Arg{{Name: "state", Type: ArgString, Field: "State",
+			OneOfArg: []string{"working", "waiting", "idle", "error"}}},
+		Examples: []string{"lifecycle waiting"},
+	},
+	{
 		Path:           []string{"agent", "send"},
 		NoModalSurface: "surveyed: no TUI action and no WebUI element reach this; the command line is the only way in",
 		Notes: []string{

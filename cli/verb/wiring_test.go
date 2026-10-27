@@ -343,6 +343,12 @@ func positionalsFor(v VerbSpec) []string {
 }
 
 func valueFor(a Arg) string {
+	// A positional restricted to a vocabulary refuses anything else, so the
+	// probe must be one of its words (`lifecycle <state>` was the first
+	// REQUIRED one; diag's is optional and never probed).
+	if len(a.OneOfArg) > 0 {
+		return a.OneOfArg[0]
+	}
 	switch a.Type {
 	case ArgTaskID:
 		return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

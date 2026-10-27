@@ -837,6 +837,13 @@ func (h cliVerbs) Progress(a verb.ProgressAction) error {
 	return fmt.Errorf("progress: %s", cli.ProgressSetStatusString(resp.Status))
 }
 
+// Lifecycle is what the injected hooks run. It always returns nil: a hook
+// failure must never surface inside the agent, so errors go to stderr only.
+func (h cliVerbs) Lifecycle(a verb.LifecycleAction) error {
+	cli.ReportLifecycle(h.ctx, h.cid, a.State, os.Stderr)
+	return nil
+}
+
 // AwaitProgress prints one JSON object, as `session await-idle` does, and
 // exits non-zero on everything but fired/armed so scripts can branch.
 func (h cliVerbs) AwaitProgress(a verb.AwaitProgressAction) error {

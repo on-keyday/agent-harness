@@ -254,6 +254,9 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if p := ProgressStr(&t); p != "" {
 		act += "  " + p
 	}
+	if l := LifecycleStr(&t); l != "" {
+		act += "  " + l
+	}
 	if ti := TitleStr(&t); ti != "" {
 		act += "  " + ti
 	}
@@ -512,6 +515,15 @@ type taskJSON struct {
 	ProgressAgeMs uint64 `json:"progress_age_ms"`
 	LiveTerminal  bool   `json:"live_terminal"`
 	Title         string `json:"title"`
+	// The hook-reported lifecycle (wire word, "" when never reported) with its
+	// server stamp / age, and the program's OSC 7501 report (wire words, ""
+	// when none; live-only like the title). All present at zero.
+	Lifecycle      string `json:"lifecycle"`
+	LifecycleAt    uint64 `json:"lifecycle_at"`
+	LifecycleAgeMs uint64 `json:"lifecycle_age_ms"`
+	ProgramState   string `json:"program_state"`
+	ProgramKind    string `json:"program_kind"`
+	ProgramMsg     string `json:"program_msg"`
 	// Who last wrote the task's authority (TaskInfo's authority_* fields).
 	// All present at zero: authority_at == 0 is "recorded before provenance".
 	AuthoritySource      string `json:"authority_source"`
@@ -624,6 +636,12 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		ProgressAgeMs:  t.ProgressAgeMs,
 		LiveTerminal:   t.LiveTerminal(),
 		Title:          string(t.Title),
+		Lifecycle:      LifecycleWord(t.Lifecycle),
+		LifecycleAt:    t.LifecycleAt,
+		LifecycleAgeMs: t.LifecycleAgeMs,
+		ProgramState:   ProgramWord(t.ProgramState),
+		ProgramKind:    ProgramKindWord(t.ProgramKind),
+		ProgramMsg:     string(t.ProgramMsg),
 
 		AuthoritySource:      t.AuthoritySource.String(),
 		AuthorityActor:       taskIDHexOrEmpty(t.AuthorityActor.Id[:]),

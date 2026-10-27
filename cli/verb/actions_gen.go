@@ -419,6 +419,12 @@ type GridAction struct {
 	Mode GridScopeMode
 }
 
+// LifecycleAction is built by: lifecycle.
+type LifecycleAction struct {
+	ActionMarker
+	State string
+}
+
 // ListAction is built by: ls.
 type ListAction struct {
 	ActionMarker
@@ -2358,6 +2364,13 @@ func init() {
 			a.Text = b.Trail
 			return a, nil
 		},
+		"lifecycle\x00cli": func(b Bound) (Action, error) {
+			a := LifecycleAction{}
+			if len(b.Args) > 0 {
+				a.State = b.Args[0]
+			}
+			return a, nil
+		},
 		"agent send\x00cli": func(b Bound) (Action, error) {
 			a := AgentSendAction{}
 			a.Kind = "send"
@@ -3698,6 +3711,7 @@ const (
 	CmdSessionStreamTurn      = "session stream turn"
 	CmdNotify                 = "notify"
 	CmdProgress               = "progress"
+	CmdLifecycle              = "lifecycle"
 	CmdAgentSend              = "agent send"
 	CmdAgentDispatch          = "agent dispatch"
 	CmdPreview                = "preview"
@@ -4977,6 +4991,27 @@ func ParseCmdProgress(sf Surface, args []string, ctx map[string]string) (Progres
 		return zero, err
 	}
 	a := act.(ProgressAction)
+	return a, nil
+}
+
+func ParseCmdLifecycle(sf Surface, args []string, ctx map[string]string) (LifecycleAction, error) {
+	var zero LifecycleAction
+	sp, ok := Lookup("lifecycle")
+	if !ok {
+		return zero, fmt.Errorf("lifecycle: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(LifecycleAction)
 	return a, nil
 }
 
@@ -6428,6 +6463,8 @@ type CLIDispatch[R any] interface {
 	Notify(NotifyAction) R
 	// progress
 	Progress(ProgressAction) R
+	// lifecycle
+	Lifecycle(LifecycleAction) R
 	// agent send
 	AgentSend(AgentSendAction) R
 	// agent dispatch
@@ -6829,6 +6866,12 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.Progress(a), true, nil
+	case CmdLifecycle:
+		a, perr := ParseCmdLifecycle(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.Lifecycle(a), true, nil
 	case CmdAgentSend:
 		a, perr := ParseCmdAgentSend(CLI, args, ctx)
 		if perr != nil {
@@ -7287,6 +7330,8 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 		return h.Notify(a), true
 	case ProgressAction:
 		return h.Progress(a), true
+	case LifecycleAction:
+		return h.Lifecycle(a), true
 	case AgentSendAction:
 		switch a.Kind {
 		case "send":
@@ -7681,6 +7726,12 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdProgress:
 			a, perr := ParseCmdProgress(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdLifecycle:
+			a, perr := ParseCmdLifecycle(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
