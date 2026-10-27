@@ -475,6 +475,11 @@ func New(cfg Config) *Server {
 			// parent-hop copy below drops it.
 			ev.SetLiveTerminal(mux.HasTerminal())
 			ev.SetTitle([]byte(mux.Title()))
+			// The program's OSC 7501 report rides every event like the
+			// title; the parent-hop copy drops its msg.
+			pst, pkind, pmsg := mux.Program()
+			ev.ProgramState, ev.ProgramKind = pst, pkind
+			ev.SetProgramMsg([]byte(pmsg))
 			// Same reason as the act fields above: stamped on EVERY event so
 			// any of them refreshes a subscriber's row. task_observers events
 			// carry this as their payload of interest.

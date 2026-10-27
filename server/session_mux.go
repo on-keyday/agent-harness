@@ -358,7 +358,9 @@ func (m *SessionMux) recordFrame(frameBytes []byte) {
 				m.modes.Feed(frameBytes[frameHeaderSize:])
 				m.screenMu.Lock()
 				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
+				probes := m.screen.TakeProgramStatusQueries()
 				m.screenMu.Unlock()
+				m.answerProgramStatusProbes(probes)
 			}
 			m.lastOutput.Store(time.Now().UnixNano())
 		}
@@ -414,7 +416,25 @@ func (m *SessionMux) loadScreen(b []byte) {
 	m.modes.Feed(b)
 	m.screenMu.Lock()
 	_, _ = m.screen.Write(b)
+	// A probe in a loaded capture was asked of a previous server by a
+	// program that settled its answer long ago: drop it, never answer it.
+	_ = m.screen.TakeProgramStatusQueries()
 	m.screenMu.Unlock()
+}
+
+// answerProgramStatusProbes writes the OSC 7501 probe reply into the PTY's
+// input once per probe seen on the LIVE output. The operator's terminals do
+// not know 7501, and claude probes once, at startup, often with nobody
+// attached, so the server is the only party that can answer
+// (docs/superpowers/specs/2026-10-27-task-lifecycle-design.md D18). This is
+// the one terminal query the harness answers itself; every other one still
+// round-trips to the client.
+func (m *SessionMux) answerProgramStatusProbes(n int) {
+	for ; n > 0; n-- {
+		if err := m.writeFrameToRunner(encodeFrame(frame.FrameType_Stdin, []byte(vtgrid.ProgramStatusQueryReply))); err != nil {
+			return
+		}
+	}
 }
 
 // loadHeldCapture applies a capture the previous server wrote for this session:
@@ -1114,6 +1134,47 @@ func (m *SessionMux) Title() string {
 	t := m.screen.Title()
 	m.screenMu.Unlock()
 	return vtgrid.SanitizeTitle(t, maxWireTitleBytes)
+}
+
+// Program is the root OSC 7501 record the session's program last reported,
+// mapped to the wire enums; msg is sanitized and cut like the title. None for
+// a mux without a terminal and for a program that never reported.
+func (m *SessionMux) Program() (protocol.ProgramState, protocol.ProgramKind, string) {
+	if !m.terminal {
+		return protocol.ProgramState_None, protocol.ProgramKind_None, ""
+	}
+	m.screenMu.Lock()
+	ps := m.screen.ProgramStatus()
+	m.screenMu.Unlock()
+	return programStateOf(ps.State), programKindOf(ps.Kind), vtgrid.SanitizeTitle(ps.Msg, maxWireTitleBytes)
+}
+
+func programStateOf(s string) protocol.ProgramState {
+	switch s {
+	case "idle":
+		return protocol.ProgramState_Idle
+	case "working":
+		return protocol.ProgramState_Working
+	case "done":
+		return protocol.ProgramState_Done
+	case "blocked":
+		return protocol.ProgramState_Blocked
+	case "error":
+		return protocol.ProgramState_Error
+	}
+	return protocol.ProgramState_None
+}
+
+func programKindOf(k string) protocol.ProgramKind {
+	switch k {
+	case "permission":
+		return protocol.ProgramKind_Permission
+	case "question":
+		return protocol.ProgramKind_Question
+	case "auth":
+		return protocol.ProgramKind_Auth
+	}
+	return protocol.ProgramKind_None
 }
 
 // lastWinSizeBytes is the most recent TerminalWindowSize frame as wire bytes,

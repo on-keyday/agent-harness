@@ -2210,6 +2210,14 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 			if t.ID != redactedHex {
 				taskInfos[i].SetTitle([]byte(mux.Title()))
 			}
+			// The program's own report: its state and kind are liveness and
+			// reach the parent-hop row too; its msg is content, like the title.
+			pst, pkind, pmsg := mux.Program()
+			taskInfos[i].ProgramState = pst
+			taskInfos[i].ProgramKind = pkind
+			if t.ID != redactedHex {
+				taskInfos[i].SetProgramMsg([]byte(pmsg))
+			}
 			// Observers, split by kind. Read here rather than stored because
 			// they describe who is watching RIGHT NOW; a terminal task's
 			// observer set is not a fact that outlives its session.

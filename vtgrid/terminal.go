@@ -99,6 +99,12 @@ type Terminal struct {
 	title     string
 	altActive bool
 
+	// program is the root OSC 7501 record the program last reported, and
+	// programQueries counts `OSC 7501 ; ?` probes not yet taken: the screen
+	// model only records them, answering is its owner's job (TakeProgramStatusQueries).
+	program        ProgramStatus
+	programQueries int
+
 	// Parser state, persisted across Write calls so a sequence split across
 	// two frames is still recognised at the boundary.
 	st       parseState
@@ -174,6 +180,19 @@ func (t *Terminal) AltScreen() bool { return t.altActive }
 // informative byte on the wire — a spinner glyph there is re-asserted on every
 // tick, which no cell is.
 func (t *Terminal) Title() string { return t.title }
+
+// ProgramStatus is the root OSC 7501 record the program last reported; the
+// zero value when none (or after state=clear / RIS).
+func (t *Terminal) ProgramStatus() ProgramStatus { return t.program }
+
+// TakeProgramStatusQueries returns how many `OSC 7501 ; ?` probes arrived
+// since the last call, and resets the count. The caller decides whether they
+// get an answer: a live stream's do, a replayed capture's must not.
+func (t *Terminal) TakeProgramStatusQueries() int {
+	n := t.programQueries
+	t.programQueries = 0
+	return n
+}
 
 // CellAt returns the cell at the given position, or the zero Cell when out of
 // bounds. A cell whose Width is 0 is the continuation of the wide glyph to its
@@ -518,6 +537,8 @@ func (t *Terminal) reset() {
 		t.alt.clearRow(y, Color{})
 	}
 	t.resetTabs()
+	// RIS removes every program status record (OSC 7501 spec).
+	t.program = ProgramStatus{}
 }
 
 func (t *Terminal) csi(b byte) {
@@ -589,6 +610,20 @@ func (t *Terminal) endString() {
 		title := s[i+1:]
 		if utf8.ValidString(title) {
 			t.title = title
+		}
+	case "7501":
+		// A body at the buffer cap may have been cut, which would let a
+		// truncated base64 msg read as a different text: discard it whole,
+		// as the protocol's own 4096-byte sequence cap demands anyway.
+		if len(t.strBuf) >= maxString {
+			return
+		}
+		st, query, ok := ParseProgramStatus(s[i+1:])
+		switch {
+		case query:
+			t.programQueries++
+		case ok:
+			t.program = st
 		}
 	case "8":
 		// `OSC 8 ; params ; URI ST` opens a hyperlink that every cell written
