@@ -66,3 +66,18 @@ func TestFormatRunnerUnenroll(t *testing.T) {
 		t.Error("not_found must not read as success")
 	}
 }
+
+// The undo line is the recovery after a mistaken --force: it must run as
+// printed, whatever the label holds.
+func TestFormatRunnerUnenrollUndoQuotesTheLabel(t *testing.T) {
+	k := testKey(0xcd)
+	got, _ := FormatRunnerUnenroll(protocol.RunnerKeyStatus_Ok, RunnerUnenrollResult{Key: k, Label: "build box's"})
+	want := "undo: harness-cli runner enroll " + hex.EncodeToString(k) + ` --label 'build box'\''s'`
+	if !strings.Contains(got, want) {
+		t.Fatalf("undo line not shell-safe:\n%s\nwant %s", got, want)
+	}
+	got, _ = FormatRunnerUnenroll(protocol.RunnerKeyStatus_Ok, RunnerUnenrollResult{Key: k, Label: "gmk"})
+	if !strings.Contains(got, " --label gmk\n") {
+		t.Fatalf("a plain label should stay unquoted:\n%s", got)
+	}
+}

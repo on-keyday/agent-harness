@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -90,5 +91,37 @@ func TestDefaultRunnerKeyPathIgnoresXDG(t *testing.T) {
 	want := filepath.Join(home, ".config", "harness", "runner-key")
 	if got != want {
 		t.Fatalf("DefaultRunnerKeyPath() = %q, want %q", got, want)
+	}
+}
+
+// Every slot on a machine reads one key file, and a fleet restart starts them
+// together the first time it exists. Each must come up with the same key; a
+// loser of the create race must never read a half-written file.
+func TestLoadOrCreateRunnerKeyConcurrentFirstStart(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		path := filepath.Join(t.TempDir(), "runner-key")
+		const n = 16
+		keys := make([]ed25519.PrivateKey, n)
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				keys[i], errs[i] = LoadOrCreateRunnerKey(path)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		for i := 0; i < n; i++ {
+			if errs[i] != nil {
+				t.Fatalf("round %d: slot %d failed: %v", round, i, errs[i])
+			}
+			if !bytes.Equal(keys[i].Public().(ed25519.PublicKey), keys[0].Public().(ed25519.PublicKey)) {
+				t.Fatalf("round %d: slot %d got a different key", round, i)
+			}
+		}
 	}
 }

@@ -290,7 +290,7 @@ Arguments: $ARGUMENTS
    - Proceed only after the user picks (2) or (3). Never silently override `--hostname` without confirmation.
 
 4b. **Enroll this host's runner key** (once per machine and user; every slot that reads the same key file shares it).
-   - `"$HARNESS_REPO_PATH/bin/agent-runner" --print-pubkey [--runner-key-file <path>]` prints the 64-hex public key on stdout (creating the key at `<home>/.config/harness/runner-key` if absent) and the file it read on stderr.
+   - `"$HARNESS_REPO_PATH/bin/agent-runner" --print-pubkey [--runner-key-file <path>]` prints the 64-hex public key on stdout (creating the key at `<home>/.config/harness/runner-key` if absent) and the file it read on stderr. Pass the same `--runner-key-file` the slot will get, and run it as the user the slot runs as, on the host itself — from a sandboxed shell `<home>` is a different directory and this prints (and creates) a key the slot never reads. The stderr path is the check: it must be the file the slot will read.
    - `harness-cli runner keys` — if a key line starts with the first 16 hex of that key, it is already enrolled; go on to step 5.
    - Otherwise `harness-cli runner enroll <64-hex> --label "$HARNESS_HOSTNAME"`. This needs the `runner_enroll` capability. If it answers `permission denied`, do not work around it: give the user that exact command to run from an operator surface (or to grant you `runner_enroll` with `caps set`), and continue — a runner started before its key is enrolled retries and connects once it is.
 

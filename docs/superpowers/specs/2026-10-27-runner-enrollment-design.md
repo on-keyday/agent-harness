@@ -436,3 +436,28 @@ verifying against this spec is not misled.
   from, which is what makes phase 2's self-heal a plain reconnect.
 - **Migration step 1** gained its precondition: the server's own command line
   must not carry `--psk` / `--psk-file`.
+- **`agent-runner` keeps `--psk` / `--psk-file`, ignored, with a startup WARN**
+  (amends D13 for the runner only). A slot's command line is frozen where it
+  was registered — a systemd unit, a Task Scheduler entry, the argv
+  `restart.py` replays — so a runner that refused an unknown flag would not
+  come back on a remote host, and D5 has no hands on that host. The server's
+  flags stay removed: its restart is the operator's own step. The follow-up
+  change removes the runner's two.
+- **A listen-mode runner refused `not_enrolled` does not retry.** "Needs no
+  separate handling" above holds for the proof, not for the retry: the server
+  dialed, and nothing redials. `server dial-runner` answers `ok` once ECDH and
+  the greeting are done, before the gate, so the refusal shows only as an
+  absent `ls` row. After an enroll, or an undo, the operator dials it again.
+  Documented in the README; no code change.
+- **Skew row, added:** old client × new server authenticates as
+  `client_legacy`, but cannot decode `ls`, because `RunnerInfo` grew. No
+  compatibility layer for it: it is not the path the harness upgrades through
+  — migration step 2 rebuilds every client, and nothing between steps 1 and 2
+  needs `ls`.
+- **The runner key is created by link, not by create-exclusive.** Every slot
+  of a machine reads one file and a fleet restart starts them together; a
+  slot that lost the create race could read the winner's empty file and exit
+  "does not parse". The key is written whole to a temp file and linked into
+  place; the loser reads the winner's file.
+- **The undo line shell-quotes the label**, so it runs as printed whatever the
+  label holds.

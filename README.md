@@ -846,9 +846,18 @@ bin/harness-cli runner unenroll <prefix> --force     # …this closes them, and 
 bin/agent-runner --rotate-key                        # new key; the old one kept as runner-key.prev
 ```
 
+Run `--print-pubkey` on the runner's host, as the user the runner runs as, and
+with the same `--runner-key-file` if the runner is given one — from anywhere
+else (another user, a sandboxed agent's shell) it prints, or creates, a
+different key.
+
 A runner whose key is not enrolled is refused `not_enrolled`, logs its key and
 the command that enrolls it, and keeps retrying, so a runner started first and
-enrolled afterwards connects by itself. The three verbs need the
+enrolled afterwards connects by itself. A runner in listen mode is the
+exception: it does not dial, so after enrolling its key (or undoing an
+unenroll) run `server dial-runner` for it again. `server dial-runner` answers
+`ok` once the connection is made, before the runner's key is checked, so `ls`
+is where a refused one shows — it is absent. The three verbs need the
 `runner_enroll` capability (an operator holds it); an agent that brings runners
 up for you needs it granted. `runner_admin` is a different power — `server
 dial-runner`, the server's own network reach — and implies nothing here. The
@@ -866,7 +875,10 @@ authenticates with the old handshake, marked `legacy` on runner rows, on
 acceptance; it lands once nothing reads `legacy`. Upgrade the **server
 first**: a new client or runner cannot talk to an old server. A server started
 with `--psk` / `--psk-file` must have them removed from its command line, or
-the new binary refuses to start. Design:
+the new binary refuses to start. `agent-runner` instead accepts both flags,
+ignores them and warns at startup, so a slot registered with them comes back
+after the rebuild. An old CLI, TUI or WebUI connects but cannot read `ls` (the
+runner row grew); rebuild it. Design:
 `docs/superpowers/specs/2026-10-27-runner-enrollment-design.md`.
 
 ## Operating modes

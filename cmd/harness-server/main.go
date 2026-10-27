@@ -123,9 +123,6 @@ func resolveOperatorPSK(val, file, dataDir string, permitNone bool) ([]byte, err
 // --server-key-file is not given; its public half goes to <name>.pub beside it.
 const serverKeyFileName = "server-key"
 
-// resolveServerKey loads the server's Ed25519 key, generating it on first run
-// the way resolveOperatorPSK does. A file that exists but does not parse is an
-// error: regenerating would silently invalidate every client's pinned key.
 const runnerKeysFileName = "runner-keys.json"
 
 // loadRunnerKeys reads <data-dir>/runner-keys.json. A file that does not parse
@@ -141,6 +138,9 @@ func loadRunnerKeys(dataDir string) (*server.RunnerKeyStore, error) {
 	return server.LoadRunnerKeyStore(filepath.Join(dataDir, runnerKeysFileName), nil)
 }
 
+// resolveServerKey loads the server's Ed25519 key, generating it on first run
+// the way resolveOperatorPSK does. A file that exists but does not parse is an
+// error: regenerating would silently invalidate every client's pinned key.
 func resolveServerKey(file, dataDir string) (ed25519.PrivateKey, error) {
 	if file == "" {
 		if dataDir == "" {

@@ -59,27 +59,40 @@ func RotateRunnerKey(path string) (ed25519.PrivateKey, error) {
 }
 
 func writeNewRunnerKey(path string) (ed25519.PrivateKey, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("runner key: %w", err)
 	}
 	seed := make([]byte, ed25519.SeedSize)
 	if _, err := rand.Read(seed); err != nil {
 		return nil, fmt.Errorf("runner key: %w", err)
 	}
-	// O_EXCL: two runners starting at once must not each write a key and
-	// leave the loser enrolled under a key that is no longer on disk.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return LoadOrCreateRunnerKey(path)
-	}
+	// Written whole to a temp file, then linked into place. Every slot of a
+	// machine reads this one file, and a fleet restart starts them together:
+	// creating the path directly let a slot that lost the race read it before
+	// the winner had written it and exit on "does not parse". A link either
+	// places a complete file or fails because one is already there.
+	tmp, err := os.CreateTemp(dir, ".runner-key-*")
 	if err != nil {
 		return nil, fmt.Errorf("runner key: %w", err)
 	}
-	if _, err := f.WriteString(hex.EncodeToString(seed) + "\n"); err != nil {
-		f.Close()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		tmp.Close()
 		return nil, fmt.Errorf("runner key: %w", err)
 	}
-	if err := f.Close(); err != nil {
+	if _, err := tmp.WriteString(hex.EncodeToString(seed) + "\n"); err != nil {
+		tmp.Close()
+		return nil, fmt.Errorf("runner key: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, fmt.Errorf("runner key: %w", err)
+	}
+	if err := os.Link(tmpName, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return LoadOrCreateRunnerKey(path) // another slot won; its file is whole
+		}
 		return nil, fmt.Errorf("runner key: %w", err)
 	}
 	return ed25519.NewKeyFromSeed(seed), nil

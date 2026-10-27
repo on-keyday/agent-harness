@@ -206,7 +206,7 @@ func FormatRunnerUnenroll(st protocol.RunnerKeyStatus, res RunnerUnenrollResult)
 		runnerUserLines(&sb, res.Runners)
 		undo := "undo: harness-cli runner enroll " + hex.EncodeToString(res.Key)
 		if res.Label != "" {
-			undo += " --label " + res.Label
+			undo += " --label " + shellWord(res.Label)
 		}
 		sb.WriteString(undo + "\n")
 		return sb.String(), true
@@ -220,4 +220,17 @@ func FormatRunnerUnenroll(st protocol.RunnerKeyStatus, res RunnerUnenrollResult)
 		return "runner unenroll: more than one enrolled key has that prefix; give more of it\n", false
 	}
 	return fmt.Sprintf("runner unenroll: %v\n", st), false
+}
+
+// shellWord quotes s for a POSIX shell when it holds anything but plain word
+// characters: the undo line is pasted after a mistaken --force, so it must run
+// as printed.
+func shellWord(s string) string {
+	plain := s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_.,:/@+=", r))
+	}) < 0
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
