@@ -836,6 +836,31 @@ end of the task and a deliberate server restart, but a server crash loses it.
 It is not a board message; a supervisor that wants to act on your next write
 arms `await-progress` on your task (see `supervising-workers`).
 
+## What `ls` says a task is doing (`lifecycle=`, `program=`)
+
+Two more fields sit beside `progress=` on a live task's row. Neither is
+yours to write.
+
+- **`lifecycle=<state> (<age>)`** is written by the hooks the runner injects into
+  `.claude/settings.json`. Those hooks run `harness-cli lifecycle <state>` on
+  claude's own events. **Do not call `harness-cli lifecycle` yourself**: the
+  next hook overwrites it, and in the meantime your row says something your
+  runtime did not.
+  - `working`: a turn is running.
+  - `waiting`: blocked on a human inside the turn, on a permission prompt or a
+    question.
+  - `idle`: the turn ended and the task waits for its next prompt.
+  - `error`: the turn ended on an API or model error.
+- **`program=<state>[:<kind>]`** is the program's own report (OSC 7501), read
+  off its terminal. It is shown only while the task has a live terminal.
+
+The two come from different sources and are not reconciled, so they can
+disagree. An interrupted turn (Esc) fires no hook and stays `working`; read it
+against `act=` (output age) before concluding a worker is busy. `ls --json`
+carries both fields on every row, at zero when never reported: `lifecycle`,
+`lifecycle_at`, `lifecycle_age_ms`, `program_state`, `program_kind`,
+`program_msg`.
+
 ## How a body reaches the receiver — and never reading base64 by eye
 
 The broker delivers `--data` verbatim; the `inbox` / `read` JSON-Lines output
