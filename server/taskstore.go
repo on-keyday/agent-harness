@@ -397,22 +397,50 @@ func (s *TaskStore) SetProgress(id, text string, at int64) (TaskEntry, bool) {
 	return *t, true
 }
 
-// progressLine is one task's line as the snapshot carries it.
+// SetLifecycle records a lifecycle report. Hooks run async, so two reports
+// from one task can land out of order: one whose reporter stamp is older than
+// the stored one is stale and changes nothing (an equal stamp is accepted).
+// The server stamp only ever increases, as SetProgress's does.
+func (s *TaskStore) SetLifecycle(id string, st protocol.LifecycleState, reportedAt, at int64) (TaskEntry, protocol.LifecycleSetStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return TaskEntry{}, protocol.LifecycleSetStatus_NotFound
+	}
+	if reportedAt < t.LifecycleReportedAt {
+		return *t, protocol.LifecycleSetStatus_Stale
+	}
+	if at <= t.LifecycleAt {
+		at = t.LifecycleAt + 1
+	}
+	t.Lifecycle = st
+	t.LifecycleAt = at
+	t.LifecycleReportedAt = reportedAt
+	return *t, protocol.LifecycleSetStatus_Ok
+}
+
+// progressLine is one task's progress line and lifecycle as the snapshot
+// carries them.
 type progressLine struct {
-	TaskID     string `json:"task_id"`
-	Progress   string `json:"progress"`
-	ProgressAt int64  `json:"progress_at"`
+	TaskID              string `json:"task_id"`
+	Progress            string `json:"progress"`
+	ProgressAt          int64  `json:"progress_at"`
+	Lifecycle           uint8  `json:"lifecycle"`
+	LifecycleAt         int64  `json:"lifecycle_at"`
+	LifecycleReportedAt int64  `json:"lifecycle_reported_at"`
 }
 
 // progressLines returns every task that has ever written a line (cleared ones
-// included: a clear is a write, with its own stamp).
+// included: a clear is a write, with its own stamp) or reported a lifecycle.
 func (s *TaskStore) progressLines() []progressLine {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []progressLine
 	for id, t := range s.tasks {
-		if t.ProgressAt != 0 {
-			out = append(out, progressLine{TaskID: id, Progress: t.Progress, ProgressAt: t.ProgressAt})
+		if t.ProgressAt != 0 || t.LifecycleAt != 0 {
+			out = append(out, progressLine{TaskID: id, Progress: t.Progress, ProgressAt: t.ProgressAt,
+				Lifecycle: uint8(t.Lifecycle), LifecycleAt: t.LifecycleAt, LifecycleReportedAt: t.LifecycleReportedAt})
 		}
 	}
 	return out
@@ -430,6 +458,9 @@ func (s *TaskStore) restoreProgress(l progressLine) bool {
 	}
 	t.Progress = l.Progress
 	t.ProgressAt = l.ProgressAt
+	t.Lifecycle = protocol.LifecycleState(l.Lifecycle)
+	t.LifecycleAt = l.LifecycleAt
+	t.LifecycleReportedAt = l.LifecycleReportedAt
 	return true
 }
 
@@ -622,6 +653,9 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.ResumedByKind = resumerKind
 	e.Kind = newKind
 	e.AgentProfile = agentProfile
+	// The resumed run may report from another runner host whose clock is
+	// behind this one's; its first lifecycle report must not read as stale.
+	e.LifecycleReportedAt = 0
 
 	if s.wal != nil {
 		if err := s.wal.Write(WALEvent{

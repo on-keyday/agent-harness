@@ -48,6 +48,9 @@ type TaskHandler struct {
 	// response is sent. Server.New wires it to a task_progress event publish;
 	// nil-safe for tests that construct TaskHandler directly.
 	OnTaskProgress func(taskHex string)
+	// OnTaskLifecycle fires after an accepted (not stale) lifecycle_set,
+	// before the response is sent.
+	OnTaskLifecycle func(taskHex string)
 
 	// OnSessionObservers fires when a session's observer set changes (a viewer
 	// or cowriter attached or left). Those attaches move no task status by
@@ -901,6 +904,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_ProgressSet:
 		h.handleProgressSet(conn, &req)
+	case protocol.TaskControlKind_LifecycleSet:
+		h.handleLifecycleSet(conn, &req)
 
 	case protocol.TaskControlKind_ProgressClear:
 		h.handleProgressClear(conn, &req)
@@ -2570,6 +2575,8 @@ func redactParentTaskInfo(info *protocol.TaskInfo) {
 	info.ProgressAt = 0
 	info.ProgressAgeMs = 0
 	info.SetTitle(nil)
+	// Lifecycle stays: whether the parent is working or waiting on a human is
+	// liveness, like output_idle_ms, not content.
 }
 
 // notifyWorkerInfo is the sender identity of a notify, derived from what the

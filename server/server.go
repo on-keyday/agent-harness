@@ -437,9 +437,12 @@ func New(cfg Config) *Server {
 		var taskKind protocol.TaskKind
 		var progress string
 		var progressAt int64
+		var lifecycle protocol.LifecycleState
+		var lifecycleAt int64
 		if t, ok := s.tasks.Get(taskID); ok {
 			taskKind = t.Kind
 			progress, progressAt = t.Progress, t.ProgressAt
+			lifecycle, lifecycleAt = t.Lifecycle, t.LifecycleAt
 		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
@@ -453,6 +456,11 @@ func New(cfg Config) *Server {
 		ev.SetProgress([]byte(progress))
 		ev.ProgressAt = uint64(progressAt)
 		ev.ProgressAgeMs = progressAgeMs(progressAt)
+		// Stored too, and liveness rather than content: a parent-hop
+		// subscriber keeps it (the redaction below leaves it alone).
+		ev.Lifecycle = lifecycle
+		ev.LifecycleAt = uint64(lifecycleAt)
+		ev.LifecycleAgeMs = progressAgeMs(lifecycleAt)
 		// Live-session act enrichment on EVERY task event (same point-in-time
 		// mux read as List enrichment in handleList): any event keeps a
 		// subscriber's busy/idle badge current, and task_activity events get
@@ -531,6 +539,16 @@ func New(cfg Config) *Server {
 			return
 		}
 		publishTaskEvent(taskHex, protocol.StatusEventKind_TaskProgress, t.Status, 0)
+	}
+
+	// A task's hooks reported a lifecycle state: publish task_lifecycle so
+	// event-driven clients update the badge without a List.
+	s.taskHandler.OnTaskLifecycle = func(taskHex string) {
+		t, ok := s.tasks.Get(taskHex)
+		if !ok {
+			return
+		}
+		publishTaskEvent(taskHex, protocol.StatusEventKind_TaskLifecycle, t.Status, 0)
 	}
 
 	// An observer attaching to or leaving a live session changes nothing the
