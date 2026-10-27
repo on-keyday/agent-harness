@@ -54,7 +54,8 @@ the author chose it while writing; those rows are the ones to check.
 | D22 | Claude's own question tool `AskUserQuestion` gets its own hook: `PreToolUse` with the matcher `AskUserQuestion` → waiting. Its `PostToolUse` (after the answer) → working through the generic hook. The operator runs claude in auto mode, where permission dialogs rarely appear, so an explicit question is the main source of `wait`. Orca records only that it "can arrive as PermissionRequest" (`src/main/agent-hooks/server/server-claude-status-rules.ts:85` at `4c66f91`); "can" is no guarantee in auto mode. `PreToolUse` fires before the tool runs, whatever the permission mode. If the question is dismissed, claude may omit the final hook (Orca `server-status-inference.ts:224`), and `wait` then stays until the next prompt, as D25 (2). The dummy E2E includes one `AskUserQuestion` run in auto mode | operator (runs auto mode) + this spec |
 | D23 | D10's "same host" premise is false across a resume: a resume can bind to a different runner (`handleSubmitResume`). The stored reporter stamp is reset to 0 when a task is resumed, so the new host's first report is never dropped as stale | this spec (builder check) |
 | D24 | Every task kind gets the same lifecycle hooks, event-stream included. `WriteAgentSettings` already injects identically for oneshot (`handleAssign`), interactive PTY and event-stream (both `handleOpenExec`, `runner/session.go:969`), and nothing changes there. Unverified: whether `PermissionRequest` fires for event-stream claude (`--permission-prompt-tool stdio`). If it does not, only `wait` is missing for those tasks; `working`/`ready`/`err` still come from the other hooks. The E2E checks this for one event-stream task. **Result (2026-10-27):** `waiting` appeared for an `AskUserQuestion` in an event-stream task. A permission prompt in stream mode was not exercised, so it remains unverified. A first draft excluded event-stream; that was withdrawn because "unverified" is a reason to verify, not to exclude. If `wait` turns out missing there, the follow-up is to have the stream adapter report it from its pending table, and that needs its own design, since it makes a second writer | this spec |
-| D19 | Display words differ from wire names so they cannot be confused with the existing output-activity badge (`busy` / `idle:3m`, `cli.ActivityStr`). `waiting` → `wait`, `idle` → `ready`, `error` → `err`. `working` and unset show the existing activity badge unchanged, so an interrupted turn stuck at `working` (D15) still reads `idle:12m` | this spec |
+| D19 | Display words differ from wire names so they cannot be confused with the existing output-activity badge (`busy` / `idle:3m`, `cli.ActivityStr`). `waiting` → `wait`, `idle` → `ready`, `error` → `err`. ~~`working` and unset show the existing activity badge unchanged~~ — **amended by D28**: `working` → `work`, and unset is shown too. An interrupted turn stuck at `working` (D15) still reads, because the activity badge stays beside the lifecycle one (`work:12m` next to `idle:12m`) | this spec, amended by D28 (operator) |
+| D28 | **Every lifecycle state is on the list, beside the program badge.** Reversal of D19's hiding and of the Phase 2 "WebUI task sheet only" row. What moved it: the operator found the WebUI fragmented. The sheet repeated the row's badge (`ready:42s` on the row, `lifecycle ready:42s` under the id), and the program status sat on a third line of plain text. Nothing showed at all unless the task was `ready`, `wait` or `err`. That last point also hid the fleet-wide failure seen on 2026-10-27, when runners older than the hooks left every task unreported and the lists looked the same as before. Now: (1) `work:5s` / `wait:3m` / `ready:12m` / `err:30s`, and `lc:-` for a live task that never reported (`lifecycle=-` in `ls`, `- (never reported)` in the TUI detail popup); nothing for a finished task (D14 holds). (2) The WebUI row shows the program badge right after it (`prog blocked:question`, kind only with blocked, the full line with msg as its tooltip). The sheet no longer repeats either. (3) Colors: red for `wait`/`err`/`prog blocked`/`prog error`, default blue for `ready`, gray for everything else. (4) The TUI gives lifecycle its own `Life` column before `Act`. Act keeps the activity badge, so the D15 reading stays possible. Life comes and goes with `Obs` on the same panel-width threshold; below it the Act cell carries the lifecycle badge, since there is room for only one | operator (1)–(3), 2026-10-27; this spec (4): it keeps D15 readable in a one-cell column |
 | D20 | Lifecycle survives parent-hop redaction (`redactParentTaskInfo`). It is liveness like `output_idle_ms`, not content like progress and title | this spec |
 | D14 | Lifecycle is shown only while the task is non-terminal. It is not cleared when the task ends. Surfaces stop rendering it, so a finished task does not read "working" | this spec |
 | D15 | Known gap, narrowed by the final review: an Esc while a TOOL runs fires `PostToolUseFailure` with `is_interrupt`, which ends the turn (measured: `idle` within ~2 s). An Esc while the model is still thinking fires no claude hook, so the field stays `working` until the next prompt. Surfaces show the lifecycle age next to the existing output-idle age, and the reader judges (same stance as progress D4) | this spec |
@@ -167,15 +168,15 @@ Walk `.claude/skills/surface-parity-checklist` item by item. Minimum:
 
 | Surface | Display |
 | --- | --- |
-| CLI `ls` text (`taskLine`) | `lifecycle=waiting (3m ago)` while non-terminal and written; wire names in this machine-adjacent surface |
+| CLI `ls` text (`taskLine`) | `lifecycle=waiting (3m ago)` while non-terminal, `lifecycle=-` when never reported (D28); wire names in this machine-adjacent surface |
 | CLI `ls --json` / `session ls` | `lifecycle` (wire name string, `""` when unset), `lifecycle_at`, `lifecycle_age_ms`, always present |
-| TUI task table, `Act` column (`tui/tasks.go`, flat and tree) | D19 words with the age, e.g. `wait:3m`, `ready:12m`, `err:1m`. The column widens from 8 to 10 in both column sets. `wait` is bold. `working` / unset keep `cli.ActivityStr` as today |
-| TUI detail popup | `lifecycle: waiting (3m ago)` beside progress age and output-idle age |
-| WebUI task list row, task sheet, tree node | a badge with the D19 word and age after the status label. `wait` and `err` use `taskStatusColor("Failed")` (`#f14c4c`, `webui/static/main.js` `taskStatusColor`). `ready` uses the default `#61afef`. The tree node shows the badge in its status line |
+| TUI task table, `Life` column (`tui/tasks.go`, flat and tree) | D19/D28 words with the age, e.g. `work:5s`, `WAIT:3m`, `ready:12m`, `err:1m`, `lc:-`; width 10. `wait` is upper-cased, not styled, because bubbles may cut an ANSI sequence when it truncates a cell. Shown with `Obs` above the same panel width; below it the `Act` cell carries the badge instead of `cli.ActivityStr` (D28 (4)) |
+| TUI detail popup | `lifecycle: waiting (3m ago)` or `lifecycle: - (never reported)` beside progress age and output-idle age |
+| WebUI task list row, tree node | a badge with the D19/D28 word and age after the status label. `wait` and `err` use `taskStatusColor("Failed")` (`#f14c4c`, `webui/static/main.js` `taskStatusColor`). `ready` uses the default `#61afef`; `work` and `lc:-` are gray. The tree node shows the badge in its status line. The task sheet does not repeat it (D28) |
 
 The point of D1 is that `wait` and `ready` stand out at a glance in a list of
-working rows. `working` therefore adds nothing visible: the activity badge
-already covers it.
+working rows. Color does that; `work` and `lc:-` are shown in gray so that a
+task whose hooks never fire can be told from a quiet one (D28).
 
 ### Agent skill
 
@@ -198,16 +199,16 @@ every verb, mark this one "written by hooks; do not call".
 - The replay already strips OSC `?`-queries (9580515), so a recorded probe is
   never re-answered on attach.
 
-Surfaces. The point is to show a disagreement with lifecycle (D3), not to add
-another badge to the list:
+Surfaces. The point is to show a disagreement with lifecycle (D3), so the
+program badge sits right beside the lifecycle badge (D28):
 
 | Surface | Display |
 | --- | --- |
 | CLI `ls` text | `program=blocked:permission` when `live_terminal` and a state was ever reported; `msg` is not printed |
 | CLI `ls --json` / `session ls` | `program_state`, `program_kind` (wire names, `""` when absent) and `program_msg`, always present |
-| TUI task table | nothing. The `Act` column carries lifecycle only (D19) |
+| TUI task table | nothing: the table cannot afford another column at the widths it supports. The `d` detail popup carries it |
 | TUI detail popup | `program: blocked (permission) — <msg>` on its own line, under the lifecycle line |
-| WebUI task sheet | the same line under the lifecycle badge. Not on the list row or the tree node |
+| WebUI task list row | `prog blocked:permission` right after the lifecycle badge, red for `blocked` / `error`, gray otherwise; the full line with `msg` as its tooltip. ~~WebUI task sheet: the same line under the lifecycle badge~~ — replaced by D28. Not on the tree node: its status line is 132 px wide |
 
 ### The probe (D18)
 

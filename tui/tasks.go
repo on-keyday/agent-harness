@@ -65,11 +65,15 @@ func colsFor(tree bool, width int) []table.Column {
 		cols = treeCols()
 	}
 	if width >= obsColumnMinWidth {
-		// Inserted before Repo, so the live-session columns (Act, Obs) stay
-		// adjacent: one says whether the AGENT is working, the other whether a
-		// HUMAN is on it.
-		out := make([]table.Column, 0, len(cols)+1)
+		// Life is inserted before Act and Obs before Repo, so the live-session
+		// columns (Life, Act, Obs) stay adjacent: what the agent's hooks say,
+		// whether its screen is moving, and whether a HUMAN is on it.
+		out := make([]table.Column, 0, len(cols)+2)
 		for _, c := range cols {
+			if c.Title == "Act" {
+				// 10 fits ready:999m.
+				out = append(out, table.Column{Title: "Life", Width: 10})
+			}
 			if c.Title == "Repo" {
 				// 10, not 7: the cell can carry "0c 0v 12x" when commands are
 				// running in the worktree, and bubbles hard-truncates a cell to its
@@ -84,8 +88,9 @@ func colsFor(tree bool, width int) []table.Column {
 	return cols
 }
 
-// showsObs reports whether the current column set includes Obs, so SetRows
-// builds exactly as many cells as there are columns.
+// showsObs reports whether the current column set includes Obs and Life, so
+// SetRows builds exactly as many cells as there are columns. Below the
+// threshold the Act cell carries the lifecycle badge instead (actCell).
 func (m *TasksModel) showsObs() bool { return m.width >= obsColumnMinWidth }
 
 // flatCols is the default column set. Kept as a function so NewTasks and
@@ -299,10 +304,6 @@ func (m *TasksModel) rebuild() {
 		} else if r, ok := runnerByID[t.AssignedTo.Hex()]; ok {
 			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 		}
-		// Busy/idle badge from the live session's server-computed idle age;
-		// blank for tasks without a live interactive session (the server
-		// leaves last_output_at at 0 for those).
-		act := actCell(t)
 		idCell := idHex[:12]
 		if m.tree && i < len(gutter) {
 			// 8 hex is what `by=` has always shown, so a reader comparing the
@@ -314,10 +315,11 @@ func (m *TasksModel) rebuild() {
 			idCell,
 			originCell(t.OriginKind),
 			agent,
-			act,
 		}
 		if m.showsObs() {
-			row = append(row, observerCell(t))
+			row = append(row, lifeCell(t), actCell(t, false), observerCell(t))
+		} else {
+			row = append(row, actCell(t, true))
 		}
 		row = append(row,
 			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
@@ -517,17 +519,28 @@ func doingCell(t protocol.TaskInfo) string {
 	return renderPromptCell(t)
 }
 
-// actCell is the Act column: the lifecycle badge when the task's hooks report
-// it waiting, ready or failed, else the busy/idle badge from the live
-// session's output age, blank for a task with neither. `wait` is marked by
-// case — WAIT:3m — not by an ANSI style: bubbles truncates cells by width and
-// a style can be cut mid-sequence (see doingCell).
-func actCell(t protocol.TaskInfo) string {
-	if b := cli.LifecycleBadge(&t); b != "" {
-		if t.Lifecycle == protocol.LifecycleState_Waiting {
-			return strings.ToUpper(b[:len("wait")]) + b[len("wait"):]
+// lifeCell is the Life column: the lifecycle badge (cli.LifecycleBadge), blank
+// for a finished task. `wait` is marked by case — WAIT:3m — not by an ANSI
+// style: bubbles truncates cells by width and a style can be cut mid-sequence
+// (see doingCell).
+func lifeCell(t protocol.TaskInfo) string {
+	b := cli.LifecycleBadge(&t)
+	if rest, ok := strings.CutPrefix(b, "wait:"); ok {
+		return "WAIT:" + rest
+	}
+	return b
+}
+
+// actCell is the Act column: the busy/idle badge from the live session's
+// output age, blank for a task without a live session (the server leaves
+// last_output_at at 0 for those). In a panel too narrow for the Life column
+// (merged), the lifecycle badge takes the cell when there is one: what the
+// hooks say is the answer the operator scans the list for.
+func actCell(t protocol.TaskInfo, merged bool) string {
+	if merged {
+		if b := lifeCell(t); b != "" {
+			return b
 		}
-		return b
 	}
 	if t.LastOutputAt > 0 {
 		return cli.ActivityStr(t.OutputIdleMs)

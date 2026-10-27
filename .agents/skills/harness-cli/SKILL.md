@@ -853,6 +853,10 @@ yours to write.
     question.
   - `idle`: the turn ended and the task waits for its next prompt.
   - `error`: the turn ended on an API or model error.
+  - `-`: no hook has reported. Its hooks are not firing: an agent other than
+    claude, a `--no-worktree` task without injected settings, or a runner
+    started before the hooks existed. It says nothing about whether the task is
+    busy; read `act=` for that.
 - **`program=<state>[:<kind>]`** is the program's own report (OSC 7501), read
   off its terminal. It is shown only while the task has a live terminal.
 

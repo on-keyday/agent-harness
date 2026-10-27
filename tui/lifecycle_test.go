@@ -21,23 +21,79 @@ func lifecycleRow(st protocol.LifecycleState, ageMs uint64) protocol.TaskInfo {
 	return t
 }
 
-// The Act cell shows the lifecycle badge when there is one, the activity badge
-// otherwise. `wait` is marked by case, not by an ANSI style: bubbles truncates
-// cells by width and a style can be cut mid-sequence.
-func TestActCell_Lifecycle(t *testing.T) {
-	if got := actCell(lifecycleRow(protocol.LifecycleState_Waiting, 180000)); got != "WAIT:3m" {
-		t.Errorf("waiting = %q, want WAIT:3m", got)
+// The Life cell shows every lifecycle state, and lc:- for a live task that
+// never reported (D28). `wait` is marked by case, not by an ANSI style: bubbles
+// truncates cells by width and a style can be cut mid-sequence.
+func TestLifeCell(t *testing.T) {
+	cases := []struct {
+		st   protocol.LifecycleState
+		age  uint64
+		want string
+	}{
+		{protocol.LifecycleState_Working, 1000, "work:1s"},
+		{protocol.LifecycleState_Waiting, 180000, "WAIT:3m"},
+		{protocol.LifecycleState_Idle, 720000, "ready:12m"},
+		{protocol.LifecycleState_Error, 30000, "err:30s"},
 	}
-	if got := actCell(lifecycleRow(protocol.LifecycleState_Idle, 720000)); got != "ready:12m" {
-		t.Errorf("idle = %q, want ready:12m", got)
+	for _, c := range cases {
+		if got := lifeCell(lifecycleRow(c.st, c.age)); got != c.want {
+			t.Errorf("%v = %q, want %q", c.st, got, c.want)
+		}
 	}
-	if got, want := actCell(lifecycleRow(protocol.LifecycleState_Working, 1000)), cli.ActivityStr(90000); got != want {
-		t.Errorf("working = %q, want the activity badge %q", got, want)
+	never := lifecycleRow(protocol.LifecycleState_Unset, 0)
+	never.LifecycleAt = 0
+	if got := lifeCell(never); got != "lc:-" {
+		t.Errorf("never reported = %q, want lc:-", got)
 	}
-	noSession := lifecycleRow(protocol.LifecycleState_Unset, 0)
-	noSession.LastOutputAt, noSession.LifecycleAt = 0, 0
-	if got := actCell(noSession); got != "" {
-		t.Errorf("no session, no lifecycle = %q, want blank", got)
+	done := lifecycleRow(protocol.LifecycleState_Waiting, 1000)
+	done.Status = protocol.TaskStatus_Succeeded
+	if got := lifeCell(done); got != "" {
+		t.Errorf("finished = %q, want blank", got)
+	}
+}
+
+// With its own Life column the Act cell is the activity badge alone; merged
+// into a narrow panel, the lifecycle badge takes it.
+func TestActCell(t *testing.T) {
+	ti := lifecycleRow(protocol.LifecycleState_Working, 1000)
+	if got, want := actCell(ti, false), cli.ActivityStr(90000); got != want {
+		t.Errorf("own column = %q, want the activity badge %q", got, want)
+	}
+	if got := actCell(ti, true); got != "work:1s" {
+		t.Errorf("merged = %q, want work:1s", got)
+	}
+	ended := lifecycleRow(protocol.LifecycleState_Unset, 0)
+	ended.LastOutputAt, ended.Status = 0, protocol.TaskStatus_Succeeded
+	if got := actCell(ended, true); got != "" {
+		t.Errorf("ended, no session = %q, want blank", got)
+	}
+}
+
+func TestLifeColumn(t *testing.T) {
+	m := NewTasks()
+	m.SetRows([]protocol.TaskInfo{lifecycleRow(protocol.LifecycleState_Idle, 720000)}, nil)
+	m.SetSize(120, 10)
+	var titles []string
+	for _, c := range m.baseCols {
+		titles = append(titles, c.Title)
+		if c.Title == "Life" && c.Width != 10 {
+			t.Errorf("Life width = %d, want 10 (fits ready:999m)", c.Width)
+		}
+	}
+	if titles[4] != "Life" || titles[5] != "Act" {
+		t.Fatalf("Life must sit just before Act; columns = %v", titles)
+	}
+	if got := m.table.Rows()[0][4]; got != "ready:12m" {
+		t.Errorf("Life cell = %q, want ready:12m", got)
+	}
+	m.SetSize(40, 10)
+	for _, c := range m.baseCols {
+		if c.Title == "Life" {
+			t.Error("Life column survived below the threshold")
+		}
+	}
+	if got := m.table.Rows()[0][4]; got != "ready:12m" {
+		t.Errorf("narrow Act cell = %q, want the lifecycle badge", got)
 	}
 }
 
@@ -45,7 +101,7 @@ func TestActColumnWidth(t *testing.T) {
 	for name, cols := range map[string]func() []table.Column{"flat": flatCols, "tree": treeCols} {
 		for _, c := range cols() {
 			if c.Title == "Act" && c.Width != 10 {
-				t.Errorf("%s Act width = %d, want 10 (fits ready:999m)", name, c.Width)
+				t.Errorf("%s Act width = %d, want 10 (fits ready:999m when merged)", name, c.Width)
 			}
 		}
 	}
@@ -80,8 +136,8 @@ func TestTaskDetail_Lifecycle(t *testing.T) {
 	}
 	never := lifecycleRow(protocol.LifecycleState_Unset, 0)
 	never.LifecycleAt = 0
-	if d := formatTaskDetail(never, nil); strings.Contains(d, "lifecycle:") {
-		t.Errorf("a never-reported lifecycle printed a line:\n%s", d)
+	if d := formatTaskDetail(never, nil); !strings.Contains(d, "lifecycle:     - (never reported)") {
+		t.Errorf("a never-reported lifecycle must read as such (D28):\n%s", d)
 	}
 	// D14: a finished task must not read "working" — the review found the
 	// popup ignored the terminal status the badge and the WebUI respect.

@@ -26,9 +26,10 @@ func TestLifecycleBadge(t *testing.T) {
 		{"waiting", lifecycleTask(protocol.LifecycleState_Waiting, 180000, protocol.TaskStatus_Running), "wait:3m"},
 		{"idle", lifecycleTask(protocol.LifecycleState_Idle, 720000, protocol.TaskStatus_Detached), "ready:12m"},
 		{"error", lifecycleTask(protocol.LifecycleState_Error, 30000, protocol.TaskStatus_Running), "err:30s"},
-		{"working", lifecycleTask(protocol.LifecycleState_Working, 30000, protocol.TaskStatus_Running), ""},
+		{"working", lifecycleTask(protocol.LifecycleState_Working, 30000, protocol.TaskStatus_Running), "work:30s"},
 		{"terminal", lifecycleTask(protocol.LifecycleState_Waiting, 180000, protocol.TaskStatus_Succeeded), ""},
-		{"never written", protocol.TaskInfo{Status: protocol.TaskStatus_Running, Lifecycle: protocol.LifecycleState_Waiting}, ""},
+		{"never written", protocol.TaskInfo{Status: protocol.TaskStatus_Running, Lifecycle: protocol.LifecycleState_Waiting}, "lc:-"},
+		{"never written, terminal", protocol.TaskInfo{Status: protocol.TaskStatus_Failed}, ""},
 	}
 	for _, c := range cases {
 		if got := LifecycleBadge(&c.t); got != c.want {
@@ -43,8 +44,12 @@ func TestTaskLine_Lifecycle(t *testing.T) {
 		t.Fatalf("taskLine = %q, want lifecycle=waiting (3m ago)", line)
 	}
 	ti.LifecycleAt = 0
+	if line := taskLine(ti, nil); !strings.Contains(line, "lifecycle=-") {
+		t.Fatalf("taskLine = %q, want lifecycle=- for a live task that never reported", line)
+	}
+	ti.Status = protocol.TaskStatus_Succeeded
 	if line := taskLine(ti, nil); strings.Contains(line, "lifecycle=") {
-		t.Fatalf("taskLine = %q, want no lifecycle= for a never-written field", line)
+		t.Fatalf("taskLine = %q, want no lifecycle= for a finished task", line)
 	}
 }
 

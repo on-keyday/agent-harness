@@ -50,7 +50,7 @@ func TestTasksTableAgentColumnCarriesMarker(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	// Column order: Status, ID, From, Agent, Act, Repo, Prompt.
+	// Column order: Status, ID, From, Agent, then the live-session columns.
 	if rows[0][3] != "claude+skills" {
 		t.Errorf("Agent column = %q, want claude+skills", rows[0][3])
 	}
@@ -177,10 +177,10 @@ func TestObsColumnAppearsOnlyWhenThePanelAffordsIt(t *testing.T) {
 	for i, c := range m.baseCols {
 		titles[i] = c.Title
 	}
-	if titles[5] != "Obs" {
+	if titles[6] != "Obs" {
 		t.Errorf("Obs must sit next to Act, before Repo; columns = %v", titles)
 	}
-	if got := m.table.Rows()[0][5]; got != "1c 2v" {
+	if got := m.table.Rows()[0][6]; got != "1c 2v" {
 		t.Errorf("Obs cell = %q, want %q", got, "1c 2v")
 	}
 

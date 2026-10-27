@@ -5731,15 +5731,18 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       repoEl.className = "task-repo";
       repoEl.textContent = repoTail(t.repoPath);
       line1.append(dot, statusEl);
-      // What the task's hooks report: wait / ready / err. Red for the two
-      // that ask for the operator, the default task color otherwise.
-      const lc = taskLifecycleModel(t);
-      if (lc) {
-        const lcEl = document.createElement("span");
-        lcEl.className = "task-lifecycle";
-        lcEl.style.color = taskStatusColor(lc.attention ? "Failed" : "");
-        lcEl.textContent = `${lc.word}:${lc.age}`;
-        line1.appendChild(lcEl);
+      // What the task's hooks report, then what its program reports (OSC
+      // 7501), side by side so a disagreement is on the row (D3, D28). Red for
+      // the states that ask for the operator, gray for the ones that do not
+      // need a look (work, never reported), the default task color for ready.
+      for (const b of [taskLifecycleModel(t), taskProgramModel(t)]) {
+        if (!b) continue;
+        const el = document.createElement("span");
+        el.className = "task-lifecycle";
+        el.style.color = b.attention ? taskStatusColor("Failed") : b.quiet ? "#888" : taskStatusColor("");
+        el.textContent = b.text;
+        if (b.tooltip) el.title = b.tooltip;
+        line1.appendChild(el);
       }
       line1.appendChild(repoEl);
       // Busy/idle badge from the server-computed idle age (-1 = no live
@@ -5927,28 +5930,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     });
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
-
-    // The lifecycle badge again at the top of the sheet, as on the row.
-    const sheetLc = taskLifecycleModel(t);
-    if (sheetLc) {
-      const lcRow = document.createElement("div");
-      lcRow.className = "task-lifecycle-row";
-      const lcEl = document.createElement("span");
-      lcEl.className = "task-lifecycle";
-      lcEl.style.color = taskStatusColor(sheetLc.attention ? "Failed" : "");
-      lcEl.textContent = `lifecycle ${sheetLc.word}:${sheetLc.age}`;
-      lcRow.appendChild(lcEl);
-      sheet.appendChild(lcRow);
-    }
-    // Under it, what the program itself reports (OSC 7501), so the two can
-    // disagree on screen. textContent: the msg is the program's text.
-    const progLine = t.liveTerminal ? programStatusLine(t) : null;
-    if (progLine) {
-      const pRow = document.createElement("div");
-      pRow.className = "task-program-row";
-      pRow.textContent = `program ${progLine}`;
-      sheet.appendChild(pRow);
-    }
 
     // The idle-notify item is shared by both live kinds: await-idle watches
     // output quiescence, which a stream session has as much as a PTY one.
@@ -7849,7 +7830,7 @@ function taskNowModel(t) {
   };
 }
 
-// programStatusLine is the task sheet's program line, mirroring
+// programStatusLine is the program badge's tooltip, mirroring
 // cli.ProgramDetail: the program's own OSC 7501 report, kind only with
 // blocked, the msg when it sent one; null when it never reported.
 function programStatusLine(t) {
@@ -7861,18 +7842,33 @@ function programStatusLine(t) {
 }
 
 // taskLifecycleModel is the lifecycle badge, mirroring cli.LifecycleBadge:
-// wait / ready / err with the short age, null for working (the activity badge
-// covers it), for a task that never reported, and for one that has ended.
-// The words are not the wire names so `ready` cannot be read as the activity
-// badge's `idle:3m`. attention marks the two that ask for the operator.
+// work / wait / ready / err with the short age, lc:- for a live task that never
+// reported, null for one that has ended. The words are not the wire names so
+// `ready` cannot be read as the activity badge's `idle:3m`. attention marks the
+// two that ask for the operator, quiet the two that need no look.
 function taskLifecycleModel(t) {
-  if (!t.lifecycleAt || t.lifecycleAt === "0") return null;
   if (["Succeeded", "Failed", "Cancelled"].includes(t.status)) return null;
-  const word = { waiting: "wait", idle: "ready", error: "err" }[t.lifecycle];
-  if (!word) return null;
+  const never = { text: "lc:-", attention: false, quiet: true };
+  if (!t.lifecycleAt || t.lifecycleAt === "0") return never;
+  const word = { working: "work", waiting: "wait", idle: "ready", error: "err" }[t.lifecycle];
+  if (!word) return never;
   const ms = t.lifecycleAgeMs || 0;
   const age = ms >= 60000 ? `${Math.floor(ms / 60000)}m` : `${Math.floor(ms / 1000)}s`;
-  return { word, age, attention: word !== "ready" };
+  return { text: `${word}:${age}`, attention: word === "wait" || word === "err", quiet: word === "work" };
+}
+
+// taskProgramModel is the program badge beside it, mirroring cli.ProgramStr:
+// `prog blocked:question`, kind only with blocked; the full line, msg
+// included, as its tooltip. null without a live terminal or a report.
+function taskProgramModel(t) {
+  if (!t.liveTerminal || !t.programState) return null;
+  const s = t.programState;
+  return {
+    text: `prog ${s}${t.programKind ? ":" + t.programKind : ""}`,
+    attention: s === "blocked" || s === "error",
+    quiet: s !== "blocked" && s !== "error",
+    tooltip: programStatusLine(t),
+  };
 }
 
 // treeNodeProgress is what a task-tree node shows of the task's progress: a
@@ -9871,7 +9867,7 @@ function renderTaskTreeGraph(nodes, grantEdges, tasks, statusColor, onSelect, op
     if (nodeLc) {
       const lcSpan = svgEl("tspan", { class: "tt-lifecycle" });
       if (nodeLc.attention && statusColor) lcSpan.setAttribute("fill", statusColor("Failed"));
-      lcSpan.textContent = ` ${nodeLc.word}:${nodeLc.age}`;
+      lcSpan.textContent = ` ${nodeLc.text}`;
       sub.appendChild(lcSpan);
     }
     g.appendChild(sub);

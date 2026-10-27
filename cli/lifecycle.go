@@ -73,39 +73,48 @@ func LifecycleWord(st protocol.LifecycleState) string {
 	return ""
 }
 
-// lifecycleShown reports whether t's lifecycle is worth rendering: written,
-// and the task not finished — a finished task must not read "working".
-func lifecycleShown(t *protocol.TaskInfo) bool {
-	return t.LifecycleAt != 0 && !isTerminalStatus(t.Status)
+// LifecycleShown reports whether t's lifecycle is rendered at all: not for a
+// finished task, which must not read "working" (D14). A live task that never
+// reported IS rendered, as "-": hooks that do not fire (an agent without them,
+// a runner that predates them) must not look like a quiet task (D28).
+func LifecycleShown(t *protocol.TaskInfo) bool {
+	return !isTerminalStatus(t.Status)
 }
 
-// LifecycleStr is `lifecycle=waiting (3m ago)` for the CLI `ls` row, or ""
-// when the task never reported one or has ended.
+// LifecycleStr is `lifecycle=waiting (3m ago)` for the CLI `ls` row,
+// `lifecycle=-` when the task never reported one, "" when it has ended.
 func LifecycleStr(t *protocol.TaskInfo) string {
-	if !lifecycleShown(t) {
+	if !LifecycleShown(t) {
 		return ""
+	}
+	if t.LifecycleAt == 0 {
+		return "lifecycle=-"
 	}
 	return fmt.Sprintf("lifecycle=%s (%s)", LifecycleWord(t.Lifecycle), AgeStr(t.LifecycleAgeMs))
 }
 
-// LifecycleBadge is the list badge: `wait:3m`, `ready:12m` or `err:30s`. The
-// words differ from the wire names so `ready` cannot be confused with the
-// output-activity badge's `idle:3m`. "" for working and unset, which keep the
-// activity badge, and for a task that is not live.
+// LifecycleBadge is the list badge: `work:5s`, `wait:3m`, `ready:12m` or
+// `err:30s`, and `lc:-` for a live task that never reported. The words differ
+// from the wire names so `ready` cannot be confused with the output-activity
+// badge's `idle:3m`, which is shown beside it. "" for a finished task.
 func LifecycleBadge(t *protocol.TaskInfo) string {
-	if !lifecycleShown(t) {
+	if !LifecycleShown(t) {
 		return ""
 	}
 	var word string
-	switch t.Lifecycle {
-	case protocol.LifecycleState_Waiting:
+	switch {
+	case t.LifecycleAt == 0:
+		return "lc:-"
+	case t.Lifecycle == protocol.LifecycleState_Working:
+		word = "work"
+	case t.Lifecycle == protocol.LifecycleState_Waiting:
 		word = "wait"
-	case protocol.LifecycleState_Idle:
+	case t.Lifecycle == protocol.LifecycleState_Idle:
 		word = "ready"
-	case protocol.LifecycleState_Error:
+	case t.Lifecycle == protocol.LifecycleState_Error:
 		word = "err"
 	default:
-		return ""
+		return "lc:-"
 	}
 	return word + ":" + shortAge(t.LifecycleAgeMs)
 }

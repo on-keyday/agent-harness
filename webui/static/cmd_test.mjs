@@ -636,28 +636,38 @@ test("task event banner: lifecycle reports print nothing", () => {
   eq(page.taskEventBanner("task abc kind=TaskLifecycle status=Detached"), null);
 });
 
-// The lifecycle badge mirrors cli.LifecycleBadge: wait / ready / err with the
-// short age, nothing for working (the activity badge covers it), for a task
-// that never reported, or for one that has ended. wait and err ask for the
-// operator, so they carry attention.
-// The task sheet's program line: the program's own OSC 7501 report, kind only
-// with blocked, msg when it sent one; null when it never reported.
-test("task sheet: program status line", () => {
+// The task row's program badge: the program's own OSC 7501 report, kind only
+// with blocked; its tooltip is the full line, msg included. null without a
+// live terminal or when it never reported.
+test("task row: program badge and its tooltip line", () => {
   eq(page.programStatusLine({ programState: "blocked", programKind: "question", programMsg: "q?" }), "blocked (question) — q?");
   eq(page.programStatusLine({ programState: "working", programKind: "", programMsg: "" }), "working");
   eq(page.programStatusLine({ programState: "", programKind: "", programMsg: "" }), null);
+  eq(page.taskProgramModel({ liveTerminal: true, programState: "blocked", programKind: "question", programMsg: "q?" }),
+    { text: "prog blocked:question", attention: true, quiet: false, tooltip: "blocked (question) — q?" });
+  eq(page.taskProgramModel({ liveTerminal: true, programState: "done", programKind: "", programMsg: "" }),
+    { text: "prog done", attention: false, quiet: true, tooltip: "done" });
+  eq(page.taskProgramModel({ liveTerminal: false, programState: "done", programKind: "", programMsg: "" }), null);
+  eq(page.taskProgramModel({ liveTerminal: true, programState: "", programKind: "", programMsg: "" }), null);
 });
 
+// The lifecycle badge mirrors cli.LifecycleBadge: every state with the short
+// age, lc:- for a live task that never reported (D28), null once it has ended.
+// wait and err ask for the operator (attention); work and lc:- need no look
+// (quiet).
 test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 180000, status: "Running" }),
-    { word: "wait", age: "3m", attention: true });
+    { text: "wait:3m", attention: true, quiet: false });
   eq(page.taskLifecycleModel({ lifecycle: "idle", lifecycleAt: "5", lifecycleAgeMs: 720000, status: "Detached" }),
-    { word: "ready", age: "12m", attention: false });
+    { text: "ready:12m", attention: false, quiet: false });
   eq(page.taskLifecycleModel({ lifecycle: "error", lifecycleAt: "5", lifecycleAgeMs: 30000, status: "Running" }),
-    { word: "err", age: "30s", attention: true });
-  eq(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Running" }), null);
-  eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Running" }), null);
+    { text: "err:30s", attention: true, quiet: false });
+  eq(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Running" }),
+    { text: "work:1s", attention: false, quiet: true });
+  eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Running" }),
+    { text: "lc:-", attention: false, quiet: true });
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Succeeded" }), null);
+  eq(page.taskLifecycleModel({ lifecycle: "", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Failed" }), null);
 });
 
 // await-progress needs no live session (a oneshot writes progress too), so
