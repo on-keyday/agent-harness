@@ -6,6 +6,7 @@ package vtgrid
 // vtgrid's own gates must keep calling the real sequence rather than a copy.
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -13,7 +14,8 @@ import (
 
 // Repaint synthesises the bytes that make a terminal show THIS screen, whatever
 // state it was in before: the screen selection, the modes needed to address
-// cells absolutely, every row, the cursor, and the window title.
+// cells absolutely, every row, the cursor, the window title, and the program
+// status (OSC 7501).
 //
 // It is the counterpart ANSI() names and declines to be — "There is no cursor
 // positioning and no screen clear: the result is a block of text, not a program
@@ -80,6 +82,13 @@ import (
 // readings, the one that leaves the observer's own title alone is the safer
 // default.
 //
+// The PROGRAM STATUS rides along for the same reason: a program reports it
+// once, on a change, so a terminal rebuilt from this sequence alone — the next
+// server after a held restart, an observer whose ring lost the report — would
+// otherwise show none until the program's next change. Emitted only while a
+// root record is held, for the reason the title is: "never reported" and
+// "cleared" both read as none here.
+//
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
 // them; termmode/tracker.go's preamble does, and the two are complementary.
@@ -129,8 +138,27 @@ func (t *Terminal) Repaint() []byte {
 	if title := t.Title(); title != "" {
 		b.WriteString(titleOSC(title))
 	}
+	if st := t.ProgramStatus(); st.State != "" {
+		b.WriteString(programStatusOSC(st))
+	}
 	fmt.Fprintf(&b, "\x1b[%d;%dH", y+1, x+1)
 	return []byte(b.String())
+}
+
+// programStatusOSC renders the root record as a report ParseProgramStatus
+// accepts: state, kind, and msg in base64, each only when present. BEL ends it,
+// as it ends titleOSC. Every part was validated on the way in — the state and
+// kind are protocol words and the msg holds no control character — so nothing
+// here needs filtering.
+func programStatusOSC(st ProgramStatus) string {
+	s := "\x1b]7501;state=" + st.State
+	if st.Kind != "" {
+		s += ":kind=" + st.Kind
+	}
+	if st.Msg != "" {
+		s += ":msg=" + base64.StdEncoding.EncodeToString([]byte(st.Msg))
+	}
+	return s + "\x07"
 }
 
 // titleOSC renders a window title as `OSC 0 ; title BEL` — command 0 because it

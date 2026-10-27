@@ -107,6 +107,32 @@ func TestHeldCaptureCarriesInputModes(t *testing.T) {
 	}
 }
 
+// The program's OSC 7501 status survives the restart. claude reports only on a
+// change, so a re-adopted session used to list no program status until its
+// next turn — while the title, which the repaint carries, came back at once.
+func TestHeldCaptureCarriesProgramStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	before := newFakeStream(t)
+	old := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, before, NewRingBuffer(1<<20), SessionHooks{})
+	before.QueueRead(makeWireFrame(1, []byte("\x1b]7501;state=blocked:kind=permission:msg=cT8\x1b\\prompt> ")))
+	waitFor(t, func() bool { st, _, _ := old.Program(); return st == protocol.ProgramState_Blocked })
+
+	fresh := NewSessionMux(ctx, "task", protocol.TaskKind_Interactive, newFakeStream(t), NewRingBuffer(1<<20), SessionHooks{})
+	if _, _, err := fresh.loadHeldCapture(old.heldCapture()); err != nil {
+		t.Fatalf("loadHeldCapture: %v", err)
+	}
+	st, kind, msg := fresh.Program()
+	if st != protocol.ProgramState_Blocked || kind != protocol.ProgramKind_Permission || msg != "q?" {
+		t.Errorf("re-adopted program status = %v/%v/%q, want blocked/permission/\"q?\"", st, kind, msg)
+	}
+	// The status rides the same Synth frame as the screen and must not disturb it.
+	if w := fresh.screenRepaint(); !strings.Contains(string(w), "prompt>") {
+		t.Errorf("the restored screen lost its content; repaint = %q", w)
+	}
+}
+
 // The capture is not history and must not be replayed as though the runner had
 // sent it. A client that asks for the PTY-only view (`snapshot --raw
 // --without-synth`) is asking what the process produced, and bytes a previous

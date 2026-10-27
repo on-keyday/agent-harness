@@ -60,6 +60,43 @@ func TestTerminal_ProgramStatusAcrossWrites(t *testing.T) {
 	}
 }
 
+// The repaint carries the program status for the reason it carries the title:
+// a program reports a state once, on a change, so a terminal rebuilt from the
+// repaint alone — the next server after a held restart, a client whose ring no
+// longer holds the report — would otherwise show none until the next change.
+// Reconstructing through a FRESH Terminal is the point.
+func TestRepaintCarriesProgramStatus(t *testing.T) {
+	for _, want := range []ProgramStatus{
+		{State: "working"},
+		{State: "blocked", Kind: "question", Msg: "Tea or coffee? 紅茶"},
+	} {
+		src := New(80, 24)
+		msg := ""
+		if want.Msg != "" {
+			msg = ":msg=" + base64.StdEncoding.EncodeToString([]byte(want.Msg))
+		}
+		src.Write([]byte("\x1b]7501;state=" + want.State + ":kind=" + want.Kind + msg + ":app=claude-code\x1b\\screen"))
+		if got := src.ProgramStatus(); got != want {
+			t.Fatalf("precondition: %+v, want %+v", got, want)
+		}
+		dst := New(80, 24)
+		dst.Write(src.Repaint())
+		if got := dst.ProgramStatus(); got != want {
+			t.Errorf("after repaint: %+v, want %+v", got, want)
+		}
+	}
+}
+
+// No record, no OSC: "never reported" and "cleared" read the same here, and
+// leaving an observer's status alone is the safer reading, as for the title.
+func TestRepaintOmitsAbsentProgramStatus(t *testing.T) {
+	src := New(80, 24)
+	src.Write([]byte("\x1b]7501;state=working\x07\x1b]7501;state=clear\x07plain"))
+	if rp := src.Repaint(); strings.Contains(string(rp), "7501") {
+		t.Errorf("repaint without a status carries 7501: %q", rp)
+	}
+}
+
 func TestTerminal_ProbeCounted(t *testing.T) {
 	term := New(80, 24)
 	term.Write([]byte("\x1b]7501;?\x1b\\x\x1b]7501;?\x07"))
