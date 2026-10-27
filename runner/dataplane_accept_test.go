@@ -21,8 +21,8 @@ func storedListGrant(t *testing.T, sess *Session, id byte) {
 
 func TestValidateDataPlaneHelloUnknownGrant(t *testing.T) {
 	sess := &Session{Grants: newGrantStore()}
-	info := protocol.DataPlaneInfoLegacy{GrantId: [16]uint8{3}, TaskId: protocol.TaskID{Id: [16]uint8{7}}}
-	got := validateDataPlaneHello(sess, info, protocol.TaskControlKind_ListFiles, 0, time.Now())
+	grant := protocol.DataPlaneGrant{GrantId: [16]uint8{3}, TaskId: protocol.TaskID{Id: [16]uint8{7}}}
+	got := validateDataPlaneHello(sess, grant, protocol.TaskControlKind_ListFiles, 0, time.Now())
 	if got != protocol.ClientHelloStatus_BadTicket {
 		t.Fatalf("want bad_ticket, got %v", got)
 	}
@@ -31,8 +31,8 @@ func TestValidateDataPlaneHelloUnknownGrant(t *testing.T) {
 func TestValidateDataPlaneHelloAcceptsStoredGrant(t *testing.T) {
 	sess := &Session{Grants: newGrantStore()}
 	storedListGrant(t, sess, 3)
-	info := protocol.DataPlaneInfoLegacy{GrantId: [16]uint8{3}, TaskId: protocol.TaskID{Id: [16]uint8{7}}}
-	got := validateDataPlaneHello(sess, info, protocol.TaskControlKind_ListFiles, 0, time.Now())
+	grant := protocol.DataPlaneGrant{GrantId: [16]uint8{3}, TaskId: protocol.TaskID{Id: [16]uint8{7}}}
+	got := validateDataPlaneHello(sess, grant, protocol.TaskControlKind_ListFiles, 0, time.Now())
 	if got != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("want ok, got %v", got)
 	}
@@ -42,45 +42,19 @@ func TestValidateDataPlaneHelloAcceptsStoredGrant(t *testing.T) {
 // unknown_task keeps that indistinguishable from a task this runner does not
 // have, rather than disclosing which of the two it is.
 func TestValidateDataPlaneHelloWithNoSession(t *testing.T) {
-	got := validateDataPlaneHello(nil, protocol.DataPlaneInfoLegacy{}, protocol.TaskControlKind_ListFiles, 0, time.Now())
+	got := validateDataPlaneHello(nil, protocol.DataPlaneGrant{}, protocol.TaskControlKind_ListFiles, 0, time.Now())
 	if got != protocol.ClientHelloStatus_UnknownTask {
 		t.Fatalf("want unknown_task, got %v", got)
 	}
 }
 
-func dataPlaneHelloBytes(t *testing.T, psk, transcript []byte, grantID byte) []byte {
-	t.Helper()
-	var req protocol.PskAuthRequest
-	if len(psk) > 0 {
-		binder, err := cli.ComputePSKBinder(psk, transcript)
-		if err != nil {
-			t.Fatalf("binder: %v", err)
-		}
-		req.Binder = binder
-		req.BinderLen = uint16(len(binder))
-	}
-	req.Role = protocol.AuthRole_ClientLegacy
-	var hello protocol.ClientHelloLegacy
-	hello.Kind = protocol.ClientKind_DataPlane
-	hello.SetDataPlaneInfo(protocol.DataPlaneInfoLegacy{
-		GrantId: [16]uint8{grantID},
-		TaskId:  protocol.TaskID{Id: [16]uint8{7}},
-	})
-	req.SetClientHelloLegacy(hello)
-	return req.MustAppend([]byte{byte(appwire.AppKind_PskAuth)})
-}
-
-func TestCheckDataPlaneHelloAcceptsALegacyHello(t *testing.T) {
-	psk := []byte("secret")
-	transcript := []byte("transcript-bytes")
-	data := dataPlaneHelloBytes(t, psk, transcript, 3)
-
-	info, st := checkDataPlaneHello(data, transcript, nil)
-	if st != protocol.PskAuthStatus_Ok {
-		t.Fatalf("want ok, got %v", st)
-	}
-	if info == nil || info.GrantId != ([16]uint8{3}) {
-		t.Fatalf("info lost: %+v", info)
+// The hello an old client sent: role=0 (client_legacy), kind=data_plane, the
+// grant id as a value. The role is retired, so it no longer decodes.
+func TestCheckDataPlaneHelloRefusesTheRetiredRole(t *testing.T) {
+	data := []byte{byte(appwire.AppKind_PskAuth), 0x00, 0x00, 0x00, byte(protocol.ClientKind_DataPlane)}
+	data = append(data, make([]byte, 32)...) // grant_id, task_id
+	if _, st := checkDataPlaneHello(data, nil, newGrantStore()); st != protocol.PskAuthStatus_NoIdentity {
+		t.Fatalf("want no_identity, got %v", st)
 	}
 }
 
@@ -93,10 +67,8 @@ func TestCheckDataPlaneHelloRefusesOtherClientKinds(t *testing.T) {
 	var req protocol.PskAuthRequest
 	req.Binder = binder
 	req.BinderLen = uint16(len(binder))
-	req.Role = protocol.AuthRole_ClientLegacy
-	var hello protocol.ClientHelloLegacy
-	hello.Kind = protocol.ClientKind_Cli
-	req.SetClientHelloLegacy(hello)
+	req.Role = protocol.AuthRole_Client
+	req.SetClientHello(protocol.ClientHello{Kind: protocol.ClientKind_Cli})
 	data := req.MustAppend([]byte{byte(appwire.AppKind_PskAuth)})
 
 	_, st := checkDataPlaneHello(data, transcript, nil)

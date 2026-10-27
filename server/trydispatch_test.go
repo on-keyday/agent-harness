@@ -190,7 +190,7 @@ func TestTryDispatch_SendError(t *testing.T) {
 }
 
 // boardRunnerID builds an protocol.RunnerID from a connection ID string so
-// tests can call board.Registry().Validate without going through the protocol
+// tests can call board.Registry().Ticket without going through the protocol
 // wire. It derives the identity the same way makeProtoRunnerID does, so a test
 // that registers by connection-id string and validates by identity agrees with
 // itself — the server itself derives nothing from an address any more.
@@ -210,8 +210,8 @@ func boardTaskID(taskIDHex string) protocol.TaskID {
 // TestTryDispatch_RegistersTicket verifies the full ticket lifecycle:
 //  1. TryDispatch registers a non-zero ticket in the Board.
 //  2. The AssignTask sent to the runner contains that ticket.
-//  3. board.Registry().Validate returns HelloStatusOk.
-//  4. After TaskFinished is handled, Validate returns HelloStatusUnknownTask.
+//  3. board.Registry().Ticket returns it.
+//  4. After TaskFinished is handled, the board holds no ticket for the task.
 func TestTryDispatch_RegistersTicket(t *testing.T) {
 	board := agentboard.New(agentboard.Config{
 		RingN:      8,
@@ -268,12 +268,11 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 		t.Error("expected non-zero AuthTicket in AssignTaskBody, got all-zero")
 	}
 
-	// 3. board.Registry().Validate must return HelloStatusOk for the registered ticket.
+	// 3. The board holds the ticket the runner was sent.
 	brid := boardRunnerID(t, runnerID.String())
 	btid := boardTaskID(taskIDHex)
-	status := board.Registry().Validate(brid, btid, body.AuthTicket)
-	if status != agentboard.HelloStatusOk {
-		t.Errorf("expected HelloStatusOk after TryDispatch, got %v", status)
+	if got, ok := board.Registry().Ticket(brid, btid); !ok || got != body.AuthTicket {
+		t.Errorf("board ticket after TryDispatch = %x, %v; want the one in AssignTaskBody", got, ok)
 	}
 
 	// 4. Simulate TaskFinished via RunnerHandler — the ticket must be revoked.
@@ -295,9 +294,8 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 	}
 	rh.Handle(fc, payload)
 
-	// After revocation, Validate must return HelloStatusUnknownTask.
-	status = board.Registry().Validate(brid, btid, body.AuthTicket)
-	if status != agentboard.HelloStatusUnknownTask {
-		t.Errorf("expected HelloStatusUnknownTask after TaskFinished, got %v", status)
+	// After revocation the board holds no ticket for the task.
+	if _, ok := board.Registry().Ticket(brid, btid); ok {
+		t.Error("ticket still registered after TaskFinished")
 	}
 }

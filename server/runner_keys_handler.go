@@ -142,16 +142,6 @@ func (h *TaskHandler) handleRunnerKeys(conn ConnHandle, requestID uint32) {
 		}
 	}
 	body.SetKeys(rows)
-	var legacy []protocol.RunnerKeyUser
-	for _, e := range h.Registry.List() {
-		if !e.LegacyAuth {
-			continue
-		}
-		u := protocol.RunnerKeyUser{Id: e.Identity}
-		u.SetHostname([]byte(e.Hostname))
-		legacy = append(legacy, u)
-	}
-	body.SetLegacy(legacy)
 	respondWithBody(conn, "runner_keys", body, func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: requestID}
 		resp.SetRunnerKeys(protocol.RunnerKeysResponse{RequestId: requestID, StreamId: streamID})

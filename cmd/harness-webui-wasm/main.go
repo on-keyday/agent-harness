@@ -1702,10 +1702,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"agentProfiles":    profiles,
 					"skillsInjected":   r.SkillsInjected(),
 					// keyLabel is the display string ls and the TUI show
-					// (label, key prefix, or "legacy"); key/legacyAuth are raw.
-					"keyLabel":   cli.RunnerKeyStr(r),
-					"key":        hex.EncodeToString(r.Key[:]),
-					"legacyAuth": r.LegacyAuth(),
+					// (label, or key prefix); key is raw.
+					"keyLabel": cli.RunnerKeyStr(r),
+					"key":      hex.EncodeToString(r.Key[:]),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))
@@ -1858,7 +1857,6 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"principalRunner": runnerIdentityOrEmpty(ci.PrincipalRunner),
 					"connectedAt":     float64(ci.ConnectedAt),
 					"identified":      ci.Identified(),
-					"legacyAuth":      ci.LegacyAuth(),
 				})
 			}
 			// Fetch the live port-forward registry using the same long-lived
@@ -3010,11 +3008,11 @@ func harnessRunnerEnroll(this js.Value, args []js.Value) any {
 // harness.runnerKeys() -> Promise<{text, ok}>
 func harnessRunnerKeys(this js.Value, args []js.Value) any {
 	return runnerKeyPromise(func(c *cli.Client) (string, bool, error) {
-		rows, legacy, err := cli.RunnerKeysWith(rootCtx, c)
+		rows, err := cli.RunnerKeysWith(rootCtx, c)
 		if err != nil {
 			return "", false, err
 		}
-		return cli.FormatRunnerKeys(rows, legacy), true, nil
+		return cli.FormatRunnerKeys(rows), true, nil
 	})
 }
 

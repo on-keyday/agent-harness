@@ -146,8 +146,8 @@ func TestNotEnrolledRunnerConnectsAfterEnroll(t *testing.T) {
 	defer h.Close()
 	go runner.OnConnect(ctx, h) //nolint:errcheck
 	e := waitForRunnerByHostname(t, srv, "late", 5*time.Second)
-	if !bytes.Equal(e.Key, pub) || e.LegacyAuth {
-		t.Fatalf("registry entry key=%x legacy=%v, want the enrolled key and not legacy", e.Key, e.LegacyAuth)
+	if !bytes.Equal(e.Key, pub) {
+		t.Fatalf("registry entry key=%x, want the enrolled key", e.Key)
 	}
 }
 
@@ -174,8 +174,8 @@ func TestEnrolledRunnerRegistersWithKey(t *testing.T) {
 		if string(r.Hostname) != "enrolled" {
 			continue
 		}
-		if !bytes.Equal(r.Key[:], pub) || string(r.KeyLabel) != "lbl" || r.LegacyAuth() {
-			t.Fatalf("runner row key=%x label=%q legacy=%v", r.Key, r.KeyLabel, r.LegacyAuth())
+		if !bytes.Equal(r.Key[:], pub) || string(r.KeyLabel) != "lbl" {
+			t.Fatalf("runner row key=%x label=%q", r.Key, r.KeyLabel)
 		}
 		return
 	}

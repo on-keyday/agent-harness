@@ -210,20 +210,26 @@ func TestAgentProxyE2E(t *testing.T) {
 	})
 	proxyConn.Start(ctx)
 
-	// Build and send merged PskAuthRequest{role=client, binder_len=0, ClientHello}.
-	// No PSK is configured on the server in this test (nil binder).
+	// Build and send merged PskAuthRequest{role=client, binder, ClientHello}.
+	// The binder is keyed by the ticket over this conn's transcript, which the
+	// rehandshake made end-to-end with the server: a binder over a transcript
+	// the runner holds would be refused bad_ticket.
 	// The agent_proxy_e2e test exercises the end-to-end relay/rehandshake path;
 	// we build the request manually to embed AgentInfo without setting process env.
 	pskCtx, pskCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pskCancel()
-	info := protocol.AgentInfoLegacy{RunnerId: srvRunnerEntry.Identity, TaskId: taskID, AuthTicket: ticket}
+	info := protocol.AgentInfo{RunnerId: srvRunnerEntry.Identity, TaskId: taskID}
 	info.SetHostname([]byte("proxy-e2e-agent"))
 	{
-		req := protocol.PskAuthRequest{Role: protocol.AuthRole_ClientLegacy}
-		req.SetBinder(nil) // no PSK in this test
-		hello := protocol.ClientHelloLegacy{Kind: protocol.ClientKind_Agent}
+		req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+		binder, err := cli.ComputePSKBinder(ticket[:], proxyConn.Connection().GetTranscript())
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBinder(binder)
+		hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
 		hello.SetAgentInfo(info)
-		if !req.SetClientHelloLegacy(hello) {
+		if !req.SetClientHello(hello) {
 			t.Fatal("SetClientHello failed")
 		}
 		data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})

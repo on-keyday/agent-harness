@@ -312,7 +312,7 @@ func TestRunnerMergedHandshakeEncodesRoleRunner(t *testing.T) {
 		t.Errorf("RunnerHello.Hostname: got %q, want %q", string(rh.Hostname), "test-runner")
 	}
 	// ClientHello must be nil for runner role.
-	if req.ClientHelloLegacy() != nil {
+	if req.ClientHello() != nil {
 		t.Error("ClientHello() should be nil for runner role")
 	}
 }

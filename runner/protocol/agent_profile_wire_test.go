@@ -28,12 +28,12 @@ func TestRunnerHelloAgentProfilesRoundTrip(t *testing.T) {
 	}
 
 	var orig PskAuthRequest
-	orig.Role = AuthRole_RunnerLegacy
+	orig.Role = AuthRole_Runner
 	if !orig.SetBinder(nil) {
 		t.Fatal("SetBinder(nil) returned false")
 	}
-	if !orig.SetRunnerHello(rh) {
-		t.Fatal("SetRunnerHello failed")
+	if !orig.SetRunnerAuth(RunnerAuth{Hello: rh}) {
+		t.Fatal("SetRunnerAuth failed")
 	}
 
 	buf, err := orig.Append(nil)
@@ -46,10 +46,11 @@ func TestRunnerHelloAgentProfilesRoundTrip(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 
-	gotRH := got.RunnerHello()
-	if gotRH == nil {
-		t.Fatal("RunnerHello() returned nil")
+	ga := got.RunnerAuth()
+	if ga == nil {
+		t.Fatal("RunnerAuth() returned nil")
 	}
+	gotRH := &ga.Hello
 	if len(gotRH.AgentProfiles) != 2 || string(gotRH.AgentProfiles[1].Name) != "codex" {
 		t.Fatalf("profiles round-trip: got %+v", gotRH.AgentProfiles)
 	}

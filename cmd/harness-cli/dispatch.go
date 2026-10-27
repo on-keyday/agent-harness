@@ -541,11 +541,11 @@ func (h cliVerbs) RunnerEnroll(a verb.RunnerEnrollAction) error {
 }
 
 func (h cliVerbs) RunnerKeys(verb.RunnerKeysAction) error {
-	rows, legacy, err := cli.RunnerKeys(h.ctx, h.cid())
+	rows, err := cli.RunnerKeys(h.ctx, h.cid())
 	if err != nil {
 		return err
 	}
-	fmt.Print(cli.FormatRunnerKeys(rows, legacy))
+	fmt.Print(cli.FormatRunnerKeys(rows))
 	return nil
 }
 

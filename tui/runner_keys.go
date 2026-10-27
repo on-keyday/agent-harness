@@ -48,11 +48,11 @@ func DoRunnerKeys(c *cli.Client) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := runnerKeyCtx()
 		defer cancel()
-		rows, legacy, err := cli.RunnerKeysWith(ctx, c)
+		rows, err := cli.RunnerKeysWith(ctx, c)
 		if err != nil {
 			return RunnerKeyResultMsg{Verb: "runner keys", Err: err}
 		}
-		return RunnerKeyResultMsg{Verb: "runner keys", Text: cli.FormatRunnerKeys(rows, legacy), OK: true}
+		return RunnerKeyResultMsg{Verb: "runner keys", Text: cli.FormatRunnerKeys(rows), OK: true}
 	}
 }
 

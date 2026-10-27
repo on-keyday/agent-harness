@@ -36,8 +36,8 @@ func TestGateAgentBinderAccepted(t *testing.T) {
 	if accepted == nil {
 		t.Fatalf("refused: %v", parsePskResponse(t, sent))
 	}
-	if g.Role() != protocol.AuthRole_Client || g.Legacy() {
-		t.Fatalf("role=%v legacy=%v", g.Role(), g.Legacy())
+	if g.Role() != protocol.AuthRole_Client {
+		t.Fatalf("role=%v", g.Role())
 	}
 }
 
@@ -88,25 +88,4 @@ func TestOperatorKindsUnderRoleClientProveOperatorPSK(t *testing.T) {
 		}
 	}
 	_ = g
-}
-
-// A task created over a legacy agent connection and one created over a new
-// one must record the same principal kind: the WAL stores it as a number.
-func TestLegacyAndNewAgentRecordSameOriginKind(t *testing.T) {
-	rid, tid, ticket := testRunnerID("r"), protocol.TaskID{Id: [16]byte{1}}, [16]byte{9}
-	legacy := buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{RunnerId: rid, TaskId: tid, AuthTicket: ticket})
-	fresh := buildAgentBinderReq(ticket, testTranscript, rid, tid)
-	kinds := map[string]protocol.ClientKind{}
-	for name, req := range map[string]*protocol.PskAuthRequest{"legacy": legacy, "new": fresh} {
-		th := newTestTaskHandler(NewTaskStore())
-		d := &Dispatcher{RecordClientIdentity: th.RecordClientIdentity}
-		conn := &fakeConn{id: tcid("ws:127.0.0.1:8539-9")}
-		if !pskDispatchIdentity(d, conn, req) {
-			t.Fatalf("%s: dispatch failed", name)
-		}
-		kinds[name] = th.lookupClientKind(conn.id.String())
-	}
-	if kinds["legacy"] != protocol.ClientKind_Agent || kinds["new"] != protocol.ClientKind_Agent {
-		t.Fatalf("recorded kinds %v, want agent for both", kinds)
-	}
 }

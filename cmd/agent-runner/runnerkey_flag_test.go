@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,21 +74,5 @@ func TestScrubDropsTheRunnerKeyFileName(t *testing.T) {
 	scrubOperatorSecret()
 	if v, ok := os.LookupEnv(cli.RunnerKeyFileEnv); ok {
 		t.Errorf("%s survived the scrub with %q", cli.RunnerKeyFileEnv, v)
-	}
-}
-
-// A slot registered (or recorded by restart.py) with the removed connect-PSK
-// flags must still start after the rebuild: it is the path the fleet upgrades
-// through, and a slot that does not come back on a remote host needs hands on
-// that host. The flags are accepted and ignored until the follow-up change.
-func TestRemovedPSKFlagsStillParse(t *testing.T) {
-	fs := flag.NewFlagSet("agent-runner", flag.ContinueOnError)
-	cfg := newMainConfig()
-	cfg.bindFlags(fs)
-	if err := fs.Parse([]string{"--psk", "x", "--psk-file", "/nonexistent/psk"}); err != nil {
-		t.Fatalf("a slot started with --psk / --psk-file no longer parses: %v", err)
-	}
-	if !cfg.legacyPSKGiven() {
-		t.Fatal("the ignored flags must be noticed, so startup can warn about them")
 	}
 }

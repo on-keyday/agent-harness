@@ -42,7 +42,7 @@ type RunnersModel struct {
 const idColumnMinWidth = 72
 
 // keyColumnMinWidth is where the Key column joins: the enrolled key's label,
-// its prefix, or "legacy". It sits before Roots, the flex column, so Roots
+// or its prefix. It sits before Roots, the flex column, so Roots
 // keeps absorbing the slack. Below it the key is in the detail popup.
 const keyColumnMinWidth = 100
 

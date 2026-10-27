@@ -141,7 +141,6 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		AgentProfiles:    []string{"claude", "codex"},
 		SkillsInjected:   true,
 		Key:              ed25519.PublicKey(bytes.Repeat([]byte{0x5a}, ed25519.PublicKeySize)),
-		LegacyAuth:       true,
 		ActiveTasks:      map[string]struct{}{"00112233445566778899aabbccddeeff": {}},
 		ConnectedAt:      now,
 		LastTaskActivity: now,
@@ -157,11 +156,6 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		"KeyLabelLen": "filled by the list handler from the enrollment store, not from RunnerEntry",
 		"KeyLabel":    "filled by the list handler from the enrollment store, not from RunnerEntry",
 	})
-	// legacy_auth is bit-packed beside skills_injected, which the reflect sweep
-	// cannot tell apart; it needs its own assertion.
-	if !info.LegacyAuth() {
-		t.Error("RunnerInfo.LegacyAuth is false after mapping LegacyAuth:true — the mapper forgot it")
-	}
 }
 
 // TestPortForwardInfoMapsEveryField is the same completeness guard for

@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/authority"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -287,9 +286,7 @@ func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
 	if got := len(board.ListSubscribers("")); got != 0 {
 		t.Errorf("subscribers after disconnect = %d, want 0 — the taskState leaked", got)
 	}
-	if st := board.Registry().Validate(
-		rid, tid, [16]byte{1},
-	); st == agentboard.HelloStatusOk {
-		t.Error("the auth ticket still validates after the runner disconnected")
+	if _, ok := board.Registry().Ticket(rid, tid); ok {
+		t.Error("the auth ticket is still registered after the runner disconnected")
 	}
 }

@@ -7893,8 +7893,8 @@ function runnerRowModel(r) {
     roots: (r.roots && r.roots.length > 0) ? r.roots.slice() : ["(any)"],
     id: r.id ? r.id.slice(0, 8) : "-",
     cid: r.cid || "-",
-    // The enrolled key's label, its prefix, or "legacy" — the same string
-    // `ls` prints as key=, rendered by the bridge (cli.RunnerKeyStr).
+    // The enrolled key's label or its prefix — the same string `ls` prints
+    // as key=, rendered by the bridge (cli.RunnerKeyStr).
     key: r.keyLabel || "-",
   };
 }
@@ -9526,7 +9526,6 @@ function connTooltip(conn) {
     lines.push(`task: ${conn.principalTask}`);
   }
   if (!conn.identified) lines.push("handshake not completed");
-  if (conn.legacyAuth) lines.push("legacy handshake (an old binary)");
   return lines.join("\n");
 }
 
@@ -10423,16 +10422,6 @@ function renderConnList(conns, tasks) {
         unidentBadge.textContent = "unident";
         unidentBadge.title = "handshake not yet completed (probe / failed auth)";
         row.appendChild(unidentBadge);
-      }
-
-      // Legacy badge: authenticated with a handshake role from before runner
-      // enrollment. None left is what the follow-up change waits for.
-      if (conn.legacyAuth) {
-        const legacyBadge = document.createElement("span");
-        legacyBadge.className = "conn-unident-badge";
-        legacyBadge.textContent = "legacy";
-        legacyBadge.title = "authenticated with a pre-enrollment handshake (an old binary)";
-        row.appendChild(legacyBadge);
       }
 
       // Principal task (agent conns only — non-zero hex)

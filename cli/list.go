@@ -399,31 +399,20 @@ type runnerJSON struct {
 	Agents         []string `json:"agents"`
 	SkillsInjected bool     `json:"skills_injected"`
 	Roots          []string `json:"roots"`
-	// Key is the enrolled key's hex, "" for a legacy runner, which LegacyAuth
-	// says; KeyLabel is that key's label in the enrollment store.
-	Key        string `json:"key"`
-	KeyLabel   string `json:"key_label"`
-	LegacyAuth bool   `json:"legacy_auth"`
+	// Key is the enrolled key's hex; KeyLabel is that key's label in the
+	// enrollment store.
+	Key      string `json:"key"`
+	KeyLabel string `json:"key_label"`
 }
 
 // RunnerKeyStr is what a runner row shows for the key it authenticated with:
-// the key's label, its first 16 hex when it has none, or "legacy" for a runner
-// that registered without one. Never empty, so the column always reads.
+// the key's label, or its first 16 hex when it has none. Never empty, so the
+// column always reads.
 func RunnerKeyStr(r protocol.RunnerInfo) string {
-	switch {
-	case r.LegacyAuth():
-		return "legacy"
-	case len(r.KeyLabel) > 0:
+	if len(r.KeyLabel) > 0 {
 		return string(r.KeyLabel)
 	}
 	return KeyPrefix16(r.Key[:])
-}
-
-func runnerKeyHex(r protocol.RunnerInfo) string {
-	if r.LegacyAuth() {
-		return ""
-	}
-	return hex.EncodeToString(r.Key[:])
 }
 
 // RunnerCIDStr renders RunnerInfo.cid — WHERE a runner is reached right now.
@@ -564,9 +553,8 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 			Agents:         agentProfileNames(r.AgentProfiles, string(r.AgentBin)),
 			SkillsInjected: r.SkillsInjected(),
 			Roots:          roots,
-			Key:            runnerKeyHex(r),
+			Key:            hex.EncodeToString(r.Key[:]),
 			KeyLabel:       string(r.KeyLabel),
-			LegacyAuth:     r.LegacyAuth(),
 		})
 	}
 

@@ -164,82 +164,6 @@ one-shot task has no PTY and no statusline, so this route cannot cover
 
 ---
 
-## Any connect-PSK holder can register as a runner
-
-**What.** `role=runner` proves the connect PSK and nothing else, and every
-agent holds that PSK. So an agent can connect as a runner, declare whatever
-roots, hostname and runner id it likes, and be registered: there is no
-enrollment step (`pskGate.Check` step 2 → `RunnerHandler` Hello →
-`Registry.Add`). A registered runner is handed tasks together with a fresh
-ticket, and that ticket authenticates an agent connection for that task. For a
-task the operator submitted, the task's caps can be wider than the impostor's
-own caps. The operator PSK is kept separate so that an agent cannot get out of
-its caps. This path gets a similar result without going near operator auth.
-
-**Evidence** (2026-09-30, from reading the code, not exercised):
-
-- An impostor that is already up at submit time shows up as an error:
-  `handleSubmit` answers `AmbiguousRunner` when more than one candidate
-  matches.
-- A task that is already Queued is not checked again. `Scheduler.Tick` gives
-  it to any Idle runner whose root equals `RepoPath` and that passes
-  `selectorMatches`. It deliberately does not enforce `BoundRunnerID`. So
-  while the bound runner is Busy or Offline, an impostor that claims the same
-  root gets the task on the next Tick.
-- Pinning does not stop this. `ByHostname` and `ByRunnerId` compare values
-  the runner reports about itself in its hello, and an agent knows its own
-  runner's id from `HARNESS_RUNNER_ID`. `ByIp` matches any connection from
-  the same host. Only `ByConnId` is a value the server observes, and it
-  stops matching when the runner reconnects.
-- `dispatch.go` creates the ticket, registers it under
-  `(runner.Identity, task.ID)`, and sends it in `AssignTaskBody.AuthTicket`.
-  `gate.ValidateTicket` checks only the (runner id, task id, ticket) triple.
-- Not read: whether `Registry.Add` refuses a second entry with the same
-  identity, and where an agent connection's caps come from after `Validate`.
-
-**Mostly a `submit` path.** The window described above exists only for
-`submit`-created (oneshot) tasks, and those are rare in practice: `ls --json`
-on 2026-09-30 showed 33 tasks, all 33 `interactive`. Interactive tasks never
-wait in a queue. `handleOpenInteractive` decides on a runner at the moment the
-task is opened, answers `AmbiguousRunner` or `RunnerBusy` straight away when
-it cannot, and otherwise assigns the task, mints the ticket and sends
-`OpenExec` itself, all without going through `Scheduler.Tick`. The remaining
-case is an impostor that is already registered when the task is opened. The
-open then comes back ambiguous and the operator picks from a list. The
-hostname and root shown for each candidate are whatever the runner declared,
-but each `RunnerCandidate` also carries the runner's `cid`, and the server
-observes that value itself. The rows can therefore be told apart, provided the
-operator knows the real runner's address. Not read: whether each UI's picker
-actually shows the `cid`.
-
-**Why deferred.** A separate runner secret would not be a boundary. Most of
-the fleet today runs agents outside a sandbox, under the runner's uid. On
-those hosts the agent can read everything the runner reads, including files
-and `/proc/<pid>/environ`, and runner autostart needs a credential stored on
-disk. A separate secret would also break the way agents bring runners up with
-`scripts/runner.sh`, which works because they hold the connect PSK. So the
-boundary that actually holds today is this: an agent outside a sandbox has the
-same power as a runner, across the whole fleet and not only on its own host,
-because the PSK reaches every runner's queue. A fix worth doing would be an
-enrollment step that the server grants behind a capability, so that `--caps`
-can withhold it. Even that closes the path only once agents run in a sandbox.
-
-**Not pursued while the trust model holds** (operator, 2026-10-27). This path
-matters only against an agent that sets out to escape its caps, and the threat
-model is decided as accidents, not a hostile agent: "Multi-tenancy" below,
-question 1. Reopen together with that answer.
-
-**Runner enrollment landed for the accident case**
-(`2026-10-27-runner-enrollment-design.md`). A runner now proves an enrolled
-Ed25519 key, and no agent is handed a fleet-wide secret: the connect PSK is
-gone. The path above stays open only through `runner_legacy`, which the
-follow-up change of that spec removes once no runner row reads `legacy`;
-delete this entry then. What remains after it is the same-uid case — an agent
-outside a sandbox can read its runner's key file — which is the hostile-agent
-question again.
-
----
-
 ## What the task log is for, now that oneshot is unused
 
 **What.** `task.<id>.log` (the `logs` verb, the TUI logs pane, the WebUI log
@@ -347,9 +271,10 @@ isolation unit:
 1. **Is the boundary against accidents or against a hostile agent?**
    - Accidents (topic name collisions, landing on the wrong runner): board
      namespacing plus runner pools are enough.
-   - A hostile agent: per-tenant `board_observe` /
-     `purge` / `global`, and separating the PSK all become required. So does
-     the "Any connect-PSK holder can register as a runner" entry above.
+   - A hostile agent: per-tenant `board_observe` / `purge` / `global` all
+     become required, and so does keeping each runner's key out of its
+     agents' reach: an agent outside a sandbox runs as its runner's uid and
+     can read the key file, and with it register a runner of its own.
 
    **Answered: accidents** (operator, 2026-10-27). The premise is already the
    "Trust model" section of `runner/agentskills/harness-cli/SKILL.md`: every

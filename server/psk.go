@@ -47,39 +47,13 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		d.Dispatch(conn, data)
 		return true
 
-	case protocol.AuthRole_ClientLegacy:
-		legacy := req.ClientHelloLegacy()
-		if legacy == nil {
-			return false
-		}
-		// The gate has already checked the ticket a legacy hello carries;
-		// identity code past this point takes the ticket-free shape.
-		hello := clientHelloFromLegacy(legacy)
-		if d.RecordClientIdentity != nil {
-			// Fast path: record identity directly — no TaskControlResponse emitted.
-			cid := conn.ConnectionID().String()
-			return d.RecordClientIdentity(cid, conn, &hello) == protocol.ClientHelloStatus_Ok
-		}
-		// Fallback (tests without RecordClientIdentity wired): re-dispatch via
-		// the normal TaskControl wire path. This emits an extra
-		// TaskControlResponse{ClientHello} but legacy clients tolerate it.
-		tcReq := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
-		tcReq.SetClientHello(hello)
-		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})
-		if err != nil {
-			slog.Error("pskDispatchIdentity: encode TaskControlRequest failed", "err", err)
-			return false
-		}
-		d.Dispatch(conn, data)
-		return true
-
-	case protocol.AuthRole_RunnerLegacy, protocol.AuthRole_Runner:
-		rh := runnerHelloOf(req)
-		if rh == nil {
+	case protocol.AuthRole_Runner:
+		a := req.RunnerAuth()
+		if a == nil {
 			return false
 		}
 		rmsg := protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
-		rmsg.SetHello(*rh)
+		rmsg.SetHello(a.Hello)
 		data, err := rmsg.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 		if err != nil {
 			slog.Error("pskDispatchIdentity: encode RunnerMessage failed", "err", err)
@@ -91,57 +65,25 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 	return false
 }
 
-// runnerHelloOf is the RunnerHello of either runner role.
-func runnerHelloOf(req *protocol.PskAuthRequest) *protocol.RunnerHello {
-	if req.Role == protocol.AuthRole_Runner {
-		if a := req.RunnerAuth(); a != nil {
-			return &a.Hello
-		}
-		return nil
-	}
-	return req.RunnerHello()
-}
-
-// clientHelloFromLegacy drops the bearer values an AuthRole.client_legacy hello
-// carries (the agent's ticket, the data-plane grant id), once the gate has
-// checked them, so code past the gate handles one ClientHello shape.
-func clientHelloFromLegacy(l *protocol.ClientHelloLegacy) protocol.ClientHello {
-	h := protocol.ClientHello{Kind: l.Kind}
-	if a := l.AgentInfo(); a != nil {
-		info := protocol.AgentInfo{RunnerId: a.RunnerId, TaskId: a.TaskId}
-		info.SetHostname(a.Hostname)
-		h.SetAgentInfo(info)
-	}
-	if dp := l.DataPlaneInfo(); dp != nil {
-		h.SetDataPlaneInfo(protocol.DataPlaneInfo{TaskId: dp.TaskId})
-	}
-	return h
-}
-
 // pskGate enforces the merged authentication + identity handshake on each
 // connection. The first message must be [0x45]+PskAuthRequest (brgen-encoded),
 // and what it must prove depends on the role and kind:
 //   - an operator kind (cli/tui/webui): a binder keyed by the operator PSK
 //     (nothing when none is configured: --dangerously-permit-no-operator-psk);
 //   - role=client, kind=agent: a binder keyed by the task's ticket (TicketFor);
-//   - role=runner: an Ed25519 signature by an enrolled key (RunnerAuth);
-//   - client_legacy agents send their ticket (ValidateTicket); runner_legacy
-//     proves nothing. Both are accepted until the follow-up change of
-//     2026-10-27-runner-enrollment-design.md.
+//   - role=runner: an Ed25519 signature by an enrolled key (RunnerAuth).
+//
+// The two roles every binary spoke before runner enrollment (AuthRole 0 and 1)
+// are gone: a request carrying one decodes to no arm and is refused
+// no_identity, which a runner retries.
 //
 // An identity is required in every case.
 //
-// authed starts false until Check succeeds. Nil ValidateTicket degrades to Ok
-// (safe for tests that do not wire a Board).
+// authed starts false until Check succeeds.
 type pskGate struct {
 	authed bool
-	// role is fixed by the accepted handshake, never by later messages, and
-	// stored NORMALISED: AuthRole_Client or AuthRole_Runner whichever shape
-	// proved it, with legacy saying whether that was a _legacy role. Every
-	// reader of the role therefore compares against two values, as before
-	// the legacy roles existed.
-	role   protocol.AuthRole
-	legacy bool
+	// role is fixed by the accepted handshake, never by later messages.
+	role protocol.AuthRole
 	// runnerKey is the enrolled key a role=runner connection signed with;
 	// nil for every other connection.
 	runnerKey ed25519.PublicKey
@@ -158,8 +100,6 @@ type pskGate struct {
 	// serverKey signs every PskAuthResponse so a client holding the public
 	// half can tell this server from an impostor. server.New guarantees one.
 	serverKey ed25519.PrivateKey
-	// ValidateTicket checks the ticket a role=client_legacy agent sends.
-	ValidateTicket func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus
 	// TicketFor is the ticket a role=client agent's binder must be keyed by.
 	// nil (test wiring without a Board) refuses every role=client agent.
 	TicketFor func(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte, bool)
@@ -173,12 +113,9 @@ func newPSKGate() *pskGate {
 
 func (g *pskGate) Authed() bool { return g.authed }
 
-// Role is the authenticated role, normalised to AuthRole_Client or
-// AuthRole_Runner. Meaningful only once Authed.
+// Role is the authenticated role, AuthRole_Client or AuthRole_Runner.
+// Meaningful only once Authed.
 func (g *pskGate) Role() protocol.AuthRole { return g.role }
-
-// Legacy reports that the connection authenticated with a _legacy role.
-func (g *pskGate) Legacy() bool { return g.legacy }
 
 // agentBinderOK checks a role=client agent's binder against the ticket the
 // board holds for its (runner, task).
@@ -232,20 +169,14 @@ func (g *pskGate) AllowsMessage(data []byte) bool {
 }
 
 // binderKey selects the secret a binder must prove: the operator PSK, for
-// operator-surface clients (kind cli/tui/webui) of either client role. Nothing
-// else proves a shared secret: an agent's binder is keyed by its ticket
-// (agentBinderOK), a runner signs (RunnerAuth), and a client_legacy agent or
-// runner_legacy runner carried none once the connect PSK was gone. nil = no
-// binder to check; with no operator PSK configured
-// (--dangerously-permit-no-operator-psk) operator surfaces prove nothing.
+// operator-surface clients (kind cli/tui/webui). Nothing else proves a shared
+// secret: an agent's binder is keyed by its ticket (agentBinderOK) and a
+// runner signs (RunnerAuth). nil = no binder to check; with no operator PSK
+// configured (--dangerously-permit-no-operator-psk) operator surfaces prove
+// nothing.
 func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
-	switch req.Role {
-	case protocol.AuthRole_Client:
+	if req.Role == protocol.AuthRole_Client {
 		if h := req.ClientHello(); h != nil && h.Kind != protocol.ClientKind_Agent {
-			return g.operatorPSK
-		}
-	case protocol.AuthRole_ClientLegacy:
-		if h := req.ClientHelloLegacy(); h != nil && h.Kind != protocol.ClientKind_Agent {
 			return g.operatorPSK
 		}
 	}
@@ -279,10 +210,10 @@ func (g *pskGate) respond(sendFn func([]byte), transcript []byte, status protoco
 //
 // Processing order (load-bearing per spec):
 //  1. Decode PskAuthRequest
-//  2. Binder verification (before any identity action)
+//  2. Binder verification (before any identity action); for kind=agent this
+//     is the ticket check, for role=runner the signature and enrollment (2b)
 //  3. Identity required (fail-closed)
-//  4. Ticket validation (client+agent role only)
-//  5. Accept: mark authed, reply ok, return decoded request for caller dispatch
+//  4. Accept: mark authed, reply ok, return decoded request for caller dispatch
 //
 // transcript is this connection's objproto handshake transcript
 // (Connection.GetTranscript()). ComputePSKBinder inputs are UNCHANGED.
@@ -365,19 +296,9 @@ func (g *pskGate) Check(
 			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
 			return true, true, nil
 		}
-	case protocol.AuthRole_ClientLegacy:
-		if req.ClientHelloLegacy() == nil {
-			slog.Warn("pskGate: client role but ClientHello is nil (identity required)")
-			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
-			return true, true, nil
-		}
-	case protocol.AuthRole_RunnerLegacy, protocol.AuthRole_Runner:
-		rh := runnerHelloOf(&req)
-		if rh == nil {
-			slog.Warn("pskGate: runner role but RunnerHello is nil (identity required)")
-			g.respond(sendFn, transcript, protocol.PskAuthStatus_NoIdentity)
-			return true, true, nil
-		}
+	case protocol.AuthRole_Runner:
+		// Step 2b has refused a request with no RunnerAuth.
+		rh := &req.RunnerAuth().Hello
 		// A zero runner_id is an ABSENT identity, not a valid one, and it has to
 		// be refused here rather than absorbed downstream. The board keys every
 		// task's ticket by (runner identity, task id) and RegisterTask
@@ -403,44 +324,8 @@ func (g *pskGate) Check(
 		return true, true, nil
 	}
 
-	// Step 4: Ticket validation (client role + kind=agent only).
-	// This closes the bad-ticket→operator fallback: an agent presenting an
-	// invalid ticket must NOT proceed as operator.
-	if req.Role == protocol.AuthRole_ClientLegacy {
-		hello := req.ClientHelloLegacy()
-		if hello.Kind == protocol.ClientKind_Agent {
-			info := hello.AgentInfo()
-			if info == nil {
-				slog.Warn("pskGate: agent kind but AgentInfo is nil")
-				g.respond(sendFn, transcript, protocol.PskAuthStatus_BadTicket)
-				return true, true, nil
-			}
-			if g.ValidateTicket != nil {
-				if s := g.ValidateTicket(info); s != protocol.PskAuthStatus_Ok {
-					g.respond(sendFn, transcript, s)
-					return true, true, nil
-				}
-			}
-			// nil ValidateTicket degrades to Ok (test-wiring without a Board).
-		}
-	}
-
-	// Step 5: Accept — mark authed, reply ok, return decoded request for dispatch.
-	switch req.Role {
-	case protocol.AuthRole_ClientLegacy:
-		g.role, g.legacy = protocol.AuthRole_Client, true
-		h := req.ClientHelloLegacy()
-		var host string
-		if a := h.AgentInfo(); a != nil {
-			host = string(a.Hostname)
-		}
-		slog.Info("legacy client handshake", "kind", h.Kind.String(), "hostname", host, "cid", g.cid)
-	case protocol.AuthRole_RunnerLegacy:
-		g.role, g.legacy = protocol.AuthRole_Runner, true
-		slog.Info("legacy runner handshake", "hostname", string(req.RunnerHello().Hostname), "cid", g.cid)
-	default:
-		g.role = req.Role
-	}
+	// Step 4: Accept — mark authed, reply ok, return decoded request for dispatch.
+	g.role = req.Role
 	g.authed = true
 	g.respond(sendFn, transcript, protocol.PskAuthStatus_Ok)
 	return true, false, &req

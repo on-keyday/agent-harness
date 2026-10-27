@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ed25519"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -12,7 +13,7 @@ func TestPSKDispatchIdentityRejectsFailedPrincipalRegistration(t *testing.T) {
 		return protocol.ClientHelloStatus_BadTicket
 	}}
 	conn := &fakeConn{id: tcid("rejected-principal")}
-	if pskDispatchIdentity(d, conn, buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{})) {
+	if pskDispatchIdentity(d, conn, buildAgentBinderReq([16]byte{}, testTranscript, protocol.RunnerID{}, protocol.TaskID{})) {
 		t.Fatal("a revoked ticket was accepted as an unidentified operator")
 	}
 }
@@ -20,23 +21,25 @@ func TestPSKDispatchIdentityRejectsFailedPrincipalRegistration(t *testing.T) {
 func TestAuthenticatedConnectionRoles(t *testing.T) {
 	var taskID protocol.TaskID
 	taskID.Id[0] = 1
+	rid, ticket := testRunnerID("role-test"), [16]byte{7}
+	pub, priv, _ := ed25519.GenerateKey(nil)
 	roles := []struct {
 		name string
 		req  *protocol.PskAuthRequest
 	}{
 		{"operator", buildOperatorClientHello(nil, testTranscript)},
-		{"agent", buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{TaskId: taskID})},
-		{"runner", buildRunnerHelloReq(nil, testTranscript, protocol.RunnerHello{Version: 1, RunnerId: testRunnerID("role-test")})},
+		{"agent", buildAgentBinderReq(ticket, testTranscript, rid, taskID)},
+		{"runner", buildRunnerAuthReq(priv, testTranscript, protocol.RunnerHello{Version: 1, RunnerId: rid})},
 	}
 	for _, role := range roles {
 		t.Run(role.name, func(t *testing.T) {
-			g := newPSKGate()
-			g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_Ok }
+			g := gateWithKeys(t, pub)
+			g.TicketFor = agentGate(rid, taskID, ticket).TicketFor
 			_, closeConn, accepted := g.Check(buildPskAuthData(t, role.req), testTranscript, func([]byte) {})
 			if closeConn || accepted == nil {
 				t.Fatal("initial handshake rejected")
 			}
-			client := role.req.Role == protocol.AuthRole_ClientLegacy
+			client := role.req.Role == protocol.AuthRole_Client
 			for _, tc := range []struct {
 				name string
 				data []byte
@@ -70,8 +73,8 @@ func TestUnauthenticatedConnectionHasNoRoleAuthority(t *testing.T) {
 			t.Errorf("unauthenticated connection allowed %v", kind)
 		}
 	}
-	g.ValidateTicket = func(*protocol.AgentInfoLegacy) protocol.PskAuthStatus { return protocol.PskAuthStatus_BadTicket }
-	req := buildAgentClientHello(nil, testTranscript, protocol.AgentInfoLegacy{})
+	// No TicketFor wired: every role=client agent is refused.
+	req := buildAgentBinderReq([16]byte{}, testTranscript, protocol.RunnerID{}, protocol.TaskID{})
 	_, closeConn, accepted := g.Check(buildPskAuthData(t, req), testTranscript, func([]byte) {})
 	if !closeConn || accepted != nil || g.AllowsMessage([]byte{byte(appwire.AppKind_TaskControl), byte(protocol.TaskControlKind_List)}) {
 		t.Fatal("rejected handshake granted application authority")

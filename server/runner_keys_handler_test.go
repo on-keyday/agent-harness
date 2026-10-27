@@ -204,13 +204,12 @@ func TestUnenrollUnusedKeyNeedsNoForce(t *testing.T) {
 	}
 }
 
-func TestRunnerKeysListsUsersAndLegacy(t *testing.T) {
+func TestRunnerKeysListsUsers(t *testing.T) {
 	f := newKeyVerbFixture(t)
 	op := keyVerbConn()
 	pub, _, _ := ed25519.GenerateKey(nil)
 	f.enroll(t, op, pub, "gmk")
 	f.h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9902-1"), Identity: testRunnerID("a"), Hostname: "gmkhost", Key: pub, Conn: &fakeConn{id: tcid("ws:127.0.0.1:9902-1")}})
-	f.h.Registry.Add(&RunnerEntry{ID: tcid("ws:127.0.0.1:9902-2"), Identity: testRunnerID("b"), Hostname: "old-laptop", LegacyAuth: true, Conn: &fakeConn{id: tcid("ws:127.0.0.1:9902-2")}})
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKeys, RequestId: 3}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
@@ -228,8 +227,5 @@ func TestRunnerKeysListsUsersAndLegacy(t *testing.T) {
 	}
 	if string(body.Keys[0].EnrolledBy) != "operator" {
 		t.Fatalf("enrolled_by %q", body.Keys[0].EnrolledBy)
-	}
-	if len(body.Legacy) != 1 || string(body.Legacy[0].Hostname) != "old-laptop" {
-		t.Fatalf("legacy %+v", body.Legacy)
 	}
 }

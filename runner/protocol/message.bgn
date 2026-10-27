@@ -134,16 +134,13 @@ format RunnerHello:
 
 # AuthRole discriminates which identity type is carried in a PskAuthRequest.
 #
-# The _legacy values are the two roles every binary spoke before runner
-# enrollment, kept under their old numbers so an old binary still connects
-# while the fleet migrates through the harness itself. They are deleted, with
-# the formats only they carry, by the follow-up change of
-# 2026-10-27-runner-enrollment-design.md. AuthRole is never persisted;
-# ClientKind, which the WAL stores, is not touched.
+# 0 and 1 are retired: they were the roles every binary spoke before runner
+# enrollment (an agent sent its ticket as a value, a runner proved nothing),
+# accepted through the migration and removed by the follow-up change of
+# 2026-10-27-runner-enrollment-design.md. A request carrying one has no arm
+# below and is refused no_identity. Do not reuse the numbers.
 enum AuthRole:
     :u8
-    client_legacy = 0  # ClientHelloLegacy: an agent sends its ticket, a data-plane hello its grant id
-    runner_legacy = 1  # RunnerHello, proving nothing beyond the binder
     client        = 2  # ClientHello: an agent's binder is keyed by its ticket, a data-plane hello's by its grant id
     runner        = 3  # RunnerAuth: an enrolled Ed25519 key signs the transcript
 
@@ -174,8 +171,6 @@ format PskAuthRequest:
     binder :[binder_len]u8
     role :AuthRole
     match role:
-        AuthRole.client_legacy => client_hello_legacy :ClientHelloLegacy
-        AuthRole.runner_legacy => runner_hello :RunnerHello
         AuthRole.client        => client_hello :ClientHello
         AuthRole.runner        => runner_auth :RunnerAuth
 
@@ -662,29 +657,6 @@ format ClientHello:
     if kind == ClientKind.data_plane:
         data_plane_info :DataPlaneInfo
 
-# --- the AuthRole.client_legacy shapes ---------------------------------------
-# What every client sent before runner enrollment: the ticket and the grant id
-# travel as values. Accepted until the follow-up change of
-# 2026-10-27-runner-enrollment-design.md deletes them together with
-# AuthRole.client_legacy.
-format AgentInfoLegacy:
-    runner_id :RunnerID
-    task_id :TaskID
-    auth_ticket :[16]u8
-    hostname_len :u8
-    hostname :[hostname_len]u8
-
-format DataPlaneInfoLegacy:
-    grant_id :[16]u8
-    task_id :TaskID
-
-format ClientHelloLegacy:
-    kind :ClientKind
-    if kind == ClientKind.agent:
-        agent_info :AgentInfoLegacy
-    if kind == ClientKind.data_plane:
-        data_plane_info :DataPlaneInfoLegacy
-
 enum ClientHelloStatus:
     :u8
     ok = "ok"
@@ -923,15 +895,13 @@ format RunnerInfo:
     agent_bin_len :u8
     agent_bin :[agent_bin_len]u8
     skills_injected :u1
-    # legacy_auth: registered under AuthRole.runner_legacy, so with no key.
-    legacy_auth :u1
-    reserved :u6
+    reserved :u7
     # named agent profiles this runner can launch a session under (mirrors
     # RunnerHello.agent_profiles). Echoed by the server.
     agent_profiles_len :u8
     agent_profiles :[agent_profiles_len]AgentProfileName
-    # The enrolled key this runner authenticated with (all zero when
-    # legacy_auth), and that key's label in the enrollment store.
+    # The enrolled key this runner authenticated with, and that key's label in
+    # the enrollment store.
     key :[32]u8
     key_label_len :u8
     key_label :[key_label_len]u8
@@ -2571,10 +2541,6 @@ format RunnerKeysResponse:
 format RunnerKeysBody:
     keys_len :u16
     keys :[keys_len]RunnerKeyRow
-    # Registered runners that authenticated with AuthRole.runner_legacy, i.e.
-    # without a key. Empty once the fleet has migrated.
-    legacy_len :u16
-    legacy :[legacy_len]RunnerKeyUser
 
 format RunnerKeyRow:
     key :[32]u8
@@ -3109,8 +3075,7 @@ format ConnInfo:
     connected_at :u64               # unix nano, stamped at activeConns register
     identified :u1                  # 1 once role is established (handshake done);
                                     # 0 = opened-but-never-authed (probe / failed)
-    legacy_auth :u1                 # 1 = authenticated with an AuthRole _legacy role
-    reserved :u6
+    reserved :u7
 
 # --- (a) snapshot: streamed body, mirrors ListResult / ListResultBody ---
 format ConnListQuery:

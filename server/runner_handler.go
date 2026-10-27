@@ -16,10 +16,9 @@ import (
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
 // and applies them to Registry and TaskStore.
 type RunnerHandler struct {
-	// AuthOf reports what the connection authenticated with: the enrolled
-	// runner key (nil for a legacy runner) and whether the role was _legacy.
-	// nil (test wiring) reads as a legacy connection.
-	AuthOf func(cid objproto.ConnectionID) (key ed25519.PublicKey, legacy bool)
+	// AuthOf reports the enrolled runner key the connection authenticated
+	// with. nil (test wiring) registers the runner with no key.
+	AuthOf func(cid objproto.ConnectionID) ed25519.PublicKey
 	// KickConn ends a connection from the server side (Server.kickConn).
 	KickConn func(cid objproto.ConnectionID)
 
@@ -171,9 +170,8 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				entry.ViaDialAddr = info.ViaDialAddr
 			}
 		}
-		entry.LegacyAuth = true
 		if h.AuthOf != nil {
-			entry.Key, entry.LegacyAuth = h.AuthOf(conn.ConnectionID())
+			entry.Key = h.AuthOf(conn.ConnectionID())
 		}
 		displaced, err := h.Registry.Add(entry)
 		if err != nil {

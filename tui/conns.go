@@ -543,11 +543,8 @@ func connInfoToRow(ci *protocol.ConnInfo) table.Row {
 	runner := cli.PrincipalShort(ci.PrincipalRunner.Id[:])
 	age := cli.ConnAge(ci.ConnectedAt)
 	state := "ok"
-	switch {
-	case !ci.Identified():
+	if !ci.Identified() {
 		state = "unident"
-	case ci.LegacyAuth():
-		state = "legacy"
 	}
 	return table.Row{cid, role, principal, runner, age, state}
 }

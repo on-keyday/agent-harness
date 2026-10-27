@@ -32,7 +32,8 @@ func TestConnectionRolesE2E(t *testing.T) {
 			cid := objproto.MustParseConnectionID("ws:" + addr + "-1")
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			s := New(Config{Addr: addr, OperatorPSK: []byte("role-test-operator")})
+			runnerPriv, runnerKeys := enrolledTestRunner(t)
+			s := New(Config{Addr: addr, OperatorPSK: []byte("role-test-operator"), RunnerKeys: runnerKeys})
 			s.SetBoard(newTestBoard(t))
 			done := make(chan error, 1)
 			go func() { done <- s.Run(ctx) }()
@@ -110,7 +111,7 @@ func TestConnectionRolesE2E(t *testing.T) {
 				conn = pc.Connection()
 				peerDone = pc.Done()
 				hello := protocol.RunnerHello{Version: 1, RunnerId: testRunnerID("role-runner"), MaxTasks: 1}
-				req := buildRunnerHelloReq(nil, conn.GetTranscript(), hello)
+				req := buildRunnerAuthReq(runnerPriv, conn.GetTranscript(), hello)
 				if _, _, err := conn.SendMessage(buildPskAuthData(t, req)); err != nil {
 					t.Fatal(err)
 				}

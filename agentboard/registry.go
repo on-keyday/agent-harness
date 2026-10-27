@@ -1,7 +1,6 @@
 package agentboard
 
 import (
-	"crypto/subtle"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -60,19 +59,4 @@ func (r *registry) Ticket(rid protocol.RunnerID, tid protocol.TaskID) ([16]byte,
 	defer r.mu.Unlock()
 	t, ok := r.tickets[ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}]
 	return t, ok
-}
-
-// Validate is called from the ClientHello path with the identity the agent
-// presented.
-func (r *registry) Validate(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) protocol.ClientHelloStatus {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	want, ok := r.tickets[ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}]
-	if !ok {
-		return HelloStatusUnknownTask
-	}
-	if subtle.ConstantTimeCompare(want[:], ticket[:]) != 1 {
-		return HelloStatusBadTicket
-	}
-	return HelloStatusOk
 }

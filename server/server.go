@@ -1235,20 +1235,19 @@ type streamingConn struct {
 	objproto.Connection
 	trans          trsf.Transport
 	connectedSince time.Time // stamped at activeConns register; used by ConnList
-	// Set when the gate accepts: whether the connection authenticated with a
-	// _legacy role, and the runner key a role=runner connection proved.
-	legacyAuth bool
-	authKey    ed25519.PublicKey
+	// Set when the gate accepts: the runner key a role=runner connection
+	// proved.
+	authKey ed25519.PublicKey
 }
 
 // recordAuth stores what the gate accepted on the connection's activeConns
 // entry, before the hello is dispatched, so the registration and the conn
 // listing can read it.
-func (s *Server) recordAuth(cid objproto.ConnectionID, legacy bool, key ed25519.PublicKey) {
+func (s *Server) recordAuth(cid objproto.ConnectionID, key ed25519.PublicKey) {
 	s.activeConnsMu.Lock()
 	defer s.activeConnsMu.Unlock()
 	if sc, ok := s.activeConns[cid]; ok {
-		sc.legacyAuth, sc.authKey = legacy, key
+		sc.authKey = key
 		s.activeConns[cid] = sc
 	}
 }
@@ -1271,11 +1270,10 @@ func (s *Server) kickConn(cid objproto.ConnectionID) {
 }
 
 // authOf is RunnerHandler.AuthOf.
-func (s *Server) authOf(cid objproto.ConnectionID) (ed25519.PublicKey, bool) {
+func (s *Server) authOf(cid objproto.ConnectionID) ed25519.PublicKey {
 	s.activeConnsMu.Lock()
 	defer s.activeConnsMu.Unlock()
-	sc := s.activeConns[cid]
-	return sc.authKey, sc.legacyAuth
+	return s.activeConns[cid].authKey
 }
 
 // DumpTrsfState logs each active connection's trsf internal state (debug aid;
@@ -1430,19 +1428,6 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	if s.Board != nil {
 		gate.TicketFor = s.Board.Registry().Ticket
 	}
-	// Wire ticket validation into the gate: an agent that fails this check
-	// must NOT fall through to operator (this is the hole the merged handshake
-	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.
-	gate.ValidateTicket = func(info *protocol.AgentInfoLegacy) protocol.PskAuthStatus {
-		if s.Board == nil {
-			return protocol.PskAuthStatus_Ok // no board → degrade to ok (test wiring)
-		}
-		status := s.Board.Registry().Validate(info.RunnerId, info.TaskId, info.AuthTicket)
-		if status == agentboard.HelloStatusOk {
-			return protocol.PskAuthStatus_Ok
-		}
-		return protocol.PskAuthStatus_BadTicket
-	}
 	// Pubsub only flows once the gate has fixed the role (AllowsMessage), so
 	// reading it per JOIN reads the authenticated one.
 	subscriber.SetAuthorizer(func(topic string) pubsub.JoinGrant {
@@ -1491,7 +1476,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 				// Reused code: TaskHandler.Handle (task_handler.go:148) and
 				// RunnerHandler.Handle (runner_handler.go:64) — both are invoked
 				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
-				s.recordAuth(session.ConnectionID(), gate.Legacy(), gate.RunnerKey())
+				s.recordAuth(session.ConnectionID(), gate.RunnerKey())
 				if !pskDispatchIdentity(s.dispatcher, wrapped, accepted) {
 					_ = trsf.SendClose(session)
 					cancel()
@@ -1665,7 +1650,6 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 		PrincipalRunner: principalRunner,
 	}
 	info.SetIdentified(identified)
-	info.SetLegacyAuth(sc.legacyAuth)
 	info.SetCid([]byte(cidStr))
 	return info
 }

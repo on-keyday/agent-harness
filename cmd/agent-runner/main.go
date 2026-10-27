@@ -52,12 +52,6 @@ type mainConfig struct {
 	ServerPubKey               string
 	ServerPubKeyFile           string
 	RunnerKeyFile              string
-	// IgnoredPSK / IgnoredPSKFile hold the removed connect-PSK flags, still
-	// accepted so a slot registered with them starts after the upgrade. They
-	// do nothing; the follow-up change of 2026-10-27-runner-enrollment-design.md
-	// deletes them with the legacy handshake roles.
-	IgnoredPSK                 string
-	IgnoredPSKFile             string
 	PrintPubkey                bool
 	RotateKey                  bool
 	NoWorktree                 bool
@@ -114,10 +108,6 @@ func newMainConfig() *mainConfig {
 	}
 }
 
-// legacyPSKGiven reports that the command line still carries a removed
-// connect-PSK flag, which startup warns about.
-func (c *mainConfig) legacyPSKGiven() bool { return c.IgnoredPSK != "" || c.IgnoredPSKFile != "" }
-
 // bindFlags registers all flags on fs, using cfg's current values as defaults.
 func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen. Takes a comma-separated list, tried in order until one answers, and re-tried from the top on every reconnect — for a runner that moves between networks (a LAN address first, a tailnet one after it). harness-cli/TUI/WebUI take a single address: the operator who moved knows which network they are on, and this runner may come back up with nobody present. Agents are unaffected either way; they are handed the ONE address this runner connected on.")
@@ -139,8 +129,6 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.ServerPubKey, "server-pubkey", c.ServerPubKey, "the server's public key (hex, from <data-dir>/server-key.pub on the server host); when set, the runner refuses a server that cannot prove it holds the matching private key, and agents inherit it (env: HARNESS_SERVER_PUBKEY)")
 	fs.StringVar(&c.ServerPubKeyFile, "server-pubkey-file", c.ServerPubKeyFile, "path to a file holding --server-pubkey (env: HARNESS_SERVER_PUBKEY_FILE)")
-	fs.StringVar(&c.IgnoredPSK, "psk", "", "IGNORED: the connect PSK was removed (runners prove an enrolled key); accepted so an existing slot's command line still starts")
-	fs.StringVar(&c.IgnoredPSKFile, "psk-file", "", "IGNORED: see --psk")
 	fs.StringVar(&c.RunnerKeyFile, "runner-key-file", c.RunnerKeyFile, "this runner's Ed25519 key, which the server must have enrolled (`harness-cli runner enroll`); created when absent (env: HARNESS_RUNNER_KEY_FILE; default <home>/.config/harness/runner-key, shared by every slot this user runs)")
 	fs.BoolVar(&c.PrintPubkey, "print-pubkey", c.PrintPubkey, "print this runner's public key (creating the key if absent) for `harness-cli runner enroll`, and exit; needs no other flag")
 	fs.BoolVar(&c.RotateKey, "rotate-key", c.RotateKey, "write a new key (the old one is kept as <key file>.prev), print its public key, and exit. Running runners keep the old key until restarted; enroll the new one first")
@@ -474,9 +462,6 @@ func main() {
 	// The path AND the key, so a runner reading a different file than the one
 	// that was enrolled shows it here.
 	slog.Info("runner key", "path", runnerKeyPath, "pubkey", hex.EncodeToString(runnerKey.Public().(ed25519.PublicKey)))
-	if cfg.legacyPSKGiven() {
-		slog.Warn("--psk / --psk-file are ignored: the connect PSK was removed and this runner proves its enrolled key instead; drop them from this slot's command line")
-	}
 
 	// Agent skills: embedded by default; a non-empty --agentskills-dir (or
 	// HARNESS_AGENTSKILLS_DIR) swaps in an on-disk FS that WriteAgentSkills

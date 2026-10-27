@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"net"
 	"strings"
@@ -26,9 +27,10 @@ import (
 // through handleConnection — where the per-connection role is known — and not
 // through a helper a test could call while the wiring stayed broken.
 type pubsubAuthzServer struct {
-	s      *Server
-	cid    objproto.ConnectionID
-	victim string
+	s          *Server
+	cid        objproto.ConnectionID
+	victim     string
+	runnerPriv ed25519.PrivateKey
 }
 
 func startPubsubAuthzServer(t *testing.T) (context.Context, *pubsubAuthzServer) {
@@ -43,7 +45,8 @@ func startPubsubAuthzServer(t *testing.T) (context.Context, *pubsubAuthzServer) 
 	addr := ln.Addr().String()
 	_ = ln.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	s := New(Config{Addr: addr, OperatorPSK: []byte("pubsub-authz-operator")})
+	runnerPriv, runnerKeys := enrolledTestRunner(t)
+	s := New(Config{Addr: addr, OperatorPSK: []byte("pubsub-authz-operator"), RunnerKeys: runnerKeys})
 	s.SetBoard(newTestBoard(t))
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -67,7 +70,7 @@ func startPubsubAuthzServer(t *testing.T) (context.Context, *pubsubAuthzServer) 
 		time.Sleep(10 * time.Millisecond)
 	}
 	victim := s.Tasks().Create("repo", "", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, authority.Grant{}, "")
-	return ctx, &pubsubAuthzServer{s: s, cid: objproto.MustParseConnectionID("ws:" + addr + "-1"), victim: victim}
+	return ctx, &pubsubAuthzServer{s: s, cid: objproto.MustParseConnectionID("ws:" + addr + "-1"), victim: victim, runnerPriv: runnerPriv}
 }
 
 // dialOperator connects with the operator secret.
@@ -135,7 +138,7 @@ func (e *pubsubAuthzServer) dialRunner(ctx context.Context, t *testing.T, label 
 	identity := testRunnerID(label)
 	// No roots: the scheduler must not hand this runner the queued victim.
 	hello := protocol.RunnerHello{Version: 1, RunnerId: identity, MaxTasks: 1}
-	req := buildRunnerHelloReq(nil, pc.Connection().GetTranscript(), hello)
+	req := buildRunnerAuthReq(e.runnerPriv, pc.Connection().GetTranscript(), hello)
 	if _, _, err := pc.Connection().SendMessage(buildPskAuthData(t, req)); err != nil {
 		t.Fatal(err)
 	}

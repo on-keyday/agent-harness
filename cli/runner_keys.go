@@ -68,20 +68,20 @@ func RunnerEnrollWith(ctx context.Context, c taskControlClient, key ed25519.Publ
 	return resp.RunnerEnroll().Status, nil
 }
 
-func RunnerKeysWith(ctx context.Context, c *Client) ([]RunnerKeyRow, []RunnerKeyUser, error) {
+func RunnerKeysWith(ctx context.Context, c *Client) ([]RunnerKeyRow, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RunnerKeys}
 	req.SetRunnerKeys(protocol.RunnerKeysRequest{})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	rk := resp.RunnerKeys()
 	if resp.Kind != protocol.TaskControlKind_RunnerKeys || rk == nil {
-		return nil, nil, fmt.Errorf("runner keys: unexpected response kind=%v", resp.Kind)
+		return nil, fmt.Errorf("runner keys: unexpected response kind=%v", resp.Kind)
 	}
 	var body protocol.RunnerKeysBody
 	if err := ReadResponseBody(ctx, c.Transport(), rk.StreamId, &body); err != nil {
-		return nil, nil, fmt.Errorf("runner keys: %w", err)
+		return nil, fmt.Errorf("runner keys: %w", err)
 	}
 	rows := make([]RunnerKeyRow, 0, len(body.Keys))
 	for _, r := range body.Keys {
@@ -93,7 +93,7 @@ func RunnerKeysWith(ctx context.Context, c *Client) ([]RunnerKeyRow, []RunnerKey
 			Runners:    runnerKeyUsers(r.Runners),
 		})
 	}
-	return rows, runnerKeyUsers(body.Legacy), nil
+	return rows, nil
 }
 
 func RunnerUnenrollWith(ctx context.Context, c *Client, prefix string, force bool) (protocol.RunnerKeyStatus, RunnerUnenrollResult, error) {
@@ -135,10 +135,10 @@ func RunnerEnroll(ctx context.Context, server objproto.ConnectionID, key ed25519
 	return RunnerEnrollWith(ctx, c, key, label)
 }
 
-func RunnerKeys(ctx context.Context, server objproto.ConnectionID) ([]RunnerKeyRow, []RunnerKeyUser, error) {
+func RunnerKeys(ctx context.Context, server objproto.ConnectionID) ([]RunnerKeyRow, error) {
 	c, err := Dial(ctx, server, protocol.ClientKind_Cli)
 	if err != nil {
-		return nil, nil, fmt.Errorf("dial server: %w", err)
+		return nil, fmt.Errorf("dial server: %w", err)
 	}
 	defer c.Close()
 	return RunnerKeysWith(ctx, c)
@@ -182,17 +182,17 @@ func FormatRunnerEnroll(st protocol.RunnerKeyStatus, key ed25519.PublicKey, labe
 	return fmt.Sprintf("runner enroll %s: %v", KeyPrefix16(key), st)
 }
 
-// FormatRunnerKeys renders `runner keys`: a block per key, then the legacy
-// runners. Counts are printed even at zero: zero is a measurement.
-func FormatRunnerKeys(rows []RunnerKeyRow, legacy []RunnerKeyUser) string {
+// FormatRunnerKeys renders `runner keys`: a block per key, then the number of
+// keys. Counts are printed even at zero: zero is a measurement, and with no key
+// enrolled the count is the whole answer.
+func FormatRunnerKeys(rows []RunnerKeyRow) string {
 	var sb strings.Builder
 	for _, r := range rows {
 		fmt.Fprintf(&sb, "%s label=%s enrolled=%s by=%s runners=%d\n",
 			KeyPrefix16(r.Key), r.Label, r.EnrolledAt.UTC().Format(time.RFC3339), r.EnrolledBy, len(r.Runners))
 		runnerUserLines(&sb, r.Runners)
 	}
-	fmt.Fprintf(&sb, "legacy runners=%d\n", len(legacy))
-	runnerUserLines(&sb, legacy)
+	fmt.Fprintf(&sb, "keys=%d\n", len(rows))
 	return sb.String()
 }
 

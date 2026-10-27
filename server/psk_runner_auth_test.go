@@ -24,6 +24,18 @@ func testRunnerHello(host string) protocol.RunnerHello {
 	return rh
 }
 
+// enrolledTestRunner is a runner key and an enrollment store holding it, for
+// tests that run a real server and handshake as a runner.
+func enrolledTestRunner(t *testing.T) (ed25519.PrivateKey, *RunnerKeyStore) {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	st, err := LoadRunnerKeyStore("", []RunnerKeyRecord{{Key: pub, Label: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv, st
+}
+
 func gateWithKeys(t *testing.T, keys ...ed25519.PublicKey) *pskGate {
 	t.Helper()
 	var recs []RunnerKeyRecord
@@ -76,31 +88,7 @@ func TestGateRunnerEnrolledKeyIsAccepted(t *testing.T) {
 	if shouldClose || accepted == nil || !g.Authed() {
 		t.Fatalf("enrolled key refused: status %v", parsePskResponse(t, sent))
 	}
-	if g.Role() != protocol.AuthRole_Runner || g.Legacy() || !g.RunnerKey().Equal(pub) {
-		t.Fatalf("role=%v legacy=%v key=%x", g.Role(), g.Legacy(), g.RunnerKey())
-	}
-}
-
-func TestGateRunnerLegacyIsAcceptedAndMarked(t *testing.T) {
-	g := gateWithKeys(t)
-	var sent []byte
-	_, shouldClose, accepted := g.Check(buildPskAuthData(t, buildRunnerHelloReq(nil, testTranscript, testRunnerHello("old"))), testTranscript, func(b []byte) { sent = append(sent, b...) })
-	if shouldClose || accepted == nil {
-		t.Fatalf("legacy runner refused: %v", parsePskResponse(t, sent))
-	}
-	if g.Role() != protocol.AuthRole_Runner || !g.Legacy() || g.RunnerKey() != nil {
-		t.Fatalf("role=%v legacy=%v key=%x, want runner / true / nil", g.Role(), g.Legacy(), g.RunnerKey())
-	}
-}
-
-func TestGateClientLegacyNormalisesToClient(t *testing.T) {
-	g := gateWithKeys(t)
-	var sent []byte
-	_, _, accepted := g.Check(buildPskAuthData(t, buildOperatorClientHello(nil, testTranscript)), testTranscript, func(b []byte) { sent = append(sent, b...) })
-	if accepted == nil {
-		t.Fatalf("legacy operator refused: %v", parsePskResponse(t, sent))
-	}
-	if g.Role() != protocol.AuthRole_Client || !g.Legacy() {
-		t.Fatalf("role=%v legacy=%v, want client / true", g.Role(), g.Legacy())
+	if g.Role() != protocol.AuthRole_Runner || !g.RunnerKey().Equal(pub) {
+		t.Fatalf("role=%v key=%x", g.Role(), g.RunnerKey())
 	}
 }

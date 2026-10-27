@@ -100,9 +100,9 @@ func TestSendMergedHandshake_OperatorKind_WithPSK(t *testing.T) {
 		t.Errorf("operator path must not set AgentInfo, got non-nil")
 	}
 
-	// RunnerHello must be nil for client role.
-	if req.RunnerHello() != nil {
-		t.Errorf("RunnerHello() must be nil for client role")
+	// RunnerAuth must be nil for client role.
+	if req.RunnerAuth() != nil {
+		t.Errorf("RunnerAuth() must be nil for client role")
 	}
 }
 

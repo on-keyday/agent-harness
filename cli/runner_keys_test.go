@@ -28,24 +28,27 @@ func TestFormatRunnerEnroll(t *testing.T) {
 	}
 }
 
-// Zero is a measurement: a key nobody uses prints runners=0, and the legacy
-// line is printed even when it is empty.
+// Zero is a measurement: a key nobody uses prints runners=0, and the key count
+// is printed even when no key is enrolled.
 func TestFormatRunnerKeysNeverElidesZero(t *testing.T) {
 	rows := []RunnerKeyRow{
 		{Key: testKey(1), Label: "gmk", EnrolledAt: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC), EnrolledBy: "operator",
 			Runners: []RunnerKeyUser{{ID: protocol.RunnerID{Id: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}}, Hostname: "gmkhost"}}},
 		{Key: testKey(2), Label: "", EnrolledAt: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC), EnrolledBy: "task:00ff"},
 	}
-	got := FormatRunnerKeys(rows, nil)
+	got := FormatRunnerKeys(rows)
 	for _, want := range []string{
 		"0101010101010101 label=gmk enrolled=2026-10-27T09:00:00Z by=operator runners=1",
 		"  aabbccdd gmkhost",
 		"0202020202020202 label= enrolled=2026-10-27T10:00:00Z by=task:00ff runners=0",
-		"legacy runners=0",
+		"keys=2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+	if got := FormatRunnerKeys(nil); got != "keys=0\n" {
+		t.Errorf("no keys: %q, want keys=0", got)
 	}
 }
 

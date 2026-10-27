@@ -24,49 +24,31 @@ import (
 // validateDataPlaneHello, so the credential check stays in one place with the
 // store that holds it.
 //
-// Under role=client the hello names only the task, and its binder is keyed by
-// the grant id: the grant is found by trying the binder against this task's
-// live grants in grants (none matching → bad_ticket), and the answer carries
-// the grant id that matched, so everything after this reads one shape.
-func checkDataPlaneHello(data, transcript []byte, grants *grantStore) (*protocol.DataPlaneInfoLegacy, protocol.PskAuthStatus) {
+// The hello names only the task, and its binder is keyed by the grant id: the
+// grant is found by trying the binder against this task's live grants in
+// grants (none matching → bad_ticket), and the answer is the grant that
+// matched.
+func checkDataPlaneHello(data, transcript []byte, grants *grantStore) (protocol.DataPlaneGrant, protocol.PskAuthStatus) {
+	var none protocol.DataPlaneGrant
 	if len(data) == 0 || appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
-		return nil, protocol.PskAuthStatus_NoIdentity
+		return none, protocol.PskAuthStatus_NoIdentity
 	}
 	var req protocol.PskAuthRequest
-	if err := req.DecodeExact(data[1:]); err != nil {
-		return nil, protocol.PskAuthStatus_NoIdentity
+	if err := req.DecodeExact(data[1:]); err != nil || req.Role != protocol.AuthRole_Client {
+		return none, protocol.PskAuthStatus_NoIdentity
 	}
-	if req.Role == protocol.AuthRole_Client {
-		hello := req.ClientHello()
-		if hello == nil || hello.Kind != protocol.ClientKind_DataPlane || hello.DataPlaneInfo() == nil {
-			return nil, protocol.PskAuthStatus_NoIdentity
-		}
-		taskID := hello.DataPlaneInfo().TaskId
-		if grants == nil {
-			return nil, protocol.PskAuthStatus_BadTicket
-		}
-		g, ok := grants.MatchBinder(taskID, transcript, req.Binder)
-		if !ok {
-			return nil, protocol.PskAuthStatus_BadTicket
-		}
-		return &protocol.DataPlaneInfoLegacy{GrantId: g.GrantId, TaskId: taskID}, protocol.PskAuthStatus_Ok
+	hello := req.ClientHello()
+	if hello == nil || hello.Kind != protocol.ClientKind_DataPlane || hello.DataPlaneInfo() == nil {
+		return none, protocol.PskAuthStatus_NoIdentity
 	}
-
-	// A client_legacy hello carries its grant id as a value and proves nothing
-	// else (there is no connect PSK any more); validateDataPlaneHello checks
-	// that value against the store. Accepted until the follow-up change.
-	if req.Role != protocol.AuthRole_ClientLegacy {
-		return nil, protocol.PskAuthStatus_NoIdentity
+	if grants == nil {
+		return none, protocol.PskAuthStatus_BadTicket
 	}
-	hello := req.ClientHelloLegacy()
-	if hello == nil || hello.Kind != protocol.ClientKind_DataPlane {
-		return nil, protocol.PskAuthStatus_NoIdentity
+	g, ok := grants.MatchBinder(hello.DataPlaneInfo().TaskId, transcript, req.Binder)
+	if !ok {
+		return none, protocol.PskAuthStatus_BadTicket
 	}
-	info := hello.DataPlaneInfo()
-	if info == nil {
-		return nil, protocol.PskAuthStatus_NoIdentity
-	}
-	return info, protocol.PskAuthStatus_Ok
+	return g, protocol.PskAuthStatus_Ok
 }
 
 // validateDataPlaneHello is the whole authorization decision for a data-plane
@@ -79,7 +61,7 @@ func checkDataPlaneHello(data, transcript []byte, grants *grantStore) (*protocol
 // indistinguishable from a task this runner does not have.
 func validateDataPlaneHello(
 	sess *Session,
-	info protocol.DataPlaneInfoLegacy,
+	grant protocol.DataPlaneGrant,
 	kind protocol.TaskControlKind,
 	dir protocol.FileTransferDirection,
 	now time.Time,
@@ -87,7 +69,7 @@ func validateDataPlaneHello(
 	if sess == nil || sess.Grants == nil {
 		return protocol.ClientHelloStatus_UnknownTask
 	}
-	return sess.Grants.Validate(info.GrantId, info.TaskId, kind, dir, now)
+	return sess.Grants.Validate(grant.GrantId, grant.TaskId, kind, dir, now)
 }
 
 // dataPlaneMTUFor answers the packet size to build an accepted connection with.
@@ -182,7 +164,7 @@ func handleDataPlaneConn(
 	if sess := sessionRef.Load(); sess != nil {
 		grants = sess.Grants
 	}
-	info, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), grants)
+	grant, st := checkDataPlaneHello(data, pc.Connection().GetTranscript(), grants)
 	if st != protocol.PskAuthStatus_Ok {
 		log.Warn("data plane: handshake refused", "status", st)
 		sendPskAuthStatus(pc, st)
@@ -198,7 +180,7 @@ func handleDataPlaneConn(
 		sendPskAuthStatus(pc, protocol.PskAuthStatus_BadTicket)
 		return
 	}
-	kind, ok := sess.Grants.Kind(info.GrantId)
+	kind, ok := sess.Grants.Kind(grant.GrantId)
 	if !ok {
 		log.Warn("data plane: refused, no such grant")
 		sendPskAuthStatus(pc, protocol.PskAuthStatus_BadTicket)
@@ -220,17 +202,17 @@ func handleDataPlaneConn(
 	// task -- which is what makes a routed transfer's cwnd separable from
 	// everything else the runner is doing.
 	dpCID := pc.Connection().ConnectionID().String()
-	sess.registerTrsfConn(dpCID, protocol.ConnRole_Cli, pc.Transport(), info.TaskId)
+	sess.registerTrsfConn(dpCID, protocol.ConnRole_Cli, pc.Transport(), grant.TaskId)
 	defer sess.unregisterTrsfConn(dpCID)
 
 	// The grant can be revoked while this connection is open; that has to reach
 	// the transfer, or a narrowing `caps set` would be advisory here.
-	sess.Grants.OnClose(info.GrantId, func() { pc.Connection().Close() }) //nolint:errcheck
+	sess.Grants.OnClose(grant.GrantId, func() { pc.Connection().Close() }) //nolint:errcheck
 
 	// However this connection ends -- served, refused, or the client gone --
 	// the state it holds on both sides goes with it. The timers are only the
 	// backstop for a runner that dies without saying so.
-	grantID := info.GrantId
+	grantID := grant.GrantId
 	finishReport = func() {
 		sess.ensureGrants().Forget(grantID)
 		if sess.Sender == nil {
@@ -249,7 +231,7 @@ func handleDataPlaneConn(
 		log.Warn("data plane: no request arrived", "err", err)
 		return
 	}
-	serveDataPlaneRequest(ctx, log, sess, pc, *info, kind, req)
+	serveDataPlaneRequest(ctx, log, sess, pc, grant, kind, req)
 }
 
 // armDataPlaneRequest installs the handler for the one RunnerRequest the client
@@ -324,7 +306,7 @@ func serveDataPlaneRequest(
 	log *slog.Logger,
 	sess *Session,
 	pc *peer.Conn,
-	info protocol.DataPlaneInfoLegacy,
+	grant protocol.DataPlaneGrant,
 	kind protocol.TaskControlKind,
 	req *protocol.RunnerRequest,
 ) {
@@ -335,12 +317,12 @@ func serveDataPlaneRequest(
 			log.Warn("data plane: grant says open_file_transfer, request does not")
 			return
 		}
-		if st := validateDataPlaneHello(sess, info, kind, oft.Direction, time.Now()); st != protocol.ClientHelloStatus_Ok {
+		if st := validateDataPlaneHello(sess, grant, kind, oft.Direction, time.Now()); st != protocol.ClientHelloStatus_Ok {
 			log.Warn("data plane: request refused", "status", st)
 			sendPskAuthStatus(pc, pskStatusFor(st))
 			return
 		}
-		if oft.TaskId.Id != info.TaskId.Id {
+		if oft.TaskId.Id != grant.TaskId.Id {
 			log.Warn("data plane: request names a task the grant does not")
 			return
 		}
@@ -351,12 +333,12 @@ func serveDataPlaneRequest(
 			log.Warn("data plane: grant says list_files, request does not")
 			return
 		}
-		if st := validateDataPlaneHello(sess, info, kind, 0, time.Now()); st != protocol.ClientHelloStatus_Ok {
+		if st := validateDataPlaneHello(sess, grant, kind, 0, time.Now()); st != protocol.ClientHelloStatus_Ok {
 			log.Warn("data plane: request refused", "status", st)
 			sendPskAuthStatus(pc, pskStatusFor(st))
 			return
 		}
-		if lf.TaskId.Id != info.TaskId.Id {
+		if lf.TaskId.Id != grant.TaskId.Id {
 			log.Warn("data plane: request names a task the grant does not")
 			return
 		}

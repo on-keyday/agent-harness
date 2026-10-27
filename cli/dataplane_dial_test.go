@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -46,36 +45,5 @@ func TestDataPlaneStatusErrorDistinguishesRefusals(t *testing.T) {
 	// The three must not collapse into one another.
 	if errors.Is(dataPlaneStatusError(protocol.PskAuthStatus_Expired), ErrDataPlaneRevoked) {
 		t.Fatalf("expired and revoked are the same error")
-	}
-}
-
-// The hello has to say data_plane and carry the grant verbatim, because that is
-// the only thing the runner has to match against what the server pushed it.
-func TestDataPlaneHelloCarriesTheGrant(t *testing.T) {
-	var req protocol.PskAuthRequest
-	req.Role = protocol.AuthRole_ClientLegacy
-	var hello protocol.ClientHelloLegacy
-	hello.Kind = protocol.ClientKind_DataPlane
-	hello.SetDataPlaneInfo(protocol.DataPlaneInfoLegacy{
-		GrantId: [16]uint8{7, 7},
-		TaskId:  protocol.TaskID{Id: [16]uint8{3}},
-	})
-	req.SetClientHelloLegacy(hello)
-	data := req.MustAppend([]byte{byte(appwire.AppKind_PskAuth)})
-
-	if appwire.AppKind(data[0]) != appwire.AppKind_PskAuth {
-		t.Fatalf("wrong envelope kind: %d", data[0])
-	}
-	var back protocol.PskAuthRequest
-	if err := back.DecodeExact(data[1:]); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	h := back.ClientHelloLegacy()
-	if h == nil || h.Kind != protocol.ClientKind_DataPlane {
-		t.Fatalf("hello kind lost: %+v", h)
-	}
-	info := h.DataPlaneInfo()
-	if info == nil || info.GrantId != ([16]uint8{7, 7}) || info.TaskId.Id != ([16]uint8{3}) {
-		t.Fatalf("grant lost: %+v", info)
 	}
 }

@@ -2432,7 +2432,6 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	}
 	info.SetAgentProfiles(profs)
 	info.SetSkillsInjected(r.SkillsInjected)
-	info.SetLegacyAuth(r.LegacyAuth)
 	copy(info.Key[:], r.Key)
 	info.Id = r.Identity
 	// WHERE it is reached, which id used to answer by being an address.

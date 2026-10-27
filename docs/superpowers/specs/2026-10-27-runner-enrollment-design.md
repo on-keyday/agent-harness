@@ -461,3 +461,28 @@ verifying against this spec is not misled.
   place; the loser reads the winner's file.
 - **The undo line shell-quotes the label**, so it runs as printed whatever the
   label holds.
+
+## Amendment 2026-10-27 (the follow-up change)
+
+Landed the same day. The trigger was read on the live fleet before it:
+`harness-cli runner keys` listed 14 registered runners on two enrolled keys and
+ended `legacy runners=0`, and no `harness-cli conns` row carried the `legacy`
+mark. Where it departs from "The follow-up change" above:
+
+- **`AuthRole` 0 and 1 are retired, not reused.** `client = 2` and
+  `runner = 3` keep their numbers, so every binary built since enrollment is
+  unaffected. A request carrying 0 or 1 has no arm, does not decode, and is
+  answered `no_identity`, which a runner retries.
+- **The display bits became padding.** `RunnerInfo.legacy_auth` and
+  `ConnInfo.legacy_auth` are `reserved` bits again, so neither format's layout
+  moved. `RunnerKeysBody.legacy` is gone, so a client built before this change
+  cannot decode `runner keys`: that verb is not on the path the harness
+  upgrades through. `runner keys` now ends with `keys=N`, so its output is
+  never empty.
+- **`agent-runner --psk` / `--psk-file` are removed outright.** The amendment
+  above kept them for slot command lines frozen with them. No slot ever ran
+  with them: the operator said so (2026-10-27), and none of the 11 runner
+  processes or systemd user units on the main runner host carried them.
+- **The board's ticket compare (`agentboard` `registry.Validate`) is gone.** Its
+  one caller was the `client_legacy` agent check; a `role=client` agent proves
+  its ticket through the binder, which reads `Ticket`.

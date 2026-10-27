@@ -840,7 +840,7 @@ an agent's shell must resolve the same file.
 ```bash
 bin/agent-runner --print-pubkey                      # the key to enroll (stdout), its file (stderr)
 bin/harness-cli runner enroll <64-hex> --label build-box
-bin/harness-cli runner keys                          # enrolled keys, the runners on each, legacy runners
+bin/harness-cli runner keys                          # enrolled keys and the runners on each
 bin/harness-cli runner unenroll <8+ hex prefix>      # refused while a runner uses it…
 bin/harness-cli runner unenroll <prefix> --force     # …this closes them, and prints the enroll that undoes it
 bin/agent-runner --rotate-key                        # new key; the old one kept as runner-key.prev
@@ -862,23 +862,17 @@ is where a refused one shows — it is absent. The three verbs need the
 up for you needs it granted. `runner_admin` is a different power — `server
 dial-runner`, the server's own network reach — and implies nothing here. The
 verbs are on the CLI, the TUI command line and the WebUI command input, and
-`ls` shows each runner's key as `key=<label>` (or its prefix, or `legacy`).
+`ls` shows each runner's key as `key=<label>` (or its prefix).
 
 **Rotating a key** overlaps the old and the new, so nothing is cut off:
 `--rotate-key`, `runner enroll` the new key, restart the runners that use the
 file when convenient, then `runner unenroll` the old one once `runner keys`
 shows nothing on it. Unenrolling first would close every slot on the machine.
 
-**Old binaries still connect** — a runner or client from before enrollment
-authenticates with the old handshake, marked `legacy` on runner rows, on
-`conns` rows and in `runner keys` — until a follow-up change removes that
-acceptance; it lands once nothing reads `legacy`. Upgrade the **server
-first**: a new client or runner cannot talk to an old server. A server started
-with `--psk` / `--psk-file` must have them removed from its command line, or
-the new binary refuses to start. `agent-runner` instead accepts both flags,
-ignores them and warns at startup, so a slot registered with them comes back
-after the rebuild. An old CLI, TUI or WebUI connects but cannot read `ls` (the
-runner row grew); rebuild it. Design:
+**A binary from before enrollment no longer connects.** Its handshake used a
+role the server has since retired, and it is refused `no_identity`. An old
+runner keeps retrying, so rebuilding its host brings it back. Neither the
+server nor `agent-runner` accepts `--psk` / `--psk-file` any more. Design:
 `docs/superpowers/specs/2026-10-27-runner-enrollment-design.md`.
 
 ## Operating modes

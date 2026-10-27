@@ -125,11 +125,7 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	// and it decides real things — which shell an `ssh host cmd` reaches, which
 	// paths its roots are spelled in.
 	fmt.Fprintf(&sb, "os:            %s\n", cli.RunnerGOOSStr(r.Goos))
-	if r.LegacyAuth() {
-		fmt.Fprintf(&sb, "key:           legacy (registered without a key)\n")
-	} else {
-		fmt.Fprintf(&sb, "key:           %s (%s)\n", string(r.KeyLabel), cli.KeyPrefix16(r.Key[:]))
-	}
+	fmt.Fprintf(&sb, "key:           %s (%s)\n", string(r.KeyLabel), cli.KeyPrefix16(r.Key[:]))
 	fmt.Fprintf(&sb, "agent:         %s\n", agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {

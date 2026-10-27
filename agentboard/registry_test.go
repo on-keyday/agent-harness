@@ -34,20 +34,15 @@ func TestRegistry_RegisterProtoValidateBoard(t *testing.T) {
 	r.Register(mkProtoRid(1), mkProtoTid(1), ticket)
 
 	// Hello arrives with protocol.RunnerID/protocol.TaskID (same logical id, different Go type)
-	if status := r.Validate(mkBoardRid(1), mkBoardTid(1), ticket); status != HelloStatusOk {
-		t.Errorf("matching ticket → status=%v, want ok", status)
-	}
-	var bad [16]byte
-	if status := r.Validate(mkBoardRid(1), mkBoardTid(1), bad); status != HelloStatusBadTicket {
-		t.Errorf("wrong ticket → status=%v, want bad_ticket", status)
+	if got, ok := r.Ticket(mkBoardRid(1), mkBoardTid(1)); !ok || got != ticket {
+		t.Errorf("Ticket = %x, %v; want the registered one", got, ok)
 	}
 }
 
 func TestRegistry_UnknownTask(t *testing.T) {
 	r := newRegistry()
-	var ticket [16]byte
-	if status := r.Validate(mkBoardRid(1), mkBoardTid(2), ticket); status != HelloStatusUnknownTask {
-		t.Errorf("unregistered → status=%v, want unknown_task", status)
+	if _, ok := r.Ticket(mkBoardRid(1), mkBoardTid(2)); ok {
+		t.Error("unregistered task has a ticket")
 	}
 }
 
@@ -57,7 +52,7 @@ func TestRegistry_Revoke(t *testing.T) {
 	ticket[0] = 0x55
 	r.Register(mkProtoRid(1), mkProtoTid(3), ticket)
 	r.Revoke(mkProtoRid(1), mkProtoTid(3))
-	if status := r.Validate(mkBoardRid(1), mkBoardTid(3), ticket); status != HelloStatusUnknownTask {
-		t.Errorf("after revoke → status=%v, want unknown_task", status)
+	if _, ok := r.Ticket(mkBoardRid(1), mkBoardTid(3)); ok {
+		t.Error("ticket survived revoke")
 	}
 }

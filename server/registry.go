@@ -61,10 +61,9 @@ type RunnerEntry struct {
 	AgentProfiles  []string
 	SkillsInjected bool // from RunnerHello.skills_injected
 	// Key is the enrolled Ed25519 key this connection authenticated with
-	// (AuthRole.runner); nil for a runner that registered under
-	// AuthRole.runner_legacy, which LegacyAuth then says.
+	// (AuthRole.runner). The gate admits no runner without one; nil only in
+	// test wiring that leaves RunnerHandler.AuthOf unset.
 	Key              ed25519.PublicKey
-	LegacyAuth       bool
 	ActiveTasks      map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt      time.Time
 	LastTaskActivity time.Time
@@ -169,8 +168,9 @@ var ErrIdentityKeyMismatch = errors.New("runner identity is held by a connection
 //
 // A takeover is a runner's own reconnect, so it needs the holder's key: an
 // identity held under key K is refused (ErrIdentityKeyMismatch, nothing
-// registered) to a connection that proved another key. A legacy holder (no
-// key) can be taken over as before.
+// registered) to a connection that proved another key. A holder with no key
+// (test wiring only: the gate admits no runner without one) can be taken
+// over.
 func (r *Registry) Add(e *RunnerEntry) (displaced objproto.ConnectionID, err error) {
 	r.mu.Lock()
 	if !e.Identity.IsZero() {

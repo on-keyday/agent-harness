@@ -49,24 +49,9 @@ func TestRunnerTableKeyColumnSwapsWithRows(t *testing.T) {
 
 func TestRunnerDetailShowsKey(t *testing.T) {
 	r := protocol.RunnerInfo{}
-	r.SetLegacyAuth(true)
-	if !strings.Contains(formatRunnerDetail(r), "key:           legacy") {
-		t.Errorf("legacy runner detail:\n%s", formatRunnerDetail(r))
-	}
-	r = protocol.RunnerInfo{}
 	r.Key[0] = 0xab
 	r.SetKeyLabel([]byte("gmk"))
 	if d := formatRunnerDetail(r); !strings.Contains(d, "key:           gmk (ab00000000000000") {
 		t.Errorf("enrolled runner detail:\n%s", d)
-	}
-}
-
-func TestConnRowStateMarksLegacy(t *testing.T) {
-	ci := &protocol.ConnInfo{Role: protocol.ConnRole_Agent}
-	ci.SetCid([]byte("ws:127.0.0.1:1-1"))
-	ci.SetIdentified(true)
-	ci.SetLegacyAuth(true)
-	if row := connInfoToRow(ci); row[len(row)-1] != "legacy" {
-		t.Errorf("state %q, want legacy", row[len(row)-1])
 	}
 }

@@ -47,9 +47,9 @@ func TestDataPlaneBinderPicksTheMatchingGrant(t *testing.T) {
 	g.Insert(grantFor(3, 7), 0x50, 0)
 	g.Insert(grantFor(4, 7), 0x51, 0)
 	tr := []byte("this connection")
-	info, st := checkDataPlaneHello(boundDataPlaneHello(t, [16]byte{4}, 7, tr), tr, g)
-	if st != protocol.PskAuthStatus_Ok || info == nil || info.GrantId != ([16]uint8{4}) {
-		t.Fatalf("status %v info %+v, want ok with grant 4", st, info)
+	grant, st := checkDataPlaneHello(boundDataPlaneHello(t, [16]byte{4}, 7, tr), tr, g)
+	if st != protocol.PskAuthStatus_Ok || grant.GrantId != ([16]uint8{4}) {
+		t.Fatalf("status %v grant %+v, want ok with grant 4", st, grant)
 	}
 }
 
@@ -61,13 +61,5 @@ func TestDataPlaneBinderIgnoresOtherTasksGrants(t *testing.T) {
 	tr := []byte("this connection")
 	if _, st := checkDataPlaneHello(boundDataPlaneHello(t, [16]byte{3}, 7, tr), tr, g); st != protocol.PskAuthStatus_BadTicket {
 		t.Fatalf("want bad_ticket, got %v", st)
-	}
-}
-
-func TestLegacyDataPlaneHelloStillAccepted(t *testing.T) {
-	tr := []byte("transcript-bytes")
-	info, st := checkDataPlaneHello(dataPlaneHelloBytes(t, nil, tr, 3), tr, newGrantStore())
-	if st != protocol.PskAuthStatus_Ok || info == nil || info.GrantId != ([16]uint8{3}) {
-		t.Fatalf("legacy hello: status %v info %+v", st, info)
 	}
 }
