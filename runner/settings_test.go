@@ -28,11 +28,14 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 	if _, ok := hooks["UserPromptSubmit"]; !ok {
 		t.Error("UserPromptSubmit hook not present")
 	}
-	if _, ok := hooks["SessionStart"]; ok {
-		t.Error("SessionStart hook must not be present: self-topic subscription is seeded by the server")
-	}
-	if _, ok := hooks["Stop"]; ok {
-		t.Error("Stop hook must not be present: it conflicts with WakeStdin stdin injection")
+	// SessionStart and Stop carry ONLY the lifecycle reporter: the self-topic
+	// subscription is seeded by the server (no SessionStart subscribe hook),
+	// and a Stop hook that re-enters the turn conflicts with WakeStdin (spec
+	// 2026-10-27-task-lifecycle D6: a report-and-exit Stop hook does not).
+	for ev, want := range map[string]string{"SessionStart": "harness-cli lifecycle idle", "Stop": "harness-cli lifecycle idle"} {
+		if got := hookCommands(t, hooks, ev); len(got) != 1 || got[0] != want {
+			t.Errorf("%s hooks = %v, want only %q", ev, got, want)
+		}
 	}
 	perms, ok := parsed["permissions"].(map[string]any)
 	if !ok {
@@ -227,10 +230,10 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 		t.Fatal("hooks key missing after prune+merge")
 	}
 
-	// Retired Stop event group should be gone entirely (no current entries
-	// repopulate it, so the empty event is removed).
-	if _, ok := hooks["Stop"]; ok {
-		t.Errorf("Stop event should be pruned, got %v", hooks["Stop"])
+	// The retired Stop re-entry hook is pruned; the only Stop hook left is
+	// the current report-and-exit lifecycle reporter.
+	if got := hookCommands(t, hooks, "Stop"); len(got) != 1 || got[0] != "harness-cli lifecycle idle" {
+		t.Errorf("Stop hooks = %v, want only the lifecycle reporter", got)
 	}
 
 	// UserPromptSubmit: both cursor-era lines gone, current one added by
@@ -248,8 +251,9 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 		t.Errorf("current UserPromptSubmit hook missing after merge: %v", upGroups)
 	}
 
-	// Retired auto-subscribe hooks are pruned; no current SessionStart hook is
-	// added in their place because self-topic subscriptions are server-seeded.
+	// Retired auto-subscribe hooks are pruned; the only SessionStart hook added
+	// in their place is the lifecycle reporter (self-topic subscriptions are
+	// server-seeded).
 	startGroups, _ := hooks["SessionStart"].([]any)
 	if groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
 		t.Errorf("retired harness.hello SessionStart hook should be pruned: %v", startGroups)
@@ -257,8 +261,8 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 	if groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
 		t.Errorf("retired --self SessionStart hook should be pruned: %v", startGroups)
 	}
-	if _, ok := hooks["SessionStart"]; ok {
-		t.Errorf("SessionStart event should be removed after stale hooks are pruned: %v", startGroups)
+	if got := hookCommands(t, hooks, "SessionStart"); len(got) != 1 || got[0] != "harness-cli lifecycle idle" {
+		t.Errorf("SessionStart hooks = %v, want only the lifecycle reporter", got)
 	}
 
 	// User-authored hook in a foreign event must survive.
@@ -382,4 +386,133 @@ func countGroupCommand(groups []any, cmd string) int {
 		}
 	}
 	return n
+}
+
+// hookCommands lists every command under hooks.<event>[].hooks[].
+func hookCommands(t *testing.T, hooks map[string]any, event string) []string {
+	t.Helper()
+	var out []string
+	groups, _ := hooks[event].([]any)
+	for _, g := range groups {
+		group, _ := g.(map[string]any)
+		hs, _ := group["hooks"].([]any)
+		for _, h := range hs {
+			hook, _ := h.(map[string]any)
+			cmd, _ := hook["command"].(string)
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
+// lifecycleGroup returns the group under hooks.<event> whose hook runs cmd,
+// with that hook.
+func lifecycleGroup(t *testing.T, hooks map[string]any, event, cmd string) (group, hook map[string]any) {
+	t.Helper()
+	groups, _ := hooks[event].([]any)
+	for _, g := range groups {
+		gr, _ := g.(map[string]any)
+		hs, _ := gr["hooks"].([]any)
+		for _, h := range hs {
+			hk, _ := h.(map[string]any)
+			if c, _ := hk["command"].(string); c == cmd {
+				return gr, hk
+			}
+		}
+	}
+	t.Fatalf("no %q hook under %s", cmd, event)
+	return nil, nil
+}
+
+func readHooks(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks, _ := parsed["hooks"].(map[string]any)
+	return hooks
+}
+
+// The lifecycle reporters (spec 2026-10-27-task-lifecycle D9, D21, D22): every
+// one async, so a dial to a remote server never delays the agent; two carry a
+// matcher.
+func TestWriteAgentSettings_LifecycleHooks(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	hooks := readHooks(t, dir)
+	want := []struct{ event, matcher, cmd string }{
+		{"SessionStart", "startup|resume|clear", "harness-cli lifecycle idle"},
+		{"UserPromptSubmit", "", "harness-cli lifecycle working"},
+		{"PreToolUse", "AskUserQuestion", "harness-cli lifecycle waiting"},
+		{"PostToolUse", "", "harness-cli lifecycle working"},
+		{"PermissionRequest", "", "harness-cli lifecycle waiting"},
+		{"Elicitation", "", "harness-cli lifecycle waiting"},
+		{"Stop", "", "harness-cli lifecycle idle"},
+		{"StopFailure", "", "harness-cli lifecycle error"},
+	}
+	for _, w := range want {
+		group, hook := lifecycleGroup(t, hooks, w.event, w.cmd)
+		if hook["async"] != true {
+			t.Errorf("%s %q: async = %v, want true", w.event, w.cmd, hook["async"])
+		}
+		if m, _ := group["matcher"].(string); m != w.matcher {
+			t.Errorf("%s %q: matcher = %q, want %q", w.event, w.cmd, m, w.matcher)
+		}
+	}
+	// The inbox hook keeps its place and stays synchronous: its stdout IS the
+	// injected context.
+	_, inbox := lifecycleGroup(t, hooks, "UserPromptSubmit", "harness-cli agent inbox --json --user-prompt-submit-hook")
+	if _, ok := inbox["async"]; ok {
+		t.Errorf("inbox hook gained an async key: %v", inbox)
+	}
+}
+
+func TestWriteAgentSettings_LifecycleMergeIdempotentWithUserHooks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{
+		"PostToolUse":[{"hooks":[{"type":"command","command":"my-linter"}]}],
+		"Stop":[{"hooks":[{"type":"command","command":"say done"}]}],
+		"UserPromptSubmit":[{"hooks":[{"type":"command","command":"harness-cli agent inbox --json --user-prompt-submit-hook"}]}]}}`
+	path := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.ReadFile(path)
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(path)
+	if string(first) != string(second) {
+		t.Fatalf("second run changed the file:\n%s\n---\n%s", first, second)
+	}
+	hooks := readHooks(t, dir)
+	count := func(event, cmd string) int {
+		n := 0
+		for _, c := range hookCommands(t, hooks, event) {
+			if c == cmd {
+				n++
+			}
+		}
+		return n
+	}
+	if count("PostToolUse", "my-linter") != 1 || count("Stop", "say done") != 1 {
+		t.Fatalf("user hooks lost: PostToolUse=%v Stop=%v", hookCommands(t, hooks, "PostToolUse"), hookCommands(t, hooks, "Stop"))
+	}
+	if count("PostToolUse", "harness-cli lifecycle working") != 1 || count("UserPromptSubmit", "harness-cli lifecycle working") != 1 ||
+		count("Stop", "harness-cli lifecycle idle") != 1 {
+		t.Fatalf("lifecycle hooks not exactly once: %v", hooks)
+	}
 }

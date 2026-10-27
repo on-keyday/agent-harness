@@ -31,11 +31,32 @@ type hookSpec struct {
 // logic uses (event, command) as the de-duplication key — running
 // WriteAgentSettings repeatedly on the same dir adds nothing new after
 // the first call.
+//
+// Matcher, when set, is written as the group's `matcher` (a tool name for tool
+// events, a source for SessionStart). Async hooks run in the background and
+// never delay the agent; their stdout is not injected, so only the inbox hook,
+// whose stdout IS the injected context, stays synchronous.
 var harnessHookEntries = []struct {
 	Event   string
+	Matcher string
 	Command string
+	Async   bool
 }{
-	{"UserPromptSubmit", "harness-cli agent inbox --json --user-prompt-submit-hook"},
+	{Event: "UserPromptSubmit", Command: "harness-cli agent inbox --json --user-prompt-submit-hook"},
+	// Lifecycle reporters (docs/superpowers/specs/2026-10-27-task-lifecycle-design.md
+	// D9, D21, D22). SessionStart is limited to these sources: it also fires
+	// with source=compact mid-turn, which would read as idle while the model
+	// keeps working. AskUserQuestion is its own entry because in auto mode an
+	// explicit question is the main way a task waits on the human, and
+	// PermissionRequest is not guaranteed for it.
+	{Event: "SessionStart", Matcher: "startup|resume|clear", Command: "harness-cli lifecycle idle", Async: true},
+	{Event: "UserPromptSubmit", Command: "harness-cli lifecycle working", Async: true},
+	{Event: "PreToolUse", Matcher: "AskUserQuestion", Command: "harness-cli lifecycle waiting", Async: true},
+	{Event: "PostToolUse", Command: "harness-cli lifecycle working", Async: true},
+	{Event: "PermissionRequest", Command: "harness-cli lifecycle waiting", Async: true},
+	{Event: "Elicitation", Command: "harness-cli lifecycle waiting", Async: true},
+	{Event: "Stop", Command: "harness-cli lifecycle idle", Async: true},
+	{Event: "StopFailure", Command: "harness-cli lifecycle error", Async: true},
 }
 
 // harnessAllowEntry is the single permissions.allow entry the runner
@@ -52,7 +73,10 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 //     synthetic wake prompt written by Session.WakeStdin when the runner
 //     detects new agentboard messages while the agent is idle.
 //
-// There is deliberately no SessionStart hook. The server seeds every task's
+//   - The lifecycle reporters (harnessHookEntries): async `harness-cli
+//     lifecycle <state>` on the events that change what the task is doing.
+//
+// There is deliberately no SessionStart hook that SUBSCRIBES. The server seeds every task's
 // id-directed inbound topic (`chat.<first-8-hex-of-task-id>`) when it issues
 // the agentboard auth ticket for a runner assignment. That path is
 // agent-runtime-neutral, covers no-worktree and non-Claude agents, and
@@ -61,7 +85,9 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // discovery topic this line used to name (`harness.hello`) was removed
 // 2026-08-18, so there is nothing else a SessionStart hook would subscribe.
 //
-// There is deliberately no Stop hook. A Stop-hook-based re-entry blocks
+// The Stop hook only REPORTS and exits 0; there is deliberately no Stop hook
+// that re-enters the turn. (Wakes now arrive as ordinary user turns, so a
+// report-and-exit Stop hook does not touch them.) A Stop-hook-based re-entry blocks
 // Claude Code's stdin while the agent continues its current turn, which
 // prevents the WakeStdin stdin injection (the "<harness:agentboard-wake>"
 // marker) from being delivered as a clean new turn. The two mechanisms
@@ -200,14 +226,18 @@ func mergeHarnessHooks(root map[string]any) {
 			hooks[entry.Event] = groups
 			continue
 		}
-		groups = append(groups, map[string]any{
-			"hooks": []any{
-				map[string]any{
-					"type":    "command",
-					"command": entry.Command,
-				},
-			},
-		})
+		hook := map[string]any{
+			"type":    "command",
+			"command": entry.Command,
+		}
+		if entry.Async {
+			hook["async"] = true
+		}
+		group := map[string]any{"hooks": []any{hook}}
+		if entry.Matcher != "" {
+			group["matcher"] = entry.Matcher
+		}
+		groups = append(groups, group)
 		hooks[entry.Event] = groups
 	}
 	root["hooks"] = hooks
