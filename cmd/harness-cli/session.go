@@ -507,8 +507,12 @@ func runSessionSendWith(cid objproto.ConnectionID, a verb.SendAction) error {
 			fmt.Fprintf(os.Stderr, "session send: resized to %dx%d before sending\n", resizeRows, resizeCols)
 		}
 	}
-	if err := c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond); err != nil {
-		return err
+	// Empty only with --resize (the verb refuses it otherwise): there is
+	// nothing to type, and the resize above was the point.
+	if len(data) > 0 {
+		if err := c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond); err != nil {
+			return err
+		}
 	}
 	// Disclose what went onto the wire. The harness is a byte pipe with no
 	// notion of a "line" or of submission — that lives in whichever program

@@ -65,6 +65,9 @@ func (v VerbSpec) Usage() string {
 		b.WriteString(" <")
 		b.WriteString(v.Trailing.Name)
 		b.WriteString(">...")
+		if v.Trailing.Required && v.Trailing.UnlessFlag != "" {
+			b.WriteString(" (optional with --" + v.Trailing.UnlessFlag + ")")
+		}
 	}
 	return b.String()
 }

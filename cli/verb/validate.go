@@ -87,7 +87,7 @@ func (v VerbSpec) checkDeclared(b Bound) error {
 		}
 	}
 
-	if v.Trailing != nil && v.Trailing.Required && b.Trail == "" {
+	if t := v.Trailing; t != nil && t.Required && b.Trail == "" && (t.UnlessFlag == "" || !b.Set[t.UnlessFlag]) {
 		return fmt.Errorf("%s: %s is required\n%s", name, v.Trailing.Name, v.Usage())
 	}
 	return nil

@@ -1545,7 +1545,11 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI,
 		Action:          "SendAction",
 		Args:            []Arg{{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
-		Trailing: &Trailing{Name: "text", Field: "Text", Required: true,
+		// Optional with --resize: sizing, the repaint it forces and the
+		// --snapshot capture of it in one call is the documented way to read
+		// a full-screen program (session-debugging skill), and it types
+		// nothing. Requiring the text broke that call on 2026-09-03.
+		Trailing: &Trailing{Name: "text", Field: "Text", Required: true, UnlessFlag: "resize",
 			Reason: "the literal text to type into the PTY"},
 		// The snapshot knobs only mean something with --snapshot. Naming one
 		// without it is refused rather than ignored: a caller who asked for 80

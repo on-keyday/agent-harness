@@ -325,6 +325,12 @@ type Trailing struct {
 	// not a no-op send.
 	Required bool
 
+	// UnlessFlag lifts Required when the named flag is set: the verb then has
+	// other work to do, so an empty tail is no longer a mistype.
+	// `session send --resize 45x200 --snapshot <id>` sizes, forces a repaint
+	// and captures it in one call, typing nothing.
+	UnlessFlag string
+
 	// IfFieldEmpty writes Field only when a flag has not already filled it.
 	// `submit --task "do it"` and `submit do it` are the same prompt written
 	// two ways -- the flag wins, and the trailing words are the prompt

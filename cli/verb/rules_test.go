@@ -158,6 +158,9 @@ func TestDeclaredRulesAcceptTheOrdinaryForms(t *testing.T) {
 		{"exec tap", []string{"4", "--raw", "--chan", "stdin"}},
 		{"session send", []string{id, "hello"}},
 		{"session send", []string{"--snapshot", "--rows", "10", id, "hello"}},
+		// --resize makes the text optional: size, repaint and capture, typing nothing.
+		{"session send", []string{"--resize", "45x200", "--snapshot", id}},
+		{"session send", []string{"--resize", "45x200", "--snapshot", id, ""}},
 		{"submit", []string{"--repo", "/r", "--task", "do it"}},
 		{"submit", []string{"--repo", "/r", "do", "it"}}, // the prompt as trailing words
 		{"session new", []string{"--repo", "/r", "--stream", "--detach"}},
