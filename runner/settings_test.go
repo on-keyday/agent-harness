@@ -32,7 +32,7 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 	// subscription is seeded by the server (no SessionStart subscribe hook),
 	// and a Stop hook that re-enters the turn conflicts with WakeStdin (spec
 	// 2026-10-27-task-lifecycle D6: a report-and-exit Stop hook does not).
-	for ev, want := range map[string]string{"SessionStart": "harness-cli lifecycle idle", "Stop": "harness-cli lifecycle idle"} {
+	for ev, want := range map[string]string{"SessionStart": "harness-cli lifecycle --hook claude idle", "Stop": "harness-cli lifecycle --hook claude idle"} {
 		if got := hookCommands(t, hooks, ev); len(got) != 1 || got[0] != want {
 			t.Errorf("%s hooks = %v, want only %q", ev, got, want)
 		}
@@ -232,7 +232,7 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 
 	// The retired Stop re-entry hook is pruned; the only Stop hook left is
 	// the current report-and-exit lifecycle reporter.
-	if got := hookCommands(t, hooks, "Stop"); len(got) != 1 || got[0] != "harness-cli lifecycle idle" {
+	if got := hookCommands(t, hooks, "Stop"); len(got) != 1 || got[0] != "harness-cli lifecycle --hook claude idle" {
 		t.Errorf("Stop hooks = %v, want only the lifecycle reporter", got)
 	}
 
@@ -261,7 +261,7 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 	if groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
 		t.Errorf("retired --self SessionStart hook should be pruned: %v", startGroups)
 	}
-	if got := hookCommands(t, hooks, "SessionStart"); len(got) != 1 || got[0] != "harness-cli lifecycle idle" {
+	if got := hookCommands(t, hooks, "SessionStart"); len(got) != 1 || got[0] != "harness-cli lifecycle --hook claude idle" {
 		t.Errorf("SessionStart hooks = %v, want only the lifecycle reporter", got)
 	}
 
@@ -448,14 +448,21 @@ func TestWriteAgentSettings_LifecycleHooks(t *testing.T) {
 	}
 	hooks := readHooks(t, dir)
 	want := []struct{ event, matcher, cmd string }{
-		{"SessionStart", "startup|resume|clear", "harness-cli lifecycle idle"},
-		{"UserPromptSubmit", "", "harness-cli lifecycle working"},
-		{"PreToolUse", "AskUserQuestion", "harness-cli lifecycle waiting"},
-		{"PostToolUse", "", "harness-cli lifecycle working"},
-		{"PermissionRequest", "", "harness-cli lifecycle waiting"},
-		{"Elicitation", "", "harness-cli lifecycle waiting"},
-		{"Stop", "", "harness-cli lifecycle idle"},
-		{"StopFailure", "", "harness-cli lifecycle error"},
+		{"SessionStart", "startup|resume|clear", "harness-cli lifecycle --hook claude idle"},
+		{"UserPromptSubmit", "", "harness-cli lifecycle --hook claude working"},
+		{"PreToolUse", "AskUserQuestion", "harness-cli lifecycle --hook claude waiting"},
+		{"PostToolUse", "", "harness-cli lifecycle --hook claude working"},
+		{"PermissionRequest", "", "harness-cli lifecycle --hook claude waiting"},
+		{"Elicitation", "", "harness-cli lifecycle --hook claude waiting"},
+		{"Stop", "", "harness-cli lifecycle --hook claude idle"},
+		{"StopFailure", "", "harness-cli lifecycle --hook claude error"},
+		// A failed tool still means the turn goes on; its is_interrupt marks
+		// an Esc, which ends the turn with no Stop.
+		{"PostToolUseFailure", "", "harness-cli lifecycle --hook claude working"},
+		// claude ends the parent's turn right after launching a subagent; the
+		// CLI tracks live subagents so that Stop does not read as idle.
+		{"SubagentStart", "", "harness-cli lifecycle --hook claude working"},
+		{"SubagentStop", "", "harness-cli lifecycle --hook claude idle"},
 	}
 	for _, w := range want {
 		group, hook := lifecycleGroup(t, hooks, w.event, w.cmd)
@@ -511,8 +518,8 @@ func TestWriteAgentSettings_LifecycleMergeIdempotentWithUserHooks(t *testing.T) 
 	if count("PostToolUse", "my-linter") != 1 || count("Stop", "say done") != 1 {
 		t.Fatalf("user hooks lost: PostToolUse=%v Stop=%v", hookCommands(t, hooks, "PostToolUse"), hookCommands(t, hooks, "Stop"))
 	}
-	if count("PostToolUse", "harness-cli lifecycle working") != 1 || count("UserPromptSubmit", "harness-cli lifecycle working") != 1 ||
-		count("Stop", "harness-cli lifecycle idle") != 1 {
+	if count("PostToolUse", "harness-cli lifecycle --hook claude working") != 1 || count("UserPromptSubmit", "harness-cli lifecycle --hook claude working") != 1 ||
+		count("Stop", "harness-cli lifecycle --hook claude idle") != 1 {
 		t.Fatalf("lifecycle hooks not exactly once: %v", hooks)
 	}
 }

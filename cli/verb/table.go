@@ -1712,7 +1712,11 @@ var Verbs = []VerbSpec{
 		CmdlineSurfaces: CLI,
 		Args: []Arg{{Name: "state", Type: ArgString, Field: "State",
 			OneOfArg: []string{"working", "waiting", "idle", "error"}}},
-		Examples: []string{"lifecycle waiting"},
+		Flags: []Flag{
+			{Name: "hook", Type: FlagString, Default: "", Field: "Hook",
+				Help: "the agent whose hook runs this (claude): read that agent's event JSON on stdin; without it the state word alone is reported"},
+		},
+		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle"},
 	},
 	{
 		Path:           []string{"agent", "send"},

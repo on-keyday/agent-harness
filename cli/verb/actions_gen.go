@@ -422,6 +422,8 @@ type GridAction struct {
 // LifecycleAction is built by: lifecycle.
 type LifecycleAction struct {
 	ActionMarker
+	// the agent whose hook runs this (claude): read that agent's event JSON on stdin; without it the state…
+	Hook  string
 	State string
 }
 
@@ -2366,6 +2368,7 @@ func init() {
 		},
 		"lifecycle\x00cli": func(b Bound) (Action, error) {
 			a := LifecycleAction{}
+			a.Hook = b.Str("hook")
 			if len(b.Args) > 0 {
 				a.State = b.Args[0]
 			}

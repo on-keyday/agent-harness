@@ -49,14 +49,22 @@ var harnessHookEntries = []struct {
 	// keeps working. AskUserQuestion is its own entry because in auto mode an
 	// explicit question is the main way a task waits on the human, and
 	// PermissionRequest is not guaranteed for it.
-	{Event: "SessionStart", Matcher: "startup|resume|clear", Command: "harness-cli lifecycle idle", Async: true},
-	{Event: "UserPromptSubmit", Command: "harness-cli lifecycle working", Async: true},
-	{Event: "PreToolUse", Matcher: "AskUserQuestion", Command: "harness-cli lifecycle waiting", Async: true},
-	{Event: "PostToolUse", Command: "harness-cli lifecycle working", Async: true},
-	{Event: "PermissionRequest", Command: "harness-cli lifecycle waiting", Async: true},
-	{Event: "Elicitation", Command: "harness-cli lifecycle waiting", Async: true},
-	{Event: "Stop", Command: "harness-cli lifecycle idle", Async: true},
-	{Event: "StopFailure", Command: "harness-cli lifecycle error", Async: true},
+	{Event: "SessionStart", Matcher: "startup|resume|clear", Command: "harness-cli lifecycle --hook claude idle", Async: true},
+	{Event: "UserPromptSubmit", Command: "harness-cli lifecycle --hook claude working", Async: true},
+	{Event: "PreToolUse", Matcher: "AskUserQuestion", Command: "harness-cli lifecycle --hook claude waiting", Async: true},
+	{Event: "PostToolUse", Command: "harness-cli lifecycle --hook claude working", Async: true},
+	{Event: "PermissionRequest", Command: "harness-cli lifecycle --hook claude waiting", Async: true},
+	{Event: "Elicitation", Command: "harness-cli lifecycle --hook claude waiting", Async: true},
+	{Event: "Stop", Command: "harness-cli lifecycle --hook claude idle", Async: true},
+	{Event: "StopFailure", Command: "harness-cli lifecycle --hook claude error", Async: true},
+	// A failed tool still means the turn goes on; its is_interrupt marks an
+	// Esc, which ends the turn with no Stop hook.
+	{Event: "PostToolUseFailure", Command: "harness-cli lifecycle --hook claude working", Async: true},
+	// claude ends the parent's turn right after launching a subagent, which
+	// then works on its own: `harness-cli lifecycle` reads these from stdin
+	// and keeps the task working while any subagent is live.
+	{Event: "SubagentStart", Command: "harness-cli lifecycle --hook claude working", Async: true},
+	{Event: "SubagentStop", Command: "harness-cli lifecycle --hook claude idle", Async: true},
 }
 
 // harnessAllowEntry is the single permissions.allow entry the runner

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -840,7 +841,13 @@ func (h cliVerbs) Progress(a verb.ProgressAction) error {
 // Lifecycle is what the injected hooks run. It always returns nil: a hook
 // failure must never surface inside the agent, so errors go to stderr only.
 func (h cliVerbs) Lifecycle(a verb.LifecycleAction) error {
-	cli.ReportLifecycle(h.ctx, h.cid, a.State, os.Stderr)
+	// A hook pipes its event JSON on stdin; a hand-run command at a terminal
+	// must not block reading one.
+	var stdin io.Reader
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		stdin = os.Stdin
+	}
+	cli.ReportLifecycle(h.ctx, h.cid, a.State, a.Hook, stdin, os.Stderr)
 	return nil
 }
 
