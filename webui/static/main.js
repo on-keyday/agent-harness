@@ -5734,7 +5734,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       // What the task's hooks report, then what its program reports (OSC
       // 7501), side by side so a disagreement is on the row (D3, D28). Red for
       // the states that ask for the operator, gray for the ones that do not
-      // need a look (work, never reported), the default task color for ready.
+      // need a look (work, prog working), the default task color for the ones
+      // waiting for the next prompt (ready, prog idle / done).
       for (const b of [taskLifecycleModel(t), taskProgramModel(t)]) {
         if (!b) continue;
         const el = document.createElement("span");
@@ -7842,16 +7843,17 @@ function programStatusLine(t) {
 }
 
 // taskLifecycleModel is the lifecycle badge, mirroring cli.LifecycleBadge:
-// work / wait / ready / err with the short age, lc:- for a live task that never
-// reported, null for one that has ended. The words are not the wire names so
+// work / wait / ready / err with the short age, null for one that has ended.
+// Unlike the CLI and the TUI it is also null for a task that never reported:
+// here the badge appears only when there is a report, as the program badge
+// does, rather than as lc:- (D28 (5)). The words are not the wire names so
 // `ready` cannot be read as the activity badge's `idle:3m`. attention marks the
-// two that ask for the operator, quiet the two that need no look.
+// two that ask for the operator, quiet the one that needs no look.
 function taskLifecycleModel(t) {
   if (["Succeeded", "Failed", "Cancelled"].includes(t.status)) return null;
-  const never = { text: "lc:-", attention: false, quiet: true };
-  if (!t.lifecycleAt || t.lifecycleAt === "0") return never;
+  if (!t.lifecycleAt || t.lifecycleAt === "0") return null;
   const word = { working: "work", waiting: "wait", idle: "ready", error: "err" }[t.lifecycle];
-  if (!word) return never;
+  if (!word) return null;
   const ms = t.lifecycleAgeMs || 0;
   const age = ms >= 60000 ? `${Math.floor(ms / 60000)}m` : `${Math.floor(ms / 1000)}s`;
   return { text: `${word}:${age}`, attention: word === "wait" || word === "err", quiet: word === "work" };

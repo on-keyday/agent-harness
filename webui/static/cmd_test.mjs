@@ -655,9 +655,9 @@ test("task row: program badge and its tooltip line", () => {
 });
 
 // The lifecycle badge mirrors cli.LifecycleBadge: every state with the short
-// age, lc:- for a live task that never reported (D28), null once it has ended.
-// wait and err ask for the operator (attention); work and lc:- need no look
-// (quiet).
+// age, null once it has ended -- and, unlike the CLI and the TUI, null for a
+// task that never reported (D28 (5)). wait and err ask for the operator
+// (attention); work needs no look (quiet).
 test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 180000, status: "Running" }),
     { text: "wait:3m", attention: true, quiet: false });
@@ -668,7 +668,7 @@ test("task lifecycle badge: words, age, attention", () => {
   eq(page.taskLifecycleModel({ lifecycle: "working", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Running" }),
     { text: "work:1s", attention: false, quiet: true });
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Running" }),
-    { text: "lc:-", attention: false, quiet: true });
+    null);
   eq(page.taskLifecycleModel({ lifecycle: "waiting", lifecycleAt: "5", lifecycleAgeMs: 1000, status: "Succeeded" }), null);
   eq(page.taskLifecycleModel({ lifecycle: "", lifecycleAt: "0", lifecycleAgeMs: 0, status: "Failed" }), null);
 });
