@@ -500,7 +500,10 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	}, pc.Connection().GetTranscript(), cfg, h.pskRespCh)
 	pskCancel()
 	if pskErr != nil {
-		pc.Close()
+		// h.Close, not pc.Close: the udp sweep started above runs on the
+		// reconnect loop's ctx and stops only when the forward state is
+		// released, so a refused attempt would leave one behind per try.
+		h.Close()
 		// Only a NON-retryable rejection is fatal — a wrong PSK/ticket won't fix
 		// itself. Everything else must be RETRYABLE so PersistLoop reconnects
 		// instead of killing the runner — otherwise a routine server restart, or

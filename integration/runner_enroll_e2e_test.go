@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +74,53 @@ func TestRunnerWithoutEnrolledKeyIsRefused(t *testing.T) {
 	}
 	if n := len(srv.RegisteredRunners()); n != 0 {
 		t.Fatalf("%d runners registered, want 0", n)
+	}
+}
+
+// goroutinesIn counts the live goroutines whose stack names fn.
+func goroutinesIn(fn string) int {
+	buf := make([]byte, 1<<22)
+	buf = buf[:runtime.Stack(buf, true)]
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, fn) {
+			n++
+		}
+	}
+	return n
+}
+
+// A refused attempt leaves nothing running. A not-enrolled runner redials
+// until someone enrolls it, so whatever one attempt leaves behind piles up:
+// a go1.26 Windows runner died eight seconds into that loop holding seven
+// udp sweepers and seven datagram pumps, one per refused candidate
+// (2026-10-27).
+func TestRefusedAttemptsLeaveNoGoroutines(t *testing.T) {
+	keys, _ := server.LoadRunnerKeyStore("", nil)
+	cid, _ := startServerWithRunnerKeys(t, keys)
+	_, key, _ := ed25519.GenerateKey(nil)
+	cfg := enrollTestConfig(cid, key, "refused")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	const sweep, pump = "runner.(*udpForwards).sweep", "peer.(*Conn).pumpDatagrams"
+	sweeps, pumps := goroutinesIn(sweep), goroutinesIn(pump)
+	for i := 0; i < 5; i++ {
+		if h, err := runner.Connect(ctx, cfg); err == nil {
+			h.Close()
+			t.Fatal("connected without enrollment")
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		ds, dp := goroutinesIn(sweep)-sweeps, goroutinesIn(pump)-pumps
+		if ds <= 0 && dp <= 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after 5 refused attempts: %d more udp sweepers, %d more datagram pumps", ds, dp)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

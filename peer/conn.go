@@ -284,8 +284,14 @@ func (c *Conn) Start(ctx context.Context) {
 	if !c.started.CompareAndSwap(false, true) {
 		return
 	}
+	// The datagram pump stops when AutoReceive does. ReceiveDatagram watches only
+	// the ctx it is given, and every caller's ctx outlives the connection (a
+	// reconnect loop, an accept loop), so without this each dead connection
+	// left its pump behind.
+	dgCtx, stopDatagrams := context.WithCancel(ctx)
 	go func() {
 		defer close(c.done)
+		defer stopDatagrams()
 		trsf.AutoReceive(ctx, c.trans, c.conn, c.dispatch)
 	}()
 	// A SECOND pump, because trsf delivers datagrams on their own queue rather
@@ -294,17 +300,18 @@ func (c *Conn) Start(ctx context.Context) {
 	// here. One goroutine cannot drain both without one starving the other.
 	go func() {
 		defer close(c.dgDone)
-		c.pumpDatagrams(ctx)
+		c.pumpDatagrams(dgCtx)
 	}()
 }
 
 // pumpDatagrams drains received datagrams and dispatches them by kind. It
-// returns when ctx ends, which is also what unblocks ReceiveDatagram.
+// returns when ctx ends, which is also what unblocks ReceiveDatagram; Start
+// ends that ctx when the connection does.
 func (c *Conn) pumpDatagrams(ctx context.Context) {
 	for {
 		b, err := c.trans.ReceiveDatagram(ctx)
 		if err != nil {
-			return // ctx ended; the connection's own death cancels it via streamCtx
+			return // ctx ended: Start's caller, or the connection (see Start)
 		}
 		if len(b) == 0 {
 			continue

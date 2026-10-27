@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -143,6 +144,51 @@ func TestDatagramPumpStopsWithItsContext(t *testing.T) {
 	case <-stopped:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the datagram pump outlived its context")
+	}
+}
+
+// endingConn is an objproto.Connection that only receives, until end() — the
+// shape of a connection that dies under a caller whose ctx lives on.
+type endingConn struct {
+	objproto.Connection
+	gone chan struct{}
+}
+
+func (e *endingConn) ReceiveMessageContext(ctx context.Context) (*objproto.Message, error) {
+	select {
+	case <-e.gone:
+		return nil, errors.New("connection closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (e *endingConn) Done() <-chan struct{} { return e.gone }
+
+// Start's datagram pump ends when the CONNECTION does, not only when Start's
+// ctx does. Every caller hands Start a ctx that outlives the connection — the
+// runner's reconnect loop, the runner's accept loop — so a pump bound to that
+// ctx alone stayed behind once per dead connection: seven of them in the eight
+// seconds a not-enrolled Windows runner spent redialing (2026-10-27).
+func TestStartDatagramPumpEndsWithTheConnection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ec := &endingConn{gone: make(chan struct{})}
+	tr := &dgTransport{in: make(chan []byte), sent: make(chan []byte, 1), maxSize: 1169}
+	c := &Conn{conn: ec, trans: tr, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		done: make(chan struct{}), dgDone: make(chan struct{}), pubTopics: map[string]*pubTopic{}}
+	c.Start(ctx)
+
+	close(ec.gone)
+	select {
+	case <-c.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the control pump outlived its connection")
+	}
+	select {
+	case <-c.dgDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the datagram pump outlived its connection while Start's ctx was still live")
 	}
 }
 
