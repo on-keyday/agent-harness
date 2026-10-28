@@ -258,9 +258,13 @@ func (a *App) onTree(msg tea.KeyMsg) (tea.Cmd, bool) {
 	// The toggle also ends what the caps audit set up in the tree.
 	a.auditPins = nil
 	a.tasks.SetMark(0)
+	// The cursor follows the task, not its row number: the reorder moves every
+	// row, and T on a selected task is how it is found in the tree.
+	sel := a.tasks.SelectedID()
 	on := !a.tasks.TreeMode()
 	a.setTreeMode(on)
 	a.refreshTasksTable()
+	a.tasks.SelectID(sel)
 	mode := "flat"
 	if on {
 		mode = "creator tree"

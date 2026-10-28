@@ -158,3 +158,26 @@ func TestTreeMarksSurviveNarrowPanels(t *testing.T) {
 		}
 	}
 }
+
+// `T` on a selected task is the TUI's "show this task in the tree": the
+// selection follows the task across the reorder, not the row number it had.
+func TestTreeToggleKeepsTheSelectedTask(t *testing.T) {
+	a := New(Config{})
+	a.width, a.height = 160, 40
+	// Flat order is newest first: c, o, p. Tree order puts p before its child c.
+	setAuditTasks(a, tuiTask('p', 0, 10), tuiTask('o', 0, 20), tuiTask('c', 'p', 30))
+	a.setFocus(focusTasks)
+	a.tasks.table.SetCursor(0)
+	want := a.tasks.SelectedID()
+	if want[:2] != "63" { // 'c'
+		t.Fatalf("flat cursor 0 is %s, want c's row", want[:2])
+	}
+	a = press(t, a, runes("T"))
+	if !a.tasks.TreeMode() || a.tasks.SelectedID() != want {
+		t.Fatalf("tree=%v selected=%s; want tree order still on %s", a.tasks.TreeMode(), a.tasks.SelectedID()[:2], want[:2])
+	}
+	a = press(t, a, runes("T"))
+	if a.tasks.TreeMode() || a.tasks.SelectedID() != want {
+		t.Fatalf("tree=%v selected=%s; want flat order still on %s", a.tasks.TreeMode(), a.tasks.SelectedID()[:2], want[:2])
+	}
+}

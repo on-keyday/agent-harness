@@ -670,7 +670,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   if (taskTreeBit) taskTreeBit.addEventListener("change", drawTaskTree);
   // showTaskInTree is where a caps audit holder leads: the tree, marked for
   // that holder's capability, with the node brought into view and pulsed.
-  // Re-grant is then that node's own task sheet.
+  // Re-grant is then that node's own task sheet. The sheet's 🌳 item comes
+  // here without a capName, which leaves the mark as it was.
   function showTaskInTree(id, capName) {
     // The audit leads to a capability's holders, which reach mode or a
     // what-if would draw over; leave them first.
@@ -6090,6 +6091,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // Live re-grant. Shown for every task: a WebUI connection is an operator
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
+    addItem("🌳 ツリーで見る", "", () => {
+      if (!showTaskInTree(t.id)) appendCmdOutput(`tree: task ${t.id.slice(0, 8)} is not in the tree`, true);
+    });
     addItem("🎯 到達範囲を見る", "", () => enterReachMode(t.id));
     addItem("🔮 caps set / spawn をプレビュー", "", () => openRegrantDialog(t, { whatIf: true }));
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
