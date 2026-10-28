@@ -15,9 +15,10 @@ import (
 
 // workspacePickerRow is one candidate task for a workspace.
 //
-// Forwards is what the registry currently reports for the task, already
-// rendered as config values; the row shows the count so the operator can see
-// what a save would write without opening the file.
+// Forwards is what a save would write for the task: the file's declared values
+// for a task the workspace already has, the registry's for one it does not yet
+// (that row is an offer to add it). The row shows the count so the operator can
+// see what a save would write without opening the file.
 type workspacePickerRow struct {
 	IDHex    string
 	Label    string
@@ -25,6 +26,10 @@ type workspacePickerRow struct {
 	Resume   workspace.Resume
 	Runner   workspace.Runner
 	Forwards []string
+	// UnkeptRunning counts a declared task's running, savable forwards that
+	// its block does not declare. Shown, never added: adding one is `w` in the
+	// forwards pane.
+	UnkeptRunning int
 	// Live marks a task with a session alive right now, as opposed to one that
 	// is only here because the workspace already declares it.
 	Live bool
@@ -176,8 +181,15 @@ func (m *WorkspacePickerModel) Open(name string, live, resumable []protocol.Task
 			Forwards: forwards[idHex],
 		}
 		if d, ok := declared[idHex]; ok {
-			// An existing block's policy is the operator's; the picker starts
-			// from it rather than from the defaults.
+			// An existing block's policy and forwards are the operator's; the
+			// picker starts from them rather than from the defaults and the
+			// registry. A declared forward down right now is still declared.
+			row.Forwards = append([]string(nil), d.Forwards...)
+			for _, v := range forwards[idHex] {
+				if !existing.Declares(idHex, v) {
+					row.UnkeptRunning++
+				}
+			}
 			row.Resume, row.Runner = d.Resume, d.Runner
 			if row.Resume == "" {
 				row.Resume = workspace.ResumeNo
@@ -570,6 +582,9 @@ func (m *WorkspacePickerModel) View() string {
 			fwd = "  1 forward"
 		case n > 1:
 			fwd = fmt.Sprintf("  %d forwards", n)
+		}
+		if r.UnkeptRunning > 0 {
+			fwd += fmt.Sprintf("  +%d running, not kept", r.UnkeptRunning)
 		}
 		line := fmt.Sprintf("%s%s %-52s  resume:%-8s runner:%-8s%s",
 			cursor, mark, r.Label, r.Resume, r.Runner, fwd)

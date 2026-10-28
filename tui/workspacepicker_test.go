@@ -367,3 +367,40 @@ func TestWorkspacePickerDecisions(t *testing.T) {
 		t.Errorf("Policy = %v, want only the ticked A", d.Policy)
 	}
 }
+
+// A declared row starts from the FILE's forwards. Seeding it from the registry
+// meant a declared forward that was down at the moment of the save was absent
+// from the row — and, the row being a decision, deleted from the file.
+func TestWorkspacePickerSeedsDeclaredForwards(t *testing.T) {
+	var m WorkspacePickerModel
+	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
+		{ID: wsTaskA, Resume: workspace.ResumeContinue, Forwards: []string{"-L 3000"}},
+	}}
+	m.Open("mine", nil, nil, existing, map[string][]string{}, "", false, "", false)
+	tasks, _ := m.Result()
+	if len(tasks) != 1 || strings.Join(tasks[0].Forwards, "|") != "-L 3000" {
+		t.Errorf("tasks = %+v, want A carrying its declared -L 3000", tasks)
+	}
+}
+
+// Running forwards the block does not declare are counted, not added: the
+// difference is visible, and adding one is `w` in the forwards pane.
+func TestWorkspacePickerCountsUnkeptRunning(t *testing.T) {
+	var m WorkspacePickerModel
+	m.SetSize(200, 40)
+	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
+		{ID: wsTaskA, Resume: workspace.ResumeContinue, Forwards: []string{"-L 3000"}},
+	}}
+	m.Open("mine", nil, nil, existing, map[string][]string{wsTaskA: {
+		"-L 127.0.0.1:3000:127.0.0.1:3000", "-L 127.0.0.1:9000:127.0.0.1:9000",
+	}}, "", false, "", false)
+	if m.rows[0].UnkeptRunning != 1 {
+		t.Errorf("UnkeptRunning = %d, want 1 (9000 runs, 3000 is the declared one)", m.rows[0].UnkeptRunning)
+	}
+	if !strings.Contains(m.View(), "+1 running, not kept") {
+		t.Errorf("view does not show the difference:\n%s", m.View())
+	}
+	if tasks, _ := m.Result(); len(tasks[0].Forwards) != 1 {
+		t.Errorf("the running forward was added to the row: %q", tasks[0].Forwards)
+	}
+}

@@ -96,3 +96,27 @@ func TestSaveAfterHandEditKeepsIt(t *testing.T) {
 		t.Errorf("the hand-added block was overwritten:\n%s", got)
 	}
 }
+
+// The picker's rows were built from the file as it was when it opened; writing
+// them over a block that changed meanwhile would revert that change silently.
+func TestPickerSaveRefusedWhenFileChanged(t *testing.T) {
+	a, path := newWorkspaceApp(t, reloadSample)
+	a.workspaceSaveName = "dev"
+	a.finishWorkspaceSave(nil)
+	if !a.workspacePicker.IsOpen() {
+		t.Fatal("the picker did not open")
+	}
+	edited := reloadSample + "forward = -L 4000\n"
+	writeConfig(t, path, edited)
+	a.commitWorkspacePicker()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != edited {
+		t.Errorf("the file was written over a concurrent edit:\n%s", got)
+	}
+	if !strings.Contains(resultText(a), "changed in") {
+		t.Errorf("the refusal was not reported:\n%s", resultText(a))
+	}
+}

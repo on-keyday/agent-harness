@@ -450,6 +450,10 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 
 	if !all {
 		existing, _ := a.workspaceFile.Workspace(name)
+		a.workspacePickerBase = nil
+		if existing != nil {
+			a.workspacePickerBase = workspace.Block(existing)
+		}
 		gwAddr, gwHave := "", false
 		if a.sshGateway != nil {
 			gwAddr, gwHave = a.sshGateway.Listen, true
@@ -538,6 +542,22 @@ func (a *App) commitWorkspacePicker() tea.Cmd {
 	decisions := a.workspacePicker.Decisions()
 	dropped := len(a.workspacePicker.ExcludedIDs())
 	a.workspacePicker.Close()
+
+	// The rows were built from the file as it was when the picker opened, and
+	// every ticked row is now a decision — so a change that landed meanwhile
+	// (a CLI `workspace forward add`, a hand edit) would be reverted silently.
+	if !a.reloadWorkspace("workspace save") {
+		return nil
+	}
+	var now []byte
+	if cur, ok := a.workspaceFile.Workspace(name); ok {
+		now = workspace.Block(cur)
+	}
+	if string(now) != string(a.workspacePickerBase) {
+		a.cmdresult.Append(ErrorStyle.Render("workspace save: " + name + " changed in " + a.workspaceConfigPath() +
+			" while the picker was open; nothing written — reopen `workspace save " + name + "`"))
+		return nil
+	}
 
 	ws := &workspace.Workspace{
 		Name: name, ServerCID: a.server, Repo: a.defaultRepo, Tasks: tasks,

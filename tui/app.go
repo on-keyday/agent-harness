@@ -152,6 +152,10 @@ type App struct {
 	// workspacePicker chooses WHICH tasks a save records, and their resume /
 	// runner. See its doc comment for why no automatic rule replaced it.
 	workspacePicker WorkspacePickerModel
+	// workspacePickerBase is the target workspace's rendered block from the
+	// read the picker was built on (nil when it did not exist). A commit whose
+	// fresh read differs refuses to write: the rows would revert the change.
+	workspacePickerBase []byte
 	// workspaceRetryOnRunner arms ONE re-apply for the next runner event, set
 	// when a workspace resume failed. See the SessionStartedMsg handler.
 	workspaceRetryOnRunner bool
