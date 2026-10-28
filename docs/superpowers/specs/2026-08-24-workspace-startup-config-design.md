@@ -672,9 +672,34 @@ showed, and the operator ends up hand-editing it anyway:
    breaking the connections through it. Read from the code, not reproduced. The
    keep action below would add a second way in (adopting a hand-started `3000`).
 
+### Decisions
+
+This round records who decided what in a table, as the specs written after
+2026-08-25 do; the earlier rounds' bare `DECIDED` marks predate that and are
+left as written. `this spec` means the author (Claude) chose it, and a reader
+should not take it as the operator's.
+
+| # | Decision | Decided by |
+| --- | --- | --- |
+| D0 | Scope: a one-step way to keep / drop a single forward where forwards are started and listed, plus fixing the picker so it writes what it shows. The picker stays, for bulk edits | operator (agreed to the proposal, 2026-10-29) |
+| D1 | `w` in the forwards pane keeps / un-keeps the selected row; keep adopts the local session, un-keep releases it and stops nothing | this spec |
+| D2 | A `ws` column, computed from the file | this spec |
+| D3 | Tab in the start modal; written once the forward registers, rendered from the parsed spec; port 0 refused | this spec |
+| D4 | `workspace forward add/rm <name> <task-id> -L/-R …`, file only, name required; adoption only when `<name>` is installed | this spec (`-L` / `-R` as flags after the builder check found the positional form unparsable) |
+| D5 | One `ForwardIdentity` for every comparison | this spec |
+| D6 | A hand-started session satisfies a declaration without being adopted | this spec, after the builder check |
+| D7 | `Merge` takes `MergeDecisions`; the picker passes all three sets | this spec (repairs the operator-reported "set fresh, came back as continue") |
+| D8 | CLI save and `save --all` add forwards and never remove one — reverses round two | this spec |
+| D9 | Picker rows start from the file; running-but-undeclared shown as `+N running, not kept` | this spec |
+| D10 | The TUI re-reads (and validates) the file at every workspace operation | this spec |
+| D11 | A picker save refuses when its target block changed on disk | this spec, after the builder check |
+| D12 | Comments inside a workspace's span are not preserved by any write | operator (2026-10-29) |
+| D13 | Installing several workspaces at once: deferred | this spec — the operator raised the need and did not rule it out |
+| D14 | Moving a forward between tasks in one step: not built | this spec |
+
 ### Keeping and un-keeping one forward
 
-**DECIDED** — the TUI's forwards pane (`f`, `ForwardsModal`) gains `w`: on the
+**D1** — the TUI's forwards pane (`f`, `ForwardsModal`) gains `w`: on the
 selected row it toggles whether that forward is declared in the INSTALLED
 workspace. `w` is free in this pane (`tui/keys.go` `modalKeys`: `x`, `t`, `r`,
 Esc) and does not collide with the viewport scroll set the keymap comment
@@ -708,7 +733,7 @@ forbids.
   save`, and a pane key that sometimes opens a text input is a second modal
   grammar inside this one.
 
-**DECIDED** — the pane shows which rows are declared. A `ws` column, always
+**D2** — the pane shows which rows are declared. A `ws` column, always
 present (a column set that varies has to be swapped with its rows in one step —
 the reason the `udp` column is unconditional, `tui/portforward.go:507-513`):
 `kept` when the row's `(task, forward identity)` is declared in the installed
@@ -721,7 +746,7 @@ opens, on `r`, and after every `w`. `w` decides keep vs un-keep from its own
 re-read, not from the column, and its result line names which one it did, so a
 hand edit landing between the two cannot invert the action silently.
 
-**DECIDED** — the start modal (`p` / `b`, `PortForwardModal`) gains Tab to
+**D3** — the start modal (`p` / `b`, `PortForwardModal`) gains Tab to
 toggle a `keep in workspace <installed>` line, default off. Tab because every
 printable key belongs to the spec input, `inPortForwardModal` switches on
 `msg.Type` before the input sees the key, and no suggestion list is configured
@@ -737,7 +762,7 @@ the typed short form, and no registry round trip is needed. A local port of `0`
 is refused for keeping (the port is chosen at bind time, so the declaration
 would name a different port on every apply).
 
-**DECIDED** — the command-line form is `workspace forward add <name>
+**D4** — the command-line form is `workspace forward add <name>
 <task-id> -L <spec> [-R <spec>] …` and `workspace forward rm <name> <task-id>
 -L <spec> …`, on CLI and TUI. `-L` / `-R` are repeatable FLAGS taking the same
 spec `harness-cli forward` takes, not a quoted positional: the verb parser runs
@@ -763,7 +788,7 @@ on which workspace this TUI happens to have installed.
 
 ### Forward identity
 
-**DECIDED** — one function in `cli/workspace`, `ForwardIdentity(value string)
+**D5** — one function in `cli/workspace`, `ForwardIdentity(value string)
 (ForwardKey, error)`, parses a `forward` value through `ParseForwardValue` and
 returns the direction plus the parsed spec's fields (bind address, bind port,
 target host, target port, protocol). Two values are the same forward iff their
@@ -774,7 +799,7 @@ duplicate check, un-keep's match, and `workspace forward rm`. A session's typed
 the same way. `3000`, `127.0.0.1:3000:127.0.0.1:3000` and the rendered long form
 are therefore one forward.
 
-**DECIDED** — apply treats a local session this TUI started by hand as
+**D6** — apply treats a local session this TUI started by hand as
 SATISFYING a declared value with the same identity: it starts nothing for it,
 and does not adopt it. Without this, a value declared by hand or by the CLI's
 file-only `workspace forward add` beside a running hand-started forward makes
@@ -786,7 +811,7 @@ apply; the cost is that a later un-declare leaves it running, which is what
 
 ### The picker writes what it shows
 
-**DECIDED** — `Merge` takes the caller's decisions explicitly instead of
+**D7** — `Merge` takes the caller's decisions explicitly instead of
 inferring them from "observed":
 
 - a set of task ids whose block is DROPPED — the picker passes its unticked
@@ -799,7 +824,7 @@ inferring them from "observed":
 For the picker, an observed task's `forward` lines are replaced by what the row
 holds, which now starts from the file (below).
 
-**DECIDED — reverses the second round's "`--task` … is the only way to clear a
+**D8 — reverses the second round's "`--task` … is the only way to clear a
 task's forwards from the CLI"** — `harness-cli workspace save` and the TUI's
 `workspace save --all` no longer replace a declared task's forwards with the
 registry's: they ADD running, savable forwards that are not yet declared
@@ -808,7 +833,7 @@ round makes "will this come back" a property of the file, and a registry-driven
 replace erases a forward kept with `w` the first time a save runs while that
 forward is down. Clearing is now `workspace forward rm` or the picker.
 
-**DECIDED** — a picker row's forwards start from the FILE. A declared task's
+**D9** — a picker row's forwards start from the FILE. A declared task's
 row is seeded with its declared `forward` values; a task not yet declared is
 seeded from the registry as today, since that row is an offer to add it. A
 declared row whose task has running, savable forwards that are not declared
@@ -817,18 +842,21 @@ picker does not add them. Adding a running forward is `w` in the forwards pane.
 
 ### The file is read at each use
 
-**DECIDED** — every TUI workspace operation re-reads `.harness/config` from the
+**D10** — every TUI workspace operation re-reads `.harness/config` from the
 path the TUI resolved at start before acting: `ls`, `show`, `apply`, `save`
 (before opening the picker AND again before writing), `rm`, `w`, the start
-modal's keep, and `workspace forward add/rm`. A parse failure refuses that one
-operation with the parse error and leaves both the file and the installed
-workspace untouched; it does not exit the TUI (the start-up parse error stays
-fatal, before the alt screen). After a successful re-read the installed
+modal's keep, and `workspace forward add/rm`. A parse failure — or the
+installed workspace failing `Validate`, since `Parse` keeps `forward` values
+verbatim — refuses that one operation with the error and leaves both the file
+and the installed workspace untouched. (Without the validation a typo'd
+`forward` line was installed, and the next apply stopped the forward it
+replaced and started nothing — found in review, fixed in 0d59a68a.) It does
+not exit the TUI (the start-up parse error stays fatal, before the alt screen). After a successful re-read the installed
 workspace is replaced by the file's version of the same name, so `apply`
 applies what the file says now. The installed workspace having been removed
 from the file by hand uninstalls it, by the third round's rule for `rm`.
 
-**DECIDED** — the picker's save refuses when its target workspace changed on
+**D11** — the picker's save refuses when its target workspace changed on
 disk while the picker was open: the rendered block from the read that opened
 the picker is compared with the one from the read before writing, and a
 difference aborts the write with a line saying to reopen `workspace save
@@ -838,7 +866,7 @@ between (a CLI `workspace forward add`, a hand edit) and resurrect a block
 deleted meanwhile. Other workspaces are unaffected either way, since `Set`
 replaces only the target's span.
 
-**DECIDED (operator, 2026-10-29)** — every write, including a single `w`, goes
+**D12** (operator, 2026-10-29) — every write, including a single `w`, goes
 through `Merge` + `File.Set`, which re-renders the target workspace's whole span
 (`cli/workspace/save.go:20-52`). A comment or hand alignment INSIDE that span is
 therefore lost on each write; lines outside it, other workspaces' included,
@@ -848,14 +876,14 @@ a save, which is what made this worth deciding.
 
 ### Out of scope
 
-- **Installing several workspaces at once.** Raised by the operator: two
+- **Installing several workspaces at once (D13).** Raised by the operator: two
   workspaces, one applied by hand after each restart. Its cause on this
   deployment was a workspace kept only because its task is the ssh-gateway
   `User` the operator's VS Code Remote-SSH connects through; anchoring that on a
   shell session and editing the workspace removes the need. Not decided by the
   operator as a non-goal — deferred until the editing above exists and the need
   is re-examined.
-- **Moving a forward between tasks in one step.** Un-keep on one row and
+- **Moving a forward between tasks in one step (D14).** Un-keep on one row and
   `workspace forward add` (or keep after starting it on the other task) cover
   it; it is not a routine operation.
 - **WebUI.** Unchanged, for the Scope section's reason: a browser has no file.
@@ -866,8 +894,8 @@ a save, which is what made this worth deciding.
 | --- | --- |
 | TUI forwards pane (`f`) | `w` keep / un-keep; `ws` column; footer names `w` |
 | TUI start modal (`p` / `b`) | Tab toggles keep; not in link mode |
-| TUI command line | `workspace forward add/rm <name> <task-id> <value>` |
-| `harness-cli` | `workspace forward add/rm <name> <task-id> <value>` (file only) |
+| TUI command line | `workspace forward add/rm <name> <task-id> -L <spec> [-R <spec>] …` |
+| `harness-cli` | `workspace forward add/rm <name> <task-id> -L <spec> [-R <spec>] …` (file only) |
 | TUI workspace picker | writes shown policy, drops unticked, seeds forwards from file |
 | `harness-cli workspace save`, TUI `save --all` | no drop set, no policy set; forwards are added, never removed |
 | WebUI / wasm | n/a — see Scope |
