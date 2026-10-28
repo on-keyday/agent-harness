@@ -459,23 +459,11 @@ func (a *App) writeWorkspaceAll(name string, forwards []protocol.PortForwardInfo
 		ws.Tasks = append(ws.Tasks, *byTask[id])
 	}
 
-	// Observed = every task this save could say something about: the ones just
-	// enumerated, plus the ones the installed workspace already declares.
-	// Including the declared ones is what lets a save CLEAR a task's forwards
-	// after the operator stopped them — the registry reports presence, never
-	// absence. --all drops nothing: it made no per-task decision.
-	observed := map[string]bool{}
-	for _, id := range order {
-		observed[id] = true
-	}
-	if a.workspace != nil {
-		for _, t := range a.workspace.Tasks {
-			observed[t.ID] = true
-		}
-	}
-	// --all observes forwards only, so it decides about neither
-	// workspace-level line and both are carried forward by Merge.
-	a.writeWorkspace(ws, observed, 0, skipped, workspaceDecided{})
+	// --all states nothing: it drops no block, sets no policy, and only ADDS the
+	// running forwards — a declared forward that is down right now is still
+	// wanted, so it is not removed. Nor does it decide either workspace-level
+	// line; Merge carries both forward.
+	a.writeWorkspace(ws, workspace.MergeDecisions{}, 0, skipped, workspaceDecided{})
 }
 
 func countWorkspaceForwards(ws *workspace.Workspace) int {
@@ -488,12 +476,12 @@ func countWorkspaceForwards(ws *workspace.Workspace) int {
 
 // commitWorkspacePicker writes the workspace the picker was filled in for.
 //
-// The picker's LISTED set is what the save observed, so an unticked row is a
-// decision to drop that task's block — not the merge's "I did not look at this
-// one, keep it".
+// The picker's rows are decisions: an unticked row drops its block and a
+// ticked one's resume / runner are what the screen showed.
 func (a *App) commitWorkspacePicker() tea.Cmd {
 	name := a.workspacePicker.Name()
-	tasks, observed := a.workspacePicker.Result()
+	tasks, _ := a.workspacePicker.Result()
+	decisions := a.workspacePicker.Decisions()
 	dropped := len(a.workspacePicker.ExcludedIDs())
 	a.workspacePicker.Close()
 
@@ -518,7 +506,7 @@ func (a *App) commitWorkspacePicker() tea.Cmd {
 			ws.SSHGateway, ws.SSHGatewaySet = "", false
 		}
 	}
-	a.writeWorkspace(ws, observed, dropped, 0, workspaceDecided{Grid: !gridKeep, Gateway: !gwKeep})
+	a.writeWorkspace(ws, decisions, dropped, 0, workspaceDecided{Grid: !gridKeep, Gateway: !gwKeep})
 	return nil
 }
 
@@ -539,7 +527,7 @@ type workspaceDecided struct {
 // line cannot differ between them.
 // decided says which workspace-level lines the caller chose explicitly, so
 // Merge must not carry the file's old value forward for those.
-func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int, decided workspaceDecided) {
+func (a *App) writeWorkspace(ws *workspace.Workspace, d workspace.MergeDecisions, dropped, skipped int, decided workspaceDecided) {
 	f := a.workspaceFile
 	if f == nil {
 		f = workspace.New()
@@ -560,7 +548,7 @@ func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, 
 		}
 		existing = &clone
 	}
-	merged := workspace.Merge(existing, ws, observed)
+	merged := workspace.Merge(existing, ws, d)
 	f.Set(merged)
 
 	path := a.workspaceConfigPath()

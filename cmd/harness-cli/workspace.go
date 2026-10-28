@@ -82,8 +82,9 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 
 		// An empty filter lists every forward the caller may see, so a bare
 		// `workspace save <name>` records the same set the TUI would rather than
-		// one task. --task narrows it, and is also what lets a save CLEAR one
-		// task's forwards: the registry reports presence, never absence.
+		// one task. --task narrows it. A save only ADDS forwards: the registry
+		// reports presence, never absence, and a declared forward that is down
+		// right now is still wanted — `workspace forward rm` drops one.
 		// No AskEndpoints: a workspace save records what a forward IS, not how
 		// it is performing, so there is nothing here worth a round trip to
 		// every endpoint.
@@ -109,14 +110,6 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 			}
 			t.Forwards = append(t.Forwards, spec)
 		}
-		observed := map[string]bool{}
-		for _, id := range order {
-			observed[id] = true
-		}
-		if *taskID != "" {
-			observed[*taskID] = true // named but forward-less: clear its forwards
-		}
-
 		ws := &workspace.Workspace{Name: name, ServerCID: workspaceServerCIDStr, Repo: *repo}
 		for _, id := range order {
 			ws.Tasks = append(ws.Tasks, *byTask[id])
@@ -136,7 +129,7 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 			f = workspace.New()
 		}
 		existing, _ := f.Workspace(name)
-		ws = workspace.Merge(existing, ws, observed)
+		ws = workspace.Merge(existing, ws, workspace.MergeDecisions{})
 		f.Set(ws)
 		if err := f.Save(path); err != nil {
 			return err

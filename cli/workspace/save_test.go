@@ -185,7 +185,7 @@ runner  = assigned
 		ID: "3f2a9c00000000000000000000000001", Resume: ResumeContinue, Runner: RunnerAssigned,
 		Forwards: []string{"-L 3000:127.0.0.1:3000", "-R 8080:127.0.0.1:8080"},
 	}}}
-	got := Merge(ex, observed, map[string]bool{"3f2a9c00000000000000000000000001": true})
+	got := Merge(ex, observed, MergeDecisions{Observed: map[string]bool{"3f2a9c00000000000000000000000001": true}})
 
 	if len(got.Tasks) != 2 {
 		t.Fatalf("len(Tasks) = %d, want 2 — the unobserved sibling must survive", len(got.Tasks))
@@ -210,7 +210,7 @@ func TestMergeClearsForwardsOfAnObservedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex, _ := existing.Workspace("default")
-	got := Merge(ex, &Workspace{Name: "default"}, map[string]bool{"3f2a9c00000000000000000000000001": true})
+	got := Merge(ex, &Workspace{Name: "default"}, MergeDecisions{Observed: map[string]bool{"3f2a9c00000000000000000000000001": true}})
 	if len(got.Tasks) != 1 || len(got.Tasks[0].Forwards) != 0 {
 		t.Errorf("an observed task's stopped forward was not cleared: %+v", got.Tasks)
 	}
@@ -219,7 +219,7 @@ func TestMergeClearsForwardsOfAnObservedTask(t *testing.T) {
 // A first save has no existing workspace to merge with.
 func TestMergeWithNoExistingWorkspace(t *testing.T) {
 	got := Merge(nil, &Workspace{Name: "w", ServerCID: "ws:x-1", Tasks: []Task{{ID: "3f2a9c00000000000000000000000001"}}},
-		map[string]bool{"3f2a9c00000000000000000000000001": true})
+		MergeDecisions{Observed: map[string]bool{"3f2a9c00000000000000000000000001": true}})
 	if got.ServerCID != "ws:x-1" || len(got.Tasks) != 1 {
 		t.Errorf("first save lost its own content: %+v", got)
 	}
@@ -302,13 +302,61 @@ func TestRenderSSHGateway(t *testing.T) {
 func TestMergeSSHGateway(t *testing.T) {
 	existing := &Workspace{Name: "w", SSHGateway: "127.0.0.1:2222", SSHGatewaySet: true}
 
-	kept := Merge(existing, &Workspace{Name: "w"}, nil)
+	kept := Merge(existing, &Workspace{Name: "w"}, MergeDecisions{})
 	if kept.SSHGateway != "127.0.0.1:2222" || !kept.SSHGatewaySet {
 		t.Errorf("an unobserved gateway was lost: %q set=%v", kept.SSHGateway, kept.SSHGatewaySet)
 	}
 
-	observed := Merge(existing, &Workspace{Name: "w", SSHGateway: "0.0.0.0:2200", SSHGatewaySet: true}, nil)
+	observed := Merge(existing, &Workspace{Name: "w", SSHGateway: "0.0.0.0:2200", SSHGatewaySet: true}, MergeDecisions{})
 	if observed.SSHGateway != "0.0.0.0:2200" {
 		t.Errorf("an observed gateway did not win: %q", observed.SSHGateway)
+	}
+}
+
+// The picker's statements reach the file: a cycled policy is written and an
+// unticked row's block is dropped. Before MergeDecisions both were silently
+// discarded — A came back continue/assigned and B survived.
+func TestMergePickerDecisions(t *testing.T) {
+	existing := &Workspace{Name: "dev", Tasks: []Task{
+		{ID: idTaskA, Resume: ResumeContinue, Runner: RunnerAssigned},
+		{ID: idTaskB, Resume: ResumeContinue, Runner: RunnerAssigned, Forwards: []string{"-L 3000"}},
+	}}
+	observed := &Workspace{Name: "dev", Tasks: []Task{{ID: idTaskA, Resume: ResumeFresh, Runner: RunnerAny}}}
+	got := Merge(existing, observed, MergeDecisions{
+		Observed: map[string]bool{idTaskA: true, idTaskB: true},
+		Drop:     map[string]bool{idTaskB: true},
+		Policy:   map[string]bool{idTaskA: true},
+	})
+	if len(got.Tasks) != 1 || got.Tasks[0].ID != idTaskA ||
+		got.Tasks[0].Resume != ResumeFresh || got.Tasks[0].Runner != RunnerAny {
+		t.Errorf("Tasks = %+v, want only A as fresh/any", got.Tasks)
+	}
+}
+
+// With no decisions (the CLI save, `save --all`) a declared forward survives
+// although nothing is running for it, and a running one is added beside it.
+func TestMergeAddOnlyKeepsDeclaredForwards(t *testing.T) {
+	existing := &Workspace{Name: "dev", Tasks: []Task{
+		{ID: idTaskA, Resume: ResumeNo, Runner: RunnerAny, Forwards: []string{"-L 3000"}},
+	}}
+	observed := &Workspace{Name: "dev", Tasks: []Task{{ID: idTaskA, Resume: ResumeContinue, Runner: RunnerAssigned,
+		Forwards: []string{"-L 127.0.0.1:8080:127.0.0.1:8080"}}}}
+	got := Merge(existing, observed, MergeDecisions{})
+	if len(got.Tasks) != 1 {
+		t.Fatalf("Tasks = %+v", got.Tasks)
+	}
+	tk := got.Tasks[0]
+	if tk.Resume != ResumeNo || tk.Runner != RunnerAny ||
+		strings.Join(tk.Forwards, "|") != "-L 3000|-L 127.0.0.1:8080:127.0.0.1:8080" {
+		t.Errorf("task = %+v, want no/any with both forwards", tk)
+	}
+}
+
+func TestMergeAddOnlySkipsAnIdenticalForward(t *testing.T) {
+	existing := &Workspace{Name: "dev", Tasks: []Task{{ID: idTaskA, Forwards: []string{"-L 3000"}}}}
+	observed := &Workspace{Name: "dev", Tasks: []Task{{ID: idTaskA, Forwards: []string{"-L 127.0.0.1:3000:127.0.0.1:3000"}}}}
+	got := Merge(existing, observed, MergeDecisions{})
+	if strings.Join(got.Tasks[0].Forwards, "|") != "-L 3000" {
+		t.Errorf("forwards = %q, want the declared spelling alone", got.Tasks[0].Forwards)
 	}
 }

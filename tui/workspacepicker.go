@@ -473,6 +473,23 @@ func (m *WorkspacePickerModel) Result() ([]workspace.Task, map[string]bool) {
 	return tasks, observed
 }
 
+// Decisions is what this picker states to Merge: every listed row was looked
+// at, an unticked one is dropped, and a ticked one's resume / runner are the
+// values on screen — the operator cycled them here, so they are not the
+// hand-edits a save must preserve.
+func (m *WorkspacePickerModel) Decisions() workspace.MergeDecisions {
+	d := workspace.MergeDecisions{Observed: map[string]bool{}, Drop: map[string]bool{}, Policy: map[string]bool{}}
+	for _, r := range m.rows {
+		d.Observed[r.IDHex] = true
+		if r.Include {
+			d.Policy[r.IDHex] = true
+		} else {
+			d.Drop[r.IDHex] = true
+		}
+	}
+	return d
+}
+
 // ExcludedIDs are the listed-but-unticked tasks, whose blocks a save removes.
 func (m *WorkspacePickerModel) ExcludedIDs() []string {
 	var out []string

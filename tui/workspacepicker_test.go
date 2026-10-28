@@ -344,3 +344,26 @@ func TestPickerGatewayResultCarriesTheRunningAddress(t *testing.T) {
 		t.Errorf("GatewayResult = %q set:%v keep:%v, want the running address as a set", val, set, keep)
 	}
 }
+
+// The picker's choices are statements Merge must act on: every listed row was
+// observed, an unticked one is dropped, and a ticked one's resume / runner are
+// what the operator chose.
+func TestWorkspacePickerDecisions(t *testing.T) {
+	var m WorkspacePickerModel
+	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
+		{ID: wsTaskA, Resume: workspace.ResumeContinue}, {ID: wsTaskB, Resume: workspace.ResumeContinue},
+	}}
+	m.Open("mine", nil, nil, existing, nil, "", false, "", false)
+	m.Move(1)
+	m.Toggle() // untick B
+	d := m.Decisions()
+	if !d.Observed[wsTaskA] || !d.Observed[wsTaskB] {
+		t.Errorf("Observed = %v, want both listed rows", d.Observed)
+	}
+	if !d.Drop[wsTaskB] || d.Drop[wsTaskA] {
+		t.Errorf("Drop = %v, want only the unticked B", d.Drop)
+	}
+	if !d.Policy[wsTaskA] || d.Policy[wsTaskB] {
+		t.Errorf("Policy = %v, want only the ticked A", d.Policy)
+	}
+}

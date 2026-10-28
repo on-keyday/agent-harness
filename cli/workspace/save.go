@@ -129,11 +129,18 @@ func (f *File) Save(path string) error {
 //     spec's own text calls them "the two values an operator is expected to
 //     hand-edit afterwards" — and a save reset them to the defaults every time.
 //
-// So: the `forward` lines of an OBSERVED task are replaced (that is the state
-// the save can actually see), every other task block is kept verbatim, and an
-// existing block's resume/runner always survive. A task appearing for the first
-// time takes the values `observed` gives it.
-func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Workspace {
+// What the caller DECIDED is passed in d rather than inferred, because two
+// callers decide different things. The picker states, per listed row, whether
+// the task stays and what its policy is; the CLI save and `save --all` state
+// nothing and only report what is running. So: a Drop block is removed, a
+// Policy block takes observed's resume/runner, an Observed block has its
+// `forward` lines replaced by observed's, and every other block keeps its own
+// lines and gains observed's forwards it does not already declare (by
+// ForwardIdentity). A save with no decisions therefore never removes a
+// declared forward — "will this come back" is a property of the file, and a
+// forward down at the moment of the save is still wanted. A task appearing
+// for the first time takes the values `observed` gives it.
+func Merge(existing, observed *Workspace, d MergeDecisions) *Workspace {
 	out := &Workspace{Name: observed.Name}
 	pick := func(newVal, oldVal string) string {
 		if newVal != "" {
@@ -160,13 +167,25 @@ func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Worksp
 
 	// Existing blocks first, in file order, so a save never reshuffles the file.
 	for _, old := range existing.Tasks {
+		if d.Drop[old.ID] {
+			continue
+		}
 		merged := old
-		if observedTasks[old.ID] {
+		merged.Forwards = append([]string(nil), old.Forwards...)
+		seen := observed.task(old.ID)
+		if d.Policy[old.ID] && seen != nil {
+			merged.Resume, merged.Runner = seen.Resume, seen.Runner
+		}
+		switch {
+		case d.Observed[old.ID]:
 			merged.Forwards = nil
-			for _, t := range observed.Tasks {
-				if t.ID == old.ID {
-					merged.Forwards = t.Forwards
-					break
+			if seen != nil {
+				merged.Forwards = seen.Forwards
+			}
+		case seen != nil:
+			for _, v := range seen.Forwards {
+				if k, err := ForwardIdentity(v); err == nil && !declaresKey(merged.Forwards, k) {
+					merged.Forwards = append(merged.Forwards, v)
 				}
 			}
 		}
@@ -174,18 +193,19 @@ func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Worksp
 	}
 	// Then tasks this save saw for the first time.
 	for _, t := range observed.Tasks {
-		known := false
-		for _, old := range existing.Tasks {
-			if old.ID == t.ID {
-				known = true
-				break
-			}
-		}
-		if !known {
+		if existing.task(t.ID) == nil && !d.Drop[t.ID] {
 			out.Tasks = append(out.Tasks, t)
 		}
 	}
 	return out
+}
+
+// MergeDecisions is what a save's caller stated, keyed by task id. Nil maps
+// state nothing.
+type MergeDecisions struct {
+	Observed map[string]bool // forward lines replaced by observed's
+	Drop     map[string]bool // block removed
+	Policy   map[string]bool // resume / runner taken from observed
 }
 
 // Remove deletes a workspace's lines from the file, reporting whether it was
