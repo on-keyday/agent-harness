@@ -138,10 +138,15 @@ type App struct {
 	// workspaceArmed means an apply is due on the next snapshot: the apply
 	// needs task STATUSES to decide what to resume, and the snapshot is where
 	// those arrive.
-	workspace         *workspace.Workspace
-	workspaceArmed    bool
-	workspaceFile     *workspace.File
-	workspacePath     string
+	workspace      *workspace.Workspace
+	workspaceArmed bool
+	workspaceFile  *workspace.File
+	workspacePath  string
+	// loadWorkspaceFile reads .harness/config the way start-up did. Every
+	// workspace operation calls it again (reloadWorkspace), so a hand edit made
+	// while the TUI runs is what the next operation sees. A field so tests can
+	// read a temp file without the process environment deciding.
+	loadWorkspaceFile func() (*workspace.File, string, error)
 	workspaceSaveName string // non-empty while a `workspace save` waits for the forward snapshot
 	workspaceSaveAll  bool   // that save was `--all`: write without opening the picker
 	// workspacePicker chooses WHICH tasks a save records, and their resume /
@@ -356,6 +361,7 @@ func New(cfg Config) *App {
 		defaultRepo:       cfg.DefaultRepo,
 		workspaceFile:     cfg.WorkspaceFile,
 		workspacePath:     cfg.WorkspacePath,
+		loadWorkspaceFile: func() (*workspace.File, string, error) { return workspace.Load(cfg.ConfigPath) },
 		configPath:        cfg.ConfigPath,
 		runners:           NewRunners(),
 		tasks:             NewTasks(),

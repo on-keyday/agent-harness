@@ -46,8 +46,14 @@ func workspaceWantsResume(t *protocol.TaskInfo, decl workspace.Task) bool {
 // step reports its own outcome and none aborts the others: a port already bound
 // must not cost the operator the resume or the grid.
 func (a *App) applyWorkspace() tea.Cmd {
+	if a.workspace == nil || a.client == nil {
+		return nil
+	}
+	if !a.reloadWorkspace("workspace apply") {
+		return nil
+	}
 	ws := a.workspace
-	if ws == nil || a.client == nil {
+	if ws == nil {
 		return nil
 	}
 	var cmds []tea.Cmd
@@ -213,6 +219,9 @@ func (a *App) gridArgsString() string {
 func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 	switch v.Sub {
 	case verb.SubApply:
+		if !a.reloadWorkspace("workspace apply") {
+			return nil
+		}
 		if v.Name != "" {
 			ws, ok := a.workspaceFile.Workspace(v.Name)
 			if !ok {
@@ -275,6 +284,9 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		return nil
 
 	case verb.SubLs:
+		if !a.reloadWorkspace("workspace ls") {
+			return nil
+		}
 		names := a.workspaceFile.Names()
 		if len(names) == 0 {
 			a.cmdresult.Append("workspace ls: no workspaces in " + a.workspaceConfigPath())
@@ -290,6 +302,9 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		return nil
 
 	case verb.SubShow:
+		if !a.reloadWorkspace("workspace show") {
+			return nil
+		}
 		name := v.Name
 		if name == "" && a.workspace != nil {
 			name = a.workspace.Name
@@ -305,6 +320,9 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 		return nil
 
 	case verb.SubRm:
+		if !a.reloadWorkspace("workspace rm") {
+			return nil
+		}
 		if a.workspaceFile == nil || !a.workspaceFile.Remove(v.Name) {
 			a.cmdresult.Append(ErrorStyle.Render("workspace rm: no workspace named " + v.Name))
 			return nil
@@ -347,6 +365,39 @@ func (a *App) workspaceDeclares(taskID string) bool {
 	return false
 }
 
+// reloadWorkspace re-reads .harness/config before a workspace operation acts.
+// Reading it once at start made a hand edit invisible until restart, and the
+// next TUI write then overwrote the edit with the stale copy.
+//
+// A file that does not parse refuses this one operation and touches nothing —
+// the start-up parse error stays fatal, but an edit in progress while the TUI
+// runs must not cost the operator the client. On success the installed
+// workspace becomes the file's version of the same name; one removed from the
+// file by hand is uninstalled, as `workspace rm` would.
+func (a *App) reloadWorkspace(op string) bool {
+	f, path, err := a.loadWorkspaceFile()
+	if err != nil {
+		a.cmdresult.Append(ErrorStyle.Render(op + ": " + err.Error()))
+		return false
+	}
+	a.workspaceFile = f
+	if path != "" {
+		a.workspacePath = path
+	}
+	if a.workspace == nil {
+		return true
+	}
+	name := a.workspace.Name
+	if ws, ok := f.Workspace(name); ok {
+		a.SetWorkspace(ws)
+		return true
+	}
+	a.SetWorkspace(nil)
+	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
+		"workspace %s: no longer in %s; nothing is installed now", name, a.workspaceConfigPath())))
+	return true
+}
+
 // workspaceConfigPath is where a save would write and where a load came from.
 func (a *App) workspaceConfigPath() string {
 	if a.workspacePath != "" {
@@ -366,6 +417,9 @@ func (a *App) workspaceConfigPath() string {
 func (a *App) saveWorkspace(name string, all bool) tea.Cmd {
 	if a.client == nil {
 		a.cmdresult.Append(WarnStyle.Render("workspace save: not connected"))
+		return nil
+	}
+	if !a.reloadWorkspace("workspace save") {
 		return nil
 	}
 	a.workspaceSaveName = name
@@ -528,6 +582,9 @@ type workspaceDecided struct {
 // decided says which workspace-level lines the caller chose explicitly, so
 // Merge must not carry the file's old value forward for those.
 func (a *App) writeWorkspace(ws *workspace.Workspace, d workspace.MergeDecisions, dropped, skipped int, decided workspaceDecided) {
+	if !a.reloadWorkspace("workspace save") {
+		return
+	}
 	f := a.workspaceFile
 	if f == nil {
 		f = workspace.New()
