@@ -75,3 +75,30 @@ func TestPlanForwardsWithNothingDeclared(t *testing.T) {
 		t.Errorf("Stop = %+v, want only the workspace-owned one", plan.Stop)
 	}
 }
+
+// A session typed as `3000` and a declaration in the long form a save renders
+// are the same forward. Compared as strings they were not, and an apply
+// stopped the running one and bound the declared one in the same pass.
+func TestPlanForwardsMatchesByIdentity(t *testing.T) {
+	active := map[int]*PortForwardSession{
+		1: {ID: 1, TaskID: wsTaskA, Spec: "3000", Direction: ForwardLocal, FromWorkspace: true},
+	}
+	plan := planForwards([]string{"-L 127.0.0.1:3000:127.0.0.1:3000"}, active, wsTaskA)
+	if len(plan.Start) != 0 || len(plan.Stop) != 0 {
+		t.Errorf("Start=%q Stop=%d, want nothing — the running forward IS the declared one", plan.Start, len(plan.Stop))
+	}
+}
+
+// A forward the operator started by hand satisfies a declaration with the same
+// identity: binding a second copy would only fail on the port. It is not
+// adopted, so a later un-declare never stops it.
+func TestPlanForwardsHandStartedSatisfies(t *testing.T) {
+	s := &PortForwardSession{ID: 1, TaskID: wsTaskA, Spec: "3000", Direction: ForwardLocal}
+	plan := planForwards([]string{"-L 3000"}, map[int]*PortForwardSession{1: s}, wsTaskA)
+	if len(plan.Start) != 0 || len(plan.Stop) != 0 {
+		t.Errorf("Start=%q Stop=%d, want nothing", plan.Start, len(plan.Stop))
+	}
+	if s.FromWorkspace {
+		t.Error("planning adopted a hand-started forward")
+	}
+}

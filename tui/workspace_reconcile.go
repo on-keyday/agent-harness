@@ -1,6 +1,6 @@
 package tui
 
-import "strings"
+import "github.com/on-keyday/agent-harness/cli/workspace"
 
 // forwardPlan is the difference between what a workspace declares for one task
 // and what is already running for it.
@@ -9,27 +9,16 @@ type forwardPlan struct {
 	Stop  []*PortForwardSession // workspace-owned sessions no longer declared
 }
 
-// forwardKey identifies a forward by the pair a session actually records:
-// PortForwardSession.Spec holds the spec without its flag, Direction holds the
-// flag. Matching on the spec alone would let a -R satisfy a declared -L.
-type forwardKey struct {
-	dir  ForwardDirection
-	spec string
-}
-
-// splitForwardValue peels the -L/-R flag off a config value. A value that does
-// not split is skipped by the caller: Validate rejected it before any apply
-// ran, so reaching here means the file was not the one that was validated.
-func splitForwardValue(value string) (forwardKey, bool) {
-	flag, spec, ok := strings.Cut(strings.TrimSpace(value), " ")
-	if !ok {
-		return forwardKey{}, false
+// sessionIdentity is the forward a session is, by the key a declaration is
+// compared with. PortForwardSession.Spec holds the spec without its flag and
+// Direction holds the flag, so both go in: matching the spec alone would let a
+// -R satisfy a declared -L. An ip link is never a declarable forward.
+func sessionIdentity(s *PortForwardSession) (workspace.ForwardKey, bool) {
+	if s.Direction == ForwardLink {
+		return workspace.ForwardKey{}, false
 	}
-	dir := ForwardLocal
-	if flag == "-R" {
-		dir = ForwardRemote
-	}
-	return forwardKey{dir: dir, spec: strings.TrimSpace(spec)}, true
+	k, err := workspace.ForwardIdentity(s.Direction.flag() + " " + s.Spec)
+	return k, err == nil
 }
 
 // planForwards computes the difference for one task. Reconciling rather than
@@ -37,33 +26,44 @@ func splitForwardValue(value string) (forwardKey, bool) {
 // conflict: the forwards that ARE working must survive the apply that retries
 // the one that is not.
 //
+// Declarations and sessions are compared by workspace.ForwardIdentity, never
+// by spelling: a session typed as `3000` and the long form a save renders are
+// one forward, and comparing strings stopped the one to bind the other.
+//
 // Only workspace-owned sessions are candidates for Stop. A forward the operator
-// started by hand belongs to the operator.
+// started by hand belongs to the operator — but it still SATISFIES a
+// declaration with its identity, since binding a second copy could only fail
+// on the port. It is not adopted, so un-declaring it later never stops it.
 func planForwards(declared []string, active map[int]*PortForwardSession, taskID string) forwardPlan {
-	want := make(map[forwardKey]bool, len(declared))
+	want := make(map[workspace.ForwardKey]bool, len(declared))
 	for _, value := range declared {
-		if k, ok := splitForwardValue(value); ok {
+		if k, err := workspace.ForwardIdentity(value); err == nil {
 			want[k] = true
 		}
 	}
 
-	running := make(map[forwardKey]bool, len(active))
+	running := make(map[workspace.ForwardKey]bool, len(active))
 	var plan forwardPlan
 	for _, s := range active {
-		if s.TaskID != taskID || !s.FromWorkspace {
-			continue // another task's, or the operator's own — not ours to touch
+		if s.TaskID != taskID {
+			continue
 		}
-		k := forwardKey{dir: s.Direction, spec: s.Spec}
-		if !want[k] {
+		k, ok := sessionIdentity(s)
+		if !ok {
+			continue
+		}
+		if s.FromWorkspace && !want[k] {
 			plan.Stop = append(plan.Stop, s)
 			continue
 		}
 		running[k] = true
 	}
 
+	// A value that does not parse is skipped: Validate rejected it before any
+	// apply ran, so reaching here means the file was not the one validated.
 	for _, value := range declared {
-		k, ok := splitForwardValue(value)
-		if !ok {
+		k, err := workspace.ForwardIdentity(value)
+		if err != nil {
 			continue
 		}
 		if !running[k] {
