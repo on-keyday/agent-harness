@@ -704,8 +704,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       renderTaskList(lastTasks);
     });
   }
-  // revealTaskInList opens one task's sheet, widening the filters first if that
-  // task is not currently listed.
+  // revealTaskInList scrolls to one task's sheet, widening the filters first if
+  // that task is not currently listed.
   //
   // The graph shows every visible task; the list shows the filtered ones. A
   // click on a node outside the filter used to do nothing at all — no sheet, no
@@ -722,13 +722,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     }
     const sheet = find();
     if (!sheet) return;
-    // Same single-open rule a row click follows. Without it two sheets end up
-    // open, and the next poll's rebuild restores only the first one in DOM
-    // order — so the sheet this click opened could quietly close again.
-    for (const s of taskList.querySelectorAll(".task-sheet")) {
-      if (s !== sheet) s.hidden = true;
-    }
-    sheet.hidden = false;
     sheet.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
@@ -5696,10 +5689,9 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     const visible = lastTasks
       .filter((t) => taskMatchesFilter(t, terms))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
-    // The rebuild below wipes all sheet DOM, which would close the open sheet
-    // and reset any agent dropdown the user changed — every 5s poll. Capture
-    // that per-task UI state first and restore it after the rebuild.
-    const openSheetTaskId = taskList.querySelector(".task-sheet:not([hidden])")?.dataset.taskId ?? null;
+    // The rebuild below wipes all sheet DOM, which would reset any agent
+    // dropdown the user changed — every 5s poll. Capture those picks first and
+    // restore them after the rebuild.
     const agentPicks = {};
     for (const s of taskList.querySelectorAll(".task-sheet")) {
       const sel = s.querySelector(".task-agent-select");
@@ -5849,7 +5841,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       const sheet = document.createElement("div");
       sheet.className = "task-sheet";
       sheet.dataset.taskId = t.id;
-      sheet.hidden = t.id !== openSheetTaskId;
       buildTaskSheet(sheet, t);
       // Restore the user's agent pick from before the rebuild (only if that
       // profile is still among the options — otherwise keep the default).
@@ -5860,12 +5851,6 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
           agentSel.value = savedAgent;
         }
       }
-      row.addEventListener("click", () => {
-        for (const s of taskList.querySelectorAll(".task-sheet")) {
-          if (s !== sheet) s.hidden = true;   // single open sheet at a time
-        }
-        sheet.hidden = !sheet.hidden;
-      });
       wrap.appendChild(row);
       wrap.appendChild(sheet);
       taskList.appendChild(wrap);
@@ -5898,8 +5883,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   }
 
   // buildTaskSheet fills one task's action sheet, gating items by status/kind.
-  // Each item stops propagation (so it doesn't re-toggle the row), runs its
-  // harness call, and switches tabs where relevant.
+  // Each item runs its harness call and switches tabs where relevant.
   function buildTaskSheet(sheet, t) {
     const isTerminal = TERMINAL_STATES.has(t.status);
     const addItem = (label, cls, fn) => {
@@ -5907,7 +5891,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       item.type = "button";
       item.className = "task-action" + (cls ? " " + cls : "");
       item.textContent = label;
-      item.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+      item.addEventListener("click", () => fn());
       sheet.appendChild(item);
     };
 
