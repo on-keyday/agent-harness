@@ -1138,13 +1138,19 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
    avoid a dead scroll area below the screen. */
 .session-preview-body { padding: 0.5em; }
 /* Below the scrolling body, outside it, so the keys stay put while the
-   terminal scrolls; on a phone the modal is 100dvh, which keeps them just
-   above the OS keyboard like the attached terminal's row. */
+   terminal scrolls. */
 #session-preview-keys {
   flex: 0 0 auto;
   margin: 0;
   padding: 0.4em 0.5em;
   border-top: 1px solid #444;
+}
+@media (max-width: 600px) {
+  /* The phone modal is a fixed 100dvh, and a growing body put the free
+     height between the terminal and the keys. Not growing puts the keys
+     right under the terminal; shrinking still keeps them on screen when
+     the terminal is taller than the space the OS keyboard leaves. */
+  .session-preview-body { flex: 0 1 auto; }
 }
 .session-preview-spacer { overflow: hidden; }
 .session-preview-scale { transform-origin: top left; }
