@@ -51,6 +51,10 @@ type PortForwardModal struct {
 	taskID string
 	mode   ForwardDirection
 	input  textinput.Model
+	// keep asks for the forward to be declared in keepTarget, the installed
+	// workspace, once it registers. keepTarget is "" when nothing is installed.
+	keep       bool
+	keepTarget string
 }
 
 func (m *PortForwardModal) IsOpen() bool           { return m.open }
@@ -83,6 +87,21 @@ func (m *PortForwardModal) OpenMode(taskID string, dir ForwardDirection) {
 	m.input.SetValue("")
 	m.input.Focus()
 	m.open = true
+	m.keep, m.keepTarget = false, ""
+}
+
+// SetKeepTarget names the workspace a keep would write into ("" for none).
+func (m *PortForwardModal) SetKeepTarget(name string) { m.keepTarget = name }
+func (m *PortForwardModal) KeepTarget() string        { return m.keepTarget }
+func (m *PortForwardModal) Keep() bool                { return m.keep }
+
+// ToggleKeep flips keep, when there is a workspace to keep into and the modal
+// is not starting an ip link — a link has no `forward` line to write.
+func (m *PortForwardModal) ToggleKeep() {
+	if m.keepTarget == "" || m.mode == ForwardLink {
+		return
+	}
+	m.keep = !m.keep
 }
 
 func (m *PortForwardModal) Close() {
@@ -107,7 +126,19 @@ func (m *PortForwardModal) View() string {
 		BorderForeground(colorFocused).
 		Padding(1, 2)
 	footer := FooterStyle.Render("Enter to start · Esc to cancel")
-	return box.Render("Port-forward task " + pfShortID(m.taskID) + "  " + m.mode.flag() + " " + m.input.View() + "\n\n" + footer)
+	keepLine := ""
+	switch {
+	case m.mode == ForwardLink:
+	case m.keepTarget == "":
+		keepLine = "\n" + FooterStyle.Render("(no workspace installed)")
+	default:
+		mark := "[ ]"
+		if m.keep {
+			mark = "[x]"
+		}
+		keepLine = "\n" + mark + " keep in workspace " + m.keepTarget + "  " + FooterStyle.Render("(Tab)")
+	}
+	return box.Render("Port-forward task " + pfShortID(m.taskID) + "  " + m.mode.flag() + " " + m.input.View() + keepLine + "\n\n" + footer)
 }
 
 // PortForwardSession tracks a running forward so it can be identified for a

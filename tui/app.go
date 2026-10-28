@@ -192,7 +192,10 @@ type App struct {
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
 	activeForwards   map[int]*PortForwardSession // keyed by client-side unique id
-	nextForwardID    int
+	// pendingKeep holds, per client-side forward id, the workspace a start
+	// modal's keep will write into once that forward registers.
+	pendingKeep   map[int]string
+	nextForwardID int
 
 	// rawModal is the third way to start a forward (`t`), alongside p/-L and
 	// b/-R: a live host:port connection whose client-side endpoint is this
@@ -396,6 +399,7 @@ func New(cfg Config) *App {
 		lifecycleRecvAt:   map[string]time.Time{},
 		authorityRecvAt:   map[string]time.Time{},
 		activeForwards:    map[int]*PortForwardSession{},
+		pendingKeep:       map[int]string{},
 		sessionCaps:       protocol.Capability_None,
 		sessionScope:      protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
@@ -1506,6 +1510,9 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PortForwardStartedMsg:
 		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID, FromWorkspace: msg.FromWorkspace}
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
+		if msg.ForwardID != 0 { // -R: the bind is confirmed and the id known now
+			a.finishPendingKeep(msg.ID)
+		}
 		return a, nil
 
 	case PortForwardRegisteredMsg:
@@ -1517,6 +1524,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s, ok := a.activeForwards[msg.ID]; ok {
 			s.ForwardID = msg.ForwardID
 		}
+		a.finishPendingKeep(msg.ID)
 		return a, nil
 
 	case PortForwardStoppedMsg:
@@ -1524,6 +1532,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// failure). Drop it so it no longer shows in the stop picker. If it was
 		// already removed (e.g. the user killed it via the picker), this is a
 		// no-op and we skip the duplicate log.
+		delete(a.pendingKeep, msg.ID) // never registered: nothing to keep
 		if _, ok := a.activeForwards[msg.ID]; ok {
 			delete(a.activeForwards, msg.ID)
 			a.cmdresult.Append("forward stopped: " + pfShortID(msg.TaskID))

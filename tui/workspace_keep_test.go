@@ -162,3 +162,74 @@ func TestKeepDecidesFromTheFileNotTheColumn(t *testing.T) {
 		t.Errorf("result does not say which way it went:\n%s", resultText(a))
 	}
 }
+
+func modalKey(a *App, msg tea.KeyMsg) { a.inPortForwardModal(msg) }
+
+// startKeptForward opens the -L modal for A with keep on, types spec and
+// presses Enter, returning the client-side id the forward was started under.
+func startKeptForward(t *testing.T, a *App, spec string) int {
+	t.Helper()
+	a.openForwardModal(wsTaskA, ForwardLocal)
+	modalKey(a, tea.KeyMsg{Type: tea.KeyTab})
+	if !a.portForwardModal.Keep() {
+		t.Fatal("Tab did not turn keep on")
+	}
+	modalKey(a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(spec)})
+	modalKey(a, tea.KeyMsg{Type: tea.KeyEnter})
+	return a.nextForwardID
+}
+
+// Keep is written once the forward is registered, in the long form a save
+// writes, and the session it belongs to is adopted.
+func TestStartModalKeepWritesOnRegistered(t *testing.T) {
+	a, path := newWorkspaceApp(t, "[workspace dev]\n")
+	id := startKeptForward(t, a, "3000")
+	if strings.Contains(fileText(t, path), "3000") {
+		t.Fatal("written before the forward was registered")
+	}
+	a.Update(PortForwardStartedMsg{ID: id, TaskID: wsTaskA, Direction: ForwardLocal, Spec: "3000"})
+	a.Update(PortForwardRegisteredMsg{ID: id, ForwardID: 9})
+	if !strings.Contains(fileText(t, path), longForm3000) {
+		t.Errorf("file does not declare the forward:\n%s", fileText(t, path))
+	}
+	if s := a.activeForwards[id]; s == nil || !s.FromWorkspace {
+		t.Error("the started session was not adopted")
+	}
+}
+
+// A forward that never registers (typo, bind failure) never reaches the file.
+func TestStartModalKeepNothingWhenItFails(t *testing.T) {
+	a, path := newWorkspaceApp(t, "[workspace dev]\n")
+	before := fileText(t, path)
+	id := startKeptForward(t, a, "3000")
+	a.Update(PortForwardStartedMsg{ID: id, TaskID: wsTaskA, Direction: ForwardLocal, Spec: "3000"})
+	a.Update(PortForwardStoppedMsg{ID: id, TaskID: wsTaskA})
+	a.Update(PortForwardRegisteredMsg{ID: id, ForwardID: 9}) // late, after the stop
+	if fileText(t, path) != before {
+		t.Errorf("a failed forward was kept:\n%s", fileText(t, path))
+	}
+}
+
+func TestStartModalTabWithoutWorkspace(t *testing.T) {
+	a := New(Config{})
+	a.openForwardModal(wsTaskA, ForwardLocal)
+	if !strings.Contains(a.portForwardModal.View(), "(no workspace installed)") {
+		t.Errorf("view does not say nothing is installed:\n%s", a.portForwardModal.View())
+	}
+	modalKey(a, tea.KeyMsg{Type: tea.KeyTab})
+	if a.portForwardModal.Keep() {
+		t.Error("Tab turned keep on with no workspace to keep into")
+	}
+}
+
+func TestStartModalNoKeepLineInLinkMode(t *testing.T) {
+	a, _ := newWorkspaceApp(t, "[workspace dev]\n")
+	a.openForwardModal(wsTaskA, ForwardLink)
+	if v := a.portForwardModal.View(); strings.Contains(v, "keep") || strings.Contains(v, "no workspace installed") {
+		t.Errorf("link mode offers keep:\n%s", v)
+	}
+	modalKey(a, tea.KeyMsg{Type: tea.KeyTab})
+	if a.portForwardModal.Keep() {
+		t.Error("Tab turned keep on for an ip link")
+	}
+}

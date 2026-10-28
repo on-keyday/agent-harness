@@ -776,16 +776,28 @@ func (a *App) inPortForwardModal(msg tea.KeyMsg) tea.Cmd {
 	case tea.KeyEsc:
 		a.portForwardModal.Close()
 		return nil
+	case tea.KeyTab:
+		a.portForwardModal.ToggleKeep()
+		return nil
 	case tea.KeyEnter:
 		spec := a.portForwardModal.Spec()
 		taskID := a.portForwardModal.TaskID()
 		mode := a.portForwardModal.Mode()
+		keepIn := ""
+		if a.portForwardModal.Keep() {
+			keepIn = a.portForwardModal.KeepTarget()
+		}
 		a.portForwardModal.Close()
 		if spec == "" {
 			a.cmdresult.Append(WarnStyle.Render("forward cancelled (empty spec)"))
 			return nil
 		}
 		a.nextForwardID++
+		if keepIn != "" && mode != ForwardLink {
+			// Written once the forward registers, so a typo or a bind failure
+			// never reaches the file (finishPendingKeep).
+			a.pendingKeep[a.nextForwardID] = keepIn
+		}
 		switch mode {
 		case ForwardRemote:
 			return DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program, false)

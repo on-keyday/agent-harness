@@ -550,8 +550,17 @@ func (a *App) onForwardStart(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case mainKeys.ForwardLink:
 		dir = ForwardLink
 	}
-	a.portForwardModal.OpenMode(taskID, dir)
+	a.openForwardModal(taskID, dir)
 	return nil, true
+}
+
+// openForwardModal opens the start modal with the installed workspace as its
+// keep target, so Tab can offer "keep in workspace <name>".
+func (a *App) openForwardModal(taskID string, dir ForwardDirection) {
+	a.portForwardModal.OpenMode(taskID, dir)
+	if a.workspace != nil {
+		a.portForwardModal.SetKeepTarget(a.workspace.Name)
+	}
 }
 
 // `P` / `B` stop a local / remote forward for the selected task. With more

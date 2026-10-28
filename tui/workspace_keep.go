@@ -148,3 +148,28 @@ func (a *App) forwardMarks(fs []protocol.PortForwardInfo) map[uint64]string {
 func (a *App) refreshForwardMarks() {
 	a.forwardsModal.SetMarks(a.forwardMarks(a.forwardsModal.forwards))
 }
+
+// finishPendingKeep writes a start modal's keep once forward id has registered.
+// The value is rendered from the PARSED spec by the function a save uses
+// (ForwardKey.Value), so the file never holds the typed short form.
+func (a *App) finishPendingKeep(id int) {
+	name, ok := a.pendingKeep[id]
+	if !ok {
+		return
+	}
+	delete(a.pendingKeep, id)
+	s := a.activeForwards[id]
+	if s == nil {
+		return
+	}
+	k, ok := sessionIdentity(s)
+	if !ok {
+		return
+	}
+	value, err := k.Value()
+	if err != nil {
+		a.cmdresult.Append(WarnStyle.Render("keep: " + err.Error()))
+		return
+	}
+	a.keepForward("keep", name, s.TaskID, value, true)
+}
