@@ -778,7 +778,7 @@ type SpawnAction struct {
 	Cols uint
 }
 
-// WorkspaceAction is built by: workspace apply, workspace detach, workspace ls, workspace rm, workspace save, workspace show.
+// WorkspaceAction is built by: workspace apply, workspace detach, workspace forward add, workspace forward rm, workspace ls, workspace rm, workspace save, workspace show.
 type WorkspaceAction struct {
 	ActionMarker
 	// record only this task (32 hex); omitted = every task the registry reports a forward for
@@ -795,6 +795,10 @@ type WorkspaceAction struct {
 	Sub  string
 	// also stop what the workspace started
 	Stop bool
+	// a -L spec to declare, as `forward` takes it (repeatable)
+	L []string
+	// a -R spec to declare, as `forward` takes it (repeatable)
+	R []string
 }
 
 // The builds the declaration implies, one per verb path, registered into
@@ -1885,6 +1889,58 @@ func init() {
 			a := WorkspaceAction{}
 			a.Sub = "detach"
 			a.Stop = b.Bool("stop")
+			return a, nil
+		},
+		"workspace forward add\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "forward-add"
+			a.L = stringsOf(b.Custom["L"])
+			a.R = stringsOf(b.Custom["R"])
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TaskID = b.Args[1]
+			}
+			return a, nil
+		},
+		"workspace forward add\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "forward-add"
+			a.L = stringsOf(b.Custom["L"])
+			a.R = stringsOf(b.Custom["R"])
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TaskID = b.Args[1]
+			}
+			return a, nil
+		},
+		"workspace forward rm\x00cli": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "forward-rm"
+			a.L = stringsOf(b.Custom["L"])
+			a.R = stringsOf(b.Custom["R"])
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TaskID = b.Args[1]
+			}
+			return a, nil
+		},
+		"workspace forward rm\x00tui": func(b Bound) (Action, error) {
+			a := WorkspaceAction{}
+			a.Sub = "forward-rm"
+			a.L = stringsOf(b.Custom["L"])
+			a.R = stringsOf(b.Custom["R"])
+			if len(b.Args) > 0 {
+				a.Name = b.Args[0]
+			}
+			if len(b.Args) > 1 {
+				a.TaskID = b.Args[1]
+			}
 			return a, nil
 		},
 		"board topics\x00cli": func(b Bound) (Action, error) {
@@ -3696,6 +3752,8 @@ const (
 	CmdWorkspaceShow          = "workspace show"
 	CmdWorkspaceApply         = "workspace apply"
 	CmdWorkspaceDetach        = "workspace detach"
+	CmdWorkspaceForwardAdd    = "workspace forward add"
+	CmdWorkspaceForwardRm     = "workspace forward rm"
 	CmdBoardTopics            = "board topics"
 	CmdBoardRead              = "board read"
 	CmdBoardThread            = "board thread"
@@ -3801,6 +3859,8 @@ const (
 	SubDiag            = "diag"
 	SubDiff            = "diff"
 	SubFile            = "file"
+	SubForwardAdd      = "forward-add"
+	SubForwardRm       = "forward-rm"
 	SubHelp            = "help"
 	SubInbox           = "inbox"
 	SubKill            = "kill"
@@ -4597,6 +4657,48 @@ func ParseCmdWorkspaceDetach(sf Surface, args []string, ctx map[string]string) (
 	sp, ok := Lookup("workspace", "detach")
 	if !ok {
 		return zero, fmt.Errorf("workspace detach: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(WorkspaceAction)
+	return a, nil
+}
+
+func ParseCmdWorkspaceForwardAdd(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "forward", "add")
+	if !ok {
+		return zero, fmt.Errorf("workspace forward add: not in the verb table")
+	}
+	sp = sp.For(sf)
+	fs := sp.NewFlagSet(flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	b, err := sp.Parse(fs, args)
+	if err != nil {
+		return zero, err
+	}
+	act, err := sp.BuildFunc()(b)
+	if err != nil {
+		return zero, err
+	}
+	a := act.(WorkspaceAction)
+	return a, nil
+}
+
+func ParseCmdWorkspaceForwardRm(sf Surface, args []string, ctx map[string]string) (WorkspaceAction, error) {
+	var zero WorkspaceAction
+	sp, ok := Lookup("workspace", "forward", "rm")
+	if !ok {
+		return zero, fmt.Errorf("workspace forward rm: not in the verb table")
 	}
 	sp = sp.For(sf)
 	fs := sp.NewFlagSet(flag.ContinueOnError)
@@ -6430,6 +6532,10 @@ type CLIDispatch[R any] interface {
 	WorkspaceLs(WorkspaceAction) R
 	// workspace show
 	WorkspaceShow(WorkspaceAction) R
+	// workspace forward add
+	WorkspaceForwardAdd(WorkspaceAction) R
+	// workspace forward rm
+	WorkspaceForwardRm(WorkspaceAction) R
 	// board topics
 	BoardTopics(BoardAction) R
 	// board read
@@ -6761,6 +6867,18 @@ func DispatchCLI[R any](h CLIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.WorkspaceShow(a), true, nil
+	case CmdWorkspaceForwardAdd:
+		a, perr := ParseCmdWorkspaceForwardAdd(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.WorkspaceForwardAdd(a), true, nil
+	case CmdWorkspaceForwardRm:
+		a, perr := ParseCmdWorkspaceForwardRm(CLI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.WorkspaceForwardRm(a), true, nil
 	case CmdBoardTopics:
 		a, perr := ParseCmdBoardTopics(CLI, args, ctx)
 		if perr != nil {
@@ -7261,6 +7379,10 @@ func DispatchCLIAction[R any](h CLIDispatch[R], act Action) (r R, handled bool) 
 			return h.WorkspaceLs(a), true
 		case "show":
 			return h.WorkspaceShow(a), true
+		case "forward-add":
+			return h.WorkspaceForwardAdd(a), true
+		case "forward-rm":
+			return h.WorkspaceForwardRm(a), true
 		}
 	case BoardAction:
 		switch a.Sub {
@@ -7621,6 +7743,18 @@ func ParseCLICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdWorkspaceShow:
 			a, perr := ParseCmdWorkspaceShow(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceForwardAdd:
+			a, perr := ParseCmdWorkspaceForwardAdd(CLI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceForwardRm:
+			a, perr := ParseCmdWorkspaceForwardRm(CLI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}
@@ -8109,6 +8243,10 @@ type TUIDispatch[R any] interface {
 	WorkspaceApply(WorkspaceAction) R
 	// workspace detach
 	WorkspaceDetach(WorkspaceAction) R
+	// workspace forward add
+	WorkspaceForwardAdd(WorkspaceAction) R
+	// workspace forward rm
+	WorkspaceForwardRm(WorkspaceAction) R
 	// submit
 	Submit(SpawnAction) R
 	// session new
@@ -8398,6 +8536,18 @@ func DispatchTUI[R any](h TUIDispatch[R], cmd string, args []string, ctx map[str
 			return r, true, perr
 		}
 		return h.WorkspaceDetach(a), true, nil
+	case CmdWorkspaceForwardAdd:
+		a, perr := ParseCmdWorkspaceForwardAdd(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.WorkspaceForwardAdd(a), true, nil
+	case CmdWorkspaceForwardRm:
+		a, perr := ParseCmdWorkspaceForwardRm(TUI, args, ctx)
+		if perr != nil {
+			return r, true, perr
+		}
+		return h.WorkspaceForwardRm(a), true, nil
 	case CmdSubmit:
 		a, perr := ParseCmdSubmit(TUI, args, ctx)
 		if perr != nil {
@@ -8745,6 +8895,10 @@ func DispatchTUIAction[R any](h TUIDispatch[R], act Action) (r R, handled bool) 
 			return h.WorkspaceApply(a), true
 		case "detach":
 			return h.WorkspaceDetach(a), true
+		case "forward-add":
+			return h.WorkspaceForwardAdd(a), true
+		case "forward-rm":
+			return h.WorkspaceForwardRm(a), true
 		}
 	case SpawnAction:
 		switch a.Kind {
@@ -9057,6 +9211,18 @@ func ParseTUICommand(tokens []string, ctx map[string]string) (act Action, handle
 			return a, true, nil
 		case CmdWorkspaceDetach:
 			a, perr := ParseCmdWorkspaceDetach(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceForwardAdd:
+			a, perr := ParseCmdWorkspaceForwardAdd(TUI, tokens[n:], ctx)
+			if perr != nil {
+				return nil, true, perr
+			}
+			return a, true, nil
+		case CmdWorkspaceForwardRm:
+			a, perr := ParseCmdWorkspaceForwardRm(TUI, tokens[n:], ctx)
 			if perr != nil {
 				return nil, true, perr
 			}

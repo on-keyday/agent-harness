@@ -122,8 +122,9 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       | purge | dispatch | subscribe | unsubscribe | topics
       | subscriptions | contacts}`. See `runner/agentskills/harness-cli/SKILL.md`
       for conventions.
-    - Workspace config: `workspace {save,ls,show}` reads and writes
-      `.harness/config`, and the global `--config` / `--workspace` add a
+    - Workspace config: `workspace {save,ls,show,rm}` and `workspace forward
+      {add,rm}` read and write `.harness/config`, and the global `--config` /
+      `--workspace` add a
       third resolution tier below flag and env for `server-cid` /
       `ws-path` / `repo`. See **Workspace config** below.
     - Capabilities: `submit` / `session new` take
@@ -1607,7 +1608,7 @@ The cmdline accepts `submit / session {new,attach,ls,kill}
 / session await-idle [ls,kill] / await-progress [ls,kill] / session stream attach / file {ls,push,pull,delete} / git / exec
 / forward {ls,kill,tap} / conns
 / grid / caps / scope
-/ caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,ls,show}
+/ caps set / caps set-parent / caps audit / caps reach / caps what-if / workspace {save,apply,detach,ls,show,rm} / workspace forward {add,rm}
 / server dial-runner / runner {enroll,keys,unenroll} / ssh-gateway / cancel / prune / repo / clear / help / quit`.
 `exec <task-id> [--] <cmd>...` runs a command in that task's worktree and prints
 its output into the cmdresult pane, stdout marked `1|` and stderr `2|`;
@@ -1694,7 +1695,28 @@ bin/harness-tui --workspace default          # applies on start and every reconn
 
 Inside the TUI, `workspace apply [name]` re-applies on demand, `workspace save
 <name>` writes the current state back, and `workspace ls` / `show [name]`
-inspect the file.
+inspect the file. **The TUI re-reads the file at every workspace operation**,
+so a hand edit takes effect on the next `apply` without a restart, and a TUI
+write never overwrites it with the copy read at start. A file left unparsable
+refuses that one operation and leaves the installed workspace as it was; only
+the start-up parse error is fatal.
+
+**Keeping one forward is one keystroke.** In the forwards pane (`f`), `w` keeps
+the selected forward in the installed workspace, or drops it; the `ws` column
+says `kept` or `-` for every row, read from the file. In the start modal (`p` /
+`b`), Tab toggles "keep in workspace <name>", written only once the forward has
+registered, so a typo or a bind failure never reaches the file. Both write the
+long form a save writes. Keeping marks the running forward as the workspace's,
+so the next apply does not bind it twice; dropping it does not stop it — `x`
+does that — and releases it, so no apply stops it either. A forward held by
+another process (a `harness-cli forward` in another terminal) is written
+anyway, and the line says the next apply here will try to bind it too.
+`workspace forward add|rm <name> <task-id> -L <spec> [-R <spec>]…` is the same
+edit on the command line, on both the CLI and the TUI. It edits the file and
+nothing else. A missing task block is created as `resume = continue`; a
+workspace not in the file is refused — `workspace save` creates one. Comments
+written inside a workspace's own lines are not kept by any write; lines outside
+it are.
 
 **`workspace detach` takes the workspace back off.** An applied workspace stays
 installed and re-applies on every reconnect; detach stops that and leaves
@@ -1720,13 +1742,16 @@ bin/harness-cli workspace save <name> [--task <32-hex>] [--repo PATH]
 bin/harness-cli workspace rm <name>
 bin/harness-cli workspace ls
 bin/harness-cli workspace show [<name>]
+bin/harness-cli workspace forward add <name> <task-id> -L 3000   # declare one; starts nothing
+bin/harness-cli workspace forward rm  <name> <task-id> -L 3000   # drop one; stops nothing
 bin/harness-cli --workspace default ls       # server-cid / ws-path / repo only
 ```
 
 The CLI has no picker — nothing to draw it on — so its `save` records every task
-the registry reports a forward for, or just the one `--task` names. `--task` is
-also how a task's forwards get CLEARED after you stop them: the registry reports
-presence, never absence, so a save can only clear what it was pointed at.
+the registry reports a forward for, or just the one `--task` names. It only
+ADDS: a declared forward that is not running is kept, because the registry
+reports presence and never absence, and a forward down at the moment of the
+save is still wanted. `workspace forward rm` is how one is dropped.
 
 Saving is how the file gets written — no task id or forward spec is meant to be
 typed by hand. In the TUI, `workspace save <name>` opens a **picker**: every
@@ -1751,10 +1776,15 @@ workspace is a statement, not something a rule can infer from what happens to be
 running — `workspace save <name> --all` takes every live session without asking,
 for when pressing Enter is the only thing the picker would do.
 
-A save **merges**: task blocks it did not list are left alone, and an existing
-block's `resume` / `runner` are never reset — those are yours. The picker starts
-from what the file already says, so a second save defaults to "what I said last
-time", not to whatever is running now.
+A save **merges**: task blocks it did not list are left alone. The picker writes
+what it shows — a `resume` / `runner` you cycled is written, and an unticked row
+drops its block — and it starts from what the file already says, forwards
+included: a declared forward that is not running is still on its row, and a
+running one the block does not declare shows as `+N running, not kept` (`w` in
+the forwards pane adds it). If the workspace changed on disk while the picker
+was open, Enter refuses and writes nothing; reopen `workspace save`. The CLI
+save and `--all` decide nothing per task: they never drop a block and never
+overwrite an existing block's `resume` / `runner`.
 
 Both save paths read the server-side forward registry and write every forward
 whose client endpoint is an OS socket, skipping the in-process ones with a
@@ -1765,7 +1795,10 @@ it, reported as an ordinary bind conflict.
 
 Applying **reconciles** rather than restarts. A declared forward already running
 is left alone, a missing one is started, and one no longer declared is stopped;
-forwards the operator started by hand are never touched. That is what makes
+forwards the operator started by hand are never stopped, and one with the same
+forward as a declaration counts as running it rather than being bound twice.
+Forwards are compared by what they parse to, not how they are spelled, so
+`-L 3000` and `-L 127.0.0.1:3000:127.0.0.1:3000` are one forward. That is what makes
 `workspace apply` the recovery from a port conflict — freeing the port and
 re-applying starts only the forward that failed, leaving the ones that were
 working connected. A failed forward is not retried automatically and does not

@@ -1084,6 +1084,12 @@ func (h cliVerbs) WorkspaceShow(a verb.WorkspaceAction) error {
 func (h cliVerbs) WorkspaceSave(a verb.WorkspaceAction) error {
 	return runWorkspaceAction(h.ctx, a, h.cid)
 }
+func (h cliVerbs) WorkspaceForwardAdd(a verb.WorkspaceAction) error {
+	return runWorkspaceAction(h.ctx, a, h.cid)
+}
+func (h cliVerbs) WorkspaceForwardRm(a verb.WorkspaceAction) error {
+	return runWorkspaceAction(h.ctx, a, h.cid)
+}
 
 // PruneLocal removes worktrees on THIS machine. The repo comes off the action
 // with its ladder already applied (env, then workspace config), which is a

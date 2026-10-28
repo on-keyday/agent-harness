@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli/verb"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -231,5 +232,24 @@ func TestStartModalNoKeepLineInLinkMode(t *testing.T) {
 	modalKey(a, tea.KeyMsg{Type: tea.KeyTab})
 	if a.portForwardModal.Keep() {
 		t.Error("Tab turned keep on for an ip link")
+	}
+}
+
+// `workspace forward add` naming a workspace other than the installed one
+// edits that workspace's file block only: adopting for it would get the
+// forward stopped by the installed workspace's next apply.
+func TestTUIWorkspaceForwardAddOnOtherWorkspaceAdoptsNothing(t *testing.T) {
+	a, path := newWorkspaceApp(t, "[workspace dev]\n\n[workspace other]\n")
+	a.activeForwards[1] = &PortForwardSession{ID: 1, TaskID: wsTaskA, Direction: ForwardLocal, Spec: "3000"}
+	act, err := ParseCommand("workspace forward add other "+wsTaskA+" -L 3000", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.runWorkspaceAction(act.(verb.WorkspaceAction))
+	if !strings.Contains(fileText(t, path), "[workspace other task "+wsTaskA+"]") {
+		t.Errorf("other did not get the forward:\n%s", fileText(t, path))
+	}
+	if a.activeForwards[1].FromWorkspace {
+		t.Error("a forward was adopted for a workspace that is not installed")
 	}
 }

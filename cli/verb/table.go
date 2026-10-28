@@ -1134,6 +1134,57 @@ var Verbs = []VerbSpec{
 		},
 		Examples: []string{"workspace detach", "workspace detach --stop"},
 	},
+	// workspace forward add/rm: one forward in or out of a workspace, without
+	// re-saving the whole thing through the picker. File only, on both
+	// surfaces, which is what gives the CLI a full implementation; the TUI's
+	// `w` in the forwards pane is the same edit for a forward on screen.
+	{
+		Path:         []string{"workspace", "forward", "add"},
+		SurfaceNotes: map[Surface][]string{TUI: {"also adopts the matching running forward when <name> is the installed workspace"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
+		},
+		Notes: []string{
+			"declare a forward for a task in .harness/config; starts nothing",
+			"a missing task block is created with resume = continue, runner = assigned",
+		},
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "forward-add"},
+		CmdlineSurfaces: CLI | TUI,
+		Args: []Arg{{Name: "name", Type: ArgString, Field: "Name"},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		AtLeastOne: []Rule{{Flags: []string{"L", "R"}, Reason: "nothing to add or remove"}},
+		Flags: []Flag{
+			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
+				Help: "a -L spec to declare, as `forward` takes it (repeatable)"},
+			{Name: "R", Type: FlagString, Custom: argListValue, Field: "R",
+				Help: "a -R spec to declare, as `forward` takes it (repeatable)"},
+		},
+		Examples: []string{"workspace forward add dev aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 3000"},
+	},
+	{
+		Path:         []string{"workspace", "forward", "rm"},
+		SurfaceNotes: map[Surface][]string{TUI: {"also releases the matching running forward when <name> is the installed workspace; it keeps running"}},
+		ModalSurfaces: []ModalSurface{
+			{Surface: TUI, At: "tui/portforward.go:ForwardsModal"},
+		},
+		Notes: []string{
+			"drop a forward's declaration from .harness/config; stops nothing (the task block stays)",
+		},
+		Action:          "WorkspaceAction",
+		Const:           map[string]string{"Sub": "forward-rm"},
+		CmdlineSurfaces: CLI | TUI,
+		Args: []Arg{{Name: "name", Type: ArgString, Field: "Name"},
+			{Name: "task-id", Type: ArgTaskID, Field: "TaskID"}},
+		AtLeastOne: []Rule{{Flags: []string{"L", "R"}, Reason: "nothing to add or remove"}},
+		Flags: []Flag{
+			{Name: "L", Type: FlagString, Custom: argListValue, Field: "L",
+				Help: "a -L spec to drop, as `forward` takes it (repeatable)"},
+			{Name: "R", Type: FlagString, Custom: argListValue, Field: "R",
+				Help: "a -R spec to drop, as `forward` takes it (repeatable)"},
+		},
+		Examples: []string{"workspace forward rm dev aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -L 3000"},
+	},
 
 	// --- board ---
 	//

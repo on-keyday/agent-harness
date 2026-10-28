@@ -18,6 +18,8 @@ func TestParseWorkspace(t *testing.T) {
 		{"workspace ls", "ls", ""},
 		{"workspace show", "show", ""},
 		{"workspace show default", "show", "default"},
+		{"workspace forward add dev " + wsTaskA + " -L 3000", "forward-add", "dev"},
+		{"workspace forward rm dev " + wsTaskA + " -R 8080", "forward-rm", "dev"},
 	} {
 		act, err := ParseCommand(c.in, "")
 		if err != nil {

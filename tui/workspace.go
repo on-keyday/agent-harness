@@ -346,6 +346,27 @@ func (a *App) runWorkspaceAction(v verb.WorkspaceAction) tea.Cmd {
 
 	case verb.SubSave:
 		return a.saveWorkspace(v.Name, v.All)
+
+	case verb.SubForwardAdd, verb.SubForwardRm:
+		// The same edit `w` makes, one value at a time through keepForward —
+		// which adopts / releases a running forward only when v.Name is the
+		// installed workspace.
+		op := "workspace forward add"
+		keep := v.Sub == verb.SubForwardAdd
+		if !keep {
+			op = "workspace forward rm"
+		}
+		var values []string
+		for _, s := range v.L {
+			values = append(values, "-L "+s)
+		}
+		for _, s := range v.R {
+			values = append(values, "-R "+s)
+		}
+		for _, value := range values {
+			a.keepForward(op, v.Name, v.TaskID, value, keep)
+		}
+		return nil
 	}
 	return nil
 }

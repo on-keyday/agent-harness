@@ -137,8 +137,71 @@ func runWorkspaceAction(ctx context.Context, a verb.WorkspaceAction, cid func() 
 		fmt.Printf("workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped\n",
 			name, path, len(ws.Tasks), countTaskForwards(ws), skipped)
 		return nil
+
+	case verb.SubForwardAdd, verb.SubForwardRm:
+		return editWorkspaceForwards(f, path, a)
 	}
 	return fmt.Errorf("workspace: unhandled sub-verb %q", a.Sub)
+}
+
+// editWorkspaceForwards is `workspace forward add/rm`: the file only. A CLI
+// process holds no forward, so there is nothing for it to start, stop, adopt
+// or release — which is also why this verb, unlike `apply`, exists here.
+func editWorkspaceForwards(f *workspace.File, path string, a verb.WorkspaceAction) error {
+	cur, ok := f.Workspace(a.Name)
+	if !ok {
+		// A header-only workspace made here would apply against whatever
+		// connection the next client had: the connection keys are what a save
+		// records, so creating one is `workspace save`'s job.
+		return fmt.Errorf("no workspace named %q in %s — create it with `workspace save %s`", a.Name, path, a.Name)
+	}
+	ws := *cur
+	ws.Tasks = append([]workspace.Task(nil), cur.Tasks...)
+	for i := range ws.Tasks {
+		ws.Tasks[i].Forwards = append([]string(nil), ws.Tasks[i].Forwards...)
+	}
+	changed, unchanged := 0, 0
+	for _, v := range workspaceForwardValues(a) {
+		var did bool
+		var err error
+		if a.Sub == verb.SubForwardAdd {
+			did, err = ws.AddForward(a.TaskID, v)
+		} else {
+			did, err = ws.RemoveForward(a.TaskID, v)
+		}
+		if err != nil {
+			return err
+		}
+		if did {
+			changed++
+		} else {
+			unchanged++
+		}
+	}
+	if changed > 0 {
+		f.Set(&ws)
+		if err := f.Save(path); err != nil {
+			return err
+		}
+	}
+	if a.Sub == verb.SubForwardAdd {
+		fmt.Printf("workspace %s: %d added, %d already present (task %s)\n", a.Name, changed, unchanged, a.TaskID)
+	} else {
+		fmt.Printf("workspace %s: %d removed, %d not declared (task %s)\n", a.Name, changed, unchanged, a.TaskID)
+	}
+	return nil
+}
+
+// workspaceForwardValues turns the verb's -L / -R flags into `forward` values.
+func workspaceForwardValues(a verb.WorkspaceAction) []string {
+	var out []string
+	for _, s := range a.L {
+		out = append(out, "-L "+s)
+	}
+	for _, s := range a.R {
+		out = append(out, "-R "+s)
+	}
+	return out
 }
 
 // workspaceCfgPath and workspaceServerCIDStr are what `workspace save` needs

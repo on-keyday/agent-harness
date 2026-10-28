@@ -3441,3 +3441,29 @@ named the new bit, kind or field before any handler existed. The verb table's
 `TestExamplesParse` / `TestUsagePositionalsParse` /
 `TestEveryDeclaredFlagIsReadByItsBuild` then refused a hex `Validate` on the
 declarations, which is why item 2 lands in the client and the server here.
+
+### 2026-10-29 (pre-landing) — workspace: keep one forward (`w`, start-modal Tab, `workspace forward add/rm`), the picker writes what it shows
+
+Spec `2026-08-24-workspace-startup-config-design.md` fifth-round amendment,
+plan `2026-10-29-workspace-keep-forward.md`. A verb pair, two TUI keys, a
+forwards-pane column, and a file-semantics change (`Merge` takes the caller's
+decisions; saves add forwards and never remove them).
+
+done:    1 (two `VerbSpec`s under `workspace forward`), 2 (`AtLeastOne` -L/-R),
+         4 (`modalKeys.ForwardKeep = "w"`; the disjointness test stayed green),
+         5 (forwards pane `w`; start modal Tab, not shown in link mode), 24
+         (`-L`/`-R` mean "declare", not "start", here; the TUI form adopts only
+         when <name> is the installed workspace — written in SurfaceNotes),
+         29, 30, 31 (`ws` cell empty only when nothing is installed or the row
+         cannot be written down — an existence gate), 32 (the start-modal value
+         goes through `cli.PortForwardConfigSpec`, the save's renderer), 33
+         (a bad -L/-R value errors), 34 (`ws` column unconditional, before
+         origin), 35 (README Workspace config + cmdline verb lists), 37
+omitted: 6, 7, 20–23 (WebUI: a browser has no `.harness/config` — the spec's
+         Scope section), 11/12 (`forward ls` shows no `ws` column: a CLI process
+         has no installed workspace to compare against)
+n/a:     3, 8, 9, 10, 13–19, 25–28a, 34a, 36, 38, S1–S6
+missed:  —
+
+Item 39 (the spec's own Surfaces table) is walked at the end of the plan, after
+the dummy-harness run.

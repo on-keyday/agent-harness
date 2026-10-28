@@ -676,6 +676,12 @@ func (h tuiVerbs) WorkspaceLs(v verb.WorkspaceAction) tea.Cmd     { return h.a.r
 func (h tuiVerbs) WorkspaceShow(v verb.WorkspaceAction) tea.Cmd   { return h.a.runWorkspaceAction(v) }
 func (h tuiVerbs) WorkspaceApply(v verb.WorkspaceAction) tea.Cmd  { return h.a.runWorkspaceAction(v) }
 func (h tuiVerbs) WorkspaceDetach(v verb.WorkspaceAction) tea.Cmd { return h.a.runWorkspaceAction(v) }
+func (h tuiVerbs) WorkspaceForwardAdd(v verb.WorkspaceAction) tea.Cmd {
+	return h.a.runWorkspaceAction(v)
+}
+func (h tuiVerbs) WorkspaceForwardRm(v verb.WorkspaceAction) tea.Cmd {
+	return h.a.runWorkspaceAction(v)
+}
 
 // --- the screen-state family -------------------------------------------
 //
