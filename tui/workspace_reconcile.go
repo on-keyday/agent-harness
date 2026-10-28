@@ -5,8 +5,8 @@ import "github.com/on-keyday/agent-harness/cli/workspace"
 // forwardPlan is the difference between what a workspace declares for one task
 // and what is already running for it.
 type forwardPlan struct {
-	Start []string              // declared values with nothing running
-	Stop  []*PortForwardSession // workspace-owned sessions no longer declared
+	Start   []string              // declared values with nothing running
+	Release []*PortForwardSession // workspace-owned sessions no longer declared
 }
 
 // sessionIdentity is the forward a session is, by the key a declaration is
@@ -30,10 +30,14 @@ func sessionIdentity(s *PortForwardSession) (workspace.ForwardKey, bool) {
 // by spelling: a session typed as `3000` and the long form a save renders are
 // one forward, and comparing strings stopped the one to bind the other.
 //
-// Only workspace-owned sessions are candidates for Stop. A forward the operator
-// started by hand belongs to the operator — but it still SATISFIES a
-// declaration with its identity, since binding a second copy could only fail
-// on the port. It is not adopted, so un-declaring it later never stops it.
+// A workspace-owned session the file no longer declares is RELEASED, not
+// stopped (operator, 2026-10-29): removing a declaration means "do not bring
+// it back", the same as un-keep, wherever it was removed from — a CLI
+// `workspace forward rm` included, which cannot reach this process's
+// bookkeeping. Stopping is `x`, `forward kill` or `workspace detach --stop`.
+// A forward the operator started by hand still SATISFIES a declaration with
+// its identity, since binding a second copy could only fail on the port; it
+// is not adopted.
 func planForwards(declared []string, active map[int]*PortForwardSession, taskID string) forwardPlan {
 	want := make(map[workspace.ForwardKey]bool, len(declared))
 	for _, value := range declared {
@@ -53,7 +57,7 @@ func planForwards(declared []string, active map[int]*PortForwardSession, taskID 
 			continue
 		}
 		if s.FromWorkspace && !want[k] {
-			plan.Stop = append(plan.Stop, s)
+			plan.Release = append(plan.Release, s)
 			continue
 		}
 		running[k] = true

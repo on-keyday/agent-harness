@@ -241,6 +241,8 @@ workspace-owned forwards already running and acts only on the difference:
 - a declared spec already running as a workspace-owned forward is left alone;
 - a declared spec with nothing running is started;
 - a workspace-owned forward whose spec is no longer declared is stopped.
+  *(Reversed 2026-10-29 by the fifth round's D15: it is now released and left
+  running.)*
 
 Not "tear everything down, then re-establish". The intended recovery from a port
 conflict is to free the port and run `workspace apply`, and a
@@ -696,6 +698,7 @@ should not take it as the operator's.
 | D12 | Comments inside a workspace's span are not preserved by any write | operator (2026-10-29) |
 | D13 | Installing several workspaces at once: deferred | this spec — the operator raised the need and did not rule it out |
 | D14 | Moving a forward between tasks in one step: not built | this spec |
+| D15 | An apply RELEASES a workspace-owned forward the file no longer declares — it keeps running and stops being the workspace's — instead of stopping it. Reverses the first round's "a workspace-owned forward whose spec is no longer declared is stopped" | operator (2026-10-29, chose this over documenting the stop or dropping adoption) |
 
 ### Keeping and un-keeping one forward
 
@@ -713,10 +716,11 @@ forbids.
   exist it is created with `resume = continue`, `runner = assigned`, the values
   a save gives a first-time block. A value already declared (compared by
   forward identity, below) is a no-op reported as such.
-- **Adopt** — when the row's `ForwardId` matches a session in
-  `a.activeForwards`, that session's `FromWorkspace` is set. Without this the
-  next `workspace apply` finds the declared value with no workspace-owned
-  session and binds it a second time. When no local session matches, the forward
+- **Adopt** — a session in `a.activeForwards` with the row's task and forward
+  identity gets `FromWorkspace` set, which makes it one of the forwards
+  `workspace detach --stop` stops. (This first said adoption was what kept the
+  next apply from binding it a second time; D6 made a hand-started session
+  satisfy a declaration on its own, so that reason no longer holds.) When no local session matches, the forward
   belongs to another process (a `harness-cli forward` in another terminal); it
   is written anyway and the result line says the next apply in this TUI will try
   to bind it too — the existing "a save can capture a forward another process
@@ -725,9 +729,23 @@ forbids.
   stays, even with no forwards left: its `resume` / `runner` are a separate
   statement about the task. A matching local session has `FromWorkspace`
   CLEARED. Un-keeping means "do not bring this back"; stopping it now is `x`.
-  Without the clear, the reconciliation rule ("a workspace-owned forward whose
-  spec is no longer declared is stopped") would turn un-keep into a kill on the
-  next reconnect.
+  The next apply would release it anyway (D15); clearing it here makes the
+  release immediate, so `detach --stop` no longer counts it either.
+
+**D15** — reconciliation releases instead of stopping. A workspace-owned session
+whose identity the file no longer declares has `FromWorkspace` cleared and
+keeps running; the apply prints `workspace <ws>: -L <spec> on <task> no longer
+declared; left running (x stops it)`, and counts it as work done, so the same
+pass does not also print "already reconciled". The fact that moved it: a
+CLI `workspace forward rm` cannot reach the TUI's `FromWorkspace`, so under
+the first round's rule the same file edit stopped a forward or did not
+depending on which process made it — and the TUI's next apply, which a
+reconnect or a resume re-arms without anything being typed, cut a live tunnel
+some time after a command documented as stopping nothing. Removing a
+declaration now means one thing everywhere: do not bring it back. Stopping is
+`x`, `forward kill`, or `workspace detach --stop` for everything the workspace
+still owns. What this gives up: editing the file is no longer a way to make
+the TUI tear a forward down.
 - **No workspace installed** — `w` is refused with a line naming `workspace
   apply <name>`. Not a prompt for a name: creating a workspace is `workspace
   save`, and a pane key that sometimes opens a text input is a second modal
@@ -906,6 +924,10 @@ a save, which is what made this worth deciding.
 - `Merge` with the reproduction input above: A written `fresh / any`, B removed.
   The same input with empty drop and policy sets (the CLI save) keeps A's and
   B's policy, and B's declared forward survives although it is not running.
+- An apply over a workspace-owned forward the file no longer declares releases
+  it: not cancelled, `FromWorkspace` false, "left running" reported (D15).
+- A hand edit whose `forward` value fails `Validate` refuses the operation and
+  leaves the installed workspace as it was (D10).
 - A picker save after the target block changed on disk is refused and the file
   is unchanged.
 - An apply with a hand-started local session matching a declared value starts

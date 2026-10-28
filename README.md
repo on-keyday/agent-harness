@@ -1706,9 +1706,9 @@ the selected forward in the installed workspace, or drops it; the `ws` column
 says `kept` or `-` for every row, read from the file. In the start modal (`p` /
 `b`), Tab toggles "keep in workspace <name>", written only once the forward has
 registered, so a typo or a bind failure never reaches the file. Both write the
-long form a save writes. Keeping marks the running forward as the workspace's,
-so the next apply does not bind it twice; dropping it does not stop it — `x`
-does that — and releases it, so no apply stops it either. A forward held by
+long form a save writes. Keeping marks the running forward as the workspace's
+(so `workspace detach --stop` stops it); dropping it does not stop it — `x`
+does that — and releases it. A forward held by
 another process (a `harness-cli forward` in another terminal) is written
 anyway, and the line says the next apply here will try to bind it too.
 `workspace forward add|rm <name> <task-id> -L <spec> [-R <spec>]…` is the same
@@ -1794,8 +1794,13 @@ the next apply will then contend for that port with the process still holding
 it, reported as an ordinary bind conflict.
 
 Applying **reconciles** rather than restarts. A declared forward already running
-is left alone, a missing one is started, and one no longer declared is stopped;
-forwards the operator started by hand are never stopped, and one with the same
+is left alone and a missing one is started. One the workspace started (or
+kept) that the file no longer declares is **released, not stopped**: it keeps
+running, stops being the workspace's, and the apply says `no longer declared;
+left running (x stops it)` — so removing a line means "do not bring it back"
+whether the TUI, `workspace forward rm` from the CLI or an editor removed it.
+Stopping is `x`, `forward kill`, or `workspace detach --stop`. Forwards the
+operator started by hand are never stopped, and one with the same
 forward as a declaration counts as running it rather than being bound twice.
 Forwards are compared by what they parse to, not how they are spelled, so
 `-L 3000` and `-L 127.0.0.1:3000:127.0.0.1:3000` are one forward. That is what makes

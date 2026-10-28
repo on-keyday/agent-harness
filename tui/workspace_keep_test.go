@@ -253,3 +253,27 @@ func TestTUIWorkspaceForwardAddOnOtherWorkspaceAdoptsNothing(t *testing.T) {
 		t.Error("a forward was adopted for a workspace that is not installed")
 	}
 }
+
+// Removing a declaration never stops the forward (operator, 2026-10-29): an
+// apply that finds a workspace-owned forward the file no longer declares
+// RELEASES it — it keeps running, the next apply leaves it alone, and the
+// line says how to stop it. Before, the apply stopped it, so a CLI
+// `workspace forward rm` documented as stopping nothing cut a live tunnel on
+// the TUI's next apply.
+func TestApplyReleasesAnUndeclaredForward(t *testing.T) {
+	a, _ := newWorkspaceApp(t, "[workspace dev]\n\n[workspace dev task "+wsTaskA+"]\nresume = continue\n")
+	cancelled := false
+	s := &PortForwardSession{ID: 1, TaskID: wsTaskA, Direction: ForwardLocal, Spec: "3000",
+		FromWorkspace: true, Cancel: func() { cancelled = true }}
+	a.activeForwards[1] = s
+	a.applyWorkspaceForwards("dev", a.workspace.Tasks[0])
+	if cancelled {
+		t.Error("the undeclared forward was stopped")
+	}
+	if s.FromWorkspace {
+		t.Error("the undeclared forward is still workspace-owned")
+	}
+	if !strings.Contains(resultText(a), "no longer declared; left running") {
+		t.Errorf("the release was not reported:\n%s", resultText(a))
+	}
+}

@@ -57,6 +57,7 @@ func (a *App) applyWorkspace() tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
+	acted := 0 // things done that issue no tea.Cmd (releases)
 	for _, decl := range ws.Tasks {
 		// a.tasksByID is map[string]protocol.TaskInfo — VALUES, not pointers. A
 		// missing task reads back as the zero TaskInfo, whose Status is Queued,
@@ -88,7 +89,9 @@ func (a *App) applyWorkspace() tea.Cmd {
 		// after a server restart actually printed. The SessionStartedMsg handler
 		// re-arms, and the snapshot that follows reconciles with the task alive.
 		if !resuming {
-			cmds = append(cmds, a.applyWorkspaceForwards(ws.Name, decl)...)
+			fwdCmds, released := a.applyWorkspaceForwards(ws.Name, decl)
+			cmds = append(cmds, fwdCmds...)
+			acted += released
 		}
 	}
 
@@ -102,7 +105,7 @@ func (a *App) applyWorkspace() tea.Cmd {
 	if cmd := a.applyWorkspaceGateway(ws); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	if len(cmds) == 0 {
+	if len(cmds) == 0 && acted == 0 {
 		// An apply that had nothing to do must SAY so. Reconciling to a no-op is
 		// the healthy steady state and the expected answer to `workspace apply`
 		// after fixing a port conflict that turned out not to need fixing —
@@ -113,16 +116,15 @@ func (a *App) applyWorkspace() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// applyWorkspaceForwards stops the workspace-owned forwards this task no longer
-// declares and starts the declared ones that are not running.
-func (a *App) applyWorkspaceForwards(wsName string, decl workspace.Task) []tea.Cmd {
+// applyWorkspaceForwards releases the workspace-owned forwards this task no
+// longer declares — they keep running, unmanaged — and starts the declared ones
+// that are not running. It returns the starts and how many it released.
+func (a *App) applyWorkspaceForwards(wsName string, decl workspace.Task) ([]tea.Cmd, int) {
 	plan := planForwards(decl.Forwards, a.activeForwards, decl.ID)
-	for _, s := range plan.Stop {
-		a.cmdresult.Append(fmt.Sprintf("workspace %s: stopping %s %s on %s (no longer declared)",
+	for _, s := range plan.Release {
+		s.FromWorkspace = false
+		a.cmdresult.Append(fmt.Sprintf("workspace %s: %s %s on %s no longer declared; left running (x stops it)",
 			wsName, s.Direction.flag(), s.Spec, pfShortID(decl.ID)))
-		if s.Cancel != nil {
-			s.Cancel()
-		}
 	}
 	var cmds []tea.Cmd
 	for _, value := range plan.Start {
@@ -148,7 +150,7 @@ func (a *App) applyWorkspaceForwards(wsName string, decl workspace.Task) []tea.C
 			cmds = append(cmds, DoStartPortForward(a.client, decl.ID, spec, id, a.program, true))
 		}
 	}
-	return cmds
+	return cmds, len(plan.Release)
 }
 
 // applyWorkspaceGateway reconciles the ssh gateway toward what the workspace
