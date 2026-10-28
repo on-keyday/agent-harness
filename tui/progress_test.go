@@ -27,19 +27,19 @@ func progressTask(kind protocol.TaskKind, progress string, at uint64, live bool,
 
 // The last column says what the task is doing now: its own line first, then
 // its program's title (marked, so the two are told apart), then the prompt.
-func TestDoingCell(t *testing.T) {
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "stage 2", 1, true, "✳ topic")); got != "stage 2 (12m ago)" {
+func TestAboutCell(t *testing.T) {
+	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "stage 2", 1, true, "✳ topic")); got != "stage 2 (12m ago)" {
 		t.Errorf("with progress = %q, want the line with its age (D4: the reader judges staleness)", got)
 	}
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "✳ topic")); got != "(title) ✳ topic" {
+	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "✳ topic")); got != "(title) ✳ topic" {
 		t.Errorf("title only = %q, want it marked", got)
 	}
-	if got := doingCell(progressTask(protocol.TaskKind_Oneshot, "", 0, false, "")); got != "the original ask" {
+	if got := aboutCell(progressTask(protocol.TaskKind_Oneshot, "", 0, false, "")); got != "the original ask" {
 		t.Errorf("neither = %q, want the prompt", got)
 	}
 	// A cleared line is a write: it says "nothing to report", and the cell
 	// falls through to the title rather than resurrecting a stale line.
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "", 9, true, "✳ topic")); got != "(title) ✳ topic" {
+	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "", 9, true, "✳ topic")); got != "(title) ✳ topic" {
 		t.Errorf("cleared = %q, want the title", got)
 	}
 }
@@ -82,12 +82,12 @@ func TestTasksFlexColumnIsNamed(t *testing.T) {
 	for name, cols := range map[string]func() []table.Column{"flat": flatCols, "tree": treeCols} {
 		found := false
 		for _, c := range cols() {
-			if c.Title == "Doing" {
+			if c.Title == "About" {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("%s columns have no \"Doing\" column for flexColumn to find", name)
+			t.Errorf("%s columns have no \"About\" column for flexColumn to find", name)
 		}
 	}
 }
@@ -95,11 +95,11 @@ func TestTasksFlexColumnIsNamed(t *testing.T) {
 // A forged task event can carry any bytes (pubsub lets a subscriber publish),
 // and bubbles passes a cell's bytes to the terminal as they are: the cell
 // strips control characters itself rather than trusting the server's rules.
-func TestDoingCell_StripsControls(t *testing.T) {
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "\x1b[2Jx\u009b", 1, true, "")); got != "[2Jx (12m ago)" {
+func TestAboutCell_StripsControls(t *testing.T) {
+	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "\x1b[2Jx\u009b", 1, true, "")); got != "[2Jx (12m ago)" {
 		t.Errorf("progress cell = %q, want the ESC and C1 gone", got)
 	}
-	if got := doingCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "\x1b]0;t\x07")); got != "(title) ]0;t" {
+	if got := aboutCell(progressTask(protocol.TaskKind_Interactive, "", 0, true, "\x1b]0;t\x07")); got != "(title) ]0;t" {
 		t.Errorf("title cell = %q, want the controls gone", got)
 	}
 }

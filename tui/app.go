@@ -2071,7 +2071,7 @@ func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusE
 
 // applyEventProgress copies the progress line and the live title from a task
 // event into ti. Every task event carries both (a parent-hop subscriber's
-// arrive emptied, as its List row does), so the Doing column follows a
+// arrive emptied, as its List row does), so the About column follows a
 // progress write or a title change without a snapshot. It stamps the local
 // receipt time the row's age is advanced from.
 func (a *App) applyEventProgress(ti *protocol.TaskInfo, id string, ev protocol.TaskStatusEvent) {

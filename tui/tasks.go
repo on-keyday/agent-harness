@@ -103,7 +103,7 @@ func flatCols() []table.Column {
 		{Title: "Agent", Width: 14},
 		{Title: "Act", Width: 10},
 		{Title: "Repo", Width: 28},
-		{Title: "Doing", Width: 0}, // resized later via SetSize; see doingCell
+		{Title: "About", Width: 0}, // resized later via SetSize; see aboutCell
 	}
 }
 
@@ -125,7 +125,7 @@ func treeCols() []table.Column {
 		{Title: "Agent", Width: 14},
 		{Title: "Act", Width: 10},
 		{Title: "Repo", Width: 18},
-		{Title: "Doing", Width: 0},
+		{Title: "About", Width: 0},
 	}
 }
 
@@ -138,7 +138,7 @@ func (m *TasksModel) SetTree(on bool) bool {
 	// ID cell carries the gutter), and flat and tree happen to have the SAME
 	// column count — so a count-based check would swap the headers and leave
 	// every row showing its flat id.
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Doing")))
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "About")))
 	return m.tree
 }
 
@@ -159,7 +159,7 @@ func (m *TasksModel) columns() []table.Column {
 func (m *TasksModel) SetMark(c protocol.Capability) {
 	m.mark = c
 	m.baseCols = m.columns()
-	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Doing")))
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "About")))
 }
 
 // SelectID puts the cursor on the task's row, reporting whether it is listed.
@@ -197,7 +197,7 @@ func (m *TasksModel) SetSize(w, h int) {
 	// Width decides the column SET, not only the widths.
 	m.width = w
 	m.baseCols = m.columns()
-	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Doing"))
+	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "About"))
 	// A width-only change keeps the same column set, and must NOT disturb the
 	// rows: bubbles keeps the scroll position in the unexported
 	// viewport.YOffset, and SetCursor does not restore it (only MoveUp/MoveDown
@@ -323,7 +323,7 @@ func (m *TasksModel) rebuild() {
 		}
 		row = append(row,
 			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
-			doingCell(t),
+			aboutCell(t),
 		)
 		rows = append(rows, row)
 		ids = append(ids, idHex)
@@ -497,17 +497,20 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // The Kind field is the authoritative source — TaskStatusEvent carries it
 // from the very first event, so a freshly-stubbed row knows its kind
 // without needing the next List snapshot to disambiguate.
-// doingCell is the task table's last column: what the task is doing now. Its
-// own progress line when it has one, else its program's window title marked
+// aboutCell is the task table's last column, About. Its own progress line
+// when it has one, else its program's window title marked
 // "(title)" — a plain-text mark, because bubbles truncates cells by width and
 // an ANSI style inside one can be cut mid-sequence — else the prompt cell as
-// before. Interactive sessions used to show only "<interactive>" here.
+// before. Interactive sessions used to show only "<interactive>" here. It was
+// named Doing until the operator objected: a title is generated from the first
+// prompt and drifts from the work, so the header claimed something two of the
+// three sources do not say (progress spec, D31).
 //
 // The line carries its age, which is how the reader judges a stale one (D4).
 // Both strings have their control characters stripped HERE: bubbles hands a
 // cell's bytes to the terminal as they are, and a task event can be forged by
 // any subscriber, so the server's own rules are not a substitute.
-func doingCell(t protocol.TaskInfo) string {
+func aboutCell(t protocol.TaskInfo) string {
 	if t.ProgressAt != 0 && len(t.Progress) > 0 {
 		p := string(t.Progress)
 		return vtgrid.SanitizeTitle(p, len(p)) + " (" + cli.AgeStr(t.ProgressAgeMs) + ")"
@@ -522,7 +525,7 @@ func doingCell(t protocol.TaskInfo) string {
 // lifeCell is the Life column: the lifecycle badge (cli.LifecycleBadge), blank
 // for a finished task. `wait` is marked by case — WAIT:3m — not by an ANSI
 // style: bubbles truncates cells by width and a style can be cut mid-sequence
-// (see doingCell).
+// (see aboutCell).
 func lifeCell(t protocol.TaskInfo) string {
 	b := cli.LifecycleBadge(&t)
 	if rest, ok := strings.CutPrefix(b, "wait:"); ok {

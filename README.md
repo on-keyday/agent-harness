@@ -274,7 +274,7 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # task's end and a deliberate restart; a crash loses it. `ls` shows it as
 # progress="…" (12m ago); `ls --json` carries progress / progress_at /
 # progress_age_ms, plus title (the live window title) and live_terminal. The TUI
-# "Doing" column shows the progress line, else the window title marked
+# "About" column shows the progress line, else the window title marked
 # "(title)", else the prompt; the WebUI task row shows it too.
 bin/harness-cli progress fixing the parser / writing tests
 bin/harness-cli progress --clear
