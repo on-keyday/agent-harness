@@ -51,6 +51,20 @@ Missing `harness-cli`, a denied capability and a dead server are all ordinary
 states here with a sentence a human can act on — never a stack trace and never
 an empty list rendered as "nobody is listening".
 
+**A stale ticket is the one with a known remedy, so it is named.** The viewer
+authenticates with the `HARNESS_AUTH_TICKET` of the task whose shell launched
+it, frozen into its environment; resuming that task issues a new ticket and
+ending it revokes the old one, and from then on every call answers
+`BadTicket`. `/api/payload` then carries `send.stale_auth: true` and a reason
+saying to restart the viewer from a live task's shell (a failed send answers
+the same field). Nothing in the process can renew the ticket. Reasons are cut
+from `harness-cli`'s stderr with its slog connection lines removed first —
+they used to fill the cut and leave `server rejected: B`.
+
+```bash
+python3 -m unittest memviewer_test     # from this directory
+```
+
 ## It writes your notes to disk
 
 `-o` is the default action and embeds every memory body in the page it writes —

@@ -2051,6 +2051,36 @@ def _cli(args: list[str], stdin: str | None = None, timeout: int = 60):
         return False, "", str(e)
 
 
+# harness-cli logs every connection on stderr through slog's default handler
+# ("2026/10/29 02:38:06 INFO new active connection added cid=…"). In a reason
+# shown to a human those lines are noise, and they were worse than noise: two
+# of them filled the 200-byte cut and left "psk auth: … server rejected: B",
+# the one word that said what was wrong cut off.
+_SLOG_INFO = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (DEBUG|INFO) ")
+
+
+def cli_failure(err: str, out: str) -> tuple[str, bool]:
+    """A failed harness-cli call's reason for a human, and whether it is a
+    STALE TICKET.
+
+    The ticket is the one case with a known remedy. This viewer authenticates
+    with the HARNESS_AUTH_TICKET of the task whose shell started it, frozen
+    into its environment at launch; resuming that task issues a new ticket and
+    ending it revokes the old one, so the server answers BadTicket for as long
+    as this process lives. Nothing here can renew it — the remedy is to
+    restart the viewer from a live task's shell — so it is named rather than
+    left as a truncated wire status.
+    """
+    lines = [ln for ln in (err or out or "").splitlines()
+             if ln.strip() and not _SLOG_INFO.match(ln)]
+    text = lines[-1].strip() if lines else "harness-cli が理由を出さずに失敗しました"
+    if "BadTicket" in (err or "") + (out or ""):
+        return ("起動したタスクの ticket が失効しています (BadTicket — そのタスクが resume "
+                "されたか終わった)。生きているタスクのシェルから memviewer を再起動して"
+                "ください", True)
+    return text[:200], False
+
+
 def send_targets() -> dict:
     """Live agents addressable as chat.<first-8-hex>, minus this task.
 
@@ -2060,14 +2090,17 @@ def send_targets() -> dict:
     the operator should see BEFORE sending rather than after.
     """
     if not SEND_ENABLED:
-        return {"ok": False, "reason": "loopback bind のときだけ有効です", "targets": []}
+        return {"ok": False, "reason": "loopback bind のときだけ有効です", "targets": [],
+                "stale_auth": False}
     ok, out, err = _cli(["ls", "--json"])
     if not ok:
-        return {"ok": False, "reason": (err or out).strip()[:200], "targets": []}
+        reason, stale = cli_failure(err, out)
+        return {"ok": False, "reason": reason, "targets": [], "stale_auth": stale}
     try:
         tasks = json.loads(out).get("tasks", [])
     except json.JSONDecodeError as e:
-        return {"ok": False, "reason": f"ls --json を解釈できません: {e}", "targets": []}
+        return {"ok": False, "reason": f"ls --json を解釈できません: {e}", "targets": [],
+                "stale_auth": False}
 
     # Subscriber counts are gated on board_observe; without it the server
     # answers denied, not an empty board. Degrade to "unknown" rather than
@@ -2108,7 +2141,7 @@ def send_targets() -> dict:
     # viewer was opened alongside, so it is the one a comment is usually for —
     # and being first makes it the default selection with no extra markup.
     live.sort(key=lambda x: (not x["self"], x["topic"]))
-    return {"ok": True, "reason": "", "targets": live}
+    return {"ok": True, "reason": "", "targets": live, "stale_auth": False}
 
 
 # Every message from here is a TOOL send: a human clicked a button in a viewer
@@ -2286,9 +2319,10 @@ class Handler(BaseHTTPRequestHandler):
             warn = (f"{n}B は inline 上限 {HOOK_INLINE_LIMIT}B 超 — 届いてはいるが相手の"
                     f"起床文脈には入らない。相手が `harness-cli agent read <seq>` を"
                     f"走らせるまで読まれません")
+        reason, stale = ("", False) if ok else cli_failure(err, out)
         self._json(200 if ok else 502,
-                   {"ok": ok, "out": (out or "").strip(), "err": (err or "").strip(),
-                    "bytes": n, "warn": warn})
+                   {"ok": ok, "out": (out or "").strip(), "err": reason,
+                    "stale_auth": stale, "bytes": n, "warn": warn})
 
     def log_message(self, *a) -> None:  # quiet
         pass
