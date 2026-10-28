@@ -173,6 +173,32 @@ func TestHookEventFor(t *testing.T) {
 	if ev := hookEventFor("claude", nil); ev != (hookEvent{}) {
 		t.Errorf("claude without stdin = %+v, want zero", ev)
 	}
+	if ev := hookEventFor("codex", strings.NewReader(`{"hook_event_name":"SubagentStart","agent_id":"agent-1","turn_id":"turn-1"}`)); ev.Name != "SubagentStart" || ev.AgentID != "agent-1" {
+		t.Errorf("codex = %+v, want SubagentStart for agent-1", ev)
+	}
+	if ev := hookEventFor("unknown", strings.NewReader(in)); ev != (hookEvent{}) {
+		t.Errorf("unknown runtime = %+v, want stdin ignored", ev)
+	}
+}
+
+func TestNextLifecycle_CodexInterruptAndSessionEnd(t *testing.T) {
+	var st hookState
+	st.next(hookEvent{Name: "UserPromptSubmit"}, protocol.LifecycleState_Working)
+	if got := st.next(hookEvent{Name: "Interrupt"}, protocol.LifecycleState_Idle); got != protocol.LifecycleState_Idle || st.InTurn {
+		t.Fatalf("Interrupt = %v, inTurn=%v; want idle", got, st.InTurn)
+	}
+	st.next(hookEvent{Name: "UserPromptSubmit"}, protocol.LifecycleState_Working)
+	st.next(hookEvent{Name: "SubagentStart", AgentID: "a1"}, protocol.LifecycleState_Working)
+	if got := st.next(hookEvent{Name: "Interrupt"}, protocol.LifecycleState_Idle); got != protocol.LifecycleState_Working || st.InTurn {
+		t.Fatalf("Interrupt with a live subagent = %v, inTurn=%v", got, st.InTurn)
+	}
+	if got := st.next(hookEvent{Name: "SubagentStop", AgentID: "a1"}, protocol.LifecycleState_Idle); got != protocol.LifecycleState_Idle {
+		t.Fatalf("last subagent stopped = %v, want idle", got)
+	}
+	st.next(hookEvent{Name: "SubagentStart", AgentID: "a2"}, protocol.LifecycleState_Working)
+	if got := st.next(hookEvent{Name: "SessionEnd"}, protocol.LifecycleState_Idle); got != protocol.LifecycleState_Idle || st.InTurn || len(st.Subagents) != 0 {
+		t.Fatalf("SessionEnd = %v, state=%+v; want idle and reset", got, st)
+	}
 }
 
 func TestParseHookInput(t *testing.T) {

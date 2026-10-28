@@ -722,7 +722,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		_ = s.Sender.Send(data)
 	}
 
-	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Write Claude Code and Codex hook settings into the worktree.
 	// Non-fatal: task continues even if settings file can't be written.
 	// In NoWorktree mode this is skipped by default to avoid polluting the
 	// user's repo; ForceInjectHarnessSettings re-enables it.
@@ -966,7 +966,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
-	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Write Claude Code and Codex hook settings into the worktree.
 	// Non-fatal: task continues even if settings file can't be written.
 	// Skipped in NoWorktree mode by default; ForceInjectHarnessSettings overrides.
 	if !s.NoWorktree || s.ForceInjectHarnessSettings {

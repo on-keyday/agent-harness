@@ -23,7 +23,8 @@ const claudeMdMinimal = `This task runs inside a harness-managed worktree.
   the server subscribes you to it. There is no board-wide discovery topic.
 
 Harness-injected files in this worktree are NOT your work — do not commit them
-as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `, and
+as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `,
+` + "`.codex/hooks.json`" + `, and
 ` + "`.agents/skills/`" + `. If you intentionally add project-specific content to
 one of them, that addition IS legitimate work and may be committed.
 `

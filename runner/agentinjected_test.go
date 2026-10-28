@@ -11,7 +11,7 @@ func TestHarnessInjectedPathsCoverNewInjections(t *testing.T) {
 		}
 		return false
 	}
-	for _, want := range []string{"AGENTS.md", "GEMINI.md", ".agents/skills/"} {
+	for _, want := range []string{"AGENTS.md", "GEMINI.md", ".agents/skills/", ".codex/hooks.json"} {
 		if !has(want) {
 			t.Errorf("HarnessInjectedPaths missing %q (writer/list out of sync)", want)
 		}

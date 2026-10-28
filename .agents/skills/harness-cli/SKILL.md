@@ -118,24 +118,25 @@ anything automatically — and it was wrong in the way most likely to mislead
 the readers it addressed. Two things it got backwards:
 
 - **The hook file is injected for every runtime.** The runner writes
-  `.claude/settings.json` into an injected worktree without consulting which
-  agent it is about to spawn there. Having it is not a Claude privilege.
+  `.claude/settings.json` and `.codex/hooks.json` into an injected worktree
+  without consulting which agent it is about to spawn there.
 - **Waking is gated on having a live stdin, not on a runtime.** A session —
   interactive or event-stream — has one; **a one-shot never does and can never
   be woken**, whatever it runs. That is the real dividing line.
 
 What remains runtime-dependent is narrow: whether anything on your side turns
-a new turn into an inbox fetch. Claude Code does it by reading the injected
-`.claude/settings.json`; a non-Claude runtime has been observed receiving
-messages automatically too, by a mechanism of its own. If nothing on your side
-does it, the wake keystrokes still arrive but nothing fetches the messages, so
-run `harness-cli agent inbox` yourself on whatever cadence your loop allows.
+a new turn into an inbox fetch. Claude Code reads `.claude/settings.json`;
+Codex reads `.codex/hooks.json`. Codex requires the project configuration and
+the exact hook definitions to be trusted: review them with `/hooks` in its CLI.
+New or changed hooks are skipped until trusted; the runner does not bypass
+that review. Other runtimes may not consume either file. If no hook fetches
+messages, follow the wake prompt and run `harness-cli agent inbox --json`.
 
 Do not conclude from your runtime's name that you are in either camp — check
 whether messages actually arrive, and remember that a one-shot task is
 push-less regardless.
 
-`harness-cli agent inbox` is wired into the Claude Code hooks for this task:
+`harness-cli agent inbox` is wired into both the Claude Code and Codex hooks:
 
 - `UserPromptSubmit` runs
   `harness-cli agent inbox --json --user-prompt-submit-hook`
@@ -602,10 +603,10 @@ send to it is a separate question — see "Who you can reach".
 
 **Check that you have an inbox path; do not infer it from your name.** The
 inbound subscription is server-seeded for every agent runtime, and
-`.claude/settings.json` is injected into every worktree regardless of runtime
-(see "Inbox is automatic"). Whether the hook in it fires depends on whether
-your runtime reads that file, which at least one non-Claude runtime does. If
-messages do not arrive on their own, poll `harness-cli agent inbox`.
+`.claude/settings.json` and `.codex/hooks.json` are injected into every worktree
+regardless of runtime (see "Inbox is automatic"). A hook runs only when its
+runtime loads and trusts it. If messages do not arrive on their own, run
+`harness-cli agent inbox --json`.
 
 ## Reaching another agent — id-directed first
 
@@ -842,9 +843,10 @@ Two more fields sit beside `progress=` on a live task's row. Neither is
 yours to write.
 
 - **`lifecycle=<state> (<age>)`** is written by the hooks the runner injects into
-  `.claude/settings.json`. Those hooks run `harness-cli lifecycle --hook claude
-  <state>` on claude's own events. The CLI reads each event from the hook's
-  stdin, and it keeps a task `working` while a subagent it launched is still
+  `.claude/settings.json` and `.codex/hooks.json`. Those hooks run
+  `harness-cli lifecycle --hook claude <state>` or
+  `harness-cli lifecycle --hook codex <state>` on the respective runtime events.
+  The CLI reads each event from the hook's stdin, and it keeps a task `working` while a subagent it launched is still
   running. **Do not call `harness-cli lifecycle` yourself**: the
   next hook overwrites it, and in the meantime your row says something your
   runtime did not.
@@ -852,17 +854,20 @@ yours to write.
   - `waiting`: blocked on a human inside the turn, on a permission prompt or a
     question.
   - `idle`: the turn ended and the task waits for its next prompt.
-  - `error`: the turn ended on an API or model error.
-  - `-`: no hook has reported. Its hooks are not firing: an agent other than
-    claude, a `--no-worktree` task without injected settings, or a runner
-    started before the hooks existed. It says nothing about whether the task is
-    busy; read `act=` for that.
+  - `error`: Claude Code reported `StopFailure` (API or model error). Codex
+    has no equivalent hook in this configuration.
+  - `-`: no hook has reported. Possible causes include an unsupported runtime,
+    untrusted Codex hooks, a `--no-worktree` task without injected settings, or
+    a runner started before the hooks existed. It says nothing about whether
+    the task is busy; read `act=` for that.
 - **`program=<state>[:<kind>]`** is the program's own report (OSC 7501), read
   off its terminal. It is shown only while the task has a live terminal.
 
 The two come from different sources and are not reconciled, so they can
 disagree. An Esc while a tool runs ends the turn and reads `idle`. An Esc
-while the model is still thinking fires no hook, so the row stays `working`.
+while the model is still thinking fires no Claude hook, so that row stays
+`working`; Codex reports `Interrupt` and returns to `idle` unless a subagent
+is still running.
 Read it against `act=` (output age) before concluding a worker is busy. `ls --json`
 carries both fields on every row, at zero when never reported: `lifecycle`,
 `lifecycle_at`, `lifecycle_age_ms`, `program_state`, `program_kind`,
@@ -1227,8 +1232,8 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
 
 The runner injects these into your worktree; they are NOT your work: the pointer
 files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), `.claude/` (settings + skills),
-and `.agents/skills/`. Don't commit them as your own. If you deliberately add
-project-specific content to one of them, that addition is legitimate work and
+`.codex/hooks.json`, and `.agents/skills/`. Don't commit them as your own. If you
+deliberately add project-specific content to one of them, that addition is legitimate work and
 may be committed.
 
 ## Trust model

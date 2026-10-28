@@ -36,12 +36,15 @@ type hookSpec struct {
 // events, a source for SessionStart). Async hooks run in the background and
 // never delay the agent; their stdout is not injected, so only the inbox hook,
 // whose stdout IS the injected context, stays synchronous.
-var harnessHookEntries = []struct {
+type harnessHookEntry struct {
 	Event   string
 	Matcher string
 	Command string
 	Async   bool
-}{
+	Timeout int
+}
+
+var harnessHookEntries = []harnessHookEntry{
 	{Event: "UserPromptSubmit", Command: "harness-cli agent inbox --json --user-prompt-submit-hook"},
 	// Lifecycle reporters (docs/superpowers/specs/2026-10-27-task-lifecycle-design.md
 	// D9, D21, D22). SessionStart is limited to these sources: it also fires
@@ -67,15 +70,33 @@ var harnessHookEntries = []struct {
 	{Event: "SubagentStop", Command: "harness-cli lifecycle --hook claude idle", Async: true},
 }
 
+// Codex uses the same command-hook envelope for inbox delivery, but has its
+// own event set. Do not copy Claude-only events or its permissions.allow.
+// Project and hook trust remain under Codex's normal /hooks review flow.
+var codexHookEntries = []harnessHookEntry{
+	{Event: "UserPromptSubmit", Command: "harness-cli agent inbox --json --user-prompt-submit-hook"},
+	{Event: "SessionStart", Matcher: "startup|resume|clear", Command: "harness-cli lifecycle --hook codex idle", Async: true},
+	{Event: "UserPromptSubmit", Command: "harness-cli lifecycle --hook codex working", Async: true},
+	{Event: "PreToolUse", Matcher: "^request_user_input$", Command: "harness-cli lifecycle --hook codex waiting", Async: true},
+	{Event: "PermissionRequest", Command: "harness-cli lifecycle --hook codex waiting", Async: true},
+	{Event: "PostToolUse", Command: "harness-cli lifecycle --hook codex working", Async: true},
+	{Event: "Stop", Command: "harness-cli lifecycle --hook codex idle", Async: true},
+	{Event: "Interrupt", Command: "harness-cli lifecycle --hook codex idle", Async: true, Timeout: 3},
+	// Codex always runs SessionEnd synchronously, even with async=true.
+	{Event: "SessionEnd", Command: "harness-cli lifecycle --hook codex idle", Timeout: 3},
+	{Event: "SubagentStart", Command: "harness-cli lifecycle --hook codex working", Async: true},
+	{Event: "SubagentStop", Command: "harness-cli lifecycle --hook codex idle", Async: true},
+}
+
 // harnessAllowEntry is the single permissions.allow entry the runner
 // injects so the agent can call harness-cli freely.
 const harnessAllowEntry = "Bash(harness-cli *)"
 
-// WriteAgentSettings ensures <dir>/.claude/settings.json carries the
-// runner's hooks and permission allow-entry, merging into any existing
-// content rather than overwriting it.
+// WriteAgentSettings merges the runner's hooks into .claude/settings.json
+// and .codex/hooks.json. Only Claude settings receive a permission allow-entry.
 //
 // Hooks injected:
+//
 //   - UserPromptSubmit: injects pending agentboard messages on each user
 //     prompt submission. This covers both normal user turns and the
 //     synthetic wake prompt written by Session.WakeStdin when the runner
@@ -132,6 +153,12 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // watermark covering every subscribed topic, written unlocked by whichever
 // process ran last, and it outlived the in-memory rings it indexed.
 func WriteAgentSettings(worktreeDir string) error {
+	// One runtime's malformed configuration must not prevent the other
+	// runtime's hooks from being installed.
+	return errors.Join(writeClaudeSettings(worktreeDir), writeCodexHooks(worktreeDir))
+}
+
+func writeClaudeSettings(worktreeDir string) error {
 	sub := filepath.Join(worktreeDir, ".claude")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		return err
@@ -160,6 +187,54 @@ func WriteAgentSettings(worktreeDir string) error {
 	return os.WriteFile(path, out, 0o644)
 }
 
+// writeCodexHooks merges into the dedicated hooks file, leaving config.toml
+// (including inline user hooks) and persisted trust untouched.
+func writeCodexHooks(worktreeDir string) error {
+	sub := filepath.Join(worktreeDir, ".codex")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(sub, "hooks.json")
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &root); err != nil || root == nil {
+			return fmt.Errorf("%s: malformed hook configuration", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// Reject invalid containers rather than replacing user configuration that
+	// the merge helpers would otherwise treat as absent.
+	if raw, exists := root["hooks"]; exists {
+		hooks, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: hooks must be an object", path)
+		}
+		for event, raw := range hooks {
+			groups, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("%s: hooks.%s must be an array", path, event)
+			}
+			for _, raw := range groups {
+				group, ok := raw.(map[string]any)
+				if !ok {
+					return fmt.Errorf("%s: hooks.%s group must be an object", path, event)
+				}
+				if _, ok := group["hooks"].([]any); !ok {
+					return fmt.Errorf("%s: hooks.%s handlers must be an array", path, event)
+				}
+			}
+		}
+	}
+	pruneHarnessHookEntries(root, codexHookEntries)
+	mergeHarnessHookEntries(root, codexHookEntries)
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
 // pruneStaleHarnessHooks removes hooks whose command starts with
 // harnessHookPrefix but is no longer listed in harnessHookEntries. This
 // covers the case where an older runner installed a hook (e.g. a Stop
@@ -175,8 +250,12 @@ func WriteAgentSettings(worktreeDir string) error {
 // this single-user dogfood deployment; if that ever changes, switch to
 // an explicit allow-list of retired commands and key on exact match.
 func pruneStaleHarnessHooks(root map[string]any) {
-	current := make(map[string]struct{}, len(harnessHookEntries))
-	for _, e := range harnessHookEntries {
+	pruneHarnessHookEntries(root, harnessHookEntries)
+}
+
+func pruneHarnessHookEntries(root map[string]any, entries []harnessHookEntry) {
+	current := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
 		current[e.Command] = struct{}{}
 	}
 	hooks, _ := root["hooks"].(map[string]any)
@@ -224,11 +303,15 @@ func pruneStaleHarnessHooks(root map[string]any) {
 // This makes repeated WriteAgentSettings calls idempotent and tolerates
 // users who hand-merged the runner's hook into their own group.
 func mergeHarnessHooks(root map[string]any) {
+	mergeHarnessHookEntries(root, harnessHookEntries)
+}
+
+func mergeHarnessHookEntries(root map[string]any, entries []harnessHookEntry) {
 	hooks, _ := root["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	for _, entry := range harnessHookEntries {
+	for _, entry := range entries {
 		groups, _ := hooks[entry.Event].([]any)
 		if hookCommandPresent(groups, entry.Command) {
 			hooks[entry.Event] = groups
@@ -240,6 +323,9 @@ func mergeHarnessHooks(root map[string]any) {
 		}
 		if entry.Async {
 			hook["async"] = true
+		}
+		if entry.Timeout > 0 {
+			hook["timeout"] = entry.Timeout
 		}
 		group := map[string]any{"hooks": []any{hook}}
 		if entry.Matcher != "" {

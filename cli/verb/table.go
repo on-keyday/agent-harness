@@ -1758,7 +1758,7 @@ var Verbs = []VerbSpec{
 	},
 	{
 		Path:           []string{"lifecycle"},
-		NoModalSurface: "written by the claude hooks the runner injects into the worktree's .claude/settings.json; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
+		NoModalSurface: "written by the Claude Code and Codex hooks the runner injects; an operator connection has no principal and is refused (spec 2026-10-27-task-lifecycle D12)",
 		Notes: []string{
 			"report THIS task's lifecycle state; written by hooks, not called by hand or by the agent",
 			"silent on stdout and exits 0 even on failure, so a hook never disturbs the agent; failures go to stderr",
@@ -1769,9 +1769,9 @@ var Verbs = []VerbSpec{
 			OneOfArg: []string{"working", "waiting", "idle", "error"}}},
 		Flags: []Flag{
 			{Name: "hook", Type: FlagString, Default: "", Field: "Hook",
-				Help: "the agent whose hook runs this (claude): read that agent's event JSON on stdin; without it the state word alone is reported"},
+				Help: "the agent whose hook runs this (claude or codex): read that agent's event JSON on stdin; without it the state word alone is reported"},
 		},
-		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle"},
+		Examples: []string{"lifecycle waiting", "lifecycle --hook claude idle", "lifecycle --hook codex idle"},
 	},
 	{
 		Path:           []string{"agent", "send"},

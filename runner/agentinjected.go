@@ -18,6 +18,7 @@ var HarnessInjectedPaths = []string{
 	"AGENTS.md",
 	"GEMINI.md",
 	".claude/settings.json",
+	".codex/hooks.json",
 	".claude/skills/",
 	".agents/skills/",
 }

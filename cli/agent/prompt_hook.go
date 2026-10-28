@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-// emitUserPromptSubmitHookOutput writes the Claude Code UserPromptSubmit
+// emitUserPromptSubmitHookOutput writes the Claude Code / Codex UserPromptSubmit
 // hook envelope carrying body as additional context.
 //
 // The envelope is mandatory, not cosmetic. Claude Code decides how to treat

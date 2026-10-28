@@ -196,8 +196,8 @@ func ProgramDetail(t *protocol.TaskInfo) string {
 // input" (a hand-run command, or an agent whose hook JSON this does not know),
 // and then the argv word is the state.
 //
-// The field names are Claude Code's hook schema. Another agent's hooks need
-// their own reading here and their own event table in hookState.next.
+// Claude Code and Codex share these hook input fields. Runtime selection is
+// explicit in hookEventFor, rather than inferred from the payload.
 type hookEvent struct {
 	Name      string `json:"hook_event_name"`
 	AgentID   string `json:"agent_id"`
@@ -205,7 +205,7 @@ type hookEvent struct {
 }
 
 // hookEventFor reads the hook input for the agent the hook command names
-// (`--hook claude`). Which agent's JSON is on stdin is never guessed from the
+// (`--hook claude` or `--hook codex`). Which agent's JSON is never guessed from the
 // JSON: a nested agent inherits the env, and one agent can replay another's
 // hook config. No --hook (a hand-run command) or no stdin is no input.
 // Another agent is added here with its own reading.
@@ -214,7 +214,7 @@ func hookEventFor(hook string, stdin io.Reader) hookEvent {
 		return hookEvent{}
 	}
 	switch hook {
-	case "claude":
+	case "claude", "codex":
 		return parseHookInput(stdin)
 	}
 	return hookEvent{}
@@ -287,6 +287,12 @@ func (st *hookState) next(ev hookEvent, argv protocol.LifecycleState) protocol.L
 	case "StopFailure":
 		st.InTurn = false
 		return protocol.LifecycleState_Error
+	case "Interrupt":
+		st.InTurn = false
+		return idleUnlessSubagents()
+	case "SessionEnd":
+		st.Subagents, st.InTurn = map[string]bool{}, false
+		return protocol.LifecycleState_Idle
 	case "PostToolUse":
 		return protocol.LifecycleState_Working
 	case "PostToolUseFailure":
@@ -416,7 +422,12 @@ func ReportLifecycle(ctx context.Context, cid func() objproto.ConnectionID, word
 	if r.skip {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := 5 * time.Second
+	if hook == "codex" && (ev.Name == "Interrupt" || ev.Name == "SessionEnd") {
+		// These events allow at most three seconds for the whole hook process.
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resp, err := LifecycleSet(ctx, cid(), r.state, r.reportedAt)
 	if err != nil {

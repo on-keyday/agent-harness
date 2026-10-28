@@ -17,7 +17,7 @@ import (
 //   - plain (the default): every retained message above --since, which defaults
 //     to 0 — the whole ring. Idempotent; it moves nothing. This is what an
 //     agent runs by hand, and what a runtime with no UserPromptSubmit hook
-//     (codex, bash, …) polls.
+//     (bash, or Codex with untrusted hooks) polls.
 //   - advancing (--user-prompt-submit-hook): the messages the automatic
 //     injection path has not yet been given, marked as given by the SERVER in
 //     the same operation. Only the runner-injected hook sends it — see

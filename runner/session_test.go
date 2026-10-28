@@ -762,6 +762,11 @@ echo "done"`)
 		t.Fatalf(".claude/ should not exist in no-worktree mode without force-inject; stat err=%v", err)
 	}
 
+	// Codex settings follow the same no-worktree opt-out.
+	if _, err := os.Stat(filepath.Join(repo, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("Codex hooks injected in no-worktree mode: %v", err)
+	}
+
 	// (6) repo dir itself survives the run.
 	if _, err := os.Stat(repo); err != nil {
 		t.Fatalf("repo dir disappeared: %v", err)
