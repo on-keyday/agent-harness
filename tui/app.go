@@ -655,6 +655,11 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.finishWorkspaceSave(msg.Forwards)
 		}
 		a.forwardsModal.ApplySnapshot(msg.Forwards)
+		// The pane's `ws` cells are read from the file, so it is re-read
+		// whenever the pane's rows are fetched: on open and on `r`.
+		if a.forwardsModal.IsOpen() && a.reloadWorkspace("forwards") {
+			a.refreshForwardMarks()
+		}
 		// The text dump belongs only to the `forward ls` cmdline path
 		// (ToCmdresult). cmdresult is a 200-line ring that evicts
 		// oldest-first (CmdResultModel.Append) — unconditionally dumping a
@@ -692,6 +697,7 @@ func (a *App) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case ForwardStatusMsg:
 		a.forwardsModal.ApplyEvent(msg.Event)
+		a.refreshForwardMarks()
 		return a, nil
 	case ExecStatusMsg:
 		a.execsModal.ApplyEvent(msg.Event)

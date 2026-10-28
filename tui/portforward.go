@@ -433,7 +433,10 @@ func DoKillForward(c *cli.Client, id uint64, taskID, spec string) tea.Cmd {
 // identical spec started by different clients — the entire point of a
 // shared registry — and duplicating the rendering would let this surface and
 // harness-cli's `forward ls` silently disagree on what "origin" means.
-func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
+//
+// mark is the row's `ws` cell (App.forwardMarks): whether the installed
+// workspace declares this forward.
+func portForwardInfoRow(fi *protocol.PortForwardInfo, mark string) table.Row {
 	// A link has no connections, so its conns cell is empty -- gated on the
 	// direction, never on the value; an idle tcp row still says 0/0.
 	conns := fmt.Sprintf("%d/%d", fi.ConnsOpen, fi.ConnsTotal)
@@ -453,6 +456,7 @@ func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
 		cli.FormatByteCount(fi.BytesFromTarget),
 		fmt.Sprintf("%d", fi.Taps),
 		cli.PortForwardDatagramCell(fi),
+		mark,
 		cli.PortForwardOrigin(fi),
 	}
 }
@@ -475,6 +479,7 @@ type ForwardsModal struct {
 	table    table.Model
 	baseCols []table.Column // natural column sizing; see fitColumns
 	forwards []protocol.PortForwardInfo
+	marks    map[uint64]string // `ws` cell by forward id; see App.forwardMarks
 
 	// Pending kill confirmation (armed by BeginKillConfirm, resolved by
 	// ConfirmKill/CancelKillConfirm). confirmID == 0 means none pending —
@@ -512,6 +517,11 @@ func NewForwardsModal() ForwardsModal {
 		// and never a value gate: a udp row with nothing dropped prints 0/0/0,
 		// because a blank there would read as "this row does not report it".
 		{Title: "udp", Width: 18},
+		// Whether the installed workspace declares the row — read from the
+		// FILE, because "will this come back" is a property of the file.
+		// Unconditional for the udp column's reason; empty (an existence gate)
+		// when nothing is installed or the row cannot be written down.
+		{Title: "ws", Width: 5},
 		{Title: "origin", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
@@ -534,11 +544,30 @@ func (m *ForwardsModal) SetSize(w, h int) {
 func (m *ForwardsModal) ApplySnapshot(fs []protocol.PortForwardInfo) {
 	m.forwards = make([]protocol.PortForwardInfo, len(fs))
 	copy(m.forwards, fs)
+	m.renderRows()
+}
+
+// SetMarks replaces the `ws` cells and redraws the rows in place.
+func (m *ForwardsModal) SetMarks(marks map[uint64]string) {
+	m.marks = marks
+	m.renderRows()
+}
+
+func (m *ForwardsModal) renderRows() {
 	rows := make([]table.Row, 0, len(m.forwards))
 	for i := range m.forwards {
-		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
+		rows = append(rows, portForwardInfoRow(&m.forwards[i], m.marks[m.forwards[i].ForwardId]))
 	}
 	setTableRows(&m.table, rows)
+}
+
+// Selected is the registry row under the cursor.
+func (m *ForwardsModal) Selected() (*protocol.PortForwardInfo, bool) {
+	i := m.table.Cursor()
+	if i < 0 || i >= len(m.forwards) {
+		return nil, false
+	}
+	return &m.forwards[i], true
 }
 
 // ApplyEvent folds one forwards.status event into the rows, so an open pane
@@ -584,11 +613,7 @@ func (m *ForwardsModal) ApplyEvent(ev protocol.ForwardStatusEvent) {
 		return
 	}
 
-	rows := make([]table.Row, 0, len(m.forwards))
-	for i := range m.forwards {
-		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
-	}
-	setTableRows(&m.table, rows)
+	m.renderRows()
 	if hadSelection {
 		for i := range m.forwards {
 			if m.forwards[i].ForwardId == selected {
@@ -670,7 +695,7 @@ func (m ForwardsModal) View() string {
 	}
 	// Every key the pane accepts is named. `t` existed and was invisible: the
 	// only way to find it was to read the source or the global `?` list.
-	footer := FooterStyle.Render("t: tap · r: refresh · x: kill · Esc: close")
+	footer := FooterStyle.Render("t: tap · r: refresh · x: kill · w: keep · Esc: close")
 	if len(m.forwards) == 0 {
 		return box.Render(header + "\n" + "no active forwards" + "\n" + footer)
 	}

@@ -123,6 +123,7 @@ type modalKeyMap struct {
 	Escape           string
 	ForwardKill      string
 	ForwardTap       string
+	ForwardKeep      string
 	ExecTap          string
 	ForwardRefresh   string
 	BoardRefresh     string
@@ -159,6 +160,9 @@ var modalKeys = modalKeyMap{
 	// `t` rather than a shift-variant of the kill key: tapping is a read, not
 	// a stronger form of killing, and the two should not look like a pair.
 	ForwardTap: "t",
+	// `w` (workspace) keeps the row in, or drops it from, the installed
+	// workspace — its own letter: it edits the file, not the forward.
+	ForwardKeep: "w",
 	// Same letter as ForwardTap, for the same reason: tapping reads.
 	ExecTap: "t",
 	// `r` refreshes, matching BoardRefresh — the forwards pane needs one now

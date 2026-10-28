@@ -159,14 +159,14 @@ func TestForwardsModalApplySnapshot(t *testing.T) {
 	// nothing about what broke.
 	origin := forwardColIndex(t, "origin")
 	id := forwardColIndex(t, "id")
-	rowA := portForwardInfoRow(&a)
+	rowA := portForwardInfoRow(&a, "")
 	if rowA[id] != "1" {
 		t.Errorf("a: id cell = %q, want %q", rowA[id], "1")
 	}
 	if !strings.Contains(rowA[origin], "tui") || !strings.Contains(rowA[origin], "ws:10.0.0.1:1-1") {
 		t.Errorf("a: origin cell = %q, want kind %q + cid %q", rowA[origin], "tui", "ws:10.0.0.1:1-1")
 	}
-	rowB := portForwardInfoRow(&b)
+	rowB := portForwardInfoRow(&b, "")
 	if rowB[id] != "2" {
 		t.Errorf("b: id cell = %q, want %q", rowB[id], "2")
 	}
@@ -198,7 +198,7 @@ func TestForwardRowHasOneCellPerColumn(t *testing.T) {
 	fi.SetBindAddr([]byte("127.0.0.1"))
 	fi.SetTargetHost([]byte("localhost"))
 	fi.SetOriginCid([]byte("ws:abc"))
-	if got, want := len(portForwardInfoRow(&fi)), len(NewForwardsModal().baseCols); got != want {
+	if got, want := len(portForwardInfoRow(&fi, "")), len(NewForwardsModal().baseCols); got != want {
 		t.Fatalf("row has %d cells, columns %d", got, want)
 	}
 }
@@ -211,13 +211,13 @@ func TestForwardsModalLinkRowConnsEmpty(t *testing.T) {
 	link.Protocol = protocol.ForwardProtocol_Ip
 	var tcp protocol.PortForwardInfo
 	connsCol := 4 // ID, DIR, TASK, SPEC, CONNS
-	if got := portForwardInfoRow(&link)[connsCol]; got != "" {
+	if got := portForwardInfoRow(&link, "")[connsCol]; got != "" {
 		t.Fatalf("link conns cell = %q, want empty", got)
 	}
-	if got := portForwardInfoRow(&tcp)[connsCol]; got != "0/0" {
+	if got := portForwardInfoRow(&tcp, "")[connsCol]; got != "0/0" {
 		t.Fatalf("tcp conns cell = %q, want 0/0", got)
 	}
-	if len(portForwardInfoRow(&link)) != len(NewForwardsModal().baseCols) {
+	if len(portForwardInfoRow(&link, "")) != len(NewForwardsModal().baseCols) {
 		t.Fatal("a link row has a different cell count")
 	}
 }

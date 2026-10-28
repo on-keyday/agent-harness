@@ -233,6 +233,9 @@ func (a *App) inForwardsModal(msg tea.KeyMsg) tea.Cmd {
 		a.forwardsModal.BeginKillConfirm()
 		return nil
 	}
+	if msg.String() == modalKeys.ForwardKeep {
+		return a.toggleKeepSelected()
+	}
 	if msg.String() == modalKeys.ForwardTap {
 		if id, ok := a.forwardsModal.SelectedID(); ok {
 			return a.startForwardTap(verb.ForwardTapAction{ForwardID: id, Dir: "both"})
