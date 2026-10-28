@@ -401,6 +401,18 @@ func (a *App) reloadWorkspace(op string) bool {
 		a.cmdresult.Append(ErrorStyle.Render(op + ": " + err.Error()))
 		return false
 	}
+	// Parse keeps `forward` / `grid` values verbatim; Validate is what hands
+	// them to their parsers. Start-up and `apply <name>` both validate, so a
+	// reload must too: installing a typo'd value makes the next apply stop the
+	// forward it replaced and start nothing.
+	if a.workspace != nil {
+		if ws, ok := f.Workspace(a.workspace.Name); ok {
+			if err := ws.Validate(); err != nil {
+				a.cmdresult.Append(ErrorStyle.Render(op + ": " + err.Error()))
+				return false
+			}
+		}
+	}
 	a.workspaceFile = f
 	if path != "" {
 		a.workspacePath = path

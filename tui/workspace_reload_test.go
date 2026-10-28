@@ -120,3 +120,21 @@ func TestPickerSaveRefusedWhenFileChanged(t *testing.T) {
 		t.Errorf("the refusal was not reported:\n%s", resultText(a))
 	}
 }
+
+// A value that parses but does not validate (Parse keeps forward values
+// verbatim; Validate is what checks them) must refuse the operation like a
+// parse error does. Installing it anyway made the next apply stop the working
+// forward — its identity no longer declared — and start nothing, with no line
+// naming the typo.
+func TestReloadRefusesAnInvalidValue(t *testing.T) {
+	a, path := newWorkspaceApp(t, reloadSample+"forward = -L 3000\n")
+	before := a.workspace
+	writeConfig(t, path, reloadSample+"forward = -L 30o0\n")
+	a.runWorkspaceAction(verb.WorkspaceAction{Sub: verb.SubShow})
+	if a.workspace != before {
+		t.Error("an invalid file replaced the installed workspace")
+	}
+	if !strings.Contains(resultText(a), "30o0") {
+		t.Errorf("the refusal does not name the bad value:\n%s", resultText(a))
+	}
+}
