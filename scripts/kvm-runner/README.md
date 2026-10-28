@@ -93,6 +93,29 @@ exactly one slot. **The corollary is worth knowing before you meet it:**
 fallback to the broader slot — the lab path belongs to the worktree slot, which
 does not advertise `bash`.
 
+## Reaching a server on this host over vsock
+
+A slot can dial a `harness-server` running on **this** host with no network in
+the path: give the domain a vsock device and the server a vsock listener. CID 2
+is always the host.
+
+```sh
+printf "<vsock model='virtio'><cid auto='yes'/></vsock>\n" > vsock.xml
+virsh -c qemu:///session attach-device <name> vsock.xml --config   # applies at next boot
+harness-server ... --vsock-listen 5000                              # on the host
+scripts/kvm-runner/kvm-runner.py runner up --server-cid 'vsock:2:5000-*'
+```
+
+- The device needs `/dev/vhost-vsock` openable by the user running libvirt; it
+  is mode 0666 here (measured 2026-10-29).
+- Agents on the slot get `HARNESS_SERVER_CID=vsock:2:5000-<id>`, so their
+  `harness-cli` goes over vsock as well. `harness-cli ls` shows the slot as
+  `cid=vsock:<guest cid>:<port>-<id>`.
+- vsock reaches only the guest's own host. A server on another machine is not
+  reachable this way without a forwarder on this host.
+- The guest keeps its passt NIC: vsock replaces the harness's path, not the
+  agent's network.
+
 ## What this does NOT give you
 
 - **A fresh kernel per task.** The guest kernel outlives every task on the slot.

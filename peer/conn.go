@@ -163,13 +163,13 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 const StreamMTU = 16384
 
 // MTUForTransport returns the (initial, max) trsf MTU for an objproto transport
-// scheme. Stream transports (ws/wss) get StreamMTU; datagram transports (udp)
+// scheme. Stream transports (ws/wss/vsock) get StreamMTU; datagram transports (udp)
 // keep the path-MTU-safe trsf defaults so real-network datagrams never
 // fragment. Both ends of a connection derive it from the same scheme, so the
 // choice is always symmetric.
 func MTUForTransport(transport string) (initialMTU, maxMTU int) {
 	switch transport {
-	case "ws", "wss":
+	case "ws", "wss", objproto.TransportVsock:
 		return StreamMTU, StreamMTU
 	default:
 		return trsf.DefaultInitialMTU, trsf.DefaultMaxMTU

@@ -39,6 +39,7 @@ import (
 type Config struct {
 	Addr          string        // host:port for the WebSocket listener; empty disables the WS leg (UDPAddr must then be set)
 	UDPAddr       string        // host:port for the UDP listener; empty disables the UDP leg. Combine with Addr for ws+udp dualstack.
+	VsockPort     uint32        // AF_VSOCK port to accept on from any CID (Linux); 0 disables the vsock leg. Combines with the others.
 	TLS           *tls.Config   // non-nil: the WS/WebUI listener serves wss:// and https:// with it; nil: plaintext
 	DataDir       string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
 	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
@@ -730,11 +731,9 @@ func New(cfg Config) *Server {
 // server until ctx is cancelled or a listener errors. Returns the first
 // fatal error.
 //
-// Transport selection:
-//   - cfg.Addr only      → single-stack WebSocket on cfg.Addr.
-//   - cfg.UDPAddr only   → single-stack UDP on cfg.UDPAddr; webui is not served.
-//   - both set           → ws+udp dualstack via UDPWebsocketDualStackEndpoint.
-//   - neither set        → error.
+// Transport selection: one endpoint with a leg per listener configured —
+// WebSocket on cfg.Addr, UDP on cfg.UDPAddr, vsock on cfg.VsockPort. Without
+// cfg.Addr the webui is not served; with none of the three, error.
 //
 // If cfg.DataDir is non-empty, Run creates the directory, replays any existing
 // WAL into the TaskStore (rebuilding Queued tasks and marking interrupted
@@ -779,61 +778,40 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.serve(ctx, ep, mux, httpAddr)
 }
 
-// buildEndpoint picks a transport stack based on cfg.Addr / cfg.UDPAddr.
-// Returns the endpoint, the http.ServeMux to mount webui on (nil for
-// UDP-only), and the http listen address (empty for UDP-only).
+// buildEndpoint builds one endpoint with a leg per configured listener.
+// Returns the endpoint, the http.ServeMux to mount webui on (nil without
+// cfg.Addr), and the http listen address (empty without cfg.Addr).
 func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, error) {
-	wsAddr := s.cfg.Addr
-	udpAddr := s.cfg.UDPAddr
-
-	switch {
-	case wsAddr == "" && udpAddr == "":
-		return nil, nil, "", fmt.Errorf("server: at least one of Config.Addr or Config.UDPAddr must be set")
-
-	case wsAddr != "" && udpAddr == "":
-		mux := http.NewServeMux()
-		ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
+	var legs []transport.Leg
+	var mux *http.ServeMux
+	if s.cfg.Addr != "" {
+		mux = http.NewServeMux()
+		legs = append(legs, transport.WebSocketLeg(mux, transport.WebSocketConfig{
 			Logger: s.cfg.Logger,
 			Path:   cli.WebSocketPath,
-			Mode:   objproto.EndpointModeMutual,
-		})
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("websocket session: %w", err)
-		}
-		return ep, mux, wsAddr, nil
-
-	case wsAddr == "" && udpAddr != "":
-		port, err := parseListenPort(udpAddr)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
-		}
-		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeMutual)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("udp endpoint: %w", err)
-		}
-		return ep, nil, "", nil
-
-	default:
-		port, err := parseListenPort(udpAddr)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
-		}
-		mux := http.NewServeMux()
-		ds, err := transport.UDPWebsocketDualStackEndpoint(transport.UDPWebsocketDualStackConfig{
-			Logger:  s.cfg.Logger,
-			UDPPort: port,
-			Mux:     mux,
-			WS: transport.WebSocketConfig{
-				Logger: s.cfg.Logger,
-				Path:   cli.WebSocketPath,
-				Mode:   objproto.EndpointModeMutual,
-			},
-		})
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("dualstack endpoint: %w", err)
-		}
-		return ds.Endpoint, mux, wsAddr, nil
+		}))
 	}
+	if s.cfg.UDPAddr != "" {
+		port, err := parseListenPort(s.cfg.UDPAddr)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", s.cfg.UDPAddr, err)
+		}
+		legs = append(legs, transport.UDPLeg(s.cfg.Logger, port))
+	}
+	if s.cfg.VsockPort != 0 {
+		legs = append(legs, transport.VsockLeg(transport.VsockConfig{
+			Logger:     s.cfg.Logger,
+			ListenPort: s.cfg.VsockPort,
+		}))
+	}
+	if len(legs) == 0 {
+		return nil, nil, "", fmt.Errorf("server: at least one of Config.Addr, Config.UDPAddr or Config.VsockPort must be set")
+	}
+	ep, err := transport.MultiLegEndpoint(s.cfg.Logger, objproto.EndpointModeMutual, legs...)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("server endpoint: %w", err)
+	}
+	return ep, mux, s.cfg.Addr, nil
 }
 
 // parseListenPort accepts "host:port" or ":port" and returns the port

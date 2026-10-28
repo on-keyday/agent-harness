@@ -18,6 +18,7 @@ func TestServerCandidatesSchemes(t *testing.T) {
 		{"udp:a:1-*,ws:b:2-*", []string{"udp", "ws"}},
 		{"ws:a:1-*,udp:b:2-*,ws:c:3-*", []string{"ws", "udp"}},
 		{"wss:a:1-*,udp:b:2-*", []string{"wss", "udp"}},
+		{"vsock:2:5000-*", []string{"vsock"}},
 		// Not the endpoint's problem: an unrecognised transport is reported as
 		// itself and fails when that candidate is dialed.
 		{"quic:a:1-*", []string{"quic"}},
@@ -46,21 +47,22 @@ func TestServerCandidatesSchemes(t *testing.T) {
 func TestEndpointLegsFor(t *testing.T) {
 	for _, tc := range []struct {
 		schemes  []string
-		wantWS   bool
-		wantUDP  bool
+		want     endpointLegs
 		wantErr  bool
 		errNames string
 	}{
-		{schemes: []string{"ws"}, wantWS: true},
-		{schemes: []string{"wss"}, wantWS: true},
-		{schemes: []string{"udp"}, wantUDP: true},
-		{schemes: []string{"ws", "udp"}, wantWS: true, wantUDP: true},
-		{schemes: []string{"udp", "wss"}, wantWS: true, wantUDP: true},
+		{schemes: []string{"ws"}, want: endpointLegs{ws: true}},
+		{schemes: []string{"wss"}, want: endpointLegs{ws: true}},
+		{schemes: []string{"udp"}, want: endpointLegs{udp: true}},
+		{schemes: []string{"vsock"}, want: endpointLegs{vsock: true}},
+		{schemes: []string{"ws", "udp"}, want: endpointLegs{ws: true, udp: true}},
+		{schemes: []string{"udp", "wss"}, want: endpointLegs{ws: true, udp: true}},
+		{schemes: []string{"vsock", "ws", "udp"}, want: endpointLegs{ws: true, udp: true, vsock: true}},
 		// ws and wss share one leg: the CID's scheme picks TLS at dial time.
-		{schemes: []string{"ws", "wss"}, wantWS: true},
+		{schemes: []string{"ws", "wss"}, want: endpointLegs{ws: true}},
 		// An unrecognised transport does NOT sink the whole list: a typo in the
 		// last candidate must not stop the runner reaching the first one.
-		{schemes: []string{"ws", "quic"}, wantWS: true},
+		{schemes: []string{"ws", "quic"}, want: endpointLegs{ws: true}},
 		// ... but a list with nothing dialable in it has no endpoint to build,
 		// and the error names what it found.
 		{schemes: []string{"quic"}, wantErr: true, errNames: "quic"},
@@ -81,9 +83,8 @@ func TestEndpointLegsFor(t *testing.T) {
 			t.Errorf("endpointLegsFor(%v): %v", tc.schemes, err)
 			continue
 		}
-		if legs.ws != tc.wantWS || legs.udp != tc.wantUDP {
-			t.Errorf("endpointLegsFor(%v) = {ws:%v udp:%v}, want {ws:%v udp:%v}",
-				tc.schemes, legs.ws, legs.udp, tc.wantWS, tc.wantUDP)
+		if legs != tc.want {
+			t.Errorf("endpointLegsFor(%v) = %+v, want %+v", tc.schemes, legs, tc.want)
 		}
 	}
 }

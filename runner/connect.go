@@ -939,58 +939,44 @@ func (s *peerSender) MaxDatagramSize() int { return s.pc.MaxDatagramSize() }
 // that the transport layer accepts.
 //
 // UDP transport was already symmetric (binds a socket regardless of mode), so
-// the mode bump there only affects objproto-level handshake acceptance.
+// the mode bump there only affects objproto-level handshake acceptance; the
+// vsock leg, like ws, only dials.
 // The legs come from the whole --server-cid list rather than from one
-// candidate: a list may span ws and udp, and both must dial from a single
-// endpoint (see Connect).
+// candidate: a list may span several transports, and all must dial from a
+// single endpoint (see Connect).
 func buildRunnerEndpoint(cfg Config, legs endpointLegs) (objproto.Endpoint, error) {
-	switch {
-	case legs.ws && legs.udp:
-		// The same constructor ListenAndServe uses for its own dualstack case.
-		// Mux is nil here where listen mode passes one: nil means dial-only at
-		// the transport layer while objproto still accepts incoming handshakes
+	var ls []transport.Leg
+	if legs.ws {
+		// Mux is nil where listen mode passes one: nil means dial-only at the
+		// transport layer while objproto still accepts incoming handshakes
 		// under Mutual, which is the "Mutual + nil mux" configuration
 		// WebSocketEndpointEx documents.
-		ds, err := transport.UDPWebsocketDualStackEndpoint(transport.UDPWebsocketDualStackConfig{
-			Logger:  cfg.Logger,
-			UDPPort: 0, // OS-assigned, as the single-leg UDP path takes
-			WS: transport.WebSocketConfig{
-				Logger: cfg.Logger,
-				Path:   cli.WebSocketPath,
-				TLS:    cli.ClientTLSConfig(),
-				Mode:   objproto.EndpointModeMutual,
-			},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("ws+udp dualstack endpoint: %w", err)
-		}
-		return ds.Endpoint, nil
-	case legs.ws:
-		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
+		ls = append(ls, transport.WebSocketLeg(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
 			Path:   cli.WebSocketPath,
 			TLS:    cli.ClientTLSConfig(),
-			Mode:   objproto.EndpointModeMutual,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("ws endpoint: %w", err)
-		}
-		return ep, nil
-	case legs.udp:
-		ep, err := transport.UDPEndpoint(cfg.Logger, 0, objproto.EndpointModeMutual)
-		if err != nil {
-			return nil, fmt.Errorf("udp endpoint: %w", err)
-		}
-		return ep, nil
-	default:
+		}))
+	}
+	if legs.udp {
+		ls = append(ls, transport.UDPLeg(cfg.Logger, 0)) // OS-assigned
+	}
+	if legs.vsock {
+		ls = append(ls, transport.VsockLeg(transport.VsockConfig{Logger: cfg.Logger})) // dial-only
+	}
+	if len(ls) == 0 {
 		// endpointLegsFor refuses this case, so reaching it means the two went
 		// out of step rather than that the operator typed something.
 		return nil, errors.New("runner: no transport leg to build")
 	}
+	ep, err := transport.MultiLegEndpoint(cfg.Logger, objproto.EndpointModeMutual, ls...)
+	if err != nil {
+		return nil, fmt.Errorf("runner endpoint: %w", err)
+	}
+	return ep, nil
 }
 
 // endpointLegs is which transport legs one endpoint must carry.
-type endpointLegs struct{ ws, udp bool }
+type endpointLegs struct{ ws, udp, vsock bool }
 
 // endpointLegsFor maps the --server-cid list's transports onto those legs.
 //
@@ -1007,11 +993,13 @@ func endpointLegsFor(schemes []string) (endpointLegs, error) {
 			legs.ws = true
 		case "udp":
 			legs.udp = true
+		case objproto.TransportVsock:
+			legs.vsock = true
 		}
 	}
-	if !legs.ws && !legs.udp {
+	if legs == (endpointLegs{}) {
 		return endpointLegs{}, fmt.Errorf(
-			"--server-cid: no dialable transport in %v (want ws, wss or udp)", schemes)
+			"--server-cid: no dialable transport in %v (want ws, wss, udp or vsock)", schemes)
 	}
 	return legs, nil
 }
