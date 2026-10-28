@@ -3316,21 +3316,8 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   };
 
   // Touch-keys: virtual modifier toggles + special-key buttons for soft keyboards.
-  const mods = { ctrl: false, shift: false };
-
-  const setMod = (name, on) => {
-      mods[name] = on;
-      const btn = document.getElementById(`tk-${name}`);
-      if (btn) btn.classList.toggle("active", on);
-  };
-
-  const sendSeq = (seq) => {
-      // Send straight to the PTY — no term.focus(), so touch-key-only
-      // operations (e.g. Shift+Tab to toggle auto mode) don't pop the OS
-      // soft keyboard. The keyboard opens only when the user taps the
-      // terminal to type.
-      window.harness.sendInteractive(seq);
-  };
+  // Two rows use them: #touch-keys under the attached terminal, and its copy in
+  // the session-preview modal. wireTouchKeys gives each row its own Ctrl/Shift.
 
   // Apply Ctrl/Shift modifiers to a CSI base sequence (Esc Tab arrows).
   // Standard xterm-style modifier encoding:
@@ -3346,7 +3333,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       right: "\x1b[C",
   };
 
-  const applyMods = (key) => {
+  const applyMods = (key, mods) => {
       const base = KEY_BASE[key];
       if (!base) return null;
       // Shift+Tab → BackTab
@@ -3365,57 +3352,84 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       return base;
   };
 
-  document.querySelectorAll("#touch-keys button[data-mod]").forEach(btn => {
-      btn.addEventListener("click", () => {
-          const name = btn.getAttribute("data-mod");
-          setMod(name, !mods[name]);
-      });
-  });
+  // wireTouchKeys wires the buttons under `root` with their own modifier state.
+  // send receives the bytes a key produces; getTerm returns the xterm the
+  // scroll buttons move, or null while there is none. It returns typed, which
+  // the same terminal's onData passes its data through so an armed Ctrl
+  // applies to the next letter typed on the OS keyboard, and reset, which
+  // disarms both modifiers.
+  function wireTouchKeys(root, send, getTerm) {
+      const mods = { ctrl: false, shift: false };
 
-  document.querySelectorAll("#touch-keys button[data-key]").forEach(btn => {
-      btn.addEventListener("click", () => {
-          const key = btn.getAttribute("data-key");
-          const seq = applyMods(key);
-          if (seq != null) sendSeq(seq);
-          // Auto-clear shift after a special key press (one-shot semantics).
-          if (mods.shift) setMod("shift", false);
-          if (mods.ctrl) setMod("ctrl", false);
-      });
-  });
+      const setMod = (name, on) => {
+          mods[name] = on;
+          const btn = root.querySelector(`button[data-mod="${name}"]`);
+          if (btn) btn.classList.toggle("active", on);
+      };
 
-  // Scroll buttons act on xterm's local scrollback viewport — NOT sent to the
-  // PTY. xterm's touch scrolling is finger-1:1 with no momentum (see
-  // Viewport.handleTouchMove), so a flick won't carry; these give reliable
-  // page-at-a-time navigation plus a jump back to the live bottom.
-  document.querySelectorAll("#touch-keys button[data-scroll]").forEach(btn => {
-      btn.addEventListener("click", () => {
-          switch (btn.getAttribute("data-scroll")) {
-              case "pageup":   term.scrollPages(-1); break;
-              case "pagedown": term.scrollPages(1);  break;
-              case "bottom":   term.scrollToBottom(); break;
+      root.querySelectorAll("button[data-mod]").forEach(btn => {
+          btn.addEventListener("click", () => {
+              const name = btn.getAttribute("data-mod");
+              setMod(name, !mods[name]);
+          });
+      });
+
+      root.querySelectorAll("button[data-key]").forEach(btn => {
+          btn.addEventListener("click", () => {
+              const key = btn.getAttribute("data-key");
+              const seq = applyMods(key, mods);
+              if (seq != null) send(seq);
+              // Auto-clear shift after a special key press (one-shot semantics).
+              if (mods.shift) setMod("shift", false);
+              if (mods.ctrl) setMod("ctrl", false);
+          });
+      });
+
+      // Scroll buttons act on xterm's local scrollback viewport — NOT sent to the
+      // PTY. xterm's touch scrolling is finger-1:1 with no momentum (see
+      // Viewport.handleTouchMove), so a flick won't carry; these give reliable
+      // page-at-a-time navigation plus a jump back to the live bottom.
+      root.querySelectorAll("button[data-scroll]").forEach(btn => {
+          btn.addEventListener("click", () => {
+              const t = getTerm();
+              if (!t) return;
+              switch (btn.getAttribute("data-scroll")) {
+                  case "pageup":   t.scrollPages(-1); break;
+                  case "pagedown": t.scrollPages(1);  break;
+                  case "bottom":   t.scrollToBottom(); break;
+              }
+          });
+      });
+
+      const typed = (data) => {
+          // If Ctrl is armed and the data is a single ASCII letter, transform to
+          // Ctrl+<letter> (control code = letter AND 0x1f). Auto-clear Ctrl after.
+          if (mods.ctrl && data.length === 1) {
+              const c = data.charCodeAt(0);
+              if (c >= 0x40 && c <= 0x7e) {
+                  setMod("ctrl", false);
+                  // Note: Shift on a letter is already applied by the OS
+                  // (uppercase comes through as the char itself), so we don't
+                  // touch shift state here.
+                  return String.fromCharCode(c & 0x1f);
+              }
           }
-      });
-  });
+          // Shift modifier doesn't apply to free-typed characters (the OS sends
+          // the already-shifted character). Only the special-key buttons consult
+          // mods.shift.
+          return data;
+      };
+      const reset = () => { setMod("ctrl", false); setMod("shift", false); };
+      return { typed, reset };
+  }
 
-  term.onData((data) => {
-      // If Ctrl is armed and the data is a single ASCII letter, transform to
-      // Ctrl+<letter> (control code = letter AND 0x1f). Auto-clear Ctrl after.
-      if (mods.ctrl && data.length === 1) {
-          const c = data.charCodeAt(0);
-          if (c >= 0x40 && c <= 0x7e) {
-              window.harness.sendInteractive(String.fromCharCode(c & 0x1f));
-              setMod("ctrl", false);
-              // Note: Shift on a letter is already applied by the OS
-              // (uppercase comes through as the char itself), so we don't
-              // touch shift state here.
-              return;
-          }
-      }
-      // Shift modifier doesn't apply to free-typed characters (the OS sends
-      // the already-shifted character). Only the special-key buttons consult
-      // mods.shift.
-      window.harness.sendInteractive(data);
-  });
+  // Send straight to the PTY — no term.focus(), so touch-key-only operations
+  // (e.g. Shift+Tab to toggle auto mode) don't pop the OS soft keyboard. The
+  // keyboard opens only when the user taps the terminal to type.
+  const attachKeys = wireTouchKeys(document.getElementById("touch-keys"),
+      (seq) => window.harness.sendInteractive(seq), () => term);
+
+  term.onData((data) => window.harness.sendInteractive(attachKeys.typed(data)));
   const ro = new ResizeObserver(() => {
     // ResizeObserver gives us pixel-size changes on the container. xterm
     // does not recompute its grid on its own, so call fit.fit() to derive
@@ -5093,8 +5107,21 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
   const sessionPreviewPause    = document.getElementById("session-preview-pause");
   const sessionPreviewReattach = document.getElementById("session-preview-reattach");
   const sessionPreviewClose    = document.getElementById("session-preview-close");
+  const sessionPreviewKeys     = document.getElementById("session-preview-keys");
 
   const previewPanes = new Map();
+
+  // The preview's touch keys are the attached terminal's buttons, copied so
+  // the two rows cannot offer different keys. ids are dropped: they name the
+  // original row's buttons.
+  for (const btn of document.getElementById("touch-keys").children) {
+    const copy = btn.cloneNode(true);
+    copy.removeAttribute("id");
+    sessionPreviewKeys.appendChild(copy);
+  }
+  const previewKeys = wireTouchKeys(sessionPreviewKeys,
+    (seq) => { const p = previewPanes.get("preview"); if (p) paneInput(p, seq); },
+    () => previewPanes.get("preview")?.term || null);
 
   function disposePaneTerm(p) {
     if (p.term) { p.term.dispose(); p.term = null; }
@@ -5227,16 +5254,22 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     // sent to a stopped stream (the wasm side additionally no-ops an unknown
     // paneKey). The pane claims no size authority, so no resize is forwarded.
     //
-    // Typing into a PAUSED pane says so instead of vanishing: ⏸ closes the
-    // stream, so there is nothing to write to, and silently swallowing the
-    // keystroke is the same failure the read-only preview had.
-    p.term.onData((data) => {
-      if (p.live) { window.harness.previewInput(p.key, data); return; }
-      if (p.pausedNote) return; // already said it; don't stack notes per key
-      p.pausedNote = paneNote(p, "一時停止中 — ▶ で再開すると入力できます");
-    });
+    // p.typed is the pane's touch-key row, when it has one (the single
+    // preview does; grid cells do not). A paused pane leaves an armed Ctrl
+    // armed: the keystroke is not sent, so it has not used the modifier.
+    p.term.onData((data) => paneInput(p, p.live && p.typed ? p.typed(data) : data));
     p.onResize = () => fitPaneScale(p);
     p.onResize();
+  }
+
+  // paneInput sends data to the pane's session. Typing into a PAUSED pane says
+  // so instead of vanishing: ⏸ closes the stream, so there is nothing to write
+  // to, and silently swallowing the keystroke is the same failure the
+  // read-only preview had.
+  function paneInput(p, data) {
+    if (p.live) { window.harness.previewInput(p.key, data); return; }
+    if (p.pausedNote) return; // already said it; don't stack notes per key
+    p.pausedNote = paneNote(p, "一時停止中 — ▶ で再開すると入力できます");
   }
 
   // fitPaneScale shrinks the pane's terminal to the PANE's own body width
@@ -5332,6 +5365,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
       onResize: null,
       onClosed: () => setPreviewPauseLabel(),
       key, capReplay: false, // full-size terminal: keep the whole scrollback
+      typed: previewKeys.typed,
     };
     previewPanes.set(key, p);
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
@@ -5351,6 +5385,7 @@ const POLL_INTERVAL_MOBILE_MS = 60000;
     stopPane("preview");            // close = disconnect immediately
     if (p) disposePaneTerm(p);
     previewPanes.delete("preview");
+    previewKeys.reset();            // a Ctrl armed here must not carry to the next session
   });
   sessionPreviewPause.addEventListener("click", () => {
     const p = previewPanes.get("preview");

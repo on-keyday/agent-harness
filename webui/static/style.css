@@ -1137,6 +1137,15 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
    doesn't affect layout, so the spacer gets an explicit scaled height to
    avoid a dead scroll area below the screen. */
 .session-preview-body { padding: 0.5em; }
+/* Below the scrolling body, outside it, so the keys stay put while the
+   terminal scrolls; on a phone the modal is 100dvh, which keeps them just
+   above the OS keyboard like the attached terminal's row. */
+#session-preview-keys {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.4em 0.5em;
+  border-top: 1px solid #444;
+}
 .session-preview-spacer { overflow: hidden; }
 .session-preview-scale { transform-origin: top left; }
 
