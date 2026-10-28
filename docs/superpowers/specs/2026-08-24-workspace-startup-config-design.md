@@ -731,8 +731,11 @@ reads `(no workspace installed)` and Tab does nothing. The value is written
 only once the forward is REGISTERED — on `PortForwardRegisteredMsg` for `-L`,
 on `PortForwardStartedMsg` (which already carries the forward id) for `-R` — so
 a typo or a bind failure never reaches the file. It is written by the same
-routine as `w`, rendered from the registry entry, so the file never holds the
-typed short form.
+routine as `w`. The value is rendered from the PARSED spec through
+`cli.PortForwardConfigSpec` — the function a save uses — so the file never holds
+the typed short form, and no registry round trip is needed. A local port of `0`
+is refused for keeping (the port is chosen at bind time, so the declaration
+would name a different port on every apply).
 
 **DECIDED** — the command-line form is `workspace forward add <name>
 <task-id> -L <spec> [-R <spec>] …` and `workspace forward rm <name> <task-id>
